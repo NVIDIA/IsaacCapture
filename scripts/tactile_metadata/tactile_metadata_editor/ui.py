@@ -8,7 +8,6 @@ import logging
 import math
 import queue
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -18,1588 +17,1420 @@ from trimesh import transformations as tf
 from viser import _messages
 
 from . import geometry as geo, sdk, storage
-from .document import Document, FIELDS, GROUPS, IDENTITY, JOINTS, State, joint_number
+from .document import Document, IDENTITY_POSE, JOINTS, Segment, State, Taxel
 
 LOG = logging.getLogger("isaaccapture.tactile_metadata.editor")
 
 
-def common_number(values):
-    if (
-        values
-        and all(v == values[0] for v in values)
-        and type(values[0]) in (int, float)
-        and abs(values[0]) <= 3.4028234663852886e38
-    ):
-        return float(values[0])
-    return None
-
-
 class Editor:
-    INITIAL_CAMERA_POSE = ((0.3, 0.3, -0.4), (0, 0.08, 0))
+    CAMERA_POSITION = (0.3, 0.3, -0.4)
+    CAMERA_LOOK_AT = (0.0, 0.08, 0.0)
 
-    def __init__(self, state, args):
-        self.state, self.args, self.started = state, args, bool(state.documents)
-        if not state.documents:
-            state.documents["left"] = Document("left")
-            state.saved["left"] = state.fingerprint("left")
-        self.events, self.pool = queue.SimpleQueue(), ThreadPoolExecutor(max_workers=1)
-        self.model, self.receiver, self.job = None, None, None
-        self.selected, self.points, self.candidates = [], {}, []
-        self.handles, self.q, self.logs, self.drive = {}, {}, [], {}
-        self.received, self.redraw = {}, True
-        self.frame_forces, self.frame_colors, self.frame_counts, self.issues = (
-            {},
-            {},
-            {},
-            [],
-        )
-        self.pick_target, self.slot, self.dragging, self.closing = (
-            None,
-            None,
-            False,
-            False,
-        )
-        self.sdk_result, self.sdk_revision = "not checked", None
-        if viser.__version__ != "1.1.1":
-            raise RuntimeError("Viewport axes require viser 1.1.1")
-        viewport_axes = Path(__file__).with_name("viewport_axes.js").read_text()
+    def __init__(self, state: State, args):
+        self.state = state
+        for document in state.documents.values():
+            document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
+        self.preview = {
+            side: self._preview_from(document)
+            for side, document in state.documents.items()
+        }
+        self.live_document: Document | None = None
+        self.live_metadata_key = ""
+        self.receiver: sdk.Receiver | None = None
+        self.model: geo.Model | None = None
+        self.urdf_alignment = geo.VISUALIZATION_FROM_URDF.copy()
+        self.urdf_scale = 1.0
+        self.events: queue.SimpleQueue = queue.SimpleQueue()
+        self.scene_handles: dict[str, object] = {}
+        self.segment_row_folder = None
+        self.taxel_row_folder = None
+        self.edit_joint_folder = None
+        self.preview_joint_folder = None
+        self.preview_segment_folder = None
+        self.selection_folder = None
+        self.segment_widgets, self.taxel_widgets = [], []
+        self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
+        self.preview_segment_widgets = []
+        self.selected_kind: str | None = None
+        self.selected_rows: list[int] = []
+        self.binding_phase: str | None = None
+        self.binding_taxels: list[int] = []
+        self.binding_segments: list[int] = []
+        self.pick_mode: str | None = None
+        self.selection_rotation = np.zeros(3)
+        self.selection_scale = 1.0
+        self.redraw = True
         self.server = viser.ViserServer(host="0.0.0.0", port=args.port)
         self.server.scene.set_up_direction("+y")
+        source = Path(__file__).with_name("editor_interactions.js").read_text()
         self.server._websock_server.queue_message(
-            _messages.RunJavascriptMessage(source=viewport_axes)
+            _messages.RunJavascriptMessage(source=source)
         )
-        (
-            self.server.initial_camera.position,
-            self.server.initial_camera.look_at,
-        ) = self.INITIAL_CAMERA_POSE
-        g = self.server.gui
-        g.configure_theme(control_width="medium", show_share_button=False)
-        g.main_panel.dock_right()
-        self.side = g.add_dropdown("Edit hand", tuple(state.documents))
-        self.both = g.add_checkbox("Show both hands", True)
-        self.mode = g.add_dropdown("Mode", ("EDIT", "PREVIEW", "LIVE", "PAUSED"))
-        self.watch(self.side, lambda _: self.switch())
-        self.watch(self.mode, lambda _: None)
-        tabs = g.add_tab_group()
-        with tabs.add_tab("Model"):
-            self.urdf = g.add_text("URDF", state.model.get("urdf", ""))
-            self.packages = g.add_text(
-                "Local package map JSON",
-                json.dumps(state.model.get("packages", {})),
-            )
-            self.urdf_scale = g.add_number(
-                "URDF scale", state.model.get("scale", 1.0), min=1e-6
-            )
-            self.sides = g.add_dropdown(
-                "New model hands",
-                ("left", "right", "both"),
-                initial_value="both"
-                if len(state.documents) == 2
-                else self.side.value,
-            )
-            self.button("New document", lambda: self.guard(self.reset))
-            self.button("Load URDF", lambda: self.guard(self.load_new))
-            self.button("Apply URDF scale", self.scale_model)
-            self.open_path = g.add_text("Metadata JSON", args.metadata or "")
-            self.json_side = g.add_dropdown(
-                "Assign JSON to", ("left", "right"), initial_value=self.side.value
-            )
-            self.button("Open JSON", lambda: self.guard(self.open))
-            self.wrist = g.add_dropdown("Wrist link", ("",))
-            self.allowed = g.add_text("Allowed links, comma separated", "")
-            self.button("Apply allowed links", self.set_links)
-            self.pick = g.add_dropdown(
-                "Pick target",
-                (
-                    "O",
-                    "C",
-                    "R",
-                    "Wrist O",
-                    "Wrist F",
-                    "Wrist D",
-                    "Segment",
-                    "Move selected",
-                    "Single tangent",
-                ),
-            )
-            self.pick_button = self.button(
-                "Pick on q0 model",
-                lambda: setattr(self, "pick_target", self.pick.value),
-            )
-            self.calibrate_button = self.button(
-                "Preview / set wrist reference", self.calibrate
-            )
-            self.button("Reset cameras", self.camera)
-        with tabs.add_tab("Segments"):
-            self.joint = g.add_dropdown("URDF free joint", ("",))
-            self.angle = g.add_slider("Preview joint", -3.15, 3.15, 0.001, 0.0)
-            self.angle_number = g.add_number("Preview joint value", 0.0)
-            self.watch(self.joint, lambda _: self.joint_controls())
-            for w in (self.angle, self.angle_number):
-                self.watch(w, self.preview_joint)
-            self.button("Set shared binding pose q0", self.confirm_q0)
-            self.button("Return to q0", lambda: setattr(self.mode, "value", "EDIT"))
-            self.segment = g.add_dropdown("Segment row", ("",))
-            self.semantic = g.add_dropdown("HandJoint", tuple(JOINTS))
-            self.segment_link = g.add_dropdown("Associated link", ("",))
-            self.watch(self.segment, lambda _: self.select_segment())
-            self.button("Add segment", self.add_segment)
-            self.button("Set semantic / link", self.associate)
-            self.order = g.add_text("Segment row order", "[]")
-            self.button(
-                "Reorder / delete omitted segments",
-                self.reorder_segments,
-            )
-            self.segment_table = g.add_markdown("")
-        with tabs.add_tab("Layout"):
-            self.surface = g.add_dropdown("Projection surface", ("",))
-            self.rows = g.add_number("Rows", 4, min=1)
-            self.cols = g.add_number("Columns", 4, min=1)
-            self.centers = [
-                g.add_vector3(k + " world center", (0.0, 0.0, 0.0))
-                for k in ("O", "C", "R")
-            ]
-            for key, w in zip(("O", "C", "R"), self.centers):
-                self.watch(w, lambda v, key=key: self.points.update({key: list(v)}))
-            self.spans = [
-                g.add_number(k + " span (m)", 0.03) for k in ("Column", "Row")
-            ]
-            self.button("Apply spans along picked directions", self.spans_apply)
-            self.scan = g.add_dropdown(
-                "Scan", ("row-major", "column-major", "row-snake", "column-snake")
-            )
-            self.reverse = [
-                g.add_checkbox(k, False)
-                for k in ("Reverse rows", "Reverse columns")
-            ]
-            self.excluded = g.add_text("Exclude cells [row,column]", "[]")
-            self.start = g.add_number("Start output index (-1 = unused)", -1)
-            self.influences = g.add_text("New taxel segment rows (1–4)", "[]")
-            self.grid_button = self.button("Preview grid", self.grid)
-            self.button("Apply candidates", self.apply_grid)
-            self.button("Cancel candidates", self.clear_layout)
-            self.layout_info = g.add_markdown("")
-            self.selection = g.add_text("Select output indices / ranges", "")
-            self.button("Select indices", self.select_indices)
-            self.rectangle = g.add_checkbox("Rectangle selection (drag)", False)
-            self.through = g.add_checkbox("Select through mesh", False)
-            self.watch(self.rectangle, self.rectangle_mode)
-            self.button(
-                "Delete selected taxels",
-                self.delete_taxels,
-            )
-            self.reproject_button = self.button(
-                "Reproject selected", self.reproject
-            )
-            self.indices = g.add_text("New selected output indices", "[]")
-            self.button("Preview / apply output indices", self.reindex)
-            self.page = g.add_number("List page (25 rows)", 0, min=0)
-            self.watch(self.page, lambda _: None)
-            self.table = g.add_markdown("")
-        with tabs.add_tab("Binding"):
-            self.binding_info = g.add_markdown("")
-            self.button(
-                "Assign segment rows equally",
-                lambda: self.change(
-                    self.d.assign, self.selected, json.loads(self.influences.value)
-                ),
-            )
-            self.slots = []
-            for k in range(4):
-                with g.add_folder(f"Slot {k}"):
-                    segment = g.add_dropdown("Segment", ("",))
-                    index = g.add_number("Set raw index", 0)
-                    slider = g.add_slider("Weight", 0.0, 1.0, 0.001, 0.0)
-                    number = g.add_number("Set weight", 0.0)
-                    self.watch(
-                        segment,
-                        lambda v, k=k: (
-                            self.set_slot(k, int(v.split(":")[0]))
-                            if not v.startswith("Raw")
-                            else None
-                        ),
-                    )
-                    self.watch(index, lambda v, k=k: self.set_slot(k, v))
-                    for w in (slider, number):
-                        self.watch(w, lambda v, k=k: self.weight(k, v))
-                    self.slots.append((segment, index, slider, number))
-        with tabs.add_tab("Live"):
-            self.collection = g.add_text("Tactile collection_id", "tactile")
-            self.hand = g.add_dropdown("HandTracker output", ("left", "right"))
-            self.joint_enabled = g.add_checkbox("Enable JointState", False)
-            self.joint_id = g.add_text("JointState collection_id", "")
-            self.button(
-                "Apply this hand's source configuration", self.configure_source
-            )
-            self.mapping_json = g.add_text(
-                "Joint mappings JSON: source → [target, scale, offset]",
-                "{}",
-                multiline=True,
-            )
-            self.button("Apply joint mappings", self.mapping)
-            self.button("Connect / disconnect", self.connect)
-            self.button(
-                "Play / pause",
-                lambda: setattr(
-                    self.mode,
-                    "value",
-                    "PAUSED" if self.mode.value == "LIVE" else "LIVE",
-                ),
-            )
-            self.source = g.add_dropdown(
-                "Visualization metadata", ("Received", "Draft")
-            )
-            self.force_max = g.add_number(
-                "Force color maximum (N)", 30.0, min=0.001
-            )
-            self.groups = {name: g.add_checkbox(name, True) for name in GROUPS}
-            self.button("Record metadata groups", self.record)
-            self.live_info = g.add_markdown("")
-        with tabs.add_tab("Export"):
-            self.paths = {
-                s: g.add_text(
-                    s + " save JSON", state.paths.get(s, s + ".metadata.json")
-                )
-                for s in ("left", "right")
-            }
-            self.button("Save all metadata", self.save)
-            self.all_sides = g.add_checkbox("Check / export all hands", True)
-            self.destination = g.add_text("New output directory", "package")
-            self.binary = g.add_checkbox("Include SDK binary", False)
-            self.button("Local check", self.local_check)
-            self.button("SDK check", lambda: self.background(False))
-            self.button("Export snapshot", lambda: self.background(True))
-            self.check_info = g.add_markdown("")
-            with g.add_folder("Advanced schema repair"):
-                self.schema = g.add_text("Schema JSON", "", multiline=True)
-                self.button(
-                    "Copy draft into repair field",
-                    lambda: setattr(
-                        self.schema,
-                        "value",
-                        json.dumps(storage.metadata(self.d), indent=2),
-                    ),
-                )
-                self.button("Replace draft from repair field", self.repair)
-        with g.add_folder("Draft property inspector"):
-            self.entity = g.add_dropdown("Edit entity", ("Taxels", "Segment"))
-            self.watch(self.entity, lambda _: None)
-            self.raw = g.add_markdown("")
-            self.pose_fields = []
-            for axis, k in enumerate("XYZ"):
-                w = g.add_number("Set " + k + " (m)", 0.0)
-                self.watch(w, lambda v, axis=axis: self.components([axis], [v]))
-                self.pose_fields.append(w)
-            self.button("Flip normal", lambda: self.rotate(np.pi, [1, 0, 0]))
-            self.twist = g.add_number("Tangent twist (degrees)", 0.0)
-            self.button(
-                "Apply tangent twist",
-                lambda: self.rotate(np.deg2rad(self.twist.value), [0, 0, 1]),
-            )
-            with g.add_folder("Advanced XYZW"):
-                for axis, k in enumerate("XYZW", 3):
-                    w = g.add_number("Set Q" + k, float(axis == 6))
-                    self.watch(w, lambda v, axis=axis: self.components([axis], [v]))
-                    self.pose_fields.append(w)
-            self.radius = g.add_number("Marker radius (m)", 0.002, min=0.0001)
-        g.add_markdown(
-            "Draft manipulators always edit q0. Wire markers are draft targets during playback. Ctrl/Cmd toggles selection. Ranges use `0:15,20`."
-        )
-        self.info = g.add_dropdown("Info issue", ("",))
-        self.button("Locate issue in inspector", self.locate)
-        self.log_text = g.add_markdown("")
-        self.layers = {
-            s: self.server.scene.add_frame("/view/" + s, show_axes=False)
-            for s in ("left", "right")
-        }
-        self.gizmo = self.server.scene.add_transform_controls(
-            "/draft-editor", scale=0.05, visible=False
-        )
-        self.gizmo.on_update(self.gizmo_event)
-        for modifier in (None, "cmd/ctrl"):
-            self.server.scene.on_click(modifier=modifier)(self.scene_click)
-        if state.model.get("urdf"):
-            try:
-                self.install_model(
-                    geo.Model(
-                        state.model["urdf"],
-                        state.model.get("packages", {}),
-                        state.model.get("scale", 1.0),
-                    )
-                )
-            except (OSError, ValueError) as exc:
-                self.log(
-                    "URDF unavailable; numerical draft editing remains available: "
-                    + str(exc)
-                )
-        for widget in (self.both, self.source, self.force_max, self.radius):
-            self.watch(widget, lambda _: None)
-        self.switch()
-        self.refresh()
+        self.server.initial_camera.position = self.CAMERA_POSITION
+        self.server.initial_camera.look_at = self.CAMERA_LOOK_AT
+        self.server.gui.configure_theme(control_width="medium", show_share_button=False)
+        self.server.gui.main_panel.dock_right()
+        self._build_gui()
+        self._register_scene_events()
+        self._sync_side()
 
     @property
-    def d(self):
-        return self.state.documents[self.side.value]
+    def document(self) -> Document:
+        return self.state.document
 
-    def watch(self, widget, callback):
+    @property
+    def preview_document(self) -> Document:
+        return self.preview[self.state.side]
+
+    @staticmethod
+    def _preview_from(document: Document) -> Document:
+        preview = document.clone()
+        preview.taxels = []
+        return preview
+
+    def _build_gui(self) -> None:
+        gui = self.server.gui
+        self.side_text = gui.add_markdown("")
+        self._action_button("Toggle Side", self._toggle_side)
+        self.metadata_path = gui.add_text("Metadata Path", "")
+        self._action_button("New", self._new)
+        _, self.save_info = self._action_button("Save", self._save)
+        self._action_button("Load", self._load)
+        self._action_button("Reset Camera", self._reset_camera)
+        self.mode = gui.add_dropdown("Mode", ("Edit", "Preview"))
+        self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
+        self._watch(self.mode, self._set_mode)
+        self._watch(self.show_saved, lambda _: self._request_draw())
+        self.reorder_bridge = gui.add_text("__Tactile Reorder Event", "")
+        self._watch(self.reorder_bridge, self._reorder)
+
+        self.edit_tabs = gui.add_tab_group()
+        self.urdf_tab = self.edit_tabs.add_tab("URDF")
+        with self.urdf_tab:
+            self.urdf_path = gui.add_text("URDF Path", "")
+            self._action_button("Load URDF", self._load_urdf)
+            with gui.add_folder("URDF Alignment"):
+                self.urdf_position = self._numbers("Position", (0.0, 0.0, 0.0), 0.001)
+                self.urdf_rotation = self._sliders("Rotation", (0.0, 0.0, 0.0))
+                self.urdf_scale_widget = gui.add_number(
+                    "Scale", 1.0, min=1e-6, step=0.01
+                )
+                for widget in (*self.urdf_position, *self.urdf_rotation):
+                    self._watch(widget, lambda _: self._update_urdf_alignment())
+                self._watch(
+                    self.urdf_scale_widget, lambda _: self._update_urdf_alignment()
+                )
+            self.edit_joint_folder = gui.add_folder("URDF Joints")
+
+        self.segments_tab = self.edit_tabs.add_tab("Segments")
+        with self.segments_tab:
+            with gui.add_folder("Segments Alignment"):
+                self.segment_position = self._numbers(
+                    "Position", (0.0, 0.0, 0.0), 0.001
+                )
+                self.segment_rotation = self._sliders("Rotation", (0.0, 0.0, 0.0))
+                for widget in (*self.segment_position, *self.segment_rotation):
+                    self._watch(widget, lambda _: self._update_segment_alignment())
+            with gui.add_folder("Add Segment"):
+                self.new_segment_joint = gui.add_dropdown("Name", tuple(JOINTS))
+                self.new_segment_position = self._numbers(
+                    "Position", (0.0, 0.0, 0.0), 0.001
+                )
+                self._action_button("Add with Input", self._add_segment_input)
+                self.segment_click_button, _ = self._action_button(
+                    "Add with URDF Click", self._pick_segment
+                )
+            self.segment_row_folder = gui.add_folder("All Segments")
+
+        self.taxels_tab = self.edit_tabs.add_tab("Taxels")
+        with self.taxels_tab:
+            with gui.add_folder("Add Taxels"):
+                self.grid_columns = gui.add_number("Columns", 4, min=1, step=1)
+                self.grid_rows = gui.add_number("Rows", 4, min=1, step=1)
+                self.grid_width = gui.add_number(
+                    "Area Width (m)", 0.03, min=0.0, step=0.001
+                )
+                self.grid_height = gui.add_number(
+                    "Area Height (m)", 0.03, min=0.0, step=0.001
+                )
+                self.grid_center = self._numbers(
+                    "Center Position", (0.0, 0.0, 0.0), 0.001
+                )
+                self._action_button("Add with Input", self._add_taxels_input)
+                self.taxel_click_button, _ = self._action_button(
+                    "Add with URDF Click", self._pick_taxels
+                )
+            with gui.add_folder("Bind Taxels to Segments"):
+                self.binding_start = gui.add_button("Start Binding to Segments")
+                self.binding_next = gui.add_button("Select Segments", disabled=True)
+                self.binding_complete = gui.add_button("Complete", disabled=True)
+                self.binding_info = gui.add_markdown("")
+                self._button(self.binding_start, self._start_binding)
+                self._button(self.binding_next, self._select_binding_segments)
+                self._button(self.binding_complete, self._complete_binding)
+            self.taxel_row_folder = gui.add_folder("All Taxels")
+
+        self.preview_panel = gui.add_folder("Preview", visible=False)
+        with self.preview_panel:
+            self.preview_error = gui.add_markdown("")
+            self.binding_source = gui.add_dropdown(
+                "Binding Metadata Source", ("Editing",)
+            )
+            self.show_binding = gui.add_checkbox("Show Binding Poses", False)
+            self.collection = gui.add_text("Tactile Collection ID", "tactile")
+            self.apply_preview_button, _ = self._action_button(
+                "Apply Preview Data to Editor", self._apply_preview
+            )
+            gui.add_markdown(
+                "Apply fully overrides the editor's segments, taxels, bindings, and URDF joint values."
+            )
+            self._watch(self.binding_source, lambda _: self._binding_source_changed())
+            self._watch(self.show_binding, lambda _: self._request_draw())
+            with gui.add_folder("Live"):
+                self.joint_enabled = gui.add_checkbox(
+                    "Use JointState to Drive URDF", False
+                )
+                self.joint_collection = gui.add_text(
+                    "JointState Collection ID", "", disabled=True
+                )
+                self.joint_mapping = gui.add_text(
+                    "Joint Mappings JSON", "{}", multiline=True, disabled=True
+                )
+                self._watch(self.joint_enabled, self._joint_enabled)
+                self.connect_button, _ = self._action_button(
+                    "Connect Live", self._connect
+                )
+                gui.add_markdown("Live input overrides values in the Static section.")
+                self.live_status = gui.add_markdown("Disconnected")
+            self.static_folder = gui.add_folder("Static")
+            with self.static_folder:
+                gui.add_markdown("The following values affect Preview only.")
+                self._action_button(
+                    "Restore to Editor Binding Values",
+                    self._restore_preview,
+                )
+                self.preview_joint_folder = gui.add_folder("URDF Joints")
+                self.preview_segment_folder = gui.add_folder("Segments")
+
+        self.selection_folder = gui.add_folder("Selected Objects", visible=False)
+
+    def _numbers(self, prefix: str, values, step: float):
+        return tuple(
+            self.server.gui.add_number(f"{prefix} {axis}", float(value), step=step)
+            for axis, value in zip("XYZ", values)
+        )
+
+    def _sliders(self, prefix: str, values):
+        return tuple(
+            self.server.gui.add_slider(
+                f"{prefix} {axis} (deg)", -180.0, 180.0, 1.0, float(value)
+            )
+            for axis, value in zip("XYZ", values)
+        )
+
+    def _watch(self, widget, callback) -> None:
         async def updated(event):
-            if event.client:
+            if event.client is not None:
                 value = copy.deepcopy(event.target.value)
-                self.events.put(lambda: callback(value))
+                self.events.put(lambda: self._run_action(callback, value))
 
         widget.on_update(updated)
 
-    def button(self, label, callback):
-        handle = self.server.gui.add_button(label)
+    def _button(self, widget, callback) -> None:
+        async def clicked(_):
+            self.events.put(lambda: self._run_action(callback))
+
+        widget.on_click(clicked)
+
+    def _action_button(self, label: str, callback):
+        button = self.server.gui.add_button(label)
+        info = self.server.gui.add_markdown("")
 
         async def clicked(_):
-            self.events.put(callback)
+            self.events.put(lambda: self._run_action(callback, info=info))
 
-        handle.on_click(clicked)
-        return handle
+        button.on_click(clicked)
+        return button, info
 
-    def log(self, message):
-        LOG.info("%s", message)
-        self.logs = (self.logs + [str(message)])[-8:]
-        self.log_text.content = "\n\n".join(self.logs)
-
-    def confirm(self, message, action, unsaved=False, cleanup=None):
-        modal = self.server.gui.add_modal("Confirm")
-
-        def close():
-            if cleanup:
-                cleanup()
-            modal.close()
-
-        def finish(save=False):
-            if save:
-                self.save()
-            action()
-            close()
-
-        with modal:
-            self.server.gui.add_markdown(message)
-            if unsaved:
-                self.button("Save and continue", lambda: finish(True))
-            self.button("Discard and continue" if unsaved else "Apply", finish)
-            self.button("Cancel", close)
-
-    def guard(self, action):
-        if self.state.dirty():
-            self.confirm("Unsaved drafts", action, True)
-        else:
-            action()
-
-    def change(self, action, *args, **kwargs):
-        return self.state.edit(action, *args, **kwargs)
-
-    def segment_options(self):
-        return (
-            "",
-            *map(str, range(max(len(self.d.joints), len(self.d.arrays[FIELDS[0]])))),
-        )
-
-    def install_model(self, model):
-        if self.model:
-            for h in self.model.handles.values():
-                h.remove()
-        self.model = model
-        self.wrist.options = self.segment_link.options = tuple(model.links)
-        self.joint.options = tuple(j.name for j in model.joints) or ("",)
-        self.q = copy.deepcopy(self.state.model.get("q0", {}))
-        self.sides.disabled = True
-        self.sides.value = "both" if len(self.state.documents) == 2 else self.side.value
-        self.joint_controls()
-
-    def reset(self):
-        if self.receiver:
-            self.connect()
-        for h in (
-            *self.handles.values(),
-            *(self.model.handles.values() if self.model else ()),
-        ):
-            h.remove()
-        self.handles, self.model = {}, None
-        self.state, self.started = State({"left": Document("left")}), False
-        self.state.saved["left"] = self.state.fingerprint("left")
-        self.side.options, self.side.value = ("left",), "left"
-        self.sides.disabled, self.mode.value = False, "EDIT"
-        self.frame_forces, self.frame_colors, self.frame_counts, self.drive = (
-            {},
-            {},
-            {},
-            {},
-        )
-        self.q = {}
-        for w in (
-            self.wrist,
-            self.joint,
-            self.segment_link,
-            self.surface,
-        ):
-            w.options = ("",)
-        for side, w in self.paths.items():
-            w.value = side + ".metadata.json"
-        self.switch()
-
-    def load_new(self):
-        cfg = dict(
-            urdf=str(Path(self.urdf.value).resolve()),
-            packages={
-                k: str(Path(v).resolve())
-                for k, v in json.loads(self.packages.value).items()
-            },
-            scale=self.urdf_scale.value,
-            q0={},
-        )
-        model = geo.Model(cfg["urdf"], cfg["packages"], cfg["scale"])
-        sides = ("left", "right") if self.sides.value == "both" else (self.sides.value,)
-        self.reset()
-        self.state, self.started = State({s: Document(s) for s in sides}, cfg), True
-        self.side.options, self.side.value = sides, sides[0]
-        self.install_model(model)
-        self.switch()
-
-    def scale_model(self):
-        if not self.model:
-            raise ValueError("Load a URDF before applying its scale")
-        scale = self.urdf_scale.value
-        model = geo.Model(
-            self.state.model["urdf"],
-            self.state.model.get("packages", {}),
-            scale,
-        )
-        self.change(self.state.model.update, scale=scale)
-        self.install_model(model)
-        self.clear_layout()
-
-    def open(self):
-        side, path = self.json_side.value, self.open_path.value
-        d = storage.load(path, side)
-        if self.model and side not in self.state.documents:
-            raise ValueError("Create a new document to change the fixed model hands")
-
-        def replace():
-            if not self.started:
-                self.state.documents = {}
-            self.state.documents[side] = d
-
-        if self.receiver:
-            self.connect()
-        self.mode.value = "EDIT"
-        self.state.edit(replace)
-        self.started = True
-        self.side.options, self.side.value = tuple(self.state.documents), side
-        self.state.paths[side] = self.paths[side].value = str(Path(path).resolve())
-        self.state.saved[side] = self.state.fingerprint(side)
-        self.switch()
-
-    def save(self):
-        storage.save(self.state, {s: self.paths[s].value for s in self.state.documents})
-        self.log("Saved all metadata")
-
-    def switch(self):
-        self.selected, self.points, self.candidates = [], {}, []
-        self.pick_target, self.slot = None, None
-        self.segment.value = ""
-        self.influences.value = "[]"
-        self.allowed.value = ",".join(self.d.editor.get("allowed_links", []))
-        if self.model:
-            link = self.d.editor.get("root", {}).get("link")
-            self.wrist.value = link if link in self.model.links else self.model.links[0]
-        source = self.d.editor.get("source", {})
-        self.collection.value, self.hand.value = (
-            source.get("collection", "tactile"),
-            source.get("hand", self.d.side),
-        )
-        self.joint_id.value = source.get("joint_state", "")
-        self.joint_enabled.value = bool(self.joint_id.value)
-        self.mapping_json.value = json.dumps(
-            self.d.editor.get("mapping", {}), indent=2
-        )
-        self.segment.options = self.segment_options()
-
-    def root(self, d=None, cfg=None):
-        d = d or self.d
-        if self.model and "root" in d.editor:
-            try:
-                return self.model.root(
-                    d,
-                    self.model.fk(
-                        cfg if cfg is not None else self.state.model.get("q0", {})
-                    ),
-                )
-            except (KeyError, ValueError, TypeError):
-                pass
-        return geo.VISUALIZATION_FROM_HAND.copy()
-
-    def surfaces(self):
-        return [
-            n
-            for n, (link, _) in self.model.surfaces.items()
-            if link in self.d.editor.get("allowed_links", [])
-        ]
-
-    def set_links(self):
-        links = [v.strip() for v in self.allowed.value.split(",") if v.strip()]
-        if not self.model or any(v not in self.model.links for v in links):
-            raise ValueError("Choose links from the loaded model")
-        self.change(self.d.editor.update, allowed_links=links)
-
-    def camera(self):
-        for client in self.server.get_clients().values():
-            client.camera.position, client.camera.look_at = self.INITIAL_CAMERA_POSE
-
-    def calibrate(self):
-        o, f, d = [
-            np.asarray(self.points[k]) for k in ("Wrist O", "Wrist F", "Wrist D")
-        ]
-        z = geo.unit(f - o)
-        y = geo.unit(d - o - z * ((d - o) @ z))
-        reference = geo.frame(o, z, np.cross(y, z))
-        for other in self.state.documents.values():
-            if (
-                other is not self.d
-                and other.editor.get("root", {}).get("link") == self.wrist.value
-            ):
-                raise ValueError(
-                    "Both hands require distinct wrist links in the actual model"
-                )
-        self.axes("/calibration-preview", [reference])
-        local = (
-            np.linalg.inv(
-                self.model.fk(self.state.model.get("q0", {}))[self.wrist.value]
-            )
-            @ reference
-        )
-        value = dict(link=self.wrist.value, frame=local.tolist())
-
-        def apply():
-            self.change(self.d.editor.update, root=value)
-            self.clear_layout()
-
-        self.confirm(
-            "Preserve all numerical bind poses and weights; recompute attachments at this wrist reference.",
-            apply,
-            cleanup=lambda: setattr(
-                self.handles["/calibration-preview"], "visible", False
-            ),
-        )
-
-    def joint_controls(self):
-        if self.model and self.joint.value:
-            j = self.model.urdf.joint_map[self.joint.value]
-            low = j.limit.lower if j.limit and j.limit.lower is not None else -np.pi
-            high = j.limit.upper if j.limit and j.limit.upper is not None else np.pi
-            self.angle.min, self.angle.max = low, high
-            self.angle_number.min = j.limit.lower if j.limit else None
-            self.angle_number.max = j.limit.upper if j.limit else None
-            self.angle_number.value = self.q.get(j.name, 0.0)
-            self.angle.value = float(np.clip(self.angle_number.value, low, high))
-
-    def preview_joint(self, value):
-        if self.joint.value:
-            self.q[self.joint.value] = value
-            self.angle_number.value = value
-            self.angle.value = float(np.clip(value, self.angle.min, self.angle.max))
-            self.mode.value = "PREVIEW"
-
-    def confirm_q0(self):
-        q0 = copy.deepcopy(self.q)
-
-        def apply():
-            self.change(self.state.model.update, q0=q0)
-            self.mode.value = "EDIT"
-            self.clear_layout()
-
-        self.confirm(
-            "Update shared q0; bind poses and weights stay unchanged and points may leave the mesh. Affected hands: "
-            + ", ".join(self.state.documents),
-            apply,
-        )
-
-    def add_segment(self):
-        initial = IDENTITY[:] if self.semantic.value == "WRIST" else None
-        if self.semantic.value != "WRIST" and self.model and "root" in self.d.editor:
-            initial = geo.pose(
-                np.linalg.inv(self.root())
-                @ self.model.fk(self.state.model.get("q0", {}))[self.segment_link.value]
-            )
-
-        def add():
-            self.d.joints.append(self.semantic.value)
-            self.d.arrays[FIELDS[0]].append(initial)
-            self.d.sync()
-            self.d.editor.setdefault("segment_links", {})[
-                self.d.editor["segment_ids"][-1]
-            ] = self.segment_link.value
-            self.d.editor["approximate"] = True
-
-        self.change(add)
-        # Register new rows before selection; the event loop refreshes the inspector.
-        self.segment.options = self.segment_options()
-        self.segment.value = str(len(self.d.arrays[FIELDS[0]]) - 1)
-        self.select_segment()
-
-    def associate(self):
-        i = int(self.segment.value)
-
-        def update():
-            self.d.joints[i] = self.semantic.value
-            self.d.editor.setdefault("segment_links", {})[
-                self.d.editor["segment_ids"][i]
-            ] = self.segment_link.value
-
-        self.change(update)
-
-    def select_segment(self):
-        self.entity.value, self.slot = "Segment", None
-        if self.segment.value:
-            i = int(self.segment.value)
-            if i < len(self.d.joints):
-                self.semantic.value = JOINTS[joint_number(self.d.joints[i])]
-            link = self.d.editor.get("segment_links", {}).get(
-                self.d.editor["segment_ids"][i]
-            )
-            if self.model and link in self.model.links:
-                self.segment_link.value = link
-
-    def targets(self):
-        if self.entity.value == "Segment" and self.segment.value:
-            return FIELDS[0], [int(self.segment.value)]
-        return FIELDS[1], self.selected
-
-    def reorder_segments(self):
-        ids = self.d.editor["segment_ids"]
-        selected = (
-            ids[int(self.segment.value)]
-            if self.segment.value and int(self.segment.value) < len(ids)
-            else None
-        )
-        self.change(self.d.segments, json.loads(self.order.value))
-        ids = self.d.editor["segment_ids"]
-        self.segment.value = str(ids.index(selected)) if selected in ids else ""
-
-    def delete_taxels(self):
-        self.change(self.d.delete, self.selected)
-        self.selected = []
-
-    def components(self, components, values):
-        field, rows = self.targets()
-        if not rows:
-            raise ValueError("Select a draft segment or taxel first")
-        self.change(self.d.set_components, field, rows, components, values)
-
-    def rotate(self, angle, axis):
-        field, rows = self.targets()
-        if not rows:
-            raise ValueError("Select a draft segment or taxel first")
-        self.change(
-            geo.transform,
-            self.d,
-            field,
-            rows,
-            tf.rotation_matrix(angle, axis),
-            local=True,
-        )
-
-    # Inline async callbacks preserve Viser's drag phase ordering.
-    async def gizmo_event(self, event):
-        if event.phase == "start" and event.client:
-            self.dragging = True
-        elif event.phase == "end":
-            if event.client:
-                self.drag_end(event)
+    def _run_action(self, callback, value=None, info=None) -> None:
+        try:
+            callback() if value is None else callback(value)
+            if info is not None:
+                info.content = ""
+        except Exception as exc:
+            LOG.exception("Editor action failed")
+            if info is not None:
+                info.content = f'<span style="color:#d32f2f">Error: {exc}</span>'
             else:
-                self.dragging = False
-
-    def drag_end(self, event):
-        values = [*event.target.position, *np.asarray(event.target.wxyz)[[1, 2, 3, 0]]]
-
-        def apply():
-            try:
-                field, rows = self.targets()
-                if rows:
-                    old = geo.matrix(self.d.arrays[field][rows[0]])
-                    delta = (
-                        np.linalg.inv(self.root())
-                        @ geo.matrix(values)
-                        @ np.linalg.inv(old)
-                    )
-                    self.change(geo.transform, self.d, field, rows, delta)
-            finally:
-                self.dragging = False
-
-        self.events.put(apply)
-
-    def set_slot(self, k, value):
-        self.slot = k
-        self.change(self.d.set_components, FIELDS[2], self.selected, [k], [value])
-
-    def weight(self, k, value):
-        self.slot = k
-        rejected = self.change(self.d.weight, self.selected, k, value)
-        if rejected:
-            self.log("; ".join(rejected))
-
-    def spans_apply(self):
-        o = np.asarray(self.points["O"])
-        for key, control, span in zip(("C", "R"), self.centers[1:], self.spans):
-            if key in self.points:
-                self.points[key] = (
-                    o + geo.unit(np.asarray(self.points[key]) - o) * span.value
-                ).tolist()
-                control.value = tuple(self.points[key])
-
-    def grid(self):
-        if self.surface.value not in self.surfaces():
-            raise ValueError("Choose an allowed projection surface")
-        self.candidates = self.model.grid(
-            self.d,
-            self.model.fk(self.state.model.get("q0", {})),
-            self.surface.value,
-            [self.points.get(k) for k in ("O", "C", "R")],
-            int(self.rows.value),
-            int(self.cols.value),
-            self.scan.value,
-            [w.value for w in self.reverse],
-            json.loads(self.excluded.value),
-        )
-        start = int(self.start.value)
-        start = self.d.unused_start(len(self.candidates)) if start < 0 else start
-        spans = [
-            np.linalg.norm(np.asarray(self.points[k]) - self.points["O"])
-            if k in self.points
-            else 0
-            for k in ("C", "R")
-        ]
-        spacing = [
-            v / (n - 1) if n > 1 else 0
-            for v, n in zip(spans, (self.cols.value, self.rows.value))
-        ]
-        self.layout_info.content = f"Spans C/R: {spans} m; spacing C/R: {spacing} m. {len(self.candidates)} candidates; {sum(p is None for p, _ in self.candidates)} projection failures. Output indices: {list(range(start, start + len(self.candidates)))}"
-
-    def apply_grid(self):
-        self.change(
-            self.d.add,
-            [p for p, _ in self.candidates],
-            json.loads(self.influences.value),
-            int(self.start.value),
-        )
-        self.clear_layout()
-
-    def clear_layout(self):
-        self.candidates, self.points = [], {}
-        self.rows.value = self.cols.value = 4
-        self.scan.value, self.start.value, self.excluded.value = "row-major", -1, "[]"
-        for w in self.reverse:
-            w.value = False
-        for w in self.centers:
-            w.value = (0.0, 0.0, 0.0)
-        for w in self.spans:
-            w.value = 0.03
-        self.layout_info.content = ""
-
-    def select_indices(self):
-        indices = []
-        for part in self.selection.value.split(","):
-            ends = [int(v) for v in part.strip().split(":")]
-            indices.extend(range(ends[0], ends[1] + 1) if len(ends) == 2 else ends)
-        self.selected = [
-            i
-            for i, index in enumerate(self.d.editor["output_indices"])
-            if index in indices
-        ]
-        self.entity.value = "Taxels"
-
-    def reindex(self):
-        values, order = (
-            json.loads(self.indices.value),
-            self.d.editor["output_indices"][:],
-        )
-        if len(values) != len(self.selected) or any(
-            type(v) is not int or v < 0 for v in values
-        ):
-            raise ValueError("Supply one nonnegative integer per selected taxel")
-        preview = [(order[i], value) for i, value in zip(self.selected, values)]
-        for i, value in zip(self.selected, values):
-            order[i] = value
-        self.confirm(
-            str(preview),
-            lambda: self.change(self.d.editor.update, output_indices=order),
-        )
-
-    def reproject(self):
-        root, fk = self.root(), self.model.fk(self.state.model.get("q0", {}))
-        if self.surface.value not in self.surfaces():
-            raise ValueError("Choose an allowed projection surface")
-
-        def apply():
-            for i in self.selected:
-                old = root @ geo.matrix(self.d.arrays[FIELDS[1]][i])
-                hit = self.model.hit(
-                    old[:3, 3] + old[:3, 2], -old[:3, 2], [self.surface.value], fk
+                self.preview_error.content = (
+                    f'<span style="color:#d32f2f">Error: {exc}</span>'
                 )
-                if not hit:
-                    raise ValueError(
-                        f"Taxel {i}: projection failed; selection unchanged"
-                    )
-                self.d.arrays[FIELDS[1]][i] = geo.pose(
-                    np.linalg.inv(root) @ geo.frame(hit[1], hit[2], old[:3, 0])
-                )
-            self.d.editor["approximate"] = True
-
-        self.change(apply)
-
-    def configure_source(self):
-        source = dict(
-            collection=self.collection.value,
-            hand=self.hand.value,
-            joint_state=self.joint_id.value if self.joint_enabled.value else "",
-        )
-        if not source["collection"].strip() or (
-            self.joint_enabled.value and not source["joint_state"].strip()
-        ):
-            raise ValueError("Enabled sources require collection_id values")
-        self.change(self.d.editor.update, source=source)
-        if self.receiver:
-            self.log("Source configuration updated; reconnect to apply it")
-
-    def mapping(self):
-        mappings = json.loads(self.mapping_json.value)
-        targets = {joint.name for joint in self.model.joints} if self.model else set()
-        if not isinstance(mappings, dict) or any(
-            not isinstance(source, str)
-            or not source
-            or not isinstance(values, list)
-            or len(values) != 3
-            or not isinstance(values[0], str)
-            or values[0] not in targets
-            or any(
-                type(value) not in (int, float) or not math.isfinite(value)
-                for value in values[1:]
-            )
-            for source, values in mappings.items()
-        ):
-            raise ValueError(
-                "Expected {source: [URDF target joint, finite scale, finite offset]}"
-            )
-        self.change(self.d.editor.update, mapping=mappings)
-
-    def connect(self):
-        if self.receiver:
-            if self.receiver is not True:
-                self.receiver.close()
-            self.receiver = None
-            self.log("Disconnected")
-        else:
-            self.configure_source()
-            self.configs = {
-                s: dict(
-                    d.editor.get(
-                        "source", dict(collection="tactile", hand=s, joint_state="")
-                    ),
-                    mapping=d.editor.get("mapping", {}),
-                )
-                for s, d in self.state.documents.items()
-            }
-            self.receiver = True if self.args.demo else sdk.Receiver(self.configs)
-            self.mode.value = "LIVE"
-
-    def latest(self):
-        return (
-            sdk.demo(self.configs)
-            if self.receiver is True
-            else self.receiver.latest
-            if self.receiver
-            else {}
-        )
-
-    def record(self):
-        value = self.latest().get(self.side.value, {}).get("metadata")
-        if value is None:
-            raise ValueError("No received metadata")
-        received = storage.parse(value, self.side.value)
-        path = storage.backup(self.d)
-        self.log("Draft backup: " + path)
-        self.change(
-            self.d.record, received, [k for k, w in self.groups.items() if w.value]
-        )
-
-    def repair(self):
-        d = storage.parse(json.loads(self.schema.value), self.side.value)
-        order = d.editor["output_indices"]
-        d.editor = copy.deepcopy(self.d.editor)
-        d.editor["output_indices"] = order
-        d.sync()
-        self.log("Draft backup: " + storage.backup(self.d))
-        self.change(self.state.documents.__setitem__, self.side.value, d)
-
-    def local_check(self):
-        documents = (
-            self.state.documents if self.all_sides.value else {self.side.value: self.d}
-        )
-        self.log(str({s: d.check() for s, d in documents.items()}))
-
-    def background(self, exporting):
-        if self.job and not self.job.done():
-            raise ValueError("A check/export is already running")
-        documents = copy.deepcopy(
-            self.state.documents if self.all_sides.value else {self.side.value: self.d}
-        )
-        self.job_revision = self.state.revision
-        self.sdk_revision = self.job_revision
-        if exporting:
-            self.job = self.pool.submit(
-                storage.export,
-                documents,
-                self.job_revision,
-                self.destination.value,
-                self.binary.value,
-            )
-        else:
-            self.job = self.pool.submit(
-                lambda: {s: sdk.check(d) for s, d in documents.items()}
-            )
-        self.sdk_result = f"Running for revision {self.job_revision}"
-
-    def refresh(self):
         self.redraw = True
-        d = self.d
-        self.issues = [
-            dict(v, side=s)
-            for s, doc in self.state.documents.items()
-            for v in doc.check()
-        ]
-        if self.model:
-            fk = self.model.fk(self.state.model.get("q0", {}))
-            self.model.attachments.clear()
-            for doc in self.state.documents.values():
-                try:
-                    if "root" in doc.editor:
-                        self.model.attach(doc, fk)
-                except (ValueError, KeyError, TypeError) as exc:
-                    self.model.attachments.pop(doc.side, None)
-                    self.issues.append(
-                        dict(
-                            side=doc.side,
-                            severity="warning",
-                            field="Model",
-                            row=None,
-                            message=str(exc),
-                        )
+
+    def _request_draw(self) -> None:
+        self.redraw = True
+
+    def _set_mode(self, value: str) -> None:
+        self.edit_tabs.visible = value == "Edit"
+        self.preview_panel.visible = value == "Preview"
+        self.pick_mode = None
+        self.selected_kind, self.selected_rows = None, []
+        self._cancel_binding()
+        self._rebuild_selection()
+        if value == "Preview":
+            self._update_preview_error()
+
+    def _toggle_side(self) -> None:
+        self._disconnect()
+        self.state.side = "right" if self.state.side == "left" else "left"
+        self._sync_side()
+
+    def _sync_side(self) -> None:
+        self.live_document, self.live_metadata_key = None, ""
+        self.pick_mode = None
+        self.segment_click_button.label = "Add with URDF Click"
+        self.taxel_click_button.label = "Add with URDF Click"
+        self.binding_source.options = ("Editing",)
+        self.binding_source.value = "Editing"
+        self.side_text.content = f"**Side: {self.state.side.title()}**"
+        self.metadata_path.value = self.state.paths.get(self.state.side, "")
+        position, rotation = geo.components(
+            np.asarray(self.document.alignment, dtype=float)
+        )
+        self._set_values(self.segment_position, position)
+        self._set_values(self.segment_rotation, rotation)
+        urdf_position, urdf_rotation = geo.components(self.urdf_alignment)
+        self._set_values(self.urdf_position, urdf_position)
+        self._set_values(self.urdf_rotation, urdf_rotation)
+        self.urdf_scale_widget.value = self.urdf_scale
+        self.selected_kind, self.selected_rows = None, []
+        self._cancel_binding()
+        self._rebuild_edit_lists()
+        self._rebuild_joint_controls()
+        self._rebuild_preview_segments()
+        self._rebuild_selection()
+        self.redraw = True
+
+    @staticmethod
+    def _set_values(widgets, values) -> None:
+        for widget, value in zip(widgets, values):
+            widget.value = float(value)
+
+    def _new(self) -> None:
+        document = Document(self.state.side)
+        document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
+        self.state.documents[self.state.side] = document
+        self.state.saved[self.state.side] = None
+        self.state.paths.pop(self.state.side, None)
+        self.preview[self.state.side] = self._preview_from(document)
+        self._sync_side()
+
+    def _load(self) -> None:
+        path = self.metadata_path.value.strip()
+        if not path:
+            raise ValueError("Enter Metadata Path")
+        document = storage.load(path, self.state.side)
+        self.state.replace(document, path)
+        self.preview[self.state.side] = self._preview_from(document)
+        self._sync_side()
+
+    def _save(self) -> None:
+        path = self.metadata_path.value.strip()
+        if not path:
+            raise ValueError("Enter Metadata Path")
+        issues = self.document.validate()
+        if not issues:
+            self._write_save(path)
+            return
+        modal = self.server.gui.add_modal("Save Metadata")
+        with modal:
+            self.server.gui.add_markdown(
+                f"Metadata contain errors, are you sure to save? ({len(issues)} error(s))"
+            )
+            save_button = self.server.gui.add_button("Continue")
+            cancel_button = self.server.gui.add_button("Cancel")
+
+        async def save(_):
+            self.events.put(
+                lambda: self._run_action(
+                    lambda: (self._write_save(path), modal.close()),
+                    info=self.save_info,
+                )
+            )
+
+        async def cancel(_):
+            self.events.put(modal.close)
+
+        save_button.on_click(save)
+        cancel_button.on_click(cancel)
+
+    def _write_save(self, path: str) -> None:
+        storage.save(self.state, path)
+        self.metadata_path.value = self.state.paths[self.state.side]
+        self.redraw = True
+
+    def _reset_camera(self) -> None:
+        for client in self.server.get_clients().values():
+            client.camera.position = self.CAMERA_POSITION
+            client.camera.look_at = self.CAMERA_LOOK_AT
+
+    def _load_urdf(self) -> None:
+        path = self.urdf_path.value.strip()
+        if not path:
+            raise ValueError("Enter URDF Path")
+        if self.model is not None:
+            self.model.remove()
+        self.model = geo.Model(path)
+        self._rebuild_joint_controls()
+
+    def _update_urdf_alignment(self) -> None:
+        self.urdf_alignment = geo.transform(
+            [widget.value for widget in self.urdf_position],
+            [widget.value for widget in self.urdf_rotation],
+        )
+        self.urdf_scale = float(self.urdf_scale_widget.value)
+        if not math.isfinite(self.urdf_scale) or self.urdf_scale <= 0:
+            raise ValueError("URDF Scale must be positive")
+        self.redraw = True
+
+    def _update_segment_alignment(self) -> None:
+        alignment = geo.transform(
+            [widget.value for widget in self.segment_position],
+            [widget.value for widget in self.segment_rotation],
+        )
+        delta = geo.realign(self.document, alignment)
+        saved = self.state.saved[self.state.side]
+        if saved is not None:
+            geo.apply_delta(saved.segments, list(range(len(saved.segments))), delta)
+            geo.apply_delta(saved.taxels, list(range(len(saved.taxels))), delta)
+            saved.alignment = alignment.tolist()
+        preview = self.preview_document
+        geo.apply_delta(preview.segments, list(range(len(preview.segments))), delta)
+        preview.alignment = alignment.tolist()
+        if self.live_document is not None:
+            geo.apply_delta(
+                self.live_document.segments,
+                list(range(len(self.live_document.segments))),
+                delta,
+            )
+            geo.apply_delta(
+                self.live_document.taxels,
+                list(range(len(self.live_document.taxels))),
+                delta,
+            )
+            self.live_document.alignment = alignment.tolist()
+        self._rebuild_edit_lists()
+        self._rebuild_preview_segments()
+
+    def _rebuild_joint_controls(self) -> None:
+        if self.edit_joint_folder is not None:
+            self.edit_joint_folder.remove()
+        if self.preview_joint_folder is not None:
+            self.preview_joint_folder.remove()
+        self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
+        with self.urdf_tab:
+            self.edit_joint_folder = self.server.gui.add_folder("URDF Joints")
+            with self.edit_joint_folder:
+                self._add_joint_sliders(self.document, self.edit_joint_widgets)
+        with self.static_folder:
+            self.preview_joint_folder = self.server.gui.add_folder("URDF Joints")
+            with self.preview_joint_folder:
+                self._add_joint_sliders(
+                    self.preview_document, self.preview_joint_widgets
+                )
+
+    def _add_joint_sliders(self, document: Document, output: dict) -> None:
+        if self.model is None:
+            self.server.gui.add_markdown("Load a URDF to edit joints.")
+            return
+        for joint in self.model.joints:
+            lower = (
+                joint.limit.lower
+                if joint.limit and joint.limit.lower is not None
+                else -math.pi
+            )
+            upper = (
+                joint.limit.upper
+                if joint.limit and joint.limit.upper is not None
+                else math.pi
+            )
+            value = min(upper, max(lower, document.q.get(joint.name, 0.0)))
+            widget = self.server.gui.add_slider(
+                joint.name, float(lower), float(upper), 0.001, float(value)
+            )
+            self._watch(
+                widget,
+                lambda current, name=joint.name, document=document: (
+                    document.q.__setitem__(name, float(current))
+                ),
+            )
+            output[joint.name] = widget
+
+    def _add_segment_input(self) -> None:
+        pose = IDENTITY_POSE.copy()
+        pose[:3] = [float(widget.value) for widget in self.new_segment_position]
+        row = self.document.add_segment(self.new_segment_joint.value, pose)
+        self.selected_kind, self.selected_rows = "segments", [row]
+        self._rebuild_edit_lists()
+        self._rebuild_selection()
+
+    def _pick_segment(self) -> None:
+        self.pick_mode = None if self.pick_mode == "segment" else "segment"
+        self.segment_click_button.label = (
+            "● Add with URDF Click" if self.pick_mode else "Add with URDF Click"
+        )
+
+    def _grid_values(self):
+        return (
+            [float(widget.value) for widget in self.grid_center],
+            float(self.grid_width.value),
+            float(self.grid_height.value),
+            int(self.grid_rows.value),
+            int(self.grid_columns.value),
+        )
+
+    def _add_taxels_input(self) -> None:
+        center, width, height, rows, columns = self._grid_values()
+        selected = self.document.add_taxels(
+            geo.grid_poses(center, width, height, rows, columns)
+        )
+        self.selected_kind, self.selected_rows = "taxels", selected
+        self._rebuild_edit_lists()
+        self._rebuild_selection()
+
+    def _pick_taxels(self) -> None:
+        self.pick_mode = None if self.pick_mode == "taxels" else "taxels"
+        self.taxel_click_button.label = (
+            "● Add with URDF Click" if self.pick_mode else "Add with URDF Click"
+        )
+
+    def _rebuild_edit_lists(self) -> None:
+        self._rebuild_segment_list()
+        self._rebuild_taxel_list()
+        self._rebuild_selection()
+        self._update_preview_error()
+        self.redraw = True
+
+    def _rebuild_segment_list(self) -> None:
+        if self.segment_row_folder is not None:
+            self.segment_row_folder.remove()
+        self.segment_widgets = []
+        issues = self.document.validate()
+        with self.segments_tab:
+            self.segment_row_folder = self.server.gui.add_folder("All Segments")
+            with self.segment_row_folder:
+                for row, segment in enumerate(self.document.segments):
+                    row_issues = [
+                        issue
+                        for issue in issues
+                        if issue["kind"] == "segments" and issue["row"] == row
+                    ]
+                    self.server.gui.add_html(
+                        f'<div class="tm-sort-handle" data-kind="segments" data-row="{row}" draggable="true">⠿ Drag</div>'
                     )
-            self.surface.options = tuple(self.surfaces()) or ("",)
-        calibrated = bool(self.model and d.side in self.model.attachments)
-        self.pick_button.disabled = self.calibrate_button.disabled = self.model is None
-        self.grid_button.disabled = self.reproject_button.disabled = not calibrated
-        self.angle.disabled = self.angle_number.disabled = self.model is None
-        self.selected = [i for i in self.selected if 0 <= i < len(d.arrays[FIELDS[1]])]
-        self.side.visible = self.both.visible = len(self.state.documents) == 2
-        self.segment.options = self.segment_options()
-        links = d.editor.get("segment_links", {})
-        self.segment_table.content = "\n\n".join(
-            f"row {i}: {j}; link={links.get(sid, 'unassigned')}; attachment={'ready' if self.model and sid in self.model.attachments.get(d.side, {}) else 'missing'}"
-            for i, (j, sid) in enumerate(zip(d.joints, d.editor["segment_ids"]))
-        )
-        first = int(self.page.value) * 25
-        self.table.content = "\n\n".join(
-            f"row {i}: output {d.editor['output_indices'][i]}; {p}"
-            for i, p in enumerate(d.arrays[FIELDS[1]])
-            if first <= i < first + 25
-        )
-        field, rows = self.targets()
-        values = [
-            d.arrays[field][i] if i < len(d.arrays[field]) else None for i in rows
-        ]
-        mixed = len({str(v) for v in values}) > 1
-        self.raw.content = f"Draft {field}; rows {rows[:25]}; {'Multiple values' if mixed else str(values[:1])}. Set controls replace only the edited component."
-        for k, w in enumerate(self.pose_fields):
-            cells = [
-                v[k] if isinstance(v, list) and k < len(v) else None for v in values
-            ]
-            value = common_number(cells)
-            if value is not None:
-                w.value = value
-        raw, sums = [], []
-        for i in self.selected:
-            parts = [
-                d.arrays[f][i] if i < len(d.arrays[f]) else None for f in FIELDS[2:]
-            ]
-            raw.append((i, *parts))
-            sums.append(
-                sum(parts[1])
-                if isinstance(parts[1], list)
-                and all(type(v) in (int, float) for v in parts[1])
-                else "invalid"
-            )
-        self.binding_info.content = f"{len(self.selected)} selected; weight sums (first 25): {sums[:25]}; {'Multiple values' if len({str(v[1:]) for v in raw}) > 1 else ''}\n\nRaw rows (index slots, weight slots, first 25): {raw[:25]}"
-        for k, (dropdown, index, slider, number) in enumerate(self.slots):
-            indices = [
-                v[1][k] if isinstance(v[1], list) and len(v[1]) > k else None
-                for v in raw
-            ]
-            weights = [
-                v[2][k] if isinstance(v[2], list) and len(v[2]) > k else None
-                for v in raw
-            ]
-            common = (
-                indices[0]
-                if indices and all(v == indices[0] for v in indices)
-                else None
-            )
-            options = tuple(
-                f"{i}: {d.joints[i] if i < len(d.joints) else 'missing joint_id'}"
-                for i in range(len(d.arrays[FIELDS[0]]))
-            )
-            label = (
-                options[common]
-                if type(common) is int and 0 <= common < len(options)
-                else f"Raw: {common if common is not None else 'mixed / missing'}"
-            )
-            dropdown.options, dropdown.value = (
-                tuple(dict.fromkeys((label, *options))),
-                label,
-            )
-            index.label = (
-                "Set raw index"
-                if type(common) is int
-                else "Set raw index (mixed / missing)"
-            )
-            if type(common) is int and abs(common) <= 9007199254740991:
-                index.value = common
-            mixed_weight = not weights or any(v != weights[0] for v in weights)
-            slider.label = number.label = (
-                "Set weight (mixed / missing)" if mixed_weight else "Set weight"
-            )
-            value = common_number(weights)
-            if value is not None:
-                number.value = value
-                slider.value = float(np.clip(value, 0, 1))
-        self.info.options = tuple(
-            f"{i}: {v['side']} {v['severity']} {v['field']}[{v['row']}]: {v['message']}"
-            for i, v in enumerate(self.issues)
-        ) or ("No local errors",)
-        self.check_info.content = f"Local revision {self.state.revision}: {sum(v['severity'] == 'error' for v in self.issues)} errors. SDK/export revision {self.sdk_revision}: {self.sdk_result}{' (stale)' if self.sdk_revision is not None and self.sdk_revision != self.state.revision else ''}"
+                    with self.server.gui.add_folder(f"{row}: {segment.joint}"):
+                        joint = self.server.gui.add_dropdown(
+                            "⚠ Name"
+                            if any(issue["field"] == "joint" for issue in row_issues)
+                            else "Name",
+                            tuple(JOINTS),
+                            initial_value=segment.joint,
+                        )
+                        position, rotation = geo.components(geo.matrix(segment.pose))
+                        positions = self._numbers("Position", position, 0.001)
+                        rotations = self._sliders("Rotation", rotation)
+                        self._watch(
+                            joint,
+                            lambda value, row=row: self._set_segment_joint(row, value),
+                        )
+                        for axis, widget in enumerate(positions):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_pose_component(
+                                        "segments", row, axis, value
+                                    )
+                                ),
+                            )
+                        for axis, widget in enumerate(rotations):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_pose_rotation(
+                                        "segments", row, axis, value
+                                    )
+                                ),
+                            )
+                        messages = [issue["message"] for issue in row_issues]
+                        if messages:
+                            self.server.gui.add_html(
+                                '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
+                                + "<br>".join(messages)
+                                + "</div>"
+                            )
+                        self.segment_widgets.append((joint, positions, rotations))
 
-    def locate(self):
-        if not self.issues:
+    def _rebuild_taxel_list(self) -> None:
+        if self.taxel_row_folder is not None:
+            self.taxel_row_folder.remove()
+        self.taxel_widgets = []
+        issues = self.document.validate()
+        options = ("None", *[segment.joint for segment in self.document.segments])
+        with self.taxels_tab:
+            self.taxel_row_folder = self.server.gui.add_folder("All Taxels")
+            with self.taxel_row_folder:
+                for row, taxel in enumerate(self.document.taxels):
+                    row_issues = [
+                        issue
+                        for issue in issues
+                        if issue["kind"] == "taxels" and issue["row"] == row
+                    ]
+                    self.server.gui.add_html(
+                        f'<div class="tm-sort-handle" data-kind="taxels" data-row="{row}" draggable="true">⠿ Drag</div>'
+                    )
+                    with self.server.gui.add_folder(f"Taxel {row}"):
+                        position, rotation = geo.components(geo.matrix(taxel.pose))
+                        positions = self._numbers("Position", position, 0.001)
+                        rotations = self._sliders("Rotation", rotation)
+                        for axis, widget in enumerate(positions):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_pose_component("taxels", row, axis, value)
+                                ),
+                            )
+                        for axis, widget in enumerate(rotations):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_pose_rotation("taxels", row, axis, value)
+                                ),
+                            )
+                        slots = []
+                        for slot in range(4):
+                            with self.server.gui.add_folder(f"Binding {slot}"):
+                                selected = (
+                                    taxel.segments[slot]
+                                    if taxel.segments[slot] in options
+                                    else "None"
+                                )
+                                segment = self.server.gui.add_dropdown(
+                                    "⚠ Segment"
+                                    if any(
+                                        issue["field"] in (f"segment{slot}", "binding")
+                                        for issue in row_issues
+                                    )
+                                    else "Segment",
+                                    options,
+                                    initial_value=selected,
+                                )
+                                weight = self._weight_widget(
+                                    taxel.weights[slot],
+                                    selected == "None",
+                                    any(
+                                        issue["field"] in (f"weight{slot}", "weights")
+                                        for issue in row_issues
+                                    ),
+                                )
+                                self._watch(
+                                    segment,
+                                    lambda value, row=row, slot=slot: (
+                                        self._set_taxel_segment(row, slot, value)
+                                    ),
+                                )
+                                self._watch(
+                                    weight,
+                                    lambda value, row=row, slot=slot: (
+                                        self._set_taxel_weight(row, slot, value)
+                                    ),
+                                )
+                                slots.append((segment, weight))
+                        messages = [issue["message"] for issue in row_issues]
+                        if messages:
+                            self.server.gui.add_html(
+                                '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
+                                + "<br>".join(dict.fromkeys(messages))
+                                + "</div>"
+                            )
+                        self.taxel_widgets.append((positions, rotations, slots))
+
+    def _weight_widget(self, value, disabled: bool, invalid: bool):
+        label = "⚠ Weight" if invalid else "Weight"
+        if type(value) in (int, float) and math.isfinite(value):
+            limits = {"min": 0.0, "max": 1.0} if 0.0 <= value <= 1.0 else {}
+            return self.server.gui.add_number(
+                label, float(value), step=0.01, disabled=disabled, **limits
+            )
+        return self.server.gui.add_text(label, str(value), disabled=disabled)
+
+    def _set_segment_joint(self, row: int, value: str) -> None:
+        self.document.segments[row].joint = value
+        self._rebuild_edit_lists()
+
+    def _values(self, kind: str):
+        return self.document.segments if kind == "segments" else self.document.taxels
+
+    def _set_pose_component(self, kind: str, row: int, axis: int, value) -> None:
+        self._values(kind)[row].pose[axis] = float(value)
+        self.redraw = True
+
+    def _set_pose_rotation(self, kind: str, row: int, axis: int, value) -> None:
+        current = geo.matrix(self._values(kind)[row].pose)
+        position, rotation = geo.components(current)
+        rotation = list(rotation)
+        rotation[axis] = float(value)
+        self._values(kind)[row].pose = geo.pose(geo.transform(position, rotation))
+        self.redraw = True
+
+    def _set_taxel_segment(self, row: int, slot: int, value: str) -> None:
+        taxel = self.document.taxels[row]
+        taxel.segments[slot] = None if value == "None" else value
+        if taxel.segments[slot] is None:
+            taxel.weights[slot] = 0.0
+        self._rebuild_taxel_list()
+
+    def _set_taxel_weight(self, row: int, slot: int, value) -> None:
+        try:
+            self.document.set_weight(row, slot, float(value))
+        finally:
+            self._rebuild_taxel_list()
+
+    def _reorder(self, value: str) -> None:
+        if not value:
             return
-        issue = self.issues[int(self.info.value.split(":")[0])]
-        if issue["side"] != self.side.value:
-            self.side.value = issue["side"]
-            self.switch()
-        if issue["row"] is not None:
-            if issue["field"] in (FIELDS[0], "joint_ids"):
-                self.segment.value, self.entity.value = str(issue["row"]), "Segment"
-            else:
-                self.selected, self.entity.value = [issue["row"]], "Taxels"
-        self.log("Located in draft inspector: " + issue["field"])
+        parts = value.split(":")
+        if len(parts) != 4:
+            return
+        kind, source, target, _ = parts
+        if kind not in ("segments", "taxels"):
+            return
+        self.document.move(kind, int(source), int(target))
+        self._rebuild_edit_lists()
 
-    def axes(self, name, transforms):
-        positions = np.array([t[:3, 3] for t in transforms]).reshape(-1, 3)
-        quaternions = np.array(
-            [tf.quaternion_from_matrix(t) for t in transforms]
-        ).reshape(-1, 4)
-        if name not in self.handles and len(positions):
-            self.handles[name] = self.server.scene.add_batched_axes(
-                name, quaternions, positions, axes_length=0.015, axes_radius=0.0006
+    def _start_binding(self) -> None:
+        self.pick_mode = None
+        self.segment_click_button.label = "Add with URDF Click"
+        self.taxel_click_button.label = "Add with URDF Click"
+        self.binding_phase = "taxels"
+        self.binding_taxels, self.binding_segments = [], []
+        self.selected_kind, self.selected_rows = None, []
+        self.binding_next.disabled = True
+        self.binding_complete.disabled = True
+        self.binding_info.content = (
+            "Select taxel(s) to bind in 3D scene. Hold Shift to multi-select. "
+            'Click "Select Segments" after selecting taxels. Click another area to cancel.'
+        )
+
+    def _select_binding_segments(self) -> None:
+        if not self.binding_taxels:
+            raise ValueError("Select at least one taxel")
+        self.binding_phase = "segments"
+        self.binding_info.content = (
+            'Select 1-4 segment(s). Hold Shift to multi-select. Click "Complete" '
+            "after selecting segments. Click another area to cancel."
+        )
+
+    def _complete_binding(self) -> None:
+        if not 1 <= len(self.binding_segments) <= 4:
+            self.binding_info.content = (
+                'Too many segments selected. Select 1-4 segments and click "Start '
+                'Binding to Segments" to start over.'
             )
-        if name in self.handles:
-            h = self.handles[name]
-            h.visible = bool(len(positions))
-            if len(positions):
-                h.batched_positions, h.batched_wxyzs = positions, quaternions
+            return
+        self.document.assign(self.binding_taxels, self.binding_segments)
+        self._cancel_binding()
+        self._rebuild_taxel_list()
 
-    def balls(self, name, points, colors, outline=False):
-        positions = np.asarray(points, dtype=float).reshape(-1, 3)
-        rotations = np.tile([1.0, 0, 0, 0], (len(positions), 1))
-        if name not in self.handles and len(positions):
-            mesh = trimesh.creation.icosphere(subdivisions=1)
-            self.handles[name] = self.server.scene.add_batched_meshes_simple(
-                name, mesh.vertices, mesh.faces, rotations, positions, wireframe=outline
+    def _cancel_binding(self) -> None:
+        self.binding_phase = None
+        self.binding_taxels, self.binding_segments = [], []
+        if hasattr(self, "binding_next"):
+            self.binding_next.disabled = True
+            self.binding_complete.disabled = True
+            self.binding_info.content = ""
+
+    def _joint_enabled(self, enabled: bool) -> None:
+        self.joint_collection.disabled = not enabled
+        self.joint_mapping.disabled = not enabled
+
+    def _connect(self) -> None:
+        if self.receiver is not None:
+            self._disconnect()
+            return
+        config = {
+            "side": self.state.side,
+            "collection": self.collection.value,
+            "joint_state": self.joint_collection.value
+            if self.joint_enabled.value
+            else "",
+        }
+        self.receiver = sdk.Receiver(config)
+        self.connect_button.label = "Disconnect Live"
+        self.live_status.content = "Connecting"
+
+    def _disconnect(self) -> None:
+        if self.receiver is not None:
+            self.receiver.close()
+            self.receiver = None
+        self.connect_button.label = "Connect Live"
+        self.live_status.content = "Disconnected"
+        self.redraw = True
+
+    def _binding_source_changed(self) -> None:
+        self._update_preview_error()
+        self.redraw = True
+
+    def _binding_document(self) -> Document:
+        if self.binding_source.value == "Live":
+            if self.live_document is None:
+                raise ValueError("Live metadata is unavailable")
+            return self.live_document
+        return self.document
+
+    def _preview_taxels(self) -> list[Taxel]:
+        return geo.deform(self._binding_document(), self.preview_document.segments)
+
+    def _update_preview_error(self) -> None:
+        try:
+            self._preview_taxels()
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            self.preview_error.content = (
+                f'<span style="color:#d32f2f">Binding error: {exc}</span>'
             )
-        if name in self.handles:
-            h = self.handles[name]
-            h.visible = bool(len(positions))
-            if len(positions):
-                h.batched_positions, h.batched_wxyzs = positions, rotations
-                h.batched_colors = np.asarray(colors, dtype=np.uint8)
-                h.batched_scales = np.full(
-                    len(positions), self.radius.value * (1.5 if outline else 1)
-                )
-
-    def draft_points(self):
-        return [
-            (i, t[:3, 3]) for i, t in geo.frames(self.d.arrays[FIELDS[1]], self.root())
-        ]
-
-    def rectangle_mode(self, enabled):
-        if enabled:
-            self.server.scene.on_rect_select()(self.box_event)
+            self.apply_preview_button.disabled = True
         else:
-            self.server.scene.remove_rect_select_callback(self.box_event)
+            self.preview_error.content = ""
+            self.apply_preview_button.disabled = False
 
-    async def box_event(self, event):
-        self.events.put(lambda: self.select_scene(event, True))
+    def _apply_preview(self) -> None:
+        taxels = self._preview_taxels()
+        replacement = Document(self.state.side)
+        replacement.alignment = copy.deepcopy(self.document.alignment)
+        replacement.segments = copy.deepcopy(self.preview_document.segments)
+        replacement.taxels = copy.deepcopy(taxels)
+        replacement.q = copy.deepcopy(self.preview_document.q)
+        self.state.documents[self.state.side] = replacement
+        self._rebuild_edit_lists()
+        self._rebuild_joint_controls()
 
-    async def scene_click(self, event):
-        self.events.put(lambda: self.click(event))
+    def _restore_preview(self) -> None:
+        self.preview[self.state.side] = self._preview_from(self.document)
+        self._rebuild_joint_controls()
+        self._rebuild_preview_segments()
+        self._update_preview_error()
 
-    def select_scene(self, event, box=False):
-        camera, chosen = event.client.camera, []
-        rotation = tf.quaternion_matrix(camera.wxyz)[:3, :3]
-        for i, point in self.draft_points():
-            origin = np.asarray(camera.position if box else event.ray_origin)
-            direction = (
-                geo.unit(point - origin) if box else np.asarray(event.ray_direction)
-            )
-            if box:
-                p = rotation.T @ (point - origin)
-                if p[2] >= 0:
-                    continue
-                uv = [
-                    0.5 - p[0] / p[2] / (2 * np.tan(camera.fov / 2) * camera.aspect),
-                    0.5 + p[1] / p[2] / (2 * np.tan(camera.fov / 2)),
+    def _rebuild_preview_segments(self) -> None:
+        if self.preview_segment_folder is not None:
+            self.preview_segment_folder.remove()
+        self.preview_segment_widgets = []
+        with self.static_folder:
+            self.preview_segment_folder = self.server.gui.add_folder("Segments")
+            with self.preview_segment_folder:
+                for row, segment in enumerate(self.preview_document.segments):
+                    with self.server.gui.add_folder(f"{row}: {segment.joint}"):
+                        self.server.gui.add_markdown(f"HandJoint: `{segment.joint}`")
+                        position, rotation = geo.components(geo.matrix(segment.pose))
+                        positions = self._numbers("Position", position, 0.001)
+                        rotations = self._sliders("Rotation", rotation)
+                        for axis, widget in enumerate(positions):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_preview_pose(row, axis, value, False)
+                                ),
+                            )
+                        for axis, widget in enumerate(rotations):
+                            self._watch(
+                                widget,
+                                lambda value, row=row, axis=axis: (
+                                    self._set_preview_pose(row, axis, value, True)
+                                ),
+                            )
+                        self.preview_segment_widgets.append((positions, rotations))
+
+    def _set_preview_pose(
+        self, row: int, axis: int, value: float, rotation_field: bool
+    ) -> None:
+        segment = self.preview_document.segments[row]
+        if not rotation_field:
+            segment.pose[axis] = float(value)
+        else:
+            position, rotation = geo.components(geo.matrix(segment.pose))
+            rotation = list(rotation)
+            rotation[axis] = float(value)
+            segment.pose = geo.pose(geo.transform(position, rotation))
+        self._update_preview_error()
+        self.redraw = True
+
+    def _update_live(self) -> None:
+        if self.receiver is None:
+            return
+        self.live_status.content = self.receiver.status
+        if not self.receiver.active:
+            return
+        frame = self.receiver.latest
+        raw_metadata = frame.get("metadata")
+        if raw_metadata is not None:
+            key = json.dumps(raw_metadata, sort_keys=True)
+            if key != self.live_metadata_key:
+                self.live_document = storage.parse(
+                    raw_metadata, self.state.side, self.document.alignment
+                )
+                self.live_metadata_key = key
+                self.binding_source.options = ("Editing", "Live")
+        try:
+            binding = self._binding_document()
+            hand = frame.get("hand")
+            if hand is not None:
+                joints = [segment.joint for segment in binding.segments]
+                updated = geo.hand_segments(joints, hand)
+                signature = [
+                    segment.joint for segment in self.preview_document.segments
                 ]
-                inside = all(
-                    a <= b <= c
-                    for a, b, c in zip(event.screen_min, uv, event.screen_max)
-                )
-            else:
-                along = (point - origin) @ direction
-                inside = (
-                    along > 0
-                    and np.linalg.norm(point - origin - along * direction)
-                    < self.radius.value * 2
-                )
-            if (
-                inside
-                and self.model
-                and getattr(self, "display_model", False)
-                and not self.through.value
-            ):
-                surfaces = list(self.model.surfaces)
-                hit = self.model.hit(origin, direction, surfaces, self.display_fk)
-                inside = (
-                    hit is None
-                    or hit[0] >= np.linalg.norm(point - origin) - self.radius.value * 2
-                )
-            if inside:
-                chosen.append((np.linalg.norm(point - origin), i))
-        indices = [i for _, i in (chosen if box else sorted(chosen)[:1])]
-        self.selected = (
-            sorted(set(self.selected) ^ set(indices)) if event.modifier else indices
-        )
-        self.entity.value = "Taxels"
+                self.preview_document.segments = updated
+                if signature != joints:
+                    self._rebuild_preview_segments()
+            if self.joint_enabled.value:
+                mapping = json.loads(self.joint_mapping.value or "{}")
+                for source, rule in mapping.items():
+                    raw, valid = frame.get("joints", {}).get(source, (None, False))
+                    if valid and isinstance(rule, list) and len(rule) == 3:
+                        target, scale, offset = rule
+                        self.preview_document.q[target] = raw * scale + offset
+            self._sync_preview_values()
+            self._update_preview_error()
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            json.JSONDecodeError,
+        ) as exc:
+            self.preview_error.content = (
+                f'<span style="color:#d32f2f">Live error: {exc}</span>'
+            )
+            self.apply_preview_button.disabled = True
+        self.redraw = True
 
-    def click(self, event):
-        if self.dragging:
+    def _sync_preview_values(self) -> None:
+        for row, widgets in enumerate(self.preview_segment_widgets):
+            if row >= len(self.preview_document.segments):
+                break
+            position, rotation = geo.components(
+                geo.matrix(self.preview_document.segments[row].pose)
+            )
+            self._set_values(widgets[0], position)
+            self._set_values(widgets[1], rotation)
+        for name, widget in self.preview_joint_widgets.items():
+            widget.value = self.preview_document.q.get(name, 0.0)
+
+    def _register_scene_events(self) -> None:
+        self.server.scene.on_click()(self._scene_click)
+        self.server.scene.on_click(modifier="shift")(self._scene_click)
+        self.server.scene.on_rect_select(modifier="shift")(self._scene_box)
+
+    async def _scene_click(self, event) -> None:
+        self.events.put(lambda: self._handle_scene_event(event, False))
+
+    async def _scene_box(self, event) -> None:
+        self.events.put(lambda: self._handle_scene_event(event, True))
+
+    def _display_values(self):
+        if self.mode.value == "Preview":
+            return self.preview_document.segments, []
+        return self.document.segments, self.document.taxels
+
+    def _handle_scene_event(self, event, box: bool) -> None:
+        if self.pick_mode is not None and not box:
+            self._handle_pick(event)
             return
-        if not self.pick_target:
-            self.select_scene(event)
+        segments, taxels = self._display_values()
+        candidates = {
+            "segments": list(enumerate(segments)),
+            "taxels": list(enumerate(taxels)),
+        }
+        if self.binding_phase is not None:
+            candidates = {
+                key: values
+                for key, values in candidates.items()
+                if key == self.binding_phase
+            }
+        chosen = {
+            kind: self._box_rows(event, values)
+            if box
+            else self._ray_rows(event, kind, values)
+            for kind, values in candidates.items()
+        }
+        chosen = {kind: rows for kind, rows in chosen.items() if rows}
+        if not chosen:
+            if self.binding_phase is not None:
+                self._cancel_binding()
+            else:
+                self.selected_kind, self.selected_rows = None, []
+                self._rebuild_selection()
+            self.redraw = True
             return
-        target, self.pick_target = self.pick_target, None
-        if self.mode.value != "EDIT" or not self.model:
-            raise ValueError("Surface picking requires EDIT and a q0 model")
-        fk = self.model.fk(self.state.model.get("q0", {}))
-        surfaces = self.surfaces()
-        if target in ("O", "C", "R", "Move selected", "Single tangent"):
-            if self.surface.value not in surfaces:
-                raise ValueError("Choose an allowed projection surface")
-            surfaces = [self.surface.value]
+        kind = (
+            self.selected_kind
+            if self.selected_kind in chosen
+            else "taxels"
+            if "taxels" in chosen
+            else "segments"
+        )
+        rows = chosen[kind]
+        if self.binding_phase == "taxels":
+            self.binding_taxels = (
+                sorted(set(self.binding_taxels) | set(rows))
+                if event.modifier == "shift"
+                else rows
+            )
+            self.binding_next.disabled = not self.binding_taxels
+        elif self.binding_phase == "segments":
+            self.binding_segments = (
+                sorted(set(self.binding_segments) | set(rows))
+                if event.modifier == "shift"
+                else rows
+            )
+            self.binding_complete.disabled = not self.binding_segments
+        elif event.modifier == "shift":
+            if self.selected_kind not in (None, kind):
+                return
+            self.selected_kind = kind
+            self.selected_rows = sorted(set(self.selected_rows) | set(rows))
+            self._rebuild_selection()
+        elif self.selected_kind != kind or self.selected_rows != rows:
+            self.selected_kind, self.selected_rows = kind, rows
+            self._rebuild_selection()
+        self.redraw = True
+
+    @staticmethod
+    def _ray_rows(event, kind: str, values) -> list[int]:
+        origin = np.asarray(event.ray_origin)
+        direction = np.asarray(event.ray_direction)
+        hits = []
+        for row, value in values:
+            point = np.asarray(value.pose[:3])
+            if kind == "segments":
+                distance = (point - origin) @ direction
+                offset = np.linalg.norm(point - origin - distance * direction)
+                if distance > 0 and offset <= 0.01:
+                    hits.append((distance, row))
+                continue
+            inverse = np.linalg.inv(geo.matrix(value.pose))
+            local_origin = (inverse @ np.r_[origin, 1.0])[:3]
+            local_direction = inverse[:3, :3] @ direction
+            if abs(local_direction[2]) < 1e-10:
+                continue
+            distance = -local_origin[2] / local_direction[2]
+            local_hit = local_origin + distance * local_direction
+            if distance > 0 and np.max(np.abs(local_hit[:2])) <= 0.005:
+                hits.append((distance, row))
+        return [min(hits)[1]] if hits else []
+
+    @staticmethod
+    def _box_rows(event, values) -> list[int]:
+        camera = event.client.camera
+        rotation = tf.quaternion_matrix(camera.wxyz)[:3, :3]
+        origin = np.asarray(camera.position)
+        rows = []
+        for row, value in values:
+            point = np.asarray(value.pose[:3])
+            local = rotation.T @ (point - origin)
+            if local[2] <= 0:
+                continue
+            uv = (
+                0.5
+                + local[0] / local[2] / (2 * np.tan(camera.fov / 2) * camera.aspect),
+                0.5 + local[1] / local[2] / (2 * np.tan(camera.fov / 2)),
+            )
+            if all(
+                lower <= value <= upper
+                for lower, value, upper in zip(event.screen_min, uv, event.screen_max)
+            ):
+                rows.append(row)
+        return rows
+
+    def _handle_pick(self, event) -> None:
+        mode, self.pick_mode = self.pick_mode, None
+        self.segment_click_button.label = "Add with URDF Click"
+        self.taxel_click_button.label = "Add with URDF Click"
+        if self.model is None:
+            raise ValueError("Load a URDF before using URDF Click")
         hit = self.model.hit(
             np.asarray(event.ray_origin),
             np.asarray(event.ray_direction),
-            surfaces,
-            fk,
+            self.document.q,
+            self.urdf_alignment,
+            self.urdf_scale,
         )
-        if not hit:
-            raise ValueError("No hit on an allowed visible surface")
-        self.points[target] = hit[1].tolist()
-        if target in ("O", "C", "R"):
-            self.centers[("O", "C", "R").index(target)].value = tuple(hit[1])
-        elif target == "Segment":
-            self.entity.value = "Segment"
-            self.components(
-                range(7),
-                geo.pose(
-                    np.linalg.inv(self.root())
-                    @ geo.frame(hit[1], hit[2], fk[self.segment_link.value][:3, 0])
-                ),
-            )
-        elif target == "Move selected":
-            old = geo.matrix(self.d.arrays[FIELDS[1]][self.selected[0]])
-            new = np.linalg.inv(self.root()) @ geo.frame(
-                hit[1], hit[2], (self.root() @ old)[:3, 0]
-            )
-            self.change(
-                geo.transform,
-                self.d,
-                FIELDS[1],
-                self.selected,
-                new @ np.linalg.inv(old),
-            )
-        elif target == "Single tangent":
-            self.points["C"] = hit[1].tolist()
-            self.rows.value = self.cols.value = 1
-            self.grid()
-
-    def received_document(self, side, value):
-        cached = self.received.get(side)
-        if cached is None or cached[0] != value:
-            d = storage.parse(value, side)
-            cached = (copy.deepcopy(value), d, d.check())
-            self.received[side] = cached
-        return cached[1:]
-
-    def render_side(self, side, d, root, current, forces, live, issues):
-        positions, colors, frames, outlines, edges = [], [], [], [], []
-        deformed = geo.deform(d, current) if current is not None else None
-        errors = {
-            v["row"]
-            for v in issues
-            if v["severity"] == "error" and v["field"] in FIELDS[1:]
-        }
-        for i, t in geo.frames(d.arrays[FIELDS[1]], root):
-            rigid, color = t, (140, 140, 140)
-            if deformed is not None:
-                point, orientation = deformed[i]
-                if point is None:
-                    continue
-                t[:3, 3] = (root @ np.r_[point, 1])[:3]
-                rigid = root @ orientation if orientation is not None else None
-            if live and forces is not None and len(forces) == len(d.arrays[FIELDS[1]]):
-                force = np.asarray(forces[i], dtype=float)
-                if force.shape == (3,) and np.isfinite(force).all():
-                    fraction = np.clip(
-                        np.linalg.norm(force) / self.force_max.value, 0, 1
-                    )
-                    color = (255 * fraction, 40, 255 * (1 - fraction))
-            elif not live:
-                try:
-                    indices, weights = d.arrays[FIELDS[2]][i], d.arrays[FIELDS[3]][i]
-                    if i not in errors:
-                        color = np.random.default_rng(
-                            indices[int(np.argmax(weights))]
-                        ).integers(70, 240, 3)
-                        if self.slot is not None and i in self.selected and d is self.d:
-                            color = (
-                                255 * weights[self.slot],
-                                80,
-                                255 * (1 - weights[self.slot]),
-                            )
-                except (IndexError, TypeError, ValueError):
-                    pass
-            positions.append(t[:3, 3])
-            colors.append(color)
-            selected = d is self.d and i in self.selected
-            if selected or i in errors:
-                outlines.append(t[:3, 3])
-                edges.append((255, 0, 0) if i in errors else (255, 220, 0))
-            if selected and rigid is not None:
-                frames.append(rigid)
-        prefix = "/view/" + side
-        self.balls(prefix + "/taxels", positions, colors)
-        self.balls(prefix + "/outlines", outlines, edges, True)
-        self.axes(prefix + "/taxel-axes", frames)
-        self.axes(prefix + "/root", [root])
-        segments = (
-            [root @ t for t in current if t is not None]
-            if current is not None
-            else [t for _, t in geo.frames(d.arrays[FIELDS[0]], root)]
-        )
-        self.axes(prefix + "/segments", segments)
-        self.balls(
-            prefix + "/segment-points",
-            [t[:3, 3] for t in segments],
-            [(90, 200, 250)] * len(segments),
-        )
-        self.frame_colors[side] = np.asarray(colors, dtype=np.uint8)
-
-    def draw(self):
-        latest, mode = self.latest(), self.mode.value
-        playing, status = mode in ("LIVE", "PAUSED"), []
-        updating = self.redraw or mode == "LIVE"
-        cfg = self.q if mode == "PREVIEW" else self.state.model.get("q0", {})
-        highlight, lines, line_colors = set(), [], []
-        for side, draft in self.state.documents.items():
-            value = latest.get(side, {})
-            unmapped = set(value.get("joints", {})) - set(
-                draft.editor.get("mapping", {})
-            )
-            status.append(
-                f"{side} raw JointState: {value.get('joints', {})}; unmapped: {sorted(unmapped)}"
-            )
-            fresh = (
-                bool(self.receiver)
-                and (self.receiver is True or self.receiver.active)
-                and time.monotonic() - value.get("read_time", 0) < 1
-            )
-            if (
-                self.model
-                and self.receiver
-                and self.configs.get(side, {}).get("joint_state")
-            ):
-                for name, (target, scale, offset) in draft.editor.get(
-                    "mapping", {}
-                ).items():
-                    raw, valid = value.get("joints", {}).get(name, (None, False))
-                    converted = (
-                        raw * scale + offset
-                        if valid and raw is not None
-                        else float("nan")
-                    )
-                    joint = self.model.urdf.joint_map.get(target)
-                    limit = joint.limit if joint else None
-                    valid = (
-                        fresh and joint in self.model.joints and np.isfinite(converted)
-                    )
-                    if limit:
-                        valid &= (limit.lower is None or converted >= limit.lower) and (
-                            limit.upper is None or converted <= limit.upper
-                        )
-                    status.append(
-                        f"{side}/{name}: raw={raw}; converted={converted}; limits={limit}; valid={valid}"
-                    )
-                    if valid and mode == "LIVE":
-                        self.drive[target] = converted
-            self.layers[side].visible = side == self.side.value or self.both.value
-            if updating and mode != "PAUSED":
-                try:
-                    root, d, current, skeleton = self.root(draft, cfg), draft, None, []
-                    issues = [v for v in self.issues if v["side"] == side]
-                    if mode == "LIVE":
-                        current, joints, world_to_wrist = geo.hand_current(
-                            draft, value["hand"]
-                        )
-                        root = geo.VISUALIZATION_FROM_HAND.copy()
-                        skeleton = [
-                            root @ world_to_wrist @ t
-                            for t in joints
-                            if t is not None
-                        ]
-                        if self.source.value == "Received":
-                            try:
-                                received, received_issues = self.received_document(
-                                    side, value["metadata"]
-                                )
-                                received_current, _, _ = geo.hand_current(
-                                    received, value["hand"]
-                                )
-                            except (ValueError, TypeError, KeyError, IndexError) as exc:
-                                status.append(
-                                    f"{side}: received metadata unavailable; using draft: {exc}"
-                                )
-                            else:
-                                d, issues, current = (
-                                    received,
-                                    received_issues,
-                                    received_current,
-                                )
-                    elif mode == "PREVIEW" and self.model and "root" in draft.editor:
-                        current = self.model.current(draft, self.model.fk(cfg))
-                    self.render_side(
-                        side,
-                        d,
-                        root,
-                        current,
-                        value.get("forces") if fresh else None,
-                        playing,
-                        issues,
-                    )
-                    self.axes("/view/" + side + "/live-skeleton", skeleton)
-                    self.frame_forces[side] = value.get("forces")
-                    self.frame_counts[side] = len(d.arrays[FIELDS[1]])
-                except (ValueError, TypeError, KeyError, IndexError) as exc:
-                    status.append(f"{side}: invalid visualization: {exc}")
-                    fresh = False
-            taxels = self.handles.get("/view/" + side + "/taxels")
-            if playing and taxels and taxels.visible:
-                taxels.batched_colors = (
-                    self.frame_colors.get(side, (140, 140, 140))
-                    if fresh
-                    else (140, 140, 140)
-                )
-            forces = (
-                self.frame_forces.get(side) if mode == "PAUSED" else value.get("forces")
-            )
-            force_array = (
-                np.asarray(forces, dtype=float)
-                if forces is not None
-                else np.empty((0, 3))
-            )
-            valid_forces = (
-                forces is not None
-                and force_array.ndim == 2
-                and force_array.shape[1:] == (3,)
-                and np.isfinite(force_array).all()
-                and len(force_array)
-                == self.frame_counts.get(side, len(draft.arrays[FIELDS[1]]))
-            )
-            status.append(
-                f"{side}: {value.get('config')}; local read={value.get('read_time')}; current={fresh}; force shape={force_array.shape}; valid/count-matched={valid_forces}; draft taxels={len(draft.arrays[FIELDS[1]])}"
-            )
-            hand_flags = (value.get("hand") or {}).get("is_valid", [])
-            status.append(
-                f"{side} HandPose: {sum(bool(v) for v in hand_flags)} valid joints; WRIST flag={len(hand_flags) == 26 and bool(hand_flags[1])}"
-            )
-            if side == self.side.value and fresh and valid_forces:
-                status.extend(
-                    f"{'Paused display' if mode == 'PAUSED' else 'Latest'} row {i}: fx,fy,fz={forces[i]}; |f|={np.linalg.norm(forces[i]):.4g} N"
-                    for i in self.selected[:25]
-                    if i < len(force_array)
-                )
-        connection = (
-            self.receiver.status
-            if self.receiver and self.receiver is not True
-            else "Demo"
-            if self.receiver
-            else "Disconnected"
-        )
-        self.live_info.content = connection + "\n\n" + "\n\n".join(status)
-        if not updating:
+        if hit is None:
             return
-        root, d = self.root(), self.d
-        points = self.draft_points() if mode != "EDIT" else []
-        self.balls(
-            "/draft-targets",
-            [p for _, p in points],
-            [
-                (255, 220, 0) if i in self.selected else (140, 140, 140)
-                for i, _ in points
-            ],
+        if mode == "segment":
+            value = IDENTITY_POSE.copy()
+            value[:3] = hit[1].tolist()
+            row = self.document.add_segment(self.new_segment_joint.value, value)
+            self.selected_kind, self.selected_rows = "segments", [row]
+        else:
+            _, width, height, rows, columns = self._grid_values()
+            frame = geo.surface_frame(hit[1], hit[2])
+            selected = self.document.add_taxels(
+                geo.grid_poses(hit[1], width, height, rows, columns, frame)
+            )
+            self.selected_kind, self.selected_rows = "taxels", selected
+        self._rebuild_edit_lists()
+
+    def _selection_values(self):
+        if self.selected_kind is None:
+            return []
+        if self.mode.value == "Preview":
+            return self.preview_document.segments
+        return self._values(self.selected_kind)
+
+    def _rebuild_selection(self) -> None:
+        if self.selection_folder is not None:
+            self.selection_folder.remove()
+        values = self._selection_values()
+        rows = [row for row in self.selected_rows if 0 <= row < len(values)]
+        self.selected_rows = rows
+        self.selection_folder = self.server.gui.add_folder(
+            "Selected Objects", visible=bool(rows)
+        )
+        if not rows:
+            return
+        with self.selection_folder:
+            self.server.gui.add_markdown(
+                f"Type: **{self.selected_kind}**  \nCount: **{len(rows)}**"
+            )
+            positions = np.asarray([values[row].pose[:3] for row in rows])
+            center = positions.mean(axis=0)
+            if len(rows) == 1:
+                _, rotation = geo.components(geo.matrix(values[rows[0]].pose))
+            else:
+                rotation = (0.0, 0.0, 0.0)
+            self.selection_position_widgets = self._numbers("Position", center, 0.001)
+            self.selection_rotation_widgets = self._sliders("Rotation", rotation)
+            self.selection_rotation = np.asarray(rotation, dtype=float)
+            for axis, widget in enumerate(self.selection_position_widgets):
+                self._watch(
+                    widget,
+                    lambda value, axis=axis: self._set_selection_position(axis, value),
+                )
+            for axis, widget in enumerate(self.selection_rotation_widgets):
+                self._watch(
+                    widget,
+                    lambda value, axis=axis: self._set_selection_rotation(axis, value),
+                )
+            self.selection_scale = 1.0
+            self.selection_scale_widget = self.server.gui.add_number(
+                "Scale", 1.0, min=1e-6, step=0.01, visible=len(rows) > 1
+            )
+            self._watch(self.selection_scale_widget, self._set_selection_scale)
+            self._action_button("Delete", self._delete_selection)
+
+    def _set_selection_position(self, axis: int, value: float) -> None:
+        values = self._selection_values()
+        center = np.asarray([values[row].pose[:3] for row in self.selected_rows]).mean(
+            axis=0
+        )
+        delta = np.eye(4)
+        delta[axis, 3] = float(value) - center[axis]
+        geo.apply_delta(values, self.selected_rows, delta)
+        self._sync_selected_list_values()
+
+    def _set_selection_rotation(self, axis: int, value: float) -> None:
+        values = self._selection_values()
+        if len(self.selected_rows) == 1:
+            row = self.selected_rows[0]
+            position, rotation = geo.components(geo.matrix(values[row].pose))
+            rotation = list(rotation)
+            rotation[axis] = float(value)
+            values[row].pose = geo.pose(geo.transform(position, rotation))
+        else:
+            points = np.asarray([values[row].pose[:3] for row in self.selected_rows])
+            center = points.mean(axis=0)
+            angle = np.deg2rad(float(value) - self.selection_rotation[axis])
+            rotation = tf.rotation_matrix(angle, np.eye(3)[axis], center)
+            geo.apply_delta(values, self.selected_rows, rotation)
+            self.selection_rotation[axis] = float(value)
+        self._sync_selected_list_values()
+
+    def _set_selection_scale(self, value: float) -> None:
+        values = self._selection_values()
+        factor = float(value) / self.selection_scale
+        geo.scale_positions(values, self.selected_rows, factor)
+        self.selection_scale = float(value)
+        self._sync_selected_list_values()
+
+    def _sync_selected_list_values(self) -> None:
+        if self.mode.value == "Edit":
+            widgets = (
+                self.segment_widgets
+                if self.selected_kind == "segments"
+                else self.taxel_widgets
+            )
+            values = self._selection_values()
+            for row in self.selected_rows:
+                if row >= len(widgets):
+                    continue
+                position, rotation = geo.components(geo.matrix(values[row].pose))
+                position_widgets, rotation_widgets = (
+                    (widgets[row][1], widgets[row][2])
+                    if self.selected_kind == "segments"
+                    else (widgets[row][0], widgets[row][1])
+                )
+                self._set_values(position_widgets, position)
+                self._set_values(rotation_widgets, rotation)
+        else:
+            self._sync_preview_values()
+        self.redraw = True
+
+    def _delete_selection(self) -> None:
+        if self.mode.value == "Preview":
+            for row in sorted(self.selected_rows, reverse=True):
+                self.preview_document.segments.pop(row)
+            self._rebuild_preview_segments()
+            self._update_preview_error()
+        else:
+            self.document.delete(self.selected_kind, self.selected_rows)
+            self._rebuild_edit_lists()
+        self.selected_kind, self.selected_rows = None, []
+        self._rebuild_selection()
+
+    def _draw_instances(
+        self, name: str, kind: str, values, colors, opacity: float, wireframe=False
+    ) -> None:
+        matrices = [geo.matrix(value.pose) for value in values]
+        if not matrices:
+            if name in self.scene_handles:
+                self.scene_handles[name].visible = False
+            return
+        positions = np.asarray([value[:3, 3] for value in matrices])
+        rotations = np.asarray([tf.quaternion_from_matrix(value) for value in matrices])
+        mesh = (
+            trimesh.creation.icosphere(subdivisions=1)
+            if kind == "segments"
+            else trimesh.Trimesh(
+                vertices=[
+                    [-0.5, -0.5, 0.0],
+                    [0.5, -0.5, 0.0],
+                    [0.5, 0.5, 0.0],
+                    [-0.5, 0.5, 0.0],
+                ],
+                faces=[[0, 1, 2], [0, 2, 3]],
+                process=False,
+            )
+        )
+        if name not in self.scene_handles:
+            self.scene_handles[name] = self.server.scene.add_batched_meshes_simple(
+                name,
+                mesh.vertices,
+                mesh.faces,
+                rotations,
+                positions,
+                batched_scales=np.full(len(values), 0.01),
+                batched_colors=np.asarray(colors, dtype=np.uint8),
+                opacity=opacity,
+                wireframe=wireframe,
+                side="double",
+            )
+        handle = self.scene_handles[name]
+        handle.visible = True
+        handle.batched_positions = positions
+        handle.batched_wxyzs = rotations
+        handle.batched_scales = np.full(len(values), 0.01)
+        handle.batched_colors = np.asarray(colors, dtype=np.uint8)
+        handle.opacity = opacity
+
+    def _hide_prefix(self, prefix: str) -> None:
+        for name, handle in self.scene_handles.items():
+            if name.startswith(prefix):
+                handle.visible = False
+
+    def _draw_dataset(
+        self,
+        prefix: str,
+        segments: list[Segment],
+        taxels: list[Taxel],
+        opacity: float,
+        active: bool,
+        forces=None,
+    ) -> None:
+        segment_colors = []
+        for row in range(len(segments)):
+            color = (245, 200, 45) if active else (130, 130, 130)
+            if (
+                self.selected_kind == "segments"
+                and row in self.selected_rows
+                and active
+            ):
+                color = (255, 120, 20)
+            if self.binding_phase == "segments" and row in self.binding_segments:
+                color = (255, 120, 20)
+            if self.binding_phase == "taxels" and active:
+                color = (130, 130, 130)
+            if self.pick_mode is not None and active:
+                color = (130, 130, 130)
+            segment_colors.append(color)
+        taxel_colors = [(190, 190, 190)] * len(taxels)
+        array = np.asarray(forces, dtype=float) if forces is not None else None
+        if (
+            array is not None
+            and array.shape == (len(taxels), 3)
+            and np.isfinite(array).all()
+        ):
+            fraction = np.clip(np.linalg.norm(array, axis=1) / 30.0, 0.0, 1.0)
+            taxel_colors = [
+                (int(255 * value), 0, int(255 * (1.0 - value))) for value in fraction
+            ]
+        for row in range(len(taxels)):
+            if self.selected_kind == "taxels" and row in self.selected_rows and active:
+                taxel_colors[row] = (255, 120, 20)
+            if self.binding_phase == "taxels" and row in self.binding_taxels:
+                taxel_colors[row] = (255, 120, 20)
+            if self.binding_phase == "segments" and active:
+                taxel_colors[row] = (130, 130, 130)
+            if self.pick_mode is not None and active:
+                taxel_colors[row] = (130, 130, 130)
+        self._draw_instances(
+            prefix + "/segments", "segments", segments, segment_colors, opacity
+        )
+        self._draw_instances(
+            prefix + "/taxels", "taxels", taxels, taxel_colors, opacity
+        )
+
+    def _draw_errors(self) -> None:
+        segment_rows = {
+            issue["row"]
+            for issue in self.document.validate()
+            if issue["kind"] == "segments" and issue["row"] is not None
+        }
+        taxel_rows = {
+            issue["row"]
+            for issue in self.document.validate()
+            if issue["kind"] == "taxels" and issue["row"] is not None
+        }
+        self._draw_instances(
+            "/errors/segments",
+            "segments",
+            [self.document.segments[row] for row in sorted(segment_rows)],
+            [(255, 0, 0)] * len(segment_rows),
+            1.0,
             True,
         )
-        field, rows = self.targets()
-        self.axes(
-            "/draft-axes",
-            [t for i, t in geo.frames(d.arrays[field], root) if i in rows],
+        self._draw_instances(
+            "/errors/taxels",
+            "taxels",
+            [self.document.taxels[row] for row in sorted(taxel_rows)],
+            [(255, 0, 0)] * len(taxel_rows),
+            1.0,
+            True,
         )
-        for i in self.selected:
-            try:
-                for j, w in zip(d.arrays[FIELDS[2]][i], d.arrays[FIELDS[3]][i]):
-                    if (
-                        type(j) is int
-                        and 0 <= j < len(d.joints)
-                        and type(w) in (int, float)
-                        and w <= 1
-                        and w > 0
-                    ):
-                        lines.append(
-                            [
-                                (root @ geo.matrix(d.arrays[FIELDS[0]][j]))[:3, 3],
-                                (root @ geo.matrix(d.arrays[FIELDS[1]][i]))[:3, 3],
-                            ]
-                        )
-                        line_colors.append([(int(255 * w), 80, 30)] * 2)
-                        if (
-                            self.slot is not None
-                            and j == d.arrays[FIELDS[2]][i][self.slot]
-                        ):
-                            highlight.add(
-                                d.editor.get("segment_links", {}).get(
-                                    d.editor["segment_ids"][j]
-                                )
-                            )
-            except (IndexError, TypeError, ValueError):
-                pass
-        if (
-            self.entity.value == "Segment"
-            and self.segment.value
-            and int(self.segment.value) < len(d.editor["segment_ids"])
-        ):
-            highlight.add(
-                d.editor.get("segment_links", {}).get(
-                    d.editor["segment_ids"][int(self.segment.value)]
-                )
-            )
-        if "/draft-binding" not in self.handles and lines:
-            self.handles["/draft-binding"] = self.server.scene.add_line_segments(
-                "/draft-binding",
-                np.asarray(lines),
-                np.asarray(line_colors, dtype=np.uint8),
-                thickness=2,
-                thickness_units="screen",
-            )
-        if "/draft-binding" in self.handles:
-            h = self.handles["/draft-binding"]
-            h.visible = bool(lines)
-            if lines:
-                h.points, h.colors = (
-                    np.asarray(lines),
-                    np.asarray(line_colors, dtype=np.uint8),
-                )
-        if self.model and mode != "PAUSED":
-            enabled = any(
-                bool(self.receiver) and self.configs.get(side, {}).get("joint_state")
-                for side in self.state.documents
-            )
-            self.display_model = not playing or enabled
-            self.display_fk = self.model.draw(
-                self.server.scene,
-                self.drive if playing else cfg,
-                self.display_model,
-                highlight - {None},
-            )
-        candidates = [
-            (root @ np.r_[geo.matrix(p)[:3, 3] if p else fallback, 1])[:3]
-            for p, fallback in self.candidates
-        ]
-        self.balls(
-            "/candidates",
-            candidates,
-            [(50, 220, 90) if p else (255, 0, 0) for p, _ in self.candidates],
-        )
-        if not self.dragging:
-            try:
-                t = root @ geo.matrix(d.arrays[field][rows[0]])
-                self.gizmo.position, self.gizmo.wxyz = (
-                    t[:3, 3],
-                    tf.quaternion_from_matrix(t),
-                )
-                self.gizmo.visible = True
-            except (ValueError, TypeError, IndexError):
-                self.gizmo.visible = False
 
-    def run(self):
-        self.camera()
-        last_error = None
+    def _draw_selection_axes(self) -> None:
+        values = self._selection_values()
+        rows = [row for row in self.selected_rows if 0 <= row < len(values)]
+        if not rows:
+            if "/selection/axes" in self.scene_handles:
+                self.scene_handles["/selection/axes"].visible = False
+            return
+        if len(rows) == 1:
+            frames = [geo.matrix(values[rows[0]].pose)]
+        else:
+            frame = np.eye(4)
+            frame[:3, 3] = np.asarray([values[row].pose[:3] for row in rows]).mean(
+                axis=0
+            )
+            frames = [frame]
+        positions = np.asarray([frame[:3, 3] for frame in frames])
+        rotations = np.asarray([tf.quaternion_from_matrix(frame) for frame in frames])
+        if "/selection/axes" not in self.scene_handles:
+            self.scene_handles["/selection/axes"] = self.server.scene.add_batched_axes(
+                "/selection/axes",
+                rotations,
+                positions,
+                axes_length=0.03,
+                axes_radius=0.001,
+            )
+        handle = self.scene_handles["/selection/axes"]
+        handle.visible = True
+        handle.batched_positions = positions
+        handle.batched_wxyzs = rotations
+
+    def _draw(self) -> None:
+        if self.model is not None:
+            q = (
+                self.document.q
+                if self.mode.value == "Edit"
+                else self.preview_document.q
+            )
+            self.model.draw(
+                self.server.scene,
+                q,
+                self.urdf_alignment,
+                self.urdf_scale,
+                highlighted=self.pick_mode is not None,
+                opacity=1.0,
+            )
+        self._hide_prefix("/edit")
+        self._hide_prefix("/preview")
+        self._hide_prefix("/saved")
+        self._hide_prefix("/errors")
+        if self.mode.value == "Edit":
+            self._draw_dataset(
+                "/edit",
+                self.document.segments,
+                self.document.taxels,
+                1.0,
+                True,
+            )
+            self._draw_errors()
+        else:
+            try:
+                preview_taxels = self._preview_taxels()
+            except (ValueError, TypeError, KeyError, IndexError):
+                preview_taxels = []
+            forces = (
+                self.receiver.latest.get("forces")
+                if self.receiver
+                and self.receiver.active
+                and time.monotonic()
+                - self.receiver.latest.get("read_time", float("-inf"))
+                < 0.5
+                else None
+            )
+            self._draw_dataset(
+                "/preview",
+                self.preview_document.segments,
+                preview_taxels,
+                1.0,
+                True,
+                forces,
+            )
+            if self.show_binding.value:
+                self._draw_dataset(
+                    "/edit",
+                    self.document.segments,
+                    self.document.taxels,
+                    0.5,
+                    False,
+                )
+        saved = self.state.saved[self.state.side]
+        if self.show_saved.value and saved is not None:
+            self._draw_dataset("/saved", saved.segments, saved.taxels, 0.2, False)
+        self._draw_selection_axes()
+
+    def run(self) -> None:
         try:
-            while not self.closing:
-                try:
-                    while not self.events.empty():
-                        try:
-                            self.events.get()()
-                        finally:
-                            self.refresh()
-                    if self.job and self.job.done():
-                        job, self.job = self.job, None
-                        try:
-                            self.sdk_result = str(job.result())
-                        except Exception as exc:
-                            self.sdk_result = f"Failed: {exc}"
-                        self.refresh()
-                    if (
-                        self.redraw
-                        or self.receiver
-                        or self.mode.value in ("LIVE", "PAUSED")
-                    ):
-                        with self.server.atomic():
-                            self.draw()
-                        self.redraw = False
-                    last_error = None
-                    time.sleep(1 / 30)
-                except KeyboardInterrupt:
-                    self.closing = True
-                except Exception as exc:
-                    message = f"{type(exc).__name__}: {exc}"
-                    if message != last_error:
-                        self.log(message)
-                    last_error = message
-                    time.sleep(0.1)
+            while True:
+                while not self.events.empty():
+                    self.events.get_nowait()()
+                self._update_live()
+                if self.redraw or self.receiver is not None:
+                    self._draw()
+                    self.redraw = False
+                time.sleep(1 / 30)
+        except KeyboardInterrupt:
+            pass
         finally:
-            if self.receiver and self.receiver is not True:
-                self.receiver.close()
-            self.pool.shutdown(wait=True)
+            self._disconnect()
             self.server.stop()

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 UI&Feature Design
 
 Global standard: unless improper for specific reason, for all float or int input fields, enable up/down arrow to adjust the value. For float input field, the step should be determined by the estimated range of the value. For int input field, the step should be 1. Only when a field has a clear specific limit range, the input field should reject illegal values. For sliders, when there's a clear specific limit range, use the limit range.
@@ -26,7 +32,7 @@ About LBS taxel rotation: determine by Polar Decomposition algorithm. At singula
     a) URDF Path: a text field to input the absolute path of the URDF file.
     b) "Load" button, to load the URDF file at URDF Path in scene.
     c) URDF Alignment: 3 float input fields to shift the position, 3 float slider fields to rotate the orientation, and one float input field to scale the URDF model.
-    c) A field to modify each joint value in the loaded URDF file. Current UI field "URDF free joint" and "Preview joint" provide this function, but I want you to use a different UI that shows a spannable full list of URDF joints and their input sliders for the user to slide. 
+    c) A field to modify each joint value in the loaded URDF file. Current UI field "URDF free joint" and "Preview joint" provide this function, but I want you to use a different UI that shows a spannable full list of URDF joints and their input sliders for the user to slide.
 
 8. Segments tab:
     a) Segments Alignment: 3 float input fields to shift the position, 3 float slider fields to rotate the orientation.
@@ -67,14 +73,14 @@ e) Delete
 * When deffering taxel poses or applying binding relationships to the Edit dataset, segments should be referred to by their HandJoint enum name instead of indice. It means received Metadata requires one layer of translation to turn the binding indice into HandJoint.
 * If the segment list is incompatible to the metadata's taxels binding (e.g. taxels refer to a segment that's not in list), an error should show up at the top of Preview menu including information like the missing segment enum name, and "Apply Preview Data to Editor" should grey out not clickable.
 Live section:
-    a) Checkbox "Use JointState to Drive URDF". When checked, enable the "JointState collection id" input field, and a Joint Mappings text field to receive a long json string to map the joint names in JointState to the URDF. The current field "Joint mappings JSON: source → [target, scale, offset]" is reusable. 
+    a) Checkbox "Use JointState to Drive URDF". When checked, enable the "JointState collection id" input field, and a Joint Mappings text field to receive a long json string to map the joint names in JointState to the URDF. The current field "Joint mappings JSON: source → [target, scale, offset]" is reusable.
     b) A button "Connect Live" button. When clicked, update the Preview dataset's segments poses with received hand data in real time, and update the taxels poses based on the segments poses and the binding metadata (selected in above selection field). Manage a field to clearly state the connection statue: Live or Disconnected. After clicking "Connect Live", the button changes text to "Disconnect Live". When disconnected, stops updating the segments poses or URDF joint values. (If JointState is used, Live mode also updates the URDF joint values.) Show warning: Live will override values in Static section.
-* If the metadata 
+* If the metadata
 * While Live is connected, if TactileDataArray available, render the taxel force (norm) with corresponding color: 0 is blue, 30 (clamp) is red, in the middle do color interpolation. When force missing, show as light grey (default color). When disconnect, colors go back to light grey.
 Static section:
     a) A button "Restore to Editor Binding Values"
     b) (spannable) A full list of URDF joints to adjust values, fields are same as in URDF tab, but the data is for the Preview dataset. Above the section, show the information that this is for preview only. This field is in spannable style. This values reflects real-time URDF joint values of Preview dataset, so will be updated with the Live mode streaming if JointState is applied.
     c) (spannable) A full list of segments to adjust values, fields are same as in Segments tab, but the data is for the Preview dataset. Exclude the reordering grabber UI. Make joint_name read-only. Above the section, show the information that this is for preview only. This field is in spannable style. This value reflects the preview segment poses, so will be updated with the Live mode streaming if hand data is received.
-* Segments are selectable and editable from interactive 3D scene under Preview mode, it's technicaly equal to modifying in the Static section. Taxels are not selectable or editable in Preview mode. Preview mode's taxel poses are always derived from its segments poses and the binding metadata it uses. 
+* Segments are selectable and editable from interactive 3D scene under Preview mode, it's technicaly equal to modifying in the Static section. Taxels are not selectable or editable in Preview mode. Preview mode's taxel poses are always derived from its segments poses and the binding metadata it uses.
 
-Button info display: show error messages at button when action fails.
+Button info display: show error messages at bottom when action fails.

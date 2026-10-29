@@ -10,333 +10,309 @@ import trimesh
 from trimesh import transformations as tf
 from yourdfpy import URDF
 
-from .document import FIELDS, joint_number, row_error
+from .document import Document, JOINTS, Segment, Taxel
 
-# URDF +X/+Y/+Z to visualization +Z/+X/+Y.
-VISUALIZATION_FROM_URDF = np.array(
-    [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
-    dtype=float,
-)
-# Hand +X/+Y/-Z to visualization -X/-Z/+Y.
 VISUALIZATION_FROM_HAND = np.array(
     [[-1, 0, 0, 0], [0, 0, -1, 0], [0, -1, 0, 0], [0, 0, 0, 1]],
     dtype=float,
 )
+VISUALIZATION_FROM_URDF = np.array(
+    [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
+    dtype=float,
+)
 
 
-def matrix(p):
-    try:
-        a = np.asarray(p, dtype=float)
-    except OverflowError as exc:
-        raise ValueError("Pose components exceed floating-point range") from exc
-    if a.shape != (7,) or not np.isfinite(a).all() or abs(a[3:] @ a[3:] - 1) > 1e-4:
+def matrix(values: list[float]) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    if (
+        array.shape != (7,)
+        or not np.isfinite(array).all()
+        or abs(array[3:] @ array[3:] - 1.0) > 1e-4
+    ):
         raise ValueError("Invalid XYZ/XYZW pose")
-    result = tf.quaternion_matrix(a[[6, 3, 4, 5]])
-    result[:3, 3] = a[:3]
+    result = tf.quaternion_matrix(array[[6, 3, 4, 5]])
+    result[:3, 3] = array[:3]
     return result
 
 
-def pose(transform):
-    q = tf.quaternion_from_matrix(transform)
-    return [*transform[:3, 3].tolist(), *q[[1, 2, 3, 0]].tolist()]
+def pose(transform: np.ndarray) -> list[float]:
+    quaternion = tf.quaternion_from_matrix(transform)
+    return [
+        *np.asarray(transform[:3, 3], dtype=float).tolist(),
+        *quaternion[[1, 2, 3, 0]].tolist(),
+    ]
 
 
-def unit(vector):
-    vector = np.asarray(vector, dtype=float)
-    length = np.linalg.norm(vector)
-    if not np.isfinite(length) or length < 1e-10:
-        raise ValueError("Reference directions must be finite and non-collinear")
-    return vector / length
+def transform(position, rotation_degrees) -> np.ndarray:
+    result = tf.euler_matrix(*np.deg2rad(rotation_degrees), axes="sxyz")
+    result[:3, 3] = np.asarray(position, dtype=float)
+    return result
 
 
-def frame(origin, normal, tangent):
+def components(value: np.ndarray) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    return (
+        tuple(value[:3, 3]),
+        tuple(np.rad2deg(tf.euler_from_matrix(value, axes="sxyz"))),
+    )
+
+
+def unit(value) -> np.ndarray:
+    value = np.asarray(value, dtype=float)
+    norm = np.linalg.norm(value)
+    if not np.isfinite(norm) or norm < 1e-10:
+        raise ValueError("Expected a finite nonzero direction")
+    return value / norm
+
+
+def surface_frame(origin, normal) -> np.ndarray:
     z = unit(normal)
-    x = unit(np.asarray(tangent) - z * (np.asarray(tangent) @ z))
+    x = np.array([1.0, 0.0, 0.0])
+    x -= z * (x @ z)
+    if np.linalg.norm(x) < 1e-6:
+        x = np.array([0.0, 1.0, 0.0])
+        x -= z * (x @ z)
+    x = unit(x)
     result = np.eye(4)
-    result[:3, :3], result[:3, 3] = np.column_stack((x, np.cross(z, x), z)), origin
+    result[:3, :3] = np.column_stack((x, np.cross(z, x), z))
+    result[:3, 3] = origin
     return result
 
 
-def frames(rows, root):
-    for i, p in enumerate(rows):
-        try:
-            yield i, root @ matrix(p)
-        except (ValueError, TypeError):
-            pass
+def realign(document: Document, alignment: np.ndarray) -> np.ndarray:
+    old = np.asarray(document.alignment, dtype=float)
+    delta = alignment @ np.linalg.inv(old)
+    for value in (*document.segments, *document.taxels):
+        value.pose = pose(delta @ matrix(value.pose))
+    document.alignment = alignment.tolist()
+    return delta
+
+
+def apply_delta(values, rows: list[int], delta: np.ndarray) -> None:
+    for row in rows:
+        if 0 <= row < len(values):
+            values[row].pose = pose(delta @ matrix(values[row].pose))
+
+
+def scale_positions(values, rows: list[int], factor: float) -> None:
+    if not np.isfinite(factor) or factor <= 0:
+        raise ValueError("Scale must be finite and positive")
+    points = np.asarray([values[row].pose[:3] for row in rows], dtype=float)
+    center = points.mean(axis=0)
+    for row in rows:
+        values[row].pose[:3] = (
+            center + (values[row].pose[:3] - center) * factor
+        ).tolist()
+
+
+def grid_poses(
+    center, width: float, height: float, rows: int, columns: int, frame=None
+) -> list[list[float]]:
+    if rows < 1 or columns < 1:
+        raise ValueError("Rows and Columns must be positive")
+    if not np.isfinite(width) or not np.isfinite(height) or width < 0 or height < 0:
+        raise ValueError("Grid dimensions must be finite and nonnegative")
+    basis = np.eye(4) if frame is None else np.asarray(frame, dtype=float).copy()
+    basis[:3, 3] = np.asarray(center, dtype=float)
+    result = []
+    for row in range(rows):
+        y = 0.0 if rows == 1 else (row / (rows - 1) - 0.5) * height
+        for column in range(columns):
+            x = 0.0 if columns == 1 else (column / (columns - 1) - 0.5) * width
+            current = basis.copy()
+            current[:3, 3] += basis[:3, :3] @ [x, y, 0.0]
+            result.append(pose(current))
+    return result
 
 
 class Model:
-    def __init__(self, path, packages, scale=1.0):
-        if not np.isfinite(scale) or scale <= 0:
-            raise ValueError("URDF scale must be finite and positive")
-        self.scale = float(scale)
-        self.path, self.missing, self.surfaces = Path(path).resolve(), [], {}
-        self.handles, self.attachments = {}, {}
-        # Instance-owned caches must not keep replaced models alive.
-        self._fk_cache = OrderedDict()
+    def __init__(self, path: str):
+        self.path = Path(path).resolve()
+        self.handles: dict[str, object] = {}
+        self._fk_cache: OrderedDict[tuple[float, ...], dict[str, np.ndarray]] = (
+            OrderedDict()
+        )
 
-        # yourdfpy invokes this resolver using the keyword fname.
         def resource(fname):
-            name = fname
+            name = str(fname)
             if name.startswith("package://"):
                 package, relative = name[10:].split("/", 1)
-                resolved = (
-                    Path(packages.get(package, self.path.parent / package)) / relative
-                )
+                root = self.path.parent
+                while root != root.parent and root.name != package:
+                    root = root.parent
+                if root.name == package:
+                    return str((root / relative).resolve())
+                for root in self.path.parents:
+                    candidate = root / relative
+                    if candidate.is_file():
+                        return str(candidate)
+                raise ValueError(f"Cannot resolve package resource: {name}")
             elif "://" in name:
-                raise ValueError(f"Only local resources are supported: {name}")
-            else:
-                resolved = self.path.parent / name
-            if not resolved.is_file():
-                self.missing.append(str(resolved))
-            return str(resolved)
+                raise ValueError(f"Only local mesh resources are supported: {name}")
+            return str((self.path.parent / name).resolve())
 
         self.urdf = URDF.load(str(self.path), filename_handler=resource)
-        self.links, self.joints = list(self.urdf.link_map), self.urdf.actuated_joints
+        self.joints = self.urdf.actuated_joints
+        self.links = list(self.urdf.link_map)
+        self.surfaces: dict[str, tuple[str, trimesh.Trimesh]] = {}
         scene = self.urdf.scene
-        parents = {b: a for a, b, _ in scene.graph.to_edgelist()}
+        parents = {child: parent for parent, child, _ in scene.graph.to_edgelist()}
         for node in scene.graph.nodes_geometry:
             link = node
             while link not in self.links:
                 link = parents[link]
-            transform, name = scene.graph.get(frame_to=node, frame_from=link)
-            mesh = scene.geometry[name].copy()
-            mesh.apply_transform(transform)
-            mesh.apply_scale(self.scale)
-            for i, part in enumerate(mesh.split(only_watertight=False)):
-                self.surfaces[f"{link}/{node}/{i}"] = (link, part)
+            local, geometry_name = scene.graph.get(frame_to=node, frame_from=link)
+            mesh = scene.geometry[geometry_name].copy()
+            mesh.apply_transform(local)
+            for index, part in enumerate(mesh.split(only_watertight=False)):
+                self.surfaces[f"{link}/{node}/{index}"] = (link, part)
 
-    def fk(self, cfg):
-        configuration = tuple(float(cfg.get(j.name, 0.0)) for j in self.joints)
-        result = self._fk_cache.pop(configuration, None)
-        if result is None:
+    def raw_fk(self, q: dict[str, float]) -> dict[str, np.ndarray]:
+        configuration = tuple(float(q.get(joint.name, 0.0)) for joint in self.joints)
+        cached = self._fk_cache.pop(configuration, None)
+        if cached is None:
             self.urdf.update_cfg(
                 dict(zip((j.name for j in self.joints), configuration))
             )
-            result = {
-                link: VISUALIZATION_FROM_URDF
-                @ self.urdf.get_transform(link).copy()
-                for link in self.links
-            }
-            for transform in result.values():
-                transform[:3, 3] *= self.scale
-        self._fk_cache[configuration] = result
+            cached = {link: self.urdf.get_transform(link).copy() for link in self.links}
+        self._fk_cache[configuration] = cached
         if len(self._fk_cache) > 4:
             self._fk_cache.popitem(last=False)
+        return cached
+
+    @staticmethod
+    def _rigid(raw: np.ndarray, alignment: np.ndarray, scale: float) -> np.ndarray:
+        result = alignment.copy()
+        result[:3, :3] = alignment[:3, :3] @ raw[:3, :3]
+        result[:3, 3] = alignment[:3, :3] @ (raw[:3, 3] * scale) + alignment[:3, 3]
         return result
 
-    def root(self, d, fk):
-        reference = d.editor["root"]
-        local = np.asarray(reference["frame"], dtype=float)
-        if (
-            local.shape != (4, 4)
-            or not np.isfinite(local).all()
-            or not np.allclose(local[3], [0, 0, 0, 1])
-            or not np.allclose(local[:3, :3].T @ local[:3, :3], np.eye(3))
-            or np.linalg.det(local[:3, :3]) < 0
-        ):
-            raise ValueError("Invalid wrist reference frame")
-        return fk[reference["link"]] @ local
-
-    def attach(self, d, fk):
-        root = self.root(d, fk)
-        attachments = self.attachments[d.side] = {}
-        for i, sid in enumerate(d.editor["segment_ids"]):
-            link = d.editor.get("segment_links", {}).get(sid)
-            try:
-                attachments[sid] = (
-                    np.linalg.inv(fk[link]) @ root @ matrix(d.arrays[FIELDS[0]][i])
-                )
-            except (KeyError, TypeError, ValueError):
-                pass
-
-    def current(self, d, fk):
-        inverse = np.linalg.inv(self.root(d, fk))
-        links, attachments = (
-            d.editor.get("segment_links", {}),
-            self.attachments.get(d.side, {}),
-        )
-        return [
-            inverse @ fk[links[sid]] @ attachments[sid]
-            if sid in attachments and links.get(sid) in fk
-            else None
-            for sid in d.editor["segment_ids"]
-        ]
-
-    def draw(self, scene, cfg, visible=True, highlight=None):
-        fk = self.fk(cfg)
+    def draw(
+        self,
+        scene,
+        q: dict[str, float],
+        alignment: np.ndarray,
+        scale: float,
+        highlighted: bool = False,
+        opacity: float = 0.6,
+    ) -> None:
+        raw = self.raw_fk(q)
         for name, (link, mesh) in self.surfaces.items():
             if name not in self.handles:
                 self.handles[name] = scene.add_mesh_simple(
-                    "/model/" + name,
+                    "/urdf/" + name,
                     mesh.vertices,
                     mesh.faces,
                     color=(170, 175, 180),
-                    opacity=0.6,
+                    opacity=opacity,
                     side="double",
                 )
-            h = self.handles[name]
-            h.visible = visible
-            h.color = (
-                (255, 220, 0) if highlight and link in highlight else (170, 175, 180)
-            )
-            h.position, h.wxyz = fk[link][:3, 3], tf.quaternion_from_matrix(fk[link])
-        return fk
+            current = self._rigid(raw[link], alignment, scale)
+            handle = self.handles[name]
+            handle.position = current[:3, 3]
+            handle.wxyz = tf.quaternion_from_matrix(current)
+            handle.scale = scale
+            handle.opacity = opacity
+            handle.color = (255, 210, 45) if highlighted else (170, 175, 180)
+            handle.visible = True
 
-    def hit(self, origin, direction, surfaces, fk):
-        nearest = None
-        for name in surfaces:
-            link, mesh = self.surfaces[name]
-            inverse = np.linalg.inv(fk[link])
-            local = (inverse @ np.r_[origin, 1])[:3]
+    def hit(
+        self,
+        origin,
+        direction,
+        q: dict[str, float],
+        alignment: np.ndarray,
+        scale: float,
+    ):
+        nearest, transforms = None, self.raw_fk(q)
+        for link, mesh in self.surfaces.values():
+            raw = transforms[link]
+            similarity = alignment @ np.diag([scale, scale, scale, 1.0]) @ raw
+            inverse = np.linalg.inv(similarity)
+            local_origin = (inverse @ np.r_[origin, 1.0])[:3]
+            local_direction = inverse[:3, :3] @ direction
             points, _, faces = mesh.ray.intersects_location(
-                [local], [inverse[:3, :3] @ direction]
+                [local_origin], [local_direction]
             )
             for point, face in zip(points, faces):
-                world = (fk[link] @ np.r_[point, 1])[:3]
+                world = (similarity @ np.r_[point, 1.0])[:3]
                 distance = np.linalg.norm(world - origin)
                 if nearest is None or distance < nearest[0]:
-                    nearest = (
-                        distance,
-                        world,
-                        fk[link][:3, :3] @ mesh.face_normals[face],
-                        name,
+                    normal = (
+                        np.linalg.inv(similarity[:3, :3]).T @ mesh.face_normals[face]
                     )
+                    nearest = (distance, world, unit(normal))
         return nearest
 
-    def grid(self, d, fk, surface, points, rows, cols, scan, reverse, excluded):
-        if (
-            rows < 1
-            or cols < 1
-            or points[0] is None
-            or (cols > 1 and points[1] is None)
-            or (rows > 1 and points[2] is None)
-        ):
-            raise ValueError(
-                "Pick required first/last centers and use positive row/column counts"
-            )
-        if scan not in (
-            "row-major",
-            "column-major",
-            "row-snake",
-            "column-snake",
-        ) or any(
-            len(v) != 2
-            or any(type(k) is not int for k in v)
-            or not 0 <= v[0] < rows
-            or not 0 <= v[1] < cols
-            for v in excluded
-        ):
-            raise ValueError("Invalid scan or excluded cell coordinates")
-        origin = np.asarray(points[0])
-        column = (
-            np.asarray(points[1]) - origin if points[1] is not None else np.zeros(3)
-        )
-        row = np.asarray(points[2]) - origin if points[2] is not None else np.zeros(3)
-        if (
-            (cols > 1 and np.linalg.norm(column) < 1e-10)
-            or (rows > 1 and np.linalg.norm(row) < 1e-10)
-            or (rows > 1 and cols > 1 and np.linalg.norm(np.cross(column, row)) < 1e-10)
-        ):
-            raise ValueError(
-                "Required row/column spans must be nonzero and independent"
-            )
-        tangent = unit(column if np.linalg.norm(column) > 0 else row)
-        link, mesh = self.surfaces[surface]
-        face = trimesh.proximity.closest_point(
-            mesh, [(np.linalg.inv(fk[link]) @ np.r_[origin, 1])[:3]]
-        )[2][0]
-        normal = fk[link][:3, :3] @ mesh.face_normals[face]
-        cells = [(r, c) for r in range(rows) for c in range(cols)]
-        major = 1 if scan.startswith("column") else 0
-        cells.sort(
-            key=lambda rc: (
-                rc[major],
-                -rc[1 - major]
-                if scan.endswith("snake") and rc[major] % 2
-                else rc[1 - major],
-            )
-        )
-        depth, inverse = (
-            max(np.linalg.norm(mesh.extents), 0.01),
-            np.linalg.inv(self.root(d, fk)),
-        )
-        result = []
-        for r, c in cells:
-            r, c = rows - 1 - r if reverse[0] else r, cols - 1 - c if reverse[1] else c
-            if [r, c] in excluded:
-                continue
-            point = (
-                origin
-                + column * (c / (cols - 1) if cols > 1 else 0)
-                + row * (r / (rows - 1) if rows > 1 else 0)
-            )
-            hit = self.hit(point + normal * depth, -normal, [surface], fk)
-            try:
-                candidate = (
-                    pose(inverse @ frame(hit[1], hit[2], tangent)) if hit else None
-                )
-            except ValueError:
-                candidate = None
-            result.append((candidate, (inverse @ np.r_[point, 1])[:3]))
-        return result
+    def remove(self) -> None:
+        for handle in self.handles.values():
+            handle.remove()
+        self.handles.clear()
 
 
-def transform(d, field, selected, delta, local=False):
-    for i in selected:
-        old = matrix(d.arrays[field][i])
-        d.arrays[field][i] = pose(old @ delta if local else delta @ old)
-    d.editor["approximate"] = True
-
-
-def deform(d, current):
+def deform(binding: Document, current: list[Segment]) -> list[Taxel]:
+    bind_segments = {
+        segment.joint: matrix(segment.pose) for segment in binding.segments
+    }
+    current_segments = {segment.joint: matrix(segment.pose) for segment in current}
+    if len(bind_segments) != len(binding.segments) or len(current_segments) != len(
+        current
+    ):
+        raise ValueError("Segment HandJoint values must be unique")
     result = []
-    for i, p in enumerate(d.arrays[FIELDS[1]]):
-        try:
-            indices, weights = d.arrays[FIELDS[2]][i], d.arrays[FIELDS[3]][i]
-            if any(
-                row_error(f, v, len(current))
-                for f, v in zip(FIELDS[2:], (indices, weights))
-            ):
-                raise ValueError("Invalid skinning row")
-            transforms = [
-                current[j] @ np.linalg.inv(matrix(d.arrays[FIELDS[0]][j])) @ matrix(p)
-                for j, w in zip(indices, weights)
-                if w > 0
-            ]
-            position = sum(
-                w * t[:3, 3] for w, t in zip([w for w in weights if w > 0], transforms)
+    for taxel in binding.taxels:
+        active = [
+            (joint, weight)
+            for joint, weight in zip(taxel.segments, taxel.weights)
+            if joint is not None and weight > 0
+        ]
+        if not active:
+            raise ValueError("Taxel has no active segment")
+        transforms = []
+        for joint, weight in active:
+            if joint not in bind_segments or joint not in current_segments:
+                raise ValueError(f"Missing segment {joint}")
+            transforms.append(
+                (weight, current_segments[joint] @ np.linalg.inv(bind_segments[joint]))
             )
-            rigid = (
-                transforms[0].copy()
-                if len({j for j, w in zip(indices, weights) if w > 0}) == 1
-                else None
-            )
-            if rigid is not None:
-                rigid[:3, 3] = position
-            result.append((position, rigid))
-        except (TypeError, ValueError, KeyError, IndexError):
-            result.append((None, None))
+        bind_taxel = matrix(taxel.pose)
+        position = sum(
+            weight * (delta @ np.r_[bind_taxel[:3, 3], 1.0])[:3]
+            for weight, delta in transforms
+        )
+        if len({joint for joint, _ in active}) == 1:
+            rotation = transforms[0][1][:3, :3] @ bind_taxel[:3, :3]
+        else:
+            blend = sum(weight * delta[:3, :3] for weight, delta in transforms)
+            u, singular, vh = np.linalg.svd(blend)
+            if singular[-1] < 1e-8:
+                rotation = bind_taxel[:3, :3]
+            else:
+                correction = np.eye(3)
+                correction[2, 2] = np.linalg.det(u @ vh)
+                rotation = u @ correction @ vh @ bind_taxel[:3, :3]
+        value = np.eye(4)
+        value[:3, :3], value[:3, 3] = rotation, position
+        result.append(Taxel(pose(value), list(taxel.segments), list(taxel.weights)))
     return result
 
 
-def hand_current(d, hand):
+def hand_segments(joints: list[str], hand: dict) -> list[Segment]:
     values = []
-    for p, q, valid in zip(hand["positions"], hand["orientations"], hand["is_valid"]):
-        try:
-            values.append(matrix([*p, *q]) if valid else None)
-        except (ValueError, TypeError):
-            values.append(None)
-    if len(values) != 26 or len(hand["is_valid"]) != 26 or values[1] is None:
-        raise ValueError("HandTracker WRIST or array shape is invalid")
-    inverse = np.linalg.inv(values[1])
-    return (
-        [
-            inverse @ values[joint_number(j)]
-            if values[joint_number(j)] is not None
-            else None
-            for j in d.joints
-        ],
-        values,
-        inverse,
-    )
+    for position, orientation, valid in zip(
+        hand["positions"], hand["orientations"], hand["is_valid"]
+    ):
+        values.append(matrix([*position, *orientation]) if valid else None)
+    if len(values) != len(JOINTS) or values[1] is None:
+        raise ValueError("HandTracker WRIST pose is unavailable")
+    wrist_inverse = np.linalg.inv(values[1])
+    result = []
+    for joint in joints:
+        index = JOINTS.index(joint)
+        if values[index] is None:
+            raise ValueError(f"HandTracker {joint} pose is unavailable")
+        result.append(
+            Segment(
+                joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ values[index])
+            )
+        )
+    return result

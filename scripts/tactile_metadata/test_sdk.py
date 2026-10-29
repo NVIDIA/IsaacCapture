@@ -25,14 +25,14 @@ class ReceiverTests(unittest.TestCase):
 
         def receive(_):
             if not receiver.latest:
-                return b'{"sides": {"left": null}}'
+                return b'{"frame": {"hand": null}}'
             self.assertTrue(receiver.active)
-            self.assertEqual(receiver.status, "Connected")
+            self.assertEqual(receiver.status, "Live")
             raise EOFError
 
         receiver.connection.recv_bytes.side_effect = receive
-        receiver.receive()
-        self.assertEqual(receiver.latest, {"left": None})
+        receiver._receive()
+        self.assertEqual(receiver.latest, {"hand": None})
         self.assertFalse(receiver.active)
 
 

@@ -3,298 +3,194 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
-import uuid
+from dataclasses import dataclass, field
 
 JOINTS = """PALM WRIST THUMB_METACARPAL THUMB_PROXIMAL THUMB_DISTAL THUMB_TIP
 INDEX_METACARPAL INDEX_PROXIMAL INDEX_INTERMEDIATE INDEX_DISTAL INDEX_TIP
 MIDDLE_METACARPAL MIDDLE_PROXIMAL MIDDLE_INTERMEDIATE MIDDLE_DISTAL MIDDLE_TIP
 RING_METACARPAL RING_PROXIMAL RING_INTERMEDIATE RING_DISTAL RING_TIP
 LITTLE_METACARPAL LITTLE_PROXIMAL LITTLE_INTERMEDIATE LITTLE_DISTAL LITTLE_TIP""".split()
-FIELDS = (
-    "segment_bind_poses",
-    "taxel_bind_poses",
-    "taxel_segment_indices",
-    "taxel_segment_weights",
-)
-GROUPS = {
-    "Skeleton binding poses": ("joints", FIELDS[0]),
-    "Taxel binding poses": FIELDS[1:2],
-    "Skinning": FIELDS[2:],
-}
-IDENTITY = [0, 0, 0, 0, 0, 0, 1]
-# Neutral right-hand OpenXR poses in wrist coordinates; left is mirrored below.
-# fmt: off
-DEFAULT_OPENXR_SEGMENT_POSES = (
-    (-0.00244, 0.00122, -0.05917, 0.010296699, 0.02060433, -0.000212213, 0.999734662),
-    (0, 0, 0, 0, 0, 0, 1),
-    (-0.022, -0.012, -0.028, -0.00692186, 0.30239121, 0.275661445, 0.912426661),
-    (-0.047208158, -0.020249943, -0.065583071, -0.00692186, 0.30239121, 0.275661445, 0.912426661),
-    (-0.065292271, -0.02616838, -0.09254484, -0.00692186, 0.30239121, 0.275661445, 0.912426661),
-    (-0.080088363, -0.031010737, -0.114604468, -0.00692186, 0.30239121, 0.275661445, 0.912426661),
-    (-0.00528, 0, -0.02068, 0, 0.124664128, 0, 0.992199),
-    (-0.024, 0, -0.094, -0.017438446, 0.039983244, 0.00069791, 0.999047924),
-    (-0.027194641, -0.00139598, -0.133847779, -0.043584497, 0.039951273, 0.00174431, 0.99824909),
-    (-0.029105295, -0.003487718, -0.157679985, -0.060999707, 0.039914746, 0.00244129, 0.997336397),
-    (-0.030691675, -0.005925105, -0.177467419, -0.060999707, 0.039914746, 0.00244129, 0.997336397),
-    (-0.00088, 0.00044, -0.02134, 0.010296699, 0.02060433, -0.000212213, 0.999734662),
-    (-0.004, 0.002, -0.097, -0.017452406, 0, 0, 0.999847695),
-    (-0.004, 0.000429523, -0.141972587, -0.043619387, 0, 0, 0.999048222),
-    (-0.004, -0.002010838, -0.169866039, -0.06104854, 0, 0, 0.998134798),
-    (-0.004, -0.004691964, -0.191702054, -0.06104854, 0, 0, 0.998134798),
-    (0.0033, 0, -0.02002, 0, -0.081592271, 0, 0.996665792),
-    (0.015, 0, -0.091, -0.017444553, -0.029990932, -0.000523494, 0.999397797),
-    (0.017516954, -0.001465779, -0.132898883, -0.04359976, -0.029966951, -0.001308385, 0.998598684),
-    (0.019070086, -0.003731828, -0.158753338, -0.06102107, -0.029939553, -0.001831181, 0.997685671),
-    (0.020319944, -0.006291084, -0.1795593, -0.06102107, -0.029939553, -0.001831181, 0.997685671),
-    (0.00704, -0.00088, -0.01804, -0.022312091, -0.184914996, -0.004199362, 0.982492229),
-    (0.032, -0.004, -0.082, -0.017415551, -0.064944346, -0.001133608, 0.99773626),
-    (0.036145766, -0.005116784, -0.113710652, -0.043527274, -0.064892417, -0.002833264, 0.996938475),
-    (0.038599442, -0.006772743, -0.132478637, -0.06091962, -0.064833086, -0.003965361, 0.996026981),
-    (0.040915463, -0.008966391, -0.150193714, -0.06091962, -0.064833086, -0.003965361, 0.996026981),
-)
-# fmt: on
+IDENTITY_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+IDENTITY_MATRIX = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+]
 
 
-def joint_number(joint):
-    number = JOINTS.index(joint) if isinstance(joint, str) else joint
-    if type(number) is not int or not 0 <= number < len(JOINTS):
-        raise ValueError("Invalid HandJoint identifier")
-    return number
+@dataclass
+class Segment:
+    joint: str
+    pose: list[float] = field(default_factory=lambda: IDENTITY_POSE.copy())
 
 
-def row_error(field, values, segments):
-    width = 7 if field in FIELDS[:2] else 4
-    if not isinstance(values, list) or len(values) != width:
-        return f"Expected {width} components"
+@dataclass
+class Taxel:
+    pose: list[float] = field(default_factory=lambda: IDENTITY_POSE.copy())
+    segments: list[str | None] = field(default_factory=lambda: [None] * 4)
+    weights: list[float] = field(default_factory=lambda: [0.0] * 4)
+
+
+def pose_error(values: object) -> str | None:
+    if not isinstance(values, list) or len(values) != 7:
+        return "Expected XYZ and XYZW"
     if any(
-        type(v) not in (int, float) or (type(v) is float and not math.isfinite(v))
-        for v in values
+        type(value) not in (int, float) or not math.isfinite(value) for value in values
     ):
-        return "Components must be finite numbers"
-    if field == FIELDS[2]:
-        if any(
-            type(v) is not int or not 0 <= v < min(segments, 0x100000000)
-            for v in values
-        ):
-            return "All slots must index segment rows, including zero-weight slots"
-    elif field == FIELDS[3]:
-        if min(values) < 0 or abs(sum(values) - 1) > 1e-5:
-            return "Weights must be nonnegative and sum to one"
-    elif (
-        max(map(abs, values)) > 3.4028234663852886e38
-        or abs(sum(v * v for v in values[3:]) - 1) > 1e-4
-    ):
-        return "Expected float32 coordinates and a unit XYZW quaternion"
+        return "Pose components must be finite numbers"
+    if abs(sum(value * value for value in values[3:]) - 1.0) > 1e-4:
+        return "Orientation must be a unit quaternion"
     return None
 
 
 class Document:
-    def __init__(self, side=None):
+    """Editor-native data. Poses and semantic bindings never use FlatBuffer row indices."""
+
+    def __init__(self, side: str):
+        if side not in ("left", "right"):
+            raise ValueError("Side must be left or right")
         self.side = side
-        self.joints = JOINTS[:] if side in ("left", "right") else []
-        self.arrays = {field: [] for field in FIELDS}
-        if self.joints:
-            poses = [list(pose) for pose in DEFAULT_OPENXR_SEGMENT_POSES]
-            if side == "left":
-                for pose in poses:
-                    pose[0], pose[4], pose[5] = -pose[0], -pose[4], -pose[5]
-            self.arrays[FIELDS[0]] = poses
-        self.types = ("LBS", "HandSkeletonRef")
-        self.editor = {"segment_ids": [], "output_indices": []}
-        self.sync()
+        self.segments: list[Segment] = []
+        self.taxels: list[Taxel] = []
+        self.q: dict[str, float] = {}
+        self.alignment = copy.deepcopy(IDENTITY_MATRIX)
 
-    def sync(self):
-        count, ids = len(self.arrays[FIELDS[0]]), self.editor["segment_ids"]
-        ids.extend(uuid.uuid4().hex for _ in range(count - len(ids)))
-        del ids[count:]
-        count, order = len(self.arrays[FIELDS[1]]), self.editor["output_indices"]
-        order.extend(range(len(order), count))
-        del order[count:]
+    def clone(self) -> Document:
+        return copy.deepcopy(self)
 
-    def set_components(self, field, selected, components, values):
-        width = 7 if field in FIELDS[:2] else 4
-        for i in selected:
-            while len(self.arrays[field]) <= i:
-                self.arrays[field].append(None)
-            if not isinstance(self.arrays[field][i], list):
-                self.arrays[field][i] = [None] * width
-            row = self.arrays[field][i]
-            row.extend([None] * max(0, width - len(row)))
-            for component, value in zip(components, values):
-                row[component] = value
-        if field in FIELDS[:2] and selected:
-            self.editor["approximate"] = True
-            self.sync()
+    def add_segment(self, joint: str, pose: list[float]) -> int:
+        if joint not in JOINTS:
+            raise ValueError("Choose a HandJoint")
+        self.segments.append(Segment(joint, list(pose)))
+        return len(self.segments) - 1
 
-    def weight(self, selected, slot, value):
-        rejected = []
-        for i in selected:
-            try:
-                values = list(self.arrays[FIELDS[3]][i])
-                values[slot] = float(value)
-                if (
-                    len(values) != 4
-                    or min(values) < 0
-                    or not all(math.isfinite(v) for v in values)
-                ):
-                    raise ValueError("Expected four finite nonnegative weights")
-                total = sum(values)
-                if total <= 0 or not math.isfinite(total):
-                    raise ValueError("Weight sum must be finite and positive")
-                self.arrays[FIELDS[3]][i] = [v / total for v in values]
-            except (IndexError, ValueError, TypeError, OverflowError) as exc:
-                rejected.append(f"Taxel row {i}: {exc}")
-        return rejected
+    def add_taxels(self, poses: list[list[float]]) -> list[int]:
+        first = len(self.taxels)
+        self.taxels.extend(Taxel(list(pose)) for pose in poses)
+        return list(range(first, len(self.taxels)))
 
-    def assign(self, selected, segments):
-        if not 1 <= len(segments) <= 4 or any(
-            type(i) is not int or not 0 <= i < len(self.arrays[FIELDS[0]])
-            for i in segments
-        ):
-            raise ValueError("Choose one to four existing segment rows")
-        for i in selected:
-            self.set_components(
-                FIELDS[2], [i], range(4), segments + [segments[0]] * (4 - len(segments))
-            )
-            self.set_components(
-                FIELDS[3],
-                [i],
-                range(4),
-                [1 / len(segments)] * len(segments) + [0] * (4 - len(segments)),
-            )
+    def delete(self, kind: str, rows: list[int]) -> None:
+        values = self.segments if kind == "segments" else self.taxels
+        for row in sorted(set(rows), reverse=True):
+            if 0 <= row < len(values):
+                values.pop(row)
 
-    def unused_start(self, count):
-        start = 0
-        while any(start + i in self.editor["output_indices"] for i in range(count)):
-            start += 1
-        return start
+    def move(self, kind: str, source: int, target: int) -> None:
+        values = self.segments if kind == "segments" else self.taxels
+        if not 0 <= source < len(values) or not 0 <= target < len(values):
+            raise ValueError("Reorder row is outside the list")
+        value = values.pop(source)
+        values.insert(target, value)
 
-    def add(self, poses, segments, start=-1):
-        if any(len(self.arrays[f]) != len(self.arrays[FIELDS[1]]) for f in FIELDS[2:]):
-            raise ValueError("Repair skinning counts before adding taxels")
-        if not poses:
-            raise ValueError("No candidates to apply")
-        start = self.unused_start(len(poses)) if start < 0 else start
-        first = len(self.arrays[FIELDS[1]])
-        self.arrays[FIELDS[1]].extend(copy.deepcopy(poses))
-        self.assign(range(first, first + len(poses)), segments)
-        self.editor["output_indices"].extend(range(start, start + len(poses)))
-        self.sync()
-        self.editor["approximate"] = True
+    def assign(self, taxels: list[int], segment_rows: list[int]) -> None:
+        if not 1 <= len(segment_rows) <= 4:
+            raise ValueError("Select one to four segments")
+        joints = []
+        for row in segment_rows:
+            if not 0 <= row < len(self.segments):
+                raise ValueError("Selected segment no longer exists")
+            joints.append(self.segments[row].joint)
+        weights = [1.0 / len(joints)] * len(joints)
+        for row in taxels:
+            if 0 <= row < len(self.taxels):
+                self.taxels[row].segments = joints + [None] * (4 - len(joints))
+                self.taxels[row].weights = weights + [0.0] * (4 - len(joints))
 
-    def delete(self, selected):
-        for i in sorted(set(selected), reverse=True):
-            for values in (
-                *[self.arrays[f] for f in FIELDS[1:]],
-                self.editor["output_indices"],
+    def set_weight(self, taxel_row: int, slot: int, value: float) -> None:
+        taxel = self.taxels[taxel_row]
+        if taxel.segments[slot] is None:
+            raise ValueError("Select a segment before editing its weight")
+        value = float(value)
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError("Weight must be from 0 to 1")
+        active = [i for i, segment in enumerate(taxel.segments) if segment is not None]
+        if len(active) == 1:
+            taxel.weights = [1.0 if i == slot else 0.0 for i in range(4)]
+            return
+        others = [i for i in active if i != slot]
+        remainder = 1.0 - value
+        total = sum(taxel.weights[i] for i in others)
+        taxel.weights[slot] = value
+        for i in range(4):
+            if taxel.segments[i] is None:
+                taxel.weights[i] = 0.0
+        if total > 0.0:
+            for i in others:
+                taxel.weights[i] = taxel.weights[i] / total * remainder
+        else:
+            for i in others:
+                taxel.weights[i] = remainder / len(others)
+
+    def validate(self) -> list[dict]:
+        issues: list[dict] = []
+
+        def issue(kind: str, row: int | None, field: str, message: str) -> None:
+            issues.append(dict(kind=kind, row=row, field=field, message=message))
+
+        duplicate_joints = {
+            joint
+            for joint in {segment.joint for segment in self.segments}
+            if sum(segment.joint == joint for segment in self.segments) > 1
+        }
+        joints = {segment.joint for segment in self.segments}
+        for row, segment in enumerate(self.segments):
+            if segment.joint not in JOINTS:
+                issue("segments", row, "joint", "Invalid HandJoint")
+            elif segment.joint in duplicate_joints:
+                issue("segments", row, "joint", "HandJoint is already used")
+            if error := pose_error(segment.pose):
+                issue("segments", row, "pose", error)
+        for row, taxel in enumerate(self.taxels):
+            if error := pose_error(taxel.pose):
+                issue("taxels", row, "pose", error)
+            if len(taxel.segments) != 4 or len(taxel.weights) != 4:
+                issue("taxels", row, "binding", "Expected four binding slots")
+                continue
+            for slot, (joint, weight) in enumerate(zip(taxel.segments, taxel.weights)):
+                valid_weight = type(weight) in (int, float) and math.isfinite(weight)
+                if joint is None:
+                    if not valid_weight or weight != 0.0:
+                        issue(
+                            "taxels", row, f"weight{slot}", "None weight must be zero"
+                        )
+                elif joint not in joints:
+                    issue("taxels", row, f"segment{slot}", f"Missing segment {joint}")
+                elif not valid_weight or weight <= 0.0:
+                    issue(
+                        "taxels",
+                        row,
+                        f"weight{slot}",
+                        "Selected segment weight must be greater than zero",
+                    )
+            if not any(
+                joint in joints for joint in taxel.segments if joint is not None
             ):
-                if i < len(values):
-                    values.pop(i)
-
-    def segments(self, order):
-        count = len(self.arrays[FIELDS[0]])
-        if (
-            len(self.joints) != count
-            or len(set(order)) != len(order)
-            or any(type(i) is not int or not 0 <= i < count for i in order)
-        ):
-            raise ValueError("Repair skeleton counts and supply distinct segment rows")
-        mapping = {old: new for new, old in enumerate(order)}
-        self.joints = [self.joints[i] for i in order]
-        self.arrays[FIELDS[0]] = [self.arrays[FIELDS[0]][i] for i in order]
-        self.editor["segment_ids"] = [self.editor["segment_ids"][i] for i in order]
-        for values in self.arrays[FIELDS[2]]:
-            if isinstance(values, list):
-                values[:] = [
-                    mapping.get(i, -1) if type(i) is int and 0 <= i < count else i
-                    for i in values
-                ]
-
-    def record(self, received, groups):
-        for group in groups:
-            for field in GROUPS[group]:
-                if field == "joints":
-                    self.joints = copy.deepcopy(received.joints)
-                else:
-                    self.arrays[field] = copy.deepcopy(received.arrays[field])
-        self.sync()
-
-    def check(self):
-        problems = []
-
-        def issue(field, message, row=None, severity="error"):
-            problems.append(
-                dict(severity=severity, field=field, row=row, message=message)
+                issue("taxels", row, "binding", "Taxel is not bound to a segment")
+            numeric = all(
+                type(value) in (int, float) and math.isfinite(value)
+                for value in taxel.weights
             )
-
-        if self.types != ("LBS", "HandSkeletonRef"):
-            issue("metadata", "Expected LBS and HandSkeletonRef discriminators")
-        j, n, seen = len(self.joints), len(self.arrays[FIELDS[1]]), set()
-        for field, expected in zip(FIELDS, (j, n, n, n)):
-            if len(self.arrays[field]) != expected:
-                issue(field, f"Expected {expected} rows")
-            for i, row in enumerate(self.arrays[field]):
-                error = row_error(field, row, len(self.arrays[FIELDS[0]]))
-                if (
-                    field == FIELDS[0]
-                    and i < j
-                    and self.joints[i] in ("WRIST", 1)
-                    and not error
-                ):
-                    if (
-                        any(abs(v) > 1e-6 for v in row[:6])
-                        or abs(abs(row[6]) - 1) > 1e-6
-                    ):
-                        error = "WRIST bind pose must be identity"
-                if error:
-                    issue(field, error, i)
-        for i, joint in enumerate(self.joints):
-            try:
-                number = joint_number(joint)
-                if number in seen:
-                    raise ValueError("Duplicate HandJoint identifier")
-                seen.add(number)
-            except ValueError as exc:
-                issue("joint_ids", str(exc), i)
-        order = self.editor["output_indices"]
-        if (
-            len(order) != n
-            or any(type(i) is not int for i in order)
-            or sorted(order) != list(range(n))
-        ):
-            issue("output_indices", "Taxel indices must cover 0..N-1 exactly")
-        if self.editor.get("approximate"):
-            issue(
-                FIELDS[1],
-                "Surface/manual placement requires physical calibration",
-                severity="warning",
-            )
-        return problems
+            if not numeric or abs(sum(taxel.weights) - 1.0) > 1e-5:
+                issue("taxels", row, "weights", "Weights must sum to one")
+        return issues
 
 
 class State:
-    def __init__(self, documents, model=None):
-        self.documents, self.model = documents, copy.deepcopy(model or {})
-        self.revision, self.saved, self.paths = 0, {}, {}
+    def __init__(self):
+        self.documents = {side: Document(side) for side in ("left", "right")}
+        self.saved: dict[str, Document | None] = {"left": None, "right": None}
+        self.paths: dict[str, str] = {}
+        self.side = "left"
 
-    def fingerprint(self, side):
-        from .storage import metadata
+    @property
+    def document(self) -> Document:
+        return self.documents[self.side]
 
-        return json.dumps(metadata(self.documents[side]), sort_keys=True)
-
-    def edit(self, action, *args, **kwargs):
-        before = copy.deepcopy((self.documents, self.model))
-        hashes = [self.fingerprint(s) for s in self.documents]
-        try:
-            result = action(*args, **kwargs)
-        except Exception:
-            self.documents, self.model = before
-            raise
-        if hashes != [self.fingerprint(s) for s in self.documents]:
-            self.revision += 1
-        return result
-
-    def dirty(self):
-        return any(self.saved.get(s) != self.fingerprint(s) for s in self.documents)
+    def replace(self, document: Document, path: str | None = None) -> None:
+        self.documents[document.side] = document
+        self.saved[document.side] = document.clone()
+        self.saved[document.side].q = {}
+        if path is not None:
+            self.paths[document.side] = path
