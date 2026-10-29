@@ -301,10 +301,20 @@ bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
     std::vector<XrHandTrackerEXT> next_right_trackers;
     next_left_trackers.reserve(next_xdev_ids.size());
     next_right_trackers.reserve(next_xdev_ids.size());
+    bool all_trackers_created = true;
     for (const XrXDevIdMNDX xdev_id : next_xdev_ids)
     {
-        try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
-        try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_RIGHT_EXT, next_right_trackers);
+        const bool left_created = try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
+        const bool right_created =
+            try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_RIGHT_EXT, next_right_trackers);
+        all_trackers_created = left_created && right_created && all_trackers_created;
+    }
+
+    if (!all_trackers_created)
+    {
+        destroy_hand_trackers(next_left_trackers);
+        destroy_hand_trackers(next_right_trackers);
+        return false;
     }
 
     left_xdev_hand_trackers_.swap(next_left_trackers);

@@ -65,6 +65,8 @@ SPDX-License-Identifier: Apache-2.0
 - Keep transport presence, physical-glove ingress/faults, and HUMAN/RAW/ROBOT
   output freshness/errors as separate health layers. One advancing dataset must
   not keep another dataset healthy.
+- Validate every emitted health state/reason pair through the Python status reducer; producer-only tests do not
+  protect the cross-language monitoring contract.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
   production SDK's landmark order. Do not read joint names from
   `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring
