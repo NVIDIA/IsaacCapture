@@ -483,9 +483,11 @@ to their separate NVIDIA license and CloudXR EULA acceptance.</p>
 </section>
 <section id="optional-camera-panels">
 <h2>Optional camera panels<a class="headerlink" href="#optional-camera-panels" title="Link to this heading">#</a></h2>
-<p>Camera picture-in-picture panels require the native camera helper. Follow the
-source-build guide to configure a build for your application’s Python version,
-then enable camera support and rebuild the wheel:</p>
+<p>Camera picture-in-picture panels require the native camera helper. The Ubuntu
+release workflow includes it in its wheels and checks the packaged artifact.
+Installing those wheels requires no CMake configuration.</p>
+<p>For a source build, follow the source-build guide for your application’s Python
+version, then enable camera support and build the wheel:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_OVXR_CAMERA_QUADS<span class="o">=</span>ON
 cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>python_package<span class="w"> </span>python_stubs<span class="w"> </span>python_wheel<span class="w"> </span>--parallel
 </pre></div>
@@ -514,10 +516,12 @@ requirement or the application’s optional dependencies to include the OVUI
 mirror. The mirror requires CUDA 13 Python bindings, a compatible NVIDIA driver
 as described above, and a desktop display associated with a CUDA device.
 The native camera helper is required only when camera panels are also enabled.</p>
-<p>Initialize the renderer before starting the mirror. The mirror uses the OpenGL
-backend. The application must select <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND=opengl</span></code> before the
-first OVUI initialization. Capture does not change the process-wide backend. The CUDA image-copy path does not
-support the Vulkan UI backend. This setting does not change headset rendering.</p>
+<p>Initialize the renderer before starting the mirror. OVUI uses its default Vulkan
+backend; no <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND</span></code> setting is required. Capture does not change the
+process-wide backend. GPU images stay on their producing CUDA device, and OVUI
+copies them into its Vulkan image. The mirror requires the active OVUI backend
+to be Vulkan. Remove conflicting <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND</span></code> settings before OVUI starts.
+This selection does not change headset rendering.</p>
 </section>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
@@ -526,7 +530,8 @@ and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConf
 application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.
 The binding also supplies optional <code class="docutils literal notranslate"><span class="pre">frame_consumers</span></code> after the application has
 resolved its render-product paths. Capture does not depend on an Isaac Lab task
-or scene configuration.</p>
+or scene configuration. <code class="docutils literal notranslate"><span class="pre">camera_paths</span></code> is required and must contain both stereo
+cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axis=&quot;Y&quot;</span></code> for a Y-up Stage; the default is <code class="docutils literal notranslate"><span class="pre">&quot;Z&quot;</span></code>.</p>
 <p><code class="docutils literal notranslate"><span class="pre">CameraPanelConsumer</span></code> and <code class="docutils literal notranslate"><span class="pre">OwnedDesktopMirror</span></code> implement the same
 <code class="docutils literal notranslate"><span class="pre">OvxrFrameConsumer</span></code> lifecycle. Configure panels with a tuple of
 <code class="docutils literal notranslate"><span class="pre">CameraPanelConfig</span></code> values, each pairing a render-product path with its placement
@@ -583,6 +588,26 @@ relying on the selected build.</p>
 <p>Applications using different provider versions need separate project
 environments and lock files. Each can install the same Isaac Capture wheel
 with its own OVXR/OVRTX/OVStage combination.</p>
+</section>
+<section id="session-lifetime">
+<h2>Session lifetime<a class="headerlink" href="#session-lifetime" title="Link to this heading">#</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code> as a context manager, or call <code class="docutils literal notranslate"><span class="pre">close()</span></code> in a <code class="docutils literal notranslate"><span class="pre">finally</span></code>
+block. Stop application steps and input borrowers before closing. Startup failure
+before handles are borrowed retires its resources on the owner thread; successful
+startup requires explicit closure. Do not rely on interpreter exit or object
+finalizers to stop native rendering.</p>
+<p>The session schedules work; its frame pump owns native frame processing and
+retirement, and its runtime owner stops only the CloudXR process it launched.
+Applications may supply <code class="docutils literal notranslate"><span class="pre">runtime_</span><wbr><span class="pre">launcher_</span><wbr><span class="pre">factory</span></code> for a compatible launcher;
+it receives the environment path and <code class="docutils literal notranslate"><span class="pre">accept_eula</span></code> and returns an object with
+<code class="docutils literal notranslate"><span class="pre">stop()</span></code>. Externally managed runtimes remain externally owned.</p>
+<p><code class="docutils literal notranslate"><span class="pre">OvxrScenePublication</span></code> and <code class="docutils literal notranslate"><span class="pre">OvxrResourceOwner</span></code> describe the two parts of the
+application contract. <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> combines them, so existing
+adapters can continue implementing the combined interface.</p>
+<p>If native context destruction fails without proving the context was consumed,
+closure reports the failure and retains its borrowed resources and runtime.
+Do not treat this as successful retirement or start a replacement session over
+those resources. There is no automatic retry of uncertain native destruction.</p>
 </section>
 </section>
 
@@ -641,6 +666,7 @@ with its own OVXR/OVRTX/OVStage combination.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-desktop-mirror">Optional desktop mirror</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-from-another-application">Use from another application</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#application-specific-ovxr-versions">Application-specific OVXR versions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#session-lifetime">Session lifetime</a></li>
 </ul>
   </nav></div>
 
