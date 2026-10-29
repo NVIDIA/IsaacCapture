@@ -48,6 +48,9 @@ PYBIND11_MODULE(_camera_receiver_codec, m)
                 {
                     throw std::runtime_error("packet must be a uint8 buffer");
                 }
+                // Destination capacity must match the decoder, not caller-supplied dimensions.
+                if (width != self.width() || height != self.height())
+                    throw std::runtime_error("width/height do not match the configured decoder size");
                 const CudaBuf buf = extract_cuda_buffer(rgba_out, width, height);
                 bool produced = false;
                 {
@@ -73,6 +76,9 @@ PYBIND11_MODULE(_camera_receiver_codec, m)
                 {
                     throw std::runtime_error("packet must be a uint8 buffer");
                 }
+                // Destination capacity must match the decoder, not caller-supplied dimensions.
+                if (width != self.width() || height != self.height())
+                    throw std::runtime_error("width/height do not match the configured decoder size");
                 const CudaBuf buf = extract_nv12_buffer(nv12_out, width, height);
                 bool produced = false;
                 {

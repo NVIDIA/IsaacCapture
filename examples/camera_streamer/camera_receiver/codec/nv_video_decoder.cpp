@@ -338,6 +338,16 @@ NvVideoDecoder::NvVideoDecoder(const DecoderConfig& cfg) : impl_(std::make_uniqu
 
 NvVideoDecoder::~NvVideoDecoder() = default;
 
+uint32_t NvVideoDecoder::width() const
+{
+    return impl_->cfg.width;
+}
+
+uint32_t NvVideoDecoder::height() const
+{
+    return impl_->cfg.height;
+}
+
 bool NvVideoDecoder::decode(const uint8_t* packet,
                             std::size_t packet_size,
                             uintptr_t rgba_out_device_ptr,

@@ -42,6 +42,9 @@ public:
     NvVideoDecoder(NvVideoDecoder&&) = delete;
     NvVideoDecoder& operator=(NvVideoDecoder&&) = delete;
 
+    uint32_t width() const;
+    uint32_t height() const;
+
     // Feed one Annex-B access unit. Returns true iff a frame was
     // produced and converted into the caller's RGBA8 buffer.
     // ``rgba_out_device_ptr`` points to the top-left of a HxWx4 GPU
