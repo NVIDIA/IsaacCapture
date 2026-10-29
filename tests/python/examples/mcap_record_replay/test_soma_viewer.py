@@ -27,6 +27,7 @@ from isaaccapture_examples.mcap_record_replay import (
     common,
     live_full_body,
     record_full_body,
+    record_hand,
     replay_full_body,
     soma_body_common,
 )
@@ -57,6 +58,7 @@ def test_soma_renderer_keeps_native_topology_and_hides_unavailable_joints():
     assert len(soma_body_common.BONES) == 76
     group = body_group(np.ones(77))
     assert viz.update(group) == 77
+    ground.follow.assert_called_once()
     assert viz.points.points.shape == (77, 3)
     assert viz.bones.points.shape == (76, 2, 3)
     np.testing.assert_array_equal(
@@ -115,6 +117,41 @@ def test_cli_help_does_not_load_models_or_start_sessions(module, monkeypatch, ca
     assert "--body-schema" in help_text
     assert "--soma-body-representation" in help_text
     assert "--soma-body-collection-id" in help_text
+
+
+@pytest.mark.parametrize("module", [live_full_body, record_full_body, replay_full_body])
+def test_body_cli_rejects_controller_collection_collision(
+    module, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "build_body_pipeline",
+        MagicMock(side_effect=AssertionError("invalid arguments reached the pipeline")),
+    )
+    if module is record_full_body:
+        monkeypatch.setattr(
+            module,
+            "record_trackers",
+            MagicMock(
+                side_effect=AssertionError("invalid arguments reached recording")
+            ),
+        )
+    with pytest.raises(SystemExit) as caught:
+        module.main(
+            [
+                "example",
+                "--body-schema",
+                "soma",
+                "--soma-body-collection-id",
+                "controllers",
+                "--controllers",
+                "--soma-body-representation",
+                "joint-poses",
+            ]
+        )
+    assert caught.value.code == 2
+    assert "reserved" in capsys.readouterr().err
 
 
 def test_live_preview_has_no_mcap_config(monkeypatch):
@@ -193,6 +230,35 @@ def test_recorder_registers_only_raw_tracker_and_closes_on_interrupt(
     launcher.return_value.__exit__.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "module,schema_flag",
+    [(record_full_body, "--body-schema"), (record_hand, "--hand-schema")],
+)
+@pytest.mark.parametrize("stage", ["launcher", "openxr", "deviceio"])
+def test_recorder_startup_interrupt_does_not_report_success(
+    module, schema_flag, stage, monkeypatch, tmp_path, capsys
+):
+    launcher = MagicMock()
+    oxr_factory = MagicMock()
+    deviceio = MagicMock()
+    monkeypatch.setattr(common.CloudXRLauncher, "launch_context", launcher)
+    monkeypatch.setattr(common, "OpenXRSession", oxr_factory)
+    monkeypatch.setattr(common, "DeviceIOSession", deviceio)
+    context = {
+        "launcher": launcher.return_value,
+        "openxr": oxr_factory.return_value,
+        "deviceio": deviceio.run.return_value,
+    }[stage]
+    context.__enter__.side_effect = KeyboardInterrupt
+    path = tmp_path / "cancelled.mcap"
+
+    with pytest.raises(KeyboardInterrupt):
+        module.main(["record", "5", str(path), schema_flag, "soma"])
+
+    assert "[record] done" not in capsys.readouterr().out
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("duration", ["0", "-1", "nan", "inf"])
 def test_recorder_rejects_invalid_duration(duration):
     with pytest.raises(SystemExit) as caught:
@@ -206,6 +272,10 @@ def test_recorder_rejects_invalid_duration(duration):
         ([], {"full_body", "controllers"}),
         (["--no-controllers"], {"full_body"}),
         (["--body-schema", "soma"], {"soma_body_demo"}),
+        (
+            ["--body-schema", "soma", "--soma-body-collection-id", "controllers"],
+            {"controllers"},
+        ),
         (["--body-schema", "soma", "--controllers"], {"soma_body_demo", "controllers"}),
     ],
 )
