@@ -199,7 +199,8 @@ trackers" in the :code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
 The test script :code-file:`tests/python/xr_runtime/test_orbbec_ego_camera.py` runs the
 live flow with ``PluginManager`` and ``DeviceIOSession`` directly and checks that
 every EGO collection keeps arriving. It loads the plugin from ``install/plugins``,
-so it needs a full build and install with the EGO plugin enabled. With
+so it needs a full build and install with the EGO plugin enabled; for another
+install prefix, pass ``--plugin-root <prefix>/plugins``. With
 ``isaaccapture`` installed in the active environment and the CloudXR environment
 loaded, run from the repository root:
 
@@ -291,7 +292,9 @@ Troubleshooting
 - **Partial MCAP:** the recording did not finish successfully. Preserve it and
   the log for diagnosis before starting a new recording.
 - **Live plugin stalls at** ``waiting for a system...``: the runtime has no
-  OpenXR system yet; see :ref:`cloudxr-form-factor-unavailable`.
+  OpenXR system yet; see :ref:`cloudxr-form-factor-unavailable`. Ctrl-C does
+  not interrupt this wait; ``PluginManager`` stops the plugin after its
+  shutdown timeout.
 - **Publisher startup failure:** check that the CloudXR environment is loaded
   and the plugin search path is correct.
 - **Local recording logs an** ``NV_CXR_RUNTIME_DIR`` **error:** under

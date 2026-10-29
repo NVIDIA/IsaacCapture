@@ -653,7 +653,7 @@ overwrite outputs and return nonzero for unverified or incomplete results.
 | Nonzero exit or `.partial` remains | Preserve capture and logs; check queue loss, output failures, reconnect timeout, and control restoration. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
-| Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). |
+| Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |
 | TeleopSession cannot publish EGO data | Check the CloudXR environment, installed Python bindings, plugin search path, and collection prefix. |
 | Local recording logs an `NV_CXR_RUNTIME_DIR` error | Expected under PluginManager without the CloudXR environment: device status publication is skipped and recording continues. |
 | Embedded session has no final file | Check clean context exit, matching spool/fragment paths, fresh output paths, and `orbbec_ego_mcap_merge` beside the plugin. |
