@@ -301,16 +301,18 @@ bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
     std::vector<XrHandTrackerEXT> next_right_trackers;
     next_left_trackers.reserve(next_xdev_ids.size());
     next_right_trackers.reserve(next_xdev_ids.size());
-    bool all_trackers_created = true;
+    bool retry_needed = false;
     for (const XrXDevIdMNDX xdev_id : next_xdev_ids)
     {
-        const bool left_created = try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
-        const bool right_created =
+        const XDevTrackerCreation left_result =
+            try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
+        const XDevTrackerCreation right_result =
             try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_RIGHT_EXT, next_right_trackers);
-        all_trackers_created = left_created && right_created && all_trackers_created;
+        retry_needed =
+            left_result == XDevTrackerCreation::RETRY || right_result == XDevTrackerCreation::RETRY || retry_needed;
     }
 
-    if (!all_trackers_created)
+    if (retry_needed)
     {
         destroy_hand_trackers(next_left_trackers);
         destroy_hand_trackers(next_right_trackers);
@@ -327,14 +329,12 @@ bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
     return true;
 }
 
-bool LiveHandTrackerImpl::try_create_xdev_hand_tracker(XrSession session,
-                                                       XrXDevIdMNDX xdev_id,
-                                                       XrHandEXT hand,
-                                                       std::vector<XrHandTrackerEXT>& trackers)
+LiveHandTrackerImpl::XDevTrackerCreation LiveHandTrackerImpl::try_create_xdev_hand_tracker(
+    XrSession session, XrXDevIdMNDX xdev_id, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers)
 {
     if (xdev_list_ == XR_NULL_HANDLE || xdev_id == 0)
     {
-        return false;
+        return XDevTrackerCreation::RETRY;
     }
 
     XrCreateHandTrackerXDevMNDX xdev_create_info{ XR_TYPE_CREATE_HAND_TRACKER_XDEV_MNDX };
@@ -351,13 +351,17 @@ bool LiveHandTrackerImpl::try_create_xdev_hand_tracker(XrSession session,
 
     XrHandTrackerEXT tracker = XR_NULL_HANDLE;
     const XrResult result = pfn_create_hand_tracker_(session, &create_info, &tracker);
+    if (result == XR_ERROR_FEATURE_UNSUPPORTED)
+    {
+        return XDevTrackerCreation::UNSUPPORTED;
+    }
     if (XR_FAILED(result))
     {
-        return false;
+        return XDevTrackerCreation::RETRY;
     }
 
     trackers.push_back(tracker);
-    return true;
+    return XDevTrackerCreation::CREATED;
 }
 
 bool LiveHandTrackerImpl::try_create_default_hand_tracker(XrSession session,
