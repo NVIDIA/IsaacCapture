@@ -4,7 +4,7 @@
 Retargeting Interface
 =====================
 
-Isaac Teleop uses a graph-based retargeting pipeline. Data flows from **source nodes** through
+Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from **source nodes** through
 **retargeters** and is combined into a single action tensor.
 
 Source Nodes
@@ -17,6 +17,11 @@ Source Nodes
 * ``JointStateSource`` -- provides name-keyed joint positions from a generic joint-space device
   (leader arm, exoskeleton, ...). See :doc:`joint_space`.
 * ``FullBodySource`` -- provides full-body pose (e.g. Pico tracking).
+* ``SomaBodySource`` -- polls either a typed ``SomaBodyJointRotations`` or
+  ``SomaBodyJointPoses`` payload from a configured publisher collection. It
+  runs upstream FK for rotations or directly maps evaluated poses, then emits
+  an optional ``SomaBodyInput`` containing the 77 global SOMA joint poses.
+  See :doc:`/device/trackers/index` and :code-file:`examples/deviceio_live_view/README.md`.
 
 Available Retargeters
 ---------------------
@@ -54,9 +59,12 @@ Available Retargeters
 .. dropdown:: SO101ClutchRetargeter / SO101GripperRetargeter
 
    Retargeters for the SO-101 5-DOF arm under full-pose SE3 IK. ``SO101ClutchRetargeter``
-   outputs a 7-D ``ee_pose`` like ``Se3AbsRetargeter`` but clutch-rebases controller position
-   around an origin captured on engage (no teleport) and composes a fixed orientation
-   calibration offset onto the grip orientation so the gripper pose follows the controller pose.
+   outputs a 7-D ``ee_pose`` like ``Se3AbsRetargeter`` but clutch-rebases the **full pose** around
+   an origin captured on engage (no teleport): it re-latches both the home position and the home
+   orientation on every engage and composes the orientation delta on the **left** (base frame),
+   with no fixed calibration offset. It engages on ``RUNNING`` **and**
+   ``squeeze > squeeze_threshold``, re-seeds its held pose from the configured home on ``reset``,
+   and can latch its home position from the arm's measured EE pose.
    ``SO101GripperRetargeter`` maps the trigger to a proportional jaw closedness in ``[0, 1]``.
    See :doc:`so101` for the full setup.
 
@@ -96,7 +104,7 @@ Available Retargeters
 
    .. code-block:: python
 
-      from isaacteleop.retargeters import (
+      from isaaccapture.retargeters import (
           DexHandRetargeter,
           DexHandRetargeterConfig,
       )
@@ -148,9 +156,35 @@ Available Retargeters
    **DexBiManualRetargeter:** Bimanual wrapper around two ``DexHandRetargeter`` instances. Create
    ``DexHandRetargeterConfig`` for left and right hands, then instantiate with
    ``left_config``, ``right_config``, and ``target_joint_names`` (combined left + right joint
-   names). See the `retargeters README
-   <https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md>`_
-   for a full code example.
+   names):
+
+   .. code-block:: python
+
+      from isaaccapture.retargeters import (
+          DexBiManualRetargeter,
+          DexHandRetargeterConfig,
+      )
+
+      left_config = DexHandRetargeterConfig(
+          hand_joint_names=left_hand_joints,
+          hand_retargeting_config="/path/to/left_hand_config.yml",
+          hand_urdf="/path/to/left_hand.urdf",
+          hand_side="left",
+      )
+
+      right_config = DexHandRetargeterConfig(
+          hand_joint_names=right_hand_joints,
+          hand_retargeting_config="/path/to/right_hand_config.yml",
+          hand_urdf="/path/to/right_hand.urdf",
+          hand_side="right",
+      )
+
+      bimanual_retargeter = DexBiManualRetargeter(
+          left_config=left_config,
+          right_config=right_config,
+          target_joint_names=left_hand_joints + right_hand_joints,
+          name="dex_bimanual",
+      )
 
    **Coordinate frame:** The ``handtracking_to_baselink_frame_transform`` parameter is a 3x3
    rotation matrix flattened to 9 elements. Applied as
@@ -170,7 +204,7 @@ Available Retargeters
 
    .. code-block:: python
 
-      from isaacteleop.retargeters import (
+      from isaaccapture.retargeters import (
           TriHandMotionControllerRetargeter,
           TriHandMotionControllerConfig,
       )
@@ -214,8 +248,7 @@ Available Retargeters
       For a complete hand retargeting example (e.g. ``HandsSource`` + ``DexHandRetargeter`` or
       ``TriHandMotionControllerRetargeter``, connect and compute), see
       ``g1_trihand_retargeting_example.py`` and ``dex_bimanual_example.py`` in the
-      ``examples/teleop/python`` directory, or the `retargeters README
-      <https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md>`_.
+      :code-dir:`examples/teleop/python/isaaccapture_examples/teleop` directory.
 
 .. dropdown:: LocomotionRootCmdRetargeter
 
@@ -252,19 +285,22 @@ Build a Retargeting Pipeline
 
 A pipeline builder is a callable that constructs the retargeting graph and returns an
 ``OutputCombiner`` with a single ``"action"`` key. Here is a complete example for a Franka
-manipulator (from ``stack_ik_abs_env_cfg.py``):
+manipulator, adapted from ``_build_franka_stack_pipeline()`` in Isaac Lab's
+`stack_ik_abs_env_cfg.py <https://github.com/isaac-sim/IsaacLab/blob/develop/source/isaaclab_tasks/isaaclab_tasks/contrib/stack/config/franka/stack_ik_abs_env_cfg.py>`__.
+``Se3AbsRetargeter`` needs ``scipy``, so install
+the ``retargeters-lite`` extra (or the full ``retargeters`` extra) to run it:
 
 .. code-block:: python
    :class: code-100col
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner, ValueInput
+   from isaaccapture.retargeters import (
        GripperRetargeter, GripperRetargeterConfig,
        Se3AbsRetargeter, Se3RetargeterConfig,
        TensorReorderer,
    )
-   from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
+   from isaaccapture.retargeting_engine.tensor_types import TransformMatrix
 
    def build_franka_stack_pipeline():
 
@@ -325,17 +361,17 @@ Add a New Retargeter
 --------------------
 
 If the built-in retargeters do not cover your use case, you can implement a custom one in the
-`Isaac Teleop repository <https://github.com/NVIDIA/IsaacTeleop>`_:
+`Isaac Capture repository <https://github.com/NVIDIA/IsaacCapture>`_:
 
 #. Inherit from ``BaseRetargeter`` and implement ``input_spec()``, ``output_spec()``, and
-   ``compute()``.
+   ``_compute_fn()``. (``compute()`` is concrete on the base class — it fills optional inputs
+   and syncs parameters, then calls your ``_compute_fn()``.)
 #. Optionally add a ``ParameterState`` for parameters that should be live-tunable via the
    retargeter tuning UI.
 #. Connect to existing source nodes (``HandsSource``, ``ControllersSource``) or create a new
    ``IDeviceIOSource`` subclass for custom input devices.
 
-See the `retargeters README <https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md>`_
-and :doc:`Contributing Guide <../../getting_started/contributing>` for details.
+See the :doc:`Contributing Guide <../../development/contributing>` for details.
 
 .. toctree::
    :maxdepth: 1

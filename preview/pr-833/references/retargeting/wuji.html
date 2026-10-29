@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Retargeter: Wuji Glove to Wuji Hand &#8212; Isaac Teleop Documentation</title>
+    <title>Retargeter: Wuji Glove to Wuji Hand &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -35,7 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=e662b523" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -45,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -58,13 +59,13 @@
 
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Camera Streaming" href="../camera_streaming.html" />
+    <link rel="next" title="Device provider monitoring" href="../device_provider_monitoring.html" />
     <link rel="prev" title="Retargeter: Joint-Space Device" href="joint_space.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -141,11 +142,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -164,6 +165,19 @@
 </button>
         </div>
       
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
       
         <div class="navbar-item">
 
@@ -229,11 +243,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -245,6 +259,19 @@
     
     
       <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
         
           <div class="navbar-item">
 
@@ -266,10 +293,6 @@
   </div>
   
     <div class="sidebar-primary-items__start sidebar-primary__section">
-        <div class="sidebar-primary-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-</div>
         <div class="sidebar-primary-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
         <li class="nav-item">
@@ -281,7 +304,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -292,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -307,22 +330,6 @@
         </li>
 </ul></div>
         <div class="sidebar-primary-item">
-<form class="bd-search d-flex align-items-center"
-      action="../../search.html"
-      method="get">
-  <i class="fa-solid fa-magnifying-glass"></i>
-  <input type="search"
-         class="form-control"
-         name="q"
-         placeholder="Search..."
-         aria-label="Search..."
-         autocomplete="off"
-         autocorrect="off"
-         autocapitalize="off"
-         spellcheck="false"/>
-  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-        <div class="sidebar-primary-item">
 
 
 
@@ -331,37 +338,54 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Retargeting Interface</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="sharpa.html">Retargeter: Manus to Sharpa</a></li>
 <li class="toctree-l2"><a class="reference internal" href="so101.html">Retargeters: SO-101 (5-DOF arm)</a></li>
@@ -369,13 +393,12 @@
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">Retargeter: Wuji Glove to Wuji Hand</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">Dedicated CloudXR Runtime</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../rig.html">Rig Launcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../haptic_feedback.html">Haptic Feedback</a></li>
 </ul>
 </div>
 </nav></div>
@@ -457,7 +480,7 @@ depend on the Wuji glove plugin.</p>
 (positions only; joint orientations are not used).</p></td>
 </tr>
 <tr class="row-even"><td><p>Retargeting</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">wuji_sdk.retargeting.RetargetSession</span></code> maps the hand pose to the
+<td><p><code class="docutils literal notranslate"><span class="pre">wuji_</span><wbr><span class="pre">sdk.</span><wbr><span class="pre">retargeting.</span><wbr><span class="pre">RetargetSession</span></code> maps the hand pose to the
 selected Wuji hand model.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Output</p></td>
@@ -475,22 +498,22 @@ the last valid command instead of forwarding the invalid output.</p></td>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
 <p>Install the Wuji retargeting extra:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;isaacteleop[wuji]&#39;</span>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[wuji]'</span>
 </pre></div>
 </div>
 </section>
 <section id="use-it-from-python">
 <h2>Use it from Python<a class="headerlink" href="#use-it-from-python" title="Link to this heading">#</a></h2>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">WujiHandRetargeter</span><span class="p">,</span>
     <span class="n">WujiHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">WujiHandRetargeterConfig</span><span class="p">(</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;wuji_hand_2&quot;</span><span class="p">,</span>
-    <span class="n">hand_side</span><span class="o">=</span><span class="s2">&quot;right&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">"wuji_hand_2"</span><span class="p">,</span>
+    <span class="n">hand_side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">retargeter</span> <span class="o">=</span> <span class="n">WujiHandRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;wuji_right&quot;</span><span class="p">)</span>
+<span class="n">retargeter</span> <span class="o">=</span> <span class="n">WujiHandRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"wuji_right"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">model</span></code> accepts <code class="docutils literal notranslate"><span class="pre">&quot;wuji_hand&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;wuji_hand_2&quot;</span></code>. <code class="docutils literal notranslate"><span class="pre">hand_side</span></code> accepts
@@ -500,16 +523,18 @@ the last valid command instead of forwarding the invalid output.</p></td>
 <h2>Run the example<a class="headerlink" href="#run-the-example" title="Link to this heading">#</a></h2>
 <p>The example supports a device-free synthetic pose, recorded keypoints, and a
 real Wuji hand:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Device-free<span class="w"> </span>smoke<span class="w"> </span><span class="nb">test</span>
-<span class="gp">$ </span>python<span class="w"> </span>examples/retargeting/python/wuji_hand_retargeter_demo.py<span class="w"> </span><span class="se">\</span>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/retargeting
+
+<span class="gp"># </span>Device-free<span class="w"> </span>smoke<span class="w"> </span><span class="nb">test</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>synthetic<span class="w"> </span>--model<span class="w"> </span>wuji_hand_2<span class="w"> </span>--hand<span class="w"> </span>right
 
 <span class="gp"># </span>Replay<span class="w"> </span>MediaPipe-format<span class="w"> </span>keypoints
-<span class="gp">$ </span>python<span class="w"> </span>examples/retargeting/python/wuji_hand_retargeter_demo.py<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>replay<span class="w"> </span>--replay<span class="w"> </span>my_take.pkl<span class="w"> </span>--model<span class="w"> </span>wuji_hand_2<span class="w"> </span>--hand<span class="w"> </span>right
 
 <span class="gp"># </span>Drive<span class="w"> </span>real<span class="w"> </span>hardware<span class="w"> </span>and<span class="w"> </span><span class="nb">let</span><span class="w"> </span>TeleopSession<span class="w"> </span>launch<span class="w"> </span>the<span class="w"> </span>Wuji<span class="w"> </span>glove<span class="w"> </span>plugin
-<span class="gp">$ </span>python<span class="w"> </span>examples/retargeting/python/wuji_hand_retargeter_demo.py<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>drive<span class="w"> </span>--hand<span class="w"> </span>right<span class="w"> </span>--plugin-path<span class="w"> </span>build/src/plugins
 </pre></div>
 </div>
@@ -526,7 +551,7 @@ differs from <code class="docutils literal notranslate"><span class="pre">--hand
 first — the glove plugin’s <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> only builds the plugin target:</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cmake<span class="w"> </span>--build<span class="w"> </span>build
 <span class="gp">$ </span>ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>-R<span class="w"> </span><span class="s1">&#39;retargeting_test_wuji_(hand_retargeter|mapping_tables)&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-R<span class="w"> </span><span class="s1">'retargeting_test_wuji_(hand_retargeter|mapping_tables)'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--output-on-failure
 </pre></div>
 </div>
@@ -536,7 +561,7 @@ keep the Wuji SDK out of the test environment; the retargeter test then skips,
 while the mapping-table cross-check still runs because it needs no SDK.</p>
 <div class="admonition seealso">
 <p class="admonition-title">See also</p>
-<p><a class="reference internal" href="../../device/wuji_glove.html"><span class="doc">Wuji Glove</span></a> – install and run the Wuji glove input plugin.</p>
+<p><a class="reference internal" href="../../device/hand_tracking/wuji_glove.html"><span class="doc">Wuji Glove</span></a> – install and run the Wuji glove input plugin.</p>
 <p><a class="reference internal" href="index.html#isaac-teleop-pipeline-builder"><span class="std std-ref">Build a Retargeting Pipeline</span></a> – connect the hand source and retargeter
 into a complete pipeline.</p>
 </div>
@@ -563,11 +588,11 @@ into a complete pipeline.</p>
       </div>
     </a>
     <a class="right-next"
-       href="../camera_streaming.html"
+       href="../device_provider_monitoring.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Camera Streaming</p>
+        <p class="prev-next-title">Device provider monitoring</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -679,7 +704,7 @@ into a complete pipeline.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on July 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Out-of-Band Teleop Control &#8212; Isaac Teleop Documentation</title>
+    <title>Out-of-Band Teleop Control &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -35,7 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=e662b523" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -45,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -58,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Egocentric Hand Reconstruction" href="egocentric_hand_reconstruction.html" />
-    <link rel="prev" title="Rig Launcher" href="rig.html" />
+    <link rel="next" title="Haptic Feedback" href="haptic_feedback.html" />
+    <link rel="prev" title="CloudXR Service" href="cloudxr.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -141,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -164,6 +165,19 @@
 </button>
         </div>
       
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
       
         <div class="navbar-item">
 
@@ -229,11 +243,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -245,6 +259,19 @@
     
     
       <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
         
           <div class="navbar-item">
 
@@ -266,10 +293,6 @@
   </div>
   
     <div class="sidebar-primary-items__start sidebar-primary__section">
-        <div class="sidebar-primary-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-</div>
         <div class="sidebar-primary-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
         <li class="nav-item">
@@ -281,7 +304,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -292,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -307,22 +330,6 @@
         </li>
 </ul></div>
         <div class="sidebar-primary-item">
-<form class="bd-search d-flex align-items-center"
-      action="../search.html"
-      method="get">
-  <i class="fa-solid fa-magnifying-glass"></i>
-  <input type="search"
-         class="form-control"
-         name="q"
-         placeholder="Search..."
-         aria-label="Search..."
-         autocomplete="off"
-         autocorrect="off"
-         autocapitalize="off"
-         spellcheck="false"/>
-  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-        <div class="sidebar-primary-item">
 
 
 
@@ -331,45 +338,61 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="cloudxr.html">Dedicated CloudXR Runtime</a></li>
-<li class="toctree-l1"><a class="reference internal" href="rig.html">Rig Launcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Out-of-Band Teleop Control</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
 </ul>
 </div>
 </nav></div>
@@ -439,22 +462,36 @@ web client page and the <code class="docutils literal notranslate"><span class="
 baseline works, add <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> to automate the full flow.</p>
 <p>Launch the CloudXR runtime with the <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> flag (add <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>
 on first run):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
 </pre></div>
 </div>
 <p>This will:</p>
 <ol class="arabic simple">
-<li><p>Verify a USB-connected headset is available via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">devices</span></code></p></li>
-<li><p>Start the WSS proxy with the OOB control hub</p></li>
+<li><p>Check host prerequisites and start the WSS proxy with the OOB control hub</p></li>
+<li><p>Wait for one ready headset, even if none is attached at startup</p></li>
 <li><p>Open the teleop page on the headset via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">shell</span> <span class="pre">am</span> <span class="pre">start</span></code></p></li>
 <li><p>Accept the self-signed certificate and click CONNECT automatically
 via Chrome DevTools Protocol (CDP)</p></li>
 </ol>
+<p>Ordinary headset absence, an <code class="docutils literal notranslate"><span class="pre">offline</span></code> or <code class="docutils literal notranslate"><span class="pre">unauthorized</span></code> transport, and
+browser recovery failures leave the host running with a degraded OOB status.
+The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
+observing every 5 seconds. A meaningful device, network, rule, or browser
+change opens a fresh 60-second recovery episode. Override the positive,
+finite values with <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RECOVERY_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code> and
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RETRY_</span><wbr><span class="pre">INTERVAL_</span><wbr><span class="pre">SEC</span></code>; invalid values fail host preflight.</p>
+<p>At INFO, OOB progress reports headset waiting and connection, browser readiness,
+and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
+USB-health blocks remain visible with operator action. An unchanged wait for
+an absent headset is announced once; routine setup steps are DEBUG messages.
+Progress uses the <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr.oob_teleop_env.oob-progress</span></code> logger.
+It remains visible through filters selecting its parent logger, while embedded
+applications can also select progress alone.</p>
 <p>To start the hub <strong>without</strong> any <code class="docutils literal notranslate"><span class="pre">adb</span></code> interaction — useful in containers,
 CI, or wireless-only environments — set <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_HUB_ONLY=1</span></code> and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
 and is <strong>not compatible with</strong> <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TELEOP_OOB_HUB_ONLY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TELEOP_OOB_HUB_ONLY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
 </pre></div>
 </div>
 <p>You should see output confirming the hub is running:</p>
@@ -476,10 +513,14 @@ page access and CloudXR streaming)</p></li>
 <p><strong>Step 2 — (Manual fallback) Open the web client on the headset</strong></p>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
-parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
+parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code> — plus the hub’s
+<code class="docutils literal notranslate"><span class="pre">controlToken</span></code>:</p>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;controlToken=&lt;CONTROL_TOKEN&gt;</pre>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;HOST_IP&gt;</span></code> with the streaming host’s LAN IP. The <code class="docutils literal notranslate"><span class="pre">port</span></code> must
-match the proxy port (default 48322).</p>
+match the proxy port (default 48322). <code class="docutils literal notranslate"><span class="pre">&lt;CONTROL_TOKEN&gt;</span></code> is the value of
+<code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code>, or the generated token printed in the startup banner; the
+banner’s bookmark shows it as <code class="docutils literal notranslate"><span class="pre">&lt;REDACTED&gt;</span></code>, so substitute it before pasting.
+Without the token the hub rejects the headset and the client does not retry.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>All three parameters are required. If <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> or <code class="docutils literal notranslate"><span class="pre">port</span></code> is missing,
@@ -489,24 +530,27 @@ streaming but will not register with the hub or report metrics.</p>
 <p><strong>Step 3 — Verify the headset registered with the hub</strong></p>
 <p>From a PC on the same network, query the hub state API (<code class="docutils literal notranslate"><span class="pre">-k</span></code> skips the
 self-signed certificate check):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>https://&lt;HOST_IP&gt;:48322/api/oob/v1/state
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span>https://&lt;HOST_IP&gt;:48322/api/oob/v1/state
 </pre></div>
 </div>
 <p>You should see the headset listed under <code class="docutils literal notranslate"><span class="pre">&quot;headsets&quot;</span></code> with
 <code class="docutils literal notranslate"><span class="pre">&quot;connected&quot;:</span> <span class="pre">true</span></code>:</p>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;updatedAt&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1776112022900</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;configVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;serverIP&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;HOST_IP&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;port&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;headsets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"updatedAt"</span><span class="p">:</span><span class="w"> </span><span class="mi">1776112022900</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"configVersion"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"serverIP"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;HOST_IP&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"headsets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;clientId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;193f3758-281e-4292-8c36-6541b58963ef&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;connected&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;deviceLabel&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;registeredAt&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1776112022805</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metricsByCadence&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">      </span><span class="nt">"clientId"</span><span class="p">:</span><span class="w"> </span><span class="s2">"193f3758-281e-4292-8c36-6541b58963ef"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"connected"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"deviceLabel"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"registeredAt"</span><span class="p">:</span><span class="w"> </span><span class="mi">1776112022805</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"lastSeenAt"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"lastMetricsAt"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metricsByCadence"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
 <span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"lifecycle"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"health"</span><span class="p">:</span><span class="w"> </span><span class="s2">"browser_ready"</span><span class="p">,</span><span class="w"> </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ACTIVE"</span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
 </div>
@@ -516,7 +560,7 @@ network.</p>
 <p><strong>Step 4 — (Optional) Push config to the headset</strong></p>
 <p>Before or after the headset connects to the CloudXR stream, you can push
 configuration overrides via the HTTP config API:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;https://&lt;HOST_IP&gt;:48322/api/oob/v1/config?serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;codec=av1&quot;</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span><span class="s2">"https://&lt;HOST_IP&gt;:48322/api/oob/v1/config?serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;codec=av1"</span>
 </pre></div>
 </div>
 <p>See <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/config</span></code> below for all supported keys.</p>
@@ -526,7 +570,7 @@ without it, press <strong>CONNECT</strong> on the headset manually.  Once stream
 the headset reports metrics to the hub every 500 ms.  Poll the state endpoint
 from a PC to collect them:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Poll every 2 seconds (adjust to taste)</span>
-watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="s1">&#39;curl -sk https://&lt;HOST_IP&gt;:48322/api/oob/v1/state | python3 -m json.tool&#39;</span>
+watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="s1">'curl -sk -H "X-Control-Token: &lt;CONTROL_TOKEN&gt;" https://&lt;HOST_IP&gt;:48322/api/oob/v1/state | python3 -m json.tool'</span>
 </pre></div>
 </div>
 <p>The <code class="docutils literal notranslate"><span class="pre">metricsByCadence</span></code> field on each headset entry will now contain live streaming metrics.</p>
@@ -535,12 +579,12 @@ watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><
 <h2>ADB automation<a class="headerlink" href="#adb-automation" title="Link to this heading">#</a></h2>
 <p>The <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> flag automates headset setup via USB <code class="docutils literal notranslate"><span class="pre">adb</span></code>:</p>
 <ol class="arabic simple">
-<li><p><strong>adb devices</strong> verifies exactly one device is connected</p></li>
+<li><p><strong>adb devices</strong> selects one ready headset and pins its serial for the service lifetime</p></li>
 <li><p><strong>am start</strong> opens the teleop bookmark URL in the headset browser with
 the correct <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code> parameters</p></li>
 <li><p><strong>CDP connect</strong> forwards the browser’s DevTools socket over <code class="docutils literal notranslate"><span class="pre">adb</span></code>,
 accepts the self-signed certificate interstitial, and clicks CONNECT
-via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.dispatchMouseEvent</span></code>)</p></li>
+via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.</span><wbr><span class="pre">dispatchMouseEvent</span></code>)</p></li>
 </ol>
 <p>Streaming and web page access use WiFi, not USB tethering.  The headset
 reaches the streaming host directly over WiFi.  <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">forward</span></code> is used only
@@ -551,9 +595,11 @@ temporarily during CDP automation to reach the browser’s DevTools socket.</p>
 <li><p>The headset must be connected via USB with USB debugging enabled</p></li>
 <li><p>The headset must be on the same WiFi network as the streaming host</p></li>
 </ul>
-<p>If any step fails, the hub still starts.  Fall back to
+<p>If any device step fails, the hub keeps serving and retries. Fall back to
 <code class="docutils literal notranslate"><span class="pre">chrome://inspect/#devices</span></code> from the PC or tap CONNECT on the headset
-directly.</p>
+directly.  To re-open the page later without restarting the launcher, pass the
+bookmark URL above to <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.webclient</span></code> (see
+<a class="reference internal" href="cloudxr.html"><span class="doc">CloudXR Service</span></a>).</p>
 </section>
 <section id="architecture">
 <h2>Architecture<a class="headerlink" href="#architecture" title="Link to this heading">#</a></h2>
@@ -576,7 +622,7 @@ directly.</p>
 periodically (default every 500 ms), receives config pushes.</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Streaming host</strong></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr</span> <span class="pre">--setup-oob</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">run</span> <span class="pre">--setup-oob</span></code></p></td>
 <td><p>Runs CloudXR runtime + WSS proxy + OOB hub on a single TLS port.
 Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 </tr>
@@ -595,22 +641,22 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <section id="registration-first-message">
 <h3>Registration (first message)<a class="headerlink" href="#registration-first-message" title="Link to this heading">#</a></h3>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;register&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;headset&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;deviceLabel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Quest 3&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;optional CONTROL_TOKEN&gt;&quot;</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"register"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"headset"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"deviceLabel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Quest 3"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"token"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;CONTROL_TOKEN&gt;"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">role</span></code> must be <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code>. The hub replies with:</p>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hello&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;clientId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;uuid&gt;&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;configVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;serverIP&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;port&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hello"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"clientId"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;uuid&gt;"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"configVersion"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"serverIP"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
@@ -619,13 +665,13 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <section id="headset-hub-clientmetrics">
 <h3>Headset → hub: <code class="docutils literal notranslate"><span class="pre">clientMetrics</span></code><a class="headerlink" href="#headset-hub-clientmetrics" title="Link to this heading">#</a></h3>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;clientMetrics&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;t&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cadence&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;frame&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;streaming.framerate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;render.pose_to_render_time&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">18.5</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"clientMetrics"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"t"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cadence"</span><span class="p">:</span><span class="w"> </span><span class="s2">"frame"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"streaming.framerate"</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"render.pose_to_render_time"</span><span class="p">:</span><span class="w"> </span><span class="mf">18.5</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
@@ -635,6 +681,85 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 reported so far in that cadence. Metric names are the CloudXR.js <code class="docutils literal notranslate"><span class="pre">MetricsName</span></code> values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 <code class="docutils literal notranslate"><span class="pre">{name:</span> <span class="pre">value}</span></code> map per cadence, so metrics added by a future SDK need no hub change.</p>
+</section>
+<section id="browser-health-exchange">
+<h3>Browser health exchange<a class="headerlink" href="#browser-health-exchange" title="Link to this heading">#</a></h3>
+<p>After each automated CONNECT, the hub sends
+<code class="docutils literal notranslate"><span class="pre">healthProbe</span> <span class="pre">{probeId,</span> <span class="pre">lifecycleGeneration}</span></code> to a newly registered
+browser page. That page answers
+<code class="docutils literal notranslate"><span class="pre">healthReport</span> <span class="pre">{probeId,</span> <span class="pre">lifecycleGeneration,</span> <span class="pre">pageTimestamp,</span> <span class="pre">streamStatus,</span>
+<span class="pre">streamPhase,</span> <span class="pre">terminalEventId,</span> <span class="pre">terminalDetail,</span> <span class="pre">lastMetricsAt,</span> <span class="pre">metricCadences}</span></code>.
+<code class="docutils literal notranslate"><span class="pre">streamPhase</span></code> is one of <code class="docutils literal notranslate"><span class="pre">idle</span></code>, <code class="docutils literal notranslate"><span class="pre">connecting</span></code>, <code class="docutils literal notranslate"><span class="pre">retrying</span></code>, <code class="docutils literal notranslate"><span class="pre">streaming</span></code>,
+or <code class="docutils literal notranslate"><span class="pre">terminal</span></code>. A terminal event ID remains stable while that failure is
+replayed and changes only for a later, distinct terminal failure. Older clients
+that send only the boolean <code class="docutils literal notranslate"><span class="pre">streamStatus</span></code> remain supported. The hub accepts
+only the matching probe and generation from the target connection. It uses its
+own receive time for freshness; the headset clock is diagnostic only. A
+matching reply means the UI, WSS, and bidirectional browser control path are
+ready. The lifecycle
+reports <code class="docutils literal notranslate"><span class="pre">browser_ready</span></code> while waiting for a stream. In USB-local relay
+mode, <code class="docutils literal notranslate"><span class="pre">active</span></code> additionally requires <code class="docutils literal notranslate"><span class="pre">streamStatus=true</span></code> and fresh
+post-CONNECT client metrics; coturn listening and ADB rules alone are only
+TURN prerequisites.</p>
+<p>If CONNECT was dispatched but a fresh browser report has not arrived, the
+lifecycle remains degraded in <code class="docutils literal notranslate"><span class="pre">VERIFYING_BROWSER</span></code> and continues probing
+without clicking CONNECT again. After a USB cable replug, the lifecycle enters
+<code class="docutils literal notranslate"><span class="pre">VERIFYING_</span><wbr><span class="pre">EXISTING_</span><wbr><span class="pre">BROWSER</span></code> and gives the client’s configured reconnect loop
+time to finish. Fresh post-repair stream metrics return it to <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code> without
+closing, reloading, or navigating the surviving tab. One terminal event permits
+one same-tab CONNECT click; a full browser launch is reserved for the case where
+no usable tab survives the bounded grace period. The lifecycle is the sole
+owner of CDP/browser mutations; its error monitor only reports evidence.</p>
+<p>A lost browser/control connection or broken device-side prerequisite starts a
+new recovery attempt. The browser bundle must implement <code class="docutils literal notranslate"><span class="pre">healthProbe</span></code> /
+<code class="docutils literal notranslate"><span class="pre">healthReport</span></code>; an older non-empty
+<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js</span></code> is not replaced automatically. OOB
+startup checks for the protocol and fails with an asset diagnostic if the local
+bundle is too old. For source-tree testing, run
+<code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/webxr_client</span></code> and point
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> at its <code class="docutils literal notranslate"><span class="pre">build</span></code> directory before starting
+the service. USB-local static responses use <code class="docutils literal notranslate"><span class="pre">Cache-Control:</span> <span class="pre">no-store</span></code>;
+the lifecycle also clears this UI origin’s browser storage once per selected
+headset session. Before each local-client CONNECT, CDP reloads the page with
+HTTP caching disabled so a previously cached <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> cannot mask the
+updated client.</p>
+<p>The same redacted lifecycle snapshot appears in <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">status</span></code>, through
+<code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.oob_status()</span></code>, and at
+<code class="docutils literal notranslate"><span class="pre">&lt;cloudxr-install-dir&gt;/run/oob_status.json</span></code>. A normal shutdown removes the
+status file. The <code class="docutils literal notranslate"><span class="pre">selectedSerial</span></code> and <code class="docutils literal notranslate"><span class="pre">explicitSerial</span></code> fields identify the
+session’s headset selection, and <code class="docutils literal notranslate"><span class="pre">ignoredSerials</span></code> lists other observed ADB
+devices (up to eight display-safe serials). Selection is scoped to the current
+service session; a previous status file never pins a new session.</p>
+<p>The snapshot exposes separate readiness facts: <code class="docutils literal notranslate"><span class="pre">socketBound</span></code> means the WSS
+listener is serving; <code class="docutils literal notranslate"><span class="pre">transportReady</span></code> means the selected headset’s network
+and, in USB-local mode, TURN and reverse rules have been verified;
+<code class="docutils literal notranslate"><span class="pre">clientLoaded</span></code> means the browser’s CONNECT control is actionable or a
+matching browser health report was received; <code class="docutils literal notranslate"><span class="pre">connectDispatched</span></code> records a
+host CONNECT click; and <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code> requires a streaming report with
+fresh metrics. <code class="docutils literal notranslate"><span class="pre">readinessStage</span></code> and <code class="docutils literal notranslate"><span class="pre">readinessSince</span></code> show the latest
+milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the host-received
+metrics time in epoch milliseconds; the launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
+only while those metrics and the lifecycle status are less than five seconds
+old. Recovery can move the stage backward, and a surviving browser can resume
+a stream without another host CONNECT click.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.wait_for_oob_stage(&quot;streamConfirmed&quot;,</span> <span class="pre">timeout_sec=90)</span></code>
+waits for live status and raises on a fatal worker failure or timeout. Call it
+after creating the OpenXR session when the application needs a confirmed
+headset stream before announcing startup. Starting the standalone CloudXR
+service confirms its listener only; headset setup continues with bounded
+retries and is visible through the OOB status.</p>
+<p>If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
+service publishes a terminal snapshot with <code class="docutils literal notranslate"><span class="pre">health=fatal</span></code> and <code class="docutils literal notranslate"><span class="pre">state=FATAL</span></code>,
+clears readiness and streaming flags, and stops the runtime. Unlike a normal
+shutdown, it retains <code class="docutils literal notranslate"><span class="pre">oob_status.json</span></code> so <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">status</span></code> can show the
+failure reason after the runtime stops. Foreground <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">run</span></code> prints one
+actionable <code class="docutils literal notranslate"><span class="pre">OOB</span> <span class="pre">stopped</span></code> message and exits nonzero. The per-session WSS
+log contains the worker traceback, or a clear message if the worker returned
+without an exception. This also applies in hub-only mode. A blocked status
+writer does not keep the runtime alive after a fatal worker exit. A writer
+stall can delay the status file update; the in-memory fatal snapshot remains
+available while the service process is running. An intentional shutdown does
+not create a fatal snapshot.</p>
 <div class="pst-scrollable-table-container"><table class="table" id="id1">
 <caption><span class="caption-text">Metrics reported per cadence (CloudXR.js 6.3.0)</span><a class="headerlink" href="#id1" title="Link to this table">#</a></caption>
 <colgroup>
@@ -671,7 +796,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Monotonic count of streamed frames.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">render.pose_to_render_time</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">render.</span><wbr><span class="pre">pose_</span><wbr><span class="pre">to_</span><wbr><span class="pre">render_</span><wbr><span class="pre">time</span></code></p></td>
 <td><p>Pose-to-render latency (ms), rolling average.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
@@ -679,27 +804,27 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Time spent uploading the pose.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">latency.pose_to_frame_received_ms</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">latency.</span><wbr><span class="pre">pose_</span><wbr><span class="pre">to_</span><wbr><span class="pre">frame_</span><wbr><span class="pre">received_</span><wbr><span class="pre">ms</span></code></p></td>
 <td><p>Time from pose send to frame received.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.compositor_skipped_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">compositor_</span><wbr><span class="pre">skipped_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames the compositor skipped.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.out_of_order_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">out_</span><wbr><span class="pre">of_</span><wbr><span class="pre">order_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames that arrived out of order.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.mismatched_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">mismatched_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames whose pose did not match the rendered pixels.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.streaming_rate_mbps</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">streaming_</span><wbr><span class="pre">rate_</span><wbr><span class="pre">mbps</span></code></p></td>
 <td><p>Current streaming rate.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.available_bandwidth_mbps</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">available_</span><wbr><span class="pre">bandwidth_</span><wbr><span class="pre">mbps</span></code></p></td>
 <td><p>Estimated available bandwidth.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -711,7 +836,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Packet loss ratio.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.avg_decode_time_ms</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">avg_</span><wbr><span class="pre">decode_</span><wbr><span class="pre">time_</span><wbr><span class="pre">ms</span></code></p></td>
 <td><p>Average video decode time.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -723,7 +848,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Bandwidth component of the quality score, 0-4.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.network_loss_score</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">network_</span><wbr><span class="pre">loss_</span><wbr><span class="pre">score</span></code></p></td>
 <td><p>Loss component of the quality score, 0-4.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -750,24 +875,24 @@ session’s last known values.</p>
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/state</span></code><a class="headerlink" href="#get-api-oob-v1-state" title="Link to this heading">#</a></h3>
 <p>Returns the current hub state: connected headsets, latest metrics, and config
 version.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>https://localhost:48322/api/oob/v1/state
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span>https://localhost:48322/api/oob/v1/state
 </pre></div>
 </div>
 <p>Example response:</p>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;updatedAt&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;configVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;serverIP&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;10.0.0.1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;port&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;headsets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"updatedAt"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"configVersion"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"serverIP"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.0.0.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">48322</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"headsets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;clientId&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc-123&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;connected&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;deviceLabel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Quest 3&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;registeredAt&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1712799990000</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metricsByCadence&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;frame&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">          </span><span class="nt">&quot;at&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
-<span class="w">          </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;streaming.framerate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"clientId"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc-123"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"connected"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"deviceLabel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Quest 3"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"registeredAt"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712799990000</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metricsByCadence"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"frame"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"streaming.framerate"</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">}</span>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
@@ -779,15 +904,15 @@ version.</p>
 <section id="get-api-oob-v1-config">
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/config</span></code><a class="headerlink" href="#get-api-oob-v1-config" title="Link to this heading">#</a></h3>
 <p>Push config to connected headsets via query parameters:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&amp;port=48322&quot;</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span><span class="s2">"https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&amp;port=48322"</span>
 </pre></div>
 </div>
 <p>Example response:</p>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;changed&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;configVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;targetCount&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">  </span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"changed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"configVersion"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"targetCount"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
 <span class="p">}</span>
 </pre></div>
 </div>
@@ -798,18 +923,23 @@ if not connected).</p>
 </section>
 <section id="authentication">
 <h2>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">#</a></h2>
-<p>Set <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN=&lt;secret&gt;</span></code> to require a token on all hub operations.
-Pass it as:</p>
+<p>Every hub operation requires a token. Set <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN=&lt;secret&gt;</span></code> to choose
+it; if it is unset or empty, the hub generates a random token for the session and
+prints it in the startup banner. Requests without the token, and WebSocket
+<code class="docutils literal notranslate"><span class="pre">register</span></code> frames without it, are rejected. Pass it as:</p>
 <ul class="simple">
 <li><p>WebSocket: <code class="docutils literal notranslate"><span class="pre">&quot;token&quot;</span></code> field in the <code class="docutils literal notranslate"><span class="pre">register</span></code> payload</p></li>
 <li><p>HTTP: <code class="docutils literal notranslate"><span class="pre">?token=&lt;secret&gt;</span></code> query parameter or <code class="docutils literal notranslate"><span class="pre">X-Control-Token</span></code> header</p></li>
 </ul>
+<p>The headset bookmark carries the token as <code class="docutils literal notranslate"><span class="pre">controlToken</span></code> in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (<code class="docutils literal notranslate"><span class="pre">--host-client</span></code>).</p>
 </section>
 <section id="web-client-integration">
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
 <p>The web client connects to the hub when the page URL contains
 <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code> plus <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322&amp;controlToken=&lt;CONTROL_TOKEN&gt;</pre>
 <p>The client builds <code class="docutils literal notranslate"><span class="pre">wss://{serverIP}:{port}/oob/v1/ws</span></code> and:</p>
 <ol class="arabic simple">
 <li><p>Registers as role <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code></p></li>
@@ -847,10 +977,13 @@ reach returning clients. Only <code class="docutils literal notranslate"><span c
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code></p></td>
-<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>)</p></td>
+<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>). Also the hosted <code class="docutils literal notranslate"><span class="pre">/client/</span></code>
+origin for both <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> and <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>: the page
+and signaling share this socket. In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode
+<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> maps it to the headset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code></p></td>
-<td><p>Optional auth token for hub access</p></td>
+<td><p>Auth token for hub access; a random per-session token is generated if unset</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_STREAM_SERVER_IP</span></code></p></td>
 <td><p>Override the auto-detected LAN IP in hub initial config</p></td>
@@ -867,7 +1000,7 @@ reach returning clients. Only <code class="docutils literal notranslate"><span c
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_CODEC</span></code></p></td>
 <td><p>Default video codec for headset bookmarks</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_PANEL_HIDDEN_AT_START</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">PANEL_</span><wbr><span class="pre">HIDDEN_</span><wbr><span class="pre">AT_</span><wbr><span class="pre">START</span></code></p></td>
 <td><p>Hide control panel on load (<code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_ROUTE</span></code></p></td>
@@ -892,24 +1025,49 @@ mode supports WiFi setup only; the launcher rejects the
 combination at startup.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code></p></td>
-<td><p>Pin a specific adb device when more than one is connected. The
-launcher refuses to start with multiple devices unless this is
-set; the value must match a serial currently in <code class="docutils literal notranslate"><span class="pre">device</span></code> state
-(per <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">devices</span></code>). This is the standard adb env var — every
-<code class="docutils literal notranslate"><span class="pre">adb</span></code> subprocess inherits it, so no code path needs <code class="docutils literal notranslate"><span class="pre">-s</span>
-<span class="pre">&lt;serial&gt;</span></code>.</p></td>
+<td><p>Pin the intended headset before starting OOB when more than one ADB
+transport is visible. Without it, the first observation must contain
+exactly one serial; that serial is pinned even while <code class="docutils literal notranslate"><span class="pre">unauthorized</span></code>
+or <code class="docutils literal notranslate"><span class="pre">offline</span></code>. An ambiguous first observation fails with a restart
+instruction, rather than selecting by list order or by which device
+becomes ready first. Every device command then uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
+If the selected serial disappears or loses authorization, the service
+waits for it and ignores later devices. Once accessible, the selected
+device must identify as a Meta Quest or PICO headset through Android
+manufacturer/brand and a nonempty model property. Connect a supported
+HMD and set <code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code> if the wrong device was selected.
+Before each new browser launch, ADB must confirm
+<code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; wear or unlock the headset (or cover its
+proximity sensor) when the service reports that it is asleep.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
-<td><p>HTTPS static web client port for <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> (default <code class="docutils literal notranslate"><span class="pre">8080</span></code>).
-Binds to <code class="docutils literal notranslate"><span class="pre">127.0.0.1:&lt;port&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-maps the port to
-the headset.  <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> uses the WSS proxy port (<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>)
-instead; <code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code> has no effect on it.</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RECOVERY_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code></p></td>
+<td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
+Expiry changes to observation mode; it never stops the host. If this is
+shorter than the browser reconnect budget, the host caps browser grace
+early enough to leave one retry interval for a bounded fallback.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RETRY_</span><wbr><span class="pre">INTERVAL_</span><wbr><span class="pre">SEC</span></code></p></td>
+<td><p>Positive finite retry and observation interval in seconds (default <code class="docutils literal notranslate"><span class="pre">5</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">RECONNECT_</span><wbr><span class="pre">MAX_</span><wbr><span class="pre">ATTEMPTS</span></code></p></td>
+<td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">10</span></code>).
+The WebXR client’s stream reconnect loop is opt-in — off unless an
+explicit <code class="docutils literal notranslate"><span class="pre">reconnectEnabled=true</span></code> URL param or the 2D debug UI’s
+checkbox turns it on — and OOB has no way to know which, so the host
+always waits out this budget before taking over, whether or not the
+client is actually retrying. The value is also included in the
+generated headset URL.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">RECONNECT_</span><wbr><span class="pre">DELAY_</span><wbr><span class="pre">MS</span></code></p></td>
+<td><p>Non-negative delay between browser-local attempts in milliseconds
+(default <code class="docutils literal notranslate"><span class="pre">3000</span></code>). The host derives its bounded recovery grace from
+this value and the maximum-attempt count.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -924,30 +1082,38 @@ over the USB cable on the headset’s loopback via <code class="docutils literal
 <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> because the OOB hub is the only path that delivers TURN relay
 configuration to the client (without it the headset has no way to discover the
 coturn endpoint).  Always use both flags together:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob<span class="w"> </span>--usb-local
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob<span class="w"> </span>--usb-local
 </pre></div>
 </div>
 <p>On startup the launcher:</p>
 <ol class="arabic simple">
-<li><p>Pre-flights: <code class="docutils literal notranslate"><span class="pre">adb</span></code> on PATH, <code class="docutils literal notranslate"><span class="pre">coturn</span></code> installed, exactly one device
-connected, headset has at least one non-loopback IP (Wi-Fi up — see
-troubleshooting below for why this is required even though no packets
-traverse the network).</p></li>
+<li><p>Pre-flights host tools, ports, and static assets. It can start with no
+headset attached.</p></li>
 <li><p>Resolves the WebXR static directory from
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
-the published client (see <a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
-<li><p>Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-the WSS proxy uses (Python <code class="docutils literal notranslate"><span class="pre">http.server</span></code> in a daemon thread).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> for 8080 (static UI), 48322 (WSS), 49100 (backend),
-3478 (coturn TURN).</p></li>
-<li><p>Starts coturn locally on 127.0.0.1:3478 for WebRTC ICE relay.</p></li>
-<li><p>Launches the teleop URL on the headset and auto-clicks CONNECT via CDP.</p></li>
+the published client (see <a class="reference internal" href="../development/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
+<li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">https://localhost:48322/client/</span></code> on the WSS
+proxy’s existing TLS listener.</p></li>
+<li><p>After the selected headset is ready, checks its non-loopback network,
+starts/verifies coturn, and creates <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> rules for 48322
+(WSS and static UI), 49100 (backend), and 3478 (TURN).</p></li>
+<li><p>Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
+replugging the same serial first rebuilds all three reverse rules, verifies
+coturn, and repairs CDP forwarding without mutating a surviving browser tab.
+The WebXR client owns its bounded reconnect attempts. Fresh post-repair
+stream metrics resume the existing session; a stable terminal event allows
+one same-tab CONNECT click, and only a missing/unusable tab falls back to
+full browser launch automation. ADB loss, missing reverse rules, TURN
+failure or restart, and control/CDP/stream transport loss all enter this
+preservation-first repair path. While preserving an active browser, the
+launcher checks recovery prerequisites at most once per second instead of
+waiting for the ordinary five-second observation cadence.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
-before the session starts — the SDK and web client both cache settings
-(e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
+cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://localhost:&lt;proxy_port&gt;</span></code>)
+once for the selected session — the SDK and web client both cache settings
+(e.g. <code class="docutils literal notranslate"><span class="pre">general.</span><wbr><span class="pre">iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
 stale value can silently win over a fresh URL param. The origin is owned
 by the launcher so clearing it has no collateral effect; the step is a
@@ -973,22 +1139,21 @@ open AP you never authenticate to works. The packets still route over
 USB (the kernel short-circuits loopback regardless of source
 interface); the Wi-Fi interface just needs to <em>exist</em> with an IP so
 WebRTC’s enumeration is non-empty.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> launcher pre-flights this via
-<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">shell</span> <span class="pre">ip</span> <span class="pre">-o</span> <span class="pre">-4</span> <span class="pre">addr</span> <span class="pre">show</span></code> and refuses to start if no non-loopback
-interface is present. A runtime monitor also watches for mid-session
-Wi-Fi drops and prints a yellow warning so the cause is obvious without
-having to puzzle out a frozen WebRTC connection.</p>
+<p>The lifecycle checks this via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">shell</span> <span class="pre">ip</span> <span class="pre">-o</span> <span class="pre">-4</span> <span class="pre">addr</span> <span class="pre">show</span></code> after the
+host is listening. A successful command with no non-loopback interface
+reports a network block; a failed ADB command reports cable/transport loss
+and never claims that Wi-Fi dropped. Wi-Fi restoration resumes recovery.</p>
 </section>
 <section id="web-client-ui-has-no-text-oob-host-client">
 <h3>Web client UI has no text (OOB / <code class="docutils literal notranslate"><span class="pre">--host-client</span></code>)<a class="headerlink" href="#web-client-ui-has-no-text-oob-host-client" title="Link to this heading">#</a></h3>
 <p><strong>Cause:</strong> Production webpack emits <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> (main app, including UIKit MSDF text)
 and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> (desktop emulation only). If the static cache under
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> is missing or outdated — especially a truncated
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> is missing or outdated — especially a truncated
 <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> — in-VR text does not render.</p>
 <p><strong>Fix:</strong> Ensure <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> are present
 under the static dir — run the launcher once with network, copy a full <code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code>
 output, or use the GitHub Pages URL directly. See
-<a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>.</p>
+<a class="reference internal" href="../development/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>.</p>
 </section>
 <section id="cdp-startbutton-marked-failed-not-actionable">
 <h3>CDP: startButton marked failed / not actionable<a class="headerlink" href="#cdp-startbutton-marked-failed-not-actionable" title="Link to this heading">#</a></h3>
@@ -1032,7 +1197,7 @@ internet, this fails and <code class="docutils literal notranslate"><span class=
 <p><strong>Fix:</strong> Pre-stage the full client <code class="docutils literal notranslate"><span class="pre">build/</span></code> tree (or the published
 <code class="docutils literal notranslate"><span class="pre">/client/&lt;version&gt;/</span></code> directory) into the static dir, then re-run.  The
 launcher only downloads missing or empty files.  Override the target directory
-via <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code>.</p>
+via <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code>.</p>
 <p><strong>Fix:</strong> Set the SDK versions in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code> (copy from
 <code class="docutils literal notranslate"><span class="pre">.env.default</span></code>) so the download script can resolve the right version,
 or stage <code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version&gt;.tgz</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/</span></code> manually.</p>
@@ -1051,20 +1216,20 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="rig.html"
+       href="cloudxr.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Rig Launcher</p>
+        <p class="prev-next-title">CloudXR Service</p>
       </div>
     </a>
     <a class="right-next"
-       href="egocentric_hand_reconstruction.html"
+       href="haptic_feedback.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Egocentric Hand Reconstruction</p>
+        <p class="prev-next-title">Haptic Feedback</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1095,6 +1260,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#websocket-protocol">WebSocket protocol</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#registration-first-message">Registration (first message)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#headset-hub-clientmetrics">Headset → hub: <code class="docutils literal notranslate"><span class="pre">clientMetrics</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#browser-health-exchange">Browser health exchange</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#http-api">HTTP API</a><ul class="nav section-nav flex-column">
@@ -1200,7 +1366,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on July 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

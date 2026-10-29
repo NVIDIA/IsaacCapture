@@ -8,8 +8,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta content="0; url=../teleop/control_state_machine.html" http-equiv="refresh" />
 
-    <title>Teleop Control State Machine &#8212; Isaac Teleop Documentation</title>
+    <title>Teleop Control State Machine &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -35,7 +36,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=e662b523" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -45,7 +47,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -58,13 +60,11 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Televiz" href="televiz.html" />
-    <link rel="prev" title="Teleop Session" href="teleop_session.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -141,11 +141,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -164,6 +164,19 @@
 </button>
         </div>
       
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
       
         <div class="navbar-item">
 
@@ -193,10 +206,6 @@
     </div>
   
 
-  
-    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
-      <span class="fa-solid fa-outdent"></span>
-    </button>
   
 </div>
 
@@ -229,11 +238,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -245,6 +254,19 @@
     
     
       <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
         
           <div class="navbar-item">
 
@@ -266,10 +288,6 @@
   </div>
   
     <div class="sidebar-primary-items__start sidebar-primary__section">
-        <div class="sidebar-primary-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-</div>
         <div class="sidebar-primary-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
         <li class="nav-item">
@@ -281,7 +299,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -292,7 +310,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -307,22 +325,6 @@
         </li>
 </ul></div>
         <div class="sidebar-primary-item">
-<form class="bd-search d-flex align-items-center"
-      action="../search.html"
-      method="get">
-  <i class="fa-solid fa-magnifying-glass"></i>
-  <input type="search"
-         class="form-control"
-         name="q"
-         placeholder="Search..."
-         aria-label="Search..."
-         autocomplete="off"
-         autocorrect="off"
-         autocapitalize="off"
-         spellcheck="false"/>
-  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-        <div class="sidebar-primary-item">
 
 
 
@@ -331,45 +333,61 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul class="current nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">Dedicated CloudXR Runtime</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
 </ul>
 </div>
 </nav></div>
@@ -423,140 +441,7 @@
                   
   <section id="teleop-control-state-machine">
 <h1>Teleop Control State Machine<a class="headerlink" href="#teleop-control-state-machine" title="Link to this heading">#</a></h1>
-<p>This page describes the default teleop control state machine used by
-<code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> and how to connect button inputs.</p>
-<section id="overview">
-<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> expects the optional <code class="docutils literal notranslate"><span class="pre">teleop_control_pipeline</span></code> to expose
-this output contract:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">teleop_state</span></code>: one-hot execution state channels in this order:
-<code class="docutils literal notranslate"><span class="pre">stopped</span></code>, <code class="docutils literal notranslate"><span class="pre">paused</span></code>, <code class="docutils literal notranslate"><span class="pre">running</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">reset_event</span></code>: bool pulse</p></li>
-</ul>
-<p>When provided, <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> decodes these outputs into
-<code class="docutils literal notranslate"><span class="pre">ComputeContext.execution_events</span></code> so downstream retargeters and high-level app
-logic can read:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.execution_state</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.reset</span></code></p></li>
-</ul>
-<p>Isaac Teleop provides <code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> as a ready-to-use default
-state machine. It should work for most setups, but you can also implement your
-own control state machine as long as it preserves the same output contract.</p>
-</section>
-<section id="default-state-machine-behavior">
-<h2>Default State Machine Behavior<a class="headerlink" href="#default-state-machine-behavior" title="Link to this heading">#</a></h2>
-<p>Inputs (all optional bool signals):</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">kill_button</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">run_toggle_button</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">reset_button</span></code></p></li>
-</ul>
-<p>Transitions:</p>
-<ol class="arabic simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">kill_button</span></code> level-held:</p>
-<ul class="simple">
-<li><p>while asserted, state is forced to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code></p></li>
-<li><p>emits <code class="docutils literal notranslate"><span class="pre">reset_event</span> <span class="pre">=</span> <span class="pre">True</span></code></p></li>
-</ul>
-</li>
-<li><p><code class="docutils literal notranslate"><span class="pre">run_toggle_button</span></code> rising edge:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">STOPPED</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">PAUSED</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PAUSED</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">RUNNING</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">RUNNING</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">PAUSED</span></code></p></li>
-</ul>
-</li>
-<li><p><code class="docutils literal notranslate"><span class="pre">reset_button</span></code> rising edge:</p>
-<ul class="simple">
-<li><p>state unchanged</p></li>
-<li><p>emits <code class="docutils literal notranslate"><span class="pre">reset_event</span> <span class="pre">=</span> <span class="pre">True</span></code></p></li>
-</ul>
-</li>
-</ol>
-<p>Safety behavior:</p>
-<ul class="simple">
-<li><p>If a required control input (kill/run-toggle) is absent for the frame, manager
-fail-safes to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code>.</p></li>
-<li><p>Loss-driven <code class="docutils literal notranslate"><span class="pre">reset_event</span></code> is edge-triggered on availability loss (emitted once
-on the first frame required inputs drop out, not unconditionally every frame).</p></li>
-<li><p>This fail-safe is immediate (same frame). If teleop control inputs are lost
-(for example controller disconnect, tracking loss, or selector output becomes
-unavailable), execution state is forced to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code> right away.</p></li>
-</ul>
-</section>
-<section id="connecting-inputs">
-<h2>Connecting Inputs<a class="headerlink" href="#connecting-inputs" title="Link to this heading">#</a></h2>
-<p>Use one debounced selector per signal (simple wiring, no multi-input lambdas):
-see <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop_session_manager/python/teleop_controls_simple_example.py" rel="noopener noreferrer" target="_blank">teleop_controls_simple_example.py</a>
-for the full runnable setup.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.tensor_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllerInputIndex</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">DefaultTeleopStateManager</span><span class="p">,</span>
-    <span class="n">create_bool_selector</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;controllers&quot;</span><span class="p">)</span>
-<span class="n">left</span> <span class="o">=</span> <span class="n">controllers</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">ControllersSource</span><span class="o">.</span><span class="n">LEFT</span><span class="p">)</span>
-
-<span class="n">kill_signal</span> <span class="o">=</span> <span class="n">create_bool_selector</span><span class="p">(</span>
-    <span class="n">left</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;kill_signal_selector&quot;</span><span class="p">,</span>
-    <span class="n">selector_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">selected</span><span class="p">:</span> <span class="n">selected</span><span class="p">[</span><span class="n">ControllerInputIndex</span><span class="o">.</span><span class="n">SECONDARY_CLICK</span><span class="p">],</span>
-<span class="p">)</span>
-<span class="n">run_toggle_signal</span> <span class="o">=</span> <span class="n">create_bool_selector</span><span class="p">(</span>
-    <span class="n">left</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;run_toggle_signal_selector&quot;</span><span class="p">,</span>
-    <span class="n">selector_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">selected</span><span class="p">:</span> <span class="n">selected</span><span class="p">[</span><span class="n">ControllerInputIndex</span><span class="o">.</span><span class="n">PRIMARY_CLICK</span><span class="p">],</span>
-<span class="p">)</span>
-<span class="n">reset_signal</span> <span class="o">=</span> <span class="n">create_bool_selector</span><span class="p">(</span>
-    <span class="n">left</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;reset_signal_selector&quot;</span><span class="p">,</span>
-    <span class="n">selector_fn</span><span class="o">=</span><span class="k">lambda</span> <span class="n">selected</span><span class="p">:</span> <span class="n">selected</span><span class="p">[</span><span class="n">ControllerInputIndex</span><span class="o">.</span><span class="n">THUMBSTICK_CLICK</span><span class="p">],</span>
-<span class="p">)</span>
-
-<span class="n">manager</span> <span class="o">=</span> <span class="n">DefaultTeleopStateManager</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;teleop_manager&quot;</span><span class="p">)</span>
-<span class="n">control_pipeline</span> <span class="o">=</span> <span class="n">manager</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span>
-    <span class="p">{</span>
-        <span class="n">manager</span><span class="o">.</span><span class="n">INPUT_KILL</span><span class="p">:</span> <span class="n">kill_signal</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;value&quot;</span><span class="p">),</span>
-        <span class="n">manager</span><span class="o">.</span><span class="n">INPUT_RUN_TOGGLE</span><span class="p">:</span> <span class="n">run_toggle_signal</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;value&quot;</span><span class="p">),</span>
-        <span class="n">manager</span><span class="o">.</span><span class="n">INPUT_RESET</span><span class="p">:</span> <span class="n">reset_signal</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;value&quot;</span><span class="p">),</span>
-    <span class="p">}</span>
-<span class="p">)</span>
-</pre></div>
-</div>
-<p>Debounce behavior is configurable in <code class="docutils literal notranslate"><span class="pre">create_bool_selector</span></code>:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">threshold</span></code> / <code class="docutils literal notranslate"><span class="pre">release_threshold</span></code> for float hysteresis</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">activate_frames</span></code> / <code class="docutils literal notranslate"><span class="pre">deactivate_frames</span></code> for rising/falling debounce length</p></li>
-<li><p>automatic <code class="docutils literal notranslate"><span class="pre">None</span></code> propagation when upstream input is absent</p></li>
-</ul>
-<p>Important availability note:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">create_bool_selector</span></code> propagates unavailable upstream input as <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> treats <code class="docutils literal notranslate"><span class="pre">None</span></code> on any required control input
-as a safety fault and immediately transitions to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code>; when required
-inputs first become unavailable it emits a single loss-driven
-<code class="docutils literal notranslate"><span class="pre">reset_event</span> <span class="pre">=</span> <span class="pre">True</span></code> pulse.</p></li>
-</ul>
-</section>
-<section id="using-context-in-high-level-app-logic">
-<h2>Using Context in High-Level App Logic<a class="headerlink" href="#using-context-in-high-level-app-logic" title="Link to this heading">#</a></h2>
-<p>After <code class="docutils literal notranslate"><span class="pre">session.step()</span></code>, use <code class="docutils literal notranslate"><span class="pre">session.last_context</span></code> to gate robot enablement
-or other high-level behavior:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface.execution_events</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionState</span>
-
-<span class="n">outputs</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
-<span class="n">context</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">last_context</span>
-<span class="k">if</span> <span class="n">context</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">robot_enabled</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_events</span><span class="o">.</span><span class="n">execution_state</span> <span class="o">!=</span> <span class="n">ExecutionState</span><span class="o">.</span><span class="n">STOPPED</span>
-    <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_events</span><span class="o">.</span><span class="n">reset</span><span class="p">:</span>
-        <span class="n">handle_reset</span><span class="p">()</span>
-</pre></div>
-</div>
-</section>
+<p>This page has moved to <a class="reference internal" href="../teleop/control_state_machine.html"><span class="doc">Teleop Control State Machine</span></a>.</p>
 </section>
 
 
@@ -569,24 +454,6 @@ or other high-level behavior:</p>
                 <footer class="prev-next-footer d-print-none">
                   
 <div class="prev-next-area">
-    <a class="left-prev"
-       href="teleop_session.html"
-       title="previous page">
-      <i class="fa-solid fa-angle-left"></i>
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Teleop Session</p>
-      </div>
-    </a>
-    <a class="right-next"
-       href="televiz.html"
-       title="next page">
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Televiz</p>
-      </div>
-      <i class="fa-solid fa-angle-right"></i>
-    </a>
 </div>
                 </footer>
               
@@ -594,28 +461,9 @@ or other high-level behavior:</p>
             
             
 
-
-              
-                <dialog id="pst-secondary-sidebar-modal"></dialog>
-                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="bd-sidebar-secondary"></div>
 
 
-  <div class="sidebar-secondary-item">
-<div
-    id="pst-page-navigation-heading-2"
-    class="page-toc tocsection onthispage">
-    <i class="fa-solid fa-list"></i> On this page
-  </div>
-  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
-    <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#default-state-machine-behavior">Default State Machine Behavior</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connecting-inputs">Connecting Inputs</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#using-context-in-high-level-app-logic">Using Context in High-Level App Logic</a></li>
-</ul>
-  </nav></div>
-
-</div></div>
               
             
 
@@ -694,7 +542,7 @@ or other high-level behavior:</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on July 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

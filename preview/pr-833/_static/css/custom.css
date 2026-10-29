@@ -80,30 +80,32 @@ a:focus {
     color: #7FDBFF;
 }
 
-/* Version switcher: match sidebar search box appearance */
+/* Version switcher: a navbar pill next to the search field */
 .version-switcher {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-    padding: 0.35rem 0.5rem;
+    gap: 0.4rem;
+    padding: 0.6em 0.75em;
     border: 1px solid var(--pst-color-border);
-    border-radius: 6px;
-    background: var(--pst-color-background);
+    border-radius: 1.5em;
+    background: var(--pst-color-surface);
 }
+.version-switcher:hover,
 .version-switcher:focus-within {
-    border-color: var(--pst-color-primary);
-    box-shadow: 0 0 0 2px rgba(118, 185, 0, 0.2);
+    box-shadow: 0 0 0 0.1875rem var(--pst-color-link-hover);
 }
 .version-switcher__label {
     font-weight: 600;
     font-size: 0.9em;
+    /* The select's line box is the UA's ``normal``; a taller one here rounds the
+       two texts onto different baselines at fractional zoom. */
+    line-height: normal;
     color: var(--pst-color-text-muted);
     white-space: nowrap;
 }
 .version-switcher__select {
-    flex: 1;
-    min-width: 0;
+    /* Bounded so a long ref name cannot wrap the navbar's right-hand row. */
+    max-width: 11rem;
     border: none;
     outline: none;
     background: transparent;
@@ -115,40 +117,15 @@ a:focus {
     box-shadow: none;
 }
 
-/* Sidebar search box: one unified bar; green highlight wraps icon + input + shortcut */
-.sidebar-primary-item .bd-search {
+/* Desktop search is the navbar field; the persistent magnifier is mobile-only. */
+.bd-header .navbar-persistent--container {
+    display: none;
+}
+
+/* The nvidia theme hides the field's label and shortcut (``.search-button-field
+   span``), leaving a bare magnifier that readers overlook. Show the full pill. */
+.bd-header .search-button-field span {
     display: flex;
-    align-items: center;
-    gap: 0;
-    margin-bottom: 0.75rem;
-    padding: 0 0.5rem;
-    border: 1px solid var(--pst-color-border);
-    border-radius: 6px;
-    background: var(--pst-color-background);
-}
-.sidebar-primary-item .bd-search:focus-within {
-    border-color: var(--pst-color-primary);
-    box-shadow: 0 0 0 2px rgba(118, 185, 0, 0.2);
-}
-.sidebar-primary-item .bd-search .form-control {
-    flex: 1;
-    min-width: 0;
-    padding: 0.35rem 0.5rem;
-    border: none;
-    border-radius: 0;
-    outline: none;
-    font-size: 0.9em;
-    background: transparent;
-}
-.sidebar-primary-item .bd-search .form-control:focus {
-    box-shadow: none;
-}
-.sidebar-primary-item .bd-search .fa-magnifying-glass {
-    color: var(--pst-color-text-muted);
-    flex-shrink: 0;
-}
-.sidebar-primary-item .bd-search .search-button__kbd-shortcut {
-    flex-shrink: 0;
 }
 
 /* Reduce top padding in left sidebar */

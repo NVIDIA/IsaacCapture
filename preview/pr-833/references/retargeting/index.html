@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Retargeting Interface &#8212; Isaac Teleop Documentation</title>
+    <title>Retargeting Interface &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -35,7 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=e662b523" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -45,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,12 +60,12 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Retargeter: Manus to Sharpa" href="sharpa.html" />
-    <link rel="prev" title="Build System" href="../build.html" />
+    <link rel="prev" title="Generated Tracker Code" href="../generated_trackers.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -141,11 +142,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -164,6 +165,19 @@
 </button>
         </div>
       
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
       
         <div class="navbar-item">
 
@@ -229,11 +243,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -245,6 +259,19 @@
     
     
       <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
         
           <div class="navbar-item">
 
@@ -266,10 +293,6 @@
   </div>
   
     <div class="sidebar-primary-items__start sidebar-primary__section">
-        <div class="sidebar-primary-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
-</div>
         <div class="sidebar-primary-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
         <li class="nav-item">
@@ -281,7 +304,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -292,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -307,22 +330,6 @@
         </li>
 </ul></div>
         <div class="sidebar-primary-item">
-<form class="bd-search d-flex align-items-center"
-      action="../../search.html"
-      method="get">
-  <i class="fa-solid fa-magnifying-glass"></i>
-  <input type="search"
-         class="form-control"
-         name="q"
-         placeholder="Search..."
-         aria-label="Search..."
-         autocomplete="off"
-         autocorrect="off"
-         autocapitalize="off"
-         spellcheck="false"/>
-  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-        <div class="sidebar-primary-item">
 
 
 
@@ -331,37 +338,54 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Retargeting Interface</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="sharpa.html">Retargeter: Manus to Sharpa</a></li>
 <li class="toctree-l2"><a class="reference internal" href="so101.html">Retargeters: SO-101 (5-DOF arm)</a></li>
@@ -369,13 +393,12 @@
 <li class="toctree-l2"><a class="reference internal" href="wuji.html">Retargeter: Wuji Glove to Wuji Hand</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">Dedicated CloudXR Runtime</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../rig.html">Rig Launcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../haptic_feedback.html">Haptic Feedback</a></li>
 </ul>
 </div>
 </nav></div>
@@ -429,7 +452,7 @@
                   
   <section id="retargeting-interface">
 <h1>Retargeting Interface<a class="headerlink" href="#retargeting-interface" title="Link to this heading">#</a></h1>
-<p>Isaac Teleop uses a graph-based retargeting pipeline. Data flows from <strong>source nodes</strong> through
+<p>Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from <strong>source nodes</strong> through
 <strong>retargeters</strong> and is combined into a single action tensor.</p>
 <section id="source-nodes">
 <h2>Source Nodes<a class="headerlink" href="#source-nodes" title="Link to this heading">#</a></h2>
@@ -441,6 +464,11 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">JointStateSource</span></code> – provides name-keyed joint positions from a generic joint-space device
 (leader arm, exoskeleton, …). See <a class="reference internal" href="joint_space.html"><span class="doc">Retargeter: Joint-Space Device</span></a>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">FullBodySource</span></code> – provides full-body pose (e.g. Pico tracking).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SomaBodySource</span></code> – polls either a typed <code class="docutils literal notranslate"><span class="pre">SomaBodyJointRotations</span></code> or
+<code class="docutils literal notranslate"><span class="pre">SomaBodyJointPoses</span></code> payload from a configured publisher collection. It
+runs upstream FK for rotations or directly maps evaluated poses, then emits
+an optional <code class="docutils literal notranslate"><span class="pre">SomaBodyInput</span></code> containing the 77 global SOMA joint poses.
+See <a class="reference internal" href="../../device/trackers/index.html"><span class="doc">Spatial Trackers and Device Data</span></a> and <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a>.</p></li>
 </ul>
 </section>
 <section id="available-retargeters">
@@ -482,9 +510,12 @@ and <code class="docutils literal notranslate"><span class="pre">controller_thre
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">SO101ClutchRetargeter / SO101GripperRetargeter</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">Retargeters for the SO-101 5-DOF arm under full-pose SE3 IK. <code class="docutils literal notranslate"><span class="pre">SO101ClutchRetargeter</span></code>
-outputs a 7-D <code class="docutils literal notranslate"><span class="pre">ee_pose</span></code> like <code class="docutils literal notranslate"><span class="pre">Se3AbsRetargeter</span></code> but clutch-rebases controller position
-around an origin captured on engage (no teleport) and composes a fixed orientation
-calibration offset onto the grip orientation so the gripper pose follows the controller pose.
+outputs a 7-D <code class="docutils literal notranslate"><span class="pre">ee_pose</span></code> like <code class="docutils literal notranslate"><span class="pre">Se3AbsRetargeter</span></code> but clutch-rebases the <strong>full pose</strong> around
+an origin captured on engage (no teleport): it re-latches both the home position and the home
+orientation on every engage and composes the orientation delta on the <strong>left</strong> (base frame),
+with no fixed calibration offset. It engages on <code class="docutils literal notranslate"><span class="pre">RUNNING</span></code> <strong>and</strong>
+<code class="docutils literal notranslate"><span class="pre">squeeze</span> <span class="pre">&gt;</span> <span class="pre">squeeze_threshold</span></code>, re-seeds its held pose from the configured home on <code class="docutils literal notranslate"><span class="pre">reset</span></code>,
+and can latch its home position from the arm’s measured EE pose.
 <code class="docutils literal notranslate"><span class="pre">SO101GripperRetargeter</span></code> maps the trigger to a proportional jaw closedness in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>.
 See <a class="reference internal" href="so101.html"><span class="doc">Retargeters: SO-101 (5-DOF arm)</span></a> for the full setup.</p>
 </div>
@@ -522,27 +553,27 @@ tracking (26 joints) to robot-specific hand joint angles.</p>
 of the fingers, to ensure accurate optimization.</p>
 </div>
 <p class="sd-card-text"><strong>Configuration (DexHandRetargeter):</strong></p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DexHandRetargeter</span><span class="p">,</span>
     <span class="n">DexHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">DexHandRetargeterConfig</span><span class="p">(</span>
     <span class="n">hand_joint_names</span><span class="o">=</span><span class="p">[</span>
-        <span class="s2">&quot;thumb_proximal_yaw_joint&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;thumb_proximal_pitch_joint&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;index_proximal_joint&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;middle_proximal_joint&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;ring_proximal_joint&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;pinky_proximal_joint&quot;</span><span class="p">,</span>
+        <span class="s2">"thumb_proximal_yaw_joint"</span><span class="p">,</span>
+        <span class="s2">"thumb_proximal_pitch_joint"</span><span class="p">,</span>
+        <span class="s2">"index_proximal_joint"</span><span class="p">,</span>
+        <span class="s2">"middle_proximal_joint"</span><span class="p">,</span>
+        <span class="s2">"ring_proximal_joint"</span><span class="p">,</span>
+        <span class="s2">"pinky_proximal_joint"</span><span class="p">,</span>
     <span class="p">],</span>
-    <span class="n">hand_retargeting_config</span><span class="o">=</span><span class="s2">&quot;/path/to/hand_config.yml&quot;</span><span class="p">,</span>
-    <span class="n">hand_urdf</span><span class="o">=</span><span class="s2">&quot;/path/to/robot_hand.urdf&quot;</span><span class="p">,</span>
+    <span class="n">hand_retargeting_config</span><span class="o">=</span><span class="s2">"/path/to/hand_config.yml"</span><span class="p">,</span>
+    <span class="n">hand_urdf</span><span class="o">=</span><span class="s2">"/path/to/robot_hand.urdf"</span><span class="p">,</span>
     <span class="n">handtracking_to_baselink_frame_transform</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>  <span class="c1"># 3x3 matrix flattened</span>
-    <span class="n">hand_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;right&quot;</span>
+    <span class="n">hand_side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>  <span class="c1"># or "right"</span>
 <span class="p">)</span>
 
-<span class="n">retargeter</span> <span class="o">=</span> <span class="n">DexHandRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dex_hand_left&quot;</span><span class="p">)</span>
+<span class="n">retargeter</span> <span class="o">=</span> <span class="n">DexHandRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"dex_hand_left"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p class="sd-card-text"><strong>YAML configuration example:</strong></p>
@@ -572,9 +603,35 @@ target joint names, type (e.g. <code class="docutils literal notranslate"><span 
 <p class="sd-card-text"><strong>DexBiManualRetargeter:</strong> Bimanual wrapper around two <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code> instances. Create
 <code class="docutils literal notranslate"><span class="pre">DexHandRetargeterConfig</span></code> for left and right hands, then instantiate with
 <code class="docutils literal notranslate"><span class="pre">left_config</span></code>, <code class="docutils literal notranslate"><span class="pre">right_config</span></code>, and <code class="docutils literal notranslate"><span class="pre">target_joint_names</span></code> (combined left + right joint
-names). See the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md" rel="noopener noreferrer" target="_blank">retargeters README</a>
-for a full code example.</p>
-<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_to_baselink_frame_transform</span></code> parameter is a 3x3
+names):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">DexBiManualRetargeter</span><span class="p">,</span>
+    <span class="n">DexHandRetargeterConfig</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">left_config</span> <span class="o">=</span> <span class="n">DexHandRetargeterConfig</span><span class="p">(</span>
+    <span class="n">hand_joint_names</span><span class="o">=</span><span class="n">left_hand_joints</span><span class="p">,</span>
+    <span class="n">hand_retargeting_config</span><span class="o">=</span><span class="s2">"/path/to/left_hand_config.yml"</span><span class="p">,</span>
+    <span class="n">hand_urdf</span><span class="o">=</span><span class="s2">"/path/to/left_hand.urdf"</span><span class="p">,</span>
+    <span class="n">hand_side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">right_config</span> <span class="o">=</span> <span class="n">DexHandRetargeterConfig</span><span class="p">(</span>
+    <span class="n">hand_joint_names</span><span class="o">=</span><span class="n">right_hand_joints</span><span class="p">,</span>
+    <span class="n">hand_retargeting_config</span><span class="o">=</span><span class="s2">"/path/to/right_hand_config.yml"</span><span class="p">,</span>
+    <span class="n">hand_urdf</span><span class="o">=</span><span class="s2">"/path/to/right_hand.urdf"</span><span class="p">,</span>
+    <span class="n">hand_side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">bimanual_retargeter</span> <span class="o">=</span> <span class="n">DexBiManualRetargeter</span><span class="p">(</span>
+    <span class="n">left_config</span><span class="o">=</span><span class="n">left_config</span><span class="p">,</span>
+    <span class="n">right_config</span><span class="o">=</span><span class="n">right_config</span><span class="p">,</span>
+    <span class="n">target_joint_names</span><span class="o">=</span><span class="n">left_hand_joints</span> <span class="o">+</span> <span class="n">right_hand_joints</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"dex_bimanual"</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_</span><wbr><span class="pre">to_</span><wbr><span class="pre">baselink_</span><wbr><span class="pre">frame_</span><wbr><span class="pre">transform</span></code> parameter is a 3x3
 rotation matrix flattened to 9 elements. Applied as
 <code class="docutils literal notranslate"><span class="pre">target_pos</span> <span class="pre">=</span> <span class="pre">joint_pos</span> <span class="pre">&#64;</span> <span class="pre">wrist_rotation</span> <span class="pre">&#64;</span> <span class="pre">transform_matrix</span></code>. Config default is <strong>Identity</strong>
 <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1)</span></code>. Common value for <strong>G1/Inspire</strong>: <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0)</span></code>
@@ -588,25 +645,25 @@ joint angles (7 DOF per hand). No external dependencies.</p>
 <p class="sd-card-text"><strong>Mapping:</strong> trigger → index finger, squeeze → middle finger, both → thumb. Good for quick
 prototyping and testing.</p>
 <p class="sd-card-text"><strong>Configuration:</strong></p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TriHandMotionControllerRetargeter</span><span class="p">,</span>
     <span class="n">TriHandMotionControllerConfig</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">TriHandMotionControllerConfig</span><span class="p">(</span>
     <span class="n">hand_joint_names</span><span class="o">=</span><span class="p">[</span>
-        <span class="s2">&quot;thumb_rotation&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;thumb_proximal&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;thumb_distal&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;index_proximal&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;index_distal&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;middle_proximal&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;middle_distal&quot;</span><span class="p">,</span>
+        <span class="s2">"thumb_rotation"</span><span class="p">,</span>
+        <span class="s2">"thumb_proximal"</span><span class="p">,</span>
+        <span class="s2">"thumb_distal"</span><span class="p">,</span>
+        <span class="s2">"index_proximal"</span><span class="p">,</span>
+        <span class="s2">"index_distal"</span><span class="p">,</span>
+        <span class="s2">"middle_proximal"</span><span class="p">,</span>
+        <span class="s2">"middle_distal"</span><span class="p">,</span>
     <span class="p">],</span>
-    <span class="n">controller_side</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;right&quot;</span>
+    <span class="n">controller_side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>  <span class="c1"># or "right"</span>
 <span class="p">)</span>
 
-<span class="n">controller</span> <span class="o">=</span> <span class="n">TriHandMotionControllerRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;trihand_motion_left&quot;</span><span class="p">)</span>
+<span class="n">controller</span> <span class="o">=</span> <span class="n">TriHandMotionControllerRetargeter</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"trihand_motion_left"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p class="sd-card-text"><strong>Output DOF mapping (7 DOF):</strong></p>
@@ -659,8 +716,8 @@ both hands with left and right VR controllers.</p>
 <p class="admonition-title">Tip</p>
 <p class="sd-card-text">For a complete hand retargeting example (e.g. <code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> + <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code> or
 <code class="docutils literal notranslate"><span class="pre">TriHandMotionControllerRetargeter</span></code>, connect and compute), see
-<code class="docutils literal notranslate"><span class="pre">g1_trihand_retargeting_example.py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
-<code class="docutils literal notranslate"><span class="pre">examples/teleop/python</span></code> directory, or the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md" rel="noopener noreferrer" target="_blank">retargeters README</a>.</p>
+<code class="docutils literal notranslate"><span class="pre">g1_</span><wbr><span class="pre">trihand_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/teleop/python/isaaccapture_examples/teleop" rel="noopener noreferrer" target="_blank">examples/teleop/python/isaaccapture_examples/teleop</a> directory.</p>
 </div>
 </div>
 </details><details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
@@ -683,7 +740,7 @@ still or when controllers are not available but the pipeline expects locomotion 
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">FootPedalRootCmdRetargeter</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">Maps 3-axis foot pedal input to the same 4D root command <code class="docutils literal notranslate"><span class="pre">[vel_x,</span> <span class="pre">vel_y,</span> <span class="pre">rot_vel_z,</span> <span class="pre">hip_height]</span></code>.
-Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.mode</span></code>):
+Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.</span><wbr><span class="pre">mode</span></code>):
 <code class="docutils literal notranslate"><span class="pre">&quot;horizontal&quot;</span></code> (right/left pedals = forward/back, rudder = yaw or strafe when pedal pressed)
 and <code class="docutils literal notranslate"><span class="pre">&quot;vertical&quot;</span></code> (left pedal drives hip height, rudder = yaw). Config includes velocity
 limits, squat range, deadzone and rudder thresholds.</p>
@@ -699,24 +756,27 @@ tensor. The <code class="docutils literal notranslate"><span class="pre">output_
 <span id="isaac-teleop-pipeline-builder"></span><h2>Build a Retargeting Pipeline<a class="headerlink" href="#build-a-retargeting-pipeline" title="Link to this heading">#</a></h2>
 <p>A pipeline builder is a callable that constructs the retargeting graph and returns an
 <code class="docutils literal notranslate"><span class="pre">OutputCombiner</span></code> with a single <code class="docutils literal notranslate"><span class="pre">&quot;action&quot;</span></code> key. Here is a complete example for a Franka
-manipulator (from <code class="docutils literal notranslate"><span class="pre">stack_ik_abs_env_cfg.py</span></code>):</p>
-<div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span><span class="p">,</span> <span class="n">HandsSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span><span class="p">,</span> <span class="n">ValueInput</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+manipulator, adapted from <code class="docutils literal notranslate"><span class="pre">_build_franka_stack_pipeline()</span></code> in Isaac Lab’s
+<a class="reference external" href="https://github.com/isaac-sim/IsaacLab/blob/develop/source/isaaclab_tasks/isaaclab_tasks/contrib/stack/config/franka/stack_ik_abs_env_cfg.py" rel="noopener noreferrer" target="_blank">stack_ik_abs_env_cfg.py</a>.
+<code class="docutils literal notranslate"><span class="pre">Se3AbsRetargeter</span></code> needs <code class="docutils literal notranslate"><span class="pre">scipy</span></code>, so install
+the <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> extra (or the full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra) to run it:</p>
+<div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span><span class="p">,</span> <span class="n">HandsSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span><span class="p">,</span> <span class="n">ValueInput</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span><span class="p">,</span>
     <span class="n">Se3AbsRetargeter</span><span class="p">,</span> <span class="n">Se3RetargeterConfig</span><span class="p">,</span>
     <span class="n">TensorReorderer</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.tensor_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">TransformMatrix</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.tensor_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">TransformMatrix</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">build_franka_stack_pipeline</span><span class="p">():</span>
 
     <span class="c1"># 1. Create input sources</span>
-    <span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;controllers&quot;</span><span class="p">)</span>
-    <span class="n">hands</span> <span class="o">=</span> <span class="n">HandsSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;hands&quot;</span><span class="p">)</span>
+    <span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"controllers"</span><span class="p">)</span>
+    <span class="n">hands</span> <span class="o">=</span> <span class="n">HandsSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"hands"</span><span class="p">)</span>
 
     <span class="c1"># 2. Apply coordinate-frame transform (world_T_anchor provided by IsaacTeleopDevice)</span>
-    <span class="n">transform_input</span> <span class="o">=</span> <span class="n">ValueInput</span><span class="p">(</span><span class="s2">&quot;world_T_anchor&quot;</span><span class="p">,</span> <span class="n">TransformMatrix</span><span class="p">())</span>
+    <span class="n">transform_input</span> <span class="o">=</span> <span class="n">ValueInput</span><span class="p">(</span><span class="s2">"world_T_anchor"</span><span class="p">,</span> <span class="n">TransformMatrix</span><span class="p">())</span>
     <span class="n">transformed_controllers</span> <span class="o">=</span> <span class="n">controllers</span><span class="o">.</span><span class="n">transformed</span><span class="p">(</span>
         <span class="n">transform_input</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">ValueInput</span><span class="o">.</span><span class="n">VALUE</span><span class="p">)</span>
     <span class="p">)</span>
@@ -726,36 +786,36 @@ manipulator (from <code class="docutils literal notranslate"><span class="pre">s
         <span class="n">input_device</span><span class="o">=</span><span class="n">ControllersSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">,</span>
         <span class="n">target_offset_roll</span><span class="o">=</span><span class="mf">90.0</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">se3</span> <span class="o">=</span> <span class="n">Se3AbsRetargeter</span><span class="p">(</span><span class="n">se3_cfg</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;ee_pose&quot;</span><span class="p">)</span>
+    <span class="n">se3</span> <span class="o">=</span> <span class="n">Se3AbsRetargeter</span><span class="p">(</span><span class="n">se3_cfg</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"ee_pose"</span><span class="p">)</span>
     <span class="n">connected_se3</span> <span class="o">=</span> <span class="n">se3</span><span class="o">.</span><span class="n">connect</span><span class="p">({</span>
         <span class="n">ControllersSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">:</span> <span class="n">transformed_controllers</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">ControllersSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">),</span>
     <span class="p">})</span>
 
-    <span class="n">gripper_cfg</span> <span class="o">=</span> <span class="n">GripperRetargeterConfig</span><span class="p">(</span><span class="n">hand_side</span><span class="o">=</span><span class="s2">&quot;right&quot;</span><span class="p">)</span>
-    <span class="n">gripper</span> <span class="o">=</span> <span class="n">GripperRetargeter</span><span class="p">(</span><span class="n">gripper_cfg</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;gripper&quot;</span><span class="p">)</span>
+    <span class="n">gripper_cfg</span> <span class="o">=</span> <span class="n">GripperRetargeterConfig</span><span class="p">(</span><span class="n">hand_side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">)</span>
+    <span class="n">gripper</span> <span class="o">=</span> <span class="n">GripperRetargeter</span><span class="p">(</span><span class="n">gripper_cfg</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"gripper"</span><span class="p">)</span>
     <span class="n">connected_gripper</span> <span class="o">=</span> <span class="n">gripper</span><span class="o">.</span><span class="n">connect</span><span class="p">({</span>
         <span class="n">ControllersSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">:</span> <span class="n">transformed_controllers</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">ControllersSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">),</span>
         <span class="n">HandsSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">:</span> <span class="n">hands</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="n">HandsSource</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">),</span>
     <span class="p">})</span>
 
     <span class="c1"># 4. Flatten into a single action tensor with TensorReorderer</span>
-    <span class="n">ee_elements</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;pos_x&quot;</span><span class="p">,</span> <span class="s2">&quot;pos_y&quot;</span><span class="p">,</span> <span class="s2">&quot;pos_z&quot;</span><span class="p">,</span> <span class="s2">&quot;quat_x&quot;</span><span class="p">,</span> <span class="s2">&quot;quat_y&quot;</span><span class="p">,</span> <span class="s2">&quot;quat_z&quot;</span><span class="p">,</span> <span class="s2">&quot;quat_w&quot;</span><span class="p">]</span>
+    <span class="n">ee_elements</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"pos_x"</span><span class="p">,</span> <span class="s2">"pos_y"</span><span class="p">,</span> <span class="s2">"pos_z"</span><span class="p">,</span> <span class="s2">"quat_x"</span><span class="p">,</span> <span class="s2">"quat_y"</span><span class="p">,</span> <span class="s2">"quat_z"</span><span class="p">,</span> <span class="s2">"quat_w"</span><span class="p">]</span>
     <span class="n">reorderer</span> <span class="o">=</span> <span class="n">TensorReorderer</span><span class="p">(</span>
         <span class="n">input_config</span><span class="o">=</span><span class="p">{</span>
-            <span class="s2">&quot;ee_pose&quot;</span><span class="p">:</span> <span class="n">ee_elements</span><span class="p">,</span>
-            <span class="s2">&quot;gripper_command&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gripper_value&quot;</span><span class="p">],</span>
+            <span class="s2">"ee_pose"</span><span class="p">:</span> <span class="n">ee_elements</span><span class="p">,</span>
+            <span class="s2">"gripper_command"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gripper_value"</span><span class="p">],</span>
         <span class="p">},</span>
-        <span class="n">output_order</span><span class="o">=</span><span class="n">ee_elements</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;gripper_value&quot;</span><span class="p">],</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;action_reorderer&quot;</span><span class="p">,</span>
-        <span class="n">input_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;ee_pose&quot;</span><span class="p">:</span> <span class="s2">&quot;array&quot;</span><span class="p">,</span> <span class="s2">&quot;gripper_command&quot;</span><span class="p">:</span> <span class="s2">&quot;scalar&quot;</span><span class="p">},</span>
+        <span class="n">output_order</span><span class="o">=</span><span class="n">ee_elements</span> <span class="o">+</span> <span class="p">[</span><span class="s2">"gripper_value"</span><span class="p">],</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"action_reorderer"</span><span class="p">,</span>
+        <span class="n">input_types</span><span class="o">=</span><span class="p">{</span><span class="s2">"ee_pose"</span><span class="p">:</span> <span class="s2">"array"</span><span class="p">,</span> <span class="s2">"gripper_command"</span><span class="p">:</span> <span class="s2">"scalar"</span><span class="p">},</span>
     <span class="p">)</span>
     <span class="n">connected_reorderer</span> <span class="o">=</span> <span class="n">reorderer</span><span class="o">.</span><span class="n">connect</span><span class="p">({</span>
-        <span class="s2">&quot;ee_pose&quot;</span><span class="p">:</span> <span class="n">connected_se3</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;ee_pose&quot;</span><span class="p">),</span>
-        <span class="s2">&quot;gripper_command&quot;</span><span class="p">:</span> <span class="n">connected_gripper</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;gripper_command&quot;</span><span class="p">),</span>
+        <span class="s2">"ee_pose"</span><span class="p">:</span> <span class="n">connected_se3</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"ee_pose"</span><span class="p">),</span>
+        <span class="s2">"gripper_command"</span><span class="p">:</span> <span class="n">connected_gripper</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"gripper_command"</span><span class="p">),</span>
     <span class="p">})</span>
 
-    <span class="c1"># 5. Return OutputCombiner with &quot;action&quot; key</span>
-    <span class="k">return</span> <span class="n">OutputCombiner</span><span class="p">({</span><span class="s2">&quot;action&quot;</span><span class="p">:</span> <span class="n">connected_reorderer</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">&quot;output&quot;</span><span class="p">)})</span>
+    <span class="c1"># 5. Return OutputCombiner with "action" key</span>
+    <span class="k">return</span> <span class="n">OutputCombiner</span><span class="p">({</span><span class="s2">"action"</span><span class="p">:</span> <span class="n">connected_reorderer</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"output"</span><span class="p">)})</span>
 </pre></div>
 </div>
 <div class="admonition tip">
@@ -767,17 +827,17 @@ Mismatches will cause silent control errors.</p>
 <section id="add-a-new-retargeter">
 <span id="isaac-teleop-new-retargeter"></span><h2>Add a New Retargeter<a class="headerlink" href="#add-a-new-retargeter" title="Link to this heading">#</a></h2>
 <p>If the built-in retargeters do not cover your use case, you can implement a custom one in the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop" rel="noopener noreferrer" target="_blank">Isaac Teleop repository</a>:</p>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture" rel="noopener noreferrer" target="_blank">Isaac Capture repository</a>:</p>
 <ol class="arabic simple">
 <li><p>Inherit from <code class="docutils literal notranslate"><span class="pre">BaseRetargeter</span></code> and implement <code class="docutils literal notranslate"><span class="pre">input_spec()</span></code>, <code class="docutils literal notranslate"><span class="pre">output_spec()</span></code>, and
-<code class="docutils literal notranslate"><span class="pre">compute()</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">_compute_fn()</span></code>. (<code class="docutils literal notranslate"><span class="pre">compute()</span></code> is concrete on the base class — it fills optional inputs
+and syncs parameters, then calls your <code class="docutils literal notranslate"><span class="pre">_compute_fn()</span></code>.)</p></li>
 <li><p>Optionally add a <code class="docutils literal notranslate"><span class="pre">ParameterState</span></code> for parameters that should be live-tunable via the
 retargeter tuning UI.</p></li>
 <li><p>Connect to existing source nodes (<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code>, <code class="docutils literal notranslate"><span class="pre">ControllersSource</span></code>) or create a new
 <code class="docutils literal notranslate"><span class="pre">IDeviceIOSource</span></code> subclass for custom input devices.</p></li>
 </ol>
-<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/retargeters/README.md" rel="noopener noreferrer" target="_blank">retargeters README</a>
-and <a class="reference internal" href="../../getting_started/contributing.html"><span class="doc">Contributing Guide</span></a> for details.</p>
+<p>See the <a class="reference internal" href="../../development/contributing.html"><span class="doc">Contributing Guide</span></a> for details.</p>
 <div class="toctree-wrapper compound">
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Retargeter setup guides</span></p>
 <ul>
@@ -801,12 +861,12 @@ and <a class="reference internal" href="../../getting_started/contributing.html"
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../build.html"
+       href="../generated_trackers.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Build System</p>
+        <p class="prev-next-title">Generated Tracker Code</p>
       </div>
     </a>
     <a class="right-next"
@@ -925,7 +985,7 @@ and <a class="reference internal" href="../../getting_started/contributing.html"
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on July 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

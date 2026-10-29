@@ -3,11 +3,11 @@
 Add a New Device
 ================
 
-For new hardware that requires a custom driver or SDK, create an Isaac Teleop device plugin
+For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
 (C++ level). Plugins push data via OpenXR tensor collections. Existing plugins include Manus
 gloves, OAK-D camera, Haptikos exoskeletons, controller synthetic hands, and foot pedals. After
 creating the plugin, update the retargeting pipeline config to consume data from the new plugin's
-source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/>`_
+source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/>`_
 for examples.
 
 To add a new device that streams typed data over the OpenXR runtime, follow these four steps.
@@ -24,11 +24,10 @@ The reference implementation is the **generic 3-axis foot pedal**:
    * - Device Plugin
      - :code-dir:`src/plugins/generic_3axis_pedal`
    * - Tracker facade (``Generic3AxisPedalTracker``)
-     - :code-file:`src/core/deviceio_trackers/cpp/generic_3axis_pedal_tracker.cpp` and
-       :code-file:`src/core/deviceio_trackers/cpp/inc/deviceio_trackers/generic_3axis_pedal_tracker.hpp`
+     - Generated at configure time from :code-file:`src/core/deviceio_trackers/trackers.toml`
+       (see :ref:`Schema-based tracker manifest <schema-based-tracker-manifest>`)
    * - Live backend (``LiveGeneric3AxisPedalTrackerImpl``)
-     - :code-file:`src/core/live_trackers/cpp/live_generic_3axis_pedal_tracker_impl.cpp` and
-       :code-file:`src/core/live_trackers/cpp/live_generic_3axis_pedal_tracker_impl.hpp`
+     - Generated alongside the facade under ``${CMAKE_BINARY_DIR}/generated/trackers/``
    * - ``SchemaTracker`` / ``SampleResult``
      - :code-file:`src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp`
    * - Debug printer
@@ -65,12 +64,9 @@ Reference schema: :code-file:`src/core/schema/fbs/pedals.fbs`
 
 - **Output table** — The primary payload type (e.g. ``Generic3AxisPedalOutput``) with the
   device fields. This is what the plugin serializes and pushes.
-- **Tracked wrapper** — A table that wraps the output in an optional ``data`` field
-  (e.g. ``Generic3AxisPedalOutputTracked``). Used by the in-memory tracker API so that
-  ``data`` can be null when no sample is available.
 - **Record wrapper** — A table that wraps the output plus ``DeviceDataTimestamp``
   (e.g. ``Generic3AxisPedalOutputRecord``). This is the root type written to MCAP channels
-  by the recorder; trackers serialize into this type in ``serialize_all()``.
+  by the recorder.
 - **root_type** — Set to the Record type (e.g. ``root_type Generic3AxisPedalOutputRecord;``).
 
 Include ``timestamp.fbs`` for ``DeviceDataTimestamp``; include other shared types (e.g.
@@ -97,6 +93,9 @@ which uses ``SchemaPusher``).
   ``Pack()``, then call ``pusher_.push_buffer(ptr, size, sample_time_local_common_clock_ns,
   sample_time_raw_device_clock_ns)``. Use a monotonic clock (e.g. ``core::os_monotonic_now_ns()``)
   for the local common clock; use the device's own clock for the raw device clock if available.
+- **Shutdown** — To stop a plugin, the plugin manager sends ``SIGINT`` and kills the process if
+  it is still running 2 seconds later. A plugin that needs longer to close its files sets
+  ``shutdown_timeout_seconds`` (greater than 0, at most 3600) in its ``plugin.yaml``.
 
 Reference implementation: :code-dir:`src/plugins/generic_3axis_pedal`. The plugin holds a
 ``core::SchemaPusher`` member, opens the Linux joystick device, maps axes to
@@ -107,11 +106,60 @@ Reference implementation: :code-dir:`src/plugins/generic_3axis_pedal`. The plugi
 Step 3: Implement a tracker
 ----------------------------
 
+.. _schema-based-tracker-manifest:
+
+Schema-based trackers (manifest)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the device is a **schema-based FlatBuffer tracker** over OpenXR tensor collections (plugin
+serializes a table; the host reads or writes it via ``SchemaTracker`` / ``SchemaPusher`` with no
+``xrLocate*`` calls and no custom connection state), you usually **do not** hand-write the
+seven-layer tracker stack. Instead:
+
+1. Add or extend the FlatBuffer schema (Step 1).
+2. Add a ``[[tracker]]`` entry to :code-file:`src/core/deviceio_trackers/trackers.toml`. Defaults
+   in :code-file:`src/core/deviceio_trackers/defaults.toml` expand ``%name%``, ``%name_CamelCase%``,
+   MCAP channel names, and class names; override only genuine exceptions (``se3_tracker`` uses
+   ``class = "Se3Tracker"``; pedals use ``schema = "pedals"`` and ``channel = "pedals"``).
+3. Reconfigure/rebuild. ``cmake/GenerateTrackers.cmake`` runs
+   :code-file:`src/core/codegen/generate_trackers.py` and wires generated sources into
+   ``deviceio_trackers``, ``live_trackers``, and ``replay_trackers``.
+
+Use ``direction = "push"`` when Teleop **pushes** a typed table to a plugin (e.g.
+``HapticCommandPushTracker``). Cross-process **consumers** that bucket multiple
+``HapticCommand.endpoint`` samples on one collection (e.g. ``HapticCommandReaderTracker`` for Manus
+haptics) stay hand-written — see :doc:`../references/generated_trackers`.
+
+A device that describes itself once (a layout, a calibration) rather than in every frame declares
+that description as the tracker's ``metadata``; see :ref:`tracker-metadata`.
+
+For what the generator emits, which trackers it covers today, and which shapes are not supported
+yet, see :doc:`../references/generated_trackers`.
+
+Diagnose surprising defaults with::
+
+   python src/core/codegen/generate_trackers.py \\
+     --manifest src/core/deviceio_trackers/trackers.toml \\
+     --defaults src/core/deviceio_trackers/defaults.toml \\
+     --out-dir /tmp/isaac-teleop-trackers \\
+     --emit-cmake /tmp/isaac-teleop-trackers.cmake \\
+     --print-resolved
+
+(``--out-dir`` and ``--emit-cmake`` are required by the CLI even when ``--print-resolved``
+skips writing generated sources; temporary paths are fine.)
+
+Hand-written trackers
+~~~~~~~~~~~~~~~~~~~~~
+
+Trackers that are not schema-based FlatBuffer readers/writers (OpenXR ``xrLocate*``, opaque message
+channels, multi-endpoint haptic readers, …) still use the manual facade + live/replay impl pattern
+below.
+
 The tracker runs inside a consumer process (e.g. Teleop pipeline or a small reader app). It
 implements the **ITracker** interface (tracker **facade** in ``deviceio_trackers``); the
 **live backend** in ``live_trackers`` composes **SchemaTracker** to read raw
 tensor samples from OpenXR. Implement a concrete tracker class (e.g.
-``Generic3AxisPedalTracker``) that:
+``HandTracker``) that:
 
 - **Extends ITracker** — Override ``get_name()``,
   ``get_schema_name()``, ``get_schema_text()``, and ``get_record_channels()``.
@@ -126,34 +174,44 @@ tensor samples from OpenXR. Implement a concrete tracker class (e.g.
 - **Factory registration** — Register your tracker in the live factory dispatch table
   (see ``LiveDeviceIOFactory``). The factory constructs an ``ITrackerImpl`` that holds
   a ``SchemaTracker``, builds a ``SchemaTrackerConfig`` from the tracker's stored
-  configuration, and implements ``update(XrTime)`` and
-  ``serialize_all(channel_index, callback)``.
+  configuration, and implements ``update(int64_t monotonic_time_ns)``.
 
 In the **Impl**:
 
-- **update()** — Call ``m_schema_reader.read_all_samples(pending_records)``. If the
-  collection is not present, clear the tracked state (e.g. set ``m_tracked.data = nullptr``).
-  Otherwise, deserialize the latest sample (or all samples) into your tracked type and
-  keep the last one for ``get_data()``.
-- **serialize_all()** — For each sample in the pending batch, deserialize, build the
-  Record FlatBuffer (output table + ``DeviceDataTimestamp``), and invoke the callback with
-  ``(log_time_ns, buffer_ptr, size)``. The buffer is only valid during the callback. If the
-  device disappeared and there are no samples, you may emit one record with null data and
-  the update-tick timestamp so the MCAP stream marks absence.
+- **Construction** — Build the ``SchemaTrackerConfig`` from the tracker's configuration and
+  hand it to the ``SchemaTracker``, along with the MCAP channels (or ``nullptr`` when
+  recording is disabled) and the sub-channel indices to write.
+- **update()** — Call ``m_schema_reader.update(m_tracked)``, where ``m_tracked`` is the
+  published ``Serialized<Generic3AxisPedalOutput>`` handle. That one call reads the pending
+  samples, writes each of them to MCAP when channels are attached, and publishes the final
+  one. A tick with no new samples leaves the last-known handle in place; an absent
+  collection empties it.
+- **get_data()** — Return the published handle. See
+  :ref:`Reading a payload <data-schema-convention>` for what a consumer may assume about it.
 
-Reference implementation — split across facade and live backend:
+Recording needs no per-tracker serialization code: ``SchemaTracker`` writes through
+``McapTrackerChannels``, which wraps the payload in the Record type with its
+``DeviceDataTimestamp``. It writes two sub-channels, and replay reads only the
+second -- see :ref:`tracked-sub-channel` before overriding ``mcap_channels`` in a
+manifest entry.
 
-- **Tracker facade** — :code-file:`src/core/deviceio_trackers/cpp/generic_3axis_pedal_tracker.cpp`
-  (class ``Generic3AxisPedalTracker``): holds collection configuration, implements ``ITracker``, and
-  exposes ``get_data(session)`` returning
-  ``Generic3AxisPedalOutputTrackedT`` by dispatching to the session’s
-  ``IGeneric3AxisPedalTrackerImpl`` (see :code-file:`src/core/deviceio_base/cpp/inc/deviceio_base/generic_3axis_pedal_tracker_base.hpp`).
-- **Live backend** — :code-file:`src/core/live_trackers/cpp/live_generic_3axis_pedal_tracker_impl.cpp`
-  (``LiveGeneric3AxisPedalTrackerImpl``): composes ``SchemaTracker``, implements ``update()`` and
-  ``serialize_all()``, and uses ``SchemaTracker::read_all_samples()`` with
-  ``std::vector<SchemaTracker::SampleResult>`` for the pending batch. See
-  :code-file:`src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp`
-  for ``SchemaTracker`` and ``SampleResult`` (buffer + timestamp metadata).
+Reference implementation — generated ``SchemaTracker`` reader and a hand-written OpenXR
+locate tracker:
+
+- **Generated schema-based reader** — after configure, under
+  ``${CMAKE_BINARY_DIR}/generated/trackers/``: facade
+  ``deviceio_trackers/generic_3axis_pedal_tracker.cpp`` (``Generic3AxisPedalTracker``), base
+  ``deviceio_base/generic_3axis_pedal_tracker_base.hpp``, and live backend
+  ``live_trackers/live_generic_3axis_pedal_tracker_impl.cpp``
+  (``LiveGeneric3AxisPedalTrackerImpl``). The live impl composes ``SchemaTracker`` and uses
+  ``read_all_samples()`` with ``std::vector<SchemaTrackerBase::SampleResult>``. See
+  :code-file:`src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp` for
+  ``SchemaTracker`` / ``SampleResult``.
+- **Hand-written OpenXR locate tracker** — facade
+  :code-file:`src/core/deviceio_trackers/cpp/hand_tracker.cpp` (``HandTracker``) and live
+  backend :code-file:`src/core/live_trackers/cpp/live_hand_tracker_impl.cpp`
+  (``LiveHandTrackerImpl``): same facade / ``ITrackerImpl`` split, but ``update()`` drives
+  ``xrLocate*`` rather than ``SchemaTracker``.
 
 Step 4: Implement a simple C++ printer (optional)
 -------------------------------------------------
@@ -166,8 +224,8 @@ the collection and prints samples. Pattern (see :code-file:`examples/schemaio/pe
 2. Get required extensions with ``DeviceIOSession::get_required_extensions(trackers)`` and
    create an ``OpenXRSession``.
 3. Create a ``DeviceIOSession`` with ``DeviceIOSession::run(trackers, oxr_session->get_handles())``.
-4. Loop: call ``session->update()``, then read ``tracker->get_data(*session)``. If
-   ``tracked.data`` is non-null, use the latest sample; otherwise sleep briefly and repeat.
+4. Loop: call ``session->update()``, then read ``tracker->get_data(*session)``. If the
+   returned handle is non-empty, use the latest sample; otherwise sleep briefly and repeat.
 
 Use the same ``collection_id`` (and optionally ``tensor_identifier``) as the plugin. See
 :ref:`Schema IO example: build and run <schema-io-example>` above for building and running
@@ -205,7 +263,11 @@ schema is not sent over the wire.
    ./install/examples/schemaio/pedal_pusher
 
 The printer discovers the tensor collection created by the pusher and prints received samples.
-Both exit after 100 samples, or press Ctrl+C to exit early.
+Both exit after 1000 samples, or press Ctrl+C to exit early.
+
+The same build installs ``se3_printer``, ``full_body_printer`` and ``frame_metadata_printer`` next
+to them. Those read other schemas and need their own data source, so they are not part of this
+example; ``full_body_printer`` is covered in :doc:`body_tracking/index`.
 
 **Components**
 
@@ -214,13 +276,21 @@ Both exit after 100 samples, or press Ctrl+C to exit early.
   the configured identifier, provides ``push_buffer()`` for raw serialized data. Use composition
   to create typed wrappers (e.g. ``Generic3AxisPedalPusher`` in :code-file:`examples/schemaio/pedal_pusher.cpp`).
 - **SchemaTracker** (``live_trackers``) — Helper for reading FlatBuffer schema data via
-  OpenXR tensor collections: discovers collections by identifier, exposes ``read_all_samples()`` into
-  ``SampleResult`` values. Live tracker implementations (e.g. ``LiveGeneric3AxisPedalTrackerImpl``)
-  compose a ``SchemaTracker`` and implement ``ITrackerImpl::update()`` / ``serialize_all()``.
+  OpenXR tensor collections: discovers collections by identifier, reads pending ``SampleResult``
+  values, records them when MCAP channels are attached, and publishes the final one as a
+  ``Serialized<...>``. Live tracker implementations (e.g. ``LiveGeneric3AxisPedalTrackerImpl``)
+  compose a ``SchemaTracker`` and implement ``ITrackerImpl::update()`` on top of it.
 - **Generic3AxisPedalTracker** (tracker facade in ``deviceio_trackers``) — Concrete ``ITracker`` for
   ``Generic3AxisPedalOutput``: holds configuration and
-  ``get_data(session)`` returning ``Generic3AxisPedalOutputTrackedT`` via the session’s
+  ``get_data(session)`` returning ``Serialized<Generic3AxisPedalOutput>`` via the session’s
   ``IGeneric3AxisPedalTrackerImpl``.
 - **DeviceIOSession** — Session manager: collects required OpenXR extensions from registered
   trackers, creates tracker implementations with session handles, and calls ``update()`` on all
   trackers during the update loop.
+
+For the shared library build and contribution workflow, see
+:doc:`/development/build_from_source/index` and :doc:`/development/contributing`.
+
+.. seealso::
+
+   Once your device publishes hand or full-body poses, prove it with :doc:`/conformance/overview`.

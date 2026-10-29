@@ -1,36 +1,41 @@
 .. SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 .. SPDX-License-Identifier: Apache-2.0
 
-Welcome to Isaac Teleop
-=======================
+Welcome to Isaac Capture
+========================
 
-.. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
-   :target: references/license.html
-   :alt: License
+|default-license| |egopost-license|
+
+.. |default-license| image:: https://img.shields.io/badge/Default-Apache--2.0-blue.svg
+   :target: development/license.html
+   :alt: Default: Apache-2.0
    :class: license-badge
 
-**Isaac Teleop** (`GitHub repo <https://github.com/NVIDIA/IsaacTeleop>`_) is the unified framework for high-fidelity
-egocentric and robot data collection. It provides a standardized device interface, a flexible
-graph-based retargeting pipeline, and a streamlined data collection workflow
-that work seamlessly across simulated and real-world robots.
+.. |egopost-license| image:: https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg
+   :target: https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt
+   :alt: EgoPost: OpenMDW-1.1
+   :class: license-badge
 
-.. figure:: _static/isaac-teleop-hero.jpg
-   :width: 100%
-   :alt: Isaac Teleop
+**NVIDIA Isaac Capture** is a shared library for teleoperation and egocentric data
+capture. It brings device plugins, retargeters, and data utilities together so
+applications can collect and use human demonstration data across robot and
+simulation environments.
 
-Key features:
+**Isaac Teleop** is the robot-in-the-loop component within Isaac Capture. It
+provides teleoperation sessions and workflows for controlling robots and
+collecting demonstrations. The **Ego Pipeline** covers human and egocentric data
+capture and post-processing. Both build on the shared capture infrastructure.
 
-- **Unified stack** for sim and real teleoperation (ROS2, Isaac Sim, Isaac Lab)
-- **Standardized device interface** for XR headsets, gloves, foot pedals, body trackers
-- **Flexible retargeting** to different robot embodiments
-- **Plugin system** for adding new devices and use cases
-- **Visualization module (Televiz)** for streaming robot camera and sensor feeds, plus 3D reconstruction content to XR headsets
-- **Markerless hand reconstruction** from egocentric video into 4D hand and camera poses (monocular supported, stereo on the roadmap)
+See :doc:`overview/architecture` for the component relationships and
+:doc:`overview/ecosystem` for devices and integrations. Source code and Python
+packages are distributed through `GitHub <https://github.com/NVIDIA/IsaacCapture>`_
+and `PyPI <https://pypi.org/project/isaaccapture/>`_.
 
 .. tip::
 
-   **Just want to get running?** Follow the :doc:`getting_started/quick_start` how-to guide for
-   installation and first-run steps.
+   To run Isaac Teleop, follow :doc:`teleop/quick_start` for installation,
+   headset setup, and your first session. Existing users can consult
+   :doc:`development/migration` for the Python package migration.
 
 Table of Contents
 -----------------
@@ -40,36 +45,59 @@ Table of Contents
    :caption: Overview
    :titlesonly:
 
-   Isaac Teleop <self>
    overview/architecture
+   overview/isaac_teleop
    overview/ecosystem
 
 .. toctree::
    :maxdepth: 2
-   :caption: Getting Started
+   :caption: Isaac Teleop
 
-   getting_started/quick_start
-   getting_started/build_from_source/index
-   getting_started/teleop_session
-   getting_started/teleop_control_state_machine
-   getting_started/televiz
-   getting_started/lerobot/index
-   getting_started/contributing
+   teleop/quick_start
+   teleop/teleop_session
+   teleop/control_state_machine
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Ego Post Processing
+
+   ego_post_processing/egohand
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Development
+
+   development/build_from_source/index
+   development/televiz
+   development/migration
+   development/contributing
+   development/license
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Integrations
+   :titlesonly:
+
+   integrations/isaac_lab_sim
+   integrations/isaac_ros
+   integrations/lerobot/index
 
 .. toctree::
    :maxdepth: 2
    :caption: Devices
+   :titlesonly:
 
-   device/trackers
+   device/xr/index
+   device/hand_tracking/index
+   Body tracking <device/body_tracking/index>
+   device/cameras/index
+   Joint-space devices <device/joint_space/index>
+   device/tactile/index
+   device/spatial_controllers/index
+   device/gamepads/index
+   Spatial trackers <device/trackers/index>
    device/add_device
-   device/joint_space
-   device/body_tracking
-   device/haptic_feedback
-   device/manus
-   device/oak
-   device/oglo
-   device/wuji_glove
-   device/haptikos
+   Device Conformance <conformance/overview>
 
 .. toctree::
    :maxdepth: 2
@@ -77,14 +105,15 @@ Table of Contents
 
    references/requirements
    references/build
+   references/sbom
+   references/generated_trackers
    references/retargeting/index
+   references/device_provider_monitoring
    references/camera_streaming
    references/mcap_record_replay
    references/cloudxr
-   references/rig
    references/oob_teleop_control
-   references/egocentric_hand_reconstruction
-   references/license
+   references/haptic_feedback
 
 Indices and tables
 ------------------
