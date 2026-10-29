@@ -515,6 +515,11 @@ cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axi
 <p><code class="docutils literal notranslate"><span class="pre">CameraPanelConsumer</span></code> implements the <code class="docutils literal notranslate"><span class="pre">OvxrFrameConsumer</span></code> lifecycle. Configure panels with a tuple of
 <code class="docutils literal notranslate"><span class="pre">CameraPanelConfig</span></code> values, each pairing a render-product path with its placement
 and image bound.</p>
+<p>Camera-panel attachment failure disables panels and logs the reason without
+blocking teleoperation input. An incomplete GPU copy disables the affected panel;
+the consumer rechecks its copy stream before releasing the borrowed output.
+If completion still cannot be proved, the session reports a failure and retains
+the borrowed resources. Other camera mailboxes are still given a cleanup attempt.</p>
 <p>Consumers receive <code class="docutils literal notranslate"><span class="pre">FrameOutputs</span></code> on the XR owner thread. Use <code class="docutils literal notranslate"><span class="pre">latest_color</span></code>
 to select an output, then <code class="docutils literal notranslate"><span class="pre">copy_host_rgba</span></code> or <code class="docutils literal notranslate"><span class="pre">map_gpu</span></code> to consume it without
 unpacking native result structures. Selected handles are valid only during that
@@ -726,7 +731,7 @@ those resources. There is no automatic retry of uncertain native destruction.</p
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

@@ -87,6 +87,12 @@ cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
 and image bound.
 
+Camera-panel attachment failure disables panels and logs the reason without
+blocking teleoperation input. An incomplete GPU copy disables the affected panel;
+the consumer rechecks its copy stream before releasing the borrowed output.
+If completion still cannot be proved, the session reports a failure and retains
+the borrowed resources. Other camera mailboxes are still given a cleanup attempt.
+
 Consumers receive ``FrameOutputs`` on the XR owner thread. Use ``latest_color``
 to select an output, then ``copy_host_rgba`` or ``map_gpu`` to consume it without
 unpacking native result structures. Selected handles are valid only during that
