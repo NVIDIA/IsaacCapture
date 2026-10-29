@@ -21,7 +21,13 @@ namespace
 class FakeHandRuntime
 {
 public:
-    FakeHandRuntime()
+    enum class XDevBehavior
+    {
+        FAIL_FIRST_LEFT,
+        UNSUPPORTED,
+    };
+
+    explicit FakeHandRuntime(XDevBehavior xdev_behavior = XDevBehavior::FAIL_FIRST_LEFT) : xdev_behavior_(xdev_behavior)
     {
         if (current_ != nullptr)
         {
@@ -122,11 +128,19 @@ private:
         if (xdev_info != nullptr && create_info->hand == XR_HAND_LEFT_EXT)
         {
             ++current_->left_xdev_create_attempts_;
+            if (current_->xdev_behavior_ == XDevBehavior::UNSUPPORTED)
+            {
+                return XR_ERROR_FEATURE_UNSUPPORTED;
+            }
             if (current_->fail_first_left_xdev_create_)
             {
                 current_->fail_first_left_xdev_create_ = false;
                 return XR_ERROR_RUNTIME_FAILURE;
             }
+        }
+        if (xdev_info != nullptr && current_->xdev_behavior_ == XDevBehavior::UNSUPPORTED)
+        {
+            return XR_ERROR_FEATURE_UNSUPPORTED;
         }
 
         *tracker = reinterpret_cast<XrHandTrackerEXT>(current_->next_tracker_handle_++);
@@ -186,6 +200,7 @@ private:
 
     uintptr_t next_tracker_handle_ = 1;
     int left_xdev_create_attempts_ = 0;
+    XDevBehavior xdev_behavior_;
     bool fail_first_left_xdev_create_ = true;
 };
 
@@ -202,4 +217,17 @@ TEST_CASE("HandTracker retries an incomplete XDev binding without a topology cha
     session->update();
 
     CHECK(runtime.left_xdev_create_attempts() == 2);
+}
+
+TEST_CASE("HandTracker caches XDevs that do not support hand tracking", "[unit][hand][xdev]")
+{
+    FakeHandRuntime runtime(FakeHandRuntime::XDevBehavior::UNSUPPORTED);
+    auto hand = std::make_shared<core::HandTracker>();
+    auto session = core::DeviceIOSession::run({ hand }, runtime.handles());
+
+    REQUIRE(runtime.left_xdev_create_attempts() == 1);
+
+    session->update();
+
+    CHECK(runtime.left_xdev_create_attempts() == 1);
 }

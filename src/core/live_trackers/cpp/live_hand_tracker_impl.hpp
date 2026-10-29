@@ -43,13 +43,20 @@ public:
     const Serialized<HandPose>& get_right_hand() const override;
 
 private:
+    enum class XDevTrackerCreation
+    {
+        CREATED,
+        UNSUPPORTED,
+        RETRY,
+    };
+
     void initialize_xdev_hand_trackers(const OpenXRSessionHandles& handles);
     bool enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& xdev_ids);
     bool refresh_xdev_hand_trackers();
-    bool try_create_xdev_hand_tracker(XrSession session,
-                                      XrXDevIdMNDX xdev_id,
-                                      XrHandEXT hand,
-                                      std::vector<XrHandTrackerEXT>& trackers);
+    XDevTrackerCreation try_create_xdev_hand_tracker(XrSession session,
+                                                     XrXDevIdMNDX xdev_id,
+                                                     XrHandEXT hand,
+                                                     std::vector<XrHandTrackerEXT>& trackers);
     bool try_create_default_hand_tracker(XrSession session, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers);
     void destroy_hand_trackers(std::vector<XrHandTrackerEXT>& trackers);
     void destroy_xdev_list();
