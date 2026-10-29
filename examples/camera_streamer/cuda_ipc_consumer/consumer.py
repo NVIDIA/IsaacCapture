@@ -58,22 +58,26 @@ class CudaIpcClient:
 
     def connect(self) -> dict:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(self.socket_path)
         self.sock = sock
-        hello = self._read_json_blocking()
-        if hello is None or hello.get("type") != "hello":
-            raise RuntimeError(f"expected hello message, got {hello!r}")
-        self._send_json({"type": "subscribe", "streams": self.requested_streams})
-        subscribed = self._read_json_blocking()
-        if subscribed is None:
-            raise RuntimeError("publisher disconnected before subscription")
-        if subscribed.get("type") == "error":
-            raise RuntimeError(str(subscribed.get("error", "subscription failed")))
-        if subscribed.get("type") != "subscribed":
-            raise RuntimeError(f"expected subscribed message, got {subscribed!r}")
-        self._open_streams(subscribed)
-        sock.setblocking(False)
-        return {"hello": hello, "subscribed": subscribed}
+        try:
+            sock.connect(self.socket_path)
+            hello = self._read_json_blocking()
+            if hello is None or hello.get("type") != "hello":
+                raise RuntimeError(f"expected hello message, got {hello!r}")
+            self._send_json({"type": "subscribe", "streams": self.requested_streams})
+            subscribed = self._read_json_blocking()
+            if subscribed is None:
+                raise RuntimeError("publisher disconnected before subscription")
+            if subscribed.get("type") == "error":
+                raise RuntimeError(str(subscribed.get("error", "subscription failed")))
+            if subscribed.get("type") != "subscribed":
+                raise RuntimeError(f"expected subscribed message, got {subscribed!r}")
+            self._open_streams(subscribed)
+            sock.setblocking(False)
+            return {"hello": hello, "subscribed": subscribed}
+        except Exception:
+            self.close()
+            raise
 
     def close(self) -> None:
         if self.sock is not None:
@@ -87,6 +91,8 @@ class CudaIpcClient:
             slot.owner.close()
         self.slots.clear()
         self.recv_buf.clear()
+        self.stream_order.clear()
+        self.stream_info.clear()
 
     def read_messages(self, timeout_s: float = 0.05) -> Optional[list[dict]]:
         """Return all currently available messages, or None on socket EOF."""
@@ -156,17 +162,22 @@ class CudaIpcClient:
                         handle, cp.cuda.runtime.cudaIpcMemLazyEnablePeerAccess
                     )
                     owner = IpcMemory(ptr)
-                    mem = cp.cuda.UnownedMemory(ptr, int(slot["nbytes"]), owner)
-                    memptr = cp.cuda.MemoryPointer(mem, 0)
-                    arr = cp.ndarray(
-                        tuple(slot["shape"]),
-                        dtype=cp.uint8,
-                        memptr=memptr,
-                        strides=tuple(slot["strides"]),
-                    )
-                    self.slots[(name, int(slot["slot"]))] = IpcSlot(
-                        stream=name, slot=int(slot["slot"]), array=arr, owner=owner
-                    )
+                    try:
+                        mem = cp.cuda.UnownedMemory(ptr, int(slot["nbytes"]), owner)
+                        memptr = cp.cuda.MemoryPointer(mem, 0)
+                        arr = cp.ndarray(
+                            tuple(slot["shape"]),
+                            dtype=cp.uint8,
+                            memptr=memptr,
+                            strides=tuple(slot["strides"]),
+                        )
+                        self.slots[(name, int(slot["slot"]))] = IpcSlot(
+                            stream=name, slot=int(slot["slot"]), array=arr, owner=owner
+                        )
+                    except Exception:
+                        # A mapping is owned before its array can be registered in slots.
+                        owner.close()
+                        raise
 
 
 def _to_bgr_cpu(array, stream_info: dict):
