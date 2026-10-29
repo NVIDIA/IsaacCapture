@@ -35,6 +35,9 @@ try
 
     plugins::manus::ManusPluginConfig config;
     config.app_name = "ManusHandPrinter";
+    config.human = false;
+    config.sensors = false;
+    config.haptic = false;
     auto& tracker = plugins::manus::ManusTracker::instance(config);
 
     // Start Vulkan visualizer in a background thread.

@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <log_bridge/logger.hpp>
+#include <manus/manus_glove_collection.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
+#include <plugin_utils/openxr_plugin_session.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -11,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace plugins::manus;
@@ -129,7 +133,28 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto& tracker = ManusTracker::instance(config);
+    std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader;
+    if (config.haptic)
+    {
+        haptic_reader = std::make_shared<core::HapticCommandReaderTracker>(MANUS_GLOVE_COLLECTION_ID);
+    }
+
+    ManusPluginSessionFactory session_factory = [config, haptic_reader]
+    {
+        std::vector<std::shared_ptr<core::ITracker>> trackers;
+        if (haptic_reader)
+        {
+            trackers.push_back(haptic_reader);
+        }
+        return std::make_shared<plugin_utils::OpenXRPluginSession>(
+            config.app_name,
+            core::PluginSessionRequirements{ .schema_push = config.sensors || config.monitoring_plugin_root_id.has_value(),
+                                             .hand_tracking_push = config.human,
+                                             .wrist_tracking_pull = config.human },
+            std::move(trackers));
+    };
+
+    auto& tracker = ManusTracker::instance(config, std::move(session_factory), std::move(haptic_reader));
 
     logger->info("Plugin running. Press Ctrl+C to stop.");
 
