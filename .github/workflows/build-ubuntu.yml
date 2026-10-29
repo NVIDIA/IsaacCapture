@@ -834,6 +834,27 @@ jobs:
         # Run tests with CloudXR runtime
         ./scripts/run_tests_with_cloudxr.sh --python-version ${{ matrix.python_version }}
 
+  # The hosted client is served from this commit's build: the Pages slot for a
+  # new VERSION exists only after main deploys it, which a bump PR cannot wait for.
+  build-web-client:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Build CloudXR web client
+      uses: ./.github/actions/build-cloudxr-web-client
+
+    - name: Upload web client artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: webxr-client
+        path: deps/cloudxr/webxr_client/build
+
   test-teleop-ros2:
     # Unit tests and MCAP replay require no GPU; only live CloudXR does.
     runs-on: >-
@@ -842,7 +863,10 @@ jobs:
       || (matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04') }}
     permissions:
       contents: read
-    needs: [build-ubuntu, resolve-ci-config]
+    needs: [build-ubuntu, build-web-client, resolve-ci-config]
+    env:
+      # /tmp is the only host path these runners are known to bind-mount into containers.
+      WEB_CLIENT_DIR: /tmp/webxr_client_${{ github.run_id }}_${{ github.run_attempt }}_${{ matrix.arch }}
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
@@ -1016,6 +1040,13 @@ jobs:
           fi
         done
 
+    - name: Download web client artifact
+      if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
+      uses: actions/download-artifact@v7
+      with:
+        name: webxr-client
+        path: ${{ env.WEB_CLIENT_DIR }}
+
     # Live CloudXR and managed-plugin bring-up on the same GPU runner, reusing
     # the teleop_ros2_ref image built above. Runs the teleop_ros2 node against a
     # real in-process CloudXR runtime and requires the bundled Wuji plugin to
@@ -1060,6 +1091,8 @@ jobs:
         docker run -d \
           --name "$RUN_NAME" \
           --gpus all \
+          -v "$WEB_CLIENT_DIR:/opt/webxr_client:ro" \
+          -e TELEOP_WEB_CLIENT_STATIC_DIR=/opt/webxr_client \
           -e PYTHONUNBUFFERED=1 \
           -e ACCEPT_CLOUDXR_EULA=Y \
           --entrypoint bash "$IMAGE" -c \
@@ -1151,9 +1184,11 @@ jobs:
         cat "$LOG_FILE" 2>/dev/null || echo "No log captured"
         echo "Live CloudXR and Wuji plugin bring-up verified for mode $MODE (${{ env.ROS_DISTRO }}, ${{ matrix.arch }})."
 
-    - name: Remove teleop_ros2 image
+    - name: Remove teleop_ros2 image and web client
       if: ${{ always() }}
-      run: docker image rm -f teleop_ros2_ref:${{ env.ROS_DISTRO }} >/dev/null 2>&1 || true
+      run: |
+        docker image rm -f teleop_ros2_ref:${{ env.ROS_DISTRO }} >/dev/null 2>&1 || true
+        rm -rf "$WEB_CLIENT_DIR"
 
   # Validation dependencies live here, including for runs that do not publish.
   # Only configured skips are allowed; publishing requires all test jobs enabled.
@@ -1167,6 +1202,7 @@ jobs:
       - test-viz-gpu
       - test-viz-sanitizers
       - test-cloudxr
+      - build-web-client
       - test-teleop-ros2
     if: ${{ always() }}
 
