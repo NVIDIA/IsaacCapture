@@ -12,9 +12,17 @@ import json
 import select
 import signal
 import socket
+import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+
+# Support direct execution without installing the example as a package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "camera_receiver"))
+from slot_guard import read_slot  # noqa: E402
 
 
 @dataclass
@@ -23,6 +31,8 @@ class IpcSlot:
     slot: int
     array: object
     owner: "IpcMemory"
+    guard_path: str
+    gpu_id: int
 
 
 class IpcMemory:
@@ -64,7 +74,13 @@ class CudaIpcClient:
             hello = self._read_json_blocking()
             if hello is None or hello.get("type") != "hello":
                 raise RuntimeError(f"expected hello message, got {hello!r}")
-            self._send_json({"type": "subscribe", "streams": self.requested_streams})
+            if hello.get("version") != 3:
+                raise RuntimeError(
+                    "CUDA IPC requires protocol 3 slot read locks; update the receiver"
+                )
+            self._send_json(
+                {"type": "subscribe", "version": 3, "streams": self.requested_streams}
+            )
             subscribed = self._read_json_blocking()
             if subscribed is None:
                 raise RuntimeError("publisher disconnected before subscription")
@@ -93,6 +109,25 @@ class CudaIpcClient:
         self.recv_buf.clear()
         self.stream_order.clear()
         self.stream_info.clear()
+
+    @contextmanager
+    def read_frame(self, msg):
+        """Hold ownership until all GPU reads finish; yield None for stale frames."""
+        import cupy as cp
+
+        slot = self.slots.get((str(msg["stream"]), int(msg["slot"])))
+        if slot is None:
+            yield None
+            return
+        with read_slot(slot.guard_path, int(msg["slot_generation"])) as valid:
+            if not valid:
+                yield None
+                return
+            with cp.cuda.Device(slot.gpu_id):
+                try:
+                    yield slot.array
+                finally:
+                    cp.cuda.get_current_stream().synchronize()
 
     def read_messages(self, timeout_s: float = 0.05) -> Optional[list[dict]]:
         """Return all currently available messages, or None on socket EOF."""
@@ -172,7 +207,12 @@ class CudaIpcClient:
                             strides=tuple(slot["strides"]),
                         )
                         self.slots[(name, int(slot["slot"]))] = IpcSlot(
-                            stream=name, slot=int(slot["slot"]), array=arr, owner=owner
+                            stream=name,
+                            slot=int(slot["slot"]),
+                            array=arr,
+                            owner=owner,
+                            guard_path=str(slot["guard_path"]),
+                            gpu_id=gpu_id,
                         )
                     except Exception:
                         # A mapping is owned before its array can be registered in slots.
@@ -581,11 +621,15 @@ def run(args: argparse.Namespace) -> int:
                 if slot is None:
                     print(f"unknown frame slot: {stream}[{slot_id}]", flush=True)
                     continue
-                updated_display = True
                 if cv2 is not None:
-                    latest_cpu[stream] = _to_bgr_cpu(
-                        slot.array, client.stream_info.get(stream, {})
-                    )
+                    with client.read_frame(msg) as array:
+                        if array is None:
+                            overwritten += 1
+                            continue
+                        latest_cpu[stream] = _to_bgr_cpu(
+                            array, client.stream_info.get(stream, {})
+                        )
+                    updated_display = True
 
             if cv2 is None:
                 for msg in sampled_messages:
@@ -598,7 +642,11 @@ def run(args: argparse.Namespace) -> int:
                     metadata_text = _format_stream_metadata(msg.get("metadata"))
                     mean_text = ""
                     if args.sample_mean:
-                        mean = float(cp.mean(slot.array).get())
+                        with client.read_frame(msg) as array:
+                            if array is None:
+                                overwritten += 1
+                                continue
+                            mean = float(cp.mean(array).get())
                         mean_text = f" mean={mean:.2f}"
                     print(
                         f"{stream}[{slot_id}] gen={msg.get('slot_generation')} "
