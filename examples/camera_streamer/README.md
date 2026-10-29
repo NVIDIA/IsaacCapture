@@ -140,8 +140,13 @@ named `.venv`.
 
 All profiles live directly in `configs/`, with model-prefixed filenames.
 Each device/resolution has one shared YAML. Set `PROFILE` to the filename without
-`.yaml` (for example, `s56-stereo-2560x1984-30`), so `configs/${PROFILE}.yaml`
-selects the file. Copy the same file to both computers and select the **same PROFILE on both computers**.
+`.yaml`, for example:
+
+```bash
+PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
+```
+
+Then `configs/${PROFILE}.yaml` selects the file. Copy the same file to both computers and select the **same PROFILE on both computers**.
 `network.port` and `streams[].id/type/output` define the common wire format.
 `cameras`, `capture`, `runtime` and `alignment` control capture; `receiver`, `ipc`
 and `streams[].receiver` control decoding and local IPC. Stream order determines
