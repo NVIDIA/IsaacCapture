@@ -181,6 +181,8 @@ struct NvVideoDecoder::Impl
         cudaError_t sync_err = cudaSuccess;
         try
         {
+            if (decoder->GetOutputFormat() != cudaVideoSurfaceFormat_NV12)
+                throw std::runtime_error("NvVideoDecoder: only 8-bit NV12 decoded surfaces are supported");
             launch_nv12_to_rgba(nv12, nv12 + luma_size, pitch, pitch, w, h, reinterpret_cast<uint8_t*>(rgba_out),
                                 static_cast<int>(rgba_row_bytes), cfg.full_range, rotation, stream);
             // UnlockFrame returns the surface to NVDEC's pool, so the
@@ -271,6 +273,8 @@ struct NvVideoDecoder::Impl
         cudaError_t sync_err = cudaSuccess;
         try
         {
+            if (decoder->GetOutputFormat() != cudaVideoSurfaceFormat_NV12)
+                throw std::runtime_error("NvVideoDecoder: only 8-bit NV12 decoded surfaces are supported");
             auto* dst_y = reinterpret_cast<uint8_t*>(nv12_out);
             auto* dst_uv = dst_y + nv12_row_bytes * static_cast<std::size_t>(h);
             if (rotation == 180)
