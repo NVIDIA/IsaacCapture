@@ -44,9 +44,12 @@ to their separate NVIDIA license and CloudXR EULA acceptance.
 Optional camera panels
 ----------------------
 
-Camera picture-in-picture panels require the native camera helper. Follow the
-source-build guide to configure a build for your application's Python version,
-then enable camera support and rebuild the wheel:
+Camera picture-in-picture panels require the native camera helper. The Ubuntu
+release workflow includes it in its wheels and checks the packaged artifact.
+Installing those wheels requires no CMake configuration.
+
+For a source build, follow the source-build guide for your application's Python
+version, then enable camera support and build the wheel:
 
 .. code-block:: bash
 
@@ -77,7 +80,8 @@ and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
 The binding also supplies optional ``frame_consumers`` after the application has
 resolved its render-product paths. Capture does not depend on an Isaac Lab task
-or scene configuration.
+or scene configuration. ``camera_paths`` is required and must contain both stereo
+cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 
 ``CameraPanelConsumer`` implements the ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
@@ -144,3 +148,28 @@ relying on the selected build.
 Applications using different provider versions need separate project
 environments and lock files. Each can install the same Isaac Capture wheel
 with its own OVXR/OVRTX/OVStage combination.
+
+
+Session lifetime
+----------------
+
+Use ``OvxrSession`` as a context manager, or call ``close()`` in a ``finally``
+block. Stop application steps and input borrowers before closing. Startup failure
+before handles are borrowed retires its resources on the owner thread; successful
+startup requires explicit closure. Do not rely on interpreter exit or object
+finalizers to stop native rendering.
+
+The session schedules work; its frame pump owns native frame processing and
+retirement, and its runtime owner stops only the CloudXR process it launched.
+Applications may supply ``runtime_launcher_factory`` for a compatible launcher;
+it receives the environment path and ``accept_eula`` and returns an object with
+``stop()``. Externally managed runtimes remain externally owned.
+
+``OvxrScenePublication`` and ``OvxrResourceOwner`` describe the two parts of the
+application contract. ``OvxrApplicationInterface`` combines them, so existing
+adapters can continue implementing the combined interface.
+
+If native context destruction fails without proving the context was consumed,
+closure reports the failure and retains its borrowed resources and runtime.
+Do not treat this as successful retirement or start a replacement session over
+those resources. There is no automatic retry of uncertain native destruction.

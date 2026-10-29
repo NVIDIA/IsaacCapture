@@ -213,13 +213,15 @@ for themselves and need no sourcing.
 Run teleop examples against the service
 ---------------------------------------
 
-Nothing to pass. The examples under ``examples/teleop/python/`` attach to
-whatever runtime is serving, so with a service running they use it:
+Nothing to pass. The examples under ``examples/teleop`` attach to
+whatever runtime is serving, so with a service running they use it. Install
+them once from the repository root, as in :ref:`run-teleop-example`:
 
 .. code-block:: bash
 
+   uv pip install -e ./examples/teleop
    python -m isaaccapture.cloudxr.service start --accept-eula
-   python examples/teleop/python/gripper_retargeting_example_simple.py
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 The example leaves the service running when it exits, so the headset stays
 connected and the next run reattaches to the same session.
@@ -242,7 +244,7 @@ other than CloudXR:
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
    export ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS=1
-   python examples/teleop/python/gripper_retargeting_example_simple.py --no-launch-cloudxr-runtime
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
 ------------------------------------
