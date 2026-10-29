@@ -19,6 +19,11 @@ from isaaccapture.ovxr_session_manager.camera_panels import (
     CameraPanelConfig,
     CameraPanelConsumer,
 )
+from isaaccapture.ovxr_session_manager.desktop_mirror import (
+    DesktopMirrorConfig,
+    DesktopMirrorStatus,
+)
+import isaaccapture.ovxr_session_manager.owned_mirror as owned_mirror
 import isaaccapture.ovxr_session_manager.ovxr_session as ovxr_session
 from isaaccapture.ovxr_session_manager import frame_pump, runtime_owner
 
@@ -252,9 +257,13 @@ class _FakeHost:
         self.events.append("abort")
 
 
-def _session_with_consumers(host, config, *, frame_consumers):
+def _session_with_consumers(
+    host, config, *, frame_consumers, runtime_launcher_factory=None
+):
     host.frame_consumers = frame_consumers
-    return ovxr_session.OvxrSession(host, config)
+    return ovxr_session.OvxrSession(
+        host, config, runtime_launcher_factory=runtime_launcher_factory
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1201,6 +1210,178 @@ def test_consumer_start_failure_retires_borrowed_owners():
     assert "destroy" in [name for name, _ in _FakeContext.operations]
 
 
+def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch):
+    host = _FakeHost()
+    mirror_events = []
+    acquired = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def __init__(self, acquire_frame):
+            self.acquire_frame = acquire_frame
+
+        def start(self):
+            acquired.append(self.acquire_frame())
+            mirror_events.append(("start", threading.get_native_id()))
+
+        def record_host_frame(self):
+            mirror_events.append(("host",))
+
+        def set_status_text(self, text):
+            mirror_events.append(("status", text))
+
+        def record_render_frame(self):
+            mirror_events.append(("render", threading.get_native_id()))
+
+        def close(self):
+            assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+            mirror_events.append(("close", threading.get_native_id()))
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda acquire_frame, config, _on_user_close, *, products=None: (
+            mirror_events.append(("create", threading.get_native_id(), config))
+            or FakeMirror(acquire_frame)
+        ),
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = _session_with_consumers(host, config, frame_consumers=(consumer,))
+
+    owner.start()
+    context = owner._pump._context
+    assert not getattr(context.desc, "enable_frame_readback", False)
+    assert context.desc.render_products == list(config.render_products)
+    assert _FakeContext.selected_products == ()
+    assert [p.path for p in consumer._mailbox.view()[0]] == [
+        "/OVXR/Render/Products/Left",
+        "/OVXR/Render/Products/Right",
+    ]
+    assert consumer.status == DesktopMirrorStatus()
+    consumer.record_host_frame()
+    consumer.set_status_text("Application status")
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    owner.close()
+
+    owner_thread = owner.render_worker_native_thread_id
+    assert mirror_events[0:2] == [
+        ("create", owner_thread, mirror_config),
+        ("host",),
+    ]
+    assert ("start", owner_thread) in mirror_events
+    assert mirror_events.index(("start", owner_thread)) < mirror_events.index(
+        ("render", owner_thread)
+    )
+    assert ("status", "Application status") in mirror_events
+    assert ("render", owner_thread) in mirror_events
+    assert mirror_events[-1] == ("close", owner_thread)
+    assert acquired == [None]
+    assert consumer.status == DesktopMirrorStatus()
+
+
+def test_status_mirror_starts_after_cloudxr_context_creation(monkeypatch):
+    host = _FakeHost()
+    events = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def start(self):
+            assert any(name == "create" for name, _thread in _FakeContext.operations)
+            events.append("mirror-start")
+
+        def close(self):
+            events.append("mirror-close")
+
+    class FakeLauncher:
+        def __init__(self):
+            events.append("cloudxr-start")
+
+        def interrupt_runtime(self):
+            events.append("cloudxr-interrupt")
+
+        def stop(self):
+            events.append("cloudxr-stop")
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _acquire_frame, _config, _on_user_close, *, products=None: FakeMirror(),
+    )
+
+    def launcher_factory(_path, *, accept_eula=False):
+        return FakeLauncher()
+
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = _session_with_consumers(
+        host,
+        config,
+        runtime_launcher_factory=launcher_factory,
+        frame_consumers=(consumer,),
+    )
+
+    owner.start()
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while "mirror-start" not in events and time.monotonic() < deadline:
+        time.sleep(0.001)
+    owner.close()
+
+    assert events.index("cloudxr-start") < events.index("mirror-start")
+    assert "cloudxr-interrupt" not in events
+    assert events.index("mirror-close") < events.index("cloudxr-stop")
+
+
+def test_stuck_mirror_prevents_borrowed_context_teardown(monkeypatch):
+    host = _FakeHost()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def start(self):
+            pass
+
+        def close(self):
+            raise TimeoutError("mirror stuck")
+
+    mirror = FakeMirror()
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _context, _config, _on_user_close, *, products=None: mirror,
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = _session_with_consumers(host, config, frame_consumers=(consumer,))
+
+    owner.start()
+    context = owner._pump._context
+    with pytest.raises(TimeoutError, match="mirror stuck"):
+        owner.close()
+
+    assert owner._pump._context is context
+    assert consumer._worker is mirror
+    assert not owner.retirement_complete
+    with pytest.raises(TimeoutError, match="mirror stuck"):
+        owner.close()
+    assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+    assert not any(
+        event[0] in {"host-close", "environment-close"}
+        for event in host.events
+        if isinstance(event, tuple)
+    )
+
+
 def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypatch):
     host = _FakeHost()
     panel = CameraPanelConsumer((CameraPanelConfig("/Render/Head"),))
@@ -1237,6 +1418,154 @@ def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypat
         for event in host.events
         if isinstance(event, tuple)
     )
+
+
+def test_user_closing_mirror_requests_application_shutdown_before_owner_teardown(
+    monkeypatch,
+):
+    host = _FakeHost()
+    mirror_events = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            mirror_events.append(("start", threading.get_native_id()))
+
+        def close(self):
+            mirror_events.append(("close", threading.get_native_id()))
+
+    mirror = None
+
+    def create_mirror(_acquire_frame, _config, on_user_close, *, products=None):
+        nonlocal mirror
+        mirror = FakeMirror(on_user_close)
+        return mirror
+
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = _session_with_consumers(host, config, frame_consumers=(consumer,))
+    owner.start()
+
+    assert mirror is not None
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while not mirror_events and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert mirror_events and mirror_events[0][0] == "start"
+    mirror.on_user_close()
+    assert owner.shutdown_requested
+    assert owner._phase is not ovxr_session._Phase.CLOSED
+    assert not host.publication_closed
+
+    owner.close()
+    assert host.publication_closed
+    assert [name for name, _thread in _FakeContext.operations].count("destroy") == 1
+    assert host.events[-2:] == [
+        ("host-close", host.attach_thread),
+        ("environment-close", host.attach_thread),
+    ]
+    assert [name for name, _thread in mirror_events] == ["start", "close"]
+
+
+@pytest.mark.parametrize("close_from_mirror", [False, True])
+def test_shutdown_request_exit_wakes_frame_wait_without_runtime_interrupt(
+    monkeypatch, caplog, close_from_mirror
+):
+    host = _FakeHost()
+    frame_wait_entered = threading.Event()
+    runtime_stopped = threading.Event()
+    launcher_events = []
+
+    class BlockingContext(_FakeContext):
+        def begin_frame(self):
+            frame_wait_entered.set()
+            runtime_stopped.wait(timeout=1.0)
+            return super().begin_frame()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            pass
+
+        def close(self):
+            pass
+
+        def record_render_frame(self):
+            pass
+
+    class FakeLauncher:
+        def interrupt_runtime(self):
+            launcher_events.append(("interrupt", threading.get_native_id()))
+            runtime_stopped.set()
+
+        def stop(self):
+            launcher_events.append(("stop", threading.get_native_id()))
+
+    mirror = None
+
+    def create_mirror(_acquire_frame, _config, on_user_close, *, products=None):
+        nonlocal mirror
+        mirror = FakeMirror(on_user_close)
+        return mirror
+
+    fake_ovxr = _fake_ovxr()
+    fake_ovxr.Context = BlockingContext
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: fake_ovxr)
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
+
+    def launcher_factory(_path, *, accept_eula=False):
+        return FakeLauncher()
+
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = _session_with_consumers(
+        host,
+        config,
+        runtime_launcher_factory=launcher_factory,
+        frame_consumers=(consumer,),
+    )
+    owner.start()
+    _FakeContext.request_exit_callback = runtime_stopped.set
+
+    assert mirror is not None
+    assert owner.request_render("step-1") == 10
+    assert frame_wait_entered.wait(timeout=1.0)
+    try:
+        if close_from_mirror:
+            mirror.on_user_close()
+            assert owner.shutdown_requested
+            assert owner._phase is not ovxr_session._Phase.CLOSED
+            owner.close()
+        else:
+            owner.close()
+        deadline = time.monotonic() + 0.25
+        while (
+            owner._phase is not ovxr_session._Phase.CLOSED
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.001)
+        assert owner._phase is ovxr_session._Phase.CLOSED
+        assert owner.shutdown_requested
+        assert [name for name, _thread in launcher_events].count("interrupt") == 0
+        assert launcher_events == [("stop", owner.render_worker_native_thread_id)]
+        assert "interrupting the owned OpenXR runtime" not in caplog.text
+    finally:
+        runtime_stopped.set()
+        owner.close()
 
 
 def test_shutdown_timeout_preserves_runtime_until_frame_worker_retires(monkeypatch):
@@ -1519,6 +1848,57 @@ def test_partial_startup_failure_retires_context_before_cloudxr_stop(monkeypatch
     ]
 
 
+def test_user_closing_mirror_on_first_submit_retires_created_ovxr(
+    monkeypatch,
+):
+    host = _FakeHost()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            self.on_user_close()
+
+        def record_render_frame(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _acquire, _config, on_user_close, *, products=None: FakeMirror(
+            on_user_close
+        ),
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = _session_with_consumers(host, config, frame_consumers=(consumer,))
+
+    assert owner.start() is True
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while not owner.shutdown_requested and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert owner.shutdown_requested
+    owner.close()
+    operation_names = [name for name, _thread in _FakeContext.operations]
+    assert operation_names.count("create") == 1
+    assert operation_names.count("destroy") == 1
+    assert operation_names.count("submit") >= 1
+    assert operation_names.index("destroy") > operation_names.index("submit")
+    assert host.events[-2:] == [
+        ("host-close", host.attach_thread),
+        ("environment-close", host.attach_thread),
+    ]
+
+
 @pytest.mark.parametrize("failure_type", [RuntimeError, _WorkerAbort])
 def test_render_failure_waits_for_borrowers_and_preserves_first_error(
     monkeypatch, failure_type
@@ -1742,6 +2122,29 @@ def test_session_mode_is_forwarded_to_ovxr(mode, expected):
 def test_config_rejects_unknown_session_mode():
     with pytest.raises(ValueError, match="session_mode must be 'ar' or 'vr'"):
         _config(session_mode="automatic")
+
+
+def test_success_without_xr_submission_does_not_count_render_frame(monkeypatch):
+    class NoSubmission(_FakeContext):
+        def submit_frame(self, plan, **kwargs):
+            super().submit_frame(plan, **kwargs)
+            return 0, SimpleNamespace(submitted=False)
+
+    api = _fake_ovxr()
+    api.Context = NoSubmission
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = _session_with_consumers(_FakeHost(), config, frame_consumers=(consumer,))
+    owner.start()
+    worker = consumer
+    with owner:
+        assert owner.request_render("no-submit") > 0
+        _wait_for_operation("submit")
+        assert not worker._start_attempted
+        assert worker.status.render_thread_fps == 0
+        assert worker.status.presented_frames == 0
 
 
 def test_three_products_keep_selection_order_and_one_native_owner(monkeypatch):

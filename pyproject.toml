@@ -54,6 +54,11 @@ ovxr = [
     "ovxr==0.1.0.5842",
     "cuda-bindings>=13,<14",
 ]
+desktop-mirror = [
+    # OVUI requires 3.12; core Capture continues to support 3.11.
+    "ovui==0.3.0; python_version >= '3.12'",
+    "cuda-bindings>=13,<14",
+]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
     "scipy>=1.15.0",

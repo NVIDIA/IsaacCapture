@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Check optional camera-helper delivery in an actual project wheel.
+"""Check camera-helper and desktop-mirror delivery in an actual project wheel.
 
 Run against wheels built with BUILD_OVXR_CAMERA_QUADS ON and OFF, including
 ON -> OFF -> ON in the same build directory to detect stale packaged data.
@@ -26,6 +26,15 @@ def main():
         prefix + "libisaaccapture_camera_panels.so",
     }
     with ZipFile(args.wheel) as wheel:
+        mirror_modules = {
+            "isaaccapture/ovxr_session_manager/" + name + ".py"
+            for name in ("owned_mirror", "desktop_mirror", "gpu_output")
+        }
+        missing = mirror_modules.difference(wheel.namelist())
+        if missing:
+            raise RuntimeError(
+                f"Wheel is missing desktop mirror modules: {sorted(missing)}"
+            )
         members = {
             name
             for name in wheel.namelist()

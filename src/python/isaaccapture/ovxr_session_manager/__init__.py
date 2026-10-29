@@ -13,6 +13,7 @@ from .ovxr_session import (
     OvxrSession,
     StageOrdinalLedger,
 )
+from .desktop_mirror import DesktopMirrorConfig, DesktopMirrorStatus
 
 __all__ = [
     "OvxrSessionBinding",
@@ -21,6 +22,8 @@ __all__ = [
     "OvxrFrameConsumer",
     "OvxrSession",
     "StageOrdinalLedger",
+    "DesktopMirrorConfig",
+    "DesktopMirrorStatus",
 ]
 
 from .camera_panels import CameraPanelConfig, CameraPanelConsumer

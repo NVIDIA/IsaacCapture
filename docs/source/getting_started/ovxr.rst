@@ -37,6 +37,9 @@ from the Isaac Capture wheel. These packages retain their own licenses:
   `OVRTX <https://pypi.org/project/ovrtx/>`__ and
   `OVStage <https://pypi.org/project/ovstage/>`__ are NVIDIA proprietary software.
   Review the license included with each distribution before use.
+* `OVUI <https://pypi.org/project/ovui/>`__ is Apache-2.0 and is installed by
+  the independent ``desktop-mirror`` extra. Review its package metadata for
+  supported Python versions and platforms.
 
 CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and CloudXR EULA acceptance.
@@ -72,6 +75,32 @@ Use ``CUDAToolkit_ROOT`` to select a CUDA Toolkit installation and ``VULKAN_SDK`
 to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
 on the host.
 
+Optional desktop mirror
+-----------------------
+
+The desktop mirror requires **Python 3.12 or newer**. Isaac Capture's core
+continues to support Python 3.11; on that version the extra does not install OVUI
+and the desktop mirror is unavailable. Use a Python 3.12+ environment and select
+both extras with ``isaaccapture[ovxr,desktop-mirror]`` in the installation
+requirement or the application's optional dependencies to include the OVUI
+mirror. The mirror requires CUDA 13 Python bindings, a compatible NVIDIA driver
+as described above, and a desktop display associated with a CUDA device.
+The native camera helper is required only when camera panels are also enabled.
+
+Initialize the renderer before starting the mirror. OVUI uses its default Vulkan
+backend; no ``OMNIUI_BACKEND`` setting is required. Capture does not change the
+process-wide backend. GPU images stay on their producing CUDA device, and OVUI
+copies them into its Vulkan image. The mirror requires the active OVUI backend
+to be Vulkan. Remove conflicting ``OMNIUI_BACKEND`` settings before OVUI starts.
+This selection does not change headset rendering.
+
+The pinned OVUI 0.3.0 Vulkan upload copies on its import device's default CUDA
+stream. The mirror drains that stream before reusing the source buffer, including
+upload failures; the source image can reside on a different GPU. This depends on
+the synchronous ``ByteImageProvider.set_bytes_data_from_gpu`` implementation,
+not OVUI's separate asynchronous upload API. See the `OVUI upload implementation
+<https://github.com/NVIDIA-Omniverse/ovui/blob/60fc40daf56d010ccbc9734f64e6463b1017f74a/ovui/standalone/src/VulkanByteImageGpu.cpp#L1069-L1124>`_.
+
 Use from another application
 ----------------------------
 
@@ -83,9 +112,11 @@ resolved its render-product paths. Capture does not depend on an Isaac Lab task
 or scene configuration. ``camera_paths`` is required and must contain both stereo
 cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 
-``CameraPanelConsumer`` implements the ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
+``CameraPanelConsumer`` and ``OwnedDesktopMirror`` implement the same
+``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
-and image bound.
+and image bound. Configure the mirror's camera choices with ``MirrorProduct``
+values. Either consumer can be enabled independently.
 
 Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;

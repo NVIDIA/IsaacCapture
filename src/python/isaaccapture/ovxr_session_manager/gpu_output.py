@@ -126,6 +126,128 @@ class MappedGpuImage(MappedOutput):
     is_array: bool = False
 
 
+@dataclass
+class OwnedGpuImage:
+    """One reusable CUDA allocation, leased until the UI's source read completes."""
+
+    width: int
+    height: int
+    pointer: int
+    pitch: int
+    device: int
+    owner: int
+    closed: bool = True
+
+    def close(self) -> None:
+        if threading.get_ident() != self.owner:
+            raise RuntimeError("GPU image must be retired on its allocation owner")
+        self.closed = True
+
+
+class OwnedCudaImagePool:
+    """At most two mirror copies; no borrowed OVRTX map escapes a frame."""
+
+    def __init__(self) -> None:
+        self._images: list[OwnedGpuImage] = []
+        self._source: MappedGpuImage | None = None
+        self._ready = False
+
+    def enable(self) -> None:
+        """UI owner, after OVUI has initialized its Vulkan image provider."""
+        self._ready = True
+
+    def __call__(
+        self, renderer: int, handle: int, max_bytes: int
+    ) -> OwnedGpuImage | None:
+        if not self._ready:
+            return None  # GUI startup is an expected optional-output omission.
+        self.finish_frame()
+        from cuda.bindings import runtime as cuda
+
+        try:
+            source = map_cuda_array_rgba(renderer, handle, max_bytes)
+        except OutputMapCleanupError as error:
+            self._source = error.image
+            raise
+        self._source = source
+        destination = source.device
+        try:
+            image = next((item for item in self._images if item.closed), None)
+            if image is not None and (image.width, image.height, image.device) != (
+                source.width,
+                source.height,
+                destination,
+            ):
+                _check_cuda(cuda.cudaSetDevice(image.device))
+                _check_cuda(cuda.cudaFree(image.pointer))
+                self._images.remove(image)
+                image = None
+            _check_cuda(cuda.cudaSetDevice(destination))
+            if image is None:
+                if len(self._images) >= 2:
+                    raise RuntimeError("both owned mirror images are in use")
+                result = cuda.cudaMallocPitch(source.width * 4, source.height)
+                _check_cuda(result)
+                image = OwnedGpuImage(
+                    source.width,
+                    source.height,
+                    int(result[1]),
+                    int(result[2]),
+                    destination,
+                    threading.get_ident(),
+                )
+                self._images.append(image)
+            # Check reused allocations too: CUDA may pad a new allocation past
+            # the limit, and a rejected allocation remains owned until cleanup.
+            if image.pitch * image.height > max_bytes:
+                raise RuntimeError("owned mirror allocation exceeds the byte bound")
+            # The source map and the destination have separate lifetimes. Prove
+            # the read complete before unmapping even when enqueue reports error.
+            source.busy = True
+            _check_cuda(
+                cuda.cudaMemcpy2DFromArrayAsync(
+                    image.pointer,
+                    image.pitch,
+                    source.pointer,
+                    0,
+                    0,
+                    source.width * 4,
+                    source.height,
+                    cuda.cudaMemcpyKind.cudaMemcpyDeviceToDevice,
+                    0,
+                )
+            )
+        finally:
+            _check_cuda(cuda.cudaSetDevice(destination))
+            if source.busy:
+                _check_cuda(cuda.cudaStreamSynchronize(0))
+                source.busy = False
+            source.close()
+            self._source = None
+        image.closed = False
+        return image
+
+    def finish_frame(self) -> None:
+        """Fail closed before submit/cancel if a source read/unmap was not proved."""
+        if self._source is not None:
+            raise RuntimeError(
+                "mirror still holds a borrowed frame output; retain its owner"
+            )
+
+    def close(self) -> None:
+        self.finish_frame()
+        if not self._images:
+            return
+        from cuda.bindings import runtime as cuda
+
+        for image in list(self._images):
+            if not image.closed:
+                raise RuntimeError("owned mirror image still has a consumer")
+            _check_cuda(cuda.cudaSetDevice(image.device))
+            _check_cuda(cuda.cudaFree(image.pointer))
+            self._images.remove(image)
+
+
 def map_cuda_array_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpuImage:
     """Retain the native image array, avoiding OVRTX array-to-linear conversion."""
     from cuda.bindings import runtime as cuda
@@ -164,7 +286,7 @@ def map_cuda_array_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpu
             or len(shape) != 3
             or shape[2] != 4
         ):
-            raise ValueError("mirror GPU output must be an opaque RGBA CUDA array")
+            raise ValueError("camera GPU output must be an opaque RGBA CUDA array")
         info = cuda.cudaArrayGetInfo(int(dl.data))
         _check_cuda(info)
         channel, extent = info[1:3]
