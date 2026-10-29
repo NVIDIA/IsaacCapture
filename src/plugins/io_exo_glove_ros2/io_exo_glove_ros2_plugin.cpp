@@ -511,6 +511,7 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
     }
 
     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
     std::array<HandSkeleton, kSideCount> to_log;
     bool log_slots = false;
     {
@@ -519,7 +520,7 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         {
             const std::size_t side = side_index(hand);
             HandFrame& frame = m_hand_frames[side];
-            const HandAngles angles = read_hand_angles(msg, hand);
+            const HandAngles angles = read_hand_angles(msg, hand, m_chord_gains[side], now_s);
             frame.skeleton = build_anatomical_skeleton(angles, hand);
             frame.chord_m = angles.chord_m;
             frame.stamp = now;

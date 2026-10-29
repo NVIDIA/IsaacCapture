@@ -179,10 +179,10 @@ XrPosef invert_pose(const XrPosef& pose)
 
 HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand)
 {
-    // The mechanism supplies the fingertip chords and the spread; the anatomy supplies the
-    // landmarks. See io_exo_glove_ros2_kinematics.hpp for why the linkage cannot be injected
-    // directly and why the chord cannot invert the hand.
-    return build_anatomical_skeleton(read_hand_angles(msg, hand), hand);
+    // Stateless convenience for a single frame: a fresh gain means no travel has been learned, so
+    // this uses the anatomical fallback. The plugin keeps a HandChordGain per hand across frames.
+    HandChordGain gain;
+    return build_anatomical_skeleton(read_hand_angles(msg, hand, gain, 0.0), hand);
 }
 
 } // namespace io_exo_glove_ros2

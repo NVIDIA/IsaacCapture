@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace plugins
 {
@@ -307,6 +308,18 @@ float chord_at(const BendModel& model, float total_bend)
     return std::sqrt(x * x + y * y);
 }
 
+//! The total bend at which every joint has reached its own maximum; past it the chain cannot curl
+//! further and the chord stops shrinking.
+float max_total_bend(const BendModel& model)
+{
+    float max_total = 0.0f;
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        max_total = std::max(max_total, model.max_rad[i] / model.weights[i]);
+    }
+    return max_total;
+}
+
 XrHandJointLocationEXT make_joint(const XrPosef& pose)
 {
     XrHandJointLocationEXT joint{};
@@ -364,11 +377,7 @@ float solve_total_bend(const BendModel& model, float chord_m)
 
     // The largest total bend that still means something: the point at which the last joint reaches
     // its own maximum. Past it every joint is clamped and the chord cannot shrink further.
-    float max_total = 0.0f;
-    for (std::size_t i = 0; i < 3; ++i)
-    {
-        max_total = std::max(max_total, model.max_rad[i] / model.weights[i]);
-    }
+    const float max_total = max_total_bend(model);
     if (chord_m <= chord_at(model, max_total))
     {
         return max_total;
@@ -391,6 +400,128 @@ float solve_total_bend(const BendModel& model, float chord_m)
         }
     }
     return 0.5f * (low + high);
+}
+
+FingerChordGain::FingerChordGain(const BendModel& model, bool thumb)
+    : m_model(model),
+      m_thumb(thumb),
+      m_chord_max(model.segment_m[0] + model.segment_m[1] + model.segment_m[2]),
+      m_chord_min(chord_at(model, max_total_bend(model))),
+      m_target_chord_max(m_chord_max),
+      m_target_chord_min(m_chord_min)
+{
+    // The anatomical chain's straight and fully curled chords are the fallback until the window has
+    // seen a real gesture: a hand held still from the first frame still maps sensibly.
+}
+
+float FingerChordGain::percentile(float p, bool lateral) const
+{
+    std::vector<float> values;
+    values.reserve(m_samples.size());
+    for (const Sample& sample : m_samples)
+    {
+        values.push_back(lateral ? sample.lateral : sample.chord);
+    }
+    const float position = std::clamp(p, 0.0f, 1.0f) * static_cast<float>(values.size() - 1);
+    const auto index = static_cast<std::size_t>(position);
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(index), values.end());
+    return values[index];
+}
+
+void FingerChordGain::update(float chord_m, float lateral_rad, double now_s)
+{
+    float dt_s = 0.0f;
+    if (!m_has_last || now_s < m_last_s)
+    {
+        // First reading of a session, or a clock that went backwards: the old window is meaningless.
+        m_samples.clear();
+        m_has_last = true;
+        m_last_s = now_s;
+    }
+    else
+    {
+        dt_s = static_cast<float>(now_s - m_last_s);
+        m_last_s = now_s;
+    }
+
+    m_samples.push_back(Sample{ now_s, chord_m, lateral_rad });
+    while (!m_samples.empty() && m_samples.front().t < now_s - kWindowS)
+    {
+        m_samples.pop_front();
+    }
+
+    if (m_thumb && !m_has_lateral)
+    {
+        // Anchor the lateral extents at the first reading: there is no rig constant for an open
+        // thumb angle, so opposition starts at zero and can only grow with an observed range.
+        m_lateral_max = lateral_rad;
+        m_lateral_min = lateral_rad - kMinLateralSpanRad;
+        m_target_lateral_max = m_lateral_max;
+        m_target_lateral_min = m_lateral_min;
+        m_has_lateral = true;
+    }
+
+    if (m_samples.size() >= kMinSamples)
+    {
+        const float chord_high = percentile(1.0f - kPercentile, false);
+        const float chord_low = percentile(kPercentile, false);
+        if (chord_high - chord_low >= kMinChordSpanM)
+        {
+            m_target_chord_max = chord_high;
+            m_target_chord_min = chord_low;
+        }
+
+        if (m_thumb)
+        {
+            const float lateral_high = percentile(1.0f - kPercentile, true);
+            const float lateral_low = percentile(kPercentile, true);
+            if (lateral_high - lateral_low >= kMinLateralSpanRad)
+            {
+                m_target_lateral_max = lateral_high;
+                m_target_lateral_min = lateral_low;
+                m_lateral_learned = true;
+            }
+        }
+    }
+
+    // A slow filter on the extents, so a percentile that steps as samples enter or leave the window
+    // cannot step the injected pose. The first reading has no dt and stays at the fallback.
+    const float alpha = dt_s > 0.0f ? 1.0f - std::exp(-dt_s / kExtentTauS) : 0.0f;
+    if (alpha > 0.0f)
+    {
+        m_chord_max += alpha * (m_target_chord_max - m_chord_max);
+        m_chord_min += alpha * (m_target_chord_min - m_chord_min);
+        if (m_thumb)
+        {
+            m_lateral_max += alpha * (m_target_lateral_max - m_lateral_max);
+            m_lateral_min += alpha * (m_target_lateral_min - m_lateral_min);
+            // The learned flag is a gate, so the first learned frame can step the raw fraction;
+            // low-pass the fraction itself as well and the 0-to-opposed transition stays smooth.
+            const float span = m_lateral_max - m_lateral_min;
+            const float raw = (m_lateral_learned && span > 1e-6f) ?
+                                  std::clamp((m_lateral_max - lateral_rad) / span, 0.0f, 1.0f) :
+                                  0.0f;
+            const float opposition_alpha = dt_s > 0.0f ? 1.0f - std::exp(-dt_s / kOppositionTauS) : 0.0f;
+            m_opposition += opposition_alpha * (raw - m_opposition);
+        }
+    }
+}
+
+float FingerChordGain::fraction(float chord_m) const
+{
+    const float span = m_chord_max - m_chord_min;
+    if (!(span > 1e-6f))
+    {
+        return 0.0f;
+    }
+    return std::clamp((m_chord_max - chord_m) / span, 0.0f, 1.0f);
+}
+
+HandChordGain::HandChordGain()
+    : fingers{ FingerChordGain(bend_model(0), true), FingerChordGain(bend_model(1), false),
+               FingerChordGain(bend_model(2), false), FingerChordGain(bend_model(3), false),
+               FingerChordGain(bend_model(4), false) }
+{
 }
 
 HandChords read_tip_chords(const tf2_msgs::msg::TFMessage& msg, Hand hand)
@@ -487,6 +618,13 @@ HandChords read_tip_chords(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         out.chord_m = chord;
         // Positive towards the palm: dorsal is the back of the hand, so the palm side is -dorsal.
         out.palmward_rad = std::atan2(-dot(v, dorsal), dot(v, distal));
+        // In-plane angle from distal towards across. The right hand is the mirror of the left, so its
+        // raw angle runs the other way; flip it there so "towards the index" has one sign on both.
+        out.lateral_rad = std::atan2(dot(v, across), dot(v, distal));
+        if (hand == Hand::Right)
+        {
+            out.lateral_rad = -out.lateral_rad;
+        }
         out.valid = true;
     }
 
@@ -494,7 +632,7 @@ HandChords read_tip_chords(const tf2_msgs::msg::TFMessage& msg, Hand hand)
     return chords;
 }
 
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, HandChordGain& gain, double now_s)
 {
     HandAngles angles;
 
@@ -509,6 +647,11 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         return angles;
     }
 
+    for (std::size_t finger = 0; finger < kHumanFingerCount; ++finger)
+    {
+        gain.fingers[finger].update(chords.fingers[finger].chord_m, chords.fingers[finger].lateral_rad, now_s);
+    }
+
     const std::size_t side = hand_index(hand);
     for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
     {
@@ -519,11 +662,16 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         const SpreadJointSpec& spread_spec = kSpreadJoints[side][finger];
         out.spread = std::clamp(spread_spec.sign * (raw.joint[finger] - spread_spec.zero), -kMaxSpread, kMaxSpread);
 
-        // Flexion: one total bend whose chain tip lands on the measured chord, split over the three
-        // joints. The palmward angle decides the sign, so a tip on the palm side always curls the
-        // hand towards the palm and no linkage convention can invert it.
+        // Flexion: the glove's own chord travel normalised to [0, 1], mapped onto the anatomical
+        // chain's chord (longest -> straight, shortest -> fully curled), then solved by bisection.
+        // The palmward angle decides the sign, so a tip on the palm side always curls the hand
+        // towards the palm and no linkage convention can invert it.
         const BendModel model = bend_model(finger);
-        const float total_bend = solve_total_bend(model, chords.fingers[finger].chord_m);
+        const float straight = model.segment_m[0] + model.segment_m[1] + model.segment_m[2];
+        const float curled = chord_at(model, max_total_bend(model));
+        const float fraction = gain.fingers[finger].fraction(chords.fingers[finger].chord_m);
+        const float anatomical_chord = straight - fraction * (straight - curled);
+        const float total_bend = solve_total_bend(model, anatomical_chord);
         const std::array<float, 3> bend = distribute_bend(model, total_bend);
         const float sign = chords.fingers[finger].palmward_rad >= 0.0f ? 1.0f : -1.0f;
         for (std::size_t joint = 0; joint < 3; ++joint)
@@ -539,6 +687,7 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
             // not reach the anatomy. It is a lift, so it is clamped to the anatomical range.
             const SpreadJointSpec& base = kThumbBase[side];
             out.base = std::clamp(base.sign * (raw.thumb_base - base.zero), -kMaxThumbBase, kMaxThumbBase);
+            out.opposition = kThumbOppositionMaxRad * gain.fingers[0].opposition();
         }
     }
 
@@ -686,6 +835,12 @@ HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand)
                         axis_angle(
                             XrVector3f{ kThumbBaseAxis[0], kThumbBaseAxis[1], kThumbBaseAxis[2] }, articulation.base),
                         rotation);
+                    // Opposition first, then the in-plane flexion: the CMC's second degree of
+                    // freedom is what carries the thumb out of the palm's plane towards the index.
+                    rotation = multiply_quaternions(
+                        axis_angle(XrVector3f{ kThumbOppositionAxis[0], kThumbOppositionAxis[1], kThumbOppositionAxis[2] },
+                                   articulation.opposition),
+                        rotation);
                     rotation = multiply_quaternions(
                         axis_angle(XrVector3f{ kThumbFlexAxis[0], kThumbFlexAxis[1], kThumbFlexAxis[2] },
                                    -articulation.bend[0]),
@@ -700,7 +855,13 @@ HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand)
             {
                 if (is_thumb)
                 {
-                    // Thumb2 at the MCP: flexion in the palm plane.
+                    // Thumb2 at the MCP: a share of the CMC opposition, then flexion in the palm
+                    // plane. Opposition is a CMC/MCP motion, not an IP one.
+                    constexpr float mcp_share = kThumbOppositionMcpMaxRad / kThumbOppositionMaxRad;
+                    rotation = multiply_quaternions(
+                        axis_angle(XrVector3f{ kThumbOppositionAxis[0], kThumbOppositionAxis[1], kThumbOppositionAxis[2] },
+                                   articulation.opposition * mcp_share),
+                        rotation);
                     rotation = multiply_quaternions(
                         axis_angle(XrVector3f{ kThumbFlexAxis[0], kThumbFlexAxis[1], kThumbFlexAxis[2] },
                                    -articulation.bend[1]),

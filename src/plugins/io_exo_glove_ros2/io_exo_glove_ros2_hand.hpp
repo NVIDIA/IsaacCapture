@@ -48,7 +48,8 @@ struct HandSkeleton
     }
 };
 
-//! Reads one hand's anatomy from the glove's fingertip chords in @p msg. A skeleton whose
+//! Reads one hand's anatomy from the glove's fingertip chords in @p msg, with an unlearned travel
+//! gain (the anatomical fallback; a persistent gain across frames is the plugin's). A skeleton whose
 //! @c wrist_frame is empty means the mechanism was absent, i.e. that glove is not streaming.
 HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 

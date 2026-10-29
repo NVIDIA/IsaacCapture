@@ -55,7 +55,9 @@ namespace io_exo_glove_ros2
  *    conformance suite records: it reads Isaac Teleop's OpenXR hand tracker, not a channel of the
  *    plugin's own. The exoskeleton's links are a *linkage mechanism* -- its fingers are twice a human
  *    phalanx long -- so the injected skeleton is the vendor's human-hand anatomy: flexion from the
- *    fingertip chords, the knuckle spread and the thumb mount from the linkage's joint angles (see
+ *    fingertip chords (each normalised against a rolling window of the operator's own travel, so a
+ *    half-closed glove is a half-closed hand) and the thumb's opposition from the chord's lateral
+ *    angle, with the knuckle spread and thumb mount from the linkage's joint angles (see
  *    io_exo_glove_ros2_kinematics.hpp). It is placed in the room by a
  *    wrist pose from the headset's own hand tracking or from a controller
  *    (``plugin_utils::WristPoseSource``), because the glove's own frame is not anchored in the room.
@@ -212,6 +214,9 @@ private:
 
     std::mutex m_hand_mutex;
     std::array<HandFrame, kSideCount> m_hand_frames;
+    //! Per-session, per-finger chord travel learned from the operator's own range. Kept across
+    //! messages: it is the gain that turns a half-closed glove into a half-closed hand.
+    std::array<HandChordGain, kSideCount> m_chord_gains;
     //! Controller-only wrist source, created under ``wrist_source: auto`` so a frozen optical wrist
     //! can hand over to the controller instead of withholding the hand. Null otherwise.
     std::unique_ptr<plugin_utils::WristPoseSource> m_controller_wrist_source;

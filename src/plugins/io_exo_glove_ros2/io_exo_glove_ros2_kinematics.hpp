@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstddef>
+#include <deque>
 #include <string>
 
 namespace plugins
@@ -32,12 +33,20 @@ namespace io_exo_glove_ros2
  * chord is the distance between the knuckle frame (``link_<Side>Skeleton<Finger>1``, or
  * ``link_<Side>SkeletonThumbBase`` for the thumb) and the vendor's own tip frame
  * (``<side>_<finger>_tip``); that chord can only shrink when the finger curls, so no session-specific
- * sign or gain can invert the hand. The chord is converted to one total bend of the anatomical chain
- * (MCP/PIP/DIP with fixed segment lengths) and split over the three joints with fixed weights; see
- * @c kFingerBendWeights and @c solve_total_bend. The bend's sign is the sign of the tip's palmward
- * angle in the palm frame, so a tip that is on the palm side always curls the hand towards the palm.
- * The knuckle spread and the thumb's mount still come from the linkage's own joint angles (they are
- * not flexion), and the palm frame is built from the knuckle row.
+ * sign or gain can invert the hand. The glove's chord travel is smaller than the anatomical chain's
+ * (the operator's half-closed hand used to read as open), so each finger first normalises its own
+ * chord against a rolling window of the travel it has actually seen: see @c FingerChordGain. The
+ * normalised chord is converted to one total bend of the anatomical chain (MCP/PIP/DIP with fixed
+ * segment lengths) and split over the three joints with fixed weights; see @c kFingerBendWeights and
+ * @c solve_total_bend. The bend's sign is the sign of the tip's palmward angle in the palm frame, so
+ * a tip that is on the palm side always curls the hand towards the palm. The knuckle spread and the
+ * thumb's mount still come from the linkage's own joint angles (they are not flexion), and the palm
+ * frame is built from the knuckle row.
+ *
+ * The thumb also needs **opposition**: a chord shortening alone bends it in the palm plane, but
+ * bringing the tip to the index is a swing across and out of that plane. The chord's lateral angle
+ * around the palm normal, normalised over the same window, drives an extra CMC rotation about an axis
+ * in the palm plane (@c kThumbOppositionAxis); see @c FingerAngles::opposition.
  *
  * Everything below is a constant derived from the two URDFs that ship with the vendor SDK
  * (`io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/`), so nothing here
@@ -199,6 +208,10 @@ struct FingerAngles
     std::array<float, 3> bend{ 0.0f, 0.0f, 0.0f };
     //! Thumb only: the revolute ThumbBase angle, radians, positive as the mechanism's own axis.
     float base = 0.0f;
+    //! Thumb only: opposition of the CMC out of the palm plane, radians, 0 when the thumb is at
+    //! rest and positive towards the palm/index. Driven by the lateral chord angle; the flexion
+    //! solve above supplies the in-plane half of the same motion.
+    float opposition = 0.0f;
 };
 
 //! Angles of all five fingers plus whether the whole hand was present.
@@ -221,6 +234,11 @@ struct TipChord
     float chord_m = 0.0f;
     //! Angle of the chord from the palm's distal axis towards the palm (negative = dorsal).
     float palmward_rad = 0.0f;
+    //! Angle of the chord around the palm normal, from the distal axis towards the palm's across
+    //! axis, radians, sign-normalised so both hands read the same: it falls as the thumb swings
+    //! towards the index (that is the opposition the injected thumb needs). Fingers carry it too,
+    //! but only the thumb uses it.
+    float lateral_rad = 0.0f;
     bool valid = false;
 };
 
@@ -280,6 +298,143 @@ float solve_total_bend(const BendModel& model, float chord_m);
 //! @p total_bend split by @p model's weights, each joint clamped to its maximum, radians.
 std::array<float, 3> distribute_bend(const BendModel& model, float total_bend);
 
+//! Thumb opposition axis in the left anatomy's wrist frame, unit length. It lies in the palm plane,
+//! across the hand; the thumb's flexion axis is the palm normal, so this is the second degree of
+//! freedom the pinch needs. The angle is positive towards the palm/index (the chain is mirrored for
+//! the right hand, so one axis serves both).
+inline constexpr std::array<float, 3> kThumbOppositionAxis = { -1.0f, 0.0f, 0.0f };
+
+//! CMC opposition at a full traverse of the learned lateral range, radians (about 69 deg).
+inline constexpr float kThumbOppositionMaxRad = 1.20f;
+
+//! Share of the opposition repeated at the thumb's MCP, radians (about 20 deg). The IP is left to
+//! the flexion solve: opposition is a CMC/MCP motion in the human thumb.
+inline constexpr float kThumbOppositionMcpMaxRad = 0.35f;
+
+/*!
+ * @brief Per-session, per-finger travel gain learned from the operator's own chord.
+ *
+ * The mechanism's chord travel is smaller than the anatomical chain's, so an absolute chord-to-bend
+ * map leaves a half-closed glove looking open -- only a full fist reaches the maxima. Each finger
+ * keeps a rolling window (@c kWindowS) of its chord and takes robust extents (the @c kPercentile and
+ * 1 - it quantiles) from it. The extents are low-passed with @c kExtentTauS, so a window update
+ * cannot step the injected pose. A window whose 5th..95th span is below @c kMinChordSpanM has not
+ * seen a gesture; it is ignored and the previous extents kept, so a hand held still cannot make the
+ * gain chase noise.
+ *
+ * The same window tracks the thumb chord's lateral angle for opposition, with @c
+ * kMinLateralSpanRad as the guard. Until a lateral range has been learned, opposition is zero: the
+ * absolute open lateral angle is not a rig constant and cannot be assumed.
+ *
+ * The normalised travel is mapped onto the fixed anatomical chain by @c read_hand_angles: the
+ * longest chord seen is 0 deg and the shortest is every joint's human maximum.
+ */
+class FingerChordGain
+{
+public:
+    //! Rolling-window length, seconds.
+    static constexpr double kWindowS = 6.0;
+    //! Lower quantile of the window taken as the short extent; the upper is 1 - this.
+    static constexpr float kPercentile = 0.05f;
+    //! A chord window narrower than this has not seen a gesture; metres.
+    static constexpr float kMinChordSpanM = 0.005f;
+    //! Time constant of the extent low-pass, seconds.
+    static constexpr float kExtentTauS = 1.0f;
+    //! Time constant that keeps the opposition's learned-gate transition continuous, seconds. The
+    //! extents themselves still move with kExtentTauS.
+    static constexpr float kOppositionTauS = 0.25f;
+    //! A lateral window narrower than this has not seen an opposition; radians (about 5.7 deg).
+    //! The lateral angle is a direction, not a length, so its guard is smaller than the chord's.
+    static constexpr float kMinLateralSpanRad = 0.10f;
+    //! Readings needed before a quantile means anything.
+    static constexpr std::size_t kMinSamples = 8;
+
+    /*!
+     * @param model The anatomical chain this finger solves against; its straight and fully curled
+     *        chords seed the extents, so a hand held still from the start still maps sensibly.
+     * @param thumb Whether to track the lateral angle for opposition (the thumb only).
+     */
+    FingerChordGain(const BendModel& model, bool thumb);
+
+    //! Adds one reading at monotonic @p now_s. A rewind clears the window.
+    void update(float chord_m, float lateral_rad, double now_s);
+
+    //! @p chord_m's normalised travel against the smoothed extents, in [0, 1]: 0 at the longest
+    //! chord seen (or longer), 1 at the shortest (or shorter).
+    float fraction(float chord_m) const;
+
+    //! The thumb's smoothed opposition in [0, 1]: 0 at the widest lateral angle seen, 1 at the
+    //! narrowest. A faster second filter on top of the extents keeps the 0-to-learned transition
+    //! continuous; it stays 0 until a lateral range has been learned.
+    float opposition() const
+    {
+        return m_opposition;
+    }
+
+    float chord_max() const
+    {
+        return m_chord_max;
+    }
+
+    float chord_min() const
+    {
+        return m_chord_min;
+    }
+
+    float lateral_max() const
+    {
+        return m_lateral_max;
+    }
+
+    float lateral_min() const
+    {
+        return m_lateral_min;
+    }
+
+    bool lateral_learned() const
+    {
+        return m_lateral_learned;
+    }
+
+private:
+    struct Sample
+    {
+        double t;
+        float chord;
+        float lateral;
+    };
+
+    float percentile(float p, bool lateral) const;
+
+    BendModel m_model;
+    bool m_thumb = false;
+    std::deque<Sample> m_samples;
+    bool m_has_last = false;
+    double m_last_s = 0.0;
+
+    //! Smoothed extents actually used, and the window extents they are filtered towards.
+    float m_chord_max;
+    float m_chord_min;
+    float m_target_chord_max;
+    float m_target_chord_min;
+
+    float m_lateral_max = 0.0f;
+    float m_lateral_min = 0.0f;
+    float m_target_lateral_max = 0.0f;
+    float m_target_lateral_min = 0.0f;
+    bool m_lateral_learned = false;
+    bool m_has_lateral = false;
+    float m_opposition = 0.0f;
+};
+
+//! One hand's five gains, one per finger in OpenXR order (thumb first).
+struct HandChordGain
+{
+    HandChordGain();
+
+    std::array<FingerChordGain, kHumanFingerCount> fingers;
+};
+
 /*!
  * @brief Reads the five fingertips' chords in the glove's palm frame.
  *
@@ -299,10 +454,12 @@ std::array<float, 3> distribute_bend(const BendModel& model, float total_bend);
 HandChords read_tip_chords(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
 //! Reads the whole hand's articulation: the spread and thumb mount from the linkage angles, the
-//! three bends of every finger from its tip chord (see @c read_tip_chords). False @c valid when any
-//! frame or finger is missing, or the tip frames are not in one frame. No previous message and no
-//! per-session calibration is involved.
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand);
+//! three bends of every finger from its tip chord (see @c read_tip_chords), and the thumb's
+//! opposition from the chord's lateral angle. @p gain carries the per-session travel learned so far
+//! (one instance per hand, kept across messages) and @p now_s is the monotonic arrival time; an
+//! invalid frame leaves the gain untouched. False @c valid when any frame or finger is missing, or
+//! the tip frames are not in one frame.
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, HandChordGain& gain, double now_s);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
 //! OpenXR wrist frame (the wrist is the identity pose). Every joint is filled and carries a unit

@@ -202,7 +202,8 @@ the anatomy from the vendor's human-hand model, driven by that articulation:
 
 | What the plugin reads (mechanism) | What it injects (anatomy) |
 | --- | --- |
-| `link_<Side>Skeleton<Finger>1` and `<side>_<finger>_tip` translations | the fingertip **chord** that sets the bend |
+| `link_<Side>Skeleton<Finger>1` and `<side>_<finger>_tip` translations | the fingertip **chord**, normalised against the operator's own travel, that sets the bend |
+| the thumb chord's in-plane angle around the palm normal | the thumb's **opposition** (CMC, plus a share at the MCP) |
 | the four `link_…Skeleton<Finger>1` local `+Z` axes and the knuckle row | the palm frame: `+X` across, `+Y` the back of the hand, `-Z` along the fingers |
 | `link_<Side>Skeleton<Finger>1` (or `Thumb1`) quaternion | the knuckle spread / thumb lift (not flexion) |
 | `link_<Side>SkeletonThumbBase` (revolute) | the thumb's mount, not a fifth finger |
@@ -219,14 +220,34 @@ curls the hand towards the palm. The linkage's second frame is the first bend jo
 1.1 cm from the first along the knuckle row, so "knuckle -> next frame" is not a distal direction on
 this rig; the spread axis is the reliable live palm normal.
 
-The chord is converted to **one total bend of the anatomical chain**. The chain is the same human
-model as before (MCP -> PIP -> DIP -> tip, with its fixed segment lengths; CMC -> MCP -> IP -> tip
-for the thumb), and the bend is solved by bisection so that the chain's tip lands on the measured
-chord. That keeps bone lengths constant by construction. The total is split with fixed weights
-0.45 / 0.35 / 0.20 over MCP / PIP / DIP (the thumb's CMC / MCP / IP) and each joint is clamped to
-its human maximum (finger MCP 85, PIP 95, DIP 70 deg; thumb CMC 35, MCP 55, IP 75). A chord longer
-than the straight chain reads zero, one shorter than the fully curled chain reads the maximum. The
-weights and maxima live in `io_exo_glove_ros2_kinematics.hpp`; the landmark table is unchanged.
+The glove's chord travel is smaller than the anatomical chain's, so an absolute chord-to-bend map
+left a half-closed glove looking open: the operator had to make a full fist before the injected hand
+registered. Each hand and finger therefore learns its own **travel gain** from a rolling 6 s window
+of the chord: the 5th and 95th percentiles of that window are the short and long extents, and the
+current chord is normalised to `fraction = (max - chord) / (max - min)`. The extents are low-passed
+with a 1 s time constant, so a window update cannot step the pose; a window whose 5th..95th span is
+below 5 mm has not seen a gesture, so its extents are ignored and the previous mapping kept. This is
+a **per-session, per-finger gain learned from the operator's own range**, not a rig constant: a
+half-range gesture still drives the full anatomical range, and a hand held still cannot make the gain
+chase noise. The state lives in `FingerChordGain`/`HandChordGain` and resets when the plugin
+restarts.
+
+The normalised chord is converted to **one total bend of the anatomical chain**. The chain is the
+same human model as before (MCP -> PIP -> DIP -> tip, with its fixed segment lengths; CMC -> MCP ->
+IP -> tip for the thumb), and the bend is solved by bisection so that the chain's tip lands on the
+anatomical chord the fraction names: the longest chord seen maps to the straight chain (0 deg), the
+shortest to the fully curled one. That keeps bone lengths constant by construction. The total is
+split with fixed weights 0.45 / 0.35 / 0.20 over MCP / PIP / DIP (the thumb's CMC / MCP / IP) and
+each joint is clamped to its human maximum (finger MCP 85, PIP 95, DIP 70 deg; thumb CMC 35, MCP 55,
+IP 75). The weights and maxima live in `io_exo_glove_ros2_kinematics.hpp`; the landmark table is
+unchanged.
+
+**Opposition.** A thumb that only flexes in the palm's plane cannot reach the index, so the chord's
+lateral angle around the palm normal is tracked in the same window and normalised the same way. Its
+normalised travel (0 at the widest angle seen, 1 at the narrowest) drives an extra CMC rotation
+about an axis in the palm plane, plus a share at the MCP; the IP is left to the flexion solve. The
+injected thumb therefore swings out of the palm's plane towards the index as the glove's thumb does.
+The lateral guard is 0.1 rad (~6 deg) because it is an angle, not a length.
 
 Because the tip chord cannot invert, the runtime bend-direction check, the per-joint open-hand zeros
 and the per-joint open-to-fist gains are gone, and `--calibrate-zero` is removed. The knuckle spread
@@ -235,10 +256,6 @@ constants in `io_exo_glove_ros2_kinematics.cpp`, and
 `io_exo_glove_ros2_kinematics_tables.py` re-derives them from a recorded
 `/io_fusion/tf_exoskeleton` stream. The plugin logs, once, how many joints each hand filled and the
 mechanism root it bound to.
-
-The thumb's chord runs from the mount, so a rotation about that mount changes it only a little; its
-injected range is correspondingly smaller than a finger's. It still reads zero at the open chord and
-curls with the right sign, but it does not reach the thumb's full human range from the chord alone.
 
 The human model's hand joints are exported un-fanned (every hand-joint `rpy` is zero), which would
 leave the knuckles 31 mm apart and roll the finger plane 13 degrees. The landmark table therefore
