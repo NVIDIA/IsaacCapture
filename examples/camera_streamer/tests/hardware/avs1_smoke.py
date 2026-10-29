@@ -113,13 +113,33 @@ def configured_port(config_path: str) -> int:
     return port
 
 
+def validate_frame_limit(config_path: str, frames: int) -> None:
+    import yaml
+
+    config = yaml.safe_load(Path(config_path).read_text())
+    limit = config.get("runtime", {}).get("frames", 0)
+    # The sender must exit after the last bundle rather than wait for a reconnect.
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or limit <= 0
+        or frames <= 0
+        or limit != frames
+    ):
+        raise ValueError("runtime.frames must be positive and equal to --frames")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sender", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--frames", type=int, default=120)
     args = parser.parse_args()
-    port = configured_port(args.config)
+    try:
+        port = configured_port(args.config)
+        validate_frame_limit(args.config, args.frames)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     process = subprocess.Popen(
         [args.sender, "--config", args.config],

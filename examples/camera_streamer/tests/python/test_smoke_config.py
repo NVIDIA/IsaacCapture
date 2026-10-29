@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hardware"))
-from avs1_smoke import configured_port  # noqa: E402
+from avs1_smoke import configured_port, validate_frame_limit  # noqa: E402
 
 
 class SmokeConfigTests(unittest.TestCase):
@@ -20,3 +20,22 @@ class SmokeConfigTests(unittest.TestCase):
                 path.write_text(f"network: {{port: {value}}}")
                 with self.assertRaises(ValueError):
                     configured_port(str(path))
+
+    def test_frame_limit_matches_requested_bundles(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "camera.yaml"
+            path.write_text("runtime: {frames: 120}")
+            validate_frame_limit(str(path), 120)
+            for text, requested in [
+                ("{}", 120),
+                ("runtime: {frames: 0}", 120),
+                ("runtime: {frames: -1}", 120),
+                ("runtime: {frames: true}", 1),
+                ("runtime: {frames: 120}", 60),
+                ("runtime: {frames: 60}", 120),
+                ("runtime: {frames: 120}", 0),
+            ]:
+                with self.subTest(text=text, requested=requested):
+                    path.write_text(text)
+                    with self.assertRaisesRegex(ValueError, "runtime.frames"):
+                        validate_frame_limit(str(path), requested)
