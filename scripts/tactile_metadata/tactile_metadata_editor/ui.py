@@ -73,6 +73,9 @@ class Editor:
         self._build_gui()
         self._register_scene_events()
         self._sync_side()
+        if args.urdf:
+            self.urdf_path.value = str(Path(args.urdf).expanduser().resolve())
+            self._load_urdf()
 
     @property
     def document(self) -> Document:
@@ -94,8 +97,8 @@ class Editor:
             self.side_text = gui.add_markdown("")
             self._action_button("Toggle Side", self._toggle_side)
             self.metadata_path = gui.add_text("Metadata Path", "")
-            _, self.new_info = self._action_button("New", self._new)
-            _, self.save_info = self._action_button("Save", self._save)
+            self._action_button("New", self._new)
+            self._action_button("Save", self._save)
             self._action_button("Load", self._load)
             self._action_button("Reset Camera", self._reset_camera)
             self.mode = gui.add_dropdown("Mode", ("Edit", "Preview"))
@@ -121,7 +124,9 @@ class Editor:
                 self._watch(
                     self.urdf_scale_widget, lambda _: self._update_urdf_alignment()
                 )
-            self.edit_joint_folder = gui.add_folder("URDF Joints")
+            self.edit_joint_folder = gui.add_folder(
+                "URDF Joints", expand_by_default=False
+            )
 
         self.segments_tab = self.edit_tabs.add_tab("Segments")
         with self.segments_tab:
@@ -138,10 +143,12 @@ class Editor:
                     "Position", (0.0, 0.0, 0.0), 0.001
                 )
                 self._action_button("Add with Input", self._add_segment_input)
-                self.segment_click_button, _ = self._action_button(
+                self.segment_click_button = self._action_button(
                     "Add with URDF Click", self._pick_segment
                 )
-            self.segment_row_folder = gui.add_folder("All Segments")
+            self.segment_row_folder = gui.add_folder(
+                "All Segments", expand_by_default=False
+            )
 
         self.taxels_tab = self.edit_tabs.add_tab("Taxels")
         with self.taxels_tab:
@@ -158,7 +165,7 @@ class Editor:
                     "Center Position", (0.0, 0.0, 0.0), 0.001
                 )
                 self.grid_rotation = self._sliders("Rotation", (0.0, 0.0, 0.0))
-                self.taxel_capture_button, _ = self._action_button(
+                self.taxel_capture_button = self._action_button(
                     "Capture URDF Surface Pose", self._capture_taxel_pose
                 )
                 self._action_button("Add Taxels", self._add_taxels_input)
@@ -170,17 +177,18 @@ class Editor:
                 self._button(self.binding_start, self._start_binding)
                 self._button(self.binding_next, self._select_binding_segments)
                 self._button(self.binding_complete, self._complete_binding)
-            self.taxel_row_folder = gui.add_folder("All Taxels")
+            self.taxel_row_folder = gui.add_folder(
+                "All Taxels", expand_by_default=False
+            )
 
         self.preview_panel = gui.add_folder("Preview", visible=False)
         with self.preview_panel:
-            self.preview_error = gui.add_markdown("")
             self.binding_source = gui.add_dropdown(
                 "Binding Metadata Source", ("Editing",)
             )
             self.show_binding = gui.add_checkbox("Show Binding Poses", False)
             self.collection = gui.add_text("Tactile Collection ID", "tactile")
-            self.apply_preview_button, _ = self._action_button(
+            self.apply_preview_button = self._action_button(
                 "Apply Preview Data to Editor", self._apply_preview
             )
             gui.add_markdown(
@@ -189,6 +197,7 @@ class Editor:
             self._watch(self.binding_source, lambda _: self._binding_source_changed())
             self._watch(self.show_binding, lambda _: self._request_draw())
             with gui.add_folder("Live"):
+                self.live_status = gui.add_markdown("Current Statue: Disconnected")
                 self.joint_enabled = gui.add_checkbox(
                     "Use JointState to Drive URDF", False
                 )
@@ -199,27 +208,31 @@ class Editor:
                     "Joint Mappings JSON", "{}", multiline=True, disabled=True
                 )
                 self._watch(self.joint_enabled, self._joint_enabled)
-                self.connect_button, _ = self._action_button(
-                    "Connect Live", self._connect
-                )
+                self.connect_button = self._action_button("Connect Live", self._connect)
                 gui.add_markdown("Live input overrides values in the Static section.")
-                self.live_status = gui.add_markdown("Disconnected")
             self.static_folder = gui.add_folder("Static")
             with self.static_folder:
-                gui.add_markdown("The following values affect Preview only.")
                 self._action_button(
-                    "Restore to Editor Binding Values",
+                    "Reset Values",
                     self._restore_preview,
+                    
                 )
-                self.preview_segment_folder = gui.add_folder("Segments", order=1)
-                self.preview_joint_folder = gui.add_folder("URDF Joints", order=2)
+                gui.add_markdown("The following values affect Preview only.")
+                self.preview_segment_folder = gui.add_folder(
+                    "Segments", expand_by_default=False
+                )
+                self.preview_joint_folder = gui.add_folder(
+                    "URDF Joints", expand_by_default=False
+                )
+
+        self.info = gui.add_text("__Tactile Info", "")
+        self.preview_error = self.info
 
         self.selection_panel = gui.add_panel()
         self.selection_tab = self.selection_panel.add_tab("Selected Object")
         with self.selection_tab:
             self.selection_folder = gui.add_folder("Selection")
-        self.selection_panel.dock_left()
-        self.selection_panel.set_width(320)
+        self.selection_panel.float(x=10, y=10, width=320, height=520)
 
     def _numbers(self, prefix: str, values, step: float):
         return tuple(
@@ -249,29 +262,22 @@ class Editor:
 
         widget.on_click(clicked)
 
-    def _action_button(self, label: str, callback):
-        button = self.server.gui.add_button(label)
-        info = self.server.gui.add_markdown("")
+    def _action_button(self, label: str, callback, *, order=None):
+        button = self.server.gui.add_button(label, order=order)
 
         async def clicked(_):
-            self.events.put(lambda: self._run_action(callback, info=info))
+            self.events.put(lambda: self._run_action(callback))
 
         button.on_click(clicked)
-        return button, info
+        return button
 
-    def _run_action(self, callback, value=None, info=None) -> None:
-        if info is not None:
-            info.content = ""
+    def _run_action(self, callback, value=None) -> None:
+        self.info.value = ""
         try:
             callback() if value is None else callback(value)
         except Exception as exc:
             LOG.exception("Editor action failed")
-            if info is not None:
-                info.content = f'<span style="color:#d32f2f">Error: {exc}</span>'
-            else:
-                self.preview_error.content = (
-                    f'<span style="color:#d32f2f">Error: {exc}</span>'
-                )
+            self.info.value = f'<span style="color:#d32f2f">Error: {exc}</span>'
         self.redraw = True
 
     def _request_draw(self) -> None:
@@ -332,7 +338,7 @@ class Editor:
         self.state.paths.pop(self.state.side, None)
         self.preview[self.state.side] = self._preview_from(document)
         self._sync_side()
-        self.new_info.content = f"New {self.state.side} metadata created."
+        self.info.value = f"New {self.state.side} metadata created."
 
     def _load(self) -> None:
         path = self.metadata_path.value.strip()
@@ -362,8 +368,7 @@ class Editor:
         async def save(_):
             self.events.put(
                 lambda: self._run_action(
-                    lambda: (self._write_save(path), modal.close()),
-                    info=self.save_info,
+                    lambda: (self._write_save(path), modal.close())
                 )
             )
 
@@ -438,12 +443,14 @@ class Editor:
             self.preview_joint_folder.remove()
         self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
         with self.urdf_tab:
-            self.edit_joint_folder = self.server.gui.add_folder("URDF Joints")
+            self.edit_joint_folder = self.server.gui.add_folder(
+                "URDF Joints", expand_by_default=False
+            )
             with self.edit_joint_folder:
                 self._add_joint_sliders(self.document, self.edit_joint_widgets)
         with self.static_folder:
             self.preview_joint_folder = self.server.gui.add_folder(
-                "URDF Joints", order=2
+                "URDF Joints", expand_by_default=False
             )
             with self.preview_joint_folder:
                 self._add_joint_sliders(
@@ -454,7 +461,7 @@ class Editor:
         if self.model is None:
             self.server.gui.add_markdown("Load a URDF to edit joints.")
             return
-        for joint in self.model.joints:
+        for index, joint in enumerate(self.model.joints):
             lower = (
                 joint.limit.lower
                 if joint.limit and joint.limit.lower is not None
@@ -467,7 +474,11 @@ class Editor:
             )
             value = min(upper, max(lower, document.q.get(joint.name, 0.0)))
             widget = self.server.gui.add_slider(
-                joint.name, float(lower), float(upper), 0.001, float(value)
+                f"{index}: {joint.name}",
+                float(lower),
+                float(upper),
+                0.001,
+                float(value),
             )
             self._watch(
                 widget,
@@ -532,7 +543,9 @@ class Editor:
         self.segment_widgets = []
         issues = self.document.validate()
         with self.segments_tab:
-            self.segment_row_folder = self.server.gui.add_folder("All Segments")
+            self.segment_row_folder = self.server.gui.add_folder(
+                "All Segments", expand_by_default=False
+            )
             with self.segment_row_folder:
                 for row, segment in enumerate(self.document.segments):
                     row_issues = [
@@ -592,7 +605,9 @@ class Editor:
         issues = self.document.validate()
         options = ("None", *[segment.joint for segment in self.document.segments])
         with self.taxels_tab:
-            self.taxel_row_folder = self.server.gui.add_folder("All Taxels")
+            self.taxel_row_folder = self.server.gui.add_folder(
+                "All Taxels", expand_by_default=False
+            )
             with self.taxel_row_folder:
                 for row, taxel in enumerate(self.document.taxels):
                     row_issues = [
@@ -729,8 +744,7 @@ class Editor:
         self.binding_phase = "taxels"
         self.binding_taxels, self.binding_segments = [], []
         self.selected_kind, self.selected_rows = None, []
-        self.binding_next.disabled = True
-        self.binding_complete.disabled = True
+        self._set_binding_button(None)
         self.binding_info.content = (
             "Select taxel(s) to bind in 3D scene. Hold Shift to multi-select. "
             'Click "Select Segments" after selecting taxels. Click another area to cancel.'
@@ -740,6 +754,7 @@ class Editor:
         if not self.binding_taxels:
             raise ValueError("Select at least one taxel")
         self.binding_phase = "segments"
+        self._set_binding_button(None)
         self.binding_info.content = (
             'Select 1-4 segment(s). Hold Shift to multi-select. Click "Complete" '
             "after selecting segments. Click another area to cancel."
@@ -747,21 +762,27 @@ class Editor:
 
     def _complete_binding(self) -> None:
         if not 1 <= len(self.binding_segments) <= 4:
-            self.binding_info.content = (
-                'Too many segments selected. Select 1-4 segments and click "Start '
-                'Binding to Segments" to start over.'
+            self._cancel_binding()
+            self.info.value = (
+                '<span style="color:#d32f2f">Too many segments selected. '
+                'Select 1-4 segments and click "Start Binding to Segments" '
+                "to start over.</span>"
             )
             return
         self.document.assign(self.binding_taxels, self.binding_segments)
         self._cancel_binding()
         self._rebuild_taxel_list()
 
+    def _set_binding_button(self, active: str | None) -> None:
+        self.binding_start.disabled = active != "start"
+        self.binding_next.disabled = active != "next"
+        self.binding_complete.disabled = active != "complete"
+
     def _cancel_binding(self) -> None:
         self.binding_phase = None
         self.binding_taxels, self.binding_segments = [], []
         if hasattr(self, "binding_next"):
-            self.binding_next.disabled = True
-            self.binding_complete.disabled = True
+            self._set_binding_button("start")
             self.binding_info.content = ""
 
     def _joint_enabled(self, enabled: bool) -> None:
@@ -781,14 +802,14 @@ class Editor:
         }
         self.receiver = sdk.Receiver(config)
         self.connect_button.label = "Disconnect Live"
-        self.live_status.content = "Connecting"
+        self.live_status.content = "Current Status: Connecting"
 
     def _disconnect(self) -> None:
         if self.receiver is not None:
             self.receiver.close()
             self.receiver = None
         self.connect_button.label = "Connect Live"
-        self.live_status.content = "Disconnected"
+        self.live_status.content = "Current Status: Disconnected"
         self.redraw = True
 
     def _binding_source_changed(self) -> None:
@@ -802,27 +823,35 @@ class Editor:
             return self.live_document
         return self.document
 
-    def _preview_taxels(self) -> list[Taxel]:
+    def _preview_taxels(self) -> tuple[list[Taxel | None], list[str]]:
         return geo.deform(self._binding_document(), self.preview_document.segments)
 
     def _update_preview_error(self) -> None:
         try:
-            self._preview_taxels()
+            _, errors = self._preview_taxels()
         except (ValueError, TypeError, KeyError, IndexError) as exc:
-            self.preview_error.content = (
+            self.preview_error.value = (
                 f'<span style="color:#d32f2f">Binding error: {exc}</span>'
             )
             self.apply_preview_button.disabled = True
         else:
-            self.preview_error.content = ""
-            self.apply_preview_button.disabled = False
+            self.preview_error.value = (
+                '<span style="color:#d32f2f">' + "<br>".join(errors) + "</span>"
+                if errors
+                else ""
+            )
+            self.apply_preview_button.disabled = bool(errors)
 
     def _apply_preview(self) -> None:
-        taxels = self._preview_taxels()
+        taxels, errors = self._preview_taxels()
+        if errors:
+            raise ValueError("Repair invalid preview taxels before applying")
         replacement = Document(self.state.side)
         replacement.alignment = copy.deepcopy(self.document.alignment)
         replacement.segments = copy.deepcopy(self.preview_document.segments)
-        replacement.taxels = copy.deepcopy(taxels)
+        replacement.taxels = copy.deepcopy(
+            [taxel for taxel in taxels if taxel is not None]
+        )
         replacement.q = copy.deepcopy(self.preview_document.q)
         self.state.documents[self.state.side] = replacement
         self._rebuild_edit_lists()
@@ -840,7 +869,7 @@ class Editor:
         self.preview_segment_widgets = []
         with self.static_folder:
             self.preview_segment_folder = self.server.gui.add_folder(
-                "Segments", order=1
+                "Segments", expand_by_default=False
             )
             with self.preview_segment_folder:
                 for row, segment in enumerate(self.preview_document.segments):
@@ -882,7 +911,7 @@ class Editor:
     def _update_live(self) -> None:
         if self.receiver is None:
             return
-        self.live_status.content = self.receiver.status
+        self.live_status.content = "Current Status: " + self.receiver.status
         if not self.receiver.active:
             return
         frame = self.receiver.latest
@@ -900,7 +929,9 @@ class Editor:
             hand = frame.get("hand")
             if hand is not None:
                 joints = [segment.joint for segment in binding.segments]
-                updated = geo.hand_segments(joints, hand)
+                updated = geo.hand_segments(
+                    binding.segments, hand, self.preview_document.segments
+                )
                 signature = [
                     segment.joint for segment in self.preview_document.segments
                 ]
@@ -923,7 +954,7 @@ class Editor:
             IndexError,
             json.JSONDecodeError,
         ) as exc:
-            self.preview_error.content = (
+            self.preview_error.value = (
                 f'<span style="color:#d32f2f">Live error: {exc}</span>'
             )
             self.apply_preview_button.disabled = True
@@ -947,10 +978,14 @@ class Editor:
         self.server.scene.on_rect_select(modifier="shift")(self._scene_box)
 
     async def _scene_click(self, event) -> None:
-        self.events.put(lambda: self._handle_scene_event(event, False))
+        self.events.put(
+            lambda: self._run_action(lambda: self._handle_scene_event(event, False))
+        )
 
     async def _scene_box(self, event) -> None:
-        self.events.put(lambda: self._handle_scene_event(event, True))
+        self.events.put(
+            lambda: self._run_action(lambda: self._handle_scene_event(event, True))
+        )
 
     def _display_values(self):
         if self.mode.value == "Preview":
@@ -1001,14 +1036,14 @@ class Editor:
                 if event.modifier == "shift"
                 else rows
             )
-            self.binding_next.disabled = not self.binding_taxels
+            self._set_binding_button("next" if self.binding_taxels else None)
         elif self.binding_phase == "segments":
             self.binding_segments = (
                 sorted(set(self.binding_segments) | set(rows))
                 if event.modifier == "shift"
                 else rows
             )
-            self.binding_complete.disabled = not self.binding_segments
+            self._set_binding_button("complete" if self.binding_segments else None)
         elif event.modifier == "shift":
             if self.selected_kind not in (None, kind):
                 return
@@ -1146,7 +1181,7 @@ class Editor:
                 "Scale", 1.0, min=1e-6, step=0.01, disabled=len(rows) < 2
             )
             self._watch(self.selection_scale_widget, self._set_selection_scale)
-            delete, _ = self._action_button("Delete", self._delete_selection)
+            delete = self._action_button("Delete", self._delete_selection)
             delete.disabled = not rows
 
     def _set_selection_position(self, axis: int, value: float) -> None:
@@ -1395,11 +1430,8 @@ class Editor:
                 highlighted=self.pick_mode is not None,
                 opacity=geo.URDF_OPACITY * active_opacity,
             )
-        self._hide_prefix("/edit")
-        self._hide_prefix("/preview")
-        self._hide_prefix("/saved")
-        self._hide_prefix("/errors")
         if self.mode.value == "Edit":
+            self._hide_prefix("/preview")
             self._draw_dataset(
                 "/edit",
                 self.document.segments,
@@ -1409,17 +1441,29 @@ class Editor:
             )
             self._draw_errors()
         else:
+            self._hide_prefix("/errors")
             try:
-                preview_taxels = self._preview_taxels()
+                preview_rows, _ = self._preview_taxels()
             except (ValueError, TypeError, KeyError, IndexError):
-                preview_taxels = []
-            forces = (
+                preview_rows = []
+            valid_rows = [
+                (row, taxel)
+                for row, taxel in enumerate(preview_rows)
+                if taxel is not None
+            ]
+            preview_taxels = [taxel for _, taxel in valid_rows]
+            raw_forces = (
                 self.receiver.latest.get("forces")
                 if self.receiver
                 and self.receiver.active
                 and time.monotonic()
                 - self.receiver.latest.get("read_time", float("-inf"))
                 < 0.5
+                else None
+            )
+            forces = (
+                [raw_forces[row] for row, _ in valid_rows]
+                if raw_forces is not None and len(raw_forces) == len(preview_rows)
                 else None
             )
             self._draw_dataset(
@@ -1438,9 +1482,13 @@ class Editor:
                     0.5,
                     False,
                 )
+            else:
+                self._hide_prefix("/edit")
         saved = self.state.saved[self.state.side]
         if self.show_saved.value and saved is not None:
             self._draw_dataset("/saved", saved.segments, saved.taxels, 0.2, False)
+        else:
+            self._hide_prefix("/saved")
         self._draw_selection_axes()
 
     def run(self) -> None:

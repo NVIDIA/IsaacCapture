@@ -9,12 +9,15 @@
   let dragged = null;
   let nonce = 0;
   let observer = null;
+  let infoInput = null;
+  let infoElement = null;
+  let raf = 0;
 
-  const bridge = () => {
+  const findBridge = (name) => {
     for (const input of document.querySelectorAll("input")) {
       let parent = input;
       for (let depth = 0; parent && depth < 5; ++depth, parent = parent.parentElement) {
-        if (parent.textContent?.includes("__Tactile Reorder Event")) {
+        if (parent.textContent?.includes(name)) {
           input.style.position = "absolute";
           input.style.width = "1px";
           input.style.height = "1px";
@@ -22,7 +25,7 @@
           input.style.pointerEvents = "none";
           input.tabIndex = -1;
           for (const label of parent.querySelectorAll("label")) {
-            if (label.textContent?.includes("__Tactile Reorder Event")) {
+            if (label.textContent?.includes(name)) {
               label.style.display = "none";
             }
           }
@@ -32,6 +35,8 @@
     }
     return null;
   };
+
+  const bridge = () => findBridge("__Tactile Reorder Event");
 
   const emit = (kind, source, target) => {
     const input = bridge();
@@ -46,8 +51,74 @@
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
 
+  const alignBindingButtons = () => {
+    const names = new Set([
+      "Start Binding to Segments",
+      "Select Segments",
+      "Complete",
+    ]);
+    const buttons = [...document.querySelectorAll("button")].filter((button) =>
+      names.has(button.textContent?.trim()),
+    );
+    if (buttons.length !== 3) return;
+    let common = buttons[0].parentElement;
+    while (common && !buttons.every((button) => common.contains(button))) {
+      common = common.parentElement;
+    }
+    if (!common || common.querySelectorAll("button").length !== 3) return;
+    const children = buttons.map((button) => {
+      let child = button;
+      while (child.parentElement !== common) child = child.parentElement;
+      return child;
+    });
+    if (new Set(children).size !== 3) return;
+    common.style.display = "grid";
+    common.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
+    common.style.gap = "6px";
+    for (const child of common.children) {
+      child.style.gridColumn = children.includes(child) ? "auto" : "1 / -1";
+    }
+    for (const button of buttons) button.style.width = "100%";
+  };
+
+  const syncInfo = () => {
+    const parent = globalThis.__viserMutable?.canvas?.parentElement;
+    if (!parent) return;
+    if (!infoElement) {
+      infoElement = document.createElement("div");
+      Object.assign(infoElement.style, {
+        position: "absolute",
+        left: "12px",
+        right: "12px",
+        bottom: "12px",
+        minHeight: "64px",
+        maxHeight: "120px",
+        overflow: "auto",
+        zIndex: "20",
+        padding: "10px 14px",
+        border: "1px solid rgba(0,0,0,0.25)",
+        borderRadius: "6px",
+        background: "rgba(255,255,255,0.9)",
+        color: "#202020",
+        boxSizing: "border-box",
+      });
+    }
+    if (infoElement.parentElement !== parent) parent.appendChild(infoElement);
+    if (!infoInput?.isConnected) {
+      infoInput = findBridge("__Tactile Info");
+    }
+    infoElement.innerHTML = `<strong>Info</strong><div>${infoInput?.value || "&nbsp;"}</div>`;
+  };
+
+  const frame = () => {
+    syncInfo();
+    raf = requestAnimationFrame(frame);
+  };
+
   const bind = () => {
     bridge();
+    findBridge("__Tactile Info");
+    alignBindingButtons();
     for (const label of document.querySelectorAll("label")) {
       if (!label.textContent?.trim().startsWith("⚠")) continue;
       const field = label.parentElement?.querySelector("input, button");
@@ -90,10 +161,15 @@
   observer = new MutationObserver(bind);
   observer.observe(document.body, { childList: true, subtree: true });
   bind();
+  frame();
   globalThis[key] = {
     stop() {
       observer?.disconnect();
       observer = null;
+      cancelAnimationFrame(raf);
+      infoElement?.remove();
+      infoElement = null;
+      infoInput = null;
       dragged = null;
     },
   };

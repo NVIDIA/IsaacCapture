@@ -267,7 +267,9 @@ class Model:
         self.handles.clear()
 
 
-def deform(binding: Document, current: list[Segment]) -> list[Taxel]:
+def deform(
+    binding: Document, current: list[Segment]
+) -> tuple[list[Taxel | None], list[str]]:
     bind_segments = {
         segment.joint: matrix(segment.pose) for segment in binding.segments
     }
@@ -276,61 +278,89 @@ def deform(binding: Document, current: list[Segment]) -> list[Taxel]:
         current
     ):
         raise ValueError("Segment HandJoint values must be unique")
-    result = []
-    for taxel in binding.taxels:
-        active = [
-            (joint, weight)
-            for joint, weight in zip(taxel.segments, taxel.weights)
-            if joint is not None and weight > 0
-        ]
-        if not active:
-            raise ValueError("Taxel has no active segment")
-        transforms = []
-        for joint, weight in active:
-            if joint not in bind_segments or joint not in current_segments:
-                raise ValueError(f"Missing segment {joint}")
-            transforms.append(
-                (weight, current_segments[joint] @ np.linalg.inv(bind_segments[joint]))
+    invalid_taxels: dict[int, list[str]] = {}
+    for issue in binding.validate():
+        if issue["kind"] == "taxels" and issue["row"] is not None:
+            invalid_taxels.setdefault(issue["row"], []).append(issue["message"])
+    result: list[Taxel | None] = []
+    errors = []
+    for row, taxel in enumerate(binding.taxels):
+        if row in invalid_taxels:
+            result.append(None)
+            errors.append(
+                f"Taxel {row}: " + "; ".join(dict.fromkeys(invalid_taxels[row]))
             )
-        bind_taxel = matrix(taxel.pose)
-        position = sum(
-            weight * (delta @ np.r_[bind_taxel[:3, 3], 1.0])[:3]
-            for weight, delta in transforms
-        )
-        if len({joint for joint, _ in active}) == 1:
-            rotation = transforms[0][1][:3, :3] @ bind_taxel[:3, :3]
-        else:
-            blend = sum(weight * delta[:3, :3] for weight, delta in transforms)
-            u, singular, vh = np.linalg.svd(blend)
-            if singular[-1] < 1e-8:
-                rotation = bind_taxel[:3, :3]
+            continue
+        try:
+            active = [
+                (joint, weight)
+                for joint, weight in zip(taxel.segments, taxel.weights)
+                if joint is not None and weight > 0
+            ]
+            if not active:
+                raise ValueError("no active segment")
+            transforms = []
+            for joint, weight in active:
+                if joint not in bind_segments or joint not in current_segments:
+                    raise ValueError(f"missing segment {joint}")
+                transforms.append(
+                    (
+                        weight,
+                        current_segments[joint] @ np.linalg.inv(bind_segments[joint]),
+                    )
+                )
+            bind_taxel = matrix(taxel.pose)
+            position = sum(
+                weight * (delta @ np.r_[bind_taxel[:3, 3], 1.0])[:3]
+                for weight, delta in transforms
+            )
+            if len({joint for joint, _ in active}) == 1:
+                rotation = transforms[0][1][:3, :3] @ bind_taxel[:3, :3]
             else:
-                correction = np.eye(3)
-                correction[2, 2] = np.linalg.det(u @ vh)
-                rotation = u @ correction @ vh @ bind_taxel[:3, :3]
-        value = np.eye(4)
-        value[:3, :3], value[:3, 3] = rotation, position
-        result.append(Taxel(pose(value), list(taxel.segments), list(taxel.weights)))
-    return result
+                blend = sum(weight * delta[:3, :3] for weight, delta in transforms)
+                u, singular, vh = np.linalg.svd(blend)
+                if singular[-1] < 1e-8:
+                    rotation = bind_taxel[:3, :3]
+                else:
+                    correction = np.eye(3)
+                    correction[2, 2] = np.linalg.det(u @ vh)
+                    rotation = u @ correction @ vh @ bind_taxel[:3, :3]
+            value = np.eye(4)
+            value[:3, :3], value[:3, 3] = rotation, position
+            result.append(Taxel(pose(value), list(taxel.segments), list(taxel.weights)))
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            np.linalg.LinAlgError,
+        ) as exc:
+            result.append(None)
+            errors.append(f"Taxel {row}: {exc}")
+    return result, errors
 
 
-def hand_segments(joints: list[str], hand: dict) -> list[Segment]:
+def hand_segments(
+    binding: list[Segment], hand: dict, stale: list[Segment]
+) -> list[Segment]:
     values = []
     for position, orientation, valid in zip(
         hand["positions"], hand["orientations"], hand["is_valid"]
     ):
         values.append(matrix([*position, *orientation]) if valid else None)
-    if len(values) != len(JOINTS) or values[1] is None:
-        raise ValueError("HandTracker WRIST pose is unavailable")
-    wrist_inverse = np.linalg.inv(values[1])
+    if len(values) != len(JOINTS):
+        raise ValueError("HandTracker joint array has an invalid length")
+    stale_by_joint = {segment.joint: segment for segment in stale}
+    wrist_inverse = np.linalg.inv(values[1]) if values[1] is not None else None
     result = []
-    for joint in joints:
-        index = JOINTS.index(joint)
-        if values[index] is None:
-            raise ValueError(f"HandTracker {joint} pose is unavailable")
-        result.append(
-            Segment(
-                joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ values[index])
+    for bind_segment in binding:
+        joint = bind_segment.joint
+        tracked = values[JOINTS.index(joint)]
+        if wrist_inverse is None or tracked is None:
+            fallback = stale_by_joint.get(joint, bind_segment)
+            result.append(Segment(joint, list(fallback.pose)))
+        else:
+            result.append(
+                Segment(joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ tracked))
             )
-        )
     return result

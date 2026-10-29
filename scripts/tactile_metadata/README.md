@@ -27,6 +27,17 @@ Open [http://127.0.0.1:8080](http://127.0.0.1:8080). To use another port:
 python -m tactile_metadata_editor.cli --port 8090
 ```
 
+Metadata, side, and URDF inputs are optional:
+
+```bash
+python -m tactile_metadata_editor.cli \
+  --metadata ~/Downloads/right.metadata.json \
+  --side right \
+  --urdf "$(pwd)/model/right/linkerhand_FFG_right.urdf"
+```
+
+`--side` defaults to `left`. Paths beginning with `~` are expanded.
+
 Offline editing uses Viser, NumPy, yourdfpy, trimesh, and rtree. Live reception
 also requires the Isaac Capture SDK, a compatible OpenXR runtime, and an
 available HMD system in the same Python environment.
@@ -36,7 +47,7 @@ available HMD system in the same Python environment.
 The editor maintains independent left- and right-hand documents. **Toggle Side**
 selects the active document; each side has its own metadata path and data.
 General controls are at the top of the right menu. The Selected Object panel is
-always present on the left.
+always present as a floating window on the left.
 
 Three pose datasets are displayed:
 
@@ -62,6 +73,9 @@ The **Edit** mode contains three tabs.
 1. Enter an absolute **URDF Path** and select **Load URDF**.
 2. Use **URDF Alignment** to translate, rotate, and scale the model.
 3. Expand **URDF Joints** to adjust each movable joint.
+
+URDF Joints and the full Segment/Taxel lists are collapsed by default. Their
+displayed indices start at 0.
 
 URDF configuration is session-only and is not saved in tactile metadata. Its
 base opacity is 0.4, multiplied by the opacity of the dataset layer being
@@ -94,6 +108,9 @@ To bind taxels:
 2. Select **Select Segments** and choose one to four segments.
 3. Select **Complete**. Initial active weights are equal.
 
+The three buttons are horizontal, and at most one is enabled at a time. Between
+steps, only the required 3D selection is available.
+
 Expand **All Taxels** to edit pose, four segment slots, and four weights. `None`
 is an editor-only inactive slot with weight zero. Editing a weight preserves the
 entered value and adjusts other active weights proportionally so the row sums to
@@ -115,6 +132,9 @@ objects, and scales multi-selection positions about their center. Edit mode
 changes Editing data; Preview mode changes Preview segments. Preview taxels are
 derived and cannot be selected. With no selection, the panel remains visible,
 shows Type `None` and Count `0`, and disables its input fields.
+
+Action and validation errors appear in the fixed **Info** area at the bottom of
+the 3D viewport. It cannot be moved.
 
 ## Save and load
 
@@ -141,7 +161,8 @@ standalone check/export CLI commands.
 
 ## Preview and live data
 
-Use **Restore to Editor Binding Values** to initialize Preview from Editing.
+Use **Reset Values** to restore Preview segment poses and URDF joint values from
+Editing.
 Choose **Binding Metadata Source**:
 
 - **Editing** uses the current editor bindings.
@@ -152,6 +173,11 @@ The Preview Static section lists Segments before URDF Joints.
 **Apply Preview Data to Editor** fully replaces Editing segments, taxels,
 bindings, and URDF joint values. The button is disabled when Preview segments
 are incompatible with the selected bindings.
+
+Each Preview taxel is evaluated independently. Invalid rows are reported and
+omitted from the scene while valid taxels continue to render. Live force rows
+remain matched by their original taxel indices. Apply remains disabled until all
+taxels are valid.
 
 For live reception:
 
@@ -167,6 +193,9 @@ For live reception:
 
 HandPose updates Preview segments. Enabled JointState mappings update Preview
 URDF joints. Live frames overwrite manual Static values while connected.
+HandPose overwrites only valid joints; invalid joints retain their last pose,
+starting from the binding pose. If WRIST is invalid, every segment remains at
+its last pose because a wrist-relative transform cannot be computed.
 Tactile force magnitude maps from blue at 0 N to red at 30 N, with values above
 30 N clamped. Missing or inactive force data is light grey.
 

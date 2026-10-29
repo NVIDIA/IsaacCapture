@@ -139,12 +139,12 @@ def load(
     side: str,
     alignment: np.ndarray | list[list[float]] | None = None,
 ) -> Document:
-    with Path(path).open() as stream:
+    with Path(path).expanduser().resolve().open() as stream:
         return parse(json.load(stream), side, alignment)
 
 
 def write(path: str | Path, value: object) -> None:
-    path = Path(path).resolve()
+    path = Path(path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".tactile-")
     try:
@@ -158,6 +158,6 @@ def write(path: str | Path, value: object) -> None:
 
 def save(state: State, path: str | Path) -> None:
     write(path, metadata(state.document))
-    state.paths[state.side] = str(Path(path).resolve())
+    state.paths[state.side] = str(Path(path).expanduser().resolve())
     state.saved[state.side] = state.document.clone()
     state.saved[state.side].q = {}
