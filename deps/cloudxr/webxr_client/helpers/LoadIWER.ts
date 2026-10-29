@@ -23,9 +23,6 @@ declare global {
   }
 }
 
-// Both versions are loaded from CDN; bump them together when upgrading IWER.
-const IWER_version = '2.7.0';
-const IWER_DEVUI_version = '2.7.0';
 let pendingIWERLoad: Promise<IWERLoadResult> | null = null;
 
 export interface IWERLoadResult {
@@ -61,79 +58,26 @@ async function loadIWER(): Promise<IWERLoadResult> {
   if (!supportsImmersive) {
     console.info('Immersive mode not supported, loading IWER as fallback.');
 
-    // Load IWER first
-    const script = document.createElement('script');
-    script.src = `https://unpkg.com/iwer@${IWER_version}/build/iwer.min.js`;
-    script.async = true;
-    script.integrity = 'sha384-pcGii0Tzet8SSL0v/VOhYIzm2dynTF4sEDPQxzsbepa8wICqZkNQvx3xuRRjj6Lc';
-    script.crossOrigin = 'anonymous';
+    try {
+      // Share the client's pointer-events module. A standalone DevUI bundle has
+      // its own pointer ID counter but shares the global capture map, so mouse
+      // captures can collide with XR controller pointers.
+      const [{ XRDevice, metaQuest3 }, { DevUI }] = await Promise.all([
+        import(/* webpackMode: "lazy" */ 'iwer'),
+        import(/* webpackMode: "lazy" */ '@iwer/devui'),
+      ]);
+      const device = new XRDevice(metaQuest3);
+      device.installDevUI(DevUI);
 
-    await new Promise<void>(resolve => {
-      script.onload = async () => {
-        console.info('IWER loaded as fallback.');
-        const IWERGlobal = (window as any).IWER || (globalThis as any).IWER;
-        if (!IWERGlobal) {
-          console.warn('IWER global not found after script load.');
-          supportsImmersive = false;
-          resolve();
-          return;
-        }
-
-        // Load iwer-devui after IWER
-        const devUIScript = document.createElement('script');
-        devUIScript.src = `https://unpkg.com/@iwer/devui@${IWER_DEVUI_version}/build/iwer-devui.min.js`;
-        devUIScript.async = true;
-        devUIScript.integrity =
-          'sha384-9jc9tp/DypE1hvhqLzE0xVpXYx64QqIRMDu6f3FkSIaeTqpwniy+t1ierx3y428X';
-        devUIScript.crossOrigin = 'anonymous';
-
-        await new Promise<void>(devUIResolve => {
-          devUIScript.onload = () => {
-            console.info('IWER DevUI loaded.');
-            devUIResolve();
-          };
-          devUIScript.onerror = error => {
-            console.warn('Failed to load IWER DevUI:', error);
-            devUIResolve();
-          };
-          document.head.appendChild(devUIScript);
-        });
-
-        try {
-          const device: XRDevice = new IWERGlobal.XRDevice(IWERGlobal.metaQuest3);
-
-          const IWER_DevUI = (window as any).IWER_DevUI || (globalThis as any).IWER_DevUI;
-          if (IWER_DevUI?.DevUI) {
-            device.installDevUI(IWER_DevUI.DevUI);
-            console.info('IWER DevUI initialized with XR device.');
-          } else {
-            console.warn('IWER DevUI not found after script load, continuing without DevUI.');
-          }
-
-          // This fallback runs only after the native XRSystem reports no immersive
-          // support. IWER 2.3 otherwise preserves that unusable navigator.xr.
-          await device.installRuntime({ forceInstall: true });
-          window.xrDevice = device;
-          supportsImmersive = true;
-          iwerLoaded = true;
-          // The only log that's both unconditional (fires whether or not DevUI loaded, unlike
-          // "IWER DevUI initialized...") and guaranteed to follow installRuntime() actually
-          // succeeding (unlike "IWER DevUI initialized...", which logs before this await) - the
-          // one a caller (e.g. a test) should wait on to know navigator.xr is truly usable.
-          console.info('IWER runtime installed.');
-        } catch (e) {
-          console.warn('IWER runtime install failed:', e);
-          supportsImmersive = false;
-        }
-        resolve();
-      };
-      script.onerror = () => {
-        console.warn('Failed to load IWER.');
-        supportsImmersive = false;
-        resolve();
-      };
-      document.head.appendChild(script);
-    });
+      // The native XRSystem has already reported no immersive support.
+      await device.installRuntime({ forceInstall: true });
+      window.xrDevice = device;
+      supportsImmersive = true;
+      iwerLoaded = true;
+      console.info('IWER runtime installed.');
+    } catch (error) {
+      console.warn('IWER runtime install failed:', error);
+    }
   }
 
   return { supportsImmersive, iwerLoaded };

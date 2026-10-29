@@ -68,6 +68,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@iwer/devui": "2.7.0",
     "@playwright/test": "^1.63.0",
     "@types/jest": "^30",
     "@types/node": "^22",
