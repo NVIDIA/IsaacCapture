@@ -71,10 +71,20 @@ async function loadIWER(): Promise<IWERLoadResult> {
 
       // The native XRSystem has already reported no immersive support.
       await device.installRuntime({ forceInstall: true });
-      window.xrDevice = device;
-      supportsImmersive = true;
-      iwerLoaded = true;
-      console.info('IWER runtime installed.');
+      // Installation can return without replacing navigator.xr. Verify support
+      // before reporting readiness to enable Connect.
+      const [vr, ar] = await Promise.all([
+        navigator.xr?.isSessionSupported('immersive-vr'),
+        navigator.xr?.isSessionSupported('immersive-ar'),
+      ]);
+      supportsImmersive = Boolean(vr || ar);
+      if (supportsImmersive) {
+        window.xrDevice = device;
+        iwerLoaded = true;
+        console.info('IWER runtime installed.');
+      } else {
+        console.warn('IWER runtime installed without immersive session support.');
+      }
     } catch (error) {
       console.warn('IWER runtime install failed:', error);
     }
