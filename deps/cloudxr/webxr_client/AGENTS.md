@@ -21,3 +21,7 @@ startup notices and status cleanup until a stream connects successfully.
 
 Selecting Custom preserves current profile-driven settings; named profiles apply
 their defaults.
+
+Connect readiness must remain blocked during emulator loading and capability checks,
+even when form validation or XR-store notifications update the button. Cover startup
+with a delayed emulator bundle and click as soon as Connect becomes available.

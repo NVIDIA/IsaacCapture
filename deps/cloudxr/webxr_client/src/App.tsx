@@ -286,6 +286,10 @@ function AppContent() {
     }
   }, [cloudXR2DUI, iwerLoaded, capabilitiesValid]);
 
+  useEffect(() => {
+    cloudXR2DUI?.setCapabilitiesReady(capabilitiesValid);
+  }, [cloudXR2DUI, capabilitiesValid]);
+
   // Check capabilities once CloudXR2DUI is ready and IWER is loaded
   useEffect(() => {
     const checkCapabilitiesOnce = async () => {

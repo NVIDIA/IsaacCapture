@@ -75,29 +75,21 @@ test.describe('client UI states', () => {
   }) => {
     test.setTimeout(30000);
 
-    // Block the IWER CDN script the real page fetches (helpers/LoadIWER.ts) to force the
-    // script.onerror path - the same failure mode as a headset browser that launched but never
-    // finished loading the client page (here: never finished loading its WebXR emulation dep).
-    await page.route('**/iwer*.min.js', route => route.abort());
+    await page.route(/(?:emulator|iwer.*index_js).*\.js/, route => route.abort());
 
     const consoleLines = [];
     page.on('console', msg => consoleLines.push(msg.text()));
 
     await page.goto('http://localhost:8082/');
-    await waitForConsoleText(consoleLines, 'Failed to load IWER.');
+    await waitForConsoleText(consoleLines, 'IWER runtime install failed:');
 
-    // App.tsx:263-269 reacts to loadIWERIfNeeded() reporting !supportsImmersive by calling
-    // showError(), which reliably reaches #errorMessageText (this is the "Detected at launch"
-    // case from the reliability doc). #startButton's disabled state is deliberately NOT asserted
-    // here: it races an unrelated bug in updateConnectButtonState() (CloudXR2DUI.tsx:961), which
-    // unconditionally re-enables the button from resolution/grid validity alone whenever its
-    // text is exactly 'CONNECT', with no awareness of capabilities/IWER state - so the button can
-    // end up enabled even after a capability failure that IS otherwise correctly surfaced.
     await expect(page.locator('#errorMessageText')).toHaveText('Immersive mode not supported');
     // Text content alone doesn't prove the operator can see it - showStatus() can set
     // #errorMessageText without the box being visible if it regresses. toBeVisible() respects
     // the actual .show CSS rule (display: none by default).
     await expect(page.locator('#errorMessageBox')).toBeVisible();
+    await page.locator('#serverIpInput').fill('localhost');
+    await expect(page.locator('#startButton')).toBeDisabled();
   });
 
   test('passthrough-only: a session that enters but never streams is now detected via streamAttachTimeoutMs', async ({
@@ -127,10 +119,6 @@ test.describe('client UI states', () => {
     // changes what this test is actually exercising and can outlast a 15s console-wait timeout.
     // This test wants the no-retry give-up path specifically.
     await page.goto('http://localhost:8082/?streamAttachTimeoutMs=500&reconnectEnabled=false');
-    // See AppMockTest.spec.js: "IWER DevUI initialized with XR device." logs before
-    // installRuntime() and is skipped on the supported no-DevUI path - "IWER runtime installed."
-    // is the reliable, unconditional signal that navigator.xr is actually usable.
-    await waitForConsoleText(consoleLines, 'IWER runtime installed.');
     await page.click('#startButton', { timeout: 15000 });
 
     // The session enters immersive-ar and MockCloudXR.connect() is called (proving this isn't
@@ -155,7 +143,7 @@ test.describe('client UI states', () => {
     await waitForConsoleText(consoleLines, 'CloudXR stream did not attach within 500ms');
     await waitForConsoleText(
       consoleLines,
-      'CloudXR session stopped: Stream did not attach within 500ms'
+      'Stream stopped with error: Stream did not attach within 500ms'
     );
     await expectErrorBannerShown(
       page,

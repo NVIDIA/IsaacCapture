@@ -97,6 +97,8 @@ export const COUNTDOWN_STORAGE_KEY = 'cxr.react.countdownSeconds';
 export class CloudXR2DUI {
   /** Button to initiate XR streaming session */
   private startButton!: HTMLButtonElement;
+  // Form edits and XR-store notifications must not bypass startup capability checks.
+  private capabilitiesReady = false;
   /** Input field for the CloudXR server IP address */
   private serverIpInput!: HTMLInputElement;
   /** Button to clear the prefilled server IP (re-enables the browser autocomplete dropdown) */
@@ -1011,7 +1013,13 @@ export class CloudXR2DUI {
     this.updateConnectButtonState();
   }
 
-  /** Disable Connect button and show validation error when resolution invalid; enable when valid. */
+  public setCapabilitiesReady(ready: boolean): void {
+    this.capabilitiesReady = ready;
+    if (!ready && this.startButton) this.startButton.disabled = true;
+    this.updateConnectButtonState();
+  }
+
+  /** Update Connect availability from capability readiness and form validation. */
   public updateConnectButtonState(): void {
     const { w, h } = getResolutionFromInputs(this.perEyeWidthInput, this.perEyeHeightInput);
     const { reprojectionGridCols, reprojectionGridRows } = getGridFromInputs(
@@ -1034,8 +1042,8 @@ export class CloudXR2DUI {
       this.validationMessageBox.className = 'validation-message-box';
     }
     // Only update button when idle (don't override "CONNECT (starting...)" or "CONNECT (XR session active)")
-    if (this.startButton && this.startButton.innerHTML === 'CONNECT') {
-      const shouldEnable = !resolutionError && !gridError;
+    if (this.startButton && this.startButton.textContent?.trim() === 'CONNECT') {
+      const shouldEnable = this.capabilitiesReady && !resolutionError && !gridError;
       this.setStartButtonState(!shouldEnable, 'CONNECT');
     }
   }
@@ -1300,7 +1308,7 @@ export class CloudXR2DUI {
    */
   public setStartButtonState(disabled: boolean, text: string): void {
     if (this.startButton) {
-      this.startButton.disabled = disabled;
+      this.startButton.disabled = disabled || !this.capabilitiesReady;
       this.startButton.innerHTML = text;
     }
   }
