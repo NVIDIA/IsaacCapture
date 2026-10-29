@@ -79,10 +79,16 @@ def add_body_arguments(parser):
 
 
 def validate_body_arguments(parser, args):
-    if args.body_schema == "soma" and not args.soma_body_collection_id:
-        parser.error("soma-body-collection-id must not be empty")
     if args.controllers is None:
         args.controllers = args.body_schema == "full-body-pose"
+    if args.body_schema == "soma":
+        if not args.soma_body_collection_id:
+            parser.error("soma-body-collection-id must not be empty")
+        # Source names also identify MCAP channel bases and must remain distinct.
+        if args.controllers and args.soma_body_collection_id == "controllers":
+            parser.error(
+                "soma-body-collection-id 'controllers' is reserved when --controllers is enabled"
+            )
 
 
 def add_hand_arguments(parser):
@@ -162,11 +168,11 @@ def build_selected_hand_pipeline(args):
     return build_hand_pipeline()
 
 
-def create_hand_visualizers(args, server, ground=None):
+def create_hand_visualizers(args, server):
     if args.hand_schema == "soma":
         from .soma_hand_common import create_visualizers
 
-        return create_visualizers(server, ground)
+        return create_visualizers(server)
     return {
         "hand_left": HandViz(server, "hand_left", LEFT_COLOR),
         "hand_right": HandViz(server, "hand_right", RIGHT_COLOR),
@@ -191,22 +197,21 @@ def record_trackers(args, path, tracker_names):
     trackers = [tracker for tracker, _ in tracker_names]
     config = McapRecordingConfig(str(path), tracker_names)
     extensions = DeviceIOSession.get_required_extensions(trackers)
-    try:
-        with CloudXRLauncher.launch_context(args):
-            with OpenXRSession("McapRecordExample", extensions) as oxr:
-                with DeviceIOSession.run(
-                    trackers, oxr.get_handles(), config
-                ) as session:
-                    start = time.monotonic()
-                    frames = 0
+    with CloudXRLauncher.launch_context(args):
+        with OpenXRSession("McapRecordExample", extensions) as oxr:
+            with DeviceIOSession.run(trackers, oxr.get_handles(), config) as session:
+                start = time.monotonic()
+                frames = 0
+                # Only active recording handles Ctrl+C as a graceful completion.
+                try:
                     while time.monotonic() - start < args.duration:
                         session.update()
                         frames += 1
                         if frames % 60 == 0:
                             print(f"[record] frame={frames}")
                         time.sleep(1 / 60)
-    except KeyboardInterrupt:
-        pass
+                except KeyboardInterrupt:
+                    pass
 
 
 def resolve_recording(path_arg, prefix):

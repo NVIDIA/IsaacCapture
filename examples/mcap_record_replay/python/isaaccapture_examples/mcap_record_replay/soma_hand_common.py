@@ -136,7 +136,8 @@ def build_pipeline(collection_ids, representation):
     return OutputCombiner(outputs)
 
 
-def create_visualizers(server, ground=None):
+def create_visualizers(server):
+    """Render standalone hands without treating hand height as a floor reference."""
     return {
         key: JointInputViz(
             server,
@@ -146,7 +147,6 @@ def create_visualizers(server, ground=None):
             SomaHandInputIndex.JOINT_POSITIONS,
             SomaHandInputIndex.JOINT_VALID,
             LEFT_COLOR if hand_side == SomaHandSide.LEFT else RIGHT_COLOR,
-            ground,
         )
         for key, hand_side in HAND_SIDES.items()
     }
