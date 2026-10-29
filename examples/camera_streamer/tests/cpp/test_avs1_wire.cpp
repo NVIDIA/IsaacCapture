@@ -66,11 +66,92 @@ argus_sender::Avs1Bundle mixedBundle()
     return bundle;
 }
 
+void testStreamValidation(TestContext& test)
+{
+    const char* error = nullptr;
+    argus_sender::Avs1Bundle parsed;
+    std::vector<uint8_t> wire;
+    for (uint16_t rotation : { 0, 180 })
+    {
+        auto bundle = mixedBundle();
+        bundle.streams[0].rotation = rotation;
+        TEST_CHECK(test, argus_sender::buildAvs1WireRecord(bundle, &wire, &error));
+        TEST_CHECK(test, argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    }
+    auto invalid = mixedBundle();
+    invalid.streams[0].rotation = 90;
+    TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(invalid, &wire, &error));
+    for (size_t stream = 0; stream < 2; ++stream)
+    {
+        invalid = mixedBundle();
+        invalid.streams[stream].sequence = stream == 0 ? 0 : 1;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(invalid, &wire, &error));
+    }
+
+    std::vector<uint8_t> valid;
+    TEST_CHECK(test, argus_sender::buildAvs1WireRecord(mixedBundle(), &valid, &error));
+    const size_t firstStream = argus_sender::kAvs1LengthPrefixBytes + argus_sender::kAvs1HeaderBytes;
+    wire = valid;
+    wire[firstStream + 7] = 90;
+    TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    wire = valid;
+    wire[firstStream + 31] = 0;
+    TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    wire = valid;
+    wire[firstStream + argus_sender::kAvs1StreamDescriptorBytes + 31] = 1;
+    TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+}
+
+void testBundleValidation(TestContext& test)
+{
+    const char* error = nullptr;
+    argus_sender::Avs1Bundle parsed;
+    auto bundle = mixedBundle();
+    bundle.flags = argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID;
+    bundle.senderCaptureReadyTscNs = 0;
+    std::vector<uint8_t> valid;
+    TEST_CHECK(test, argus_sender::buildAvs1WireRecord(bundle, &valid, &error));
+    // Mutate the on-wire fields independently of the builder's checks.
+    for (uint8_t flags : { 0x80, 0x02 })
+    {
+        auto wire = valid;
+        wire[4 + 7] = flags;
+        TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    }
+    for (size_t field : { 16, 24 })
+    {
+        auto wire = valid;
+        for (size_t byte = 0; byte < 8; ++byte)
+            wire[4 + field + byte] = 0;
+        TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    }
+}
+
+void testPayloadCoverage(TestContext& test)
+{
+    const char* error = nullptr;
+    argus_sender::Avs1Bundle parsed;
+    std::vector<uint8_t> valid;
+    TEST_CHECK(test, argus_sender::buildAvs1WireRecord(mixedBundle(), &valid, &error));
+    const size_t secondSample = argus_sender::kAvs1LengthPrefixBytes + argus_sender::kAvs1HeaderBytes +
+                                2 * argus_sender::kAvs1StreamDescriptorBytes + argus_sender::kAvs1SampleDescriptorBytes;
+    // Two nonempty ranges still sum to five bytes when the second overlaps the first.
+    for (uint8_t offset : { 0, 2, 4 })
+    {
+        auto wire = valid;
+        wire[secondSample + 67] = offset;
+        TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    }
+}
+
 } // namespace
 
 int main()
 {
     TestContext test("avs1_wire");
+    testStreamValidation(test);
+    testBundleValidation(test);
+    testPayloadCoverage(test);
     argus_sender::Avs1Bundle input = mixedBundle();
     std::vector<uint8_t> wire;
     const char* error = 0;

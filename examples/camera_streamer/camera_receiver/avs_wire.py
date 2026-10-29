@@ -195,6 +195,7 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
 
     offset = header_bytes
     stream_headers: list[tuple] = []
+    flat_cursor = 0
     for expected_index in range(stream_count):
         fields = STREAM.unpack_from(packet, offset)
         offset += STREAM.size
@@ -228,7 +229,10 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
         expected_sample_count = 2 if stream_flags & STREAM_STEREO else 1
         if stream_sample_count != expected_sample_count:
             raise ValueError("AVS1 stream sample count does not match mono/stereo")
-        if first_sample + stream_sample_count > sample_count:
+        if first_sample != flat_cursor:
+            raise ValueError("AVS1 stream sample range is not contiguous")
+        flat_cursor += stream_sample_count
+        if flat_cursor > sample_count:
             raise ValueError("AVS1 stream sample range exceeds descriptor table")
         if stream_flags & STREAM_PRESENT:
             if stream_sequence == 0:
@@ -236,6 +240,9 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
         elif stream_sequence != 0:
             raise ValueError("absent AVS1 stream has nonzero stream_sequence")
         stream_headers.append(fields)
+
+    if flat_cursor != sample_count:
+        raise ValueError("AVS1 sample descriptors are not fully referenced")
 
     raw_samples = []
     for _flat_index in range(sample_count):
