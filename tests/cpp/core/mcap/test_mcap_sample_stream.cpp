@@ -105,6 +105,42 @@ TEST_CASE("TrackerSampleStreamWriter: the topic filter drops other channels", "[
     CHECK(reader.dropped_messages() == 0);
 }
 
+TEST_CASE("TrackerSampleStreamWriter: add_record adds a message on a kept topic, after the session's",
+          "[mcap][sample_stream]")
+{
+    StreamRecorder rec;
+    rec.out.set_topic_filter({ "0/head", "2/head" });
+    HeadChannels kept(rec.writer, "0", { "head" });
+    HeadChannels dropped(rec.writer, "1", { "head" });
+    const auto no_data = core::pack_record<core::HeadPoseRecord>(nullptr, core::DeviceDataTimestamp(2, 2, 2));
+
+    // A topic has a channel once its first record declared it.
+    CHECK_FALSE(rec.out.add_record("0/head", no_data.buffer(), 2));
+    kept.write(0, head_record(1.0f));
+    dropped.write(0, head_record(9.0f));
+    const auto setup = rec.out.take_setup();
+    const auto older = rec.out.take_samples();
+
+    kept.write(0, head_record(2.0f));
+    CHECK(rec.out.add_record("0/head", no_data.buffer(), 2));
+    CHECK_FALSE(rec.out.add_record("1/head", no_data.buffer(), 2));
+    CHECK_FALSE(rec.out.add_record("2/head", no_data.buffer(), 2));
+    const auto newer = rec.out.take_samples();
+
+    // The added record is the topic's newest, also once merged into an unsent tick.
+    for (const auto& samples : { newer, core::merge_samples_records(older, newer) })
+    {
+        core::TrackerSampleStreamReader reader;
+        reader.add_setup(setup);
+        REQUIRE(reader.add_samples(samples, 1, 100));
+        REQUIRE(reader.snapshot(100, kMaxAge));
+        const auto latest = reader.latest("0/head");
+        REQUIRE(latest.bytes);
+        CHECK(flatbuffers::GetRoot<core::HeadPoseRecord>(latest.bytes->data())->data() == nullptr);
+        CHECK(reader.dropped_messages() == 0);
+    }
+}
+
 TEST_CASE("TrackerSampleStreamReader: a topic keeps its newest record across ticks", "[mcap][sample_stream]")
 {
     StreamRecorder rec;

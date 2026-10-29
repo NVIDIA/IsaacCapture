@@ -5,9 +5,6 @@
 // and records the data, and how replay reads the recording back. The tracker is generated from
 // trackers.toml next to this file; on timespec platforms, a fake tensor runtime stands in for OpenXR.
 
-#if defined(XR_USE_TIMESPEC)
-#    include "fake_tensor_runtime.hpp"
-#endif
 #include "live_metadata_test_tracker_impl.hpp"
 #include "mcap_test_support.hpp"
 #include "replay_metadata_test_tracker_impl.hpp"
@@ -26,6 +23,9 @@
 #include <schema/tactile_metadata_generated.h>
 #include <schema/test_tracker_metadata_generated.h>
 #include <schema/tracker_metadata.hpp>
+#if defined(XR_USE_TIMESPEC)
+#    include <tensor_test_support/fake_tensor_runtime.hpp>
+#endif
 
 #include <XR_NVX1_tensor_data.h>
 #include <array>
@@ -95,7 +95,7 @@ std::unique_ptr<core::ReplayMetadataTestTrackerImpl> open_replay(const std::stri
 
 #if defined(XR_USE_TIMESPEC)
 
-using tracker_metadata_test::FakeTensorRuntime;
+using tensor_test_support::FakeTensorRuntime;
 
 //! The left pedal of what `get_data()` publishes, or nullopt when it publishes nothing.
 std::optional<float> published(const core::Serialized<core::Generic3AxisPedalOutput>& data)

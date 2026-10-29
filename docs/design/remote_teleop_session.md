@@ -121,7 +121,9 @@ that supplies the data).
 **Teleop Session Server.** It builds the trackers from HELLO, and `RemoteSessionHost` runs a `DeviceIOSession` over
 them on the server's OpenXR session, recording the requested topics into a `TrackerSampleStreamWriter`. It ticks at
 the robot app's tick rate; each tick sends setup for new topics before its SAMPLES, even an empty one, so the data does
-not turn stale.
+not turn stale. A plugin tracker, and a full-body tracker from the Noitom or Xsens vendor, records only new samples, so
+when the plugin's data leaves the OpenXR runtime, which a local reader sees as no data, the host adds a record without
+data to that tick. It watches every full-body tracker this way, whatever its vendor.
 
 **Robot app, per `step()`.** The `TrackerSampleStreamReader` keeps each topic's newest record. `RemoteSession.update()`
 first raises the server's ERROR or a lost link, then takes a snapshot of those records, empty when they are stale; each
@@ -252,7 +254,8 @@ with a tunnel (VPN, SSH or stunnel).
 
 No automated test needs a headset or an OpenXR runtime. C++ `RemoteSession` tests write head and hand records into a
 sample stream; tests over a link stream `KeyboardTracker` data, which needs no OpenXR (`TeleopSession` itself refuses
-it). C++ tests use an in-memory transport, `socketpair()` or loopback. Teleop Session Server tests use its test-only
+it), and pedal and Noitom full-body data from a fake tensor runtime (`tests/cpp/core/support/tensor_test_support`).
+C++ tests use an in-memory transport, `socketpair()` or loopback. Teleop Session Server tests use its test-only
 `--placeholder-openxr` flag (no OpenXR session; READY at once), or run its loop in process with a scripted OpenXR
 session, CloudXR runtime and robot apps on a virtual clock.
 
@@ -283,7 +286,8 @@ plugin trackers check each sample before decoding it, so a wrong `collection_id`
 **Plugins outside the server.** Operators start plugins; the server never starts, stops, finds or monitors them.
 Alternative: the robot app lists plugins in HELLO, and the server starts them for that connection. Not chosen: it
 couples the robot app to plugin names and paths that exist only on the server machine; anyone who reaches the
-unauthenticated port could start programs there with any arguments; and every reconnect would restart the devices.
+unauthenticated port could start programs there with any arguments; and every reconnect would restart the devices. A
+robot app's plugin trackers report no data while a plugin is not running, as in live mode.
 
 **The stop path.** On SIGINT or SIGTERM, and on a failure exit (section 7), the server refuses the held robot app and
 those in its listen backlog with the `shutting down` ERROR, while fewer than 8 refusals are in progress (it closes the

@@ -17,6 +17,7 @@ target_link_libraries(remote_deviceio_session_tests PRIVATE
     deviceio::deviceio_session
     deviceio::deviceio_trackers
     mcap::mcap_core
+    tensor_test_support::tensor_test_support
     Catch2::Catch2WithMain
 )
 
