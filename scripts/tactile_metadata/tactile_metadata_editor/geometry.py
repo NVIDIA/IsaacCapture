@@ -26,7 +26,6 @@ VISUALIZATION_FROM_URDF = np.array(
     [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
     dtype=float,
 )
-URDF_OPACITY = 0.4
 
 
 def matrix(values: list[float]) -> np.ndarray:
@@ -210,8 +209,8 @@ class Model:
         q: dict[str, float],
         alignment: np.ndarray,
         scale: float,
+        opacity: float,
         highlighted: bool = False,
-        opacity: float = URDF_OPACITY,
     ) -> None:
         raw = self.raw_fk(q)
         for name, (link, mesh) in self.surfaces.items():
@@ -340,9 +339,7 @@ def deform(
     return result, errors
 
 
-def hand_segments(
-    binding: list[Segment], hand: dict, stale: list[Segment]
-) -> list[Segment]:
+def hand_segments(hand: dict) -> list[Segment]:
     values = []
     for position, orientation, valid in zip(
         hand["positions"], hand["orientations"], hand["is_valid"]
@@ -350,17 +347,11 @@ def hand_segments(
         values.append(matrix([*position, *orientation]) if valid else None)
     if len(values) != len(JOINTS):
         raise ValueError("HandTracker joint array has an invalid length")
-    stale_by_joint = {segment.joint: segment for segment in stale}
-    wrist_inverse = np.linalg.inv(values[1]) if values[1] is not None else None
-    result = []
-    for bind_segment in binding:
-        joint = bind_segment.joint
-        tracked = values[JOINTS.index(joint)]
-        if wrist_inverse is None or tracked is None:
-            fallback = stale_by_joint.get(joint, bind_segment)
-            result.append(Segment(joint, list(fallback.pose)))
-        else:
-            result.append(
-                Segment(joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ tracked))
-            )
-    return result
+    if values[1] is None:
+        return []
+    wrist_inverse = np.linalg.inv(values[1])
+    return [
+        Segment(joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ tracked))
+        for joint, tracked in zip(JOINTS, values)
+        if tracked is not None
+    ]

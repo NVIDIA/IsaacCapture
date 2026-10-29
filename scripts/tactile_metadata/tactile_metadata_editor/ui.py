@@ -21,6 +21,27 @@ from .document import Document, IDENTITY_POSE, JOINTS, Segment, State, Taxel
 
 LOG = logging.getLogger("isaaccapture.tactile_metadata.editor")
 
+SEGMENT_CUBE_SIDE_M = 0.004
+TAXEL_SIDE_M = 0.002
+URDF_OPACITY = 0.2
+SEGMENT_FLAT_SHADING = True
+VISUALIZER_CAST_SHADOW = False
+VISUALIZER_RECEIVE_SHADOW = False
+SEGMENT_COLOR = (200, 120, 0)
+TAXEL_COLOR = (200, 120, 0)
+SELECTED_COLOR = (0, 255, 0)
+SIDE_HIGHLIGHT_COLOR = (0, 180, 255)
+INACTIVE_COLOR = (200, 200, 200)
+ERROR_COLOR = (255, 0, 0)
+FORCE_MIN_COLOR = (0, 0, 255)
+FORCE_MAX_COLOR = (255, 0, 0)
+FORCE_MAX_N = 30.0
+SELECTION_GIZMO_SCALE_M = 0.005
+SELECTION_GIZMO_LINE_WIDTH = 2.5
+ACTIVE_DATASET_OPACITY = 1
+BINDING_OVERLAY_OPACITY = 0.4
+SAVED_BINDING_OPACITY = 0.2
+
 
 class Editor:
     CAMERA_POSITION = (0.3, 0.3, -0.4)
@@ -57,21 +78,35 @@ class Editor:
         self.binding_taxels: list[int] = []
         self.binding_segments: list[int] = []
         self.pick_mode: str | None = None
+        self.preview_has_errors = False
         self.selection_rotation = np.zeros(3)
         self.selection_scale = 1.0
+        self.selection_gizmo_dragging = False
+        self.selection_gizmo_last_position: np.ndarray | None = None
         self.redraw = True
         self.server = viser.ViserServer(host="0.0.0.0", port=args.port)
         self.server.scene.set_up_direction("+y")
-        source = Path(__file__).with_name("editor_interactions.js").read_text()
-        self.server._websock_server.queue_message(
-            _messages.RunJavascriptMessage(source=source)
-        )
+        for script in ("editor_interactions.js", "viewport_axes.js"):
+            source = Path(__file__).with_name(script).read_text()
+            self.server._websock_server.queue_message(
+                _messages.RunJavascriptMessage(source=source)
+            )
         self.server.initial_camera.position = self.CAMERA_POSITION
         self.server.initial_camera.look_at = self.CAMERA_LOOK_AT
         self.server.gui.configure_theme(control_width="medium", show_share_button=False)
         self.server.gui.main_panel.dock_right()
         self._build_gui()
         self._register_scene_events()
+        self.selection_gizmo = self.server.scene.add_transform_controls(
+            "/selection/translation",
+            scale=SELECTION_GIZMO_SCALE_M,
+            line_width=SELECTION_GIZMO_LINE_WIDTH,
+            disable_sliders=True,
+            disable_rotations=True,
+            depth_test=False,
+            visible=False,
+        )
+        self.selection_gizmo.on_update(self._selection_gizmo_event)
         self._sync_side()
         if args.urdf:
             self.urdf_path.value = str(Path(args.urdf).expanduser().resolve())
@@ -101,9 +136,14 @@ class Editor:
             self._action_button("Save", self._save)
             self._action_button("Load", self._load)
             self._action_button("Reset Camera", self._reset_camera)
-            self.mode = gui.add_dropdown("Mode", ("Edit", "Preview"))
+            with gui.add_folder("Mode"):
+                self.mode_edit = gui.add_checkbox("Edit", True)
+                self.mode_preview = gui.add_checkbox("Preview", False)
             self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
-            self._watch(self.mode, self._set_mode)
+            self._watch(self.mode_edit, lambda checked: self._set_mode("Edit", checked))
+            self._watch(
+                self.mode_preview, lambda checked: self._set_mode("Preview", checked)
+            )
             self._watch(self.show_saved, lambda _: self._request_draw())
 
         self.edit_tabs = gui.add_tab_group()
@@ -169,7 +209,13 @@ class Editor:
                 self._action_button("Add Taxels", self._add_taxels_input)
             with gui.add_folder("Bind Taxels to Segments"):
                 self.binding_start = gui.add_button("Start Binding to Segments")
+                gui.add_html(
+                    '<div style="text-align:center;font-size:1.4em;line-height:1">↓</div>'
+                )
                 self.binding_next = gui.add_button("Select Segments", disabled=True)
+                gui.add_html(
+                    '<div style="text-align:center;font-size:1.4em;line-height:1">↓</div>'
+                )
                 self.binding_complete = gui.add_button("Complete", disabled=True)
                 self.binding_info = gui.add_markdown("")
                 self._button(self.binding_start, self._start_binding)
@@ -181,18 +227,36 @@ class Editor:
 
         self.preview_panel = gui.add_folder("Preview", visible=False)
         with self.preview_panel:
-            self.binding_source = gui.add_dropdown(
-                "Binding Metadata Source", ("Editing",)
-            )
+            with gui.add_folder("Binding Metadata Source"):
+                self.binding_source_editor = gui.add_checkbox("Editor", True)
+                self.binding_source_live = gui.add_checkbox(
+                    "Live", False, disabled=True
+                )
             self.show_binding = gui.add_checkbox("Show Binding Poses", False)
             self.collection = gui.add_text("Tactile Collection ID", "tactile")
-            self.apply_preview_button = self._action_button(
-                "Apply Preview Data to Editor", self._apply_preview
+            self.apply_segments_button = self._action_button(
+                "Apply Segments", self._apply_preview_segments
+            )
+            self.apply_taxels_button = self._action_button(
+                "Apply Taxels", self._apply_preview_taxels
+            )
+            self.apply_urdf_button = self._action_button(
+                "Apply URDF", self._apply_preview_urdf
+            )
+            self.apply_all_button = self._action_button(
+                "Apply ALL", self._apply_preview_all
             )
             gui.add_markdown(
-                "Apply fully overrides the editor's segments, taxels, bindings, and URDF joint values."
+                "Apply ALL fully overrides the editor's segments, taxels, bindings, and URDF joint values."
             )
-            self._watch(self.binding_source, lambda _: self._binding_source_changed())
+            self._watch(
+                self.binding_source_editor,
+                lambda checked: self._set_binding_source("Editor", checked),
+            )
+            self._watch(
+                self.binding_source_live,
+                lambda checked: self._set_binding_source("Live", checked),
+            )
             self._watch(self.show_binding, lambda _: self._request_draw())
             with gui.add_folder("Live"):
                 self.live_status = gui.add_markdown("Current Statue: Disconnected")
@@ -229,7 +293,7 @@ class Editor:
         self.selection_tab = self.selection_panel.add_tab("Selected Object")
         with self.selection_tab:
             self.selection_folder = gui.add_folder("Selection")
-        self.selection_panel.float(x=10, y=10, width=320, height=520)
+        self.selection_panel.float(x=10, y=140, width=320, height=520)
 
     def _numbers(self, prefix: str, values, step: float):
         return tuple(
@@ -275,19 +339,33 @@ class Editor:
         except Exception as exc:
             LOG.exception("Editor action failed")
             self.info.value = f'<span style="color:#d32f2f">Error: {exc}</span>'
+        else:
+            if self.mode_value == "Preview" and self.preview_has_errors:
+                self._update_preview_error()
         self.redraw = True
 
     def _request_draw(self) -> None:
         self.redraw = True
 
-    def _set_mode(self, value: str) -> None:
-        self.edit_tabs.visible = value == "Edit"
-        self.preview_panel.visible = value == "Preview"
+    @property
+    def mode_value(self) -> str:
+        return "Edit" if self.mode_edit.value else "Preview"
+
+    def _set_mode(self, mode: str, checked: bool) -> None:
+        selected = self.mode_edit if mode == "Edit" else self.mode_preview
+        other = self.mode_preview if mode == "Edit" else self.mode_edit
+        if not checked:
+            if not other.value:
+                selected.value = True
+            return
+        other.value = False
+        self.edit_tabs.visible = mode == "Edit"
+        self.preview_panel.visible = mode == "Preview"
         self.pick_mode = None
         self.selected_kind, self.selected_rows = None, []
         self._cancel_binding()
         self._rebuild_selection()
-        if value == "Preview":
+        if mode == "Preview":
             self._update_preview_error()
 
     def _toggle_side(self) -> None:
@@ -300,8 +378,9 @@ class Editor:
         self.pick_mode = None
         self.segment_click_button.label = "Add with URDF Click"
         self.taxel_capture_button.label = "Capture URDF Surface Pose"
-        self.binding_source.options = ("Editing",)
-        self.binding_source.value = "Editing"
+        self.binding_source_editor.value = True
+        self.binding_source_live.value = False
+        self.binding_source_live.disabled = True
         self.side_text.content = f"**Side: {self.state.side.title()}**"
         self.metadata_path.value = self.state.paths.get(self.state.side, "")
         position, rotation = geo.components(
@@ -470,13 +549,16 @@ class Editor:
                 else math.pi
             )
             value = min(upper, max(lower, document.q.get(joint.name, 0.0)))
-            widget = self.server.gui.add_slider(
-                f"{index}: {joint.name}",
-                float(lower),
-                float(upper),
-                0.001,
-                float(value),
-            )
+            with self.server.gui.add_folder(
+                f"{index}: {joint.name}", expand_by_default=False
+            ):
+                widget = self.server.gui.add_slider(
+                    "Value",
+                    float(lower),
+                    float(upper),
+                    0.001,
+                    float(value),
+                )
             self._watch(
                 widget,
                 lambda current, name=joint.name, document=document: (
@@ -550,7 +632,9 @@ class Editor:
                         for issue in issues
                         if issue["kind"] == "segments" and issue["row"] == row
                     ]
-                    with self.server.gui.add_folder(f"{row}: {segment.joint}"):
+                    with self.server.gui.add_folder(
+                        f"{row}: {segment.joint}", expand_by_default=False
+                    ):
                         joint = self.server.gui.add_dropdown(
                             "⚠ Name"
                             if any(issue["field"] == "joint" for issue in row_issues)
@@ -609,7 +693,9 @@ class Editor:
                         for issue in issues
                         if issue["kind"] == "taxels" and issue["row"] == row
                     ]
-                    with self.server.gui.add_folder(f"Taxel {row}"):
+                    with self.server.gui.add_folder(
+                        f"Taxel {row}", expand_by_default=False
+                    ):
                         position, rotation = geo.components(geo.matrix(taxel.pose))
                         positions = self._numbers("Position", position, 0.001)
                         rotations = self._sliders("Rotation", rotation)
@@ -629,7 +715,9 @@ class Editor:
                             )
                         slots = []
                         for slot in range(4):
-                            with self.server.gui.add_folder(f"Binding {slot}"):
+                            with self.server.gui.add_folder(
+                                f"Binding {slot}", expand_by_default=False
+                            ):
                                 selected = (
                                     taxel.segments[slot]
                                     if taxel.segments[slot] in options
@@ -789,14 +877,34 @@ class Editor:
             self.receiver = None
         self.connect_button.label = "Connect Live"
         self.live_status.content = "Current Status: Disconnected"
+        self._update_preview_error()
         self.redraw = True
 
-    def _binding_source_changed(self) -> None:
+    @property
+    def binding_source_value(self) -> str:
+        return "Live" if self.binding_source_live.value else "Editor"
+
+    def _set_binding_source(self, source: str, checked: bool) -> None:
+        selected = (
+            self.binding_source_editor
+            if source == "Editor"
+            else self.binding_source_live
+        )
+        other = (
+            self.binding_source_live
+            if source == "Editor"
+            else self.binding_source_editor
+        )
+        if not checked:
+            if not other.value:
+                selected.value = True
+            return
+        other.value = False
         self._update_preview_error()
         self.redraw = True
 
     def _binding_document(self) -> Document:
-        if self.binding_source.value == "Live":
+        if self.binding_source_value == "Live":
             if self.live_document is None:
                 raise ValueError("Live metadata is unavailable")
             return self.live_document
@@ -805,32 +913,51 @@ class Editor:
     def _preview_taxels(self) -> tuple[list[Taxel | None], list[str]]:
         return geo.deform(self._binding_document(), self.preview_document.segments)
 
-    def _update_preview_error(self) -> None:
+    def _rendered_preview_taxels(
+        self,
+    ) -> tuple[list[tuple[int, Taxel]], list[str], int]:
         try:
-            _, errors = self._preview_taxels()
+            rows, errors = self._preview_taxels()
         except (ValueError, TypeError, KeyError, IndexError) as exc:
-            self.preview_error.value = (
-                f'<span style="color:#d32f2f">Binding error: {exc}</span>'
-            )
-            self.apply_preview_button.disabled = True
-        else:
-            self.preview_error.value = (
-                '<span style="color:#d32f2f">' + "<br>".join(errors) + "</span>"
-                if errors
-                else ""
-            )
-            self.apply_preview_button.disabled = bool(errors)
+            return [], [f"Binding error: {exc}"], 0
+        return (
+            [(row, taxel) for row, taxel in enumerate(rows) if taxel is not None],
+            errors,
+            len(rows),
+        )
 
-    def _apply_preview(self) -> None:
-        taxels, errors = self._preview_taxels()
-        if errors:
-            raise ValueError("Repair invalid preview taxels before applying")
+    def _update_preview_error(self) -> None:
+        _, errors, _ = self._rendered_preview_taxels()
+        self.preview_has_errors = bool(errors)
+        self.preview_error.value = (
+            '<span style="color:#d32f2f">' + "<br>".join(errors) + "</span>"
+            if errors
+            else ""
+        )
+        self.apply_taxels_button.disabled = False
+        self.apply_all_button.disabled = False
+        self.apply_segments_button.disabled = False
+        self.apply_urdf_button.disabled = False
+
+    def _apply_preview_segments(self) -> None:
+        self.document.segments = copy.deepcopy(self.preview_document.segments)
+        self._rebuild_edit_lists()
+
+    def _apply_preview_taxels(self) -> None:
+        rows, _, _ = self._rendered_preview_taxels()
+        self.document.taxels = copy.deepcopy([taxel for _, taxel in rows])
+        self._rebuild_edit_lists()
+
+    def _apply_preview_urdf(self) -> None:
+        self.document.q = copy.deepcopy(self.preview_document.q)
+        self._rebuild_joint_controls()
+
+    def _apply_preview_all(self) -> None:
         replacement = Document(self.state.side)
         replacement.alignment = copy.deepcopy(self.document.alignment)
         replacement.segments = copy.deepcopy(self.preview_document.segments)
-        replacement.taxels = copy.deepcopy(
-            [taxel for taxel in taxels if taxel is not None]
-        )
+        rows, _, _ = self._rendered_preview_taxels()
+        replacement.taxels = copy.deepcopy([taxel for _, taxel in rows])
         replacement.q = copy.deepcopy(self.preview_document.q)
         self.state.documents[self.state.side] = replacement
         self._rebuild_edit_lists()
@@ -852,7 +979,9 @@ class Editor:
             )
             with self.preview_segment_folder:
                 for row, segment in enumerate(self.preview_document.segments):
-                    with self.server.gui.add_folder(f"{row}: {segment.joint}"):
+                    with self.server.gui.add_folder(
+                        f"{row}: {segment.joint}", expand_by_default=False
+                    ):
                         self.server.gui.add_markdown(f"HandJoint: `{segment.joint}`")
                         position, rotation = geo.components(geo.matrix(segment.pose))
                         positions = self._numbers("Position", position, 0.001)
@@ -902,15 +1031,12 @@ class Editor:
                     raw_metadata, self.state.side, self.document.alignment
                 )
                 self.live_metadata_key = key
-                self.binding_source.options = ("Editing", "Live")
+                self.binding_source_live.disabled = False
         try:
-            binding = self._binding_document()
             hand = frame.get("hand")
             if hand is not None:
-                joints = [segment.joint for segment in binding.segments]
-                updated = geo.hand_segments(
-                    binding.segments, hand, self.preview_document.segments
-                )
+                updated = geo.hand_segments(hand)
+                joints = [segment.joint for segment in updated]
                 signature = [
                     segment.joint for segment in self.preview_document.segments
                 ]
@@ -936,7 +1062,7 @@ class Editor:
             self.preview_error.value = (
                 f'<span style="color:#d32f2f">Live error: {exc}</span>'
             )
-            self.apply_preview_button.disabled = True
+            self.preview_has_errors = True
         self.redraw = True
 
     def _sync_preview_values(self) -> None:
@@ -950,6 +1076,43 @@ class Editor:
             self._set_values(widgets[1], rotation)
         for name, widget in self.preview_joint_widgets.items():
             widget.value = self.preview_document.q.get(name, 0.0)
+
+    async def _selection_gizmo_event(self, event) -> None:
+        if event.client is None:
+            return
+        phase = event.phase
+        position = np.asarray(event.target.position, dtype=float)
+        self.events.put(lambda: self._apply_selection_gizmo_event(phase, position))
+
+    def _apply_selection_gizmo_event(self, phase: str, position: np.ndarray) -> None:
+        values = self._selection_values()
+        rows = [row for row in self.selected_rows if 0 <= row < len(values)]
+        if not rows:
+            self.selection_gizmo_dragging = False
+            self.selection_gizmo_last_position = None
+            return
+        if phase == "start":
+            self.selection_gizmo_dragging = True
+            self.selection_gizmo_last_position = position
+            return
+        if (
+            not self.selection_gizmo_dragging
+            or self.selection_gizmo_last_position is None
+        ):
+            return
+        delta = position - self.selection_gizmo_last_position
+        if np.any(delta):
+            transform = np.eye(4)
+            transform[:3, 3] = delta
+            geo.apply_delta(values, rows, transform)
+            center = np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)
+            self._set_values(self.selection_position_widgets, center)
+            self._sync_selected_list_values()
+            self.selection_gizmo_last_position = position
+        if phase == "end":
+            self.selection_gizmo_dragging = False
+            self.selection_gizmo_last_position = None
+        self.redraw = True
 
     def _register_scene_events(self) -> None:
         self.server.scene.on_click()(self._scene_click)
@@ -967,7 +1130,7 @@ class Editor:
         )
 
     def _display_values(self):
-        if self.mode.value == "Preview":
+        if self.mode_value == "Preview":
             return self.preview_document.segments, []
         return self.document.segments, self.document.taxels
 
@@ -1040,23 +1203,41 @@ class Editor:
         direction = np.asarray(event.ray_direction)
         hits = []
         for row, value in values:
-            point = np.asarray(value.pose[:3])
-            if kind == "segments":
-                distance = (point - origin) @ direction
-                offset = np.linalg.norm(point - origin - distance * direction)
-                if distance > 0 and offset <= 0.005:
-                    hits.append((distance, row))
-                continue
             inverse = np.linalg.inv(geo.matrix(value.pose))
             local_origin = (inverse @ np.r_[origin, 1.0])[:3]
             local_direction = inverse[:3, :3] @ direction
+            if kind == "segments":
+                distance = Editor._ray_box_distance(
+                    local_origin, local_direction, SEGMENT_CUBE_SIDE_M / 2
+                )
+                if distance is not None:
+                    hits.append((distance, row))
+                continue
             if abs(local_direction[2]) < 1e-10:
                 continue
             distance = -local_origin[2] / local_direction[2]
             local_hit = local_origin + distance * local_direction
-            if distance > 0 and np.max(np.abs(local_hit[:2])) <= 0.00125:
+            if distance > 0 and np.max(np.abs(local_hit[:2])) <= TAXEL_SIDE_M / 2:
                 hits.append((distance, row))
         return [min(hits)[1]] if hits else []
+
+    @staticmethod
+    def _ray_box_distance(origin, direction, half_extent: float) -> float | None:
+        near, far = -math.inf, math.inf
+        for axis in range(3):
+            if abs(direction[axis]) < 1e-10:
+                if abs(origin[axis]) > half_extent:
+                    return None
+                continue
+            first = (-half_extent - origin[axis]) / direction[axis]
+            second = (half_extent - origin[axis]) / direction[axis]
+            near = max(near, min(first, second))
+            far = min(far, max(first, second))
+            if near > far:
+                return None
+        if far <= 0:
+            return None
+        return near if near > 0 else far
 
     @staticmethod
     def _box_rows(event, values) -> list[int]:
@@ -1111,7 +1292,7 @@ class Editor:
     def _selection_values(self):
         if self.selected_kind is None:
             return []
-        if self.mode.value == "Preview":
+        if self.mode_value == "Preview":
             return self.preview_document.segments
         return self._values(self.selected_kind)
 
@@ -1198,7 +1379,7 @@ class Editor:
         self._sync_selected_list_values()
 
     def _sync_selected_list_values(self) -> None:
-        if self.mode.value == "Edit":
+        if self.mode_value == "Edit":
             widgets = (
                 self.segment_widgets
                 if self.selected_kind == "segments"
@@ -1221,7 +1402,7 @@ class Editor:
         self.redraw = True
 
     def _delete_selection(self) -> None:
-        if self.mode.value == "Preview":
+        if self.mode_value == "Preview":
             for row in sorted(self.selected_rows, reverse=True):
                 self.preview_document.segments.pop(row)
             self._rebuild_preview_segments()
@@ -1233,7 +1414,12 @@ class Editor:
         self._rebuild_selection()
 
     def _draw_instances(
-        self, name: str, kind: str, values, colors, opacity: float, wireframe=False
+        self,
+        name: str,
+        kind: str,
+        values,
+        colors,
+        opacity: float,
     ) -> None:
         matrices = [geo.matrix(value.pose) for value in values]
         if not matrices:
@@ -1242,22 +1428,22 @@ class Editor:
             return
         positions = np.asarray([value[:3, 3] for value in matrices])
         rotations = np.asarray([tf.quaternion_from_matrix(value) for value in matrices])
-        scale = 0.005 if kind == "segments" else 0.0025
-        mesh = (
-            trimesh.creation.icosphere(subdivisions=1)
-            if kind == "segments"
-            else trimesh.Trimesh(
-                vertices=[
-                    [-0.5, -0.5, 0.0],
-                    [0.5, -0.5, 0.0],
-                    [0.5, 0.5, 0.0],
-                    [-0.5, 0.5, 0.0],
-                ],
-                faces=[[0, 1, 2], [0, 2, 3]],
-                process=False,
-            )
-        )
+        scale = SEGMENT_CUBE_SIDE_M if kind == "segments" else TAXEL_SIDE_M
         if name not in self.scene_handles:
+            mesh = (
+                trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+                if kind == "segments"
+                else trimesh.Trimesh(
+                    vertices=[
+                        [-0.5, -0.5, 0.0],
+                        [0.5, -0.5, 0.0],
+                        [0.5, 0.5, 0.0],
+                        [-0.5, 0.5, 0.0],
+                    ],
+                    faces=[[0, 1, 2], [0, 2, 3]],
+                    process=False,
+                )
+            )
             self.scene_handles[name] = self.server.scene.add_batched_meshes_simple(
                 name,
                 mesh.vertices,
@@ -1267,8 +1453,10 @@ class Editor:
                 batched_scales=np.full(len(values), scale),
                 batched_colors=np.asarray(colors, dtype=np.uint8),
                 opacity=opacity,
-                wireframe=wireframe,
+                flat_shading=SEGMENT_FLAT_SHADING if kind == "segments" else False,
                 side="double",
+                cast_shadow=VISUALIZER_CAST_SHADOW,
+                receive_shadow=VISUALIZER_RECEIVE_SHADOW,
             )
         handle = self.scene_handles[name]
         handle.visible = True
@@ -1283,6 +1471,44 @@ class Editor:
             if name.startswith(prefix):
                 handle.visible = False
 
+    @staticmethod
+    def _side_highlight_rows(
+        segments: list[Segment],
+        taxels: list[Taxel],
+        selected_kind: str | None,
+        selected_rows: list[int],
+    ) -> tuple[set[int], set[int]]:
+        segment_rows: set[int] = set()
+        taxel_rows: set[int] = set()
+        if selected_kind == "segments":
+            selected_joints = {
+                segments[row].joint for row in selected_rows if 0 <= row < len(segments)
+            }
+            taxel_rows = {
+                row
+                for row, taxel in enumerate(taxels)
+                if any(
+                    joint in selected_joints
+                    and type(weight) in (int, float)
+                    and weight > 0
+                    for joint, weight in zip(taxel.segments, taxel.weights)
+                )
+            }
+        elif selected_kind == "taxels":
+            bound_joints = {
+                joint
+                for row in selected_rows
+                if 0 <= row < len(taxels)
+                for joint, weight in zip(taxels[row].segments, taxels[row].weights)
+                if joint is not None and type(weight) in (int, float) and weight > 0
+            }
+            segment_rows = {
+                row
+                for row, segment in enumerate(segments)
+                if segment.joint in bound_joints
+            }
+        return segment_rows, taxel_rows
+
     def _draw_dataset(
         self,
         prefix: str,
@@ -1292,42 +1518,66 @@ class Editor:
         active: bool,
         forces=None,
     ) -> None:
+        side_segment_rows, side_taxel_rows = (
+            self._side_highlight_rows(
+                segments, taxels, self.selected_kind, self.selected_rows
+            )
+            if active
+            else (set(), set())
+        )
         segment_colors = []
         for row in range(len(segments)):
-            color = (245, 200, 45) if active else (130, 130, 130)
+            color = SEGMENT_COLOR if active else INACTIVE_COLOR
+            if row in side_segment_rows:
+                color = SIDE_HIGHLIGHT_COLOR
             if (
                 self.selected_kind == "segments"
                 and row in self.selected_rows
                 and active
             ):
-                color = (255, 120, 20)
+                color = SELECTED_COLOR
             if self.binding_phase == "segments" and row in self.binding_segments:
-                color = (255, 120, 20)
+                color = SELECTED_COLOR
             if self.binding_phase == "taxels" and active:
-                color = (130, 130, 130)
+                color = INACTIVE_COLOR
             if self.pick_mode is not None and active:
-                color = (130, 130, 130)
+                color = INACTIVE_COLOR
             segment_colors.append(color)
-        taxel_colors = [(190, 190, 190)] * len(taxels)
+        taxel_colors = [TAXEL_COLOR] * len(taxels)
         array = np.asarray(forces, dtype=float) if forces is not None else None
         if (
             array is not None
             and array.shape == (len(taxels), 3)
             and np.isfinite(array).all()
         ):
-            fraction = np.clip(np.linalg.norm(array, axis=1) / 30.0, 0.0, 1.0)
+            fraction = np.clip(np.linalg.norm(array, axis=1) / FORCE_MAX_N, 0.0, 1.0)
             taxel_colors = [
-                (int(255 * value), 0, int(255 * (1.0 - value))) for value in fraction
+                tuple(
+                    int(low + value * (high - low))
+                    for low, high in zip(FORCE_MIN_COLOR, FORCE_MAX_COLOR)
+                )
+                for value in fraction
             ]
         for row in range(len(taxels)):
+            if row in side_taxel_rows:
+                taxel_colors[row] = SIDE_HIGHLIGHT_COLOR
             if self.selected_kind == "taxels" and row in self.selected_rows and active:
-                taxel_colors[row] = (255, 120, 20)
+                taxel_colors[row] = SELECTED_COLOR
             if self.binding_phase == "taxels" and row in self.binding_taxels:
-                taxel_colors[row] = (255, 120, 20)
+                taxel_colors[row] = SELECTED_COLOR
             if self.binding_phase == "segments" and active:
-                taxel_colors[row] = (130, 130, 130)
+                taxel_colors[row] = INACTIVE_COLOR
             if self.pick_mode is not None and active:
-                taxel_colors[row] = (130, 130, 130)
+                taxel_colors[row] = INACTIVE_COLOR
+        if prefix == "/edit":
+            error_rows = {
+                issue["row"]
+                for issue in self.document.validate()
+                if issue["kind"] == "taxels" and issue["row"] is not None
+            }
+            for row in error_rows:
+                if 0 <= row < len(taxel_colors):
+                    taxel_colors[row] = ERROR_COLOR
         self._draw_instances(
             prefix + "/segments", "segments", segments, segment_colors, opacity
         )
@@ -1335,70 +1585,32 @@ class Editor:
             prefix + "/taxels", "taxels", taxels, taxel_colors, opacity
         )
 
-    def _draw_errors(self) -> None:
-        segment_rows = {
-            issue["row"]
-            for issue in self.document.validate()
-            if issue["kind"] == "segments" and issue["row"] is not None
-        }
-        taxel_rows = {
-            issue["row"]
-            for issue in self.document.validate()
-            if issue["kind"] == "taxels" and issue["row"] is not None
-        }
-        self._draw_instances(
-            "/errors/segments",
-            "segments",
-            [self.document.segments[row] for row in sorted(segment_rows)],
-            [(255, 0, 0)] * len(segment_rows),
-            1.0,
-            True,
-        )
-        self._draw_instances(
-            "/errors/taxels",
-            "taxels",
-            [self.document.taxels[row] for row in sorted(taxel_rows)],
-            [(255, 0, 0)] * len(taxel_rows),
-            1.0,
-            True,
-        )
-
-    def _draw_selection_axes(self) -> None:
+    def _draw_selection_gizmo(self) -> None:
         values = self._selection_values()
         rows = [row for row in self.selected_rows if 0 <= row < len(values)]
         if not rows:
-            if "/selection/axes" in self.scene_handles:
-                self.scene_handles["/selection/axes"].visible = False
+            self.selection_gizmo.visible = False
+            self.selection_gizmo_dragging = False
+            self.selection_gizmo_last_position = None
             return
-        if len(rows) == 1:
-            frames = [geo.matrix(values[rows[0]].pose)]
-        else:
-            frame = np.eye(4)
-            frame[:3, 3] = np.asarray([values[row].pose[:3] for row in rows]).mean(
-                axis=0
-            )
-            frames = [frame]
-        positions = np.asarray([frame[:3, 3] for frame in frames])
-        rotations = np.asarray([tf.quaternion_from_matrix(frame) for frame in frames])
-        if "/selection/axes" not in self.scene_handles:
-            self.scene_handles["/selection/axes"] = self.server.scene.add_batched_axes(
-                "/selection/axes",
-                rotations,
-                positions,
-                axes_length=0.03,
-                axes_radius=0.001,
-            )
-        handle = self.scene_handles["/selection/axes"]
-        handle.visible = True
-        handle.batched_positions = positions
-        handle.batched_wxyzs = rotations
+        self.selection_gizmo.visible = True
+        if self.selection_gizmo_dragging:
+            return
+        self.selection_gizmo.position = np.asarray(
+            [values[row].pose[:3] for row in rows]
+        ).mean(axis=0)
+        self.selection_gizmo.wxyz = (
+            tf.quaternion_from_matrix(geo.matrix(values[rows[0]].pose))
+            if len(rows) == 1
+            else np.array([1.0, 0.0, 0.0, 0.0])
+        )
 
     def _draw(self) -> None:
-        active_opacity = 1.0
+        active_opacity = ACTIVE_DATASET_OPACITY
         if self.model is not None:
             q = (
                 self.document.q
-                if self.mode.value == "Edit"
+                if self.mode_value == "Edit"
                 else self.preview_document.q
             )
             self.model.draw(
@@ -1407,9 +1619,9 @@ class Editor:
                 self.urdf_alignment,
                 self.urdf_scale,
                 highlighted=self.pick_mode is not None,
-                opacity=geo.URDF_OPACITY * active_opacity,
+                opacity=URDF_OPACITY * active_opacity,
             )
-        if self.mode.value == "Edit":
+        if self.mode_value == "Edit":
             self._hide_prefix("/preview")
             self._draw_dataset(
                 "/edit",
@@ -1418,18 +1630,12 @@ class Editor:
                 active_opacity,
                 True,
             )
-            self._draw_errors()
         else:
-            self._hide_prefix("/errors")
             try:
-                preview_rows, _ = self._preview_taxels()
+                valid_rows, _, source_count = self._rendered_preview_taxels()
             except (ValueError, TypeError, KeyError, IndexError):
-                preview_rows = []
-            valid_rows = [
-                (row, taxel)
-                for row, taxel in enumerate(preview_rows)
-                if taxel is not None
-            ]
+                valid_rows = []
+                source_count = 0
             preview_taxels = [taxel for _, taxel in valid_rows]
             raw_forces = (
                 self.receiver.latest.get("forces")
@@ -1442,7 +1648,7 @@ class Editor:
             )
             forces = (
                 [raw_forces[row] for row, _ in valid_rows]
-                if raw_forces is not None and len(raw_forces) == len(preview_rows)
+                if raw_forces is not None and len(raw_forces) == source_count
                 else None
             )
             self._draw_dataset(
@@ -1458,17 +1664,23 @@ class Editor:
                     "/edit",
                     self.document.segments,
                     self.document.taxels,
-                    0.5,
+                    BINDING_OVERLAY_OPACITY,
                     False,
                 )
             else:
                 self._hide_prefix("/edit")
         saved = self.state.saved[self.state.side]
         if self.show_saved.value and saved is not None:
-            self._draw_dataset("/saved", saved.segments, saved.taxels, 0.2, False)
+            self._draw_dataset(
+                "/saved",
+                saved.segments,
+                saved.taxels,
+                SAVED_BINDING_OPACITY,
+                False,
+            )
         else:
             self._hide_prefix("/saved")
-        self._draw_selection_axes()
+        self._draw_selection_gizmo()
 
     def run(self) -> None:
         try:

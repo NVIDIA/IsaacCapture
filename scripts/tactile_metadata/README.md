@@ -48,6 +48,12 @@ The editor maintains independent left- and right-hand documents. **Toggle Side**
 selects the active document; each side has its own metadata path and data.
 General controls are at the top of the right menu. The Selected Object panel is
 always present as a floating window on the left.
+The **Mode** section uses bold, mutually exclusive **Edit** and **Preview**
+checkbox labels; one mode is always selected.
+General and the URDF/Segments/Taxels tab selector stay fixed at the top of the
+right menu. Only the active tab contents scroll.
+Focused numeric fields preserve partial decimal input such as `1.` until the
+next digit is entered or the field loses focus.
 
 Three pose datasets are displayed:
 
@@ -64,6 +70,10 @@ Loading applies that transform; saving applies its inverse. Changing the
 alignment transforms the visible editor values without changing the underlying
 metadata coordinates.
 
+A fixed three-axis indicator in the top-right of the 3D view shows visualization
+space relative to the render camera. The Viser icon remains at the bottom-left,
+positioned above the fixed Info area.
+
 ## Edit metadata
 
 The **Edit** mode contains three tabs.
@@ -74,8 +84,9 @@ The **Edit** mode contains three tabs.
 2. Use **URDF Alignment** to translate, rotate, and scale the model.
 3. Expand **URDF Joints** to adjust each movable joint.
 
-URDF Joints and the full Segment/Taxel lists are collapsed by default. Their
-displayed indices start at 0.
+URDF Joints and the full Segment/Taxel lists are recursively collapsed by
+default. Each joint/entity item and each nested Taxel Binding folder also starts
+collapsed. Their displayed indices start at 0.
 
 URDF configuration is session-only and is not saved in tactile metadata. Its
 base opacity is 0.4, multiplied by the opacity of the dataset layer being
@@ -86,7 +97,8 @@ rendered.
 - Use **Segments Alignment** to align all metadata poses.
 - Add a segment from a HandJoint and XYZ position, or select **Add with URDF
   Click** and click the model surface.
-- Segments are represented by yellow spheres with radius 0.005 m.
+- Segments are flat-shaded cubes with side length 0.004 m. Smooth color
+  gradients and cast/received shadows are disabled.
 - Expand **All Segments** to edit HandJoint, position, and XYZ rotation.
 
 HandJoint values must be unique. Taxel bindings use HandJoint names internally,
@@ -98,7 +110,8 @@ invalid and outlined in red.
 Set Rows, Columns, Area Width, Area Height, Center Position, and Rotation.
 **Capture URDF Surface Pose** copies a clicked surface position and orientation
 into those fields without creating taxels. **Add Taxels** then creates the
-row-major planar grid. Taxels are light-grey squares with side length 0.0025 m.
+row-major planar grid. Taxels are squares with side length 0.002 m. A taxel with
+any validation error uses `ERROR_COLOR` as its fill color.
 
 To bind taxels:
 
@@ -106,8 +119,9 @@ To bind taxels:
 2. Select **Select Segments** and choose one to four segments.
 3. Select **Complete**. Initial active weights are equal.
 
-The three buttons are horizontal, and at most one is enabled at a time. Between
-steps, only the required 3D selection is available.
+The three buttons are vertical with down arrows between adjacent steps, and at
+most one is enabled at a time. Between steps, only the required 3D selection is
+available.
 
 Expand **All Taxels** to edit pose, four segment slots, and four weights. `None`
 is an editor-only inactive slot with weight zero. Editing a weight preserves the
@@ -123,11 +137,21 @@ one. If only one slot is active, its weight is one.
   contains both, taxels take priority.
 - Clicking empty scene space clears the selection.
 
+Selected objects keep `SELECTED_COLOR`. Related objects use the separate
+`SIDE_HIGHLIGHT_COLOR`: selecting segments highlights taxels with positive
+weights to those HandJoints, while selecting taxels highlights their
+positive-weight segments. Zero-weight slots are ignored.
+
 The **Selected Objects** panel edits position and rotation, deletes selected
 objects, and scales multi-selection positions about their center. Edit mode
 changes Editing data; Preview mode changes Preview segments. Preview taxels are
 derived and cannot be selected. With no selection, the panel remains visible,
 shows Type `None` and Count `0`, and disables its input fields.
+
+The selected-object 3-axis control supports axis-only translation. Dragging an
+axis moves every selected object by the same delta. Single selections use the
+object orientation; multi-selections use visualization-space axes. Rotation,
+plane-translation, and scale handles are disabled.
 
 Action and validation errors appear in the fixed **Info** area at the bottom of
 the 3D viewport. It cannot be moved.
@@ -159,21 +183,26 @@ standalone check/export CLI commands.
 
 Use **Reset Values** to restore Preview segment poses and URDF joint values from
 Editing.
-Choose **Binding Metadata Source**:
+Choose the mutually exclusive checkbox in **Binding Metadata Source**:
 
-- **Editing** uses the current editor bindings.
-- **Live** becomes available after metadata is received from the tactile stream.
+- **Editor** uses the current editor bindings and is selected by default.
+- **Live** is disabled until metadata is received from the tactile stream.
 
 The Preview Static section lists Segments before URDF Joints.
 
-**Apply Preview Data to Editor** fully replaces Editing segments, taxels,
-bindings, and URDF joint values. The button is disabled when Preview segments
-are incompatible with the selected bindings.
+Preview provides four independent apply operations:
+
+- **Apply Segments** replaces HandJoint/segment poses.
+- **Apply Taxels** replaces Editing taxels with exactly the valid derived taxels
+  currently rendered in Preview; invalid rows are omitted.
+- **Apply URDF** replaces URDF joint values.
+- **Apply ALL** applies Segments and URDF plus the same valid rendered taxel
+  subset used by Apply Taxels.
 
 Each Preview taxel is evaluated independently. Invalid rows are reported and
 omitted from the scene while valid taxels continue to render. Live force rows
-remain matched by their original taxel indices. Apply remains disabled until all
-taxels are valid.
+remain matched by their original taxel indices. Invalid taxels are reported in
+Info and omitted from Apply Taxels and Apply ALL; no Apply button is disabled.
 
 For live reception:
 
@@ -187,11 +216,13 @@ For live reception:
 
 3. Select **Connect Live**.
 
-HandPose updates Preview segments. Enabled JointState mappings update Preview
-URDF joints. Live frames overwrite manual Static values while connected.
-HandPose overwrites only valid joints; invalid joints retain their last pose,
-starting from the binding pose. If WRIST is invalid, every segment remains at
-its last pose because a wrist-relative transform cannot be computed.
+HandPose replaces Preview segments with only its valid joints, retained in
+HandJoint order, and is the sole source of Live Preview segment identities and
+poses. Invalid joints are absent. If WRIST is invalid, Preview contains no live
+segments because a wrist-relative transform cannot be computed. Selected
+binding metadata affects only taxel deformation; it never seeds Preview
+segments. Enabled JointState mappings update Preview URDF joints. Live frames
+overwrite manual Static values while connected.
 Tactile force magnitude maps from blue at 0 N to red at 30 N, with values above
 30 N clamped. Missing or inactive force data is light grey.
 

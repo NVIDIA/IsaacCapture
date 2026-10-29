@@ -10,6 +10,11 @@
   let infoInput = null;
   let infoElement = null;
   let raf = 0;
+  const numberDrafts = new Map();
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
 
   const findBridge = (name) => {
     for (const input of document.querySelectorAll("input")) {
@@ -34,34 +39,13 @@
     return null;
   };
 
-  const alignBindingButtons = () => {
-    const names = new Set([
-      "Start Binding to Segments",
-      "Select Segments",
-      "Complete",
-    ]);
-    const buttons = [...document.querySelectorAll("button")].filter((button) =>
-      names.has(button.textContent?.trim()),
-    );
-    if (buttons.length !== 3) return;
-    let common = buttons[0].parentElement;
-    while (common && !buttons.every((button) => common.contains(button))) {
-      common = common.parentElement;
-    }
-    if (!common || common.querySelectorAll("button").length !== 3) return;
-    const children = buttons.map((button) => {
-      let child = button;
-      while (child.parentElement !== common) child = child.parentElement;
-      return child;
-    });
-    if (new Set(children).size !== 3) return;
-    common.style.display = "grid";
-    common.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
-    common.style.gap = "6px";
-    for (const child of common.children) {
-      child.style.gridColumn = children.includes(child) ? "auto" : "1 / -1";
-    }
-    for (const button of buttons) button.style.width = "100%";
+  // Place Viser's logo above the fixed bottom Info area.
+  const positionViserLogo = () => {
+    const logo = document.querySelector('a[title="About Viser"]');
+    if (!logo) return;
+    logo.style.top = "auto";
+    logo.style.left = "16px";
+    logo.style.bottom = "144px";
   };
 
   const syncInfo = () => {
@@ -94,13 +78,110 @@
   };
 
   const frame = () => {
+    for (const [input, draft] of numberDrafts) {
+      if (!input.isConnected || document.activeElement !== input) {
+        numberDrafts.delete(input);
+      } else if (input.value !== draft) {
+        nativeInputValueSetter?.call(input, draft);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.setSelectionRange(draft.length, draft.length);
+      }
+    }
     syncInfo();
     raf = requestAnimationFrame(frame);
   };
 
+  const boldChoiceLabels = () => {
+    for (const label of document.querySelectorAll("label")) {
+      if (["Edit", "Preview", "Editor", "Live"].includes(label.textContent?.trim())) {
+        label.style.fontWeight = "700";
+      }
+    }
+  };
+
+  const folderFromLabel = (name) => {
+    const label = [...document.querySelectorAll("div")].find(
+      (element) => element.textContent?.trim() === name && element.querySelector("svg"),
+    );
+    return label?.parentElement || null;
+  };
+
+  const directChild = (parent, descendant) => {
+    let child = descendant;
+    while (child?.parentElement && child.parentElement !== parent) {
+      child = child.parentElement;
+    }
+    return child?.parentElement === parent ? child : null;
+  };
+
+  const freezeMainMenu = () => {
+    const general = folderFromLabel("General");
+    const preview = folderFromLabel("Preview");
+    const tabNames = new Set(["URDF", "Segments", "Taxels"]);
+    const tabs = [...document.querySelectorAll("button")].filter((button) =>
+      tabNames.has(button.textContent?.trim()),
+    );
+    if (!general || tabs.length !== 3) return;
+    const tabGroup = tabs[0].closest("[data-dock-group]");
+    if (!tabGroup) return;
+    let root = general.parentElement;
+    while (root && !root.contains(tabGroup)) root = root.parentElement;
+    if (!root) return;
+    const generalChild = directChild(root, general);
+    const tabsChild = directChild(root, tabGroup);
+    const previewChild = preview ? directChild(root, preview) : null;
+    if (!generalChild || !tabsChild) return;
+
+    Object.assign(root.style, {
+      display: "flex",
+      flexDirection: "column",
+      height: "100%",
+      minHeight: "0",
+      overflow: "hidden",
+    });
+    Object.assign(generalChild.style, {
+      flex: "0 0 auto",
+      zIndex: "30",
+    });
+    Object.assign(tabsChild.style, {
+      flex: "1 1 0",
+      minHeight: "0",
+      overflow: "hidden",
+    });
+    if (previewChild) {
+      Object.assign(previewChild.style, {
+        flex: "1 1 0",
+        minHeight: "0",
+        overflowY: "auto",
+      });
+    }
+  };
+
+  const preservePartialNumbers = () => {
+    for (const input of document.querySelectorAll("input")) {
+      if (input.dataset.tactileNumberDraft === "true") continue;
+      if (!["decimal", "numeric"].includes(input.inputMode) && input.type !== "number") {
+        continue;
+      }
+      input.dataset.tactileNumberDraft = "true";
+      input.addEventListener("input", () => {
+        const value = input.value;
+        if (/^[+-]?(?:\d+)?\.$/.test(value)) {
+          numberDrafts.set(input, value);
+        } else {
+          numberDrafts.delete(input);
+        }
+      });
+      input.addEventListener("blur", () => numberDrafts.delete(input));
+    }
+  };
+
   const bind = () => {
     findBridge("__Tactile Info");
-    alignBindingButtons();
+    positionViserLogo();
+    boldChoiceLabels();
+    freezeMainMenu();
+    preservePartialNumbers();
     for (const label of document.querySelectorAll("label")) {
       if (!label.textContent?.trim().startsWith("⚠")) continue;
       const field = label.parentElement?.querySelector("input, button");
@@ -123,6 +204,7 @@
       infoElement?.remove();
       infoElement = null;
       infoInput = null;
+      numberDrafts.clear();
     },
   };
 })();
