@@ -11,7 +11,7 @@ configuration tests run without camera hardware.
 ## Protocol and configuration tests
 
 ```bash
-cmake -S examples/camera_streamer/argus_sender -B /tmp/camera-protocol-build
+cmake -S examples/camera_streamer/argus_sender -B /tmp/camera-protocol-build -DARGUS_SENDER_CPU_TESTS_ONLY=ON
 cmake --build /tmp/camera-protocol-build --parallel 2
 ctest --test-dir /tmp/camera-protocol-build --output-on-failure
 ```
@@ -19,10 +19,29 @@ ctest --test-dir /tmp/camera-protocol-build --output-on-failure
 See [the wire specification](argus_sender/WIRE_FORMAT.md). Shared camera
 profiles are in `configs/`; select sensor modes using the installed camera driver.
 
+## Jetson sender
+
+Install the camera vendor driver and Jetson Multimedia API on the Orin. Stop any
+preview using the sensors and configure the vendor PWM for the selected frame rate.
+From `examples/camera_streamer` (or a copy of that directory on the robot):
+
+```bash
+cmake -S argus_sender -B argus_sender/build -DCMAKE_BUILD_TYPE=Release
+cmake --build argus_sender/build --parallel 2
+ctest --test-dir argus_sender/build --output-on-failure
+argus_sender/build/argus_sender --list-modes
+PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
+argus_sender/build/argus_sender --config "configs/${PROFILE}.yaml" --check-config
+argus_sender/build/argus_sender --config "configs/${PROFILE}.yaml"
+```
+
+The sender listens for a TCP receiver on port 5000 by default.
+
 ## Licensing
 
 This example is Apache-2.0 licensed. Existing upstream notices and external SDK
-licenses remain in effect.
+licenses remain in effect. The Argus-derived `EGLGlobal.h`, `EGLGlobal.cpp` and
+`Error.h` retain their BSD-3-Clause license and notices.
 
 ## Rebuilding after a source-directory move
 
