@@ -88,3 +88,9 @@ For opt-in hardware smoke tests, install PyYAML for the Python interpreter selec
 by CMake. Set `ARGUS_SENDER_HARDWARE_CONFIG` to your stereo profile; the smoke receiver
 reads `network.port` from that same file (default 5000), so there is no separate
 receiver-port override.
+
+CUDA IPC protocol 3 requires consumers to hold each slot's shared file lock and
+verify `slot_generation` before reading pixels, then finish GPU reads before
+unlocking. The receiver holds an exclusive lock while writing. Delayed notifications
+are discarded; a slow active read backpressures slot reuse rather than corrupting
+pixels. Update receiver and consumer together; protocol 2 consumers are rejected.

@@ -774,8 +774,6 @@ class Avs1TcpReceiver:
         stream: Avs1Stream,
         runtime: _StreamRuntime,
     ) -> None:
-        import cupy as cp
-
         self._validate_stream_descriptor(stream, runtime.config)
         slot = runtime.write_index
         t0 = time.monotonic()
@@ -795,11 +793,6 @@ class Avs1TcpReceiver:
             return
         receiver_process_done_mono_ns = time.monotonic_ns()
         receiver_process_done_ns, _ = _read_wall_clock_ns()
-
-        # The native decoder is synchronous. Raw NV12 copies / conversion kernels
-        # run on CuPy's current stream, so sync before announcing IPC visibility.
-        with cp.cuda.Device(self._gpu_device_id):
-            cp.cuda.get_current_stream().synchronize()
 
         timestamp_ns = time.monotonic_ns()
         receiver_ipc_publish_mono_ns = timestamp_ns
@@ -850,7 +843,20 @@ class Avs1TcpReceiver:
                 latencies,
             )
 
-    def _process_sample(
+    def _process_sample(self, runtime, stream, sample, slot) -> bool:
+        import cupy as cp
+
+        name = runtime.config.ipc_names[sample.camera_index]
+        with self._ipc_publisher.write_slot(name, slot, self._stop):
+            with cp.cuda.Device(self._gpu_device_id):
+                try:
+                    return self._decode_sample(runtime, stream, sample, slot)
+                finally:
+                    # CuPy's per-thread default stream belongs to this worker.
+                    # Complete reads/writes even on failure before releasing the slot.
+                    cp.cuda.get_current_stream().synchronize()
+
+    def _decode_sample(
         self,
         runtime: _StreamRuntime,
         stream: Avs1Stream,

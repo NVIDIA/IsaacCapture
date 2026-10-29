@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """CUDA IPC frame publisher for camera_receiver.
 
-Protocol v2 uses a newline-delimited JSON control socket:
+Protocol v3 uses a newline-delimited JSON control socket:
 
 1. Publisher -> client: ``hello`` stream catalog, no CUDA handles yet.
 2. Client -> publisher: ``subscribe`` with stream names, or omitted/empty for all.
 3. Publisher -> client: ``subscribed`` with CUDA IPC handles for selected streams.
 4. Publisher -> client: ``frame`` notifications for selected streams only.
+5. Client locks the slot's guard file, checks its generation, and completes GPU
+   reads before unlocking. Stale notifications are discarded.
 
 Image bytes stay in same-host CUDA IPC memory. The socket only carries control
 messages and per-frame metadata.
@@ -23,9 +25,12 @@ import queue
 import signal
 import socket
 import threading
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from slot_guard import commit_slot, read_slot, write_slot
 
 logger = logging.getLogger("isaaccapture.camera_streamer." + __name__)
 
@@ -42,6 +47,7 @@ class _SlotInfo:
     nbytes: int
     shape: tuple[int, ...]
     strides: tuple[int, ...]
+    guard_path: str
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,7 @@ class CudaIpcFramePublisher:
         self._accept_thread: Optional[threading.Thread] = None
         self._broadcast_thread: Optional[threading.Thread] = None
         self._started = False
+        self._guard_dir = tempfile.TemporaryDirectory(prefix="camera-ipc-slots-")
 
     @property
     def socket_path(self) -> str:
@@ -119,9 +126,14 @@ class CudaIpcFramePublisher:
                     raise TypeError(
                         f"CUDA IPC stream {name!r} slot {idx} has no strides"
                     )
+                guard_path = str(
+                    Path(self._guard_dir.name) / f"{len(self._streams)}-{idx}"
+                )
+                Path(guard_path).write_bytes(bytes(8))
                 slots.append(
                     _SlotInfo(
                         slot=idx,
+                        guard_path=guard_path,
                         handle_b64=base64.b64encode(handle).decode("ascii"),
                         nbytes=int(buf.nbytes),
                         shape=tuple(int(v) for v in iface["shape"]),
@@ -208,6 +220,15 @@ class CudaIpcFramePublisher:
                 "CUDA IPC: failed to unlink %s", self._socket_path, exc_info=True
             )
 
+    def write_slot(self, stream_name: str, slot: int, stop: threading.Event):
+        return write_slot(self._streams[stream_name].slots[slot].guard_path, stop)
+
+    def _current_frame(self, msg):
+        return read_slot(
+            self._streams[msg["stream"]].slots[msg["slot"]].guard_path,
+            msg["slot_generation"],
+        )
+
     def publish(
         self,
         stream_name: str,
@@ -219,6 +240,7 @@ class CudaIpcFramePublisher:
     ) -> None:
         if not self._started:
             return
+        commit_slot(self._streams[stream_name].slots[slot].guard_path, slot_generation)
         msg = {
             "type": "frame",
             "stream": stream_name,
@@ -284,6 +306,7 @@ class CudaIpcFramePublisher:
         msg["slots"] = [
             {
                 "slot": slot.slot,
+                "guard_path": slot.guard_path,
                 "handle": slot.handle_b64,
                 "nbytes": slot.nbytes,
                 "shape": list(slot.shape),
@@ -298,9 +321,10 @@ class CudaIpcFramePublisher:
             streams = list(self._streams.values())
         return {
             "type": "hello",
-            "version": 2,
+            "version": 3,
             "features": [
                 "subscriptions",
+                "slot_read_locks",
                 "frame_metadata",
                 "avs1_metadata",
                 "latency_metadata",
@@ -325,7 +349,7 @@ class CudaIpcFramePublisher:
         return (
             {
                 "type": "subscribed",
-                "version": 2,
+                "version": 3,
                 "streams": [
                     self._stream_with_slots(all_streams[name])
                     for name in selected_names
@@ -350,6 +374,10 @@ class CudaIpcFramePublisher:
                 subscribe = self._recv_json(client)
                 if subscribe.get("type") != "subscribe":
                     raise ValueError(f"expected subscribe message, got {subscribe!r}")
+                if subscribe.get("version") != 3:
+                    raise ValueError(
+                        "CUDA IPC requires protocol 3 slot read locks; update the consumer"
+                    )
                 requested_raw = subscribe.get("streams") or []
                 if not isinstance(requested_raw, list):
                     raise ValueError("subscribe.streams must be a list")
@@ -380,6 +408,9 @@ class CudaIpcFramePublisher:
                 msg = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
+            with self._current_frame(msg) as current:
+                if not current:
+                    continue
             stream_name = str(msg.get("stream", ""))
             with self._lock:
                 clients = list(self._clients)
