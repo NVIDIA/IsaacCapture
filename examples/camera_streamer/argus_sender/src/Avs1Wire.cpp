@@ -343,6 +343,7 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
     std::vector<uint16_t> firstSamples(streamCount);
     std::vector<uint16_t> streamSampleCounts(streamCount);
     parsed.streams.resize(streamCount);
+    uint32_t flatCursor = 0;
     for (uint16_t i = 0; i < streamCount; ++i)
     {
         uint16_t streamIndex = 0;
@@ -363,14 +364,19 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
         {
             return fail(error, "short AVS1 stream descriptor");
         }
-        if (streamIndex != i || reserved32 != 0 ||
-            static_cast<uint32_t>(firstSamples[i]) + streamSampleCounts[i] > sampleCount)
+        // Validate counts before resize so malformed tables cannot amplify allocations.
+        const uint16_t expectedCount = (stream.flags & AVS1_STREAM_STEREO) ? 2 : 1;
+        if (streamIndex != i || reserved32 != 0 || streamSampleCounts[i] != expectedCount ||
+            firstSamples[i] != flatCursor || flatCursor + streamSampleCounts[i] > sampleCount)
         {
             return fail(error, "invalid AVS1 stream descriptor index");
         }
+        flatCursor += streamSampleCounts[i];
         stream.samples.resize(streamSampleCounts[i]);
     }
 
+    if (flatCursor != sampleCount)
+        return fail(error, "AVS1 sample descriptors are not fully referenced");
     std::vector<ParsedSampleLocation> locations(sampleCount);
     for (uint16_t flat = 0; flat < sampleCount; ++flat)
     {

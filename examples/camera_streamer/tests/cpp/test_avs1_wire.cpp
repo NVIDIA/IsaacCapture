@@ -152,6 +152,23 @@ int main()
     testStreamValidation(test);
     testBundleValidation(test);
     testPayloadCoverage(test);
+    {
+        const char* descriptorError = nullptr;
+        std::vector<uint8_t> validRecord;
+        argus_sender::Avs1Bundle result;
+        TEST_CHECK(test, argus_sender::buildAvs1WireRecord(mixedBundle(), &validRecord, &descriptorError));
+        const size_t firstStream = argus_sender::kAvs1LengthPrefixBytes + argus_sender::kAvs1HeaderBytes;
+        // Oversized stereo count and overlapping mono range must fail at the descriptor,
+        // before allocating sample vectors or reading sample payloads.
+        for (size_t field : { firstStream + 35, firstStream + argus_sender::kAvs1StreamDescriptorBytes + 33 })
+        {
+            auto malformed = validRecord;
+            malformed[field] = field == firstStream + 35 ? 3 : 0;
+            TEST_CHECK(
+                test, !argus_sender::parseAvs1WireRecord(malformed.data(), malformed.size(), &result, &descriptorError));
+            TEST_CHECK_EQ(test, std::string(descriptorError), std::string("invalid AVS1 stream descriptor index"));
+        }
+    }
     argus_sender::Avs1Bundle input = mixedBundle();
     std::vector<uint8_t> wire;
     const char* error = 0;
