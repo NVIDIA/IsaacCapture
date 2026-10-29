@@ -175,7 +175,8 @@ def main(argv: list[str]) -> int:
         print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
     server = viser.ViserServer(host=args.host, port=args.port)
-    visualizers = create_hand_visualizers(args, server, setup_scene(server))
+    setup_scene(server)
+    visualizers = create_hand_visualizers(args, server)
 
     print(
         f"[replay] viser listening on {args.host}:{args.port} "

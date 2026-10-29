@@ -52,7 +52,7 @@ def main(argv: list[str]) -> int:
     pipeline = build_selected_hand_pipeline(args)
 
     server = viser.ViserServer(host=args.host, port=args.port)
-    ground = setup_scene(server)
+    setup_scene(server)
 
     config = TeleopSessionConfig(
         app_name="LiveHandExample",
@@ -65,7 +65,7 @@ def main(argv: list[str]) -> int:
         print("[live] waiting for headset connection… (Ctrl+C to stop)")
 
         with TeleopSession(config) as session:
-            visualizers = create_hand_visualizers(args, server, ground)
+            visualizers = create_hand_visualizers(args, server)
             print(
                 f"[live] viser listening on {args.host}:{args.port} "
                 f"(http://localhost:{args.port})"
