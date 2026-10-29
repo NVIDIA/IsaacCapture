@@ -522,6 +522,11 @@ process-wide backend. GPU images stay on their producing CUDA device, and OVUI
 copies them into its Vulkan image. The mirror requires the active OVUI backend
 to be Vulkan. Remove conflicting <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND</span></code> settings before OVUI starts.
 This selection does not change headset rendering.</p>
+<p>The pinned OVUI 0.3.0 Vulkan upload copies on its import device’s default CUDA
+stream. The mirror drains that stream before reusing the source buffer, including
+upload failures; the source image can reside on a different GPU. This depends on
+the synchronous <code class="docutils literal notranslate"><span class="pre">ByteImageProvider.</span><wbr><span class="pre">set_</span><wbr><span class="pre">bytes_</span><wbr><span class="pre">data_</span><wbr><span class="pre">from_</span><wbr><span class="pre">gpu</span></code> implementation,
+not OVUI’s separate asynchronous upload API. See the <a class="reference external" href="https://github.com/NVIDIA-Omniverse/ovui/blob/60fc40daf56d010ccbc9734f64e6463b1017f74a/ovui/standalone/src/VulkanByteImageGpu.cpp#L1069-L1124" rel="noopener noreferrer" target="_blank">OVUI upload implementation</a>.</p>
 </section>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
@@ -537,6 +542,11 @@ cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axi
 <code class="docutils literal notranslate"><span class="pre">CameraPanelConfig</span></code> values, each pairing a render-product path with its placement
 and image bound. Configure the mirror’s camera choices with <code class="docutils literal notranslate"><span class="pre">MirrorProduct</span></code>
 values. Either consumer can be enabled independently.</p>
+<p>Camera-panel attachment failure disables panels and logs the reason without
+blocking teleoperation input. An incomplete GPU copy disables the affected panel;
+the consumer rechecks its copy stream before releasing the borrowed output.
+If completion still cannot be proved, the session reports a failure and retains
+the borrowed resources. Other camera mailboxes are still given a cleanup attempt.</p>
 <p>Consumers receive <code class="docutils literal notranslate"><span class="pre">FrameOutputs</span></code> on the XR owner thread. Use <code class="docutils literal notranslate"><span class="pre">latest_color</span></code>
 to select an output, then <code class="docutils literal notranslate"><span class="pre">copy_host_rgba</span></code> or <code class="docutils literal notranslate"><span class="pre">map_gpu</span></code> to consume it without
 unpacking native result structures. Selected handles are valid only during that
@@ -749,7 +759,7 @@ those resources. There is no automatic retry of uncertain native destruction.</p
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
       <br/>
     
   </p>

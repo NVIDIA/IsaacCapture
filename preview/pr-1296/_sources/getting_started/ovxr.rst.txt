@@ -94,6 +94,13 @@ copies them into its Vulkan image. The mirror requires the active OVUI backend
 to be Vulkan. Remove conflicting ``OMNIUI_BACKEND`` settings before OVUI starts.
 This selection does not change headset rendering.
 
+The pinned OVUI 0.3.0 Vulkan upload copies on its import device's default CUDA
+stream. The mirror drains that stream before reusing the source buffer, including
+upload failures; the source image can reside on a different GPU. This depends on
+the synchronous ``ByteImageProvider.set_bytes_data_from_gpu`` implementation,
+not OVUI's separate asynchronous upload API. See the `OVUI upload implementation
+<https://github.com/NVIDIA-Omniverse/ovui/blob/60fc40daf56d010ccbc9734f64e6463b1017f74a/ovui/standalone/src/VulkanByteImageGpu.cpp#L1069-L1124>`_.
+
 Use from another application
 ----------------------------
 
@@ -110,6 +117,12 @@ cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
 and image bound. Configure the mirror's camera choices with ``MirrorProduct``
 values. Either consumer can be enabled independently.
+
+Camera-panel attachment failure disables panels and logs the reason without
+blocking teleoperation input. An incomplete GPU copy disables the affected panel;
+the consumer rechecks its copy stream before releasing the borrowed output.
+If completion still cannot be proved, the session reports a failure and retains
+the borrowed resources. Other camera mailboxes are still given a cleanup attempt.
 
 Consumers receive ``FrameOutputs`` on the XR owner thread. Use ``latest_color``
 to select an output, then ``copy_host_rgba`` or ``map_gpu`` to consume it without
