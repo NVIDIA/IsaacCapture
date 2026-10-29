@@ -111,11 +111,15 @@ bool resolveOutputGeometry(const OutputConfig& output,
     resolved->captureHeight = output.remap.enabled() ? output.remap.captureHeight : height;
 
     const double targetAspect = static_cast<double>(resolved->captureWidth) / resolved->captureHeight;
+    // An inferred dimension preserves the reference aspect before NV12 even-pixel rounding.
+    // Remap capture dimensions remain an explicit aspect contract.
+    const bool inferredDimension = (output.width == 0) != (output.height == 0);
+    const double strictAspect = inferredDimension && !output.remap.enabled() ? referenceAspect : targetAspect;
     resolved->clips.reserve(sources.size());
     for (size_t i = 0; i < sources.size(); ++i)
     {
         const double sourceAspect = static_cast<double>(sources[i].width) / sources[i].height;
-        if (output.resizeMode == RESIZE_STRICT && !aspectMatches(sourceAspect, targetAspect))
+        if (output.resizeMode == RESIZE_STRICT && !aspectMatches(sourceAspect, strictAspect))
         {
             std::ostringstream message;
             message << "strict resize rejects source " << sources[i].width << "x" << sources[i].height << " -> "

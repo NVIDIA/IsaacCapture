@@ -41,6 +41,34 @@ int main()
     TEST_CHECK(test, argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
     TEST_CHECK(test, std::fabs(geometry.clips[0].top) < 0.0001F);
 
+    output = argus_sender::OutputConfig();
+    output.height = 480;
+    TEST_CHECK(test, argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    TEST_CHECK_EQ(test, geometry.width, 620U);
+    TEST_CHECK_EQ(test, geometry.height, 480U);
+
+    output.width = 620;
+    TEST_CHECK(test, !argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    output.height = 0;
+    TEST_CHECK(test, argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    TEST_CHECK_EQ(test, geometry.height, 482U);
+
+    output.width = 0;
+    output.height = 480;
+    sources.push_back(sources[0]);
+    TEST_CHECK(test, argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    sources[1].width = 1920;
+    sources[1].height = 1080;
+    TEST_CHECK(test, !argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    sources.resize(1);
+    output.remap.file = "test.rmap";
+    output.remap.captureWidth = 620;
+    output.remap.captureHeight = 480;
+    TEST_CHECK(test, !argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+    output.remap.captureWidth = 2560;
+    output.remap.captureHeight = 1984;
+    TEST_CHECK(test, argus_sender::resolveOutputGeometry(output, sources, &geometry, &error));
+
     argus_sender::MixedRateScheduler scheduler({ 60, 30, 45 });
     TEST_CHECK_EQ(test, scheduler.baseFps(), 60U);
     uint32_t counts[3] = { 0, 0, 0 };
