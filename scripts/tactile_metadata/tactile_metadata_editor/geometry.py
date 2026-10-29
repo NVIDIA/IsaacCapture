@@ -10,7 +10,13 @@ import trimesh
 from trimesh import transformations as tf
 from yourdfpy import URDF
 
-from .document import Document, JOINTS, Segment, Taxel
+from .document import (
+    DEFAULT_OPENXR_SEGMENT_POSES,
+    Document,
+    JOINTS,
+    Segment,
+    Taxel,
+)
 
 VISUALIZATION_FROM_HAND = np.array(
     [[-1, 0, 0, 0], [0, 0, -1, 0], [0, -1, 0, 0], [0, 0, 0, 1]],
@@ -20,6 +26,7 @@ VISUALIZATION_FROM_URDF = np.array(
     [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
     dtype=float,
 )
+URDF_OPACITY = 0.4
 
 
 def matrix(values: list[float]) -> np.ndarray:
@@ -40,6 +47,17 @@ def pose(transform: np.ndarray) -> list[float]:
     return [
         *np.asarray(transform[:3, 3], dtype=float).tolist(),
         *quaternion[[1, 2, 3, 0]].tolist(),
+    ]
+
+
+def default_segments(side: str) -> list[Segment]:
+    poses = [list(value) for value in DEFAULT_OPENXR_SEGMENT_POSES]
+    if side == "left":
+        for value in poses:
+            value[0], value[4], value[5] = -value[0], -value[4], -value[5]
+    return [
+        Segment(joint, pose(VISUALIZATION_FROM_HAND @ matrix(value)))
+        for joint, value in zip(JOINTS, poses)
     ]
 
 
@@ -193,7 +211,7 @@ class Model:
         alignment: np.ndarray,
         scale: float,
         highlighted: bool = False,
-        opacity: float = 0.6,
+        opacity: float = URDF_OPACITY,
     ) -> None:
         raw = self.raw_fk(q)
         for name, (link, mesh) in self.surfaces.items():

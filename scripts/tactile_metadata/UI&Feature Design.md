@@ -15,7 +15,7 @@ About data cooridanates: all UI editor use visualization space. When save to met
 
 About LBS taxel rotation: determine by Polar Decomposition algorithm. At singularity, use taxel's bind rotation. Make sure to optimize for single-segment binding case, where the rotation can be directly determined without running Polar Decomposition.
 
-1. At top, always display general function: Toggle side, new/save/load metadata file, reset camera. A Mode single seletion from: Edit, Preview. And a toggle to enable/disable the saved data visualization "Show Saved Binding Poses".
+1. In a General panel at the top of the view, always display: Toggle side, new/save/load metadata file, reset camera, a Mode single selection from Edit and Preview, and a toggle to enable/disable the saved data visualization "Show Saved Binding Poses".
 
 2. This tool actually manages 3 copies of pose data (pose of segments and taxels), with different data sources.
     a) Editing dataset: the data that the user is editing in the tool. It's the binding poses of the segments and taxels under editing. Plus the URDF joint values that's under Editing mode.
@@ -41,7 +41,7 @@ About LBS taxel rotation: determine by Polar Decomposition algorithm. At singula
     d) (spannable) A full list of all segments, with an id number (read-only, starting at 0, it's the index of the segment in the list), their name (dropdown list of HandJoint, display in enum name), editable position (3 float input), editable rotation (3 float slider). This is to modify the binding poses of the segments, display this info above this section. Each segment has a grabber on the side that can be used to drag them and reorder, this will change the id numbers.
 * It's invalid to have more than one segments to select the same HandJoint. At error, outline the repeated fields in red.
 * Some fields in Taxels tab refer to segments in this Segments tab, and modifying segments may result in invalid taxel binding that's revealed in Taxels tab.
-* Segments are displayed as yellow spheres of radius 0.01m. The three axes of each segment are not displayed by default.Clicking an segment on the 3D scene while in Edit mode will select the segment, highlight it, reveal its 3 axes. When a segment is newly added, it's selected, and deselect the previous selected object(s). Clicking on any other area in the 3D scene will deselect the segment; dragging 3D scene or clicking on the menu/other UI area will not deselect the segment. Clicking on the same selected segment will not do anything.
+* Segments are displayed as yellow spheres of radius 0.005m. The three axes of each segment are not displayed by default.Clicking an segment on the 3D scene while in Edit mode will select the segment, highlight it, reveal its 3 axes. When a segment is newly added, it's selected, and deselect the previous selected object(s). Clicking on any other area in the 3D scene will deselect the segment; dragging 3D scene or clicking on the menu/other UI area will not deselect the segment. Clicking on the same selected segment will not do anything.
 
 9. Taxels tab:
 * Taxels don't have their onw alignment, it uses the alignment of the segments.
@@ -58,7 +58,7 @@ About LBS taxel rotation: determine by Polar Decomposition algorithm. At singula
 * Taxels are displayed as light grey flat square of size 0.01m*0.01m. The three axes of each taxel are not displayed by default. Clicking an taxel on the 3D scene while in Edit mode will select the taxel, highlight it, reveal its 3 axes. The 3D scene modification rules are the same as segments.
 * Multi-selection in 3D scene: While holding Shift and clicking on an object in 3D scene, the object will be added to the selection without de-selecting the previous selected object(s). It's not allowed to select both segments and taxels at the same time. So when taxels are already selected, Shift-clicking on a segment will not do anything, vise versa. When holding Shift, it's also allowed to left-button drag on the 3D scene to select a rectangular area of objects. If taxels are previously already selected, only taxels in the selected area will be selected, vise versa. When Shift is holding, dragging 3D scene won't change camera as it does otherwise. When nothing is selected, if a Shift dragging covers both segment and taxels, select the taxels but not segments.
 * When multiple objects are selected, the 3-axis visualizer should show in the center of the selected objects' area, with axis directions align with the visualiation space coordinates.
-* An additional small menu for selected object(s)' modification, apply also to single object selection:
+* An additional small menu on the left side of the view for selected object(s)' modification, apply also to single object selection:
 a) (read only) selected elements type and count (multi selection is stated in following part)
 b) (editable) current position (defined above)
 c) (editable) current rotation (defined above)

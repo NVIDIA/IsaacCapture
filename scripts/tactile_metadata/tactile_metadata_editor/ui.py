@@ -90,19 +90,23 @@ class Editor:
 
     def _build_gui(self) -> None:
         gui = self.server.gui
-        self.side_text = gui.add_markdown("")
-        self._action_button("Toggle Side", self._toggle_side)
-        self.metadata_path = gui.add_text("Metadata Path", "")
-        self._action_button("New", self._new)
-        _, self.save_info = self._action_button("Save", self._save)
-        self._action_button("Load", self._load)
-        self._action_button("Reset Camera", self._reset_camera)
-        self.mode = gui.add_dropdown("Mode", ("Edit", "Preview"))
-        self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
-        self._watch(self.mode, self._set_mode)
-        self._watch(self.show_saved, lambda _: self._request_draw())
-        self.reorder_bridge = gui.add_text("__Tactile Reorder Event", "")
-        self._watch(self.reorder_bridge, self._reorder)
+        self.general_panel = gui.add_panel()
+        self.general_tab = self.general_panel.add_tab("General")
+        with self.general_tab:
+            self.side_text = gui.add_markdown("")
+            self._action_button("Toggle Side", self._toggle_side)
+            self.metadata_path = gui.add_text("Metadata Path", "")
+            _, self.new_info = self._action_button("New", self._new)
+            _, self.save_info = self._action_button("Save", self._save)
+            self._action_button("Load", self._load)
+            self._action_button("Reset Camera", self._reset_camera)
+            self.mode = gui.add_dropdown("Mode", ("Edit", "Preview"))
+            self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
+            self._watch(self.mode, self._set_mode)
+            self._watch(self.show_saved, lambda _: self._request_draw())
+            self.reorder_bridge = gui.add_text("__Tactile Reorder Event", "")
+            self._watch(self.reorder_bridge, self._reorder)
+        self.general_panel.float(x=0, y=0, width=320)
 
         self.edit_tabs = gui.add_tab_group()
         self.urdf_tab = self.edit_tabs.add_tab("URDF")
@@ -212,7 +216,12 @@ class Editor:
                 self.preview_joint_folder = gui.add_folder("URDF Joints")
                 self.preview_segment_folder = gui.add_folder("Segments")
 
-        self.selection_folder = gui.add_folder("Selected Objects", visible=False)
+        self.selection_panel = gui.add_panel(visible=False)
+        self.selection_tab = self.selection_panel.add_tab("Selected Object")
+        with self.selection_tab:
+            self.selection_folder = gui.add_folder("Selection")
+        self.selection_panel.dock_left()
+        self.selection_panel.set_width(320)
 
     def _numbers(self, prefix: str, values, step: float):
         return tuple(
@@ -253,10 +262,10 @@ class Editor:
         return button, info
 
     def _run_action(self, callback, value=None, info=None) -> None:
+        if info is not None:
+            info.content = ""
         try:
             callback() if value is None else callback(value)
-            if info is not None:
-                info.content = ""
         except Exception as exc:
             LOG.exception("Editor action failed")
             if info is not None:
@@ -319,11 +328,13 @@ class Editor:
     def _new(self) -> None:
         document = Document(self.state.side)
         document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
+        document.segments = geo.default_segments(self.state.side)
         self.state.documents[self.state.side] = document
         self.state.saved[self.state.side] = None
         self.state.paths.pop(self.state.side, None)
         self.preview[self.state.side] = self._preview_from(document)
         self._sync_side()
+        self.new_info.content = f"New {self.state.side} metadata created."
 
     def _load(self) -> None:
         path = self.metadata_path.value.strip()
@@ -1013,7 +1024,7 @@ class Editor:
             if kind == "segments":
                 distance = (point - origin) @ direction
                 offset = np.linalg.norm(point - origin - distance * direction)
-                if distance > 0 and offset <= 0.01:
+                if distance > 0 and offset <= 0.005:
                     hits.append((distance, row))
                 continue
             inverse = np.linalg.inv(geo.matrix(value.pose))
@@ -1092,9 +1103,9 @@ class Editor:
         values = self._selection_values()
         rows = [row for row in self.selected_rows if 0 <= row < len(values)]
         self.selected_rows = rows
-        self.selection_folder = self.server.gui.add_folder(
-            "Selected Objects", visible=bool(rows)
-        )
+        self.selection_panel.visible = bool(rows)
+        with self.selection_tab:
+            self.selection_folder = self.server.gui.add_folder("Selection")
         if not rows:
             return
         with self.selection_folder:
@@ -1206,6 +1217,7 @@ class Editor:
             return
         positions = np.asarray([value[:3, 3] for value in matrices])
         rotations = np.asarray([tf.quaternion_from_matrix(value) for value in matrices])
+        scale = 0.005 if kind == "segments" else 0.01
         mesh = (
             trimesh.creation.icosphere(subdivisions=1)
             if kind == "segments"
@@ -1227,7 +1239,7 @@ class Editor:
                 mesh.faces,
                 rotations,
                 positions,
-                batched_scales=np.full(len(values), 0.01),
+                batched_scales=np.full(len(values), scale),
                 batched_colors=np.asarray(colors, dtype=np.uint8),
                 opacity=opacity,
                 wireframe=wireframe,
@@ -1237,7 +1249,7 @@ class Editor:
         handle.visible = True
         handle.batched_positions = positions
         handle.batched_wxyzs = rotations
-        handle.batched_scales = np.full(len(values), 0.01)
+        handle.batched_scales = np.full(len(values), scale)
         handle.batched_colors = np.asarray(colors, dtype=np.uint8)
         handle.opacity = opacity
 
@@ -1357,6 +1369,7 @@ class Editor:
         handle.batched_wxyzs = rotations
 
     def _draw(self) -> None:
+        active_opacity = 1.0
         if self.model is not None:
             q = (
                 self.document.q
@@ -1369,7 +1382,7 @@ class Editor:
                 self.urdf_alignment,
                 self.urdf_scale,
                 highlighted=self.pick_mode is not None,
-                opacity=1.0,
+                opacity=geo.URDF_OPACITY * active_opacity,
             )
         self._hide_prefix("/edit")
         self._hide_prefix("/preview")
@@ -1380,7 +1393,7 @@ class Editor:
                 "/edit",
                 self.document.segments,
                 self.document.taxels,
-                1.0,
+                active_opacity,
                 True,
             )
             self._draw_errors()
@@ -1402,7 +1415,7 @@ class Editor:
                 "/preview",
                 self.preview_document.segments,
                 preview_taxels,
-                1.0,
+                active_opacity,
                 True,
                 forces,
             )
@@ -1422,8 +1435,11 @@ class Editor:
     def run(self) -> None:
         try:
             while True:
-                while not self.events.empty():
-                    self.events.get_nowait()()
+                try:
+                    while True:
+                        self.events.get_nowait()()
+                except queue.Empty:
+                    pass
                 self._update_live()
                 if self.redraw or self.receiver is not None:
                     self._draw()

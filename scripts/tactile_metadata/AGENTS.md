@@ -16,6 +16,7 @@ SPDX-License-Identifier: Apache-2.0
 - 对设计文档的结构与表达要求应直接落实到目标文档；页面布局按区块列出具体控件，不以聊天中的补充说明代替文档修改。
 - Keep URDF driving separate from taxel deformation: HandPose supplies skeleton and LBS poses, while live URDF motion uses JointState only. Remove obsolete driver controls, persisted options, algorithms, and acceptance cases together.
 - Draft forms always read the editable Document. Validation reports errors without blocking draft edits or replacements; received metadata replaces only explicitly selected sections and never becomes a form source by changing the visualization.
+- New documents initialize every OpenXR HandJoint segment in the neutral hand pose, mirroring the left hand before visualization-space conversion; loading replaces these defaults instead of merging with them.
 - Preserve slot order and repeated segment indices. Normalize all four weights only on explicit user weight edits and reject negative edit values; loading, recording received values, checking, saving, and exporting preserve raw weights. Distinguish receiver failures from sender behavior, and keep all editor operations local.
 - SDK process isolation specifies where SDK classes are called; document the actual tracker/session calls required for live reception as well as export encoding.
 - Keep tool implementation inside this subtree; add missing dependencies to Isaac Capture's existing requirements and matching package metadata. Run checks only from this directory or its descendants; never run repository-wide fixing hooks that can change other directories.
@@ -23,13 +24,15 @@ SPDX-License-Identifier: Apache-2.0
 - Reuse the launching Python environment and its SDK through sys.executable. Do not create tool-specific project metadata, lockfiles, environments or SDK installations, and do not infer runtime requirements from old local build artifacts.
 - Missing packages in the agent's inspection environment limit verification; report the unavailable checks. Do not turn verification requirements into proposals to install dependencies, provision environments, or substitute interpreters; maintain Isaac Capture's shared dependency declarations instead.
 - Use Viser's standard controls and public callbacks, with document changes serialized through State. Apply the same explicit weight-normalization rule to sliders and numeric fields.
+- Client-side helpers may hide only their exact bridge input and label; never hide an ancestor container that can contain the entire Viser control panel.
+- Drain cross-thread UI events with nonblocking reads and `queue.Empty`; `Queue.empty()` is not a synchronization boundary. Give no-op-looking actions such as creating an empty document visible completion status.
 - Keep metadata/force alignment with the producer and user; do not add source-row mappings, correspondence tracking across reordering, or alignment baselines to the editor.
 - JSON follows tactile_metadata.fbs and the existing bindings. Treat array and enum conversion for encoding as routine implementation rather than a separate product-format decision.
 - Persist only schema-defined tactile metadata fields. Keep model configuration, calibration, source mappings and internal IDs in session state; audit actual save/export output rather than inferring persistence requirements from editing needs.
 - Simplify persistence by deleting unsupported branches in place; do not relocate serialization into Document or introduce new state abstractions for a narrower file format.
 - For local editor checks using a cached Ruff executable, match the version in the repository hook configuration; older binaries may not understand the shared lint rules. Keep every check and formatter target inside this subtree.
 - Keep the GUI a thin adapter over shared document, geometry, storage and SDK operations. Prefer explicit native Viser widgets and one reusable property inspector; avoid widget-type inference, duplicate field editors in dialogs, and rebuilding scene nodes on every frame. Moving logic between files alone does not reduce implementation size.
-- Use fixed URDF opacity and color-based link highlighting; do not add per-link visibility or opacity controls or state.
+- Use URDF base opacity 0.4 multiplied by the rendered dataset layer opacity, with color-based link highlighting; do not add per-link visibility or opacity controls or state.
 - Under a hard code budget, finish and count a complete executable slice before expanding the UI. Refactoring dispatch or moving functions is not evidence that the implementation fits; verify the formatted total and retain budget for integration fixes.
 - Treat metadata wrist coordinates, Viser scene coordinates and camera screen orientation as distinct; diagnose an upside-down display from the scene/camera mapping, not URDF alignment.
 - Separate OpenXR schema/reference-space contracts from provider basis conversion; verify the plugin conversion before claiming injected HandPose follows OpenXR joint axes.

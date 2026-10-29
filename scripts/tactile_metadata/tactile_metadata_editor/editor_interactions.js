@@ -15,7 +15,17 @@
       let parent = input;
       for (let depth = 0; parent && depth < 5; ++depth, parent = parent.parentElement) {
         if (parent.textContent?.includes("__Tactile Reorder Event")) {
-          if (parent.parentElement) parent.parentElement.style.display = "none";
+          input.style.position = "absolute";
+          input.style.width = "1px";
+          input.style.height = "1px";
+          input.style.opacity = "0";
+          input.style.pointerEvents = "none";
+          input.tabIndex = -1;
+          for (const label of parent.querySelectorAll("label")) {
+            if (label.textContent?.includes("__Tactile Reorder Event")) {
+              label.style.display = "none";
+            }
+          }
           return input;
         }
       }
