@@ -53,7 +53,7 @@ cmake --build camera_receiver/codec/build --parallel 2
 The build downloads the pinned NVIDIA Video Codec SDK. CPU-side Python tests:
 
 ```bash
-uv run --project examples/camera_streamer/tests --extra dev python -m pytest examples/camera_streamer/tests/python -q
+uv run --project tests --extra dev python -m pytest tests/python -q
 ```
 
 ## Licensing

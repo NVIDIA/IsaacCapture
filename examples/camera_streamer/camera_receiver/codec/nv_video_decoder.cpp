@@ -8,6 +8,7 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 
@@ -54,6 +55,7 @@ struct NvVideoDecoder::Impl
     CUcontext cu_context = nullptr;
     cudaStream_t stream = nullptr;
     std::unique_ptr<NvDecoder> decoder;
+    std::mutex decoder_mutex;
     bool warned_size_mismatch = false;
 
     Impl(const DecoderConfig& c) : cfg(c)
@@ -119,6 +121,7 @@ struct NvVideoDecoder::Impl
     bool decode_one(
         const uint8_t* packet, std::size_t packet_size, uintptr_t rgba_out, std::size_t rgba_row_bytes, int rotation)
     {
+        std::lock_guard<std::mutex> lock(decoder_mutex);
         if (!decoder)
         {
             throw std::runtime_error("NvVideoDecoder: decoder unavailable");
@@ -175,11 +178,23 @@ struct NvVideoDecoder::Impl
             return false;
         }
 
-        launch_nv12_to_rgba(nv12, nv12 + luma_size, pitch, pitch, w, h, reinterpret_cast<uint8_t*>(rgba_out),
-                            static_cast<int>(rgba_row_bytes), cfg.full_range, rotation, stream);
-        // UnlockFrame returns the surface to NVDEC's pool, so the
-        // kernel reading it must finish first.
-        const cudaError_t sync_err = cudaStreamSynchronize(stream);
+        cudaError_t sync_err = cudaSuccess;
+        try
+        {
+            launch_nv12_to_rgba(nv12, nv12 + luma_size, pitch, pitch, w, h, reinterpret_cast<uint8_t*>(rgba_out),
+                                static_cast<int>(rgba_row_bytes), cfg.full_range, rotation, stream);
+            // UnlockFrame returns the surface to NVDEC's pool, so the
+            // kernel reading it must finish first.
+            sync_err = cudaStreamSynchronize(stream);
+        }
+        catch (...)
+        {
+            // Complete any submitted reads before returning the surface to NVDEC.
+            cudaStreamSynchronize(stream);
+            decoder->UnlockFrame(&nv12);
+            cuCtxPopCurrent(nullptr);
+            throw;
+        }
         decoder->UnlockFrame(&nv12);
         check_cu(cuCtxPopCurrent(nullptr), "cuCtxPopCurrent");
         if (sync_err != cudaSuccess)
@@ -194,6 +209,7 @@ struct NvVideoDecoder::Impl
     bool decode_one_nv12(
         const uint8_t* packet, std::size_t packet_size, uintptr_t nv12_out, std::size_t nv12_row_bytes, int rotation)
     {
+        std::lock_guard<std::mutex> lock(decoder_mutex);
         if (!decoder)
         {
             throw std::runtime_error("NvVideoDecoder: decoder unavailable");
@@ -252,22 +268,35 @@ struct NvVideoDecoder::Impl
             return false;
         }
 
-        auto* dst_y = reinterpret_cast<uint8_t*>(nv12_out);
-        auto* dst_uv = dst_y + nv12_row_bytes * static_cast<std::size_t>(h);
-        if (rotation == 180)
+        cudaError_t sync_err = cudaSuccess;
+        try
         {
-            launch_nv12_rotate_180(
-                nv12, nv12 + luma_size, src_pitch, src_pitch, w, h, dst_y, static_cast<int>(nv12_row_bytes), stream);
+            auto* dst_y = reinterpret_cast<uint8_t*>(nv12_out);
+            auto* dst_uv = dst_y + nv12_row_bytes * static_cast<std::size_t>(h);
+            if (rotation == 180)
+            {
+                launch_nv12_rotate_180(nv12, nv12 + luma_size, src_pitch, src_pitch, w, h, dst_y,
+                                       static_cast<int>(nv12_row_bytes), stream);
+            }
+            else
+            {
+                check_rt(
+                    cudaMemcpy2DAsync(dst_y, nv12_row_bytes, nv12, src_pitch, w, h, cudaMemcpyDeviceToDevice, stream),
+                    "cudaMemcpy2DAsync NV12 Y");
+                check_rt(cudaMemcpy2DAsync(dst_uv, nv12_row_bytes, nv12 + luma_size, src_pitch, w, h / 2,
+                                           cudaMemcpyDeviceToDevice, stream),
+                         "cudaMemcpy2DAsync NV12 UV");
+            }
+            sync_err = cudaStreamSynchronize(stream);
         }
-        else
+        catch (...)
         {
-            check_rt(cudaMemcpy2DAsync(dst_y, nv12_row_bytes, nv12, src_pitch, w, h, cudaMemcpyDeviceToDevice, stream),
-                     "cudaMemcpy2DAsync NV12 Y");
-            check_rt(cudaMemcpy2DAsync(dst_uv, nv12_row_bytes, nv12 + luma_size, src_pitch, w, h / 2,
-                                       cudaMemcpyDeviceToDevice, stream),
-                     "cudaMemcpy2DAsync NV12 UV");
+            // The Y copy may already be queued when the UV copy fails.
+            cudaStreamSynchronize(stream);
+            decoder->UnlockFrame(&nv12);
+            cuCtxPopCurrent(nullptr);
+            throw;
         }
-        const cudaError_t sync_err = cudaStreamSynchronize(stream);
         decoder->UnlockFrame(&nv12);
         check_cu(cuCtxPopCurrent(nullptr), "cuCtxPopCurrent");
         if (sync_err != cudaSuccess)
@@ -281,8 +310,7 @@ struct NvVideoDecoder::Impl
 
     void reset_decoder()
     {
-        if (!decoder)
-            return;
+        std::lock_guard<std::mutex> lock(decoder_mutex);
         check_cu(cuCtxPushCurrent(cu_context), "cuCtxPushCurrent");
         decoder.reset();
         try
