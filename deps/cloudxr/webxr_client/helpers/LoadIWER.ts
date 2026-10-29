@@ -67,18 +67,23 @@ async function loadIWER(): Promise<IWERLoadResult> {
         import(/* webpackMode: "lazy" */ '@iwer/devui'),
       ]);
       const device = new XRDevice(metaQuest3);
-      device.installDevUI(DevUI);
 
-      // The native XRSystem has already reported no immersive support.
-      await device.installRuntime({ forceInstall: true });
-      // Installation can return without replacing navigator.xr. Verify support
-      // before reporting readiness to enable Connect.
-      const [vr, ar] = await Promise.all([
-        navigator.xr?.isSessionSupported('immersive-vr'),
-        navigator.xr?.isSessionSupported('immersive-ar'),
-      ]);
-      supportsImmersive = Boolean(vr || ar);
+      try {
+        // The native XRSystem has already reported no immersive support.
+        await device.installRuntime({ forceInstall: true });
+        // Installation can return without replacing navigator.xr. Verify support
+        // before reporting readiness to enable Connect.
+        const [vr, ar] = await Promise.all([
+          navigator.xr?.isSessionSupported('immersive-vr'),
+          navigator.xr?.isSessionSupported('immersive-ar'),
+        ]);
+        supportsImmersive = Boolean(vr || ar);
+      } finally {
+        // Restore globals before a retry; create DevUI only for a usable runtime.
+        if (!supportsImmersive) device.uninstallRuntime();
+      }
       if (supportsImmersive) {
+        device.installDevUI(DevUI);
         window.xrDevice = device;
         iwerLoaded = true;
         console.info('IWER runtime installed.');

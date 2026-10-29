@@ -5,6 +5,7 @@
 
 // @ts-check
 const { test, expect } = require('@playwright/test');
+const { EMULATOR_BUNDLE_PATTERN } = require('./emulator');
 
 /**
  * Client-side-only coverage for the real App.tsx (via webpack.app-mock.js, :8082) of two
@@ -75,7 +76,7 @@ test.describe('client UI states', () => {
   }) => {
     test.setTimeout(30000);
 
-    await page.route(/(?:emulator|iwer.*index_js).*\.js/, route => route.abort());
+    await page.route(EMULATOR_BUNDLE_PATTERN, route => route.abort());
 
     const consoleLines = [];
     page.on('console', msg => consoleLines.push(msg.text()));

@@ -97,7 +97,7 @@ export const COUNTDOWN_STORAGE_KEY = 'cxr.react.countdownSeconds';
 export class CloudXR2DUI {
   /** Button to initiate XR streaming session */
   private startButton!: HTMLButtonElement;
-  // Form edits and XR-store notifications must not bypass startup capability checks.
+  /** Form edits and XR-store notifications must not bypass startup capability checks. */
   private capabilitiesReady = false;
   /** Input field for the CloudXR server IP address */
   private serverIpInput!: HTMLInputElement;
@@ -1013,6 +1013,7 @@ export class CloudXR2DUI {
     this.updateConnectButtonState();
   }
 
+  /** Gate Connect on completed startup checks, preserving form validation. */
   public setCapabilitiesReady(ready: boolean): void {
     this.capabilitiesReady = ready;
     if (!ready && this.startButton) this.startButton.disabled = true;
