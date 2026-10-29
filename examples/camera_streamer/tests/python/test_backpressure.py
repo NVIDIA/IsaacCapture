@@ -84,3 +84,48 @@ def test_ipc_socket_is_owner_only(tmp_path):
         assert path.stat().st_mode & 0o777 == 0o600
     finally:
         publisher.stop()
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_stream_waits_for_other_eye_after_failure(monkeypatch, raises):
+    import sys
+    from concurrent.futures import Future, wait
+    from types import SimpleNamespace
+
+    import camera_receiver as module
+
+    first, second = Future(), Future()
+    if raises:
+        first.set_exception(RuntimeError("left decode failed"))
+    else:
+        first.set_result(False)
+    futures = iter([first, second])
+    receiver = module.Avs1TcpReceiver.__new__(module.Avs1TcpReceiver)
+    receiver._sample_pool = SimpleNamespace(submit=lambda *args: next(futures))
+    receiver._validate_stream_descriptor = lambda *args: None
+    runtime = SimpleNamespace(write_index=0, config=SimpleNamespace(name="head"))
+    waiting, finished = threading.Event(), threading.Event()
+
+    def observed_wait(tasks):
+        waiting.set()
+        return wait(tasks)
+
+    def process():
+        try:
+            receiver._process_stream_safe(
+                None, None, SimpleNamespace(samples=[object(), object()]), runtime
+            )
+        finally:
+            finished.set()
+
+    monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace())
+    monkeypatch.setattr(module, "wait", observed_wait)
+    thread = threading.Thread(target=process)
+    thread.start()
+    try:
+        assert waiting.wait(2)
+        assert not finished.is_set()
+    finally:
+        second.set_result(False)
+        thread.join(2)
+    assert finished.is_set()

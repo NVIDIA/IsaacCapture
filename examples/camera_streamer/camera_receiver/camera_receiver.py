@@ -23,7 +23,7 @@ import socket
 import struct
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -788,7 +788,10 @@ class Avs1TcpReceiver:
             )
             for sample in stream.samples
         ]
-        if not all(future.result() for future in futures):
+        # Keep the slot and decoders owned until both eyes finish, even on failure.
+        wait(futures)
+        results = [future.result() for future in futures]
+        if not all(results):
             return
         receiver_process_done_mono_ns = time.monotonic_ns()
         receiver_process_done_ns, _ = _read_wall_clock_ns()
