@@ -48,3 +48,8 @@ licenses remain in effect. The Argus-derived `EGLGlobal.h`, `EGLGlobal.cpp` and
 CMake caches absolute source paths. After updating an existing deployment, configure
 and build the native sender and decoder again at the paths shown above. Do not move
 or reuse an old build directory from a different source location.
+
+For opt-in hardware smoke tests, install PyYAML for the Python interpreter selected
+by CMake. Set `ARGUS_SENDER_HARDWARE_CONFIG` to your stereo profile; the smoke receiver
+reads `network.port` from that same file (default 5000), so there is no separate
+receiver-port override.

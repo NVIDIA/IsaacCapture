@@ -52,8 +52,6 @@ option(ARGUS_SENDER_HARDWARE_TESTS
 set(ARGUS_SENDER_HARDWARE_CONFIG
     "${CMAKE_CURRENT_SOURCE_DIR}/configs/hardware_stereo_smoke.yaml"
     CACHE FILEPATH "Config used by the hardware smoke test")
-set(ARGUS_SENDER_TEST_PORT "55000" CACHE STRING
-    "Loopback TCP port used by hardware tests")
 
 if(ARGUS_SENDER_HARDWARE_TESTS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -64,7 +62,6 @@ if(ARGUS_SENDER_HARDWARE_TESTS)
                 --sender $<TARGET_FILE:argus_sender>
                 --config ${ARGUS_SENDER_HARDWARE_CONFIG}
                 --frames 120
-                --port ${ARGUS_SENDER_TEST_PORT}
     )
     set_tests_properties(avs1_hardware_smoke PROPERTIES
         LABELS "hardware"

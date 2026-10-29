@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 
 HEADER = struct.Struct("!4sHHIHHQQQQIIQ")
@@ -102,13 +103,23 @@ def connect_with_retry(
     raise TimeoutError("timed out connecting to argus_sender")
 
 
+def configured_port(config_path: str) -> int:
+    import yaml
+
+    config = yaml.safe_load(Path(config_path).read_text())
+    port = config.get("network", {}).get("port", 5000)
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("network.port must be an integer in 1..65535")
+    return port
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sender", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--frames", type=int, default=120)
-    parser.add_argument("--port", type=int, default=55000)
     args = parser.parse_args()
+    port = configured_port(args.config)
 
     process = subprocess.Popen(
         [args.sender, "--config", args.config],
@@ -118,7 +129,7 @@ def main() -> int:
     )
     output = ""
     try:
-        sock = connect_with_retry(args.port, process, 15.0)
+        sock = connect_with_retry(port, process, 15.0)
         first_nals: list[list[int]] | None = None
         last_tsc: list[int | None] = [None, None]
         max_delta_us = 0.0
