@@ -51,6 +51,12 @@ public:
     //! Message records written since the last call.
     std::vector<uint8_t> take_samples();
 
+    /*!
+     * @brief Adds a Message record on `topic` to the samples, after those the session wrote.
+     * @return False, adding nothing, when `topic` has no kept channel: none declared yet, or filtered out.
+     */
+    bool add_record(std::string_view topic, std::span<const uint8_t> data, uint64_t log_time_ns);
+
 protected:
     void handleWrite(const std::byte* data, uint64_t size) override;
 
@@ -63,6 +69,7 @@ private:
     uint64_t size_ = 0;
     std::set<std::string, std::less<>> topic_filter_;
     std::set<uint16_t> kept_channels_;
+    std::map<std::string, uint16_t, std::less<>> kept_topics_;
     std::vector<uint8_t> setup_;
     std::vector<uint8_t> samples_;
 };

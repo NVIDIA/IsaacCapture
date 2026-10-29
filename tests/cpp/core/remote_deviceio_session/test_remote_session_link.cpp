@@ -3,15 +3,19 @@
 
 // Both ends of a remote session over loopback: a RemoteSessionHost recording a live DeviceIOSession, and a
 // RemoteSessionClient feeding a RemoteSession. The server's KeyboardTracker never touches the OpenXR session
-// handles, so placeholder handles stand in for a runtime.
+// handles, so placeholder handles stand in for a runtime; plugin-fed trackers read a fake tensor runtime.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <deviceio_base/tracker_vendor.hpp>
+#include <deviceio_session/deviceio_session.hpp>
 #include <deviceio_session/remote_session.hpp>
 #include <deviceio_session/remote_session_client.hpp>
 #include <deviceio_session/remote_session_host.hpp>
+#include <deviceio_trackers/full_body_tracker.hpp>
+#include <deviceio_trackers/generic_3axis_pedal_tracker.hpp>
 #include <deviceio_trackers/keyboard_tracker.hpp>
 #include <mcap/sample_stream.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -21,8 +25,14 @@
 #include <remote_link/reject.hpp>
 #include <remote_link/tcp_transport.hpp>
 #include <remote_link/websocket_transport.hpp>
+#include <schema/full_body_generated.h>
 #include <schema/keyboard_generated.h>
+#include <schema/pedals_generated.h>
+#include <schema/serialized.hpp>
 #include <sys/socket.h>
+#if defined(XR_USE_TIMESPEC)
+#    include <tensor_test_support/fake_tensor_runtime.hpp>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -1013,3 +1023,160 @@ TEST_CASE("RemoteSessionClient: tcp:// on a WebSocket port is malformed data, no
     CHECK_FALSE(peer_closed);
     CHECK(text == "Remote session ended before HELLO_ACK: receive failed: malformed data");
 }
+
+#if defined(XR_USE_TIMESPEC)
+
+namespace
+{
+
+using tensor_test_support::FakeTensorRuntime;
+
+//! A plugin-fed tracker type: the server reads its collection through the fake tensor runtime, the robot the
+//! same tracker type through a RemoteSession.
+struct PluginTrackerCase
+{
+    std::string collection;
+    uint32_t sample_size;
+    std::vector<uint8_t> payload;
+    std::shared_ptr<core::ITracker> server_tracker;
+    core::VendorConfig vendors;
+    std::unique_ptr<core::ITracker> robot_tracker;
+    std::function<bool(const core::ITracker&, const core::ITrackerSession&)> has_data;
+};
+
+PluginTrackerCase pedal_case()
+{
+    PluginTrackerCase c;
+    c.collection = "pedals";
+    auto tracker = std::make_shared<core::Generic3AxisPedalTracker>(c.collection);
+    c.sample_size = static_cast<uint32_t>(tracker->max_flatbuffer_size());
+    core::Generic3AxisPedalOutputT native;
+    native.left_pedal = 0.5f;
+    const auto packed = core::pack<core::Generic3AxisPedalOutput>(native);
+    c.payload.assign(packed.buffer().begin(), packed.buffer().end());
+    c.server_tracker = tracker;
+    c.robot_tracker = std::make_unique<core::Generic3AxisPedalTracker>(c.collection);
+    c.has_data = [](const core::ITracker& t, const core::ITrackerSession& s)
+    { return static_cast<bool>(static_cast<const core::Generic3AxisPedalTracker&>(t).get_data(s)); };
+    return c;
+}
+
+PluginTrackerCase noitom_case()
+{
+    PluginTrackerCase c;
+    c.collection = "noitom_mocap";
+    c.sample_size = 4096;
+    core::FullBodyPoseT native;
+    native.joints = std::make_unique<core::BodyJoints>();
+    native.all_joint_poses_tracked = true;
+    const auto packed = core::pack<core::FullBodyPose>(native);
+    c.payload.assign(packed.buffer().begin(), packed.buffer().end());
+    c.server_tracker = std::make_shared<core::FullBodyTracker>();
+    c.vendors.tracker_vendors.push_back({ c.server_tracker.get(), core::TrackerVendor{ "body.noitom", {} } });
+    c.robot_tracker = std::make_unique<core::FullBodyTracker>();
+    c.has_data = [](const core::ITracker& t, const core::ITrackerSession& s)
+    { return static_cast<bool>(static_cast<const core::FullBodyTracker&>(t).get_body_pose(s)); };
+    return c;
+}
+
+//! What the plugin does next. The server thread applies each step before its next tick, so only that thread
+//! touches the fake runtime.
+enum PluginStep
+{
+    kPublish = 1,
+    kGoQuiet,
+    kVanish,
+    kReturn,
+};
+
+} // namespace
+
+TEST_CASE("RemoteSessionHost: a plugin tracker reads no data once its device goes away, as in a local session",
+          "[remote][session][network]")
+{
+    PluginTrackerCase c = GENERATE(0, 1) == 0 ? pedal_case() : noitom_case();
+    CAPTURE(c.collection);
+
+    auto stream = std::make_shared<core::TrackerSampleStreamReader>();
+    auto session = core::RemoteSession::run({ stream, { { c.robot_tracker.get(), "0" } } });
+    const std::vector<std::string> topics = stream->subscribed_topics();
+    std::atomic<int> requested{ 0 };
+    std::atomic<int> ticks{ 0 };
+
+    Server server(false,
+                  [&](core::RemoteSessionHost& host, const std::atomic<bool>& stop)
+                  {
+                      FakeTensorRuntime runtime;
+                      // The session's trackers call into the runtime until the host is closed.
+                      struct CloseHostFirst
+                      {
+                          core::RemoteSessionHost& host;
+                          ~CloseHostFirst()
+                          {
+                              host.close();
+                          }
+                      } close_host_first{ host };
+
+                      if (host.wait_hello(kWait) != kHello)
+                      {
+                          throw std::runtime_error("no HELLO");
+                      }
+                      host.send_hello_ack(kHelloAck);
+                      host.start_session({ c.server_tracker }, { { c.server_tracker.get(), "0" } }, runtime.handles(),
+                                         c.vendors, topics);
+                      host.send_ready(kReady);
+                      for (int applied = 0; !stop && host.alive();)
+                      {
+                          for (; applied < requested; ++applied)
+                          {
+                              const int step = applied + 1;
+                              if (step == kPublish || step == kReturn)
+                              {
+                                  runtime.create(c.collection, c.sample_size);
+                                  runtime.push(c.collection, c.payload, core::os_monotonic_now_ns());
+                              }
+                              else if (step == kVanish)
+                              {
+                                  runtime.destroy(c.collection);
+                              }
+                          }
+                          host.tick();
+                          ++ticks;
+                          std::this_thread::sleep_for(5ms);
+                      }
+                  });
+
+    const auto client = core::RemoteSessionClient::connect(server.endpoint(), kHello, stream, kWait);
+    REQUIRE(client->wait_ready(kWait) == core::RemoteReadyState::Ready);
+    // Fresh as well, so that no data cannot come from a stale stream instead.
+    const auto reads = [&](bool data)
+    {
+        return wait_until(
+            [&]
+            {
+                session->update();
+                return session->is_fresh() && c.has_data(*c.robot_tracker, *session) == data;
+            });
+    };
+
+    CHECK(reads(false));
+    requested = kPublish;
+    REQUIRE(reads(true));
+
+    // A plugin that publishes nothing new keeps its last sample.
+    requested = kGoQuiet;
+    const int quiet_from = ticks;
+    REQUIRE(wait_until([&] { return ticks >= quiet_from + 10; }));
+    CHECK(reads(true));
+
+    requested = kVanish;
+    CHECK(reads(false));
+
+    requested = kReturn;
+    CHECK(reads(true));
+
+    server.stop();
+    CHECK(server.error().empty());
+}
+
+#endif

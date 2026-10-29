@@ -114,7 +114,9 @@ that supplies the data).
 
 **Session process.** It builds the trackers from HELLO, and `RemoteSessionHost` runs a `DeviceIOSession` over them,
 recording the requested topics into a `TrackerSampleStreamWriter`. It ticks at the robot app's tick rate; each tick
-sends setup for new topics before its SAMPLES, even an empty one, so the data does not turn stale.
+sends setup for new topics before its SAMPLES, even an empty one, so the data does not turn stale. A plugin tracker,
+and a full-body tracker from the Noitom or Xsens vendor, records only new samples, so when the plugin's data leaves the
+OpenXR runtime, which a local reader sees as no data, the host adds a record without data to the tick.
 
 **Robot app, per `step()`.** The `TrackerSampleStreamReader` keeps each topic's newest record. `RemoteSession.update()`
 takes a snapshot of those records, empty when they are stale; each replay impl reads its topics from it through a
@@ -188,7 +190,8 @@ stunnel).
 
 No automated test needs a headset or an OpenXR runtime. C++ `RemoteSession` tests write head and hand records into a
 sample stream; tests over a link stream `KeyboardTracker` data, which needs no OpenXR (`TeleopSession` itself refuses
-it). C++ tests use an in-memory transport, `socketpair()` or loopback. Teleop Session Server tests use its test-only
+it), and pedal and Noitom full-body data from a fake tensor runtime (`tests/cpp/core/support/tensor_test_support`).
+C++ tests use an in-memory transport, `socketpair()` or loopback. Teleop Session Server tests use its test-only
 `--placeholder-openxr` flag (no OpenXR session; READY at once) or scripted OpenXR and plugins.
 
 ## 12. Decisions and reasons

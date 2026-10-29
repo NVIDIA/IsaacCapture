@@ -243,7 +243,9 @@ Then point the robot app at it:
   plugin directories. ``PluginConfig.search_paths`` must still be given but is
   ignored, and ``plugin_args``, paths included, are read on the server machine.
   A plugin that stops running on the server makes ``step()`` raise
-  ``PluginCrashException``, as a local plugin crash does.
+  ``PluginCrashException``, as a local plugin crash does. As in live mode, a
+  tracker reports no data once its plugin's data goes away, and keeps its last
+  sample while the plugin runs but pushes nothing new.
 - **Status.** ``get_status()`` shows the server's OpenXR session as the
   ``openxr/runtime`` provider and the headset as ``openxr/headset``, as in live
   mode; for example, the headset turns ``DISCONNECTED`` when the operator takes

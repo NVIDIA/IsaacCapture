@@ -73,6 +73,14 @@ void append(std::vector<uint8_t>& out, std::span<const uint8_t> bytes)
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
+void append_le(std::vector<uint8_t>& out, uint64_t value, size_t width)
+{
+    for (size_t i = 0; i < width; ++i)
+    {
+        out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+    }
+}
+
 //! The channel id a Message record's body starts with.
 uint16_t message_channel_id(std::span<const uint8_t> record, const char* who)
 {
@@ -164,6 +172,25 @@ std::vector<uint8_t> TrackerSampleStreamWriter::take_samples()
     return std::exchange(samples_, {});
 }
 
+bool TrackerSampleStreamWriter::add_record(std::string_view topic, std::span<const uint8_t> data, uint64_t log_time_ns)
+{
+    const auto channel = kept_topics_.find(topic);
+    if (channel == kept_topics_.end())
+    {
+        return false;
+    }
+    // Message body: channel id, sequence, log time, publish time, then the data.
+    constexpr size_t kHeader = sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint64_t);
+    samples_.push_back(static_cast<uint8_t>(mcap::OpCode::Message));
+    append_le(samples_, kHeader + data.size(), sizeof(uint64_t));
+    append_le(samples_, channel->second, sizeof(uint16_t));
+    append_le(samples_, 0, sizeof(uint32_t));
+    append_le(samples_, log_time_ns, sizeof(uint64_t));
+    append_le(samples_, log_time_ns, sizeof(uint64_t));
+    append(samples_, data);
+    return true;
+}
+
 void TrackerSampleStreamWriter::handleWrite(const std::byte* data, uint64_t size)
 {
     size_ += size;
@@ -208,6 +235,7 @@ void TrackerSampleStreamWriter::consume_records()
             if (topic_filter_.empty() || topic_filter_.contains(channel.topic))
             {
                 kept_channels_.insert(channel.id);
+                kept_topics_[channel.topic] = channel.id;
                 append(setup_, record);
             }
             break;
