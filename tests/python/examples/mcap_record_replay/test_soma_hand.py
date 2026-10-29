@@ -258,6 +258,58 @@ def test_hand_pose_pipeline_and_native_25_joint_renderer_need_no_model(monkeypat
     assert visualizers["hand_left"].points.points.shape == (0, 3)
 
 
+@pytest.mark.parametrize("module", [live_hand, replay_hand])
+def test_hand_viewers_do_not_follow_hand_height(module, monkeypatch, tmp_path):
+    server = MagicMock()
+    ground = MagicMock()
+    monkeypatch.setattr(module.viser, "ViserServer", lambda **kwargs: server)
+    monkeypatch.setattr(module, "setup_scene", MagicMock(return_value=ground))
+    result = {}
+    for side, height in (("left", 1.0), ("right", 2.0)):
+        group = OptionalTensorGroup(OptionalType(SomaHandInput()))
+        positions = np.zeros((25, 3), dtype=np.float32)
+        positions[:, 1] = height
+        group[SomaHandInputIndex.JOINT_POSITIONS] = positions
+        group[SomaHandInputIndex.JOINT_VALID] = np.ones(25, dtype=np.uint8)
+        result[f"hand_{side}"] = group
+
+    if module is live_hand:
+        monkeypatch.setattr(module.CloudXRLauncher, "launch_context", MagicMock())
+        session = MagicMock()
+        session.__enter__.return_value.step.side_effect = [result, KeyboardInterrupt]
+        monkeypatch.setattr(module, "TeleopSession", MagicMock(return_value=session))
+    else:
+        monkeypatch.setattr(
+            module, "resolve_recording", lambda *args: tmp_path / "hands.mcap"
+        )
+        monkeypatch.setattr(
+            soma_hand_common,
+            "replay_info",
+            lambda *args: ({"hand_left": 1, "hand_right": 1}, 30.0),
+        )
+
+        def replay(path, pipeline, count, update, rate):
+            update(result)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(module, "replay_once", replay)
+
+    assert (
+        module.main(
+            [
+                "example",
+                "--hand-schema",
+                "soma",
+                "--soma-hand-representation",
+                "joint-poses",
+            ]
+        )
+        == 0
+    )
+    ground.follow.assert_not_called()
+    server.stop.assert_called_once()
+
+
 @pytest.mark.parametrize("module", [live_hand, record_hand, replay_hand])
 def test_hand_cli_help_does_not_load_models(module, monkeypatch, capsys):
     monkeypatch.setattr(
