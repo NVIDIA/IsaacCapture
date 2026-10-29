@@ -6,9 +6,28 @@
 from __future__ import annotations
 
 import ctypes
+import logging
+from enum import IntEnum
 from pathlib import Path
 
 from .camera_mailbox import CameraImage
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class _UploadResult(IntEnum):
+    """Integer C ABI shared with UploadResult in pip_layer.cpp."""
+
+    SUCCESS = 0
+    INVALID_ARGUMENT = -1
+    NOT_ATTACHED = -2
+    CAMERA_UNAVAILABLE = -3
+    SWAPCHAIN_FAILED = -4
+    ALLOCATION_FAILED = -5
+    UPLOAD_FAILED = -6
+    COMPLETION_UNPROVED = -7
+    CUDA_UNAVAILABLE = -8
+    UPLOAD_MODE_MISMATCH = -9
 
 
 class OpenXRCameraPanels:
@@ -30,6 +49,7 @@ class OpenXRCameraPanels:
             "supports_cuda": ([], ctypes.c_int),
             "attach": ([pointer] * 7 + [uint], ctypes.c_int),
             "destroy": ([pointer], ctypes.c_int),
+            "wait_cuda": ([pointer, uint], ctypes.c_int),
             "layer": ([pointer, uint], pointer),
             "configure": (
                 [
@@ -64,6 +84,8 @@ class OpenXRCameraPanels:
         self._published_revision = [0] * len(panels)
         self.last_errors = [None] * len(panels)
         self._attached = False
+        self._pending_uploads = {}
+        self._retired_panels = set()
         self._handle = self._native.isaacteleop_pip_create()
         if not self._handle:
             raise MemoryError("could not create camera panel owner")
@@ -109,6 +131,8 @@ class OpenXRCameraPanels:
     def publish(
         self, index: int, image: CameraImage | None, *, invalid: bool = False
     ) -> bool:
+        if index in self._retired_panels:
+            return False
         if invalid:
             self.hide(index)
             self.last_errors[index] = "completed camera output was invalid"
@@ -135,9 +159,15 @@ class OpenXRCameraPanels:
                     image.height,
                     gpu.device,
                 )
-                # -7 cannot prove copy completion: retain the borrowed map.
-                if result != -7:
+                # Keep the borrowed map until the native copy has completed.
+                if result != _UploadResult.COMPLETION_UNPROVED:
                     gpu.busy = False
+                else:
+                    self._pending_uploads[index] = gpu
+                    self._retired_panels.add(index)
+                    _LOGGER.warning(
+                        "Camera panel %s disabled after incomplete GPU copy", index
+                    )
             else:
                 pixels = ctypes.create_string_buffer(image.rgba)
                 result = self._native.isaacteleop_pip_publish_rgba(
@@ -151,9 +181,11 @@ class OpenXRCameraPanels:
         except Exception:
             self.hide(index)
             raise
-        if result != 0:
+        if result != _UploadResult.SUCCESS:
             self.hide(index)
-            self.last_errors[index] = f"OpenXR camera quad upload failed: {result}"
+            self.last_errors[index] = (
+                f"OpenXR camera quad upload failed: {_UploadResult(result).name} ({result})"
+            )
             return False
         self._published_revision[index] = image.revision
         self.last_errors[index] = None
@@ -162,6 +194,25 @@ class OpenXRCameraPanels:
     def hide(self, index: int) -> None:
         if self._visible[index]:
             self._set_panel(index, False, 1, 1)
+
+    def finish_frame(self) -> None:
+        first_error = None
+        for index, gpu in tuple(self._pending_uploads.items()):
+            result = self._native.isaacteleop_pip_wait_cuda(self._handle, index)
+            if result != _UploadResult.SUCCESS:
+                error = RuntimeError(
+                    f"camera {index} GPU copy completion is unproved: "
+                    f"{_UploadResult(result).name} ({result})"
+                )
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error.add_note(str(error))
+                continue
+            gpu.busy = False
+            del self._pending_uploads[index]
+        if first_error is not None:
+            raise first_error
 
     def close(self) -> None:
         if self._handle:

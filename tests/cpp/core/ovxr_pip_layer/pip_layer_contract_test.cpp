@@ -216,6 +216,8 @@ int peerCopies = 0;
 cudaError_t copyResult = cudaSuccess;
 cudaError_t syncResult = cudaSuccess;
 int cudaSyncCalls = 0;
+int currentCudaDevice = -1;
+cudaStream_t lastCudaStream = nullptr;
 cudaMemcpy3DPeerParms peerCopy{};
 }
 extern "C" cudaError_t CUDARTAPI cudaMemcpy2DFromArrayAsync(
@@ -231,8 +233,14 @@ extern "C" cudaError_t CUDARTAPI cudaMemcpy3DPeerAsync(const cudaMemcpy3DPeerPar
     peerCopy = *parameters;
     return copyResult;
 }
-extern "C" cudaError_t CUDARTAPI cudaStreamSynchronize(cudaStream_t)
+extern "C" cudaError_t CUDARTAPI cudaSetDevice(int device)
 {
+    currentCudaDevice = device;
+    return cudaSuccess;
+}
+extern "C" cudaError_t CUDARTAPI cudaStreamSynchronize(cudaStream_t stream)
+{
+    lastCudaStream = stream;
     ++cudaSyncCalls;
     return syncResult;
 }
@@ -255,12 +263,26 @@ int main()
     assert(peerCopy.dstPtr.pitch == 640 * 4 && peerCopy.dstPtr.xsize == 640 * 4);
     copyResult = cudaErrorInvalidDevice;
     assert(copyCameraArray(copyCamera, sourceArray, 640, 480, 1) == cudaErrorInvalidDevice);
-    assert(copyCameraArrayAndWait(copyCamera, sourceArray, 640, 480, 1) == -6);
+    assert(copyCameraArrayAndWait(copyCamera, sourceArray, 640, 480, 1) == UploadResult::UploadFailed);
     assert(cudaSyncCalls == 1 && !copyCamera.cudaPending && !copyCamera.retired);
     syncResult = cudaErrorUnknown;
-    assert(copyCameraArrayAndWait(copyCamera, sourceArray, 640, 480, 1) == -7);
+    assert(copyCameraArrayAndWait(copyCamera, sourceArray, 640, 480, 1) == UploadResult::CompletionUnproved);
     assert(cudaSyncCalls == 2 && copyCamera.cudaPending && copyCamera.retired);
+    PanelSession pendingOwner{};
+    pendingOwner.cameras[1] = copyCamera;
+    pendingOwner.cameras[1].cudaStream = reinterpret_cast<cudaStream_t>(uintptr_t{ 91 });
+    assert(isaacteleop_pip_wait_cuda(&pendingOwner, 1) == UploadResult::CompletionUnproved);
+    assert(pendingOwner.cameras[1].cudaPending);
+    assert(currentCudaDevice == copyCamera.cudaDevice);
+    assert(lastCudaStream == pendingOwner.cameras[1].cudaStream);
     copyResult = syncResult = cudaSuccess;
+    assert(isaacteleop_pip_wait_cuda(&pendingOwner, 1) == 0);
+    assert(!pendingOwner.cameras[1].cudaPending && pendingOwner.cameras[1].retired);
+    const int completedSyncCalls = cudaSyncCalls;
+    assert(isaacteleop_pip_wait_cuda(&pendingOwner, 1) == 0);
+    assert(cudaSyncCalls == completedSyncCalls);
+    assert(isaacteleop_pip_wait_cuda(nullptr, 0) == UploadResult::InvalidArgument);
+    assert(isaacteleop_pip_wait_cuda(&pendingOwner, kMaxCameras) == UploadResult::InvalidArgument);
 #endif
     const auto instance = reinterpret_cast<XrInstance>(uintptr_t{ 1 });
     const auto session = reinterpret_cast<XrSession>(uintptr_t{ 2 });
@@ -339,7 +361,7 @@ int main()
     owned.cudaDevice = 1;
     owned.queue = VkQueue(25);
     owned.width = owned.height = 1;
-    assert(isaacteleop_pip_publish_rgba(owner, 0, &rgba, 1, 1, 4) == -9);
+    assert(isaacteleop_pip_publish_rgba(owner, 0, &rgba, 1, 1, 4) == UploadResult::UploadModeMismatch);
     assert(owned.pixels == &rgba); // Reject without overwriting any resource.
     owned.cudaDevice = -1;
     owned.device = VK_NULL_HANDLE;

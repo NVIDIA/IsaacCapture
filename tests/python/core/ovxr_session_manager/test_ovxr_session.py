@@ -278,6 +278,7 @@ def _runtime_stubs(monkeypatch):
         "OpenXRCameraPanels",
         lambda panels: SimpleNamespace(
             supports_gpu=False,
+            finish_frame=lambda: None,
             attach=lambda _xr, _vk: None,
             layer=lambda _index: None,
             publish=lambda _index, _image, **kw: True,
@@ -1755,6 +1756,7 @@ def test_three_products_keep_selection_order_and_one_native_owner(monkeypatch):
         assert configs == panels
         return SimpleNamespace(
             supports_gpu=False,
+            finish_frame=lambda: None,
             attach=lambda *_a: events.append("attach"),
             close=lambda: events.append("close"),
         )
@@ -1968,7 +1970,9 @@ def test_failed_output_hides_cached_quad_until_successful_refresh(
         visible[0] = True
 
     consumer = CameraPanelConsumer((CameraPanelConfig("/Camera/Head"),))
+    consumer._enabled = True
     consumer._native = SimpleNamespace(
+        finish_frame=lambda: None,
         hide=lambda _index: hide(),
         publish=publish,
         layer=lambda _index: 123 if visible[0] else 0,
@@ -2208,3 +2212,102 @@ def test_failure_after_worker_ready_before_start_returns_retires_without_close(
     finally:
         with pytest.raises(RuntimeError):
             owner.close()
+
+
+@pytest.mark.parametrize("failure", ["vulkan_missing", "external_memory", "attach"])
+def test_unavailable_camera_panels_do_not_block_input_handles(
+    monkeypatch, tmp_path, caplog, failure
+):
+    import ctypes
+    from unittest.mock import Mock
+    from isaaccapture.ovxr_session_manager.openxr_quad import OpenXRCameraPanels
+
+    library = tmp_path / "panels.so"
+    library.touch()
+    native = SimpleNamespace(
+        **{
+            "isaacteleop_pip_" + name: Mock(return_value=value)
+            for name, value in {
+                "create": 123,
+                "max_cameras": 3,
+                "max_image_dimension": 4096,
+                "supports_cuda": 1,
+                "attach": -3 if failure == "attach" else 0,
+                "destroy": 0,
+                "wait_cuda": 0,
+                "layer": 0,
+                "configure": 0,
+                "publish_rgba": 0,
+                "publish_cuda_array": 0,
+            }.items()
+        }
+    )
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: native)
+    monkeypatch.setattr(
+        camera_panels,
+        "OpenXRCameraPanels",
+        lambda panels: OpenXRCameraPanels(panels, library_path=str(library)),
+    )
+    vulkan = (
+        None
+        if failure == "vulkan_missing"
+        else SimpleNamespace(
+            external_memory_handle_types=0 if failure == "external_memory" else 1,
+            vk_physical_device=1,
+            vk_device=2,
+            vk_queue=3,
+            queue_family_index=0,
+        )
+    )
+    attempts = []
+
+    def get_vulkan(self):
+        attempts.append(None)
+        if len(attempts) > 3:
+            raise RuntimeError("optional panels stalled core readiness")
+        return vulkan
+
+    monkeypatch.setattr(_FakeContext, "get_vulkan_handles", get_vulkan)
+    consumer = CameraPanelConsumer((CameraPanelConfig("/Camera/Head"),))
+    owner = _session_with_consumers(_FakeHost(), _config(), frame_consumers=(consumer,))
+    try:
+        assert owner.start()
+        assert owner.external_oxr_handles() == (11, 22, 33, 44)
+        assert consumer.composition_layers() == ()
+        assert "Camera panels disabled" in caplog.text
+    finally:
+        owner.close()
+    assert native.isaacteleop_pip_attach.call_count == int(failure == "attach")
+    native.isaacteleop_pip_destroy.assert_called_once()
+
+
+@pytest.mark.parametrize("native_fails", [False, True])
+def test_camera_completion_failure_still_retires_independent_mailboxes(native_fails):
+    events = []
+    pending = [True]
+
+    def finish_native():
+        events.append("wait")
+        if native_fails and pending[0]:
+            raise RuntimeError("native completion failed")
+
+    def blocked():
+        events.append("blocked")
+        if pending[0]:
+            raise RuntimeError("map still busy")
+
+    consumer = CameraPanelConsumer((CameraPanelConfig("/Camera/Head"),))
+    consumer._native = SimpleNamespace(
+        finish_frame=finish_native, close=lambda: events.append("native close")
+    )
+    consumer._mailboxes = [
+        SimpleNamespace(close=blocked),
+        SimpleNamespace(close=lambda: events.append("independent")),
+    ]
+    with pytest.raises(RuntimeError):
+        consumer.close()
+    assert events == ["wait", "blocked", "independent"]
+    assert consumer._native is not None
+    pending[0] = False
+    consumer.close()
+    assert events[-4:] == ["wait", "blocked", "independent", "native close"]

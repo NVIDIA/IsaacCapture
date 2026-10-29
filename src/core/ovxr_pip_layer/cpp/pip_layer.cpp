@@ -30,6 +30,21 @@ namespace
 {
 constexpr size_t kMaxCameras = 3;
 
+// Integer C ABI mirrored by _UploadResult in openxr_quad.py.
+enum UploadResult : int
+{
+    Success = 0,
+    InvalidArgument = -1,
+    NotAttached = -2,
+    CameraUnavailable = -3,
+    SwapchainFailed = -4,
+    AllocationFailed = -5,
+    UploadFailed = -6,
+    CompletionUnproved = -7,
+    CudaUnavailable = -8,
+    UploadModeMismatch = -9,
+};
+
 struct Dispatch
 {
     PFN_xrGetInstanceProcAddr gipa = nullptr;
@@ -734,42 +749,42 @@ extern "C" int isaacteleop_pip_publish_rgba(
     if (!owner || cameraIndex >= kMaxCameras || !rgba || !width || !height || width > kMaxImageDimension ||
         height > kMaxImageDimension || static_cast<uint64_t>(width) * height * 4 != length)
     {
-        return -1;
+        return UploadResult::InvalidArgument;
     }
     if (!owner->attached)
     {
-        return -2;
+        return UploadResult::NotAttached;
     }
     CameraSession& camera = owner->cameras[cameraIndex];
     const auto& panel = owner->panels[cameraIndex];
     if (!camera.device || !camera.queue || camera.retired || !(panel.headLocked ? camera.view : camera.local))
     {
-        return -3;
+        return UploadResult::CameraUnavailable;
     }
     const Dispatch& dispatch = owner->dispatch;
     if ((camera.width != width || camera.height != height || !camera.swapchain) &&
         !createSwapchain(camera, dispatch, width, height))
     {
-        return -4;
+        return UploadResult::SwapchainFailed;
     }
 #if defined(ISAAC_TELEOP_PIP_CUDA) && defined(__linux__)
     if (camera.cudaDevice >= 0)
     {
-        return -9; // Do not replace live CUDA aliases with CPU staging resources.
+        return UploadResult::UploadModeMismatch; // Do not replace live CUDA aliases with CPU staging resources.
     }
 #endif
     if ((!camera.staging || !camera.memory || !camera.pixels || !camera.pool || !camera.command || !camera.fence) &&
         !createUploadResources(camera))
     {
-        return -5;
+        return UploadResult::AllocationFailed;
     }
-    return upload(camera, dispatch, rgba) ? 0 : -6;
+    return upload(camera, dispatch, rgba) ? UploadResult::Success : UploadResult::UploadFailed;
 }
 
 
 // Application API, not an OVXR export. The caller owns a completed OVRTX map
-// until this synchronous upload returns. -7 means completion is unproved and
-// that map MUST remain retained; no further upload is admitted on the session.
+// until this synchronous upload returns. CompletionUnproved retains that map
+// until completion is proved; the affected panel retires.
 extern "C" int isaacteleop_pip_supports_cuda()
 {
 #if defined(ISAAC_TELEOP_PIP_CUDA) && defined(__linux__)
@@ -811,13 +826,30 @@ int copyCameraArrayAndWait(CameraSession& camera, const void* array, uint32_t wi
     if (cudaStreamSynchronize(camera.cudaStream) != cudaSuccess)
     {
         camera.retired = true;
-        return -7;
+        return UploadResult::CompletionUnproved;
     }
     camera.cudaPending = false;
-    return copied == cudaSuccess ? 0 : -6;
+    return copied == cudaSuccess ? UploadResult::Success : UploadResult::UploadFailed;
 }
 } // namespace
 #endif
+
+// Completion-only recovery never retries a copy or destroys native resources.
+extern "C" int isaacteleop_pip_wait_cuda(PanelSession* owner, uint32_t cameraIndex)
+{
+    if (!owner || cameraIndex >= kMaxCameras)
+        return UploadResult::InvalidArgument;
+#if defined(ISAAC_TELEOP_PIP_CUDA) && defined(__linux__)
+    auto& camera = owner->cameras[cameraIndex];
+    if (camera.cudaPending)
+    {
+        if (cudaSetDevice(camera.cudaDevice) != cudaSuccess || cudaStreamSynchronize(camera.cudaStream) != cudaSuccess)
+            return UploadResult::CompletionUnproved;
+        camera.cudaPending = false;
+    }
+#endif
+    return UploadResult::Success;
+}
 
 extern "C" int isaacteleop_pip_publish_cuda_array(
     PanelSession* owner, uint32_t cameraIndex, const void* array, uint32_t width, uint32_t height, int device)
@@ -826,16 +858,16 @@ extern "C" int isaacteleop_pip_publish_cuda_array(
     if (!owner || cameraIndex >= kMaxCameras || !array || !width || !height || width > kMaxImageDimension ||
         height > kMaxImageDimension || device < 0)
     {
-        return -1;
+        return UploadResult::InvalidArgument;
     }
     if (!owner->attached)
     {
-        return -2;
+        return UploadResult::NotAttached;
     }
     CameraSession& camera = owner->cameras[cameraIndex];
     if (!camera.device || !camera.queue || camera.retired)
     {
-        return -3;
+        return UploadResult::CameraUnavailable;
     }
     // Resolve the borrowed Vulkan device once. A camera output's CUDA ordinal
     // is a source identity, not proof it is the destination Vulkan device.
@@ -848,7 +880,7 @@ extern "C" int isaacteleop_pip_publish_cuda_array(
         int count = 0;
         if (cudaGetDeviceCount(&count) != cudaSuccess)
         {
-            return -8;
+            return UploadResult::CudaUnavailable;
         }
         for (int candidate = 0; candidate < count; ++candidate)
         {
@@ -862,29 +894,29 @@ extern "C" int isaacteleop_pip_publish_cuda_array(
         }
         if (camera.vulkanCudaDevice < 0)
         {
-            return -8;
+            return UploadResult::CudaUnavailable;
         }
     }
     if (cudaSetDevice(camera.vulkanCudaDevice) != cudaSuccess)
     {
-        return -8;
+        return UploadResult::CudaUnavailable;
     }
     const Dispatch& dispatch = owner->dispatch;
     if ((camera.width != width || camera.height != height || !camera.swapchain) &&
         !createSwapchain(camera, dispatch, width, height))
     {
-        return -4;
+        return UploadResult::SwapchainFailed;
     }
     if (!camera.cudaPixels || !camera.pool || !camera.command || !camera.fence)
     {
         if (!releaseImageResources(camera))
         {
-            return -7;
+            return UploadResult::CompletionUnproved;
         }
         camera.cudaDevice = camera.vulkanCudaDevice;
         if (!createUploadResources(camera, true))
         {
-            return -5;
+            return UploadResult::AllocationFailed;
         }
     }
     if (camera.fencePending)
@@ -892,20 +924,20 @@ extern "C" int isaacteleop_pip_publish_cuda_array(
         if (vkWaitForFences(camera.device, 1, &camera.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
         {
             camera.retired = true;
-            return -6;
+            return UploadResult::UploadFailed;
         }
         camera.fencePending = false;
     }
     camera.ready = false;
     const int copied = copyCameraArrayAndWait(camera, array, width, height, device);
-    if (copied != 0)
+    if (copied != UploadResult::Success)
     {
         return copied;
     }
     // No external semaphore wait is introduced: preserve the current host-wait
     // scheduling policy. This is a GPU-only copy, not end-to-end zero-copy.
-    return upload(camera, dispatch, nullptr) ? 0 : -6;
+    return upload(camera, dispatch, nullptr) ? UploadResult::Success : UploadResult::UploadFailed;
 #else
-    return -8;
+    return UploadResult::CudaUnavailable;
 #endif
 }

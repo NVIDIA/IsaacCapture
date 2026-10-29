@@ -68,6 +68,8 @@ class CameraPanelConsumer(OvxrFrameConsumer):
         self._native = None
         self._mailboxes = []
         self._layers = ()
+        self._attach_attempted = False
+        self._enabled = False
 
     @property
     def render_product_paths(self) -> tuple[str, ...]:
@@ -87,12 +89,24 @@ class CameraPanelConsumer(OvxrFrameConsumer):
             )
 
     def on_openxr_ready(self, openxr, vulkan) -> bool:
-        if vulkan is None:
-            return False
-        self._native.attach(openxr, vulkan)
+        if not self._attach_attempted:
+            self._attach_attempted = True
+            try:
+                if vulkan is None:
+                    raise RuntimeError("Vulkan handles are unavailable")
+                self._native.attach(openxr, vulkan)
+            except Exception:
+                # Partial native attachment stays owned until normal close.
+                _LOGGER.exception(
+                    "Camera panels disabled; teleoperation remains available"
+                )
+            else:
+                self._enabled = True
         return True
 
     def on_outputs(self, frame: FrameOutputs) -> None:
+        if not self._enabled:
+            return
         layers = []
         self._layers = ()
         for index, mailbox in enumerate(self._mailboxes):
@@ -115,8 +129,20 @@ class CameraPanelConsumer(OvxrFrameConsumer):
         return self._layers
 
     def finish_frame(self) -> None:
-        for mailbox in self._mailboxes:
-            mailbox.close()
+        first_error = None
+        operations = [self._native.finish_frame] if self._native is not None else []
+        operations.extend(mailbox.close for mailbox in self._mailboxes)
+        for finish in operations:
+            try:
+                finish()
+            except Exception as error:
+                # Retain unresolved maps without skipping independent mailboxes.
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error.add_note(str(error))
+        if first_error is not None:
+            raise first_error
 
     def close(self) -> None:
         self.finish_frame()
