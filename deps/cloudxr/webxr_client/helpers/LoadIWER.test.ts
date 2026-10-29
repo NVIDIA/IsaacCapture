@@ -48,6 +48,7 @@ describe('loadIWERIfNeeded', () => {
     } else {
       delete (navigator as Navigator & { xr?: XRSystem }).xr;
     }
+    delete testWindow.xrDevice;
     delete testWindow.IWER;
     delete testWindow.IWER_DevUI;
     jest.restoreAllMocks();
@@ -79,7 +80,9 @@ describe('loadIWERIfNeeded', () => {
 
     const device = {
       installDevUI: jest.fn(),
-      installRuntime: jest.fn(),
+      installRuntime: jest.fn(() => {
+        isSessionSupported.mockResolvedValue(true);
+      }),
     };
     testWindow.IWER = {
       XRDevice: jest.fn(() => device),
@@ -107,6 +110,38 @@ describe('loadIWERIfNeeded', () => {
     expect(appendChild).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects a skipped runtime installation and allows a later retry', async () => {
+    const nativeXR = { isSessionSupported: jest.fn().mockResolvedValue(false) };
+    Object.defineProperty(navigator, 'xr', { configurable: true, value: nativeXR });
+    const device = { installRuntime: jest.fn() };
+    testWindow.IWER = { XRDevice: jest.fn(() => device), metaQuest3: {} };
+    jest.spyOn(document.head, 'appendChild').mockImplementation(<T extends Node>(node: T): T => {
+      if (node instanceof HTMLScriptElement) {
+        queueMicrotask(() => node.onload?.(new Event('load')));
+      }
+      return node;
+    });
+
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: false,
+      iwerLoaded: false,
+    });
+    expect(window.xrDevice).toBeUndefined();
+    expect(navigator.xr).toBe(nativeXR);
+
+    device.installRuntime.mockImplementation(() => {
+      Object.defineProperty(navigator, 'xr', {
+        configurable: true,
+        value: { isSessionSupported: jest.fn().mockResolvedValue(true) },
+      });
+    });
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: true,
+      iwerLoaded: true,
+    });
+    expect(window.xrDevice).toBe(device);
+  });
+
   it('shares one IWER installation across concurrent callers', async () => {
     let appendedScripts = 0;
     let constructedDevices = 0;
@@ -116,6 +151,10 @@ describe('loadIWERIfNeeded', () => {
       installDevUI: jest.fn(),
       installRuntime: jest.fn(() => {
         runtimeInstalls++;
+        Object.defineProperty(navigator, 'xr', {
+          configurable: true,
+          value: { isSessionSupported: jest.fn().mockResolvedValue(true) },
+        });
       }),
     };
     testWindow.IWER = {

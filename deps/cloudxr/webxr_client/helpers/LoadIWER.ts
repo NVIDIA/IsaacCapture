@@ -24,8 +24,8 @@ declare global {
 }
 
 // Both versions are loaded from CDN; bump them together when upgrading IWER.
-const IWER_version = '2.3.0';
-const IWER_DEVUI_version = '2.3.0';
+const IWER_version = '2.7.0';
+const IWER_DEVUI_version = '2.7.0';
 let pendingIWERLoad: Promise<IWERLoadResult> | null = null;
 
 export interface IWERLoadResult {
@@ -65,7 +65,7 @@ async function loadIWER(): Promise<IWERLoadResult> {
     const script = document.createElement('script');
     script.src = `https://unpkg.com/iwer@${IWER_version}/build/iwer.min.js`;
     script.async = true;
-    script.integrity = 'sha384-m8Xcl9WwdP6j/5Fv7MAs7IvvW3PmWCbNZlbF8IsJAnujyeMZi0/xgUE4mM7Tbm/j';
+    script.integrity = 'sha384-pcGii0Tzet8SSL0v/VOhYIzm2dynTF4sEDPQxzsbepa8wICqZkNQvx3xuRRjj6Lc';
     script.crossOrigin = 'anonymous';
 
     await new Promise<void>(resolve => {
@@ -84,7 +84,7 @@ async function loadIWER(): Promise<IWERLoadResult> {
         devUIScript.src = `https://unpkg.com/@iwer/devui@${IWER_DEVUI_version}/build/iwer-devui.min.js`;
         devUIScript.async = true;
         devUIScript.integrity =
-          'sha384-TAu5gWlv92O6gkVclV8HYctTEswyA/0eoS6ULHjjLCShUVts4kDlUg6iLEKmL1r8';
+          'sha384-9jc9tp/DypE1hvhqLzE0xVpXYx64QqIRMDu6f3FkSIaeTqpwniy+t1ierx3y428X';
         devUIScript.crossOrigin = 'anonymous';
 
         await new Promise<void>(devUIResolve => {
@@ -110,17 +110,22 @@ async function loadIWER(): Promise<IWERLoadResult> {
             console.warn('IWER DevUI not found after script load, continuing without DevUI.');
           }
 
-          // This fallback runs only after the native XRSystem reports no immersive
-          // support. IWER 2.3 otherwise preserves that unusable navigator.xr.
+          // Only override the native runtime after it reports no immersive support.
           await device.installRuntime({ forceInstall: true });
-          window.xrDevice = device;
-          supportsImmersive = true;
-          iwerLoaded = true;
-          // The only log that's both unconditional (fires whether or not DevUI loaded, unlike
-          // "IWER DevUI initialized...") and guaranteed to follow installRuntime() actually
-          // succeeding (unlike "IWER DevUI initialized...", which logs before this await) - the
-          // one a caller (e.g. a test) should wait on to know navigator.xr is truly usable.
-          console.info('IWER runtime installed.');
+          // installRuntime can return without replacing navigator.xr; do not
+          // enable Connect until the installed runtime confirms session support.
+          const [vr, ar] = await Promise.all([
+            navigator.xr?.isSessionSupported('immersive-vr'),
+            navigator.xr?.isSessionSupported('immersive-ar'),
+          ]);
+          supportsImmersive = Boolean(vr || ar);
+          if (supportsImmersive) {
+            window.xrDevice = device;
+            iwerLoaded = true;
+            console.info('IWER runtime installed.');
+          } else {
+            console.warn('IWER runtime installed without immersive session support.');
+          }
         } catch (e) {
           console.warn('IWER runtime install failed:', e);
           supportsImmersive = false;
