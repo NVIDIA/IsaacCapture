@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Native codec build outputs
+codec/build/
+codec/_camera_receiver_codec*.so
+
+# Local logs and runtime artifacts
+*.log
+*.pid
+*.sock
+*.avs1
+*.hvs2
+*.nv12
+*.h265
+*.hevc

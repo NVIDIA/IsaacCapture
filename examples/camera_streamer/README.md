@@ -37,6 +37,25 @@ argus_sender/build/argus_sender --config "configs/${PROFILE}.yaml"
 
 The sender listens for a TCP receiver on port 5000 by default.
 
+## Workstation NVDEC decoder
+
+On a Linux workstation with an NVIDIA GPU, CUDA toolkit, CMake and `uv`, run from
+`examples/camera_streamer`:
+
+```bash
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python pybind11 numpy
+cmake -S camera_receiver/codec -B camera_receiver/codec/build \
+  -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+cmake --build camera_receiver/codec/build --parallel 2
+```
+
+The build downloads the pinned NVIDIA Video Codec SDK. CPU-side Python tests:
+
+```bash
+uv run --project examples/camera_streamer/tests --extra dev python -m pytest examples/camera_streamer/tests/python -q
+```
+
 ## Licensing
 
 This example is Apache-2.0 licensed. Existing upstream notices and external SDK
