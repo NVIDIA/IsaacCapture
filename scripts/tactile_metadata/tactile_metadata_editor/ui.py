@@ -90,9 +90,7 @@ class Editor:
 
     def _build_gui(self) -> None:
         gui = self.server.gui
-        self.general_panel = gui.add_panel()
-        self.general_tab = self.general_panel.add_tab("General")
-        with self.general_tab:
+        with gui.add_folder("General"):
             self.side_text = gui.add_markdown("")
             self._action_button("Toggle Side", self._toggle_side)
             self.metadata_path = gui.add_text("Metadata Path", "")
@@ -106,7 +104,6 @@ class Editor:
             self._watch(self.show_saved, lambda _: self._request_draw())
             self.reorder_bridge = gui.add_text("__Tactile Reorder Event", "")
             self._watch(self.reorder_bridge, self._reorder)
-        self.general_panel.float(x=0, y=0, width=320)
 
         self.edit_tabs = gui.add_tab_group()
         self.urdf_tab = self.edit_tabs.add_tab("URDF")
@@ -160,10 +157,11 @@ class Editor:
                 self.grid_center = self._numbers(
                     "Center Position", (0.0, 0.0, 0.0), 0.001
                 )
-                self._action_button("Add with Input", self._add_taxels_input)
-                self.taxel_click_button, _ = self._action_button(
-                    "Add with URDF Click", self._pick_taxels
+                self.grid_rotation = self._sliders("Rotation", (0.0, 0.0, 0.0))
+                self.taxel_capture_button, _ = self._action_button(
+                    "Capture URDF Surface Pose", self._capture_taxel_pose
                 )
+                self._action_button("Add Taxels", self._add_taxels_input)
             with gui.add_folder("Bind Taxels to Segments"):
                 self.binding_start = gui.add_button("Start Binding to Segments")
                 self.binding_next = gui.add_button("Select Segments", disabled=True)
@@ -213,10 +211,10 @@ class Editor:
                     "Restore to Editor Binding Values",
                     self._restore_preview,
                 )
-                self.preview_joint_folder = gui.add_folder("URDF Joints")
-                self.preview_segment_folder = gui.add_folder("Segments")
+                self.preview_segment_folder = gui.add_folder("Segments", order=1)
+                self.preview_joint_folder = gui.add_folder("URDF Joints", order=2)
 
-        self.selection_panel = gui.add_panel(visible=False)
+        self.selection_panel = gui.add_panel()
         self.selection_tab = self.selection_panel.add_tab("Selected Object")
         with self.selection_tab:
             self.selection_folder = gui.add_folder("Selection")
@@ -298,7 +296,7 @@ class Editor:
         self.live_document, self.live_metadata_key = None, ""
         self.pick_mode = None
         self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_click_button.label = "Add with URDF Click"
+        self.taxel_capture_button.label = "Capture URDF Surface Pose"
         self.binding_source.options = ("Editing",)
         self.binding_source.value = "Editing"
         self.side_text.content = f"**Side: {self.state.side.title()}**"
@@ -444,7 +442,9 @@ class Editor:
             with self.edit_joint_folder:
                 self._add_joint_sliders(self.document, self.edit_joint_widgets)
         with self.static_folder:
-            self.preview_joint_folder = self.server.gui.add_folder("URDF Joints")
+            self.preview_joint_folder = self.server.gui.add_folder(
+                "URDF Joints", order=2
+            )
             with self.preview_joint_folder:
                 self._add_joint_sliders(
                     self.preview_document, self.preview_joint_widgets
@@ -492,27 +492,31 @@ class Editor:
         )
 
     def _grid_values(self):
+        center = [float(widget.value) for widget in self.grid_center]
         return (
-            [float(widget.value) for widget in self.grid_center],
+            center,
             float(self.grid_width.value),
             float(self.grid_height.value),
             int(self.grid_rows.value),
             int(self.grid_columns.value),
+            geo.transform(center, [widget.value for widget in self.grid_rotation]),
         )
 
     def _add_taxels_input(self) -> None:
-        center, width, height, rows, columns = self._grid_values()
+        center, width, height, rows, columns, frame = self._grid_values()
         selected = self.document.add_taxels(
-            geo.grid_poses(center, width, height, rows, columns)
+            geo.grid_poses(center, width, height, rows, columns, frame)
         )
         self.selected_kind, self.selected_rows = "taxels", selected
         self._rebuild_edit_lists()
         self._rebuild_selection()
 
-    def _pick_taxels(self) -> None:
-        self.pick_mode = None if self.pick_mode == "taxels" else "taxels"
-        self.taxel_click_button.label = (
-            "● Add with URDF Click" if self.pick_mode else "Add with URDF Click"
+    def _capture_taxel_pose(self) -> None:
+        self.pick_mode = None if self.pick_mode == "taxel_pose" else "taxel_pose"
+        self.taxel_capture_button.label = (
+            "● Capture URDF Surface Pose"
+            if self.pick_mode
+            else "Capture URDF Surface Pose"
         )
 
     def _rebuild_edit_lists(self) -> None:
@@ -721,7 +725,7 @@ class Editor:
     def _start_binding(self) -> None:
         self.pick_mode = None
         self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_click_button.label = "Add with URDF Click"
+        self.taxel_capture_button.label = "Capture URDF Surface Pose"
         self.binding_phase = "taxels"
         self.binding_taxels, self.binding_segments = [], []
         self.selected_kind, self.selected_rows = None, []
@@ -835,7 +839,9 @@ class Editor:
             self.preview_segment_folder.remove()
         self.preview_segment_widgets = []
         with self.static_folder:
-            self.preview_segment_folder = self.server.gui.add_folder("Segments")
+            self.preview_segment_folder = self.server.gui.add_folder(
+                "Segments", order=1
+            )
             with self.preview_segment_folder:
                 for row, segment in enumerate(self.preview_document.segments):
                     with self.server.gui.add_folder(f"{row}: {segment.joint}"):
@@ -1034,7 +1040,7 @@ class Editor:
                 continue
             distance = -local_origin[2] / local_direction[2]
             local_hit = local_origin + distance * local_direction
-            if distance > 0 and np.max(np.abs(local_hit[:2])) <= 0.005:
+            if distance > 0 and np.max(np.abs(local_hit[:2])) <= 0.00125:
                 hits.append((distance, row))
         return [min(hits)[1]] if hits else []
 
@@ -1064,7 +1070,7 @@ class Editor:
     def _handle_pick(self, event) -> None:
         mode, self.pick_mode = self.pick_mode, None
         self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_click_button.label = "Add with URDF Click"
+        self.taxel_capture_button.label = "Capture URDF Surface Pose"
         if self.model is None:
             raise ValueError("Load a URDF before using URDF Click")
         hit = self.model.hit(
@@ -1081,14 +1087,12 @@ class Editor:
             value[:3] = hit[1].tolist()
             row = self.document.add_segment(self.new_segment_joint.value, value)
             self.selected_kind, self.selected_rows = "segments", [row]
+            self._rebuild_edit_lists()
         else:
-            _, width, height, rows, columns = self._grid_values()
             frame = geo.surface_frame(hit[1], hit[2])
-            selected = self.document.add_taxels(
-                geo.grid_poses(hit[1], width, height, rows, columns, frame)
-            )
-            self.selected_kind, self.selected_rows = "taxels", selected
-        self._rebuild_edit_lists()
+            position, rotation = geo.components(frame)
+            self._set_values(self.grid_center, position)
+            self._set_values(self.grid_rotation, rotation)
 
     def _selection_values(self):
         if self.selected_kind is None:
@@ -1103,17 +1107,18 @@ class Editor:
         values = self._selection_values()
         rows = [row for row in self.selected_rows if 0 <= row < len(values)]
         self.selected_rows = rows
-        self.selection_panel.visible = bool(rows)
         with self.selection_tab:
             self.selection_folder = self.server.gui.add_folder("Selection")
-        if not rows:
-            return
         with self.selection_folder:
             self.server.gui.add_markdown(
-                f"Type: **{self.selected_kind}**  \nCount: **{len(rows)}**"
+                f"Type: **{self.selected_kind if rows else 'None'}**  \n"
+                f"Count: **{len(rows)}**"
             )
-            positions = np.asarray([values[row].pose[:3] for row in rows])
-            center = positions.mean(axis=0)
+            center = (
+                np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)
+                if rows
+                else np.zeros(3)
+            )
             if len(rows) == 1:
                 _, rotation = geo.components(geo.matrix(values[rows[0]].pose))
             else:
@@ -1121,6 +1126,11 @@ class Editor:
             self.selection_position_widgets = self._numbers("Position", center, 0.001)
             self.selection_rotation_widgets = self._sliders("Rotation", rotation)
             self.selection_rotation = np.asarray(rotation, dtype=float)
+            for widget in (
+                *self.selection_position_widgets,
+                *self.selection_rotation_widgets,
+            ):
+                widget.disabled = not rows
             for axis, widget in enumerate(self.selection_position_widgets):
                 self._watch(
                     widget,
@@ -1133,10 +1143,11 @@ class Editor:
                 )
             self.selection_scale = 1.0
             self.selection_scale_widget = self.server.gui.add_number(
-                "Scale", 1.0, min=1e-6, step=0.01, visible=len(rows) > 1
+                "Scale", 1.0, min=1e-6, step=0.01, disabled=len(rows) < 2
             )
             self._watch(self.selection_scale_widget, self._set_selection_scale)
-            self._action_button("Delete", self._delete_selection)
+            delete, _ = self._action_button("Delete", self._delete_selection)
+            delete.disabled = not rows
 
     def _set_selection_position(self, axis: int, value: float) -> None:
         values = self._selection_values()
@@ -1217,7 +1228,7 @@ class Editor:
             return
         positions = np.asarray([value[:3, 3] for value in matrices])
         rotations = np.asarray([tf.quaternion_from_matrix(value) for value in matrices])
-        scale = 0.005 if kind == "segments" else 0.01
+        scale = 0.005 if kind == "segments" else 0.0025
         mesh = (
             trimesh.creation.icosphere(subdivisions=1)
             if kind == "segments"

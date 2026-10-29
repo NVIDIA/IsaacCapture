@@ -35,8 +35,8 @@ available HMD system in the same Python environment.
 
 The editor maintains independent left- and right-hand documents. **Toggle Side**
 selects the active document; each side has its own metadata path and data.
-General controls are in a floating panel at the top of the view. Selecting a
-segment or taxel opens its property panel on the left.
+General controls are at the top of the right menu. The Selected Object panel is
+always present on the left.
 
 Three pose datasets are displayed:
 
@@ -83,9 +83,10 @@ outlined in red.
 
 ### Taxels
 
-**Add with Input** creates a row-major planar grid from Rows, Columns, Area
-Width, Area Height, and Center Position. **Add with URDF Click** uses the clicked
-surface position and outward normal as the grid frame.
+Set Rows, Columns, Area Width, Area Height, Center Position, and Rotation.
+**Capture URDF Surface Pose** copies a clicked surface position and orientation
+into those fields without creating taxels. **Add Taxels** then creates the
+row-major planar grid. Taxels are light-grey squares with side length 0.0025 m.
 
 To bind taxels:
 
@@ -112,7 +113,8 @@ Dragging taxel rows changes their IDs and metadata array order.
 The **Selected Objects** panel edits position and rotation, deletes selected
 objects, and scales multi-selection positions about their center. Edit mode
 changes Editing data; Preview mode changes Preview segments. Preview taxels are
-derived and cannot be selected.
+derived and cannot be selected. With no selection, the panel remains visible,
+shows Type `None` and Count `0`, and disables its input fields.
 
 ## Save and load
 
@@ -144,6 +146,8 @@ Choose **Binding Metadata Source**:
 
 - **Editing** uses the current editor bindings.
 - **Live** becomes available after metadata is received from the tactile stream.
+
+The Preview Static section lists Segments before URDF Joints.
 
 **Apply Preview Data to Editor** fully replaces Editing segments, taxels,
 bindings, and URDF joint values. The button is disabled when Preview segments
