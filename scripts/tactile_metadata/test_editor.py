@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import numpy as np
 
 from tactile_metadata_editor import geometry as geo, storage
-from tactile_metadata_editor.document import Segment, State, Taxel
+from tactile_metadata_editor.document import JOINTS, Segment, State, Taxel
 from tactile_metadata_editor.ui import Editor
 
 
@@ -68,6 +68,41 @@ class EditorTests(unittest.TestCase):
 
                 self.assertIn("Live error: " + message, editor.info.value)
                 self.assertTrue(editor.redraw)
+
+    def test_invalid_live_hand_retains_applicable_pose_and_recovers_status(self):
+        valid_hand = {
+            "positions": [[0.0, 0.0, 0.0] for _ in JOINTS],
+            "orientations": [[0.0, 0.0, 0.0, 1.0] for _ in JOINTS],
+            "is_valid": [True for _ in JOINTS],
+        }
+        invalid_wrist = {
+            **valid_hand,
+            "is_valid": [joint != "WRIST" for joint in JOINTS],
+        }
+        for hand in (None, invalid_wrist):
+            with self.subTest(hand=hand):
+                editor = self.make_live_editor({"hand": hand})
+                retained = editor.preview_document.segments
+                retained[0].pose[0] = 0.02
+
+                editor._update_live()
+
+                self.assertIs(editor.preview_document.segments, retained)
+                self.assertEqual(
+                    editor.live_status.content, "Current Status: Data Invalid"
+                )
+                editor._rebuild_preview_segments.assert_not_called()
+                editor._apply_preview_segments()
+                self.assertEqual(editor.document.segments, retained)
+
+                editor.receiver.latest = {"hand": valid_hand}
+                editor._update_live()
+
+                self.assertEqual(editor.live_status.content, "Current Status: Live")
+                self.assertEqual(
+                    [segment.joint for segment in editor.preview_document.segments],
+                    list(JOINTS),
+                )
 
     def test_apply_all_preserves_rendered_taxels(self):
         editor = self.make_editor()

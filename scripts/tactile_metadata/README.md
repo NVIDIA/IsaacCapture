@@ -234,8 +234,9 @@ For live reception:
 
 HandPose replaces Preview segments with only its valid joints, retained in
 HandJoint order, and is the sole source of Live Preview segment identities and
-poses. Invalid joints are absent. If WRIST is invalid, Preview contains no live
-segments because a wrist-relative transform cannot be computed. Selected
+poses. Invalid joints are absent. If the hand is missing or WRIST is invalid,
+Preview retains the last valid skeleton, which can still be applied to Editing,
+and the status displays **Data Invalid** until a valid hand arrives. Selected
 binding metadata affects only taxel deformation; it never seeds Preview
 segments. Enabled JointState mappings update Preview URDF joints. Live frames
 overwrite manual Static values while connected.

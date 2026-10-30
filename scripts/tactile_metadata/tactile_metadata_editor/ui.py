@@ -1461,10 +1461,14 @@ class Editor:
                     self.live_metadata_key = key
                     self.binding_source_live.disabled = False
             hand = frame.get("hand")
-            if hand is not None:
-                updated = geo.hand_segments(
+            updated = (
+                geo.hand_segments(
                     hand, np.asarray(self.document.alignment, dtype=float)
                 )
+                if hand is not None
+                else []
+            )
+            if updated:
                 joints = [segment.joint for segment in updated]
                 signature = [
                     segment.joint for segment in self.preview_document.segments
@@ -1472,6 +1476,8 @@ class Editor:
                 self.preview_document.segments = updated
                 if signature != joints:
                     self._rebuild_preview_segments()
+            else:
+                self.live_status.content = "Current Status: Data Invalid"
             if self.joint_enabled.value:
                 mapping = json.loads(self.joint_mapping.value or "{}")
                 if not isinstance(mapping, dict):
