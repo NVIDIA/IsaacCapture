@@ -339,7 +339,7 @@ def deform(
     return result, errors
 
 
-def hand_segments(hand: dict) -> list[Segment]:
+def hand_segments(hand: dict, alignment: np.ndarray) -> list[Segment]:
     values = []
     for position, orientation, valid in zip(
         hand["positions"], hand["orientations"], hand["is_valid"]
@@ -351,7 +351,7 @@ def hand_segments(hand: dict) -> list[Segment]:
         return []
     wrist_inverse = np.linalg.inv(values[1])
     return [
-        Segment(joint, pose(VISUALIZATION_FROM_HAND @ wrist_inverse @ tracked))
+        Segment(joint, pose(alignment @ wrist_inverse @ tracked))
         for joint, tracked in zip(JOINTS, values)
         if tracked is not None
     ]

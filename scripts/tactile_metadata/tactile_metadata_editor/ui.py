@@ -269,6 +269,10 @@ class Editor:
                 self.joint_mapping = gui.add_text(
                     "Joint Mappings JSON", "{}", multiline=True, disabled=True
                 )
+                gui.add_markdown(
+                    'Format: `{"source_joint": ["urdf_joint", scale, shift]}`; '
+                    "`value = raw * scale + shift`."
+                )
                 self._watch(self.joint_enabled, self._joint_enabled)
                 self.connect_button = self._action_button("Connect Live", self._connect)
                 gui.add_markdown("Live input overrides values in the Static section.")
@@ -509,8 +513,30 @@ class Editor:
                 delta,
             )
             self.live_document.alignment = alignment.tolist()
-        self._rebuild_edit_lists()
-        self._rebuild_preview_segments()
+        for segment, (_, positions, rotations) in zip(
+            self.document.segments, self.segment_widgets
+        ):
+            position, rotation = geo.components(geo.matrix(segment.pose))
+            self._set_values(positions, position)
+            self._set_values(rotations, rotation)
+        for taxel, (positions, rotations, _) in zip(
+            self.document.taxels, self.taxel_widgets
+        ):
+            position, rotation = geo.components(geo.matrix(taxel.pose))
+            self._set_values(positions, position)
+            self._set_values(rotations, rotation)
+        self._sync_preview_values()
+        values = self._selection_values()
+        rows = [row for row in self.selected_rows if 0 <= row < len(values)]
+        if rows:
+            center = np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)
+            self._set_values(self.selection_position_widgets, center)
+            if len(rows) == 1:
+                _, rotation = geo.components(geo.matrix(values[rows[0]].pose))
+                self._set_values(self.selection_rotation_widgets, rotation)
+                self.selection_rotation = np.asarray(rotation, dtype=float)
+        self._update_preview_error()
+        self.redraw = True
 
     def _rebuild_joint_controls(self) -> None:
         if self.edit_joint_folder is not None:
@@ -549,16 +575,13 @@ class Editor:
                 else math.pi
             )
             value = min(upper, max(lower, document.q.get(joint.name, 0.0)))
-            with self.server.gui.add_folder(
-                f"{index}: {joint.name}", expand_by_default=False
-            ):
-                widget = self.server.gui.add_slider(
-                    "Value",
-                    float(lower),
-                    float(upper),
-                    0.001,
-                    float(value),
-                )
+            widget = self.server.gui.add_slider(
+                f"{index}: {joint.name}",
+                float(lower),
+                float(upper),
+                0.001,
+                float(value),
+            )
             self._watch(
                 widget,
                 lambda current, name=joint.name, document=document: (
@@ -714,46 +737,47 @@ class Editor:
                                 ),
                             )
                         slots = []
+                        segment_fields = []
                         for slot in range(4):
-                            with self.server.gui.add_folder(
-                                f"Binding {slot}", expand_by_default=False
-                            ):
-                                selected = (
-                                    taxel.segments[slot]
-                                    if taxel.segments[slot] in options
-                                    else "None"
+                            selected = (
+                                taxel.segments[slot]
+                                if taxel.segments[slot] in options
+                                else "None"
+                            )
+                            segment = self.server.gui.add_dropdown(
+                                f"⚠ Segment {slot}"
+                                if any(
+                                    issue["field"] in (f"segment{slot}", "binding")
+                                    for issue in row_issues
                                 )
-                                segment = self.server.gui.add_dropdown(
-                                    "⚠ Segment"
-                                    if any(
-                                        issue["field"] in (f"segment{slot}", "binding")
-                                        for issue in row_issues
-                                    )
-                                    else "Segment",
-                                    options,
-                                    initial_value=selected,
-                                )
-                                weight = self._weight_widget(
-                                    taxel.weights[slot],
-                                    selected == "None",
-                                    any(
-                                        issue["field"] in (f"weight{slot}", "weights")
-                                        for issue in row_issues
-                                    ),
-                                )
-                                self._watch(
-                                    segment,
-                                    lambda value, row=row, slot=slot: (
-                                        self._set_taxel_segment(row, slot, value)
-                                    ),
-                                )
-                                self._watch(
-                                    weight,
-                                    lambda value, row=row, slot=slot: (
-                                        self._set_taxel_weight(row, slot, value)
-                                    ),
-                                )
-                                slots.append((segment, weight))
+                                else f"Segment {slot}",
+                                options,
+                                initial_value=selected,
+                            )
+                            segment_fields.append((segment, selected))
+                        for slot, (segment, selected) in enumerate(segment_fields):
+                            weight = self._weight_widget(
+                                taxel.weights[slot],
+                                selected == "None",
+                                any(
+                                    issue["field"] in (f"weight{slot}", "weights")
+                                    for issue in row_issues
+                                ),
+                                slot,
+                            )
+                            self._watch(
+                                segment,
+                                lambda value, row=row, slot=slot: (
+                                    self._set_taxel_segment(row, slot, value)
+                                ),
+                            )
+                            self._watch(
+                                weight,
+                                lambda value, row=row, slot=slot: (
+                                    self._set_taxel_weight(row, slot, value)
+                                ),
+                            )
+                            slots.append((segment, weight))
                         messages = [issue["message"] for issue in row_issues]
                         if messages:
                             self.server.gui.add_html(
@@ -763,8 +787,8 @@ class Editor:
                             )
                         self.taxel_widgets.append((positions, rotations, slots))
 
-    def _weight_widget(self, value, disabled: bool, invalid: bool):
-        label = "⚠ Weight" if invalid else "Weight"
+    def _weight_widget(self, value, disabled: bool, invalid: bool, slot: int):
+        label = f"{'⚠ ' if invalid else ''}Weight {slot}"
         if type(value) in (int, float) and math.isfinite(value):
             limits = {"min": 0.0, "max": 1.0} if 0.0 <= value <= 1.0 else {}
             return self.server.gui.add_number(
@@ -1035,7 +1059,9 @@ class Editor:
         try:
             hand = frame.get("hand")
             if hand is not None:
-                updated = geo.hand_segments(hand)
+                updated = geo.hand_segments(
+                    hand, np.asarray(self.document.alignment, dtype=float)
+                )
                 joints = [segment.joint for segment in updated]
                 signature = [
                     segment.joint for segment in self.preview_document.segments
@@ -1308,6 +1334,18 @@ class Editor:
             self.server.gui.add_markdown(
                 f"Type: **{self.selected_kind if rows else 'None'}**  \n"
                 f"Count: **{len(rows)}**"
+            )
+            names = [
+                values[row].joint
+                if self.selected_kind == "segments"
+                else f"Taxel {row}"
+                for row in rows
+            ]
+            self.server.gui.add_text(
+                "Name",
+                names[0] if len(names) == 1 else json.dumps(names, indent=2),
+                multiline=True,
+                disabled=True,
             )
             center = (
                 np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)

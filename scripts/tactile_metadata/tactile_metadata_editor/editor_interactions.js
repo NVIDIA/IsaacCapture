@@ -114,6 +114,49 @@
     return child?.parentElement === parent ? child : null;
   };
 
+  const layoutTaxelBindings = () => {
+    const names = [
+      "Segment 0",
+      "Segment 1",
+      "Segment 2",
+      "Segment 3",
+      "Weight 0",
+      "Weight 1",
+      "Weight 2",
+      "Weight 3",
+    ];
+    const clean = (label) => label.textContent?.trim().replace(/^⚠\s*/, "");
+    for (const first of document.querySelectorAll("label")) {
+      if (clean(first) !== names[0]) continue;
+      let container = first.parentElement;
+      let fields = [];
+      while (container) {
+        const labels = [...container.querySelectorAll("label")];
+        fields = names.map((name) => labels.find((label) => clean(label) === name));
+        if (fields.every(Boolean)) break;
+        container = container.parentElement;
+      }
+      if (!container) continue;
+      const children = fields.map((field) => directChild(container, field));
+      if (children.some((child) => !child) || new Set(children).size !== names.length) {
+        continue;
+      }
+      const bindingChildren = new Set(children);
+      Object.assign(container.style, {
+        display: "grid",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+        gap: "8px",
+        alignItems: "end",
+      });
+      // Only bindings use the four columns; all other taxel controls stay full-width.
+      for (const child of container.children) {
+        child.style.gridColumn = bindingChildren.has(child) ? "auto" : "1 / -1";
+        if (bindingChildren.has(child)) child.style.minWidth = "0";
+      }
+      for (const field of fields) field.style.display = "none";
+    }
+  };
+
   const freezeMainMenu = () => {
     const general = folderFromLabel("General");
     const preview = folderFromLabel("Preview");
@@ -182,6 +225,7 @@
     boldChoiceLabels();
     freezeMainMenu();
     preservePartialNumbers();
+    layoutTaxelBindings();
     for (const label of document.querySelectorAll("label")) {
       if (!label.textContent?.trim().startsWith("⚠")) continue;
       const field = label.parentElement?.querySelector("input, button");
