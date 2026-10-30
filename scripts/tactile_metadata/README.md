@@ -208,16 +208,17 @@ The Preview Static section lists Segments before URDF Joints.
 Preview provides four independent apply operations:
 
 - **Apply Segments** replaces HandJoint/segment poses.
-- **Apply Taxels** replaces Editing taxels with exactly the valid derived taxels
-  currently rendered in Preview; invalid rows are omitted.
+- **Apply Taxels** replaces Editing taxels with the derived Preview taxels;
+  invalid rows retain their original binding poses.
 - **Apply URDF** replaces URDF joint values.
-- **Apply ALL** applies Segments and URDF plus the same valid rendered taxel
-  subset used by Apply Taxels.
+- **Apply ALL** applies Segments and URDF plus the same taxels used by Apply
+  Taxels.
 
 Each Preview taxel is evaluated independently. Invalid rows are reported and
 omitted from the scene while valid taxels continue to render. Live force rows
 remain matched by their original taxel indices. Invalid taxels are reported in
-Info and omitted from Apply Taxels and Apply ALL; no Apply button is disabled.
+Info. Apply Taxels and Apply ALL preserve all source rows in their original
+order to match the forces; no Apply button is disabled.
 
 For live reception:
 
