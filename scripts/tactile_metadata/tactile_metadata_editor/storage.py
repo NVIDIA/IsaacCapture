@@ -79,18 +79,20 @@ def parse(
         if len(indices) != 4 or len(weights) != 4:
             raise ValueError("Taxel bindings require four slots")
         bindings = [
-            None
-            if type(weight) in (int, float) and weight == 0
-            else names[index]
+            names[index]
             if type(index) is int and 0 <= index < len(names)
             else f"INVALID_SEGMENT_INDEX_{index}"
-            for index, weight in zip(indices, weights)
+            for index in indices
         ]
         document.taxels.append(
             Taxel(
                 pose(transform @ matrix(_pose_row(raw_pose))),
-                bindings,
+                [
+                    None if type(weight) in (int, float) and weight == 0 else joint
+                    for joint, weight in zip(bindings, weights)
+                ],
                 list(weights),
+                bindings,
             )
         )
     return document
@@ -117,8 +119,12 @@ def metadata(document: Document) -> dict:
     binding_indices = [
         {
             "values": [
-                indices.get(joint, 0 if joint is None else 0xFFFFFFFF)
-                for joint in taxel.segments
+                indices.get(joint, 0 if taxel.segments[slot] is None else 0xFFFFFFFF)
+                for slot, joint in enumerate(
+                    taxel.segments
+                    if taxel.stored_segments is None
+                    else taxel.stored_segments
+                )
             ]
         }
         for taxel in document.taxels

@@ -63,6 +63,13 @@ class Taxel:
     pose: list[float] = field(default_factory=lambda: IDENTITY_POSE.copy())
     segments: list[str | None] = field(default_factory=lambda: [None] * 4)
     weights: list[float] = field(default_factory=lambda: [0.0] * 4)
+    # Loaded references survive zero-weight slots being displayed as None.
+    stored_segments: list[str | None] | None = None
+
+    def set_segment(self, slot: int, joint: str | None) -> None:
+        self.segments[slot] = joint
+        if self.stored_segments is not None:
+            self.stored_segments[slot] = joint
 
 
 def pose_error(values: object) -> str:
@@ -117,7 +124,8 @@ class Document:
         weights = [1.0] + [0.0] * (len(joints) - 1)
         for row in taxels:
             if 0 <= row < len(self.taxels):
-                self.taxels[row].segments = joints + [None] * (4 - len(joints))
+                for slot, joint in enumerate(joints + [None] * (4 - len(joints))):
+                    self.taxels[row].set_segment(slot, joint)
                 self.taxels[row].weights = weights + [0.0] * (4 - len(joints))
 
     def set_weight(self, taxel_row: int, slot: int, value: float) -> None:

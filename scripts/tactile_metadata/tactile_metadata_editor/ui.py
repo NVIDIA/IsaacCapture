@@ -9,6 +9,7 @@ import logging
 import math
 import queue
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -1177,7 +1178,7 @@ class Editor:
     def _set_taxel_segment(self, row: int, slot: int, value: str) -> None:
         taxel = self.document.taxels[row]
         first = value != "None" and not any(taxel.segments)
-        taxel.segments[slot] = None if value == "None" else value
+        taxel.set_segment(slot, None if value == "None" else value)
         if taxel.segments[slot] is None:
             taxel.weights[slot] = 0.0
         elif first:
@@ -1359,7 +1360,10 @@ class Editor:
         rows, _ = self._preview_taxels()
         sources = self._binding_document().taxels
         return copy.deepcopy(
-            [source if row is None else row for source, row in zip(sources, rows)]
+            [
+                source if row is None else replace(source, pose=row.pose)
+                for source, row in zip(sources, rows)
+            ]
         )
 
     def _apply_preview_taxels(self) -> None:

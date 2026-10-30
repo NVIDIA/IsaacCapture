@@ -281,6 +281,74 @@ class EditorTests(unittest.TestCase):
             expected,
         )
 
+    def test_zero_weight_segment_indices_survive_round_trip(self):
+        joints = ["WRIST", "INDEX_TIP", "MIDDLE_TIP", "THUMB_TIP"]
+        for bindings, indices in (
+            (["WRIST", None, None, None], [0, 0, 0, 0]),
+            (joints, [0, 1, 2, 3]),
+        ):
+            with self.subTest(bindings=bindings):
+                document = self.make_editor().document
+                document.segments = [Segment(joint) for joint in joints]
+                document.taxels[0].segments = bindings.copy()
+                encoded = storage.metadata(document)
+
+                loaded = storage.parse(encoded)
+
+                self.assertEqual(loaded.taxels[0].segments, ["WRIST", None, None, None])
+                self.assertEqual(loaded.taxels[0].weights, [1.0, 0.0, 0.0, 0.0])
+                self.assertFalse(loaded.validate())
+                self.assertEqual(
+                    storage.metadata(loaded)["geometry_mapping"][
+                        "taxel_segment_indices"
+                    ],
+                    [{"values": indices}],
+                )
+
+    def test_segment_edits_and_preview_apply_preserve_serialized_slots(self):
+        editor = self.make_editor()
+        joints = ["WRIST", "INDEX_TIP", "MIDDLE_TIP", "THUMB_TIP"]
+        editor.document.segments = [Segment(joint) for joint in joints]
+        editor.document.taxels[0].segments = joints.copy()
+        editor.state.document = storage.parse(storage.metadata(editor.document))
+        editor.preview_document = editor._preview_from(editor.document)
+        editor._sync_taxel_binding_widgets = Mock()
+        editor._sync_selection = Mock()
+
+        editor._set_taxel_segment(0, 1, "MIDDLE_TIP")
+        self.assertEqual(editor.document.taxels[0].stored_segments[1], "MIDDLE_TIP")
+        self.assertEqual(
+            storage.metadata(editor.document)["geometry_mapping"][
+                "taxel_segment_indices"
+            ],
+            [{"values": [0, 2, 2, 3]}],
+        )
+
+        editor._set_taxel_segment(0, 1, "None")
+        source = editor.document.taxels[0].stored_segments
+        editor._apply_preview_taxels()
+        self.assertIsNot(editor.document.taxels[0].stored_segments, source)
+        self.assertEqual(
+            storage.metadata(editor.document)["geometry_mapping"][
+                "taxel_segment_indices"
+            ],
+            [{"values": [0, 0, 2, 3]}],
+        )
+
+    def test_deleting_an_unused_loaded_segment_keeps_padding_valid(self):
+        document = self.make_editor().document
+        document.segments.append(Segment("INDEX_TIP"))
+        document.taxels[0].segments[1] = "INDEX_TIP"
+        loaded = storage.parse(storage.metadata(document))
+
+        loaded.delete("segments", [1])
+
+        self.assertFalse(loaded.validate())
+        self.assertEqual(
+            storage.metadata(loaded)["geometry_mapping"]["taxel_segment_indices"],
+            [{"values": [0, 0, 0, 0]}],
+        )
+
     def test_hand_side_change_preserves_document_and_snapshots(self):
         editor = self.make_editor()
         editor.state.replace(editor.document, "metadata.json")
