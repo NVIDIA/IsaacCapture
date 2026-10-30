@@ -104,11 +104,11 @@ TEST_CASE("Two-way exchanges recover the offset the one-way minimum biases", "[r
     // One-way: the fastest frame took 70 ms, so the one-way estimate is 70 ms too large.
     estimator.add_sample(1'000 * kMs, 1'000 * kMs + kOffset + 70 * kMs);
     REQUIRE(estimator.offset_ns() == kOffset + 70 * kMs);
-    REQUIRE(std::string(estimator.offset_source()) == "one-way");
+    REQUIRE(estimator.offset_source() == ClockOffsetEstimator::Source::OneWay);
     REQUIRE(estimator.rtt_min_ns() == 0);
 
     exchange(estimator, 2'000 * kMs, kOffset, 70 * kMs, 70 * kMs);
-    REQUIRE(std::string(estimator.offset_source()) == "two-way");
+    REQUIRE(estimator.offset_source() == ClockOffsetEstimator::Source::TwoWay);
     REQUIRE(estimator.offset_ns() == kOffset);
     REQUIRE(estimator.rtt_last_ns() == 140 * kMs);
     REQUIRE(estimator.rtt_min_ns() == 140 * kMs);
