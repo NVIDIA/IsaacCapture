@@ -19,7 +19,6 @@
 
 using namespace remote_plugin_session;
 namespace protocol = remote_plugin_protocol;
-using Role = WebSocketTransport::Role;
 
 namespace
 {
@@ -84,7 +83,7 @@ void raw_send(TcpSocket& socket, const std::vector<uint8_t>& bytes)
 std::vector<uint8_t> raw_recv(TcpSocket& socket, size_t size)
 {
     std::vector<uint8_t> bytes(size);
-    REQUIRE(socket.recv_all(bytes.data(), size, kWait) == TcpSocket::RecvResult::Ok);
+    REQUIRE(socket.recv_all(bytes.data(), size, kWait) == ReceiveResult::Ok);
     return bytes;
 }
 
@@ -107,7 +106,7 @@ const std::string kSampleUpgrade =
 //! A server transport upgraded by a raw client using the RFC sample key.
 std::unique_ptr<WebSocketTransport> upgraded_server(TcpSocket server_end, TcpSocket& raw_client)
 {
-    auto server = std::make_unique<WebSocketTransport>(std::move(server_end), Role::Server);
+    auto server = std::make_unique<WebSocketTransport>(std::move(server_end));
     raw_send(raw_client, kSampleUpgrade);
     REQUIRE(server->wait_ready(kWait) == ReceiveResult::Ok);
     const std::string response = raw_recv_head(raw_client);
@@ -126,9 +125,8 @@ Connected connected_pair()
 {
     auto [client_end, server_end] = socket_pair();
     Connected pair;
-    pair.server = std::make_unique<WebSocketTransport>(std::move(server_end), Role::Server);
-    std::thread client(
-        [&] { pair.client = std::make_unique<WebSocketTransport>(std::move(client_end), Role::Client, "h:1", "/x"); });
+    pair.server = std::make_unique<WebSocketTransport>(std::move(server_end));
+    std::thread client([&] { pair.client = WebSocketTransport::connect(std::move(client_end), "h:1", "/x"); });
     REQUIRE(pair.server->wait_ready(kWait) == ReceiveResult::Ok);
     client.join();
     REQUIRE(pair.client);
@@ -232,6 +230,23 @@ TEST_CASE("WebSocketTransport server role handles control frames and fragments",
         raw_send(raw, raw_frame(0x1, true, { 'x' }));
         REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
     }
+    SECTION("a message larger than a wire frame can be is malformed")
+    {
+        std::vector<uint8_t> head{ 0x82, 0x80 | 127 }; // FIN + binary, masked, 64-bit length
+        const uint64_t length = protocol::kHeaderSize + protocol::kMaxPayloadSize + 1;
+        for (int i = 7; i >= 0; --i)
+        {
+            head.push_back(static_cast<uint8_t>(length >> (8 * i)));
+        }
+        head.insert(head.end(), { 0x12, 0x34, 0x56, 0x78 });
+        raw_send(raw, head);
+        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
+    }
+    SECTION("a reserved control opcode is malformed")
+    {
+        raw_send(raw, raw_frame(0xB, true, {}));
+        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
+    }
     SECTION("a message that is not exactly one wire frame is malformed")
     {
         raw_send(raw, raw_frame(0x2, true, { 0x01 }));
@@ -249,7 +264,7 @@ TEST_CASE("WebSocketTransport rejects bad handshakes", "[remote_device_bridge][u
     auto [peer, own_end] = socket_pair();
     SECTION("server answers garbage with 400 and refuses to send")
     {
-        WebSocketTransport server(std::move(own_end), Role::Server);
+        WebSocketTransport server(std::move(own_end));
         raw_send(peer, "hello there\r\n\r\n");
         std::vector<uint8_t> frame;
         REQUIRE(server.receive(frame, kWait) == ReceiveResult::Malformed);
@@ -260,14 +275,14 @@ TEST_CASE("WebSocketTransport rejects bad handshakes", "[remote_device_bridge][u
     SECTION("client throws on a non-101 response")
     {
         raw_send(peer, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-        REQUIRE_THROWS_AS(WebSocketTransport(std::move(own_end), Role::Client, "h:1", "/"), std::runtime_error);
+        REQUIRE_THROWS_AS(WebSocketTransport::connect(std::move(own_end), "h:1", "/"), std::runtime_error);
     }
     SECTION("client throws on a wrong Sec-WebSocket-Accept")
     {
         raw_send(peer,
                  "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                  "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n");
-        REQUIRE_THROWS_AS(WebSocketTransport(std::move(own_end), Role::Client, "h:1", "/"), std::runtime_error);
+        REQUIRE_THROWS_AS(WebSocketTransport::connect(std::move(own_end), "h:1", "/"), std::runtime_error);
     }
 }
 

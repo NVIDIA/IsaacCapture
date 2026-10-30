@@ -24,14 +24,10 @@ bool TcpTransport::send(const uint8_t* frame, size_t size)
 ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::milliseconds timeout)
 {
     frame.resize(protocol::kHeaderSize);
-    switch (m_socket.recv_all(frame.data(), protocol::kHeaderSize, timeout))
+    if (const ReceiveResult header = m_socket.recv_all(frame.data(), protocol::kHeaderSize, timeout);
+        header != ReceiveResult::Ok)
     {
-    case TcpSocket::RecvResult::Timeout:
-        return ReceiveResult::Timeout;
-    case TcpSocket::RecvResult::Closed:
-        return ReceiveResult::Closed;
-    case TcpSocket::RecvResult::Ok:
-        break;
+        return header;
     }
 
     uint32_t payload_size = 0;
@@ -43,14 +39,9 @@ ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::mi
     {
         return ReceiveResult::Malformed;
     }
-    if (payload_size == 0)
-    {
-        return ReceiveResult::Ok;
-    }
     frame.resize(protocol::kHeaderSize + payload_size);
     // A header without its payload within the stall window is a broken peer, not a quiet one.
-    return m_socket.recv_all(frame.data() + protocol::kHeaderSize, payload_size, kMidMessageStall) ==
-                   TcpSocket::RecvResult::Ok ?
+    return m_socket.recv_all(frame.data() + protocol::kHeaderSize, payload_size, kMidMessageStall) == ReceiveResult::Ok ?
                ReceiveResult::Ok :
                ReceiveResult::Closed;
 }
@@ -62,8 +53,7 @@ void TcpTransport::shutdown()
 
 std::unique_ptr<ITransport> TcpTransport::accept(TcpSocket& listener, std::chrono::milliseconds poll, std::string* peer)
 {
-    TcpSocket client = listener.accept(poll, peer);
-    return client.valid() ? std::make_unique<TcpTransport>(std::move(client)) : nullptr;
+    return accept_transport<TcpTransport>(listener, poll, peer);
 }
 
 } // namespace remote_plugin_session

@@ -10,7 +10,6 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 
-#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -27,7 +26,8 @@ namespace remote_plugin_session
 namespace
 {
 
-// A send may stall as long as the peer timeout tolerates silence; liveness is decided by the receive side.
+// A send may stall as long as the peer timeout tolerates silence; liveness is decided by the receive side. It
+// is independent of kConnectTimeout and kMidMessageStall, which only share its value.
 constexpr std::chrono::milliseconds kSendTimeout{ 3000 };
 // Best effort: the kernel clamps to its rmem/wmem maximum.
 constexpr int kSocketBufferBytes = 4 * 1024 * 1024;
@@ -153,7 +153,7 @@ template <typename Attempt>
 TcpSocket for_each_address(const Endpoint& endpoint, bool passive, const char* what, Attempt attempt)
 {
     const AddrInfoList addresses = resolve(endpoint, passive);
-    std::string last_error = "no addresses";
+    std::string errors;
 
     for (const addrinfo* ai = addresses.get(); ai != nullptr; ai = ai->ai_next)
     {
@@ -170,69 +170,15 @@ TcpSocket for_each_address(const Endpoint& endpoint, bool passive, const char* w
         }
         catch (const std::runtime_error& e)
         {
-            last_error = e.what();
+            errors += errors.empty() ? e.what() : std::string("; ") + e.what();
         }
     }
 
     throw std::runtime_error(std::string("TcpSocket::") + what + "(" + endpoint.host + ":" +
-                             std::to_string(endpoint.port) + ") failed: " + last_error);
+                             std::to_string(endpoint.port) + ") failed: " + (errors.empty() ? "no addresses" : errors));
 }
 
 } // namespace
-
-Endpoint parse_endpoint(const std::string& text, uint16_t default_port)
-{
-    Endpoint endpoint;
-    endpoint.port = default_port;
-    std::string port_text;
-    bool has_port = false;
-    if (!text.empty() && text.front() == '[')
-    {
-        // "[v6-address]" or "[v6-address]:port"
-        const size_t close = text.find(']');
-        if (close == std::string::npos || (close + 1 < text.size() && text[close + 1] != ':'))
-        {
-            throw std::invalid_argument("invalid bracketed host in endpoint '" + text + "'");
-        }
-        endpoint.host = text.substr(1, close - 1);
-        has_port = close + 1 < text.size();
-        port_text = has_port ? text.substr(close + 2) : "";
-    }
-    else if (std::count(text.begin(), text.end(), ':') > 1)
-    {
-        endpoint.host = text; // bare IPv6 address, no port
-    }
-    else
-    {
-        const size_t colon = text.find(':');
-        endpoint.host = text.substr(0, colon);
-        has_port = colon != std::string::npos;
-        port_text = has_port ? text.substr(colon + 1) : "";
-    }
-    if (has_port)
-    {
-        unsigned long port = 0;
-        size_t parsed = 0;
-        try
-        {
-            port = std::stoul(port_text, &parsed);
-        }
-        catch (const std::exception&)
-        {
-            parsed = 0;
-        }
-        if (parsed == 0 || parsed != port_text.size() || port == 0 || port > 65535)
-        {
-            throw std::invalid_argument("invalid port in endpoint '" + text + "'");
-        }
-        endpoint.port = static_cast<uint16_t>(port);
-    }
-    if (endpoint.host.empty())
-    {
-        throw std::invalid_argument("missing host in endpoint '" + text + "'");
-    }
-    return endpoint;
-}
 
 TcpSocket::TcpSocket(int fd) : m_fd(fd)
 {
@@ -365,7 +311,7 @@ bool TcpSocket::send_all(const uint8_t* data, size_t size)
     return true;
 }
 
-TcpSocket::RecvResult TcpSocket::recv_all(uint8_t* data, size_t size, std::chrono::milliseconds timeout)
+ReceiveResult TcpSocket::recv_all(uint8_t* data, size_t size, std::chrono::milliseconds timeout)
 {
     size_t received = 0;
     while (received < size)
@@ -373,11 +319,11 @@ TcpSocket::RecvResult TcpSocket::recv_all(uint8_t* data, size_t size, std::chron
         const int ready = poll_fd(m_fd, POLLIN, received == 0 ? timeout : kMidMessageStall);
         if (ready == 0)
         {
-            return received == 0 ? RecvResult::Timeout : RecvResult::Closed;
+            return received == 0 ? ReceiveResult::Timeout : ReceiveResult::Closed;
         }
         if (ready < 0)
         {
-            return RecvResult::Closed;
+            return ReceiveResult::Closed;
         }
         const ssize_t n = ::recv(m_fd, data + received, size - received, 0);
         if (n < 0)
@@ -386,15 +332,15 @@ TcpSocket::RecvResult TcpSocket::recv_all(uint8_t* data, size_t size, std::chron
             {
                 continue;
             }
-            return RecvResult::Closed;
+            return ReceiveResult::Closed;
         }
         if (n == 0)
         {
-            return RecvResult::Closed;
+            return ReceiveResult::Closed;
         }
         received += static_cast<size_t>(n);
     }
-    return RecvResult::Ok;
+    return ReceiveResult::Ok;
 }
 
 void TcpSocket::shutdown()
