@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Teleop Control State Machine" href="control_state_machine.html" />
-    <link rel="prev" title="Quick Start" href="quick_start.html" />
+    <link rel="prev" title="OVXR installation" href="../getting_started/ovxr.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -464,6 +465,14 @@ manage them directly:</p>
 <li><p>Runs retargeting pipeline with automatic updates</p></li>
 <li><p>Handles cleanup via RAII</p></li>
 </ol>
+<p>If resource cleanup fails during entry rollback or exit, <code class="docutils literal notranslate"><span class="pre">cleanup_failed</span></code>
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling <code class="docutils literal notranslate"><span class="pre">__exit__</span></code> again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.</p>
 </section>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
@@ -600,8 +609,13 @@ end-to-end.</p>
 and returns the latest completed <code class="docutils literal notranslate"><span class="pre">RetargeterIO</span></code>. On a normal hit this is often
 the previous application frame’s output. If that returned output came from
 request N-1, then <code class="docutils literal notranslate"><span class="pre">session.last_context</span></code> also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful <code class="docutils literal notranslate"><span class="pre">step()</span></code> return delivers it through <code class="docutils literal notranslate"><span class="pre">last_context</span></code>. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
 application needs exact current-frame sample/compute/return behavior.</p>
 <p>The return type is unchanged; inspect <code class="docutils literal notranslate"><span class="pre">session.last_step_info</span></code> for age and
 timing metadata such as <code class="docutils literal notranslate"><span class="pre">returned_frame_id</span></code>, <code class="docutils literal notranslate"><span class="pre">submitted_frame_id</span></code>,
@@ -1015,12 +1029,12 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="quick_start.html"
+       href="../getting_started/ovxr.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Quick Start</p>
+        <p class="prev-next-title">OVXR installation</p>
       </div>
     </a>
     <a class="right-next"
@@ -1166,7 +1180,7 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

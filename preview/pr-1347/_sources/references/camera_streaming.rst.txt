@@ -53,6 +53,9 @@ Requirements
 - **XR controllers — optional:** for adjusting the view with :ref:`camera-streaming-controls`.
 - **CloudXR setup:** see Quick Start for :ref:`first-launch requirements <run-cloudxr-server>`
   and :ref:`firewall configuration <whitelist-firewall-ports>`.
+- For Jetson Argus cameras, a Jetson image with libargus, CUDA, EGL, and the Jetson Multimedia API
+  headers installed. The optional Argus native source is built only when setup is run with
+  ``--with-argus``.
 
 Setup
 -----
@@ -92,8 +95,8 @@ through ``CUDA_PATH``, so setup records it in the venv, and ``camera_viz.py``,
 before reporting success.
 
 By default ``setup`` provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
-mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
-needs. Flags trim or extend that:
+mode (RTP), Jetson Argus, and ZED support are opt-in because they need additional native
+dependencies or vendor SDKs. Flags trim or extend that:
 
 .. list-table::
    :header-rows: 1
@@ -109,6 +112,9 @@ needs. Flags trim or extend that:
      - Also install the split-mode dependencies: the GStreamer system packages, PyGObject, and the
        native NVENC/NVDEC codec build. Required for ``loopback`` and for any config with
        ``source: rtp``; implied by ``--sender-only``. Direct mode does not need it.
+   * - ``--with-argus``
+     - Build the optional Jetson Argus native source (``type: argus``). Requires libargus, CUDA,
+       EGL, and Jetson Multimedia API headers on the machine.
    * - ``--with-zed``
      - Also build + install the ZED SDK's Python API (``pyzed``). Requires the ZED SDK on the
        machine (default ``/usr/local/zed``; override with ``--zed-sdk PATH``).
@@ -346,6 +352,9 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        bandwidth and is broadcast to RGBA on the GPU; ``stereo_rgb`` keeps color.
    * - ``zed``
      - ZED 2 / Mini / X One; mono or ``stereo: true`` (per-eye SDK retrieve, zero-copy on the GPU).
+   * - ``argus``
+     - Jetson libargus cameras through CUDA EGLStream, including GMSL sensors exposed by
+       ``nvargus-daemon``. Build setup with ``--with-argus`` first.
    * - ``video``
      - Recorded camera data — video-file replay (anything OpenCV's FFmpeg backend reads). Loops
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
@@ -366,7 +375,7 @@ needs values it supports (inspect them with ``v4l2-ctl --list-formats-ext``):
 
 .. code-block:: bash
 
-   ./camera_viz.sh run configs/v4l2.yaml     # or oakd.yaml / zed.yaml
+   ./camera_viz.sh run configs/v4l2.yaml     # or oakd.yaml / zed.yaml / argus_shw5g.yaml
 
 **ZED Mini: UVC or SDK stereo.** In the 2560×720 UVC mode used by ``v4l2.yaml``, the left
 and right camera images are packed side by side. The sample displays that entire image on one
@@ -375,8 +384,37 @@ with ``./camera_viz.sh setup --with-zed`` and use ``configs/zed.yaml`` (``type: 
 ``stereo: true``), which retrieves a separate image for each eye through the ZED SDK.
 
 **You should see** the same startup lines as above with the camera's tag (``[v4l2]``,
-``[oakd]``, ``[zed]``) and the live feed. Multiple entries in the ``cameras`` list render as one
-plane each.
+``[oakd]``, ``[zed]``, ``[argus]``) and the live feed. Multiple entries in the ``cameras`` list
+render as one plane each.
+
+Jetson Argus / GMSL cameras
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Argus support is for Jetson-local capture with minimum camera-to-display latency. It bypasses
+``nvarguscamerasrc`` and consumes Argus EGLStreams directly:
+
+.. code-block:: text
+
+   nvargus-daemon -> libargus EGLStream -> CUDA YUV-to-RGBA -> camera_viz
+
+Install with the Argus backend enabled on the Jetson:
+
+.. code-block:: bash
+
+   examples/camera_viz/camera_viz.sh setup --with-argus --jetson
+
+Use ``nvargus_nvraw`` to confirm the Argus sensor indices before editing the YAML:
+
+.. code-block:: bash
+
+   /usr/sbin/nvargus_nvraw --lps
+
+The repository includes :code-file:`configs/argus_shw5g.yaml
+<examples/camera_viz/configs/argus_shw5g.yaml>` for a SENSING SHW5G stereo pair on Jetson AGX
+Thor. Its tested settings use independent Argus sessions for sensors ``0`` and ``1``,
+``repeat_capture: true`` for lower request latency, ``pair_emit_mode: both`` to avoid duplicate
+stereo submits, and ``swap_uv: true`` for the observed SHW5G color layout. Some SENSING driver
+stacks also require running ``nvargus-daemon`` with ``enableCamInfiniteTimeout=1``.
 
 Other ready-to-edit configs include ``realsense.yaml``, ``synthetic.yaml``,
 ``synthetic_stereo.yaml``, ``synthetic_xr_3up.yaml``, and ``multi_camera.yaml`` in
@@ -686,8 +724,9 @@ interactively keeps it out of shell history and the command line.
 ``deploy`` performs these steps:
 
 1. Sync the example to ``~/camera_viz`` on the robot with ``rsync``.
-2. Run ``scripts/_install_deps.sh --sender-only --jetson`` through ``ssh -t``. Missing system
-   packages or JetPack CUDA wiring prompt for approval on the robot.
+2. Run ``scripts/_install_deps.sh --sender-only --jetson`` through ``ssh -t``. Add
+   ``--with-argus`` to ``deploy`` to build the Argus source on the robot. Missing system packages
+   or JetPack CUDA wiring prompt for approval on the robot.
 3. Render ``~/.config/systemd/user/camera-streamer.service``. ``--streaming-host IP`` (or
    ``STREAMING_HOST``) injects ``--host IP`` into its ``ExecStart`` without changing the YAML.
 4. Enable lingering once with ``sudo loginctl enable-linger``, then enable the user service and
@@ -736,13 +775,17 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
    cameras:
      - name: cam
        enabled: true
-       type: v4l2                # v4l2 | oakd | zed | video | synthetic
+       type: v4l2                # v4l2 | oakd | zed | argus | video | synthetic
        width: 2560               # video: optional — defaults to the file's size
        height: 720               # (required when source: rtp)
        fps: 30
-       stereo: false             # zed / oakd / video / synthetic — per-eye capture + SBS in XR
+       stereo: false             # zed / oakd / argus / video / synthetic — per-eye capture + SBS in XR
        path: clip.mp4            # video only — file to replay, relative to this YAML
        loop: true                # video only — rewind at end of file
+       sensor_id: 0              # argus mono only; use sensor_id_left/right for stereo
+       sensor_mode: 0            # argus only
+       repeat_capture: true      # argus only — use repeat requests when supported
+       pair_emit_mode: both      # argus independent stereo only: either | both
        rtp:
          port: 5000              # left eye when stereo
          port_right: 5001        # required when stereo + source: rtp
@@ -846,6 +889,11 @@ Troubleshooting
          cam:
            compositor: televiz
 
+- **``type: argus`` is unavailable** — rerun setup on the Jetson with ``--with-argus`` and confirm
+  the Jetson Multimedia API Argus headers exist under ``/usr/src/jetson_multimedia_api/argus``.
+- **Argus lists sensors but capture stalls** — confirm the selected ``sensor_id`` values with
+  ``/usr/sbin/nvargus_nvraw --lps``. Some GMSL driver stacks need ``nvargus-daemon`` configured
+  with ``enableCamInfiniteTimeout=1``.
 - **Split mode renders nothing** — check the sender is up (``./camera_viz.sh service-status``),
   ``$STREAMING_HOST`` was the workstation's IP at deploy time, and UDP ports (default 5000+)
   aren't firewalled.
@@ -895,8 +943,9 @@ Televiz as the compositor at the end of the chain:
    │   ├── controls/          — XR controller bindings, shapes, stereo geometry, HUD
    │   ├── pipeline/          — source ABC + threaded runner
    │   ├── placements/        — XR lock-mode strategies (world / head / lazy / gimbal)
-   │   ├── sources/           — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
+   │   ├── sources/           — V4L2 / OAK-D / ZED / Argus / video replay / synthetic / rtp_h264
    │   ├── transports/        — RTP sender + receiver (native + GStreamer)
+   │   ├── argus/             — optional Jetson libargus / CUDA EGLStream pybind module
    │   └── codec/             — native NVENC / NVDEC pybind module
    └── scripts/
        ├── _install_deps.sh             — installer (setup + deploy)
@@ -906,6 +955,8 @@ Televiz as the compositor at the end of the chain:
   hand frames to a threaded runner in :code-dir:`pipeline/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/pipeline>`. Each
   source produces GPU frames where possible — e.g. the ZED source uses ``retrieve_image(MEM.GPU)`` so
   BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.
+  The optional Argus source consumes Jetson EGLStreams with CUDA and publishes RGBA buffers without a
+  CPU readback.
 - **The viewer** (:code-file:`camera_viz.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py>`) creates a
   ``VizSession`` and adds one ``QuadLayer`` per enabled camera, then submits each frame to its layer
   and calls ``render()`` once per frame. Stereo cameras submit both eyes.
