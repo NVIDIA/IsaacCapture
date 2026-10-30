@@ -8,8 +8,10 @@
 namespace plugin_utils
 {
 
-OpenXRHandTrackingPushChannel::OpenXRHandTrackingPushChannel(const core::OpenXRSessionHandles& handles, XrHandEXT hand)
-    : time_converter_(handles), injector_(handles.instance, handles.session, hand, handles.space)
+OpenXRHandTrackingPushChannel::OpenXRHandTrackingPushChannel(const core::OpenXRSessionHandles& handles,
+                                                             const core::XrTimeConverter& time_converter,
+                                                             XrHandEXT hand)
+    : time_converter_(time_converter), injector_(handles.instance, handles.session, hand, handles.space)
 {
 }
 

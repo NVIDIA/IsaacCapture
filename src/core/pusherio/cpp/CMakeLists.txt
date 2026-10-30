@@ -29,7 +29,7 @@ target_link_libraries(pusherio
 
         # OpenXR extensions for push tensor and tensor data APIs
         Teleop::openxr_extensions
-
+    PRIVATE
         log_bridge::log_bridge_core
 )
 

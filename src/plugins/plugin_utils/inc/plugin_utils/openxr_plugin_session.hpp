@@ -15,8 +15,8 @@ namespace plugin_utils
  *
  * The session owns its OpenXR session and pull channel. OpenXR permits action
  * sets to be attached only once, so the pull channel is created with the
- * session. Its owner must destroy every returned push channel and wrist source
- * before destroying the session.
+ * session. Its owner must destroy every returned push channel before
+ * destroying the session.
  */
 core::PluginSessionFactory make_openxr_plugin_session_factory(std::string app_name);
 

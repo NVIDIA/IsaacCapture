@@ -418,10 +418,6 @@ ManusTracker::~ManusTracker()
 {
     {
         std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
-        if (!m_initialized)
-        {
-            return;
-        }
         m_initialized = false;
     }
 

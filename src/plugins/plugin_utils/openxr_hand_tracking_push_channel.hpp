@@ -15,12 +15,14 @@ namespace plugin_utils
 class OpenXRHandTrackingPushChannel final : public core::IHandTrackingPushChannel
 {
 public:
-    OpenXRHandTrackingPushChannel(const core::OpenXRSessionHandles& handles, XrHandEXT hand);
+    OpenXRHandTrackingPushChannel(const core::OpenXRSessionHandles& handles,
+                                  const core::XrTimeConverter& time_converter,
+                                  XrHandEXT hand);
 
     void push(const XrHandJointLocationEXT* joint_locations, int64_t sample_time_local_common_clock_ns) override;
 
 private:
-    core::XrTimeConverter time_converter_;
+    const core::XrTimeConverter& time_converter_;
     HandInjector injector_;
 };
 
