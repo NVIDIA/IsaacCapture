@@ -15,6 +15,10 @@
 namespace remote_plugin_session
 {
 
+//! Parses "host[:port]" or "[v6-host][:port]"; a missing port falls back to default_port. Throws
+//! std::invalid_argument.
+Endpoint parse_endpoint(const std::string& text, uint16_t default_port);
+
 //! Where a client connects: plain "host[:port]" (TCP) or "ws://host[:port][/path]" (WebSocket).
 struct RemoteAddress
 {

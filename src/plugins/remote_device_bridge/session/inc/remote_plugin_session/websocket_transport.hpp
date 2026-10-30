@@ -28,19 +28,15 @@ namespace remote_plugin_session
 class WebSocketTransport final : public ITransport
 {
 public:
-    enum class Role
-    {
-        Client,
-        Server,
-    };
+    //! Server role over an accepted socket; no I/O until the first receive() or wait_ready().
+    explicit WebSocketTransport(TcpSocket socket);
 
-    //! Server: no I/O. Client: sends the upgrade for `path` with `host_header` ("host:port") and throws
-    //! std::runtime_error unless 101.
-    WebSocketTransport(TcpSocket socket,
-                       Role role,
-                       const std::string& host_header = "",
-                       const std::string& path = "/",
-                       std::chrono::milliseconds timeout = kConnectTimeout);
+    //! Client role: sends the upgrade for `path` with `host_header` ("host:port") and throws
+    //! std::runtime_error unless the server answers 101.
+    static std::unique_ptr<WebSocketTransport> connect(TcpSocket socket,
+                                                       const std::string& host_header,
+                                                       const std::string& path,
+                                                       std::chrono::milliseconds timeout = kConnectTimeout);
 
     //! Like TcpTransport::accept; the upgrade happens on the first receive().
     static std::unique_ptr<ITransport> accept(TcpSocket& listener,
@@ -54,6 +50,14 @@ public:
     ReceiveResult wait_ready(std::chrono::milliseconds timeout) override;
 
 private:
+    enum class Role
+    {
+        Client,
+        Server,
+    };
+
+    WebSocketTransport(TcpSocket socket, Role role);
+    void client_upgrade(const std::string& host_header, const std::string& path, std::chrono::milliseconds timeout);
     bool send_message(uint8_t opcode, const uint8_t* data, size_t size);
     ReceiveResult accept_upgrade(std::chrono::milliseconds timeout);
 

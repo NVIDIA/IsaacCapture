@@ -3,10 +3,14 @@
 
 #pragma once
 
+#include "transport.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace remote_plugin_session
@@ -18,21 +22,10 @@ struct Endpoint
     uint16_t port = 0;
 };
 
-//! Parses "host[:port]" or "[v6-host][:port]"; a missing port falls back to default_port. Throws
-//! std::invalid_argument.
-Endpoint parse_endpoint(const std::string& text, uint16_t default_port);
-
 //! Minimal RAII wrapper over a blocking POSIX TCP socket (IPv4/IPv6 via getaddrinfo).
 class TcpSocket
 {
 public:
-    enum class RecvResult
-    {
-        Ok,
-        Timeout,
-        Closed,
-    };
-
     TcpSocket() = default;
     explicit TcpSocket(int fd);
     ~TcpSocket();
@@ -53,20 +46,31 @@ public:
     bool valid() const;
     int fd() const;
     uint16_t local_port() const;
-    //! Numeric "host:port" of the connected peer; "?" when unavailable.
-    std::string peer_name() const;
 
     //! False when the peer closed or the send stalled past the socket send timeout.
     bool send_all(const uint8_t* data, size_t size);
     //! Timeout applies to the wait for the first byte; a stall mid-message reports Closed.
-    RecvResult recv_all(uint8_t* data, size_t size, std::chrono::milliseconds timeout);
+    //! Ok, Timeout or Closed.
+    ReceiveResult recv_all(uint8_t* data, size_t size, std::chrono::milliseconds timeout);
 
     //! Unblocks recv/send on other threads; the descriptor stays open until close().
     void shutdown();
     void close();
 
 private:
+    //! Numeric "host:port" of the connected peer; "?" when unavailable.
+    std::string peer_name() const;
+
     int m_fd = -1;
 };
+
+//! Accepts one connection on `listener` and wraps it in `Transport`; null when the poll expires. `peer`, when
+//! given, receives the client's numeric host:port.
+template <typename Transport>
+std::unique_ptr<ITransport> accept_transport(TcpSocket& listener, std::chrono::milliseconds poll, std::string* peer)
+{
+    TcpSocket client = listener.accept(poll, peer);
+    return client.valid() ? std::make_unique<Transport>(std::move(client)) : nullptr;
+}
 
 } // namespace remote_plugin_session
