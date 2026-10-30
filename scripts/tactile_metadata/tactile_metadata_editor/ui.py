@@ -623,6 +623,7 @@ class Editor:
                 else math.pi
             )
             value = min(upper, max(lower, document.q.get(joint.name, 0.0)))
+            document.q[joint.name] = float(value)
             widget = self.server.gui.add_slider(
                 f"{index}: {joint.name}",
                 float(lower),

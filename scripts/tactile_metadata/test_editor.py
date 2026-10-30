@@ -173,6 +173,34 @@ class EditorTests(unittest.TestCase):
         self.assertEqual(editor.document.segments, editor.preview_document.segments)
         self.assertEqual(editor.document.q, editor.preview_document.q)
 
+    def test_joint_slider_initialization_matches_the_rendered_configuration(self):
+        for lower, upper, initial, expected in (
+            (1.0, 2.0, None, 1.0),
+            (-2.0, -1.0, None, -1.0),
+            (1.0, 2.0, 4.0, 2.0),
+        ):
+            with self.subTest(lower=lower, upper=upper, initial=initial):
+                editor = self.make_editor()
+                editor.model = SimpleNamespace(
+                    joints=[
+                        SimpleNamespace(
+                            name="joint",
+                            limit=SimpleNamespace(lower=lower, upper=upper),
+                        )
+                    ]
+                )
+                editor.server = SimpleNamespace(gui=Mock())
+                editor._watch = Mock()
+                if initial is not None:
+                    editor.document.q["joint"] = initial
+
+                editor._add_joint_sliders(editor.document, {})
+
+                self.assertEqual(editor.document.q["joint"], expected)
+                self.assertEqual(
+                    editor.server.gui.add_slider.call_args.args[-1], expected
+                )
+
     def test_load_preserves_current_alignment_and_visible_poses(self):
         editor = self.make_editor()
         editor.document.alignment = geo.transform(
