@@ -26,6 +26,8 @@ EDGE_SMOOTH_NS = 10_000_000
 EDGE_MIN_GAP_NS = 200_000_000
 EDGE_THRESHOLD = 0.3  # fraction of the largest |d curl/dt|
 EDGE_MAD_K = 3.0  # edge pairs outside median +- K * MAD are discarded
+DEFAULT_MIN_XCORR = 0.6
+DEFAULT_MIN_EDGES = 3
 MIN_OVERLAP_NS = 2_000_000_000
 NOT_ESTIMATED = "consumer lag: not estimated (low correlation / too few edges)"
 
@@ -133,8 +135,8 @@ def pct(values: np.ndarray, q: float) -> float:
 def breakdown(
     bridge: dict[str, np.ndarray],
     probe: dict[str, np.ndarray],
-    min_xcorr: float = 0.6,
-    min_edges: int = 3,
+    min_xcorr: float = DEFAULT_MIN_XCORR,
+    min_edges: int = DEFAULT_MIN_EDGES,
 ) -> dict:
     """Raises InputError for unusable input. consumer_p50 and total_p50 are NaN unless `estimated`."""
     check_inputs(bridge, probe)
@@ -217,14 +219,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--min-xcorr",
         type=float,
-        default=0.6,
-        help="windows whose correlation peak is lower are not used for (c) (default 0.6)",
+        default=DEFAULT_MIN_XCORR,
+        help="windows whose correlation peak is lower are not used for (c) (default %(default)s)",
     )
     parser.add_argument(
         "--min-edges",
         type=int,
-        default=3,
-        help="step edges that must pair for (c) to be reported (default 3)",
+        default=DEFAULT_MIN_EDGES,
+        help="step edges that must pair for (c) to be reported (default %(default)s)",
     )
     args = parser.parse_args(argv)
 
@@ -254,14 +256,14 @@ def main(argv: list[str] | None = None) -> int:
         f" median peak {r['xcorr_median']:.2f}"
     )
     print(
-        f"step edges paired {r['edges_paired']}, discarded {r['edges_discarded']} (outside median +- 3 MAD),"
+        f"step edges paired {r['edges_paired']}, discarded {r['edges_discarded']} (outside median +- {EDGE_MAD_K:g} MAD),"
         f" kept {len(r['edge_delays_ms'])} (need {args.min_edges})"
     )
     if not r["estimated"]:
         print(NOT_ESTIMATED)
         return 0
     print(
-        f"{'(c) consumer       xcorr probe vs bridge':<40}{r['consumer_p50']:>10.1f}{'':>10}  ({r['consumer_windows']} x 10 s windows)"
+        f"{'(c) consumer       xcorr probe vs bridge':<40}{r['consumer_p50']:>10.1f}{'':>10}  ({r['consumer_windows']} x {WINDOW_NS / 1e9:g} s windows)"
     )
     print(
         f"{'    step edges     probe - bridge':<40}{r['edge_p50']:>10.1f}{'':>10}  n={len(r['edge_delays_ms'])}: {edges_ms}"

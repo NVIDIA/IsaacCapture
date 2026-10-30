@@ -6,28 +6,12 @@ backend's (identity = slot not filled)."""
 
 from __future__ import annotations
 
-import importlib.util
 import math
-import sys
 import unittest
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from repo_paths import repo_root  # noqa: E402
-
-_TOOL = (
-    repo_root()
-    / "src"
-    / "plugins"
-    / "remote_device_bridge"
-    / "tools"
-    / "latency_probe_xrclient.py"
-)
-_spec = importlib.util.spec_from_file_location("latency_probe_xrclient", _TOOL)
-probe = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(probe)
+import latency_probe_xrclient as probe
 
 TIP = np.array([0.03, -0.02, 0.17])
 
