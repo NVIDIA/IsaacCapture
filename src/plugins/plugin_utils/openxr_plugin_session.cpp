@@ -124,33 +124,30 @@ private:
 OpenXRPluginSession::OpenXRPluginSession(std::string app_name,
                                          core::PluginSessionRequirements requirements,
                                          std::vector<std::shared_ptr<core::ITracker>> trackers)
-    : requirements_(requirements), trackers_(std::move(trackers))
+    : requirements_(requirements)
 {
+    std::shared_ptr<core::ControllerTracker> wrist_controller_tracker;
     std::vector<std::string> wrist_extensions;
     if (requirements_.wrist_tracking_pull)
     {
         auto wrist = WristPoseSource::collect_requirements(WristSourceMode::Auto);
-        wrist_controller_tracker_ = std::move(wrist.controller_tracker);
-        trackers_.insert(trackers_.end(), wrist.trackers.begin(), wrist.trackers.end());
+        wrist_controller_tracker = std::move(wrist.controller_tracker);
+        trackers.insert(trackers.end(), wrist.trackers.begin(), wrist.trackers.end());
         wrist_extensions.assign(wrist.extensions.begin(), wrist.extensions.end());
     }
 
-    auto extensions = make_required_extensions(requirements_, trackers_);
+    auto extensions = make_required_extensions(requirements_, trackers);
     append_unique(extensions, wrist_extensions);
     session_ = std::make_shared<core::OpenXRSession>(app_name, extensions);
+    pull_channel_ = std::make_unique<OpenXRPluginPullChannel>(
+        session_->get_handles(), trackers, std::move(wrist_controller_tracker));
 }
 
 OpenXRPluginSession::~OpenXRPluginSession() = default;
 
-std::unique_ptr<core::IPluginPullChannel> OpenXRPluginSession::create_pull_channel()
+core::IPluginPullChannel& OpenXRPluginSession::pull_channel()
 {
-    if (pull_channel_creation_attempted_)
-    {
-        throw std::logic_error("OpenXRPluginSession supports only one pull channel per session");
-    }
-    pull_channel_creation_attempted_ = true;
-
-    return std::make_unique<OpenXRPluginPullChannel>(session_->get_handles(), trackers_, wrist_controller_tracker_);
+    return *pull_channel_;
 }
 
 std::unique_ptr<core::ISchemaPushChannel> OpenXRPluginSession::create_schema_push_channel(

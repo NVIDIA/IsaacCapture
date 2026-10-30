@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -68,9 +69,9 @@ public:
         state_->session_destroyed = true;
     }
 
-    std::unique_ptr<core::IPluginPullChannel> create_pull_channel() override
+    core::IPluginPullChannel& pull_channel() override
     {
-        return nullptr;
+        throw std::logic_error("CapturingSession has no pull channel");
     }
 
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override

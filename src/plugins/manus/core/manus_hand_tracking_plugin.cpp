@@ -383,11 +383,7 @@ void ManusTracker::initialize() noexcept(false)
                                           .app_name = m_config.app_name }));
         }
 
-        m_pull_channel = m_plugin_session->create_pull_channel();
-        if (!m_pull_channel)
-        {
-            throw std::runtime_error("The plugin session could not create a pull channel");
-        }
+        m_pull_channel = &m_plugin_session->pull_channel();
 
         if (m_config.human)
         {
@@ -420,7 +416,7 @@ void ManusTracker::initialize() noexcept(false)
         m_right_sensor_pusher.reset();
         m_haptic_reader.reset();
         m_status_publisher.reset();
-        m_pull_channel.reset();
+        m_pull_channel = nullptr;
         m_plugin_session.reset();
         m_plugin_session_factory = {};
 

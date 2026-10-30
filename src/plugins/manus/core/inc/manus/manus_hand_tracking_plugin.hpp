@@ -148,7 +148,7 @@ private:
     // Inbound HapticCommand tensor; collection identity in
     // inc/manus/manus_glove_collection.hpp. Read each frame in update().
     std::shared_ptr<core::HapticCommandReaderTracker> m_haptic_reader;
-    std::unique_ptr<core::IPluginPullChannel> m_pull_channel;
+    core::IPluginPullChannel* m_pull_channel = nullptr; // owned by m_plugin_session
     std::unique_ptr<core::IWristTrackingSource> m_wrist_tracking_source;
     std::unique_ptr<core::SchemaPusher> m_left_sensor_pusher;
     std::unique_ptr<core::SchemaPusher> m_right_sensor_pusher;

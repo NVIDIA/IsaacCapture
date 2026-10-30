@@ -31,7 +31,7 @@ struct PluginSessionRequirements
  * @brief Multiplexed transport-neutral pull channel for typed DeviceIO trackers and optional sources.
  *
  * One update establishes the snapshot boundary for every tracker on the channel.
- * The pull channel must outlive every source created from it.
+ * The session owns the pull channel; it must outlive every source created from it.
  */
 class IPluginPullChannel : public ITrackerSession
 {
@@ -47,15 +47,15 @@ public:
 /*!
  * @brief Session abstraction that creates operation-specific plugin channels.
  *
- * The caller must keep the session alive until all pull and push channels
- * created from it have been destroyed.
+ * The caller must keep the session alive until all push channels and wrist
+ * sources created from it have been destroyed.
  */
 class IPluginSession
 {
 public:
     virtual ~IPluginSession() = default;
 
-    virtual std::unique_ptr<IPluginPullChannel> create_pull_channel() = 0;
+    virtual IPluginPullChannel& pull_channel() = 0;
     virtual std::unique_ptr<ISchemaPushChannel> create_schema_push_channel(const SchemaPusherConfig& config) = 0;
     virtual std::unique_ptr<IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) = 0;
 };

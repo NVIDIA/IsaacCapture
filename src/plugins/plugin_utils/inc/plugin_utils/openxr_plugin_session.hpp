@@ -11,8 +11,6 @@
 
 namespace core
 {
-class ControllerTracker;
-class ITracker;
 class OpenXRSession;
 }
 
@@ -22,9 +20,10 @@ namespace plugin_utils
 /*!
  * @brief Local plugin session that creates OpenXR-backed operation channels.
  *
- * The adapter owns the OpenXR session. Its owner must destroy every returned
- * pull and push channel before destroying this session. OpenXR permits action
- * sets to be attached only once, so create_pull_channel() may be called once.
+ * The adapter owns the OpenXR session and its pull channel. OpenXR permits
+ * action sets to be attached only once, so the pull channel is created with the
+ * session. Its owner must destroy every returned push channel and wrist source
+ * before destroying this session.
  */
 class OpenXRPluginSession final : public core::IPluginSession
 {
@@ -39,16 +38,14 @@ public:
     OpenXRPluginSession(OpenXRPluginSession&&) = delete;
     OpenXRPluginSession& operator=(OpenXRPluginSession&&) = delete;
 
-    std::unique_ptr<core::IPluginPullChannel> create_pull_channel() override;
+    core::IPluginPullChannel& pull_channel() override;
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override;
     std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) override;
 
 private:
     core::PluginSessionRequirements requirements_;
-    std::vector<std::shared_ptr<core::ITracker>> trackers_;
-    std::shared_ptr<core::ControllerTracker> wrist_controller_tracker_;
-    bool pull_channel_creation_attempted_ = false;
     std::shared_ptr<core::OpenXRSession> session_;
+    std::unique_ptr<core::IPluginPullChannel> pull_channel_;
 };
 
 } // namespace plugin_utils
