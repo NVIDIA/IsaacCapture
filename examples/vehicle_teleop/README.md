@@ -17,7 +17,8 @@ The remote side uses the native Linux steering wheel plugin and Isaac Teleop Ope
 
 ## Setup
 
-Build and install Isaac Teleop with examples enabled. From the Isaac Teleop repository root:
+Build and install Isaac Teleop with examples enabled, after the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html).
+From the Isaac Teleop repository root:
 
 ```bash
 cmake -B build -DBUILD_EXAMPLES=ON
@@ -25,19 +26,23 @@ cmake --build build --parallel 4
 cmake --install build
 ```
 
-Create the example virtual environment from this directory. The scripts use
-`.venv/bin/python` directly, so keep the virtual environment at
-`examples/vehicle_teleop/.venv`.
+Create the example virtual environment in this directory, install the
+`isaaccapture` build into it, then install the example:
 
 ```bash
 cd examples/vehicle_teleop
-uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python --find-links ../../build/wheels "isaaccapture[cloudxr]"
+# Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION and X.Y with the first two numbers of VERSION.
+uv venv --python 3.11 --seed .venv
 source .venv/bin/activate
-cd python
-uv sync --active --inexact --no-install-project --no-install-package isaaccapture
-cd ..
+uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=../../install/wheels/ --reinstall-package isaaccapture
+uv pip install -e .
 ```
+
+This is the install from [step 4 of Build from source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package),
+which [Running an example](../README.md#running-an-example) also uses, except
+that the venv lives in this directory because the scripts call
+`.venv/bin/python`. Rerun the `isaaccapture` line after every rebuild to replace
+the installed wheel.
 
 Clone the vehicle-side dependencies into this example's `thirdparty` directory. These repositories are intentionally not added as git submodules.
 
@@ -118,10 +123,29 @@ If the remote worker was started with `--log-mcap`, replay the recorded commands
 
 The replay command prints the retargeted vehicle command values. It does not write to PandaRunner.
 
+## Running the Modules Directly
+
+The example has no single entry point: each script in `scripts/` runs one module
+with `.venv/bin/python -m`. To run a module yourself, from this directory:
+
+```bash
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.isaac_keyboard_control_worker
+PYTHONPATH=thirdparty/opendbc:thirdparty/panda .venv/bin/python -m isaaccapture_examples.vehicle_teleop.panda_worker --connect "tcp://<remote-ip>:5555"
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.replay_command_mcap logs/vehicle_control.mcap
+```
+
+The Panda worker needs `thirdparty/opendbc` and `thirdparty/panda` on
+`PYTHONPATH`; `run_panda_worker.sh` sets that for you.
+
 ## Troubleshooting
 
 If the steering worker cannot find the native plugin, pass `--plugin-binary` explicitly. In a source build, the default location is usually `build/src/plugins/steering_wheel/steering_wheel_plugin`. In an install tree, it is usually `plugins/steering_wheel/steering_wheel_plugin`.
 
+The default `--config` and `--plugin-binary` are found relative to this example directory, so they resolve in a source checkout set up as in [Setup](#setup) and in an install tree. If you installed the example as a regular, non-editable package, pass both explicitly, with `--config` pointing at this directory's `config/steering_wheel_config.yaml`.
+
 If the worker fails while creating the OpenXR session, confirm that the CloudXR runtime is running, the CloudXR environment has been sourced in the worker terminal, and the OpenXR client is connected.
 
 If the Panda worker cannot import `opendbc` or `panda`, confirm the two dependency repositories were cloned under `examples/vehicle_teleop/thirdparty/`.
+
+If `python -m` reports `No module named 'isaaccapture_examples'`, the example is not installed in that virtual environment. Rerun `uv pip install -e .` from [Setup](#setup).

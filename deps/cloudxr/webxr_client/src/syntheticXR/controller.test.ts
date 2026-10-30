@@ -6,8 +6,8 @@ import {
   controllerSweep,
   initialInput,
   parseTrace,
-  SyntheticXRController,
   type SyntheticDevice,
+  SyntheticXRController,
 } from './controller';
 
 function device(): SyntheticDevice {

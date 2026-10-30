@@ -122,7 +122,8 @@ Expected directory layout after placing the SDK:
        lib/
          libManusSDK.so
 
-Then build from the root:
+Then, after the :doc:`source-build prerequisites </development/build_from_source/index>`,
+build from the root:
 
 .. code-block:: bash
 

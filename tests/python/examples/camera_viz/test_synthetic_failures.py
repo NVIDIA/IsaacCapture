@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sources.synthetic import SyntheticSource, SyntheticStereoSource
+from isaaccapture_examples.camera_viz.sources.synthetic import (
+    SyntheticSource,
+    SyntheticStereoSource,
+)
 
 
 @pytest.mark.parametrize("source_type", [SyntheticSource, SyntheticStereoSource])

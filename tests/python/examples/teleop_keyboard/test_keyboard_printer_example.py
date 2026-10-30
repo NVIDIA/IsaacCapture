@@ -6,7 +6,9 @@
 import glfw
 import pytest
 
-from keyboard_printer_example import evdev_code_from_scancode
+from isaaccapture_examples.teleop.keyboard_printer_example import (
+    evdev_code_from_scancode,
+)
 
 KEY_W, KEY_UP, KEY_F1 = 17, 103, 59
 

@@ -30,7 +30,7 @@ grounding = [
     "torch>=2.7.0",
     "trimesh",
     "viser",
-    "pin>=2.7",
+    "pin>=4.1",
     "pin-pink>=4.0",
     "loop-rate-limiters",
     "daqp",
@@ -39,9 +39,9 @@ grounding = [
 # test unless -DTEST_WUJI_RETARGETER=OFF.
 wuji = [
     "wuji-sdk[retarget]==2026.7.14",
-    "pin>=2.7.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "pin>=4.1",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 
 [tool.pytest.ini_options]

@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../ego_post_processing/egohand.html
+
 Egocentric Hand Reconstruction
 ==============================
 

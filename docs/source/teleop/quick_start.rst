@@ -42,15 +42,31 @@ to clone the repository for a couple quick samples to run.
    replaces the legacy package and keeps old imports working temporarily.
    See :doc:`/development/migration`.
 
-In a new terminal, activate your preferred virtual or conda environment, then install the latest
-stable release from PyPI:
+Install the package into a virtual environment. Without one, ``pip install`` fails on Ubuntu 24.04
+with ``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment
+found``. In a new terminal, from the repository root, create and activate one with
+`uv <https://docs.astral.sh/uv/>`__, which downloads the requested Python if the system lacks it
+(Python 3.11 to 3.13 are supported). If ``uv`` is missing, install it first as shown in
+:ref:`one-time-setup`.
 
 .. code-block:: bash
 
-   pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+   # --seed adds pip, so plain pip install also works in this venv.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
+
+To use an existing venv, or a conda environment other than ``base`` (``uv`` treats ``base`` as a
+system Python), activate it and skip ``uv venv``. Activate the environment again in every new
+terminal you use for the steps below.
+
+Install the latest stable release from PyPI:
+
+.. code-block:: bash
+
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions — shown here with `uv <https://docs.astral.sh/uv/>`__:
+and an opt-in to pre-release versions:
 
 .. code-block:: bash
 
@@ -102,7 +118,7 @@ env file and start the service with it:
    python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
 
 The same ``--cloudxr-env-config`` flag is available on the teleop examples under
-``examples/teleop/python/``, which register CloudXR's launcher arguments through
+``examples/teleop``, which register CloudXR's launcher arguments through
 ``CloudXRLauncher.add_launcher_arguments()`` — but it applies only when the
 example is the one starting the runtime. With a service already running the
 example attaches to it instead, and prints which settings it had to ignore (see
@@ -277,6 +293,11 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    3. Click **Connect** to begin teleoperation.
 
    .. note::
+      On PICO 4 Ultra, the web client refreshes after session ends and connection
+      failures by default, keeping the last error visible until a stream connects.
+      See :ref:`web client refresh troubleshooting <cloudxr-web-client-refresh>`
+      for refresh settings and retry behavior.
+
       For advanced usage and troubleshooting of CloudXR, see the `CloudXR documentation`_ for more
       details.
 
@@ -313,13 +334,15 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 6. Run a teleop example
 ------------------------
 
-Run the simplified gripper retargeting example. This demonstrates the full
+Install the teleop examples into the environment from step 2, then run the
+simplified gripper retargeting example. This demonstrates the full
 pipeline: reading XR controller input via CloudXR, retargeting it through the
 ``GripperRetargeter``, and printing the resulting gripper command values:
 
 .. code-block:: bash
 
-   python examples/teleop/python/gripper_retargeting_example_simple.py
+   uv pip install -e ./examples/teleop
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Once running, squeeze the **right controller trigger** to control the gripper.
 ``GripperRetargeter`` emits binary commands: ``+1.00`` means open and ``-1.00``
@@ -346,7 +369,7 @@ chosen duration, measured after session startup, pass ``--duration``:
 
 .. code-block:: bash
 
-   python examples/teleop/python/gripper_retargeting_example_simple.py --duration 20
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --duration 20
 
 ``--duration 0`` also runs until Ctrl+C. Both a timed run and Ctrl+C announce
 that the session is closing, then print ``Session closed.`` after cleanup.
@@ -358,12 +381,13 @@ For proportional controller input, read ``ControllerInputIndex.TRIGGER_VALUE``
 or use ``SO101GripperRetargeter`` for SO-101 jaw closedness in ``[0, 1]``
 (``0`` open, ``1`` closed); see :doc:`../references/retargeting/so101`.
 
-To try other examples, see ``examples/teleop/python/`` — for instance:
+To try other examples, run another module of ``isaaccapture_examples.teleop``
+the same way; :code-file:`examples/teleop/README.md` lists them all. For instance:
 
-- ``se3_retargeting_example.py`` — maps hand or controller poses to
+- ``se3_retargeting_example`` — maps hand or controller poses to
   end-effector poses (absolute or relative), with the same ``--duration`` and Ctrl+C behavior
-- ``dex_bimanual_example.py`` — bimanual dexterous hand retargeting
-- ``gripper_retargeting_example.py`` — full gripper example with more
+- ``dex_bimanual_example`` — bimanual dexterous hand retargeting
+- ``gripper_retargeting_example`` — full gripper example with more
   configuration options
 
 Next steps

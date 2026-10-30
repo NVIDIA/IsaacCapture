@@ -65,8 +65,8 @@ project.spdx
 # MuJoCo writes this to the working directory, not next to the model.
 MUJOCO_LOG.TXT
 
-# examples/mcap_record_replay writes here by default (Path.cwd() / "recordings"),
-# and its README has you run from the repo root.
+# Examples and test scripts that record write here by default
+# (Path.cwd() / "recordings"), and their docs have you run from the repo root.
 /recordings/
 
 # Runtime device files injected by MCP server infrastructure

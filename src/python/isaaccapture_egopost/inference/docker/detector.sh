@@ -4,7 +4,7 @@
 
 # Local helper for building and running the standalone RT-DETRv2 bbox-detector
 # Docker image (inference/docker/Dockerfile.detector). Detection only -- no EgoHand
-# model, no SOMA. Pair with egohand_inference.sh's --bbox-dir to feed the JSONs
+# model, no SOMA. Pair with egohand_inference.sh's --bbox_dir to feed the JSONs
 # this produces into a full EgoHand inference run without re-detecting.
 # Run from the EgoHand repo root, or any subdirectory -- the script locates the root itself.
 # Run with no arguments for usage.
@@ -34,13 +34,13 @@ usage: inference/docker/detector.sh <build|run> [args]
                           pass --weight at run time, or omit both to resolve
                           via HF (nvidia/RT-DETR-Hand-Detector-v1) instead.
 
-  run --image <name> --input <path> --out <path> --intrinsics-json <path> [options]
+  run --image <name> --input <path> --out <path> --intrinsics_json <path> [options]
       Run inference/hand_detector_2d/scripts/run_hand_detector.py through the
       image entrypoint: bbox detection only, written as
       <out>/<video_stem>/<video_stem>_{left,right}_bbox.json -- the layout
-      egohand_inference.sh run --bbox-dir <out> expects.
+      egohand_inference.sh run --bbox_dir <out> expects.
 
-      Use the same input video and --intrinsics-json for the paired
+      Use the same input video and intrinsics JSON for the paired
       egohand_inference.sh run. This wrapper uses the detector's default
       pixel-aspect rectification and does not expose a switch to disable it.
       For standard pinhole cropping, match both passes' pixel-aspect settings
@@ -53,10 +53,10 @@ usage: inference/docker/detector.sh <build|run> [args]
       --image <name>       Docker image name/tag to run. Required.
       --input <path>       A video file, or a folder of .mp4 files; mounted read-only.
       --out <path>         Output dir for bbox JSONs. Required.
-      --intrinsics-json <path>
+      --intrinsics_json <path>
                             Camera intrinsics JSON, mounted read-only. Required --
                             must match the paired egohand_inference.sh run's
-                            --intrinsics-json (see above).
+                            --intrinsics_json (see above).
       --weight <path>      RT-DETRv2 ONNX weight, mounted read-only. Not required
                             if the image was built with --weight -- and if neither
                             is given, resolved via HF (nvidia/RT-DETR-Hand-Detector-v1)
@@ -66,9 +66,9 @@ usage: inference/docker/detector.sh <build|run> [args]
                             Override tracking from the shared rtdetr_docker.yaml
                             (currently on). --no-tracking also disables bbox smoothing.
       --device <dev>        Torch-style device, e.g. cuda:1 or cpu. Default: cuda.
-      --max-seconds <N>      Only process the first N seconds.
-      --frame-batch-size <N> Frames decoded into RAM at once. Default: 2000.
-      --hf-token <token>     Optional. Forwarded as HF_TOKEN in the container
+      --max_seconds <N>      Only process the first N seconds.
+      --frame_batch_size <N> Frames decoded into RAM at once. Default: 2000.
+      --hf_token <token>     Optional. Forwarded as HF_TOKEN in the container
                               for authenticated HF downloads (e.g. higher rate
                               limits). Not needed for normal runs.
 EOF
@@ -133,15 +133,15 @@ case "$cmd" in
         --image)             IMAGE="$2";            shift 2 ;;
         --input)             INPUT="$2";            shift 2 ;;
         --out)                OUT="$2";             shift 2 ;;
-        --intrinsics-json)    INTRINSICS_JSON="$2";  shift 2 ;;
+        --intrinsics_json)    INTRINSICS_JSON="$2";  shift 2 ;;
         --weight)             WEIGHT="$2";          shift 2 ;;
         --hand)                HAND="$2";           shift 2 ;;
         --tracking)            TRACKING="true";     shift 1 ;;
         --no-tracking)         TRACKING="false";    shift 1 ;;
         --device)              DEVICE="$2";         shift 2 ;;
-        --max-seconds)         MAX_SECONDS="$2";    shift 2 ;;
-        --frame-batch-size)    FRAME_BATCH_SIZE="$2"; shift 2 ;;
-        --hf-token)            HF_TOKEN_ARG="$2";    shift 2 ;;
+        --max_seconds)         MAX_SECONDS="$2";    shift 2 ;;
+        --frame_batch_size)    FRAME_BATCH_SIZE="$2"; shift 2 ;;
+        --hf_token)            HF_TOKEN_ARG="$2";    shift 2 ;;
         *) echo "unknown arg: $1" >&2; usage ;;
       esac
     done
@@ -151,7 +151,7 @@ case "$cmd" in
     [[ -e "$INPUT" ]] || die "input not found: $INPUT"
     [[ -n "$OUT" ]] || die "--out is required"
     [[ -n "$INTRINSICS_JSON" ]] \
-      || die "--intrinsics-json is required -- must match the paired egohand_inference.sh run's --intrinsics-json, or the boxes land on the wrong pixels (see usage)"
+      || die "--intrinsics_json is required -- must match the paired egohand_inference.sh run's --intrinsics_json, or the boxes land on the wrong pixels (see usage)"
     [[ -f "$INTRINSICS_JSON" ]] || die "intrinsics JSON not found: $INTRINSICS_JSON"
     [[ "$HAND" == "left" || "$HAND" == "right" || "$HAND" == "both" ]] \
       || die "--hand must be left, right, or both (got: $HAND)"

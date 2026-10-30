@@ -6,7 +6,7 @@
 # deployment of the camera_viz example.
 #
 # Local:
-#   ./camera_viz.sh setup [--sender-only]      install deps + build codec
+#   ./camera_viz.sh setup [--sender-only]      install deps + build native modules
 #   ./camera_viz.sh loopback CONFIG            run streamer + viz on 127.0.0.1
 #   ./camera_viz.sh run CONFIG [--mode M]      run the viewer (honors source:)
 #
@@ -110,6 +110,8 @@ rsync_to_remote() {
     rsync -az --delete \
         --exclude='.venv/' \
         --exclude='codec/build/' \
+        --exclude='python/isaaccapture_examples/camera_viz/argus/build/' \
+        --exclude='python/isaaccapture_examples/camera_viz/argus/*.so' \
         --exclude='__pycache__/' \
         --exclude='*.pyc' \
         --exclude='.pytest_cache/' \
@@ -163,6 +165,10 @@ _require_local_config() {
         log_error "no venv at $LOCAL_VENV — run ./camera_viz.sh setup first"
         exit 1
     }
+    "$LOCAL_VENV/bin/python" -c 'import isaaccapture_examples.camera_viz' >/dev/null 2>&1 || {
+        log_error "camera_viz is not installed in $LOCAL_VENV — rerun ./camera_viz.sh setup"
+        exit 1
+    }
 }
 
 # RTP deps are opt-in at setup time (``--with-rtp``), so a venv provisioned
@@ -198,7 +204,7 @@ PY
 }
 
 # ──────────────────────────────────────────────────────────────────────
-# run (the viewer; args after CONFIG forward to camera_viz.py, e.g. --mode xr)
+# run (the viewer; args after CONFIG forward to the viewer, e.g. --mode xr)
 # ──────────────────────────────────────────────────────────────────────
 
 cmd_run() {
@@ -209,7 +215,7 @@ cmd_run() {
         _require_rtp_deps
     fi
     log_step "Starting camera_viz — Ctrl-C to exit"
-    "$LOCAL_VENV/bin/python" "$HERE/camera_viz.py" "$@"
+    "$LOCAL_VENV/bin/python" -m isaaccapture_examples.camera_viz "$@"
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -240,11 +246,11 @@ cmd_loopback() {
     trap '_loopback_cleanup' EXIT
 
     log_step "Starting camera_streamer → 127.0.0.1 (background)"
-    "$LOCAL_VENV/bin/python" "$HERE/camera_streamer.py" "$1" --host 127.0.0.1 &
+    "$LOCAL_VENV/bin/python" -m isaaccapture_examples.camera_viz.camera_streamer "$1" --host 127.0.0.1 &
     _LOOPBACK_SENDER_PID=$!
 
     log_step "Starting camera_viz (foreground) — Ctrl-C to exit"
-    "$LOCAL_VENV/bin/python" "$HERE/camera_viz.py" "$_LOOPBACK_RECV_CONFIG"
+    "$LOCAL_VENV/bin/python" -m isaaccapture_examples.camera_viz "$_LOOPBACK_RECV_CONFIG"
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -256,7 +262,8 @@ cmd_deploy() {
     # anything we don't recognize would land in REMOTE_REST (where the
     # positional CONFIG lives).
     local no_service=false
-    # ``--streaming-host`` → injected as ``--host`` on camera_streamer.py's
+    local argus_flag=""
+    # ``--streaming-host`` → injected as ``--host`` on the streamer's
     # CLI inside the rendered systemd unit. Lets you keep the YAML at
     # 127.0.0.1 for loopback and override only when deploying to a robot.
     local streaming_host="${STREAMING_HOST:-}"
@@ -264,6 +271,7 @@ cmd_deploy() {
     while (( $# )); do
         case $1 in
             --no-service)     no_service=true; shift;;
+            --with-argus)     argus_flag=" --with-argus"; shift;;
             --streaming-host) streaming_host=$2; shift 2;;
             *)                filtered+=("$1"); shift;;
         esac
@@ -272,7 +280,7 @@ cmd_deploy() {
 
     parse_remote_args "$@"
     [[ "${#REMOTE_REST[@]}" -eq 1 ]] || {
-        log_error "usage: camera_viz.sh deploy --host H --user U [--password P] [--no-service] CONFIG"
+        log_error "usage: camera_viz.sh deploy --host H --user U [--password P] [--no-service] [--with-argus] CONFIG"
         exit 1
     }
     local config="${REMOTE_REST[0]}"
@@ -296,7 +304,7 @@ cmd_deploy() {
     # cupy loader needs. If the Jetson is missing system packages /
     # symlinks, _install_deps.sh prompts on the TTY (ssh -t) and either
     # runs the sudo commands after the operator types ``y`` or aborts.
-    ssh_run_tty "cd $REMOTE_DIR && bash scripts/_install_deps.sh --sender-only --jetson"
+    ssh_run_tty "cd $REMOTE_DIR && bash scripts/_install_deps.sh --sender-only --jetson$argus_flag"
     log_ok "deps installed"
 
     if $no_service; then
@@ -304,10 +312,10 @@ cmd_deploy() {
         local manual_host_flag=""
         if [[ -n "$streaming_host" ]]; then
             manual_host_flag=" --host $streaming_host"
-            log_info "(--streaming-host has no effect in --no-service mode — pass it to camera_streamer.py yourself.)"
+            log_info "(--streaming-host has no effect in --no-service mode — pass it to the streamer yourself.)"
         fi
         log_info "Run manually with:"
-        log_info "  ssh $REMOTE_USER@$REMOTE_HOST 'cd ~/camera_viz && .venv/bin/python camera_streamer.py $config$manual_host_flag'"
+        log_info "  ssh $REMOTE_USER@$REMOTE_HOST 'cd ~/camera_viz && .venv/bin/python -m isaaccapture_examples.camera_viz.camera_streamer $config$manual_host_flag'"
         log_info "Re-run without --no-service when you're ready to install the systemd unit."
         return 0
     fi
@@ -357,8 +365,10 @@ REMOTE
 )
     ssh_run_tty "$linger_cmd"
 
-    log_step "Enabling + starting service"
-    ssh_run "systemctl --user enable --now ${SERVICE_NAME}.service"
+    # restart, not `enable --now`: a redeploy must replace a streamer that is
+    # already running the previous unit.
+    log_step "Enabling + (re)starting service"
+    ssh_run "systemctl --user enable ${SERVICE_NAME}.service && systemctl --user restart ${SERVICE_NAME}.service"
     log_ok "deployed."
 
     log_info "Tail logs with:   ./camera_viz.sh service-logs --host $REMOTE_HOST --user $REMOTE_USER"
@@ -391,15 +401,15 @@ cmd_service_restart() {
 # ──────────────────────────────────────────────────────────────────────
 
 show_help() {
-    cat <<EOF
+    cat <<'EOF'
 camera_viz.sh — local development + Jetson deployment for camera_viz
 
 LOCAL
     setup [--venv PATH] [--sender-only] [--jetson]
-          [--no-v4l2] [--no-oakd] [--with-rtp] [--with-zed]
+          [--no-v4l2] [--no-oakd] [--with-rtp] [--with-argus] [--with-zed]
           [--wheel PATH | --build-from-source]
                           Create .venv, install Python deps via uv into
-                          the venv, build native codec. Python deps stay
+                          the venv, build native codec / Argus modules. Python deps stay
                           inside .venv (no --system-site-packages).
                           System-side prerequisites (GStreamer plugins,
                           cairo/girepository dev headers, cuda-nvrtc on
@@ -426,6 +436,8 @@ LOCAL
                           setup offers to build it from this checkout;
                           --build-from-source picks that without asking,
                           --wheel PATH installs a wheel you already built.
+                          --with-argus builds the optional Jetson Argus
+                          native source when Argus headers are present.
 
     loopback CONFIG       Run camera_streamer + camera_viz on 127.0.0.1.
 
@@ -439,11 +451,13 @@ LOCAL
 
 REMOTE (Jetson robot)
     deploy [--host H --user U [--password P]]
-           [--streaming-host IP] [--no-service] CONFIG
+           [--streaming-host IP] [--no-service] [--with-argus] CONFIG
                           rsync source, install deps, install + start
-                          systemd user service running camera_streamer.py.
+                          systemd user service running the streamer.
                           --no-service stops after deps so you can run
-                          camera_streamer.py by hand first.
+                          the streamer by hand first.
+                          --with-argus builds the optional Argus source
+                          on the robot during dependency installation.
                           --streaming-host injects ``--host IP`` into the
                           unit's ExecStart so the sender streams there
                           regardless of streaming.host in the YAML. Same

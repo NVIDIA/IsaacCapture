@@ -17,7 +17,7 @@ dependencies = [
     "msgpack",
     "msgpack-numpy",
     # The ROS node installs pink_ik and dexpilot together. Require nlopt>=2.8 so
-    # dex-retargeting resolves to 0.5.x, keeping the env on NumPy 2 / Pinocchio 3.
+    # dex-retargeting resolves to 0.5.x, keeping the env on NumPy 2 / Pinocchio 4.
     "nlopt>=2.8.0",
 ]
 

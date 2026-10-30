@@ -3,20 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import './panel.css';
+
+import { useFrame } from '@react-three/fiber';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useFrame } from '@react-three/fiber';
 
 import {
   controllerSweep,
   type Hand,
   type InputTrace,
-  type Quaternion,
-  SyntheticXRController,
-  type SyntheticDevice,
   parseTrace,
+  type Quaternion,
+  type SyntheticDevice,
+  SyntheticXRController,
 } from './controller';
-import './panel.css';
 
 declare global {
   interface Window {

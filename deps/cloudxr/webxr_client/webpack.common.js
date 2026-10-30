@@ -83,6 +83,16 @@ module.exports = {
     rules: [
       ...eagerExceptEmulatorParserRules,
       {
+        test: /[\\/]helpers[\\/]LoadIWER\.ts$/,
+        loader: 'ts-loader',
+        options: {
+          instance: 'iwer-loader',
+          transpileOnly: true,
+          // Preserve import() so the emulator stays in its lazy chunk.
+          compilerOptions: { module: 'ESNext' },
+        },
+      },
+      {
         test: /\.tsx?$/,
         use: {
           loader: 'ts-loader',
@@ -91,7 +101,7 @@ module.exports = {
             transpileOnly: true,
           },
         },
-        exclude: /node_modules/,
+        exclude: [/node_modules/, /[\\/]helpers[\\/]LoadIWER\.ts$/],
       },
       {
         test: /\.css$/,
