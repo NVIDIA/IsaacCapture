@@ -2132,9 +2132,10 @@ class Editor:
             if self.pick_mode is not None and active:
                 taxel_colors[row] = INACTIVE_COLOR
         if prefix == "/edit":
+            binding = self.document if active else self._binding_document()
             error_rows = {
                 issue["row"]
-                for issue in self.document.validate()
+                for issue in binding.validate()
                 if issue["kind"] == "taxels" and issue["row"] is not None
             }
             for row in error_rows:
@@ -2228,10 +2229,11 @@ class Editor:
                 forces,
             )
             if self.show_binding.value:
+                binding = self._binding_document()
                 self._draw_dataset(
                     "/edit",
-                    self.document.segments,
-                    self.document.taxels,
+                    binding.segments,
+                    binding.taxels,
                     BINDING_OVERLAY_OPACITY,
                     False,
                 )

@@ -11,7 +11,7 @@ import numpy as np
 
 from tactile_metadata_editor import geometry as geo, storage
 from tactile_metadata_editor.document import JOINTS, Segment, State, Taxel
-from tactile_metadata_editor.ui import Editor
+from tactile_metadata_editor.ui import ERROR_COLOR, TAXEL_COLOR, Editor
 
 
 class EditorTests(unittest.TestCase):
@@ -196,6 +196,42 @@ class EditorTests(unittest.TestCase):
         for rendered in (validation, preview, widget.content, editor.info.value):
             self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;", rendered)
             self.assertNotIn(payload, rendered)
+
+    def test_binding_overlay_follows_selected_source_and_its_validation(self):
+        editor = self.make_editor()
+        editor.live_document = editor.document.clone()
+        editor.live_document.segments[0].pose[0] = 0.02
+        editor.live_document.taxels[0].pose[0] = 0.03
+        editor.document.taxels[0].segments[0] = "MISSING"
+        editor.model, editor.receiver = None, None
+        editor.mode_edit = SimpleNamespace(value=False)
+        editor.show_binding = SimpleNamespace(value=True)
+        editor.show_saved = SimpleNamespace(value=False)
+        editor.selected_kind, editor.selected_rows = None, []
+        editor.binding_phase, editor.binding_segments = None, []
+        editor.pick_mode = None
+        editor._rendered_preview_taxels = Mock(return_value=([], [], 0))
+        editor._draw_instances = Mock()
+        editor._hide_prefix = Mock()
+        editor._draw_selection_gizmo = Mock()
+
+        for live in (False, True):
+            with self.subTest(live=live):
+                editor.binding_source_live.value = live
+                editor._draw_instances.reset_mock()
+
+                editor._draw()
+
+                calls = {
+                    call.args[0]: call.args
+                    for call in editor._draw_instances.call_args_list
+                }
+                source = editor.live_document if live else editor.document
+                self.assertIs(calls["/edit/segments"][2], source.segments)
+                self.assertIs(calls["/edit/taxels"][2], source.taxels)
+                self.assertEqual(
+                    calls["/edit/taxels"][3], [TAXEL_COLOR if live else ERROR_COLOR]
+                )
 
     def test_start_binding_reuses_only_selected_taxels(self):
         for kind, rows in (
