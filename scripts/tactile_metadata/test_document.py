@@ -15,11 +15,14 @@ class StateTests(unittest.TestCase):
         state.replace(first, "first.json")
 
         first.segments[0].pose[0] = 0.01
+        first.alignment[0][3] = 0.01
         self.assertEqual(state.saved.segments[0].pose[0], 0.0)
+        self.assertEqual(state.saved.alignment[0][3], 0.0)
         self.assertEqual(state.saved.q, {})
         self.assertEqual(first.q, {"joint": 0.5})
 
         second = Document()
+        self.assertEqual(second.alignment[0][3], 0.0)
         state.replace(second, "second.json")
         self.assertIs(state.document, second)
         self.assertEqual(state.path, "second.json")

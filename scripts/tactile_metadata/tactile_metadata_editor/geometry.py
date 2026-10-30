@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
 import trimesh
+from numpy.typing import NDArray
 from trimesh import transformations as tf
 from yourdfpy import URDF
 
@@ -19,17 +21,27 @@ from .document import (
 )
 
 VISUALIZATION_FROM_HAND = np.array(
-    [[-1, 0, 0, 0], [0, 0, -1, 0], [0, -1, 0, 0], [0, 0, 0, 1]],
+    [
+        [-1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
     dtype=float,
 )
 VISUALIZATION_FROM_URDF = np.array(
-    [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
+    [
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
     dtype=float,
 )
 
 
-def matrix(values: list[float]) -> np.ndarray:
-    array = np.asarray(values, dtype=float)
+def matrix(values: list[float]) -> NDArray[np.float64]:
+    array = np.asarray(values, dtype=np.float64)
     if (
         array.shape != (7,)
         or not np.isfinite(array).all()
@@ -104,8 +116,9 @@ def realign(document: Document, alignment: np.ndarray) -> np.ndarray:
     return delta
 
 
-def apply_delta(values, rows: list[int], delta: np.ndarray) -> None:
-    for row in rows:
+def apply_delta(values, rows: Iterable[int], delta: np.ndarray) -> None:
+    """Apply the transform once per distinct row."""
+    for row in set(rows):
         if 0 <= row < len(values):
             values[row].pose = pose(delta @ matrix(values[row].pose))
 

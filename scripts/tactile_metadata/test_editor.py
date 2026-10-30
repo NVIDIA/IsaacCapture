@@ -7,12 +7,22 @@ from unittest.mock import Mock
 
 import numpy as np
 
-from tactile_metadata_editor import storage
+from tactile_metadata_editor import geometry as geo, storage
 from tactile_metadata_editor.document import Segment, State, Taxel
 from tactile_metadata_editor.ui import Editor
 
 
 class EditorTests(unittest.TestCase):
+    def test_apply_delta_transforms_duplicate_rows_once(self):
+        segments = [Segment("WRIST"), Segment("INDEX_TIP")]
+        delta = np.eye(4)
+        delta[0, 3] = 0.01
+
+        geo.apply_delta(segments, [0, 0], delta)
+
+        np.testing.assert_allclose(segments[0].pose[:3], [0.01, 0.0, 0.0])
+        np.testing.assert_allclose(segments[1].pose[:3], [0.0, 0.0, 0.0])
+
     def make_editor(self):
         editor = Editor.__new__(Editor)
         editor.state = State()
