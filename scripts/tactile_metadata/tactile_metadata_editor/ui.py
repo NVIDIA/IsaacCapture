@@ -462,7 +462,7 @@ class Editor:
         path = self.metadata_path.value.strip()
         if not path:
             raise ValueError("Enter Metadata Path")
-        document = storage.load(path)
+        document = storage.load(path, self.document.alignment)
         self.state.replace(document, path)
         self.preview_document = self._preview_from(document)
         self._sync_document()

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -118,6 +120,31 @@ class EditorTests(unittest.TestCase):
         np.testing.assert_allclose(editor.document.taxels[0].pose, expected)
         self.assertEqual(editor.document.segments, editor.preview_document.segments)
         self.assertEqual(editor.document.q, editor.preview_document.q)
+
+    def test_load_preserves_current_alignment_and_visible_poses(self):
+        editor = self.make_editor()
+        editor.document.alignment = geo.transform(
+            (0.12, 0.03, -0.04), (10.0, 20.0, 30.0)
+        ).tolist()
+        expected = editor.document.clone()
+        editor._sync_document = Mock()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.json"
+            storage.save(editor.state, path)
+            editor.metadata_path = SimpleNamespace(value=str(path))
+
+            editor._load()
+
+        for document in (editor.document, editor.state.saved, editor.preview_document):
+            np.testing.assert_allclose(document.alignment, expected.alignment)
+            np.testing.assert_allclose(
+                document.segments[0].pose, expected.segments[0].pose, atol=1e-12
+            )
+        for document in (editor.document, editor.state.saved):
+            np.testing.assert_allclose(
+                document.taxels[0].pose, expected.taxels[0].pose, atol=1e-12
+            )
+        editor._sync_document.assert_called_once()
 
     def test_error_html_escapes_external_text(self):
         editor = self.make_editor()
