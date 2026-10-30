@@ -5,7 +5,9 @@
 
 #include <pusherio/plugin_session.hpp>
 #include <remote_plugin_session/bridge_limits.hpp>
+#include <remote_plugin_session/remote_address.hpp>
 #include <remote_plugin_session/tcp_socket.hpp>
+#include <remote_plugin_session/transport.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -22,13 +24,13 @@ namespace remote_device_bridge
 
 enum class ClockSource
 {
-    TwoWay, //!< PING/PONG min-RTT offset; one-way only for a v0 client or when no PONG answers
+    TwoWay, //!< PING/PONG min-RTT offset; one-way only when no PONG answers
     OneWay, //!< frame-header minimum only, no PINGs (A/B baseline)
 };
 
 struct BridgeOptions
 {
-    remote_plugin_session::Endpoint listen{ "0.0.0.0", 47500 };
+    remote_plugin_session::Endpoint listen{ "0.0.0.0", remote_plugin_session::kDefaultBridgePort };
     //! Second listener speaking WebSocket (same frames, same --max-clients budget); off when unset.
     std::optional<remote_plugin_session::Endpoint> ws_listen;
     //! Overrides the HELLO app name when non-empty.

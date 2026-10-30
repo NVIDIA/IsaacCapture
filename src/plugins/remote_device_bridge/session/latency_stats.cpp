@@ -55,7 +55,7 @@ float index_curl_m(const XrHandJointLocationEXT* joints)
 
 std::string format_clock_stats(std::vector<int64_t>& ages_ns, const ClockOffsetEstimator& clock)
 {
-    const bool two_way = std::strcmp(clock.offset_source(), "two-way") == 0;
+    const bool two_way = clock.offset_source() == ClockOffsetEstimator::Source::TwoWay;
     std::string out = " | age_ms";
     if (ages_ns.empty())
     {
@@ -70,7 +70,7 @@ std::string format_clock_stats(std::vector<int64_t>& ages_ns, const ClockOffsetE
                      std::string(" | rtt_ms min=- last=-");
     char offset[48];
     std::snprintf(offset, sizeof(offset), "%.3f", static_cast<double>(clock.offset_ns()) / 1e6);
-    return out + " | offset_ms=" + offset + " clock=" + clock.offset_source();
+    return out + " | offset_ms=" + offset + " clock=" + (two_way ? "two-way" : "one-way");
 }
 
 void SampleCsv::create(const std::string& path)

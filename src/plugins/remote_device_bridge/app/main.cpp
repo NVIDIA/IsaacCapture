@@ -4,6 +4,7 @@
 #include <log_bridge/logger.hpp>
 #include <plugin_utils/openxr_plugin_session.hpp>
 #include <remote_device_bridge/bridge_server.hpp>
+#include <remote_plugin_session/remote_address.hpp>
 
 #include <atomic>
 #include <csignal>
@@ -60,12 +61,13 @@ remote_device_bridge::BridgeOptions parse_args(int argc, char** argv)
         const std::string arg = argv[i];
         if (starts_with(arg, "--listen="))
         {
-            options.listen = remote_plugin_session::parse_endpoint(arg.substr(std::string("--listen=").size()), 47500);
+            options.listen = remote_plugin_session::parse_endpoint(
+                arg.substr(std::string("--listen=").size()), remote_plugin_session::kDefaultBridgePort);
         }
         else if (starts_with(arg, "--ws-listen="))
         {
-            options.ws_listen =
-                remote_plugin_session::parse_endpoint(arg.substr(std::string("--ws-listen=").size()), 47501);
+            options.ws_listen = remote_plugin_session::parse_endpoint(
+                arg.substr(std::string("--ws-listen=").size()), remote_plugin_session::kDefaultBridgeWsPort);
         }
         else if (starts_with(arg, "--app-name="))
         {
@@ -146,7 +148,7 @@ try
 
     remote_device_bridge::BridgeServer server(
         options, [](const std::string& app_name, const core::PluginSessionRequirements& requirements)
-        { return std::make_unique<plugin_utils::OpenXRPluginSession>(app_name, requirements); });
+        { return plugin_utils::make_openxr_plugin_session_factory(app_name)(requirements, {}); });
     server.run(g_stop_requested);
     return 0;
 }
