@@ -341,6 +341,61 @@
     }
   };
 
+  const layoutTaxelPagination = () => {
+    const containers = new Set();
+    for (const label of document.querySelectorAll("label")) {
+      if (!label.textContent?.trim().startsWith("__Taxel Page Jump ")) continue;
+      let container = label.parentElement;
+      let controls = [];
+      while (container) {
+        const jumpChild = directChild(container, label);
+        if (jumpChild) {
+          controls = [jumpChild];
+          for (let index = 0; index < 3; ++index) {
+            controls.push(
+              controls[controls.length - 1]?.nextElementSibling ?? null,
+            );
+          }
+          if (controls.every(Boolean)) break;
+        }
+        container = container.parentElement;
+      }
+      if (!container || controls.some((control) => !control)) continue;
+      containers.add(container);
+      const columns = ["1", "2", "1", "2"];
+      controls.forEach((control, index) => {
+        control.dataset.tactilePaginationControl = "true";
+        control.style.gridColumn = columns[index];
+        control.style.minWidth = "0";
+      });
+      const input = controls[0].querySelector("input");
+      if (label && input) {
+        const row = directChild(controls[0], input);
+        const labelColumn = row ? directChild(row, label) : null;
+        const valueColumn = row ? directChild(row, input) : null;
+        if (labelColumn && valueColumn) {
+          labelColumn.style.display = "none";
+          valueColumn.style.flex = "1 1 100%";
+          valueColumn.style.width = "100%";
+        }
+      }
+    }
+    for (const container of containers) {
+      Object.assign(container.style, {
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        columnGap: "0.5em",
+        rowGap: "0.5em",
+        alignItems: "center",
+      });
+      for (const child of container.children) {
+        if (child.dataset.tactilePaginationControl !== "true") {
+          child.style.gridColumn = "1 / -1";
+        }
+      }
+    }
+  };
+
   const preservePartialNumbers = () => {
     for (const input of document.querySelectorAll("input")) {
       if (input.dataset.tactileNumberDraft === "true") continue;
@@ -373,6 +428,7 @@
     layoutSelectedNames();
     preservePartialNumbers();
     layoutTaxelBindings();
+    layoutTaxelPagination();
     for (const label of document.querySelectorAll("label")) {
       if (!label.textContent?.trim().startsWith("⚠")) continue;
       const field = label.parentElement?.querySelector("input, button");

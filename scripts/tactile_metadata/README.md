@@ -31,9 +31,9 @@ Metadata, side, and URDF inputs are optional:
 
 ```bash
 python -m tactile_metadata_editor.cli \
-  --metadata ~/Downloads/right.metadata.json \
-  --side right \
-  --urdf "$(pwd)/model/right/linkerhand_FFG_right.urdf"
+  --metadata <path-to-metadata-json> \
+  --side <left/right> \
+  --urdf <path-to-urdf>
 ```
 
 `--side` defaults to `left`. Paths beginning with `~` are expanded.
@@ -120,12 +120,15 @@ To bind taxels:
 
 At most one binding-step button is enabled at a time.
 
-Expand **All Taxels** to edit 50 rows at a time; **Previous Page** and **Next
-Page** switch pages without changing global Taxel indices. Each visible row
+Expand **All Taxels** to edit 25 rows at a time. Page status shows the visible
+global Taxel range. Use **Jump to page**, **Last Page** (previous page), or
+**Next Page** from the controls above or below the rows. The unlabeled input and
+Jump button share one line; Last/Next share the following line. Each visible row
 contains pose, four segment slots, and four weights. `None` is an editor-only
 inactive slot with weight zero. Selecting the first active segment sets its
 weight to one; later segment selections start at zero. Editing a weight changes
-only that slot. Validation reports rows whose weights do not sum to one.
+only that slot. Page changes reuse the same 25 row controls instead of rebuilding
+the menu. Validation reports rows whose weights do not sum to one.
 
 ## Scene selection
 

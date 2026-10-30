@@ -41,7 +41,7 @@ SELECTION_GIZMO_LINE_WIDTH = 2.5
 ACTIVE_DATASET_OPACITY = 1
 BINDING_OVERLAY_OPACITY = 0.4
 SAVED_BINDING_OPACITY = 0.3
-TAXEL_PAGE_SIZE = 50
+TAXEL_PAGE_SIZE = 25
 
 
 class Editor:
@@ -76,6 +76,11 @@ class Editor:
         self.segment_item_folders = []
         self.segment_error_widgets = []
         self.taxel_error_widgets = {}
+        self.taxel_page_rows = []
+        self.taxel_page_jumps = []
+        self.taxel_previous_buttons = []
+        self.taxel_next_buttons = []
+        self.taxel_page_info = None
         self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
         self.preview_segment_widgets = []
         self.new_taxel_binding = Taxel()
@@ -755,7 +760,7 @@ class Editor:
 
     def _rebuild_edit_lists(self) -> None:
         self._rebuild_segment_list()
-        self._rebuild_taxel_list()
+        self._sync_taxel_page()
         self._sync_new_taxel_binding_widgets()
         self._sync_selection()
         self._update_preview_error()
@@ -844,13 +849,43 @@ class Editor:
         if page == self.taxel_page:
             return
         self.taxel_page = page
-        self._rebuild_taxel_list()
+        self._sync_taxel_page()
 
-    def _rebuild_taxel_list(self) -> None:
-        if self.taxel_page_container is not None:
-            self.taxel_page_container.remove()
+    def _jump_taxel_page(self, value) -> None:
+        page = min(
+            self._taxel_page_count() - 1,
+            max(0, int(value) - 1),
+        )
+        if page == self.taxel_page:
+            return
+        self.taxel_page = page
+        self._sync_taxel_page()
+
+    def _add_taxel_page_controls(self, page_count: int, location: str) -> None:
+        jump_page = self.server.gui.add_number(
+            f"__Taxel Page Jump {location}",
+            self.taxel_page + 1,
+            min=1,
+            max=page_count,
+            step=1,
+        )
+        self._action_button(
+            "Jump",
+            lambda jump_page=jump_page: self._jump_taxel_page(jump_page.value),
+        )
+        previous = self._action_button("Last Page", lambda: self._change_taxel_page(-1))
+        next_page = self._action_button("Next Page", lambda: self._change_taxel_page(1))
+        self.taxel_page_jumps.append(jump_page)
+        self.taxel_previous_buttons.append(previous)
+        self.taxel_next_buttons.append(next_page)
+
+    def _build_taxel_page(self) -> None:
         self.taxel_widgets = {}
         self.taxel_error_widgets = {}
+        self.taxel_page_rows = []
+        self.taxel_page_jumps = []
+        self.taxel_previous_buttons = []
+        self.taxel_next_buttons = []
         issues = self.document.validate()
         options = self._taxel_segment_options()
         page_count = self._taxel_page_count()
@@ -860,44 +895,49 @@ class Editor:
         with self.taxel_row_folder:
             self.taxel_page_container = self.server.gui.add_folder(None)
             with self.taxel_page_container:
-                previous = self._action_button(
-                    "Previous Page", lambda: self._change_taxel_page(-1)
-                )
-                previous.disabled = self.taxel_page == 0
                 shown = f"{first}-{last - 1}" if last > first else "None"
-                self.server.gui.add_markdown(
-                    f"Page **{self.taxel_page + 1} / {page_count}**  \n"
+                self.taxel_page_info = self.server.gui.add_markdown(
+                    f"Page **{self.taxel_page + 1} / {page_count}**"
+                    f"&emsp;&emsp;**{TAXEL_PAGE_SIZE} per Page**  \n"
                     f"Taxels: **{shown}** of **{len(self.document.taxels)}**"
                 )
-                next_page = self._action_button(
-                    "Next Page", lambda: self._change_taxel_page(1)
-                )
-                next_page.disabled = self.taxel_page >= page_count - 1
-                for row in range(first, last):
-                    taxel = self.document.taxels[row]
-                    row_issues = [
-                        issue
-                        for issue in issues
-                        if issue["kind"] == "taxels" and issue["row"] == row
-                    ]
-                    with self.server.gui.add_folder(
-                        f"Taxel {row}", expand_by_default=False
-                    ):
+                self._add_taxel_page_controls(page_count, "top")
+                for page_slot in range(TAXEL_PAGE_SIZE):
+                    row = first + page_slot
+                    visible = row < last
+                    taxel = self.document.taxels[row] if visible else Taxel()
+                    row_issues = (
+                        [
+                            issue
+                            for issue in issues
+                            if issue["kind"] == "taxels" and issue["row"] == row
+                        ]
+                        if visible
+                        else []
+                    )
+                    folder = self.server.gui.add_folder(
+                        f"Taxel {row}", expand_by_default=False, visible=visible
+                    )
+                    with folder:
                         position, rotation = geo.components(geo.matrix(taxel.pose))
                         positions = self._numbers("Position", position, 0.001)
                         rotations = self._sliders("Rotation", rotation)
                         for axis, widget in enumerate(positions):
                             self._watch(
                                 widget,
-                                lambda value, row=row, axis=axis: (
-                                    self._set_pose_component("taxels", row, axis, value)
+                                lambda value, page_slot=page_slot, axis=axis: (
+                                    self._set_paged_taxel_pose_component(
+                                        page_slot, axis, value
+                                    )
                                 ),
                             )
                         for axis, widget in enumerate(rotations):
                             self._watch(
                                 widget,
-                                lambda value, row=row, axis=axis: (
-                                    self._set_pose_rotation("taxels", row, axis, value)
+                                lambda value, page_slot=page_slot, axis=axis: (
+                                    self._set_paged_taxel_pose_rotation(
+                                        page_slot, axis, value
+                                    )
                                 ),
                             )
                         self.server.gui.add_html(
@@ -923,8 +963,15 @@ class Editor:
                             )
                             segment_fields.append((segment, selected))
                         for slot, (segment, selected) in enumerate(segment_fields):
+                            raw_weight = taxel.weights[slot]
+                            display_weight = (
+                                raw_weight
+                                if type(raw_weight) in (int, float)
+                                and math.isfinite(raw_weight)
+                                else 0.0
+                            )
                             weight = self._weight_widget(
-                                taxel.weights[slot],
+                                display_weight,
                                 selected == "None",
                                 any(
                                     issue["field"] in (f"weight{slot}", "weights")
@@ -934,14 +981,16 @@ class Editor:
                             )
                             self._watch(
                                 segment,
-                                lambda value, row=row, slot=slot: (
-                                    self._set_taxel_segment(row, slot, value)
+                                lambda value, page_slot=page_slot, slot=slot: (
+                                    self._set_paged_taxel_segment(
+                                        page_slot, slot, value
+                                    )
                                 ),
                             )
                             self._watch(
                                 weight,
-                                lambda value, row=row, slot=slot: (
-                                    self._set_taxel_weight(row, slot, value)
+                                lambda value, page_slot=page_slot, slot=slot: (
+                                    self._set_paged_taxel_weight(page_slot, slot, value)
                                 ),
                             )
                             slots.append((segment, weight))
@@ -952,8 +1001,78 @@ class Editor:
                             + "</div>",
                             visible=bool(messages),
                         )
-                        self.taxel_error_widgets[row] = error
-                        self.taxel_widgets[row] = (positions, rotations, slots)
+                        self.taxel_page_rows.append(
+                            (folder, positions, rotations, slots, error)
+                        )
+                        if visible:
+                            self.taxel_error_widgets[row] = error
+                            self.taxel_widgets[row] = (positions, rotations, slots)
+                self._add_taxel_page_controls(page_count, "bottom")
+
+    def _paged_taxel_row(self, page_slot: int) -> int | None:
+        row = self.taxel_page * TAXEL_PAGE_SIZE + page_slot
+        return row if 0 <= row < len(self.document.taxels) else None
+
+    def _set_paged_taxel_pose_component(self, page_slot: int, axis: int, value) -> None:
+        row = self._paged_taxel_row(page_slot)
+        if row is not None:
+            self._set_pose_component("taxels", row, axis, value)
+
+    def _set_paged_taxel_pose_rotation(self, page_slot: int, axis: int, value) -> None:
+        row = self._paged_taxel_row(page_slot)
+        if row is not None:
+            self._set_pose_rotation("taxels", row, axis, value)
+
+    def _set_paged_taxel_segment(self, page_slot: int, slot: int, value: str) -> None:
+        row = self._paged_taxel_row(page_slot)
+        if row is not None:
+            self._set_taxel_segment(row, slot, value)
+
+    def _set_paged_taxel_weight(self, page_slot: int, slot: int, value) -> None:
+        row = self._paged_taxel_row(page_slot)
+        if row is not None:
+            self._set_taxel_weight(row, slot, value)
+
+    def _sync_taxel_page(self) -> None:
+        page_count = self._taxel_page_count()
+        self.taxel_page = min(self.taxel_page, page_count - 1)
+        if self.taxel_page_container is None:
+            self._build_taxel_page()
+        first = self.taxel_page * TAXEL_PAGE_SIZE
+        last = min(first + TAXEL_PAGE_SIZE, len(self.document.taxels))
+        shown = f"{first}-{last - 1}" if last > first else "None"
+        self.taxel_page_info.content = (
+            f"Page **{self.taxel_page + 1} / {page_count}**"
+            f"&emsp;&emsp;**{TAXEL_PAGE_SIZE} per Page**  \n"
+            f"Taxels: **{shown}** of **{len(self.document.taxels)}**"
+        )
+        for jump in self.taxel_page_jumps:
+            jump.min = 1
+            jump.max = page_count
+            jump.value = self.taxel_page + 1
+        for button in self.taxel_previous_buttons:
+            button.disabled = self.taxel_page == 0
+        for button in self.taxel_next_buttons:
+            button.disabled = self.taxel_page >= page_count - 1
+
+        self.taxel_widgets = {}
+        self.taxel_error_widgets = {}
+        for page_slot, (folder, positions, rotations, slots, error) in enumerate(
+            self.taxel_page_rows
+        ):
+            row = first + page_slot
+            visible = row < last
+            folder.visible = visible
+            if not visible:
+                continue
+            folder.label = f"Taxel {row}"
+            taxel = self.document.taxels[row]
+            position, rotation = geo.components(geo.matrix(taxel.pose))
+            self._set_values(positions, position)
+            self._set_values(rotations, rotation)
+            self.taxel_widgets[row] = (positions, rotations, slots)
+            self.taxel_error_widgets[row] = error
+        self._sync_taxel_binding_widgets(range(first, last))
 
     def _weight_widget(self, value, disabled: bool, invalid: bool, slot: int):
         label = f"{'⚠ ' if invalid else ''}Weight {slot}"
@@ -1021,10 +1140,11 @@ class Editor:
                     )
                     else f"Segment {slot}"
                 )
+                raw_weight = taxel.weights[slot]
                 weight.value = (
-                    str(taxel.weights[slot])
-                    if isinstance(weight.value, str)
-                    else taxel.weights[slot]
+                    float(raw_weight)
+                    if type(raw_weight) in (int, float) and math.isfinite(raw_weight)
+                    else 0.0
                 )
                 weight.disabled = selected == "None"
                 weight.label = (
