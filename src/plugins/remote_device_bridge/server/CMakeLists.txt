@@ -3,11 +3,11 @@
 
 find_package(Threads REQUIRED)
 
-# Accept loop and per-client mirroring. The plugin session comes from a factory the composition root passes in,
-# so this library never links the OpenXR loader and its tests run without a runtime.
 add_library(remote_device_bridge_server STATIC
     bridge_server.cpp
     inc/remote_device_bridge/bridge_server.hpp
+    latency_stats.cpp
+    inc/remote_device_bridge/latency_stats.hpp
 )
 
 target_include_directories(remote_device_bridge_server

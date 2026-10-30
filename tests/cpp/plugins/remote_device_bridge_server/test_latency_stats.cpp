@@ -3,7 +3,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <remote_plugin_session/latency_stats.hpp>
+#include <remote_device_bridge/latency_stats.hpp>
 
 #include <array>
 #include <cstdint>
@@ -15,7 +15,8 @@
 #include <unistd.h>
 #include <vector>
 
-using namespace remote_plugin_session;
+using namespace remote_device_bridge;
+using remote_plugin_session::ClockOffsetEstimator;
 
 namespace
 {
@@ -41,7 +42,7 @@ TEST_CASE("index_curl_m is the index-tip to wrist distance", "[remote_device_bri
     REQUIRE(index_curl_m(joints.data()) == Catch::Approx(0.05f).epsilon(1e-4));
 }
 
-TEST_CASE("format_clock_stats renders the 5 s line suffix", "[remote_device_bridge][unit]")
+TEST_CASE("format_clock_stats renders the status line suffix", "[remote_device_bridge][unit]")
 {
     ClockOffsetEstimator clock;
     std::vector<int64_t> ages;
@@ -64,12 +65,10 @@ TEST_CASE("format_clock_stats renders the 5 s line suffix", "[remote_device_brid
 TEST_CASE("SampleCsv writes the header once and one row per sample", "[remote_device_bridge][unit]")
 {
     const SampleCsvRow row{ 1'000'000'123, 1'000'000'100, 42'000, 999'930'000, 70'123'456, "right", 17, 0.08765f };
-    char line[256];
-    REQUIRE(SampleCsv::format(line, sizeof(line), row) > 0);
-    REQUIRE(std::string(line) == "1000000123,1000000100,42000,999930000,70.123,right,17,0.08765\n");
+    const std::string line = "1000000123,1000000100,42000,999930000,70.123,right,17,0.08765\n";
 
     const std::string path =
-        (std::filesystem::temp_directory_path() / ("remote_plugin_session_csv_" + std::to_string(::getpid()) + ".csv"))
+        (std::filesystem::temp_directory_path() / ("remote_device_bridge_csv_" + std::to_string(::getpid()) + ".csv"))
             .string();
     SampleCsv::create(path);
     {

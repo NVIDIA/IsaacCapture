@@ -1,26 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "inc/remote_plugin_session/latency_stats.hpp"
+#include "inc/remote_device_bridge/latency_stats.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <unistd.h>
 
-namespace remote_plugin_session
+namespace remote_device_bridge
 {
 
 namespace
 {
+
+std::runtime_error file_error(const char* what, const std::string& path)
+{
+    return std::runtime_error(std::string(what) + " stats CSV '" + path + "': " + std::strerror(errno));
+}
 
 std::FILE* open_or_throw(const std::string& path, const char* mode)
 {
     std::FILE* file = std::fopen(path.c_str(), mode);
     if (file == nullptr)
     {
-        throw std::runtime_error("--stats-csv: cannot open '" + path + "': " + std::strerror(errno));
+        throw file_error("cannot open", path);
     }
     return file;
 }
@@ -53,9 +59,9 @@ float index_curl_m(const XrHandJointLocationEXT* joints)
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-std::string format_clock_stats(std::vector<int64_t>& ages_ns, const ClockOffsetEstimator& clock)
+std::string format_clock_stats(std::vector<int64_t> ages_ns, const remote_plugin_session::ClockOffsetEstimator& clock)
 {
-    const bool two_way = clock.offset_source() == ClockOffsetEstimator::Source::TwoWay;
+    const bool two_way = clock.offset_source() == remote_plugin_session::ClockOffsetEstimator::Source::TwoWay;
     std::string out = " | age_ms";
     if (ages_ns.empty())
     {
@@ -76,8 +82,12 @@ std::string format_clock_stats(std::vector<int64_t>& ages_ns, const ClockOffsetE
 void SampleCsv::create(const std::string& path)
 {
     std::FILE* file = open_or_throw(path, "w");
-    std::fputs(kHeader, file);
-    std::fclose(file);
+    const bool written = std::fputs(kHeader, file) != EOF;
+    // fclose flushes the buffered header, so a full disk surfaces here.
+    if (std::fclose(file) != 0 || !written)
+    {
+        throw file_error("cannot write", path);
+    }
 }
 
 int SampleCsv::format(char* out, size_t size, const SampleCsvRow& row)
@@ -92,19 +102,15 @@ SampleCsv::SampleCsv(const std::string& path) : m_file(open_or_throw(path, "a"))
 {
 }
 
-SampleCsv::~SampleCsv()
-{
-    std::fclose(m_file);
-}
-
 void SampleCsv::write(const SampleCsvRow& row)
 {
     char line[256];
     const int size = format(line, sizeof(line), row);
     if (size > 0)
     {
-        std::fwrite(line, 1, std::min(static_cast<size_t>(size), sizeof(line) - 1), m_file);
+        // Bypasses stdio so no buffer ever holds part of a row.
+        (void)!::write(fileno(m_file.get()), line, std::min(static_cast<size_t>(size), sizeof(line) - 1));
     }
 }
 
-} // namespace remote_plugin_session
+} // namespace remote_device_bridge

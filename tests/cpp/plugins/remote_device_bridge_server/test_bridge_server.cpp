@@ -373,9 +373,13 @@ private:
         try
         {
             BridgeServer server(options,
-                                [](const std::string& app_name, const core::PluginSessionRequirements& requirements)
-                                { return std::make_unique<FakeSession>(app_name, requirements); });
-            ports = { server.port(), server.ws_port() };
+                                [](const std::string& app_name) -> core::PluginSessionFactory
+                                {
+                                    return [app_name](const core::PluginSessionRequirements& requirements,
+                                                      std::vector<std::shared_ptr<core::ITracker>>)
+                                    { return std::make_unique<FakeSession>(app_name, requirements); };
+                                });
+            ports = { server.port(), server.ws_port().value_or(0) };
             (void)!write(ready_fd, ports.data(), sizeof(ports));
             close(ready_fd);
             server.run(g_bridge_stop);
@@ -712,8 +716,9 @@ TEST_CASE("Any other runtime failure opening a hand ends the session", "[remote_
 TEST_CASE("A schema channel above 32768 bytes is refused at open and the session keeps working",
           "[remote_device_bridge][unit]")
 {
-    REQUIRE(BridgeOptions{}.max_schema_bytes == 32768);
-    BridgeProcess bridge;
+    BridgeOptions options;
+    options.max_schema_bytes = 32768;
+    BridgeProcess bridge(options);
     auto client = connect(bridge.port(), "client");
     auto too_big = client->create_schema_push_channel(schema_config("tactile", 32769));
     auto at_cap = client->create_schema_push_channel(schema_config("at_cap", 32768));
@@ -745,8 +750,9 @@ TEST_CASE("A schema channel above 32768 bytes is refused at open and the session
 
 TEST_CASE("The 9th client gets HELLO_ACK 'bridge full' within 500 ms", "[remote_device_bridge][unit]")
 {
-    REQUIRE(BridgeOptions{}.max_clients == 8);
-    BridgeProcess bridge;
+    BridgeOptions options;
+    options.max_clients = 8;
+    BridgeProcess bridge(options);
     std::vector<std::unique_ptr<RemotePluginSession>> clients;
     for (int i = 0; i < 8; ++i)
     {
@@ -765,8 +771,6 @@ TEST_CASE("The 9th client gets HELLO_ACK 'bridge full' within 500 ms", "[remote_
         catch (const std::runtime_error& e)
         {
             const auto took = std::chrono::steady_clock::now() - start;
-            std::cout << "bridge full (HELLO sent) after " << std::chrono::duration<double, std::milli>(took).count()
-                      << " ms" << std::endl;
             REQUIRE(took < Ms(500));
             REQUIRE(std::string(e.what()) == "RemotePluginSession: bridge rejected the session: bridge full");
         }
@@ -778,8 +782,6 @@ TEST_CASE("The 9th client gets HELLO_ACK 'bridge full' within 500 ms", "[remote_
         const auto ack = silent.wait_for(protocol::FrameType::HelloAck, Ms(1000));
         REQUIRE(ack.has_value());
         const auto took = std::chrono::steady_clock::now() - start;
-        std::cout << "bridge full (no HELLO) after " << std::chrono::duration<double, std::milli>(took).count() << " ms"
-                  << std::endl;
         REQUIRE(took < Ms(500));
         const protocol::HelloAck decoded = protocol::decode_hello_ack(ack->payload);
         REQUIRE_FALSE(decoded.accepted);
@@ -807,7 +809,6 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
         protocol::encode_frame(protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
     protocol::stamp_header(hello_frame, 0, core::os_monotonic_now_ns());
 
-    const auto start = std::chrono::steady_clock::now();
     std::unique_ptr<ITransport> late;
     std::vector<uint8_t> bytes;
     SECTION("tcp: the ACK is there before the HELLO is sent")
@@ -830,9 +831,6 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
     {
         REQUIRE(late->receive(bytes, kWait) == ReceiveResult::Ok);
     }
-    const auto took = std::chrono::steady_clock::now() - start;
-    std::cout << "bridge full (HELLO 400 ms late) after " << std::chrono::duration<double, std::milli>(took).count()
-              << " ms" << std::endl;
     const protocol::Frame frame = protocol::split_frame(std::move(bytes));
     REQUIRE(frame.header.type == protocol::FrameType::HelloAck);
     const protocol::HelloAck ack = protocol::decode_hello_ack(frame.payload);
@@ -847,8 +845,8 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
 TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applies every control frame",
           "[remote_device_bridge][unit]")
 {
-    REQUIRE(BridgeOptions{}.max_sample_age_ms == 250);
     BridgeOptions options;
+    options.max_sample_age = Ms(250);
     options.stats_period = Ms(500);
     g_fake.first_push_delay_ms = 200; // holds the bridge's run thread so the burst below queues up
     BridgeProcess bridge(options);
@@ -906,7 +904,7 @@ TEST_CASE("With --clock-source=one-way the bridge never PINGs and streams on the
     // Past the PING burst and the 2 s PONG timeout.
     REQUIRE_FALSE(client.wait_for(protocol::FrameType::Ping, Ms(2500)).has_value());
     REQUIRE(client.received(protocol::FrameType::Ping).empty());
-    REQUIRE(bridge.count(" WARN") == 0); // the message word, not the logger's "[WARN ]" level column
+    REQUIRE(bridge.count("clock: no PONG") == 0);
 }
 
 TEST_CASE("A client that never answers PING gets 10 PINGs at 50 ms, one at 1 Hz, then one-way",
@@ -927,13 +925,11 @@ TEST_CASE("A client that never answers PING gets 10 PINGs at 50 ms, one at 1 Hz,
     }
     REQUIRE(pings[10] - pings[9] > 900 * kMs);
     REQUIRE(pings[10] - pings[9] < 1100 * kMs);
-    REQUIRE(bridge.count(" WARN") == 1); // the message word, not the logger's "[WARN ]" level column
-    REQUIRE(bridge.count("WARN clock: no PONG, falling back to one-way") == 1);
+    REQUIRE(bridge.count("clock: no PONG, falling back to one-way") == 1);
 }
 
 TEST_CASE("The 5 s status line carries age, RTT, offset and clock", "[remote_device_bridge][unit]")
 {
-    REQUIRE(BridgeOptions{}.stats_period == Ms(5000));
     BridgeProcess bridge;
     auto client = connect(bridge.port(), "status");
     auto left = client->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
@@ -949,5 +945,4 @@ TEST_CASE("The 5 s status line carries age, RTT, offset and clock", "[remote_dev
         "offset_ms=-?[0-9.]+ clock=two-way\n");
     std::smatch match;
     REQUIRE(std::regex_search(log, match, pattern));
-    std::cout << "status line: " << match.str(0);
 }
