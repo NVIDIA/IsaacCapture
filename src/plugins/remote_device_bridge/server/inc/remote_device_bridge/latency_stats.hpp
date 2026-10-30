@@ -8,8 +8,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -50,19 +48,16 @@ public:
 
     //! Truncates `path`, writes the header and keeps it open for appending; throws std::runtime_error.
     explicit SampleCsv(const std::string& path);
+    ~SampleCsv();
 
-    void write(const SampleCsvRow& row) const;
+    SampleCsv(const SampleCsv&) = delete;
+    SampleCsv& operator=(const SampleCsv&) = delete;
+
+    //! False when the row was not written whole; errno says why.
+    bool write(const SampleCsvRow& row) const;
 
 private:
-    struct FileCloser
-    {
-        void operator()(std::FILE* file) const noexcept
-        {
-            std::fclose(file);
-        }
-    };
-
-    std::unique_ptr<std::FILE, FileCloser> m_file;
+    int m_fd;
 };
 
 } // namespace remote_device_bridge

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <stdexcept>
@@ -20,16 +21,6 @@ namespace
 std::runtime_error file_error(const char* what, const std::string& path)
 {
     return std::runtime_error(std::string(what) + " stats CSV '" + path + "': " + std::strerror(errno));
-}
-
-std::FILE* open_or_throw(const std::string& path, const char* mode)
-{
-    std::FILE* file = std::fopen(path.c_str(), mode);
-    if (file == nullptr)
-    {
-        throw file_error("cannot open", path);
-    }
-    return file;
 }
 
 //! Formats one row (newline included) without allocating; returns the snprintf result.
@@ -89,27 +80,37 @@ std::string format_clock_stats(std::vector<int64_t> ages_ns, const remote_plugin
     return out + " | offset_ms=" + offset + " clock=" + (two_way ? "two-way" : "one-way");
 }
 
-SampleCsv::SampleCsv(const std::string& path) : m_file(open_or_throw(path, "w"))
+SampleCsv::SampleCsv(const std::string& path)
+    : m_fd(::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644))
 {
-    const int fd = fileno(m_file.get());
-    const int flags = fcntl(fd, F_GETFL);
-    // fflush pushes the buffered header out now, so a full disk surfaces here and rows never follow it in a buffer.
-    if (std::fputs(kHeader, m_file.get()) == EOF || std::fflush(m_file.get()) != 0 || flags < 0 ||
-        fcntl(fd, F_SETFL, flags | O_APPEND) < 0)
+    if (m_fd < 0)
     {
-        throw file_error("cannot write", path);
+        throw file_error("cannot open", path);
+    }
+    const size_t size = std::strlen(kHeader);
+    if (::write(m_fd, kHeader, size) != static_cast<ssize_t>(size))
+    {
+        const std::runtime_error error = file_error("cannot write", path);
+        ::close(m_fd);
+        throw error;
     }
 }
 
-void SampleCsv::write(const SampleCsvRow& row) const
+SampleCsv::~SampleCsv()
+{
+    ::close(m_fd);
+}
+
+bool SampleCsv::write(const SampleCsvRow& row) const
 {
     char line[256];
     const int size = format_row(line, sizeof(line), row);
-    if (size > 0)
+    if (size <= 0 || static_cast<size_t>(size) >= sizeof(line))
     {
-        // Bypasses stdio so no buffer ever holds part of a row.
-        (void)!::write(fileno(m_file.get()), line, std::min(static_cast<size_t>(size), sizeof(line) - 1));
+        return false;
     }
+    // One write(2) per row, so rows from concurrent clients never interleave.
+    return ::write(m_fd, line, static_cast<size_t>(size)) == size;
 }
 
 } // namespace remote_device_bridge

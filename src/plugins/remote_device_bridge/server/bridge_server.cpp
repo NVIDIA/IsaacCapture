@@ -98,7 +98,7 @@ const char* hand_side(size_t hand_index)
 
 //! Bridge client id owning each hand's push device (0 = free). Lives in a MAP_SHARED page created before any
 //! fork, so every child sees the others' claims; the parent frees a crashed child's claims when it reaps it.
-struct BridgeServer::HandOwners
+struct detail::HandOwners
 {
     std::array<std::atomic<uint32_t>, 2> owner{};
 
@@ -121,7 +121,7 @@ struct BridgeServer::HandOwners
 };
 static_assert(std::atomic<uint32_t>::is_always_lock_free, "hand owners are shared across processes");
 
-void BridgeServer::HandOwnersUnmap::operator()(HandOwners* owners) const noexcept
+void detail::HandOwnersUnmap::operator()(HandOwners* owners) const noexcept
 {
     munmap(owners, sizeof(HandOwners));
 }
@@ -163,7 +163,7 @@ public:
                   uint32_t client_id,
                   const BridgeOptions& options,
                   const SessionFactory& session_factory,
-                  BridgeServer::HandOwners& hand_owners,
+                  detail::HandOwners& hand_owners,
                   const SampleCsv* csv)
         : m_transport(std::move(transport)),
           m_client_id(client_id),
@@ -440,7 +440,7 @@ private:
     //! Set while OPEN_PULL is open and HELLO declared a wrist source; owned by m_session.
     core::IWristTrackingSource* wrist_source() const
     {
-        return m_pull_channel != nullptr && m_wrist_declared ? &m_pull_channel->wrist_tracking_source() : nullptr;
+        return m_pull && m_wrist_declared ? &m_pull->channel->wrist_tracking_source() : nullptr;
     }
 
     void apply(const Received& received)
@@ -502,14 +502,13 @@ private:
             }
             case protocol::FrameType::OpenPull:
             {
-                if (m_pull_channel)
+                if (m_pull)
                 {
                     throw std::runtime_error("only one pull channel per session");
                 }
                 require_free_channel(header.channel_id);
                 // The session built the pull channel, and the wrist source HELLO declared, when it was created.
-                m_pull_channel = &m_session->pull_channel();
-                m_pull_channel_id = header.channel_id;
+                m_pull = PullChannel{ &m_session->pull_channel(), header.channel_id };
                 logger()->info("{} channel {}: pull channel opened{}", m_tag, header.channel_id,
                                wrist_source() != nullptr ? " with wrist source" : "");
                 break;
@@ -538,11 +537,15 @@ private:
                 it->second.channel->push(sample.joints.data(), t_ns);
                 ++it->second.pushes;
                 ++m_counts.applied;
-                if (m_csv)
+                if (m_csv &&
+                    !m_csv->write({ core::os_monotonic_now_ns(), received.t_recv_ns, sample.sample_time_ns, t_ns,
+                                    now_ns - t_ns, hand_side(it->second.hand), header.seq,
+                                    index_curl_m(sample.joints.data()) }) &&
+                    !m_csv_failed)
                 {
-                    m_csv->write({ core::os_monotonic_now_ns(), received.t_recv_ns, sample.sample_time_ns, t_ns,
-                                   now_ns - t_ns, hand_side(it->second.hand), header.seq,
-                                   index_curl_m(sample.joints.data()) });
+                    m_csv_failed = true;
+                    logger()->warn(
+                        "{} stats CSV row not written ({}); later rows may be missing", m_tag, std::strerror(errno));
                 }
                 break;
             }
@@ -622,7 +625,7 @@ private:
     {
         if (channel_id == protocol::kSessionChannelId || m_hand_channels.count(channel_id) != 0 ||
             m_schema_channels.count(channel_id) != 0 || m_refused_channels.count(channel_id) != 0 ||
-            (m_pull_channel && channel_id == m_pull_channel_id))
+            (m_pull && channel_id == m_pull->id))
         {
             throw std::runtime_error("channel id " + std::to_string(channel_id) + " is already in use");
         }
@@ -648,9 +651,9 @@ private:
             logger()->info("{} schema channel {} ({}) closed after {} pushes", m_tag, channel_id, collection_id, pushes);
             return;
         }
-        if (m_pull_channel && channel_id == m_pull_channel_id)
+        if (m_pull && channel_id == m_pull->id)
         {
-            m_pull_channel = nullptr;
+            m_pull.reset();
             logger()->info("{} channel {} (pull) closed", m_tag, channel_id);
             return;
         }
@@ -683,13 +686,13 @@ private:
 
     void tick(int64_t now_ns)
     {
-        if (!m_pull_channel)
+        if (!m_pull)
         {
             return;
         }
         try
         {
-            m_pull_channel->update();
+            m_pull->channel->update();
             if (core::IWristTrackingSource* const wrist = wrist_source())
             {
                 for (const XrHandEXT hand : { XR_HAND_LEFT_EXT, XR_HAND_RIGHT_EXT })
@@ -698,7 +701,7 @@ private:
                     sample.sample_time_ns = now_ns;
                     sample.hand = hand;
                     sample.sample = wrist->query(hand, now_ns);
-                    send(protocol::FrameType::WristSample, m_pull_channel_id, protocol::encode_wrist_sample(sample));
+                    send(protocol::FrameType::WristSample, m_pull->id, protocol::encode_wrist_sample(sample));
                     if (m_done.load())
                     {
                         return;
@@ -755,20 +758,25 @@ private:
     const uint32_t m_client_id;
     const std::string m_tag;
     const BridgeOptions& m_options;
-    BridgeServer::HandOwners& m_hand_owners;
+    detail::HandOwners& m_hand_owners;
 
     std::unique_ptr<core::IPluginSession> m_session;
     std::map<uint16_t, HandChannel> m_hand_channels;
     std::map<uint16_t, SchemaChannel> m_schema_channels;
-    core::IPluginPullChannel* m_pull_channel = nullptr; //!< owned by m_session; set while OPEN_PULL is open
+    struct PullChannel
+    {
+        core::IPluginPullChannel* channel; //!< owned by m_session
+        uint16_t id;
+    };
+    std::optional<PullChannel> m_pull; //!< set while OPEN_PULL is open
     bool m_wrist_declared = false;
-    uint16_t m_pull_channel_id = 0;
     std::set<uint16_t> m_refused_channels; //!< until the client's CLOSE
 
     ClockOffsetEstimator m_clock;
     std::optional<PingScheduler> m_pings; //!< set for --clock-source=two-way
     bool m_logged_pong = false;
     std::vector<int64_t> m_ages_ns; //!< since the last status line
+    bool m_csv_failed = false; //!< warned once
     const SampleCsv* m_csv = nullptr; //!< the parent's --stats-csv file, inherited across fork(); null without it
     uint32_t m_next_seq = 0;
     int64_t m_last_send_ns = 0;
@@ -790,7 +798,7 @@ bool serve_client(std::unique_ptr<ITransport> transport,
                   uint32_t client_id,
                   const BridgeOptions& options,
                   const SessionFactory& session_factory,
-                  BridgeServer::HandOwners& hand_owners,
+                  detail::HandOwners& hand_owners,
                   const SampleCsv* csv,
                   const std::atomic<bool>& stop)
 {
@@ -812,14 +820,14 @@ bool serve_client(std::unique_ptr<ITransport> transport,
     return ok;
 }
 
-//! Runs in a refusal child: HELLO_ACK first, then read until the client hangs up (it does once it reads the
-//! ACK) or kLingerWait passes, so the close is a FIN even when the HELLO arrives late.
 std::vector<uint8_t> bridge_full_ack()
 {
     return protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
                                   protocol::encode_hello_ack(protocol::HelloAck{ false, "bridge full" }));
 }
 
+//! Runs in a refusal child: HELLO_ACK first, then read until the client hangs up (it does once it reads the
+//! ACK) or kLingerWait passes, so the close is a FIN even when the HELLO arrives late.
 void send_bridge_full(ITransport& client, std::vector<uint8_t> ack)
 {
     if (client.wait_ready(kLingerWait) != ReceiveResult::Ok)
@@ -874,11 +882,11 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
     if (m_options.wrist_rate_hz <= 0 || m_options.max_clients <= 0 ||
         (m_options.max_sample_age && m_options.max_sample_age->count() <= 0))
     {
-        throw std::invalid_argument("--wrist-rate-hz, --max-clients and --max-sample-age-ms must be positive");
+        throw std::invalid_argument("BridgeOptions: wrist_rate_hz, max_clients and max_sample_age must be positive");
     }
     if (m_options.max_schema_bytes == 0)
     {
-        throw std::invalid_argument("--max-schema-bytes must be positive");
+        throw std::invalid_argument("BridgeOptions: max_schema_bytes must be positive");
     }
     m_listener = remote_plugin_session::TcpSocket::listen(m_options.listen, m_options.max_clients);
     if (m_options.ws_listen)
@@ -900,12 +908,13 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
     logger()->info("remote_device_bridge clock={}{}",
                    m_options.clock_source == ClockSource::TwoWay ? "two-way" : "one-way",
                    m_options.stats_csv ? " stats-csv=" + *m_options.stats_csv : std::string());
-    void* const shared = mmap(nullptr, sizeof(HandOwners), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    void* const shared =
+        mmap(nullptr, sizeof(detail::HandOwners), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shared == MAP_FAILED)
     {
         throw std::runtime_error(std::string("mmap(hand owners): ") + std::strerror(errno));
     }
-    m_hand_owners.reset(new (shared) HandOwners());
+    m_hand_owners.reset(new (shared) detail::HandOwners());
 }
 
 BridgeServer::~BridgeServer() = default;
@@ -924,16 +933,21 @@ std::optional<uint16_t> BridgeServer::ws_port() const
     return m_ws_listener.local_port();
 }
 
+void BridgeServer::release_hands(const ClientRecord& client)
+{
+    for (size_t hand = 0; hand < m_hand_owners->owner.size(); ++hand)
+    {
+        m_hand_owners->release(hand, client.id);
+    }
+}
+
 void BridgeServer::on_reaped(const ClientRecord& client, int status)
 {
     if (client.refusal)
     {
         return;
     }
-    for (size_t hand = 0; hand < m_hand_owners->owner.size(); ++hand)
-    {
-        m_hand_owners->release(hand, client.id);
-    }
+    release_hands(client);
     logger()->info("[bridge] client pid {} exited ({}) after {:g} s", client.pid,
                    WIFEXITED(status) ? "status " + std::to_string(WEXITSTATUS(status)) :
                                        "signal " + std::to_string(WTERMSIG(status)),
@@ -945,12 +959,22 @@ void BridgeServer::reap_finished()
     for (auto it = m_clients.begin(); it != m_clients.end();)
     {
         int status = 0;
-        if (waitpid(it->pid, &status, WNOHANG) != it->pid)
+        const pid_t reaped = waitpid(it->pid, &status, WNOHANG);
+        if (reaped == 0)
         {
             ++it;
             continue;
         }
-        on_reaped(*it, status);
+        if (reaped < 0)
+        {
+            // The child is gone without a status (ECHILD); drop it so it stops counting against max_clients.
+            logger()->warn("[bridge] waitpid(client pid {}) failed: {}", it->pid, std::strerror(errno));
+            release_hands(*it);
+        }
+        else
+        {
+            on_reaped(*it, status);
+        }
         it = m_clients.erase(it);
     }
 }
