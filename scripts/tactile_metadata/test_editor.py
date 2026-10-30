@@ -38,6 +38,37 @@ class EditorTests(unittest.TestCase):
         editor._sync_joint_widget_values = Mock()
         return editor
 
+    def make_live_editor(self, frame):
+        editor = self.make_editor()
+        editor.receiver = SimpleNamespace(status="Live", active=True, latest=frame)
+        editor.live_status = SimpleNamespace(content="")
+        editor.live_document, editor.live_metadata_key = None, ""
+        editor.binding_source_live.disabled = True
+        editor.joint_enabled = SimpleNamespace(value=False)
+        editor.joint_mapping = SimpleNamespace(value="{}")
+        editor.preview_error = editor.info
+        editor._sync_preview_values = Mock()
+        editor._rebuild_preview_segments = Mock()
+        editor._update_preview_error = Mock()
+        return editor
+
+    def test_malformed_live_input_reports_an_error_without_raising(self):
+        for frame, mapping, message in (
+            ({"metadata": {}}, "{}", "Expected geometry_mapping"),
+            ({}, "[]", "Joint Mappings JSON must be an object"),
+            ({}, "null", "Joint Mappings JSON must be an object"),
+            ({}, "42", "Joint Mappings JSON must be an object"),
+        ):
+            with self.subTest(frame=frame, mapping=mapping):
+                editor = self.make_live_editor(frame)
+                editor.joint_enabled.value = True
+                editor.joint_mapping.value = mapping
+
+                editor._update_live()
+
+                self.assertIn("Live error: " + message, editor.info.value)
+                self.assertTrue(editor.redraw)
+
     def test_apply_all_preserves_rendered_taxels(self):
         editor = self.make_editor()
         editor.preview_document.segments[0].pose[0] = 0.01

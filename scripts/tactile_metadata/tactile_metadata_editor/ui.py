@@ -1450,16 +1450,16 @@ class Editor:
         if not self.receiver.active:
             return
         frame = self.receiver.latest
-        raw_metadata = frame.get("metadata")
-        if raw_metadata is not None:
-            key = json.dumps(raw_metadata, sort_keys=True)
-            if key != self.live_metadata_key:
-                self.live_document = storage.parse(
-                    raw_metadata, self.document.alignment
-                )
-                self.live_metadata_key = key
-                self.binding_source_live.disabled = False
         try:
+            raw_metadata = frame.get("metadata")
+            if raw_metadata is not None:
+                key = json.dumps(raw_metadata, sort_keys=True)
+                if key != self.live_metadata_key:
+                    self.live_document = storage.parse(
+                        raw_metadata, self.document.alignment
+                    )
+                    self.live_metadata_key = key
+                    self.binding_source_live.disabled = False
             hand = frame.get("hand")
             if hand is not None:
                 updated = geo.hand_segments(
@@ -1474,6 +1474,8 @@ class Editor:
                     self._rebuild_preview_segments()
             if self.joint_enabled.value:
                 mapping = json.loads(self.joint_mapping.value or "{}")
+                if not isinstance(mapping, dict):
+                    raise ValueError("Joint Mappings JSON must be an object")
                 for source, rule in mapping.items():
                     raw, valid = frame.get("joints", {}).get(source, (None, False))
                     if valid and isinstance(rule, list) and len(rule) == 3:
