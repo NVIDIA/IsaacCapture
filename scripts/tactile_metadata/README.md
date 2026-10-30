@@ -46,12 +46,10 @@ available HMD system in the same Python environment.
 
 The editor maintains independent left- and right-hand documents. **Toggle Side**
 selects the active document; each side has its own metadata path and data.
-General controls are at the top of the right menu. The Selected Object panel is
-always present as a floating window on the left.
+General uses a separate right-docked menu above the Editor/Preview menu. The
+Selected Object panel is always present as a floating window on the left.
 The **Mode** section uses bold, mutually exclusive **Edit** and **Preview**
 checkbox labels; one mode is always selected.
-General and the URDF/Segments/Taxels tab selector stay fixed at the top of the
-right menu. Only the active tab contents scroll.
 Focused numeric fields preserve partial decimal input such as `1.` until the
 next digit is entered or the field loses focus.
 

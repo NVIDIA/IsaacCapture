@@ -20,8 +20,7 @@ About data cooridanates: all UI editor use visualization space. When save to met
 
 About LBS taxel rotation: determine by Polar Decomposition algorithm. At singularity, use taxel's bind rotation. Make sure to optimize for single-segment binding case, where the rotation can be directly determined without running Polar Decomposition.
 
-1. At the top of the right menu, always display a General section containing: Toggle side, new/save/load metadata file, reset camera, a named "Mode" section containing bold Edit and Preview checkbox labels that are mutually exclusive and cannot both be unchecked, and a toggle to enable/disable the saved data visualization "Show Saved Binding Poses".
-* Freeze General and the URDF/Segments/Taxels tab selector at the top of the right menu. Scrolling affects only the active tab contents; the General section and tab selector do not scroll.
+1. Use two separate menus docked on the right: General on top and Editor/Preview below. General contains Toggle side, new/save/load metadata file, reset camera, a named "Mode" section containing bold Edit and Preview checkbox labels that are mutually exclusive and cannot both be unchecked, and a toggle to enable/disable the saved data visualization "Show Saved Binding Poses".
 
 2. This tool actually manages 3 copies of pose data (pose of segments and taxels), with different data sources.
     a) Editing dataset: the data that the user is editing in the tool. It's the binding poses of the segments and taxels under editing. Plus the URDF joint values that's under Editing mode.

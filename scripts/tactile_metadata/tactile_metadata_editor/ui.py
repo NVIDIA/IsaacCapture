@@ -103,7 +103,8 @@ class Editor:
         self.server.initial_camera.position = self.CAMERA_POSITION
         self.server.initial_camera.look_at = self.CAMERA_LOOK_AT
         self.server.gui.configure_theme(control_width="medium", show_share_button=False)
-        self.server.gui.main_panel.dock_right()
+        self.main_panel = self.server.gui.main_panel
+        self.main_panel.dock_right()
         self._build_gui()
         self._register_scene_events()
         self.selection_gizmo = self.server.scene.add_transform_controls(
@@ -139,7 +140,9 @@ class Editor:
 
     def _build_gui(self) -> None:
         gui = self.server.gui
-        with gui.add_folder("General"):
+        self.general_panel = gui.add_panel()
+        self.general_tab = self.general_panel.add_tab("General")
+        with self.general_tab:
             self.side_text = gui.add_markdown("")
             self._action_button("Toggle Side", self._toggle_side)
             self.metadata_path = gui.add_text("Metadata Path", "")
@@ -156,6 +159,7 @@ class Editor:
                 self.mode_preview, lambda checked: self._set_mode("Preview", checked)
             )
             self._watch(self.show_saved, lambda _: self._request_draw())
+        self.general_panel.dock_above(self.main_panel)
 
         self.edit_tabs = gui.add_tab_group()
         self.urdf_tab = self.edit_tabs.add_tab("URDF")

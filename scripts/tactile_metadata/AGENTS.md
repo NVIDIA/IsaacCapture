@@ -32,8 +32,10 @@ SPDX-License-Identifier: Apache-2.0
 - Selection side-highlighting resolves bindings by HandJoint name and includes only slots with positive weights. Keep `SIDE_HIGHLIGHT_COLOR` distinct from `SELECTED_COLOR`; selection color overrides validation error color on selected taxels.
 - When product placement says top/before/below and any sibling uses explicit Viser `order`, assign explicit order to every constrained sibling; source creation order does not override mixed default and explicit ordering.
 - Route action and validation errors to the fixed, non-movable client-side Info area at the bottom of the 3D viewport, not a Viser panel, the right menu, per-button, or top-menu markdown. The Selected Object panel is a floating window on the left, not a dock. All Segments/Taxels lists, their entity folders, and Preview Segments start collapsed.
+- General is a separate right-docked panel above the right-docked Editor/Preview main panel.
 - Client-side helpers may hide only their exact bridge input and label; never hide an ancestor container that can contain the entire Viser control panel.
 - Preserve focused formatting-sensitive numeric drafts such as `0.0` and `0.` client-side because Viser canonicalizes them to floats during controlled rerenders. Restore through the native input value setter and dispatch an `input` event; a raw DOM assignment leaves React/Mantine state stale and breaks the next digit.
+- Preserve each Viser ScrollArea position across menu operations, with separate positions for Edit and Preview. Only user scrolling changes the stored position.
 - Drain cross-thread UI events with nonblocking reads and `queue.Empty`; `Queue.empty()` is not a synchronization boundary. Give no-op-looking actions such as creating an empty document visible completion status.
 - Call `/edit`, `/preview`, and `/saved` Viser scene-node groups, not image layers; this tool has no image-layer abstraction.
 - During live redraw, update the active scene-node group in place. Hide only groups that should be inactive; never hide and immediately re-show the active group each frame.

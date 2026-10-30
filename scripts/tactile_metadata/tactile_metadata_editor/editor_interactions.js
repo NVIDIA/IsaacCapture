@@ -9,8 +9,11 @@
   let observer = null;
   let infoInput = null;
   let infoElement = null;
+  let selectedNamesTextarea = null;
   let raf = 0;
   const numberDrafts = new Map();
+  const menuScrollStates = new WeakMap();
+  const menuScrollListeners = new Map();
   const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
     "value",
@@ -85,6 +88,15 @@
         input.setSelectionRange(draft.length, draft.length);
       }
     }
+    if (
+      selectedNamesTextarea?.isConnected &&
+      selectedNamesTextarea.dataset.tactileResizing !== "true"
+    ) {
+      const height = selectedNamesTextarea.dataset.tactileHeight;
+      if (height && selectedNamesTextarea.style.height !== height) {
+        selectedNamesTextarea.style.height = height;
+      }
+    }
     syncInfo();
     raf = requestAnimationFrame(frame);
   };
@@ -105,6 +117,96 @@
     return child?.parentElement === parent ? child : null;
   };
 
+  const currentMode = () => {
+    for (const name of ["Edit", "Preview"]) {
+      const label = [...document.querySelectorAll("label")].find(
+        (candidate) => candidate.textContent?.trim() === name,
+      );
+      const input = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+      if (input instanceof HTMLInputElement && input.checked) return name;
+    }
+    return "default";
+  };
+
+  const targetMode = (target) => {
+    const label =
+      target.closest("label") ??
+      (target.id ? document.querySelector(`label[for="${CSS.escape(target.id)}"]`) : null);
+    const name = label?.textContent?.trim();
+    return name === "Edit" || name === "Preview" ? name : currentMode();
+  };
+
+  const setupMenuScroll = () => {
+    for (const viewport of document.querySelectorAll(
+      "[data-radix-scroll-area-viewport]",
+    )) {
+      if (!(viewport instanceof HTMLElement) || menuScrollListeners.has(viewport)) {
+        continue;
+      }
+      const state = {
+        positions: new Map([[currentMode(), viewport.scrollTop]]),
+        restoring: false,
+        token: null,
+      };
+      menuScrollStates.set(viewport, state);
+      const onScroll = () => {
+        if (!state.restoring) {
+          state.positions.set(currentMode(), viewport.scrollTop);
+        }
+      };
+      menuScrollListeners.set(viewport, onScroll);
+      viewport.addEventListener("scroll", onScroll, { passive: true });
+    }
+  };
+
+  const preserveMenuScroll = (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (
+      !target.closest(
+        "button, input, textarea, label, [role='button'], [role='tab'], [role='option']",
+      )
+    ) {
+      return;
+    }
+    const current = currentMode();
+    const next = targetMode(target);
+    const sourceViewport = target.closest("[data-radix-scroll-area-viewport]");
+    const viewports =
+      next !== current
+        ? [...menuScrollListeners.keys()]
+        : sourceViewport instanceof HTMLElement
+          ? [sourceViewport]
+          : [];
+    for (const viewport of viewports) {
+      const state = menuScrollStates.get(viewport);
+      if (!state) continue;
+      state.positions.set(current, viewport.scrollTop);
+      const top = state.positions.get(next) ?? viewport.scrollTop;
+      const left = viewport.scrollLeft;
+      const token = {};
+      state.token = token;
+      state.restoring = true;
+      let frames = 4;
+      const restore = () => {
+        if (state.token !== token || !viewport.isConnected) return;
+        viewport.scrollTop = top;
+        viewport.scrollLeft = left;
+        if (--frames > 0) {
+          requestAnimationFrame(restore);
+        } else {
+          state.restoring = false;
+          state.positions.set(next, viewport.scrollTop);
+        }
+      };
+      requestAnimationFrame(restore);
+    }
+  };
+
+  const preserveMenuScrollKey = (event) => {
+    if (event.key === "Enter" || event.key === " ") preserveMenuScroll(event);
+  };
+
   const layoutSelectedNames = () => {
     for (const label of document.querySelectorAll("label")) {
       if (label.textContent?.trim() !== "__Selected Object Names") continue;
@@ -119,6 +221,7 @@
       valueColumn.style.flex = "1 1 100%";
       valueColumn.style.width = "100%";
       row.style.width = "100%";
+      selectedNamesTextarea = textarea;
       if (textarea.dataset.tactileFixedRows !== "true") {
         const style = getComputedStyle(textarea);
         const fontSize = Number.parseFloat(style.fontSize);
@@ -128,9 +231,26 @@
           .map((name) => Number.parseFloat(style[name]) || 0)
           .reduce((sum, value) => sum + value, 0);
         textarea.rows = 2;
-        textarea.style.height = `${Math.ceil(2 * lineHeight + chrome)}px`;
+        const height = `${Math.ceil(2 * lineHeight + chrome)}px`;
+        textarea.style.height = height;
         textarea.style.overflowY = "auto";
+        textarea.dataset.tactileHeight = height;
         textarea.dataset.tactileFixedRows = "true";
+        textarea.addEventListener("pointerdown", (event) => {
+          const rect = textarea.getBoundingClientRect();
+          if (event.clientX < rect.right - 20 || event.clientY < rect.bottom - 20) {
+            return;
+          }
+          textarea.dataset.tactileResizing = "true";
+          const finish = () => {
+            textarea.dataset.tactileHeight = `${textarea.getBoundingClientRect().height}px`;
+            delete textarea.dataset.tactileResizing;
+            window.removeEventListener("pointerup", finish);
+            window.removeEventListener("pointercancel", finish);
+          };
+          window.addEventListener("pointerup", finish, { once: true });
+          window.addEventListener("pointercancel", finish, { once: true });
+        });
       }
     }
   };
@@ -249,6 +369,7 @@
     findBridge("__Tactile Info");
     positionViserLogo();
     boldChoiceLabels();
+    setupMenuScroll();
     layoutSelectedNames();
     preservePartialNumbers();
     layoutTaxelBindings();
@@ -262,6 +383,8 @@
     }
   };
 
+  document.addEventListener("pointerdown", preserveMenuScroll, true);
+  document.addEventListener("keydown", preserveMenuScrollKey, true);
   observer = new MutationObserver(bind);
   observer.observe(document.body, { childList: true, subtree: true });
   bind();
@@ -270,10 +393,17 @@
     stop() {
       observer?.disconnect();
       observer = null;
+      document.removeEventListener("pointerdown", preserveMenuScroll, true);
+      document.removeEventListener("keydown", preserveMenuScrollKey, true);
+      for (const [viewport, listener] of menuScrollListeners) {
+        viewport.removeEventListener("scroll", listener);
+      }
+      menuScrollListeners.clear();
       cancelAnimationFrame(raf);
       infoElement?.remove();
       infoElement = null;
       infoInput = null;
+      selectedNamesTextarea = null;
       numberDrafts.clear();
     },
   };
