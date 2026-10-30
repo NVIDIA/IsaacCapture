@@ -734,6 +734,9 @@ class RecordingSessionCoordinator:
             with contextlib.suppress(Exception):
                 await self._settle_failed_episode_impl(self._service_for_pending_interruption, episode_id, message)
         if self._current_ingress is not None:
+            # Not redundant: this is the fallback used below if
+            # _retire_current_ingress() raises -- contextlib.suppress swallows
+            # the exception and leaves `retirement` at this value.
             retirement = _IngressRetirement(settled=False, failure="ingress retirement raised during close")
             with contextlib.suppress(Exception):
                 retirement = await self._retire_current_ingress()

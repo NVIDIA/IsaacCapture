@@ -49,6 +49,7 @@ def test_reported_capture_mode_is_derived_from_the_setup_flag(mock, expected):
 def test_capture_server_no_longer_accepts_an_independent_mode():
     """A caller cannot construct a server whose reported mode disagrees with its selected implementation."""
     with pytest.raises(TypeError):
+        # Intentionally wrong: `mode` is a removed kwarg; this call must fail exactly this way.
         CaptureServer(ServerConfig(), mode=p.CaptureMode.LIVE, source_factory=_never)  # type: ignore[call-arg]
 
 

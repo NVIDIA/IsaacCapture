@@ -288,6 +288,8 @@ class OptionalTensorGroup:
 
     def __getitem__(self, index: IntEnum) -> Any:
         if self._is_none:
+            # ValueError (not LookupError) is intentional: matches the real
+            # production class's documented contract exactly -- see class docstring.
             raise ValueError("cannot read from an absent OptionalTensorGroup")
         return self._values[int(index)]
 
