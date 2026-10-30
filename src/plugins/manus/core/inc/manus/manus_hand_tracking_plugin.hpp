@@ -37,7 +37,6 @@ inline constexpr std::size_t kManusFingerCount = 5;
 /// Runtime feature flags for manus_hand_plugin (parsed from --datasets=...).
 struct ManusPluginConfig
 {
-    std::string app_name = "ManusHandPlugin";
     std::optional<std::string> monitoring_plugin_root_id;
     std::string left_calibration_file;
     std::string right_calibration_file;
@@ -49,8 +48,8 @@ struct ManusPluginConfig
 class __attribute__((visibility("default"))) ManusTracker
 {
 public:
-    /// Get the singleton instance. The first call constructs with ``config`` and
-    /// calls ``plugin_session_factory`` once from initialize(); later calls ignore all arguments.
+    /// Get the singleton instance. The first call constructs with ``config`` and calls
+    /// ``plugin_session_factory`` once during construction; later calls ignore all arguments.
     static ManusTracker& instance(const ManusPluginConfig& config,
                                   const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
 
@@ -75,19 +74,20 @@ public:
 
 private:
     // Lifecycle
-    // For the SDK callbacks, which are registered while instance(config, factory) constructs
-    // the tracker; asserts that call came first.
-    static ManusTracker& instance();
-    static inline std::atomic<bool> s_instance_requested{ false };
-    ManusTracker(const ManusPluginConfig& config,
-                 const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
+    struct ConstructionArgs
+    {
+        const ManusPluginConfig& config;
+        const core::PluginSessionFactory& plugin_session_factory;
+    };
+    // Null args from the SDK callbacks; asserts instance(config, factory) came first.
+    static ManusTracker& instance(const ConstructionArgs* args);
+    explicit ManusTracker(const ConstructionArgs& args) noexcept(false);
     ~ManusTracker();
 
     ManusTracker(const ManusTracker&) = delete;
     ManusTracker& operator=(const ManusTracker&) = delete;
     ManusTracker(ManusTracker&&) = delete;
     ManusTracker& operator=(ManusTracker&&) = delete;
-    void initialize(const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
     void shutdown_sdk();
 
     // ManusSDK specific methods
@@ -98,7 +98,7 @@ private:
     static void OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_info);
     static void OnLandscapeStream(const Landscape* landscape);
     static void OnRawDeviceDataStream(const RawDeviceDataInfo* raw_device_data_info);
-    // Registered before CoreSdk_InitializeIntegrated() (see initialize()), so it may fire
+    // Registered before CoreSdk_InitializeIntegrated() (see the constructor), so it may fire
     // synchronously from within that call, on the calling thread, before the ManusTracker
     // singleton (a function-local static in instance()) has finished constructing. Must
     // therefore never call instance() -- see the definition for how it gets its logger.
@@ -140,7 +140,7 @@ private:
     std::array<uint32_t, 2> m_sensor_count{ { 0, 0 } };
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
 
-    // Plugin session state. The channels and wrist source created from the session,
+    // Plugin session state. The channels created from the session,
     // and the haptic reader it pulls, live in m_session_channels, declared after the
     // session so they are destroyed first.
     struct SessionChannels
@@ -150,7 +150,6 @@ private:
         // Inbound HapticCommand tensor; collection identity in
         // inc/manus/manus_glove_collection.hpp. Read each frame in update().
         std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader;
-        std::unique_ptr<core::IWristTrackingSource> wrist_source;
         std::unique_ptr<core::ISchemaPushChannel> left_sensor;
         std::unique_ptr<core::ISchemaPushChannel> right_sensor;
         std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> status_publisher;

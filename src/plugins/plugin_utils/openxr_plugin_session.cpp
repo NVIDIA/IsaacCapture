@@ -38,7 +38,6 @@ void append_unique(std::vector<std::string>& extensions, const std::vector<std::
     }
 }
 
-// DeviceIOSession::get_required_extensions already includes the XrTimeConverter extensions.
 std::vector<std::string> make_required_extensions(const core::PluginSessionRequirements& requirements,
                                                   const std::vector<std::shared_ptr<core::ITracker>>& trackers,
                                                   const std::vector<const char*>& wrist_extensions)
@@ -86,13 +85,15 @@ class OpenXRPluginPullChannel final : public core::IPluginPullChannel
 public:
     OpenXRPluginPullChannel(const core::OpenXRSessionHandles& handles,
                             const std::vector<std::shared_ptr<core::ITracker>>& trackers,
-                            std::optional<core::WristTrackingSourceConfig> wrist_config,
+                            const std::optional<core::WristTrackingSourceConfig>& wrist_config,
                             std::shared_ptr<core::ControllerTracker> wrist_controller_tracker)
-        : handles_(handles),
-          wrist_config_(std::move(wrist_config)),
-          wrist_controller_tracker_(std::move(wrist_controller_tracker)),
-          deviceio_session_(core::DeviceIOSession::run(trackers, handles_))
+        : deviceio_session_(core::DeviceIOSession::run(trackers, handles))
     {
+        if (wrist_config)
+        {
+            wrist_source_ = std::make_unique<OpenXRWristTrackingSource>(
+                *wrist_config, handles, deviceio_session_.get(), std::move(wrist_controller_tracker));
+        }
     }
 
     void update() override
@@ -105,22 +106,19 @@ public:
         return deviceio_session_->get_tracker_impl(tracker);
     }
 
-    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source() override
+    core::IWristTrackingSource& wrist_tracking_source() override
     {
-        if (!wrist_config_)
+        if (!wrist_source_)
         {
             throw std::logic_error(
                 "OpenXRPluginSession: wrist tracking pull was not declared in PluginSessionRequirements");
         }
-        return std::make_unique<OpenXRWristTrackingSource>(
-            *wrist_config_, handles_, deviceio_session_.get(), wrist_controller_tracker_);
+        return *wrist_source_;
     }
 
 private:
-    core::OpenXRSessionHandles handles_;
-    std::optional<core::WristTrackingSourceConfig> wrist_config_;
-    std::shared_ptr<core::ControllerTracker> wrist_controller_tracker_;
     std::unique_ptr<core::DeviceIOSession> deviceio_session_;
+    std::unique_ptr<OpenXRWristTrackingSource> wrist_source_;
 };
 
 class OpenXRPluginSession final : public core::IPluginSession

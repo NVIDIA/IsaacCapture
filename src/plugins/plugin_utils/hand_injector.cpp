@@ -27,7 +27,12 @@ void CheckXrResult(XrResult result, const char* message)
 
 std::vector<std::string> HandInjector::get_required_extensions()
 {
-    return { XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME };
+    std::vector<std::string> extensions = { XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME };
+    for (const auto& ext : core::XrTimeConverter::get_required_extensions())
+    {
+        extensions.push_back(ext);
+    }
+    return extensions;
 }
 
 HandInjector::HandInjector(XrInstance instance, XrSession session, XrHandEXT hand, XrSpace base_space)

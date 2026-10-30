@@ -31,7 +31,6 @@ public:
      * @throws std::runtime_error if the tensor collection cannot be created.
      */
     OpenXRSchemaPushChannel(const OpenXRSessionHandles& handles, SchemaPusherConfig config);
-    ~OpenXRSchemaPushChannel() override = default;
 
     OpenXRSchemaPushChannel(OpenXRSchemaPushChannel&&) = delete;
     OpenXRSchemaPushChannel& operator=(OpenXRSchemaPushChannel&&) = delete;

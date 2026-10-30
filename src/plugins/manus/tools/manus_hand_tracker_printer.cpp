@@ -35,9 +35,8 @@ try
     std::cout << "[Manus] Initializing Manus Tracker..." << std::endl;
 
     plugins::manus::ManusPluginConfig config;
-    config.app_name = "ManusHandPrinter";
     auto& tracker = plugins::manus::ManusTracker::instance(
-        config, plugin_utils::make_openxr_plugin_session_factory(config.app_name));
+        config, plugin_utils::make_openxr_plugin_session_factory("ManusHandPrinter"));
 
     // Start Vulkan visualizer in a background thread.
     // If X11 or Vulkan is unavailable the thread exits cleanly and printing

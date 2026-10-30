@@ -84,7 +84,10 @@ class FakePullChannel final : public core::IPluginPullChannel
 {
 public:
     FakePullChannel(std::shared_ptr<PullState> state, std::shared_ptr<core::ControllerTracker> controller_tracker)
-        : state_(std::move(state)), controller_tracker_(std::move(controller_tracker)), controller_impl_(state_)
+        : state_(std::move(state)),
+          controller_tracker_(std::move(controller_tracker)),
+          controller_impl_(state_),
+          wrist_source_(state_)
     {
     }
 
@@ -103,15 +106,16 @@ public:
         return controller_impl_;
     }
 
-    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source() override
+    core::IWristTrackingSource& wrist_tracking_source() override
     {
-        return std::make_unique<FakeWristTrackingSource>(state_);
+        return wrist_source_;
     }
 
 private:
     std::shared_ptr<PullState> state_;
     std::shared_ptr<core::ControllerTracker> controller_tracker_;
     FakeControllerTrackerImpl controller_impl_;
+    FakeWristTrackingSource wrist_source_;
 };
 
 class FakePluginSession final : public core::IPluginSession
@@ -158,8 +162,7 @@ TEST_CASE("Plugin pull channel supports typed trackers and optional sources", "[
     REQUIRE(state->update_count == 1);
     REQUIRE(state->last_update_time_ns == 1234);
 
-    auto wrist_source = pull_channel.create_wrist_tracking_source();
-    const core::WristTrackingSample wrist = wrist_source->query(XR_HAND_LEFT_EXT, 4242);
+    const core::WristTrackingSample wrist = pull_channel.wrist_tracking_source().query(XR_HAND_LEFT_EXT, 4242);
     REQUIRE(state->wrist_queried);
     REQUIRE(wrist.valid);
     REQUIRE(wrist.tracked);

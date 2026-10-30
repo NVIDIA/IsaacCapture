@@ -114,17 +114,21 @@ static constexpr core::WristTrackingSourceConfig kWristSourceConfig{ .mode = cor
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
                                      const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
 {
-    s_instance_requested.store(true);
-    static ManusTracker s(config, plugin_session_factory);
-    return s;
+    const ConstructionArgs args{ config, plugin_session_factory };
+    return instance(&args);
 }
 
-ManusTracker& ManusTracker::instance()
+ManusTracker& ManusTracker::instance(const ConstructionArgs* args)
 {
-    assert(s_instance_requested.load() && "Manus SDK callbacks run only after instance(config, factory)");
-    // The arguments are ignored: the static above is constructed or under construction,
-    // and its initialization guard makes callback threads wait for it.
-    return instance(ManusPluginConfig{}, {});
+    // The SDK callbacks pass null. They are registered while the first call constructs the
+    // tracker, and the static's initialization guard makes their threads wait for it.
+    static ManusTracker s(
+        [args]() -> const ConstructionArgs&
+        {
+            assert(args != nullptr && "Manus SDK callbacks run only after instance(config, factory)");
+            return *args;
+        }());
+    return s;
 }
 
 void ManusTracker::update()
@@ -261,29 +265,9 @@ void ManusTracker::apply_haptic_command(bool is_left, const std::array<float, kM
     }
 }
 
-ManusTracker::ManusTracker(const ManusPluginConfig& config,
-                           const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
-    : m_config(config)
+ManusTracker::ManusTracker(const ConstructionArgs& args) noexcept(false) : m_config(args.config)
 {
-    initialize(plugin_session_factory);
-}
-
-ManusTracker::~ManusTracker()
-{
-    {
-        std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
-        if (!m_initialized)
-        {
-            return;
-        }
-        m_initialized = false;
-    }
-
-    shutdown_sdk();
-}
-
-void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
-{
+    const core::PluginSessionFactory& plugin_session_factory = args.plugin_session_factory;
     if (m_config.monitoring_plugin_root_id && m_config.monitoring_plugin_root_id->empty())
     {
         throw std::invalid_argument("ManusTracker monitoring_plugin_root_id must not be empty");
@@ -397,11 +381,7 @@ void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_f
                                           .localized_name = "Manus Sensors Right" });
         }
 
-        if (m_config.human)
-        {
-            m_session_channels.wrist_source = m_plugin_session->pull_channel().create_wrist_tracking_source();
-        }
-        else
+        if (!m_config.human)
         {
             m_logger->info("Plugin session ready (human injection disabled).");
         }
@@ -432,6 +412,20 @@ void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_f
 
     std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
     m_initialized = true;
+}
+
+ManusTracker::~ManusTracker()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
+        if (!m_initialized)
+        {
+            return;
+        }
+        m_initialized = false;
+    }
+
+    shutdown_sdk();
 }
 
 
@@ -558,7 +552,7 @@ bool ManusTracker::apply_glove_calibration(uint32_t glove_id, bool is_left)
 
 void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_info)
 {
-    auto& tracker = instance();
+    auto& tracker = instance(nullptr);
     std::lock_guard<std::mutex> instance_lock(tracker.m_lifecycle_mutex);
     if (!tracker.m_initialized)
     {
@@ -621,7 +615,7 @@ void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_in
 
 void ManusTracker::OnLandscapeStream(const Landscape* landscape)
 {
-    auto& tracker = instance();
+    auto& tracker = instance(nullptr);
     std::lock_guard<std::mutex> instance_lock(tracker.m_lifecycle_mutex);
     if (!tracker.m_initialized)
     {
@@ -769,7 +763,7 @@ void ManusTracker::OnLog(LogSeverity p_Severity, const char* p_Log, uint32_t p_L
 
 void ManusTracker::OnRawDeviceDataStream(const RawDeviceDataInfo* raw_device_data_info)
 {
-    auto& tracker = instance();
+    auto& tracker = instance(nullptr);
     std::lock_guard<std::mutex> instance_lock(tracker.m_lifecycle_mutex);
     if (!tracker.m_initialized || !tracker.m_config.sensors)
     {
@@ -957,8 +951,8 @@ void ManusTracker::inject_hand_data()
         XrPosef root_pose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
         bool is_root_tracked = false;
 
-        const core::WristTrackingSample wrist =
-            m_session_channels.wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns);
+        const core::WristTrackingSample wrist = m_plugin_session->pull_channel().wrist_tracking_source().query(
+            is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns);
         if (wrist.valid)
         {
             if (is_left)

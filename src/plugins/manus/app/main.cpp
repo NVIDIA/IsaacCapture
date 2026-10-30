@@ -131,7 +131,7 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto& tracker = ManusTracker::instance(config, plugin_utils::make_openxr_plugin_session_factory(config.app_name));
+    auto& tracker = ManusTracker::instance(config, plugin_utils::make_openxr_plugin_session_factory("ManusHandPlugin"));
 
     logger->info("Plugin running. Press Ctrl+C to stop.");
 
