@@ -965,7 +965,8 @@ void ManusTracker::inject_hand_data()
         XrPosef root_pose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
         bool is_root_tracked = false;
 
-        const core::WristTrackingSample wrist = m_wrist_tracking_source->query(is_left, sample_time_ns);
+        const core::WristTrackingSample wrist =
+            m_wrist_tracking_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns);
         if (wrist.valid)
         {
             if (is_left)

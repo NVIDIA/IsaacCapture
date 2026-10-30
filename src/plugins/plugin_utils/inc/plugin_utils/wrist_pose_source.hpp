@@ -10,6 +10,7 @@
 #include <log_bridge/logger.hpp>
 #include <openxr/openxr.h>
 #include <oxr_utils/oxr_session_handles.hpp>
+#include <pusherio/wrist_tracking_source.hpp>
 
 #include <XR_MNDX_xdev_space.h>
 #include <memory>
@@ -18,34 +19,9 @@
 namespace plugin_utils
 {
 
-/** @brief Which device provides the wrist pose. */
-enum class WristSourceMode
-{
-    Auto, //!< Optical hand tracking preferred, controller aim pose as fallback.
-    HandTracking, //!< XR_MNDX_xdev_space optical hand tracking only.
-    Controller, //!< Controller aim pose (plus the configured rigid offset) only.
-};
-
-/** @brief Source selection plus per-device tuning. */
-struct WristSourceConfig
-{
-    WristSourceMode mode = WristSourceMode::Auto;
-    // Rigid transform from the controller aim pose to the wrist joint, per
-    // hand. Depends on the controller model and how it is mounted on the
-    // glove, so each plugin supplies its own calibrated pair (see
-    // kLeft/kRightAimToWrist in wuji_glove_plugin.cpp and
-    // kLeft/kRightHandOffset in manus_hand_tracking_plugin.cpp).
-    XrPosef left_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    XrPosef right_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-};
-
-/** @brief One wrist query result, in the session base space. */
-struct WristSample
-{
-    XrPosef pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    bool valid = false; //!< Pose usable (may be the cached last good pose).
-    bool tracked = false; //!< Source actively tracked this frame.
-};
+using WristSourceMode = core::WristTrackingSourceMode;
+using WristSourceConfig = core::WristTrackingSourceConfig;
+using WristSample = core::WristTrackingSample;
 
 /**
  * @brief Selects an optical or controller-derived wrist pose.

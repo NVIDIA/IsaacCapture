@@ -69,9 +69,9 @@ public:
     {
     }
 
-    core::WristTrackingSample query(bool is_left, int64_t sample_time_local_common_clock_ns) override
+    core::WristTrackingSample query(XrHandEXT hand, int64_t sample_time_local_common_clock_ns) override
     {
-        state_->wrist_queried = is_left && sample_time_local_common_clock_ns == 4242;
+        state_->wrist_queried = hand == XR_HAND_LEFT_EXT && sample_time_local_common_clock_ns == 4242;
         core::WristTrackingSample sample;
         sample.pose.position.x = 1.0f;
         sample.valid = true;
@@ -175,7 +175,7 @@ TEST_CASE("Plugin pull channel supports typed trackers and optional sources", "[
         REQUIRE(state->last_update_time_ns == 1234);
 
         auto wrist_source = pull_channel->create_wrist_tracking_source({});
-        const core::WristTrackingSample wrist = wrist_source->query(true, 4242);
+        const core::WristTrackingSample wrist = wrist_source->query(XR_HAND_LEFT_EXT, 4242);
         REQUIRE(state->wrist_queried);
         REQUIRE(wrist.valid);
         REQUIRE(wrist.tracked);

@@ -76,27 +76,6 @@ bool is_extension_supported(const char* extension_name)
                        { return std::string(property.extensionName) == extension_name; });
 }
 
-WristSourceMode to_openxr_mode(core::WristTrackingSourceMode mode)
-{
-    switch (mode)
-    {
-    case core::WristTrackingSourceMode::Auto:
-        return WristSourceMode::Auto;
-    case core::WristTrackingSourceMode::HandTracking:
-        return WristSourceMode::HandTracking;
-    case core::WristTrackingSourceMode::Controller:
-        return WristSourceMode::Controller;
-    }
-    throw std::logic_error("Unknown wrist tracking source mode");
-}
-
-WristSourceConfig to_openxr_config(const core::WristTrackingSourceConfig& config)
-{
-    return WristSourceConfig{ .mode = to_openxr_mode(config.mode),
-                              .left_aim_to_wrist = config.left_aim_to_wrist,
-                              .right_aim_to_wrist = config.right_aim_to_wrist };
-}
-
 class OpenXRWristTrackingSource final : public core::IWristTrackingSource
 {
 public:
@@ -104,16 +83,14 @@ public:
                               const core::OpenXRSessionHandles& handles,
                               core::DeviceIOSession* deviceio_session,
                               std::shared_ptr<core::ControllerTracker> controller_tracker)
-        : time_converter_(handles),
-          source_(to_openxr_config(config), handles, deviceio_session, std::move(controller_tracker))
+        : time_converter_(handles), source_(config, handles, deviceio_session, std::move(controller_tracker))
     {
     }
 
-    core::WristTrackingSample query(bool is_left, int64_t sample_time_local_common_clock_ns) override
+    core::WristTrackingSample query(XrHandEXT hand, int64_t sample_time_local_common_clock_ns) override
     {
-        const WristSample sample =
-            source_.query(is_left, time_converter_.convert_monotonic_ns_to_xrtime(sample_time_local_common_clock_ns));
-        return core::WristTrackingSample{ .pose = sample.pose, .valid = sample.valid, .tracked = sample.tracked };
+        return source_.query(hand == XR_HAND_LEFT_EXT,
+                             time_converter_.convert_monotonic_ns_to_xrtime(sample_time_local_common_clock_ns));
     }
 
 private:
