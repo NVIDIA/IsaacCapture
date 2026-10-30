@@ -143,7 +143,8 @@ private:
     // Last landscape as the SDK reported it (before the one-left/one-right filter); for log_status().
     uint32_t m_sdk_glove_count = 0;
     std::optional<bool> m_license_ok;
-    std::chrono::steady_clock::time_point m_next_status{};
+    static constexpr std::chrono::seconds kStatusInterval{ 5 };
+    std::chrono::steady_clock::time_point m_next_status = std::chrono::steady_clock::now() + kStatusInterval;
 
     // Haptic state — the per-side log-once flags use std::atomic to stay
     // quiet when many frames in a row fail (e.g. the glove was disconnected

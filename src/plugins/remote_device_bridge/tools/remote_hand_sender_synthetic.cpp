@@ -25,6 +25,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -38,7 +39,6 @@ namespace
 static_assert(ATOMIC_BOOL_LOCK_FREE == 2, "lock-free atomic bool is required for signal safety");
 
 std::atomic<bool> g_stop_requested{ false };
-constexpr double kTwoPi = 6.283185307179586;
 
 std::shared_ptr<spdlog::logger> logger()
 {
@@ -55,7 +55,7 @@ void signal_handler(int signal)
 
 struct Options
 {
-    remote_plugin_session::RemoteAddress remote{ { "127.0.0.1", 47500 } };
+    remote_plugin_session::RemoteAddress remote{ { "127.0.0.1", remote_plugin_session::kDefaultBridgePort } };
     int rate_hz = 90;
     double duration_s = 0.0; // 0 = run until Ctrl-C
     size_t schema_bytes = 0; // 0 = no schema channel
@@ -101,7 +101,8 @@ Options parse_args(int argc, char** argv)
         const std::string arg = argv[i];
         if (starts_with(arg, "--remote="))
         {
-            options.remote = remote_plugin_session::parse_remote(arg.substr(std::string("--remote=").size()), 47500);
+            options.remote = remote_plugin_session::parse_remote(
+                arg.substr(std::string("--remote=").size()), remote_plugin_session::kDefaultBridgePort);
         }
         else if (starts_with(arg, "--rate-hz="))
         {
@@ -184,7 +185,7 @@ XrPosef compose(const XrPosef& parent, const XrPosef& local)
 // Each finger is a chain of segments along -Z; curl pitches every segment about +X towards the palm.
 struct FingerLayout
 {
-    int first_joint; // metacarpal (thumb) or metacarpal joint index in XrHandJointEXT order
+    int first_joint; // the finger's metacarpal joint index in XrHandJointEXT order
     int segments; // number of segments after the first joint
     XrVector3f base;
     std::array<float, 4> lengths;
@@ -292,7 +293,7 @@ try
         if (options.schema_bytes > remote_plugin_session::kDefaultMaxSchemaBytes)
         {
             logger()->warn(
-                "warning: --schema-bytes={} exceeds the bridge's default cap ({} bytes); expect a 'bridge error: ... "
+                "--schema-bytes={} exceeds the bridge's default cap ({} bytes); expect a 'bridge error: ... "
                 "channel refused' disconnect",
                 options.schema_bytes, remote_plugin_session::kDefaultMaxSchemaBytes);
         }
@@ -350,7 +351,7 @@ try
         }
         const int64_t sample_time_ns = core::os_monotonic_now_ns();
         // Slow sine (4 s period) so a viewer sees the fingers open and close.
-        const float curl = 0.5f + 0.5f * static_cast<float>(std::sin(elapsed_s * kTwoPi / 4.0));
+        const float curl = 0.5f + 0.5f * static_cast<float>(std::sin(elapsed_s * 2.0 * std::numbers::pi / 4.0));
 
         core::WristTrackingSample wrist[2];
         for (const bool is_left : { true, false })
@@ -392,9 +393,6 @@ try
     }
 
     std::cout << "stopping after " << frames_sent << " frames, " << schema_sent << " schema samples" << std::endl;
-    left_pusher.reset();
-    right_pusher.reset();
-    schema_channel.reset();
     return exit_code;
 }
 catch (const std::exception& e)

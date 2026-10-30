@@ -41,17 +41,6 @@ def fingertips_curl(joints: np.ndarray | None) -> tuple[float, int]:
     return curl if math.isfinite(curl) else math.nan, int(is_set.sum())
 
 
-def print_debug_sample(side: str, joints: np.ndarray) -> None:
-    unset = np.flatnonzero(np.all(joints == np.eye(4), axis=(1, 2))).tolist()
-    print(
-        f"[debug] {side}: type={type(joints).__name__} shape={joints.shape} dtype={joints.dtype} "
-        f"identity_slots={unset} curl={fingertips_curl(joints)[0]:.5f}\n"
-        f"  slot {WRIST_SLOT} (wrist):\n{joints[WRIST_SLOT]}\n"
-        f"  slot {INDEX_TIP_SLOT} (index tip):\n{joints[INDEX_TIP_SLOT]}",
-        flush=True,
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -72,11 +61,6 @@ def main() -> None:
     parser.add_argument(
         "--port", type=int, default=None, help="xr_server port (default XRClient's)"
     )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="print the first non-None sample of each side",
-    )
     args = parser.parse_args()
 
     from groot.core.robotics.teleop.xr.xr_client import XRClient
@@ -91,7 +75,6 @@ def main() -> None:
     period_ns = int(1e9 / args.hz)
     rows = 0
     with_curl = 0
-    debug_pending = set(sides) if args.debug else set()
     try:
         with open(args.out, "w", newline="") as out:
             writer = csv.writer(out)
@@ -105,9 +88,6 @@ def main() -> None:
                     mono_ns = time.monotonic_ns()
                     joints = client.get_hand_fingertips(side)
                     curl, n_set = fingertips_curl(joints)
-                    if joints is not None and side in debug_pending:
-                        debug_pending.discard(side)
-                        print_debug_sample(side, joints)
                     if not math.isnan(curl):
                         with_curl += 1
                     writer.writerow(

@@ -4,6 +4,7 @@
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
 #if defined(MANUS_HAVE_REMOTE_PLUGIN_SESSION)
+#    include <remote_plugin_session/bridge_limits.hpp>
 #    include <remote_plugin_session/remote_address.hpp>
 #    include <remote_plugin_session/remote_plugin_session.hpp>
 #endif
@@ -133,7 +134,7 @@ AppArgs parse_args(int argc, char** argv)
         throw std::runtime_error("ManusHandPlugin: --datasets must enable at least one of human,sensors,haptic");
     }
 
-    // The remote pull channel exposes no trackers (P0), so the haptic reader cannot run over --remote.
+    // RemotePluginSession's pull channel exposes no trackers, so the haptic reader cannot run over --remote.
     if (!args.remote_endpoint.empty() && config.haptic)
     {
         if (datasets_explicit)
@@ -182,7 +183,8 @@ try
         {
             isaaccapture::Logger::get("isaaccapture.plugins.manus.main")->info("Using remote plugin session at {}", remote);
             return std::make_unique<remote_plugin_session::RemotePluginSession>(
-                remote_plugin_session::connect_transport(remote_plugin_session::parse_remote(remote, 47500)),
+                remote_plugin_session::connect_transport(
+                    remote_plugin_session::parse_remote(remote, remote_plugin_session::kDefaultBridgePort)),
                 "ManusHandPlugin", requirements);
         };
     }

@@ -613,7 +613,7 @@ void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_in
     }
 }
 
-//! Every 5 s, in local and --remote mode alike (next to RemotePluginSession's "5s:" line).
+//! Operator liveness line for the gloves and the Manus license, once per kStatusInterval.
 void ManusTracker::log_status()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -621,14 +621,9 @@ void ManusTracker::log_status()
     {
         return;
     }
-    const bool first = m_next_status == std::chrono::steady_clock::time_point{};
-    m_next_status = now + std::chrono::seconds(5);
-    if (first)
-    {
-        return;
-    }
+    m_next_status = now + kStatusInterval;
     std::lock_guard<std::mutex> lock(landscape_mutex);
-    m_logger->info("5s: gloves={} license={}", m_sdk_glove_count,
+    m_logger->info("{}s: gloves={} license={}", kStatusInterval.count(), m_sdk_glove_count,
                    !m_license_ok ? "unknown" :
                    *m_license_ok ? "ok" :
                                    "missing");

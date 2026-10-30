@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "teleopcore-remote-device-bridge-tests"
+name = "remote-device-bridge-tests"
 version = "0.0.0"  # Internal tests - not versioned
 description = "remote_device_bridge tools unit tests"
 requires-python = ">=3.11,<3.14"
