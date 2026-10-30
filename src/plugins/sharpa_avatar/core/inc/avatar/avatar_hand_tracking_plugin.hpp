@@ -139,6 +139,38 @@ struct GloveState
     bool ready = false;
 };
 
+class HapticCommandDeliveryState
+{
+public:
+    void observe(const core::Serialized<core::HapticCommand>& command)
+    {
+        if (command.get() != m_latest.get())
+        {
+            m_latest = command;
+            m_pending = command.get() != nullptr;
+        }
+    }
+
+    const core::HapticCommand* pending() const noexcept
+    {
+        return m_pending ? m_latest.get() : nullptr;
+    }
+
+    void acknowledge() noexcept
+    {
+        m_pending = false;
+    }
+
+    void discard() noexcept
+    {
+        m_pending = false;
+    }
+
+private:
+    core::Serialized<core::HapticCommand> m_latest;
+    bool m_pending = false;
+};
+
 class __attribute__((visibility("default"))) AvatarTracker
 {
 public:
@@ -194,7 +226,7 @@ private:
     std::array<std::array<std::unique_ptr<core::SchemaPusher>, 2>, 2> m_joint_pushers;
     std::unique_ptr<plugin_utils::WristPoseSource> m_wrist_source;
 
-    std::array<core::Serialized<core::HapticCommand>, 2> m_last_haptic_commands;
+    std::array<HapticCommandDeliveryState, 2> m_haptic_commands;
     std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_haptic_sample_times;
     std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_haptic_retry_after;
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
