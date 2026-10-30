@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <fcntl.h>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -29,6 +30,15 @@ std::FILE* open_or_throw(const std::string& path, const char* mode)
         throw file_error("cannot open", path);
     }
     return file;
+}
+
+//! Formats one row (newline included) without allocating; returns the snprintf result.
+int format_row(char* out, size_t size, const SampleCsvRow& row)
+{
+    return std::snprintf(out, size, "%lld,%lld,%lld,%lld,%.3f,%s,%u,%.5f\n", static_cast<long long>(row.push_mono_ns),
+                         static_cast<long long>(row.recv_mono_ns), static_cast<long long>(row.capture_sender_ns),
+                         static_cast<long long>(row.capture_mapped_ns), static_cast<double>(row.age_ns) / 1e6, row.side,
+                         static_cast<unsigned>(row.seq), static_cast<double>(row.curl_m));
 }
 
 std::string ms(int64_t ns)
@@ -79,33 +89,22 @@ std::string format_clock_stats(std::vector<int64_t> ages_ns, const remote_plugin
     return out + " | offset_ms=" + offset + " clock=" + (two_way ? "two-way" : "one-way");
 }
 
-void SampleCsv::create(const std::string& path)
+SampleCsv::SampleCsv(const std::string& path) : m_file(open_or_throw(path, "w"))
 {
-    std::FILE* file = open_or_throw(path, "w");
-    const bool written = std::fputs(kHeader, file) != EOF;
-    // fclose flushes the buffered header, so a full disk surfaces here.
-    if (std::fclose(file) != 0 || !written)
+    const int fd = fileno(m_file.get());
+    const int flags = fcntl(fd, F_GETFL);
+    // fflush pushes the buffered header out now, so a full disk surfaces here and rows never follow it in a buffer.
+    if (std::fputs(kHeader, m_file.get()) == EOF || std::fflush(m_file.get()) != 0 || flags < 0 ||
+        fcntl(fd, F_SETFL, flags | O_APPEND) < 0)
     {
         throw file_error("cannot write", path);
     }
 }
 
-int SampleCsv::format(char* out, size_t size, const SampleCsvRow& row)
-{
-    return std::snprintf(out, size, "%lld,%lld,%lld,%lld,%.3f,%s,%u,%.5f\n", static_cast<long long>(row.push_mono_ns),
-                         static_cast<long long>(row.recv_mono_ns), static_cast<long long>(row.capture_sender_ns),
-                         static_cast<long long>(row.capture_mapped_ns), static_cast<double>(row.age_ns) / 1e6, row.side,
-                         static_cast<unsigned>(row.seq), static_cast<double>(row.curl_m));
-}
-
-SampleCsv::SampleCsv(const std::string& path) : m_file(open_or_throw(path, "a"))
-{
-}
-
-void SampleCsv::write(const SampleCsvRow& row)
+void SampleCsv::write(const SampleCsvRow& row) const
 {
     char line[256];
-    const int size = format(line, sizeof(line), row);
+    const int size = format_row(line, sizeof(line), row);
     if (size > 0)
     {
         // Bypasses stdio so no buffer ever holds part of a row.

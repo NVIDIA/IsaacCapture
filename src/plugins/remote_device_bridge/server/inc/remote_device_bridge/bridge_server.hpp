@@ -22,6 +22,8 @@
 namespace remote_device_bridge
 {
 
+class SampleCsv;
+
 enum class ClockSource
 {
     TwoWay, //!< PING/PONG min-RTT offset; one-way only when no PONG answers
@@ -93,7 +95,7 @@ private:
     remote_plugin_session::TcpSocket m_listener;
     remote_plugin_session::TcpSocket m_ws_listener;
     std::unique_ptr<HandOwners, HandOwnersUnmap> m_hand_owners;
-    std::vector<uint8_t> m_bridge_full_ack;
+    std::unique_ptr<SampleCsv> m_csv; //!< --stats-csv, opened before the first fork
     std::list<ClientRecord> m_clients;
     uint32_t m_accepted = 0;
 };

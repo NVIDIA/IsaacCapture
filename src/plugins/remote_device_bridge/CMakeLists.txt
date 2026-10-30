@@ -3,8 +3,6 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-include(GNUInstallDirs)
-
 if(WIN32)
     message(STATUS "Skipping remote_device_bridge (POSIX sockets only)")
     return()

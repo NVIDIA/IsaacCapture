@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <remote_device_bridge/latency_stats.hpp>
+#include <sys/wait.h>
 
 #include <array>
 #include <cstdint>
@@ -62,7 +63,7 @@ TEST_CASE("format_clock_stats renders the status line suffix", "[remote_device_b
             " | age_ms p50=25.0 p99=49.5 max=50.0 | rtt_ms min=140.0 last=151.0 | offset_ms=5000.000 clock=two-way");
 }
 
-TEST_CASE("SampleCsv writes the header once and one row per sample", "[remote_device_bridge][unit]")
+TEST_CASE("SampleCsv writes the header once and forked clients append rows", "[remote_device_bridge][unit]")
 {
     const SampleCsvRow row{ 1'000'000'123, 1'000'000'100, 42'000, 999'930'000, 70'123'456, "right", 17, 0.08765f };
     const std::string line = "1000000123,1000000100,42000,999930000,70.123,right,17,0.08765\n";
@@ -70,14 +71,18 @@ TEST_CASE("SampleCsv writes the header once and one row per sample", "[remote_de
     const std::string path =
         (std::filesystem::temp_directory_path() / ("remote_device_bridge_csv_" + std::to_string(::getpid()) + ".csv"))
             .string();
-    SampleCsv::create(path);
     {
-        SampleCsv first(path);
-        first.write(row);
-    }
-    {
-        SampleCsv second(path); // a later client appends
-        second.write(row);
+        const SampleCsv csv(path);
+        csv.write(row);
+        const pid_t pid = fork();
+        if (pid == 0)
+        {
+            csv.write(row); // a forked client appends through the inherited descriptor
+            _exit(0);
+        }
+        REQUIRE(pid > 0);
+        int status = 0;
+        REQUIRE(waitpid(pid, &status, 0) == pid);
     }
     REQUIRE(read_file(path) == std::string(SampleCsv::kHeader) + line + line);
     REQUIRE(std::string(SampleCsv::kHeader) ==

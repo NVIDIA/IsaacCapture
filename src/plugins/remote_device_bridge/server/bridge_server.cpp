@@ -163,27 +163,17 @@ public:
                   uint32_t client_id,
                   const BridgeOptions& options,
                   const SessionFactory& session_factory,
-                  BridgeServer::HandOwners& hand_owners)
+                  BridgeServer::HandOwners& hand_owners,
+                  const SampleCsv* csv)
         : m_transport(std::move(transport)),
           m_client_id(client_id),
           m_tag("[bridge c" + std::to_string(client_id) + "]"),
           m_options(options),
-          m_hand_owners(hand_owners)
+          m_hand_owners(hand_owners),
+          m_csv(csv)
     {
-        try
-        {
-            if (m_options.stats_csv)
-            {
-                m_csv = std::make_unique<SampleCsv>(*m_options.stats_csv);
-            }
-            handshake(session_factory);
-        }
-        catch (...)
-        {
-            // The destructor does not run for a constructor that throws.
-            m_transport->shutdown();
-            throw;
-        }
+        // The reader starts last, so a throw here leaves only members whose destructors close the transport.
+        handshake(session_factory);
     }
 
     ~ClientSession()
@@ -282,7 +272,6 @@ private:
     {
         std::unique_ptr<core::ISchemaPushChannel> channel;
         std::string collection_id;
-        size_t max_bytes = 0; //!< max_flatbuffer_size
         uint64_t pushes = 0;
     };
 
@@ -507,8 +496,7 @@ private:
                     throw ChannelRefused(*error);
                 }
                 auto channel = m_session->create_schema_push_channel(config);
-                m_schema_channels.emplace(header.channel_id, SchemaChannel{ std::move(channel), config.collection_id,
-                                                                            config.max_flatbuffer_size });
+                m_schema_channels.emplace(header.channel_id, SchemaChannel{ std::move(channel), config.collection_id });
                 logger()->info("{} channel {}: schema '{}' opened", m_tag, header.channel_id, config.collection_id);
                 break;
             }
@@ -570,12 +558,6 @@ private:
                     throw std::runtime_error("SCHEMA_SAMPLE on unknown channel " + std::to_string(header.channel_id));
                 }
                 const protocol::SchemaSample sample = protocol::decode_schema_sample(payload);
-                // OpenXRSchemaPushChannel copies into a max_flatbuffer_size buffer without checking.
-                if (sample.bytes.size() > it->second.max_bytes)
-                {
-                    throw std::runtime_error("SCHEMA_SAMPLE of " + std::to_string(sample.bytes.size()) +
-                                             " bytes exceeds the channel's max_flatbuffer_size");
-                }
                 const int64_t t_ns = m_clock.remote_to_local(sample.sample_time_local_common_clock_ns);
                 if (stale(t_ns, core::os_monotonic_now_ns()))
                 {
@@ -787,7 +769,7 @@ private:
     std::optional<PingScheduler> m_pings; //!< set for --clock-source=two-way
     bool m_logged_pong = false;
     std::vector<int64_t> m_ages_ns; //!< since the last status line
-    std::unique_ptr<SampleCsv> m_csv;
+    const SampleCsv* m_csv = nullptr; //!< the parent's --stats-csv file, inherited across fork(); null without it
     uint32_t m_next_seq = 0;
     int64_t m_last_send_ns = 0;
     int64_t m_last_recv_ns = 0;
@@ -809,12 +791,13 @@ bool serve_client(std::unique_ptr<ITransport> transport,
                   const BridgeOptions& options,
                   const SessionFactory& session_factory,
                   BridgeServer::HandOwners& hand_owners,
+                  const SampleCsv* csv,
                   const std::atomic<bool>& stop)
 {
     bool ok = true;
     try
     {
-        ClientSession session(std::move(transport), client_id, options, session_factory, hand_owners);
+        ClientSession session(std::move(transport), client_id, options, session_factory, hand_owners, csv);
         session.run(stop);
     }
     catch (const HandshakeRefused&)
@@ -831,6 +814,12 @@ bool serve_client(std::unique_ptr<ITransport> transport,
 
 //! Runs in a refusal child: HELLO_ACK first, then read until the client hangs up (it does once it reads the
 //! ACK) or kLingerWait passes, so the close is a FIN even when the HELLO arrives late.
+std::vector<uint8_t> bridge_full_ack()
+{
+    return protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+                                  protocol::encode_hello_ack(protocol::HelloAck{ false, "bridge full" }));
+}
+
 void send_bridge_full(ITransport& client, std::vector<uint8_t> ack)
 {
     if (client.wait_ready(kLingerWait) != ReceiveResult::Ok)
@@ -900,10 +889,8 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
     }
     if (m_options.stats_csv)
     {
-        SampleCsv::create(*m_options.stats_csv);
+        m_csv = std::make_unique<SampleCsv>(*m_options.stats_csv);
     }
-    m_bridge_full_ack = protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
-                                               protocol::encode_hello_ack(protocol::HelloAck{ false, "bridge full" }));
     logger()->info(
         "remote_device_bridge listening on {}:{} (wrist {} Hz, process per client, max {}, max sample age {}, max "
         "schema {} bytes)",
@@ -1012,7 +999,7 @@ void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::s
         logger()->warn("[bridge] client {} refused: bridge full ({})", peer, active);
         if (refusing >= kMaxRefusing)
         {
-            std::vector<uint8_t> ack = m_bridge_full_ack;
+            std::vector<uint8_t> ack = bridge_full_ack();
             protocol::stamp_header(ack, 0, core::os_monotonic_now_ns());
             client->send(ack.data(), ack.size());
             return;
@@ -1023,7 +1010,7 @@ void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::s
         {
             m_listener.close();
             m_ws_listener.close();
-            send_bridge_full(*client, m_bridge_full_ack);
+            send_bridge_full(*client, bridge_full_ack());
             _exit(0);
         }
         if (pid < 0)
@@ -1045,7 +1032,8 @@ void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::s
     {
         m_listener.close();
         m_ws_listener.close();
-        const bool ok = serve_client(std::move(client), id, m_options, m_session_factory, *m_hand_owners, stop);
+        const bool ok =
+            serve_client(std::move(client), id, m_options, m_session_factory, *m_hand_owners, m_csv.get(), stop);
         // _exit skips stdio teardown: flush the logger's file sink and stdout first.
         logger()->flush();
         std::fflush(nullptr);

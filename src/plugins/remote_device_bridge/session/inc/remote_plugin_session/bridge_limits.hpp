@@ -22,7 +22,7 @@ inline std::optional<std::string> schema_cap_error(const std::string& collection
         return std::nullopt;
     }
     return "schema '" + collection_id + "' sample size " + std::to_string(sample_bytes) + " bytes exceeds bridge cap " +
-           std::to_string(cap_bytes) + " bytes (runtime limit); channel refused";
+           std::to_string(cap_bytes) + " bytes; channel refused";
 }
 
 } // namespace remote_plugin_session

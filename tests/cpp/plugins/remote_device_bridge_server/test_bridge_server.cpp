@@ -726,8 +726,7 @@ TEST_CASE("A schema channel above 32768 bytes is refused at open and the session
 
     REQUIRE(wait_until([&] { return client->stats().refused_channels.size() == 1; }));
     const std::string reason = client->stats().refused_channels.begin()->second;
-    REQUIRE(reason ==
-            "schema 'tactile' sample size 32769 bytes exceeds bridge cap 32768 bytes (runtime limit); channel refused");
+    REQUIRE(reason == "schema 'tactile' sample size 32769 bytes exceeds bridge cap 32768 bytes; channel refused");
     REQUIRE(bridge.wait_log("refused: " + reason));
     REQUIRE(bridge.wait_log("open schema at_cap"));
     REQUIRE(bridge.wait_log("open hand left"));

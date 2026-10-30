@@ -85,7 +85,7 @@ void print_usage()
         << defaults.max_schema_bytes << ", the\n"
         << "                       largest the runtime accepts)\n"
         << "  --clock-source       two-way: PING/PONG min-RTT clock offset, one-way if the client never answers\n"
-        << "                       within 2 s; one-way: frame-header minimum, no PINGs (default two-way)\n"
+        << "                       in time; one-way: frame-header minimum, no PINGs (default two-way)\n"
         << "  --stats-csv          write one row per pushed hand sample to this file (truncated at start)\n";
 }
 
