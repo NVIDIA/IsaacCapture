@@ -80,7 +80,6 @@ std::vector<uint8_t> encode_hello_ack(const HelloAck& value);
 //! One byte: 0 = left, 1 = right.
 std::vector<uint8_t> encode_open_hand(XrHandEXT hand);
 std::vector<uint8_t> encode_open_schema(const core::SchemaPusherConfig& value);
-std::vector<uint8_t> encode_open_wrist(const core::WristTrackingSourceConfig& value);
 std::vector<uint8_t> encode_wrist_sample(const WristSample& value);
 std::vector<uint8_t> encode_error(const std::string& message);
 std::vector<uint8_t> encode_ping(int64_t t1_ns);
@@ -103,7 +102,6 @@ Hello decode_hello(const std::vector<uint8_t>& payload);
 HelloAck decode_hello_ack(const std::vector<uint8_t>& payload);
 XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload);
 core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload);
-core::WristTrackingSourceConfig decode_open_wrist(const std::vector<uint8_t>& payload);
 HandSample decode_hand_sample(const std::vector<uint8_t>& payload);
 SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload);
 WristSample decode_wrist_sample(const std::vector<uint8_t>& payload);
