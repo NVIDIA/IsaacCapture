@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Real-data acceptance run: replay a recorded episode through RecordingService and verify the output.
 
 This is a dataset reader plus an independent verifier, not an acquisition emulator: the service has no

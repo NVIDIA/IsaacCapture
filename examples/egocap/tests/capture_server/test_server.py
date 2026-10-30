@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Deterministic, real-socket tests for the production CaptureServer --
 not mocked transports, an actual websockets listener and an actual
 CaptureClient talking to it. Ordinary tests start it via

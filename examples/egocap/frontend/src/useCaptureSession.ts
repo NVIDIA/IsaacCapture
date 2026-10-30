@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Owns WS /api/session: the browser connection/reconnect/liveness state
  * machine, the latest validated capture snapshot, the latest recording

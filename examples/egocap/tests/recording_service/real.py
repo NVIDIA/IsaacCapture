@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Helpers that feed a real recorded episode through the public RecordingService API.
 
 Nothing here simulates a device: samples are the stored rows and decoded frames of an actual

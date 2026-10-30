@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Per-station, per-day active/inactive time tracker for the egocap GUI.
 
 Each egocap station is tracked independently. The operator toggles a button

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # recording
 
 The recording module library: configuration I/O, episode storage/layout, video writers, QC and

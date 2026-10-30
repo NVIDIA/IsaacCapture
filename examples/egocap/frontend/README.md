@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # egocap-web-frontend
 
 The capture preview React page. `useCaptureSession` (`src/useCaptureSession.ts`)

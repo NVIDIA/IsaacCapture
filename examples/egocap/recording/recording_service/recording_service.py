@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """RecordingService: turns submitted samples into a checked, finalized on-disk episode.
 
 A caller supplies numeric samples and decoded camera images; the service validates and

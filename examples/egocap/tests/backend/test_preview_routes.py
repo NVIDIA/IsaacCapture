@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for WS /api/session and GET /stream{stream_id} against the real
 mock CaptureServer transport. Covers: bootstrap-before-data ordering,
 BEGUN-before-tracking, binary header correctness, and MJPEG identity

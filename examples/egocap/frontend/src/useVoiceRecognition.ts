@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Owns the browser SpeechRecognition lifecycle only: starting/stopping one
  * recognizer instance, restarting it after a normal end while voice mode

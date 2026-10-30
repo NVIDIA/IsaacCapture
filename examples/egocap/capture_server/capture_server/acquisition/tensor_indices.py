@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Real, SDK-pinned tensor-group index constants, shared verbatim by the
 production :mod:`capture_server.acquisition.isaac_capture` adapter and
 :mod:`capture_server.mock.mock_isaac_capture` -- not mock behavior (these

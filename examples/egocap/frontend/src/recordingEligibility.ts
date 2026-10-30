@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * One pure source of truth for whether each recording action is currently
  * allowed, and why not when it isn't. Both a control's disabled state and

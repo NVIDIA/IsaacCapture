@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Integration-level tests for useCaptureSession's effect: real timers
  * (faked), a controlled WebSocket stub, and the actual ordering/ownership

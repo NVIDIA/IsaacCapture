@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Device-specific capture checks (Avatar hand liveness, Pico body joints, camera parity) and the advisories.
 
 Explicit arrays with known answers, written to real Zarr groups and read back by the production checker. The

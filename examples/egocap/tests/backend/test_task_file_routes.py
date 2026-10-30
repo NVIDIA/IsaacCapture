@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The task-file endpoints through the real application, plus the HTTP error mapping on a small app."""
 
 from __future__ import annotations

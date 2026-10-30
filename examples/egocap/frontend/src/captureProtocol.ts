@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * WS /api/session SNAPSHOT=3 types, runtime validation, and the 32-byte
  * browser binary tracking header. Mirrors backend/egocap_web/preview_protocol.py

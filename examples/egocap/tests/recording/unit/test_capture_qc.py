@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Capture-quality checks and the keep/flag/reject decision, on explicit numeric arrays with known answers.
 
 The arrays are written to real Zarr groups on disk and read back by the production checker; durations and

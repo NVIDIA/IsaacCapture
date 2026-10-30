@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entry point. Importing this module never starts a listener --
 only calling :func:`main` does. The actual argument parsing and listener
 live in :mod:`capture_server.server`; this module just re-exports them as

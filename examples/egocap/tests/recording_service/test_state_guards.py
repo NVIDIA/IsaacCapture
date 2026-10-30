@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """State guards and error paths of RecordingService, against the real backend and a real recorded episode.
 
 Failures are injected by wrapping real components (or corrupting real staged output), never by replacing the

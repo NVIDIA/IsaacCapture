@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A generic one-dedicated-worker-thread offload utility, shared by every
 concrete acquisition adapter (:mod:`capture_server.acquisition.isaac_capture`,
 :mod:`capture_server.acquisition.depthai`).

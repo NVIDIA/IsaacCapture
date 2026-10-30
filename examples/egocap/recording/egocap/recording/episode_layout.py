@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Session directory layout, durable manifests and retry-safe episode finalization.
 
 A session directory holds ``episode_<N>.pending`` while an episode is being written and, without routing,

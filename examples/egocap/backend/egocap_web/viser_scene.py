@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A Viser 3D view of the tracked head, controllers and gloves, embedded by the page as an iframe.
 
 One :class:`VisualizationScene` per backend process owns one ``ViserServer`` and one periodic sampler task. The

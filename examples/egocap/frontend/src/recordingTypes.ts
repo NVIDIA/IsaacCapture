@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The narrow shape the real backend command handlers (backend/egocap_web/
  * recording_command.py) publish and accept today -- in-memory batch/task/

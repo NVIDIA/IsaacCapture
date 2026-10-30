@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Deterministic tests for CaptureStatusMonitor against the real mock
 CaptureServer transport -- not a hand-rolled test double, the actual
 production CaptureServer running with its mock acquisition composition.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Latest-sample preview cache: one tracking slot and at most three camera
 slots, each holding its immutable callback value and backend-local receipt
 time. Replacing a slot drops the superseded value -- there is no history,

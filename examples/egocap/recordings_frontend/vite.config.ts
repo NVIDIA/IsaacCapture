@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { defineConfig } from "vite";
 
 // A separate Vite project from ../frontend -- its own build, own dev

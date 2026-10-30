@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """An injectable monotonic clock.
 
 ``mock_isaac_capture.TeleopSession.step()`` derives synthetic motion from

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Persistent per-session error log for egocap recordings.
 
 Appends one JSON object per line (JSONL) to ``<session_root>/errors.jsonl`` for

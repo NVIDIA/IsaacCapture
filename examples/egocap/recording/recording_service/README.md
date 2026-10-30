@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # recording_service
 
 The Ego Capture UI **recording service**: submitted samples in, checked and finalized episodes out.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Per-station recording configuration. EGOCAP_STATION_CONFIG (see
 # backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
 # consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,

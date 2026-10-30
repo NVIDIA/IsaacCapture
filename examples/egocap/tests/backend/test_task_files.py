@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The task-file reader on small fixtures and on the example catalog shipped in data/taskfiles/."""
 
 from __future__ import annotations

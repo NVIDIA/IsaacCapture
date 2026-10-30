@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Converts the frontend's typed recording values into the exact flat,
  * snake_case payload shapes backend/egocap_web/recording_command.py's

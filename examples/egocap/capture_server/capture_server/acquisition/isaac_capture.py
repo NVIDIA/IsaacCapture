@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The production IsaacCapture acquisition adapter: owns SDK source-graph
 configuration, the launcher/session context, the single rate-paced loop
 that calls ``TeleopSession.step()``, and native-to-protocol mapping for

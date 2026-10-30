@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared fixture for tests that need a real, built frontend ``dist/`` on
 disk (as opposed to the API-only tests, which are the majority and need
 nothing here)."""

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Read an already-recorded episode (Zarr arrays + MP4 files) as plain sample tuples.
 
 This is a dataset reader, not an acquisition emulator: it hands back stored rows and decoded

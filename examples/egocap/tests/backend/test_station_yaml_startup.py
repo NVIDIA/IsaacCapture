@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The minimal deployment-station-YAML startup slice, wired through the real app's lifespan:
 a configured station seeds the label/instruction/output-root through the existing config/context
 mechanisms, and a configured-but-invalid file blocks recording without crashing backend startup or

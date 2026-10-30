@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for video_writer_backends.py's public contract: the config-validation helpers, a real
 CPU (ffmpeg_h264/libx264) encode-write-release-readback roundtrip -- this is the existing default
 encoder `VideoSourceSpec` already uses, not a new test dependency -- and a few behavior-oriented

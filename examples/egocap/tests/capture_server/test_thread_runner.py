@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for ThreadRunner.close()'s bounded-wait behavior: a bounded
 timeout must never cancel the underlying close_fn job itself, only this
 coroutine's own wait for it, and must be structurally distinguishable

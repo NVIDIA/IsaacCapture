@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Pure numeric measurements used by the capture-quality checks.
 
 Each function reads arrays and returns numbers (or a problem description); none opens files or decides what a

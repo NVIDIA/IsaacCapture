@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Recording service: submitted samples in, checked and finalized Zarr/MP4 episodes out.
 
 Public API: :class:`RecordingService` configured by :class:`ServiceConfig`. All value types

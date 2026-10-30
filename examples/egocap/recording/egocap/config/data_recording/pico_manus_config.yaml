@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Pico + Manus Glove Data Recording Configuration
 # Records video from OAK camera(s), controller poses from Pico VR, and the Manus
 # hand skeleton for human data collection.

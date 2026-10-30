@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Validates against the ACTUAL complete descriptor CaptureServer publishes
  * for ic_tracking_v1 -- not a partial/synthetic one. Generated once via:

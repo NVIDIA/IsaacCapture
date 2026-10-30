@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """``Acquisition``: the one concrete object ``_Session`` holds for its
 acquisition source -- composing one optional :class:`IsaacCaptureAdapter`
 (``None`` for a camera-only request, which must never construct an IC

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Replay acquisition: play one recorded episode (Zarr tracking tables plus
 MP4 camera files) back through the SAME production adapters and wire
 protocol the mock and real sources use, with no hardware and no

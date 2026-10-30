@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Capture-quality checks over a sealed, recorded episode, and the keep/flag/reject decision they imply.
 
 This is separate from ``dataset_check`` (storage integrity: is the episode structurally valid?). Here the

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Capture-quality decisions through the real service, on a real recorded episode.
 
 Samples are the stored rows and frames of an actual episode. The camera gate is driven by the configured

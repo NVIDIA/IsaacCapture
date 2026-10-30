@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type { useCaptureSession } from "./useCaptureSession";
 import type { RecordingActions, RecordingBatchIdentity, RecordingEpisodeIdentity } from "./recordingTypes";
 import { batchTargetPayload, episodeTargetPayload, setTaskPayload } from "./recordingWire";

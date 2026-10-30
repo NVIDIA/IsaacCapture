@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Ordinary, SDK-agnostic acquisition adapters shared by mock and real
 modes -- see each module's own docstring. No mock-specific behavior
 lives here; see :mod:`capture_server.mock` for that."""

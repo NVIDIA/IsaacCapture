@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for recording_adapter.py: the pure native-tracking-callback ->
 RecordingService-sample conversion math (head/controller/hand/button), and
 the bounded ingress queue/consumer -- see the module's own docstring for

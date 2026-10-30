@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The service and the recording-owned wrapper it depends on import only their own declared dependencies.
 
 Static (AST) checks over every production module of the service and of ``egocap/recording/``, and over this

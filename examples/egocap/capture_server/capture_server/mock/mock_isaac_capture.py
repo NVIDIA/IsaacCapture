@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A synthetic approximation of the public IsaacCapture API subset the
 production :mod:`capture_server.acquisition.isaac_capture` adapter calls,
 inspected against an IsaacCapture checkout at pinned commit

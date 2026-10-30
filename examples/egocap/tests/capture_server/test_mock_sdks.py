@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for the two mock SDK approximation files
 (capture_server.mock.mock_isaac_capture, capture_server.mock.mock_depthai)
 and the production adapters that consume them -- retargeted from an

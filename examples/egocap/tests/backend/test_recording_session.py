@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for recording_session.py's RecordingSessionCoordinator, against
 the REAL RecordingService (synthetic source profiles -- no
 EGOCAP_REAL_EPISODE fixture needed, matching test_configuration.py's

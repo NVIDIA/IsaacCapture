@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The Viser 3D view: descriptor binding, the glove/controller/head transforms on asymmetric fixtures, freshness
 and visibility, scene ownership against a recording fake server, and real Viser server start/stop.
 

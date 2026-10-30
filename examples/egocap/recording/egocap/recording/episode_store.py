@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Append-only on-disk episode storage: Zarr v3 numeric groups plus real MP4 video.
 
 This is the concrete persistence backend used by the recording service. It writes

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "vitest";
 import { INITIAL_STATE, reducer, type Action, type ConnectionState } from "./useCaptureSession";
 import { PREVIEW_VERSION, SNAPSHOT_TYPE, type PreviewSnapshot } from "./captureProtocol";

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Pins recordingWire.ts's output to the exact flat, snake_case shape
  * backend/egocap_web/recording_command.py's validators require -- this is

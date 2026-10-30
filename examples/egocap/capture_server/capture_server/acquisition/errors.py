@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Exceptions an acquisition adapter raises when its underlying SDK
 (real or :mod:`capture_server.mock`) fails. These are plain, SDK-agnostic
 exception types -- not tied to any particular adapter shape -- so

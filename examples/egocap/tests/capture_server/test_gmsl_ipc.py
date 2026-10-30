@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The GMSL frame-feed camera source, against an in-process fake publisher speaking the receiver's protocol.
 
 No GPU: the fake publisher keeps its "ring slots" as NumPy arrays and the test slot mapper hands them back

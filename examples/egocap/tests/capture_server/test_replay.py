@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Replay acquisition: a recorded episode played back through the production adapters.
 
 The fixture builds a tiny synthetic episode in the recorder's on-disk layout (Zarr v3 groups plus an mp4v

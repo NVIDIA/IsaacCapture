@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The production :class:`~.feed.SlotMapper`: opens the publisher's CUDA IPC handles with CuPy.
 
 Only memory mapping and device-to-host copies are used -- no CuPy kernels -- so this works on a GPU

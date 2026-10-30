@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Lifecycle tests for useVoiceRecognition against a small fake recognizer --
  * not a mock-browser framework, just enough of the real SpeechRecognition

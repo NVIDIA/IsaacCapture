@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Deployment station YAML loader: flat/merged layouts, validation, and the unset-path default."""
 
 from pathlib import Path

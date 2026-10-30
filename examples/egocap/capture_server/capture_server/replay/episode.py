@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Read one recorded episode -- Zarr tracking tables plus MP4 camera files --
 into the in-memory, time-aligned form the replay sources play back from.
 

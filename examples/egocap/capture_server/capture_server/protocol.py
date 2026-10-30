@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Wire protocol for the generic IsaacCapture (IC) + OAK-D CaptureServer.
 
 Implements the 32-byte GTC1 binary header, the ``ic_tracking_v1`` tracking

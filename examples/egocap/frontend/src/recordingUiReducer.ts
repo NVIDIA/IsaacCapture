@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The recording interaction state machine: idle -> starting -> recording ->
  * stopping -> idle (plus discarding/editingTask/savingTask/restarting/

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Deployment station YAML: resolved once at backend startup into one immutable station value.
 
 ``EGOCAP_STATION_CONFIG`` points at a YAML file describing this station's identity, operator,

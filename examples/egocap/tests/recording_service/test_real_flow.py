@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """RecordingService end to end with a real recorded episode and the real Zarr/MP4 backend."""
 
 import asyncio

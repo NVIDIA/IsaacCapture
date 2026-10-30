@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """GET /api/task-files and GET /api/task-files/{name}: the read-only catalog endpoints.
 
 A thin HTTP adapter over :mod:`task_files`; the filesystem work runs in a worker thread so it never blocks the

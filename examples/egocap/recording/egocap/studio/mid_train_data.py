@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Mid Train task library (CSV-backed) for the egocap "Mid Train" instruction mode.
 
 Unlike the diverse-language ``TASK_LIBRARY`` (keyed by *Studio*), Mid Train tasks

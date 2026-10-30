@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The recordings PoC endpoints: the opt-in gate, path-traversal rejection,
 listing/download behavior, and the real app's page-serving mount."""
 

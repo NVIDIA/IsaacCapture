@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Owns the real ``RecordingService`` instance for this backend process:
 one immutable committed/next-task context, at most one in-flight lifecycle
 operation, a per-take recording ingress, and a small coordinator-owned

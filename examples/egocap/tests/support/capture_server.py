@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The one shared way to start/stop the production CaptureServer for tests,
 running it in its own built-in mock acquisition mode -- "mock" is a mode of
 the one real server, not a separate implementation. Reused by

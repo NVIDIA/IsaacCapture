@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Install/import checks for the Ego Capture UI recording package.
 
 Standalone now: no checkout bridge, no environment variable this package needs to import or run.

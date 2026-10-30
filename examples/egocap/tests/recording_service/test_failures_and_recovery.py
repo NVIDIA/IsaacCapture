@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Failure, restart and shutdown behavior of RecordingService against the real backend.
 
 Crashes are real process deaths (SIGKILL / os._exit inside the finalize step). Storage failures and a

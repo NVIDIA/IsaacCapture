@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The production DepthAI acquisition adapter: owns stable camera
 selection, camera/encoder configuration, the single rate-paced loop that
 polls the encoded-frame queue, and resource release for one configured

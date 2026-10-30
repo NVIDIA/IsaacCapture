@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Dataset checker and reader on a small episode written by the real EpisodeStore (real Zarr + real MP4).
 
 The input pixels/values are generated, but every file is produced by the production backend and read back

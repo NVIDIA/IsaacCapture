@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Quality checks that read a staged episode's real Zarr arrays and MP4 files.
 
 Every check opens the files written by :class:`~egocap.recording.episode_store.EpisodeStore`;

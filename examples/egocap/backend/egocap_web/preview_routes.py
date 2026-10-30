@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """WS /api/session and GET /stream{stream_id} routes. Split out of app.py
 for readability -- this module owns viewer task lifetime and transport
 details; app.py keeps the FastAPI app object, lifespan and static hosting.

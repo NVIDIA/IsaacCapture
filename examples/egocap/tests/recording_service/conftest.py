@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Test support for the real-backend service tests.
 
 * A per-test watchdog (SIGALRM) turns a hang into a failure instead of blocking the run forever. It is only a

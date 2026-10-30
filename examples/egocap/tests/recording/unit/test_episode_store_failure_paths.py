@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """EpisodeStore and layout failure paths, driven through the production backend.
 
 Encoder release failures are injected by wrapping the real writer (it really finishes the file, then reports

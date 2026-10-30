@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Local destination routing for kept episodes: studio, timestamped group, output slot, and group totals.
 
 Layout: a kept episode ends at

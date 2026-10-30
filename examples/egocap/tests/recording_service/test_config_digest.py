@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Which configuration changes block finishing a pending take: synthetic sources, no recorded data needed.
 
 A SEALED take is still to be judged, so the whole configuration (including the capture policy and algorithm

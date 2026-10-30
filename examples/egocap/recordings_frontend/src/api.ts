@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /** Thin client for the standalone recordings.py backend module's two
  * endpoints -- nothing shared with the main frontend's API surface. */
 

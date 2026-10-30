@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Ego Capture UI per-episode data-quality thresholds.
 #
 # Reference data documenting the threshold values capture_qc.py's own defaults are based on;

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared fixture for a real, running CaptureServer with mock acquisition.
 Normal CaptureClient integration tests use this instead of reimplementing
 server behavior. A deliberate protocol violation the real server cannot be

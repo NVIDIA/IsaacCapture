@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # egocap-recordings-frontend
 
 PoC demo page for browsing and downloading recorded files -- not part of

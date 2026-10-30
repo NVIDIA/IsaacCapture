@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for recording_command.py: both the structural payload
 parsing/validation, and RecordingContext's real command handling against a
 REAL RecordingSessionCoordinator (-> real RecordingService, same no-fixture

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Studio resolution, group assignment, output numbering, group totals and the routed-path guards.
 
 Everything runs on real directories and real JSON/zarr metadata files; no filesystem call is substituted.

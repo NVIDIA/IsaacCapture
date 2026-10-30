@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """
 EOD **Episode Rename** backfill: per-episode and dataset zarr attrs, ``config.yaml``
 ``meta``, optional **EOD session folder move** (``_unmatched`` or wrong studio →

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Resolve the real IsaacCapture SDK from ``ISAAC_ROOT`` for live tracking.
 
 ``ISAAC_ROOT`` is a separate, built IsaacCapture checkout; the importable package (with its native

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A synthetic approximation of the public DepthAI v3 API subset the
 production :mod:`capture_server.acquisition.depthai` adapter calls,
 grounded against the public `luxonis/depthai-core

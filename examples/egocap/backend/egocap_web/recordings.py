@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """PoC demo interface for browsing and downloading recorded files -- not
 part of the final system design, and not a RecordingService responsibility
 of its own. Self-contained: its own JSON listing endpoint (scans the

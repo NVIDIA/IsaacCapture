@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Exercises the `__enter__`/`__exit__` pairing guard in the two
 acquisition adapters directly: an object whose own `__enter__()` raised
 must never see a matching `__exit__()` call, while an object that *did*

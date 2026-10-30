@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Focused coverage for tests/support/capture_server.py's own cleanup
 guarantees -- not CaptureServer itself (see tests/capture_server/test_server.py
 for that), but the shared test helper wrapping it."""

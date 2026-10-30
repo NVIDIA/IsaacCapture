@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Build a low-poly Pico 4 Ultra headset model in the OpenXR head-pose frame (metres, Y up, -Z forward).
 
 The tracked head pose is the view origin between the eyes, so the eyes sit at the origin, the visor extends

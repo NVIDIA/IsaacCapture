@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Setup-time selection of the acquisition implementation (mock vs real) from ServerConfig.mock.
 
 Import-isolation checks run in a fresh interpreter, because what a process has already imported

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Value types for the recording service: configuration, samples, results and errors.
 
 Everything here is recording-owned. Samples carry measured payloads and timestamps only;

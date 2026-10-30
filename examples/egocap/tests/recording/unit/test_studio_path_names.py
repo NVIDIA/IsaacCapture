@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 from egocap.studio.studio_path_names import (
     canonicalize_studio_dir_name,
     sanitize_studio_dir_name,

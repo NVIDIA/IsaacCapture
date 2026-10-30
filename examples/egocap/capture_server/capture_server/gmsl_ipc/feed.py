@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Client for the station camera receiver's local frame feed: a Unix socket carrying JSON-lines
 notifications about GMSL camera frames that live in GPU ring buffers exported as CUDA IPC handles.
 

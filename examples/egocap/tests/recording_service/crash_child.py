@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Child process for crash tests: records real samples through the real service, then dies mid-episode.
 
 Usage: crash_child.py OUTPUT_ROOT MODE [SESSION_ID]

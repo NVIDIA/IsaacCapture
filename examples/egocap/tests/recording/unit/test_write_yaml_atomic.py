@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for episode_layout.py's write_yaml_atomic: the happy path and the failure-cleanup path
 (no orphaned temp file, the real exception still propagates)."""
 

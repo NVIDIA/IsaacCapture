@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import json
 
 from egocap.recording.episode_error_log import ERROR_LOG_FILENAME, log_episode_errors

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A ``Pipeline``-shaped camera source serving live GMSL frames from the station's frame feed,
 for :class:`~capture_server.acquisition.depthai.DepthAIAdapter`.
 

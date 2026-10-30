@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """The quality checker reads real written output; corrupted COPIES of real output must be flagged.
 
 The clean episode is produced by the real service from a real recorded episode. Corruptions are applied

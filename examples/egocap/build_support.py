@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Builds both Ego Capture UI web frontends (``frontend/`` and ``recordings_frontend/``)
 via their existing npm scripts, for local development and for test fixtures
 that need real built assets. Not part of a packaging/distribution pipeline --

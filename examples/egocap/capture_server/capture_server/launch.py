@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Launch composition: the ONE place that selects mock vs real
 acquisition dependencies and binds mock-only options (scenario/seed/
 faults) into them: ``ServerConfig.mock`` selects dependencies once, here --

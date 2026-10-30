@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Descriptor-driven DataView decoding of one ic_tracking_v1 payload into
  * display values. Bounds, shapes and dtypes come entirely from the

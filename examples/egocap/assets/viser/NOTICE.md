@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Models for the 3D tracking view
 
 Static models loaded once by `backend/egocap_web/viser_scene.py`. They are visual only; nothing here is tracking

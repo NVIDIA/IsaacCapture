@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """EpisodeStore and episode layout, exercised with a real recorded episode.
 
 The round-trip tests read actual Zarr arrays and decode an actual MP4 from a previously recorded

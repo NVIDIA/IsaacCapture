@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A ``Pipeline``-shaped camera source that plays back one recorded MP4,
 for :class:`~capture_server.acquisition.depthai.DepthAIAdapter`.
 

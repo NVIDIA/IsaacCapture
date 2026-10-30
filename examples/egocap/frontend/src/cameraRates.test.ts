@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "vitest";
 import { CameraRateTracker, RATE_MIN_SPAN_MS, RATE_WINDOW_MS, formatCameraStats } from "./cameraRates";
 

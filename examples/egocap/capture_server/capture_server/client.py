@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Async client for the CaptureServer wire protocol: a two-call
 ``start()``/``stop()`` facade with five lifecycle/data callbacks, built
 on top of ``capture_server.protocol``'s message encode/decode.

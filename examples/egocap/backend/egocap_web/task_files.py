@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Read-only access to the task CSV catalogs in ``data/taskfiles/``.
 
 Two small functions, ``list_task_files`` and ``read_task_file``, take the catalog root explicitly and touch the

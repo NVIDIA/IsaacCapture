@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The fixed voice-command grammar: a pure function from one final recognition
  * result string to a recognized intent, or `null` for anything that doesn't

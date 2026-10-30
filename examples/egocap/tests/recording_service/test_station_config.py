@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Station config.yaml snapshot behavior: no real recorded episode needed (numeric-only, no camera/encoder)."""
 
 import dataclasses

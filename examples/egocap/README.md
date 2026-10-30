@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Ego Capture UI
 
 Ego Capture UI is an IsaacCapture example for recording egocentric camera video and headset/

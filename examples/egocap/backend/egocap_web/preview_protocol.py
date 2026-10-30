@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """WS /api/session snapshot adapter and the 32-byte browser binary tracking
 header. This is a browser-facing envelope distinct from CaptureServer's own
 wire protocol: SNAPSHOT=3/version=1 is a capture-preview projection of

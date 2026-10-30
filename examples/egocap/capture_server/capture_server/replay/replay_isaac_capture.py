@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """A ``TeleopSession``-shaped tracking source that plays back a recorded
 episode, for :class:`~capture_server.acquisition.isaac_capture.IsaacCaptureAdapter`.
 
