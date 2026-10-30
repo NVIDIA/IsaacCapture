@@ -181,14 +181,13 @@ WebSocketTransport::WebSocketTransport(TcpSocket socket) : WebSocketTransport(st
 {
 }
 
-std::unique_ptr<WebSocketTransport> WebSocketTransport::connect(TcpSocket socket,
-                                                                const std::string& host_header,
-                                                                const std::string& path,
-                                                                std::chrono::milliseconds timeout)
+WebSocketTransport::WebSocketTransport(TcpSocket socket,
+                                       const std::string& host_header,
+                                       const std::string& path,
+                                       std::chrono::milliseconds timeout)
+    : WebSocketTransport(std::move(socket), Role::Client)
 {
-    std::unique_ptr<WebSocketTransport> transport(new WebSocketTransport(std::move(socket), Role::Client));
-    transport->client_upgrade(host_header, path, timeout);
-    return transport;
+    client_upgrade(host_header, path, timeout);
 }
 
 void WebSocketTransport::client_upgrade(const std::string& host_header,
@@ -400,7 +399,10 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
 
         if (opcode == kPing)
         {
-            send_message(kPong, control_payload.data(), control_payload.size());
+            if (!send_message(kPong, control_payload.data(), control_payload.size()))
+            {
+                return ReceiveResult::Closed;
+            }
             continue;
         }
         if (opcode == kPong)
