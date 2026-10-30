@@ -35,6 +35,26 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(receiver.latest, {"hand": None})
         self.assertFalse(receiver.active)
 
+    def test_pipe_close_preserves_child_errors(self):
+        for messages, expected in (
+            (
+                [b'{"status": "ImportError: SDK unavailable"}'],
+                "ImportError: SDK unavailable",
+            ),
+            ([b'{"frame": {}}'], "Disconnected"),
+            ([], "Disconnected"),
+        ):
+            with self.subTest(messages=messages):
+                receiver = Receiver.__new__(Receiver)
+                receiver.status, receiver.active = "Connecting", True
+                receiver.connection = Mock()
+                receiver.connection.recv_bytes.side_effect = [*messages, EOFError()]
+
+                receiver._receive()
+
+                self.assertEqual(receiver.status, expected)
+                self.assertFalse(receiver.active)
+
 
 if __name__ == "__main__":
     unittest.main()

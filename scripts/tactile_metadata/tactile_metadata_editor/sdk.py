@@ -33,7 +33,8 @@ class Receiver:
                     self.active = True
         except (EOFError, OSError, ValueError):
             self.active = False
-            self.status = "Disconnected"
+            if self.status in ("Connecting", "Live"):
+                self.status = "Disconnected"
 
     def close(self) -> None:
         self.process.terminate()
