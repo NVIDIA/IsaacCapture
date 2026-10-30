@@ -285,9 +285,12 @@ private:
         uint64_t tx_wrist = 0;
     };
 
+    //! The client gets the logged reason as a HELLO_ACK refusal before the connection closes.
     [[noreturn]] void refuse_handshake(const std::string& reason)
     {
         logger()->warn("{} {}; dropping connection", m_tag, reason);
+        send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+             protocol::encode_hello_ack(protocol::HelloAck{ false, reason }));
         throw HandshakeRefused(reason);
     }
 

@@ -841,6 +841,49 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
     REQUIRE(first->connected());
 }
 
+TEST_CASE("A HELLO of another version gets HELLO_ACK(false) with the logged reason, then the close",
+          "[remote_device_bridge][unit]")
+{
+    BridgeOptions options;
+    options.ws_listen = Endpoint{ "127.0.0.1", 0 };
+    BridgeProcess bridge(options);
+
+    protocol::Hello hello;
+    hello.app_name = "v1";
+    std::vector<uint8_t> payload = protocol::encode_hello(hello);
+    payload[0] = 1; // little-endian u16 version, as a HELLO v1 client sends it
+    payload[1] = 0;
+    std::vector<uint8_t> hello_frame =
+        protocol::encode_frame(protocol::FrameType::Hello, protocol::kSessionChannelId, payload);
+    protocol::stamp_header(hello_frame, 0, core::os_monotonic_now_ns());
+
+    std::unique_ptr<ITransport> old_client;
+    SECTION("tcp")
+    {
+        old_client = std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", bridge.port() }, kWait));
+    }
+    SECTION("ws")
+    {
+        old_client =
+            std::make_unique<WebSocketTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", bridge.ws_port() }, kWait),
+                                                 "127.0.0.1:" + std::to_string(bridge.ws_port()), "/", kWait);
+    }
+    REQUIRE(old_client->send(hello_frame.data(), hello_frame.size()));
+    std::vector<uint8_t> bytes;
+    REQUIRE(old_client->receive(bytes, kWait) == ReceiveResult::Ok);
+    const protocol::Frame frame = protocol::split_frame(std::move(bytes));
+    REQUIRE(frame.header.type == protocol::FrameType::HelloAck);
+    const protocol::HelloAck ack = protocol::decode_hello_ack(frame.payload);
+    REQUIRE_FALSE(ack.accepted);
+    REQUIRE(ack.reason == "bad HELLO (protocol: unsupported HELLO version 1)");
+    REQUIRE(old_client->receive(bytes, Ms(2000)) == ReceiveResult::Closed);
+    REQUIRE(bridge.wait_log("] " + ack.reason + "; dropping connection"));
+
+    // The bridge keeps serving.
+    auto current = connect(bridge.port(), "current");
+    REQUIRE(current->connected());
+}
+
 TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applies every control frame",
           "[remote_device_bridge][unit]")
 {
