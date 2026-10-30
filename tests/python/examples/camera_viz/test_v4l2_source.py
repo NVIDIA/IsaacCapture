@@ -3,7 +3,6 @@
 """V4L2 backend failures must surface before capture starts, without a GPU."""
 
 import os
-from pathlib import Path
 import shlex
 import subprocess
 import sys
@@ -13,10 +12,10 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from pipeline import SourceSpec
-from sources import _v4l2_backend
-from sources._helpers import PolledSource
-from sources.v4l2 import V4l2Source
+from isaaccapture_examples.camera_viz.pipeline import SourceSpec
+from isaaccapture_examples.camera_viz.sources._helpers import PolledSource
+from isaaccapture_examples.camera_viz.sources.v4l2 import V4l2Source
+from repo_paths import repo_root
 
 
 @pytest.fixture
@@ -101,7 +100,7 @@ def test_unplugged_camera_can_reconnect(opencv):
     [(True, True, 0), (True, False, 1), (False, False, 0)],
 )
 def test_setup_checks_backend_when_enabled(tmp_path, enabled, available, exit_code):
-    camera_dir = Path(_v4l2_backend.__file__).resolve().parent.parent
+    camera_dir = repo_root() / "examples" / "camera_viz"
     toolkit = tmp_path / "cuda-12.6"
     toolkit.mkdir()
     venv = tmp_path / "venv"

@@ -14,15 +14,15 @@ from dataclasses import replace as dataclasses_replace
 
 import pytest
 
-from controls import (
+from isaaccapture_examples.camera_viz.controls import (
     LOCK_MODE_CYCLE,
     SHAPE_CYCLE,
     ControllerControls,
     ControlsConfig,
     ControlTarget,
+    controls_config_from_yaml,
 )
-from controls import controls_config_from_yaml
-from placements import (
+from isaaccapture_examples.camera_viz.placements import (
     PlacementConfig,
     build as build_placement,
     heading_deg,
@@ -278,7 +278,7 @@ def test_offset_can_never_reach_divergent_parallax():
     must diverge, which they physically cannot do. The ceiling is derived from
     the measured IPD, so a stick held to the stop stays clear of it however
     generous the configured limit is."""
-    from controls import MAX_OFFSET_FRACTION_OF_IPD
+    from isaaccapture_examples.camera_viz.controls import MAX_OFFSET_FRACTION_OF_IPD
 
     target = _stereo_target(plane_distance=0.0)
     controls, _ = _make(
@@ -712,14 +712,14 @@ def test_held_stick_log_is_throttled(capsys):
 def test_summarize_says_a_shared_value_once():
     """Bindings apply to every camera at once, so values normally agree —
     repeating them per camera is what overflowed the HUD bar."""
-    from controls import summarize
+    from isaaccapture_examples.camera_viz.controls import summarize
 
     assert summarize([("zed", "52.0 mm")]) == "52.0 mm"
     assert summarize([("a", "52.0 mm"), ("b", "52.0 mm")]) == "52.0 mm  (2 cameras)"
 
 
 def test_summarize_lists_cameras_that_disagree():
-    from controls import summarize
+    from isaaccapture_examples.camera_viz.controls import summarize
 
     out = summarize([("front", "52.0 mm"), ("rear", "10.0 mm")])
     assert "front 52.0 mm" in out and "rear 10.0 mm" in out
@@ -727,14 +727,18 @@ def test_summarize_lists_cameras_that_disagree():
 
 
 def test_summarize_handles_nothing_changing():
-    from controls import summarize
+    from isaaccapture_examples.camera_viz.controls import summarize
 
     assert summarize([]) == ""
 
 
 def test_multi_camera_baseline_message_stays_one_line(capsys):
     """End-to-end: three cameras must not produce three repeated values."""
-    from controls.hud import _TEXT_W, _TITLE, split_message
+    from isaaccapture_examples.camera_viz.controls.hud import (
+        _TEXT_W,
+        _TITLE,
+        split_message,
+    )
 
     targets = [_stereo_target(n) for n in ("front", "left", "right")]
     controls, _ = _make(targets, ControlsConfig(deadzone=0.0))
@@ -757,13 +761,13 @@ def test_multi_camera_baseline_message_stays_one_line(capsys):
 def test_suggestion_comes_from_the_plane_distance_and_ipd():
     """d = ipd * (1 - Z / FAR_TARGET_M): a 1 m plane at a 63 mm IPD suggests
     6.3 * 0.9 = 5.67 cm."""
-    from controls import FAR_TARGET_M
+    from isaaccapture_examples.camera_viz.controls import FAR_TARGET_M
 
     target = _stereo_target()
     target.placement_config = PlacementConfig(distance=1.0)
     controls, _ = _make([target])
     controls.step(0.0, 63.0)
-    from controls import PLANE_DISTANCE_STEP_CM
+    from isaaccapture_examples.camera_viz.controls import PLANE_DISTANCE_STEP_CM
 
     raw = 6.3 * (1.0 - 1.0 / FAR_TARGET_M)
     expected = round(raw / PLANE_DISTANCE_STEP_CM) * PLANE_DISTANCE_STEP_CM
@@ -798,7 +802,7 @@ def test_suggestion_never_exceeds_the_divergence_ceiling():
     target.placement_config = PlacementConfig(distance=0.05)  # absurdly near
     controls, _ = _make([target])
     controls.step(0.0, 63.0)
-    from controls import PLANE_DISTANCE_STEP_CM
+    from isaaccapture_examples.camera_viz.controls import PLANE_DISTANCE_STEP_CM
 
     # Rounding to a step can land half a step above the raw ceiling.
     assert controls._suggested_plane_distance_cm(target) <= (
@@ -845,7 +849,7 @@ def test_stick_still_moves_at_display_frame_rates():
 
 
 def test_the_layer_only_ever_sees_whole_steps():
-    from controls import PLANE_DISTANCE_STEP_CM
+    from isaaccapture_examples.camera_viz.controls import PLANE_DISTANCE_STEP_CM
 
     target = _stereo_target(plane_distance=0.0)
     controls, _ = _make(
@@ -912,7 +916,7 @@ def test_equirect_gap_is_skipped_because_it_does_nothing():
 def test_quad_and_cylinder_axes_do_different_things():
     """The point of the rework: each shape's two axes must not collapse into
     one control."""
-    from controls import SHAPE_PARAMS
+    from isaaccapture_examples.camera_viz.controls import SHAPE_PARAMS
 
     for shape, (x_name, y_name) in SHAPE_PARAMS.items():
         assert x_name != y_name, shape
@@ -926,7 +930,7 @@ def test_height_change_moves_the_plane_now_not_at_the_next_resnap(lock_mode):
     """world cached the finished placement and ignored retuning outright;
     lazy only recomputed on a re-snap, so a height change sat unapplied until
     you happened to look away."""
-    from placements import PlacementConfig, build
+    from isaaccapture_examples.camera_viz.placements import PlacementConfig, build
 
     head_pos, head_q = (0.0, 1.5, 0.0), (1.0, 0.0, 0.0, 0.0)
     cfg = PlacementConfig(distance=1.0)
@@ -940,7 +944,7 @@ def test_height_change_moves_the_plane_now_not_at_the_next_resnap(lock_mode):
 
 @pytest.mark.parametrize("lock_mode", ["world", "head", "gimbal", "lazy"])
 def test_size_change_lands_immediately_too(lock_mode):
-    from placements import PlacementConfig, build
+    from isaaccapture_examples.camera_viz.placements import PlacementConfig, build
 
     head_pos, head_q = (0.0, 1.5, 0.0), (1.0, 0.0, 0.0, 0.0)
     cfg = PlacementConfig(distance=1.0)
@@ -953,7 +957,7 @@ def test_size_change_lands_immediately_too(lock_mode):
 
 def test_world_lock_still_pins_the_plane_across_a_retune():
     """Retuning must not become an excuse to re-place a world-locked plane."""
-    from placements import PlacementConfig, build
+    from isaaccapture_examples.camera_viz.placements import PlacementConfig, build
 
     cfg = PlacementConfig(distance=1.0)
     strategy = build("world", cfg)

@@ -28,8 +28,8 @@ namespace viz
 // goes into MuJoCo world through the same one, so it cancels.
 //
 // Deliberately diverges from
-// examples/cloudxr_mujoco_teleop/visualize_poses_mujoco_example.py, which
-// applies Rx(+90) only and maps XR-forward to MuJoCo +y, which is not REP-103.
+// examples/cloudxr_mujoco_teleop/python/isaaccapture_examples/cloudxr_mujoco_teleop/visualize_poses_mujoco_example.py,
+// which applies Rx(+90) only and maps XR-forward to MuJoCo +y, which is not REP-103.
 // Do not "fix" this constant to match it.
 inline constexpr std::array<double, 4> kQuatMjFromXr = { 0.5, 0.5, -0.5, -0.5 }; // wxyz
 

@@ -20,15 +20,19 @@ set its `--host` and `--port` arguments to the Hybrid Data Server TCP endpoint.
 
 ## Build
 
-The Noitom SDK is not vendored in this repository. Build the optional plugin
-when you need Noitom support:
+The Noitom SDK is not vendored in this repository. Complete the
+[source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html), then build the
+optional plugin when you need Noitom support:
 
 ```bash
-cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON
-cmake --build build --target python_package noitom_mocap_plugin --parallel
+cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON -DISAAC_TELEOP_PYTHON_VERSION=3.12
+cmake --build build --target python_package python_wheel noitom_mocap_plugin --parallel
 cmake --install build
 uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
 ```
+
+Python 3.12 matches Isaac Lab 3.0, which Example 2 needs. The wheel installs
+only on the Python it was built for, so use a 3.12 venv for Example 1 too.
 
 Run `cmake --install build` again whenever `plugin.yaml` changes so the updated
 configuration is copied to `install/plugins/noitom_mocap/plugin.yaml`.
@@ -45,11 +49,12 @@ MCAP script because the recording uses the standard `full_body` channel.
 
 ![Noitom full-body recording](assets/record.gif)
 
-Record the Noitom full-body stream:
+Install the example once, then record the Noitom full-body stream:
 
 ```bash
-uv run python examples/noitom/record_noitom_full_body.py \
-  10 examples/noitom/recordings/noitom_full_body.mcap
+uv pip install -e ./examples/noitom
+python -m isaaccapture_examples.noitom.record_noitom_full_body \
+  10 recordings/noitom_full_body.mcap
 ```
 
 The resulting MCAP uses the standard `core.FullBodyPoseRecord` schema and
@@ -60,39 +65,59 @@ the standard `full_body` channel, so the generic replay script can play it back:
 ```bash
 uv pip install -e ./examples/mcap_record_replay
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
-  examples/noitom/recordings/noitom_full_body.mcap
+  recordings/noitom_full_body.mcap
 ```
 
 ## Example 2: Teleop
 
 ![Noitom G1 live teleoperation](assets/teleop.gif)
 
-Run Isaac Lab with the external task registration callback. The task launches
-`noitom_mocap_plugin` through IsaacTeleop's plugin manager by default.
+Run Isaac Lab 3.0.0 or later with the external task registration callback.
+The task launches `noitom_mocap_plugin` through IsaacTeleop's plugin manager by
+default. Below, `<repo>` is your IsaacCapture checkout and `<isaaclab>` your
+Isaac Lab checkout.
+
+The callback runs inside Isaac Lab's own interpreter, so install isaaccapture
+and this example into *that* environment rather than a venv of your own. Build
+with `-DISAAC_TELEOP_PYTHON_VERSION=3.12` as above: Isaac Lab 3.0 runs Python
+3.12, and pip skips a wheel built for another version. Deactivate any venv
+first, because `isaaclab.sh -p` uses `$VIRTUAL_ENV` when it is set. `X.Y` is
+your build's version, the first two numbers of the repository's `VERSION` file.
 
 ```bash
-cd ~/dependence/IsaacLab3-0
-PYTHONPATH=~/IsaacTeleop/examples/noitom:$PYTHONPATH \
-  ./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
+deactivate    # only if a venv is active
+cd <isaaclab>
+./isaaclab.sh -p -m pip install "isaaccapture[cloudxr]==X.Y+local" \
+  --find-links <repo>/install/wheels
+./isaaclab.sh -p -m pip install -e <repo>/examples/noitom
+```
+
+This replaces the `isaacteleop` 1.4 that Isaac Lab installs with the `1!X.Y`
+compatibility shim from your build, which maps `isaacteleop` to
+`isaaccapture`. Isaac Lab pins `isaacteleop~=1.4.145`, so pip may warn about
+that conflict.
+
+```bash
+cd <isaaclab>
+./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
   --task Isaac-PickPlace-Locomanipulation-G1-Noitom-Abs-v0 \
   --visualizer kit \
   --xr \
-  --external_callback noitom_tasks.register_tasks
+  --external_callback isaaccapture_examples.noitom.noitom_tasks.register_tasks
 ```
 
 For advanced manual plugin control, start the plugin yourself and disable
 auto-launch in the Isaac Lab terminal:
 
 ```bash
-./install/plugins/noitom_mocap/noitom_mocap_plugin
+<repo>/install/plugins/noitom_mocap/noitom_mocap_plugin
 
 NOITOM_MOCAP_AUTO_LAUNCH=0 \
-PYTHONPATH=~/IsaacTeleop/examples/noitom:$PYTHONPATH \
-  ./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
+./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
   --task Isaac-PickPlace-Locomanipulation-G1-Noitom-Abs-v0 \
   --visualizer kit \
   --xr \
-  --external_callback noitom_tasks.register_tasks
+  --external_callback isaaccapture_examples.noitom.noitom_tasks.register_tasks
 ```
 
 If you run a dedicated CloudXR runtime yourself, source its environment before

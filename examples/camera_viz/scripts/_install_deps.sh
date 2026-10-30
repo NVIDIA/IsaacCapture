@@ -13,7 +13,7 @@
 #   --sender-only  sender path only. No isaaccapture, no vulkan deps.
 #
 # Flags: --venv, --wheel, --python, --no-v4l2, --no-oakd, --with-rtp,
-#        --with-zed, --zed-sdk, --build-from-source.
+#        --with-argus, --with-zed, --zed-sdk, --build-from-source.
 
 set -euo pipefail
 
@@ -54,6 +54,7 @@ WITH_OAKD=true
 # build, and the native codec — none of which direct mode needs.
 # --sender-only forces it on below (streaming is the sender's whole job).
 WITH_RTP=false
+WITH_ARGUS=false
 WITH_ZED=false
 ZED_SDK_DIR=/usr/local/zed
 # Skip the index probes and build isaaccapture from this checkout. Also the
@@ -75,6 +76,7 @@ while (( $# )); do
         --no-v4l2)      WITH_V4L2=false; shift;;
         --no-oakd)      WITH_OAKD=false; shift;;
         --with-rtp)     WITH_RTP=true; shift;;
+        --with-argus)   WITH_ARGUS=true; shift;;
         --with-zed)     WITH_ZED=true; shift;;
         --zed-sdk)      ZED_SDK_DIR=$2; shift 2;;
         --build-from-source) BUILD_FROM_SOURCE=true; shift;;
@@ -90,7 +92,7 @@ fi
 
 # Select the toolkit CuPy will discover, without guessing from the driver.
 cuda_info=$(python3 "$HERE/check_cuda.py" --detect) || die "CUDA toolkit detection failed"
-IFS=$'\t' read -r cuda_root cuda_major cuda_minor <<< "$cuda_info"
+IFS=$'\t' read -r cuda_root cuda_major cuda_minor cupy_cuda_path <<< "$cuda_info"
 note "CUDA $cuda_major.$cuda_minor at $cuda_root"
 
 # System-dep check. apt-installable bits are NOT auto-installed — we
@@ -207,7 +209,9 @@ check_system_deps
 # ``libnvrtc.so`` and fails to resolve without these. Skipped on desktop
 # where the CUDA installer already lays down the right symlinks.
 check_cuda_symlinks() {
-    if ! $JETSON; then
+    # A toolkit found through nvcc is not JetPack's; its libs are already on
+    # the linker path.
+    if ! $JETSON || [[ -n "$cupy_cuda_path" ]]; then
         return 0
     fi
     if [[ ! -d "$cuda_root/lib64" ]]; then
@@ -442,9 +446,12 @@ EOF
 isaaccapture can be built from this checkout instead:
   $REPO_ROOT
 
-That is a full C++ / CUDA / Vulkan build and takes a while. Install the
-source-build prerequisites first:
+That is a full C++ / CUDA / Vulkan build and takes a while. First install
+the source-build prerequisites from the Prerequisites and One time setup
+sections of:
   $REPO_ROOT/docs/source/development/build_from_source/index.rst
+camera_viz needs Televiz (isaaccapture.viz), which is built only when the
+Vulkan headers (libvulkan-dev) and the CUDA toolkit are found.
 EOF
 
     if ! $BUILD_FROM_SOURCE; then
@@ -503,6 +510,15 @@ if [[ ! -d "$VENV_DIR" ]]; then
 fi
 PY="$VENV_DIR/bin/python"
 
+# Read back by cuda_env.py; see there for why some toolkits need it.
+CUDA_PATH_RECORD="$VENV_DIR/camera_viz_cuda_path"
+if [[ -n "$cupy_cuda_path" ]]; then
+    printf '%s\n' "$cupy_cuda_path" > "$CUDA_PATH_RECORD"
+    note "CuPy uses CUDA_PATH=$cupy_cuda_path unless CUDA_PATH or CUDA_HOME is set"
+else
+    rm -f "$CUDA_PATH_RECORD"
+fi
+
 # cupy ships separate packages per CUDA major (cupy-cuda12x, cupy-cuda13x...);
 # they coexist on disk and CuPy warns about "multiple CuPy packages installed."
 # If a prior setup picked a different major, uninstall the stale variant now.
@@ -529,7 +545,7 @@ fi
 # girepository-1.0 build path, and Ubuntu 22.04 only ships 1.0
 # (libgirepository1.0-dev). 3.50.x supports both. Source-builds against
 # the C deps installed in ensure_apt_deps(); pycairo is a transitive dep.
-# pillow renders the XR controls HUD (examples/camera_viz/hud.py).
+# pillow renders the XR controls HUD (isaaccapture_examples/camera_viz/controls/hud.py).
 PKGS=("pyyaml>=6.0" "$target_cupy" "numpy>=1.23" "scipy>=1.15" "pillow>=10.0")
 [[ "$MODE" == full ]] && PKGS=("$ISAACCAPTURE_PKG" "${PKGS[@]}")
 $WITH_V4L2 && PKGS+=("opencv-python>=4.5,<5")
@@ -560,6 +576,14 @@ else
     uv pip install --python "$PY" --upgrade "${PKGS[@]}"
 fi
 
+# The example itself, so `python -m isaaccapture_examples.camera_viz` resolves
+# without the source directory on sys.path. Editable, so edits need no
+# reinstall -- and the native codec .so, built in place below, is picked up
+# from the source tree either way. --no-deps: the steps above already installed
+# every dependency, with the cupy variant matching the CUDA major.
+step "installing camera_viz"
+uv pip install --python "$PY" -e "$CAMERA_VIZ_DIR" --no-deps
+
 # ZED SDK ships get_python_api.py which downloads a matching pyzed wheel
 # and then tries ``pip install`` it (which fails in uv venvs, no pip).
 # We let that fail and install the wheel ourselves.
@@ -586,7 +610,7 @@ fi
 # Native NVENC/NVDEC codec. Failures are non-fatal: the runtime falls
 # back to the GStreamer encoder when the native ``.so`` isn't importable.
 if $WITH_RTP; then
-    CODEC_DIR="$CAMERA_VIZ_DIR/codec"
+    CODEC_DIR="$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/codec"
     if [[ -d "$CODEC_DIR" ]]; then
         step "building native NVENC/NVDEC codec"
         # shellcheck disable=SC1091
@@ -600,13 +624,26 @@ fi
 
 if $WITH_V4L2; then
     step "verifying OpenCV V4L2 backend"
-    "$PY" "$CAMERA_VIZ_DIR/sources/_v4l2_backend.py" \
+    "$PY" "$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/sources/_v4l2_backend.py" \
         || die "V4L2 capture is unavailable — see the diagnostics above"
+fi
+
+# Native Argus camera source. Jetson-only and opt-in; failures are non-fatal
+# because some Jetson images may still lack matching libargus/CUDA headers.
+ARGUS_DIR="$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/argus"
+if $WITH_ARGUS && [[ -d "$ARGUS_DIR" && -d /usr/src/jetson_multimedia_api/argus ]]; then
+    echo "==> building native Argus source"
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+    if ! "$ARGUS_DIR/build.sh"; then
+        echo "_install_deps.sh: Argus source build failed - type: argus will be unavailable" >&2
+    fi
+    deactivate
 fi
 
 # Smoke imports. ``gi`` is in the list under RTP to confirm PyGObject
 # built and installed cleanly into the venv.
-SMOKE_MODS="cupy yaml scipy.spatial.transform"
+SMOKE_MODS="isaaccapture_examples.camera_viz cupy yaml scipy.spatial.transform"
 # ``websockets`` comes from the cloudxr extra and is what the XR default mode
 # needs to launch the runtime; check it here so a missing extra fails setup
 # rather than the first ``run --mode xr``.
@@ -649,7 +686,8 @@ if [[ "$MODE" == full ]]; then
     note "cd $CAMERA_VIZ_DIR"
     note "./camera_viz.sh run configs/synthetic.yaml --mode window"
 else
-    note "sender ready — start it with camera_streamer.py <config>"
+    note "sender ready — start it with:"
+    note "$PY -m isaaccapture_examples.camera_viz.camera_streamer <config>"
 fi
 
 # camera_viz itself calls .venv/bin/python directly, but the docs' uv commands

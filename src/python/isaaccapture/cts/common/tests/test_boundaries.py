@@ -14,7 +14,7 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "cts_common"
 RENDERER = PACKAGE / "panel" / "skeleton.py"
 
 IMPORTS_VISER = re.compile(r"^\s*(?:import viser|from viser)", re.MULTILINE)
-SCHEMA_SPECIFIC = re.compile(r"\b(?:hand_cts|HandPose)\w*")
+SCHEMA_SPECIFIC = re.compile(r"\b(?:full_body_cts|hand_cts|FullBodyPose|HandPose)\w*")
 
 
 def _modules() -> list[Path]:

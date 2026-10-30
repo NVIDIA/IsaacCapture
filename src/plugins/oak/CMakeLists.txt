@@ -6,7 +6,8 @@
 # ==============================================================================
 # This plugin uses FetchContent for DepthAI and vcpkg for its transitive deps.
 #
-# Prerequisites:
+# Prerequisites, after the shared source-build prerequisites in
+# docs/source/development/build_from_source/index.rst:
 #   1. Build tools for vcpkg to build libusb (Linux only):
 #      sudo apt install libudev-dev autoconf automake libtool pkg-config
 #

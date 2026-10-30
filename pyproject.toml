@@ -50,15 +50,24 @@ dev = [
 ui = [
     "imgui[glfw]>=2.0.0",
 ]
+ovxr = [
+    "ovxr==0.1.0.5842",
+    "cuda-bindings>=13,<14",
+]
+desktop-mirror = [
+    # OVUI requires 3.12; core Capture continues to support 3.11.
+    "ovui==0.3.0; python_version >= '3.12'",
+    "cuda-bindings>=13,<14",
+]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
     "scipy>=1.15.0",
     "pyyaml>=6.0.3",
     "torch>=2.7.0",
     "nlopt>=2.6.2",
-    "pin>=2.7.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "pin>=4.1",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 retargeters-lite = [
     "scipy>=1.15.0",
@@ -68,22 +77,22 @@ grounding = [
     "torch>=2.7.0",
     "trimesh",
     "viser",
-    "pin>=2.7.0",
+    "pin>=4.1",
     "pin-pink>=4.0.0",
     "loop-rate-limiters>=1.0.0",
     "daqp>=0.5.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 wuji = [
     "wuji-sdk[retarget]==2026.7.14",
-    "pin>=2.7.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "pin>=4.1",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 cloudxr = [
     "cryptography>=3.0",
-    "websockets>=14.0",
+    "websockets>=17.3",
     "Pillow>=10.0; sys_platform == 'linux'",
     "cupy-cuda12x>=13.0; sys_platform == 'linux'",
 ]

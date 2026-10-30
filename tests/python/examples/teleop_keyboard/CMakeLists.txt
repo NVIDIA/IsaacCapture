@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Unit tests for the keyboard examples under examples/teleop/python. No display is
+# Unit tests for the keyboard examples under examples/teleop. No display is
 # needed: the GLFW test never opens a window, and the terminal test runs against a
 # pseudo-terminal. Neither opens a TeleopSession.
 

@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The examples under test live in examples/teleop/python, which is not a package.
+# Resolve `isaaccapture_examples.teleop` against the in-tree source.
+#
+# python/, not python/isaaccapture_examples/: that is a PEP 420 namespace. Do not
+# add an __init__.py to make an import work -- it breaks the installed wheel's
+# ability to share the namespace.
 
 import sys
 from pathlib import Path

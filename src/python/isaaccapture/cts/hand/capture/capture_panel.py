@@ -41,6 +41,7 @@ from hand_cts.profile import HAND, JOINT_NAMES
 import cues
 import make_labels
 import render
+import wrist
 from live import LiveHands, build_pipeline
 from session import BEAT_S, COUNTDOWN_BEATS, STEPS
 from steps import TIMER, Phase, Sound, Take
@@ -54,7 +55,6 @@ PANEL_WIDTH_PX = 480
 NO_DATA_S = 10.0
 NUM_JOINTS = len(JOINT_NAMES)
 SIDES = ("left", "right")
-WRIST_ENV = "WUJI_GLOVE_WRIST_SOURCE"
 
 
 class HeldJoints:
@@ -94,6 +94,7 @@ class CapturePanel:
         self._recording = recording
         self._plugins = plugins
         self._spoken = {label: cues.wav(label, text) for label, _, text in STEPS}
+        self._closing = cues.wav("closing", cues.CLOSING)
         self._armed = threading.Event()
         self._valid: dict[str, int | None] = dict.fromkeys(SIDES)
         self._listed: tuple[int, bool] | None = None
@@ -191,7 +192,7 @@ class CapturePanel:
         )
         with TeleopSession(config) as session:
             self._loop(LiveHands(session, hands), take)
-        cues.play(cues.wav("closing", cues.CLOSING))
+        cues.play(self._closing)
         self._label(take)
 
     def _loop(self, live: LiveHands, take: Take) -> None:
@@ -323,7 +324,7 @@ def _provenance(args: argparse.Namespace, repo: Path, roots: list[Path]) -> dict
         "hand_source": list(args.plugin) or ["headset_optical"],
         "plugin_versions": versions,
         "wrist_source": args.wrist_source,
-        "env": {WRIST_ENV: os.environ.get(WRIST_ENV)},
+        "env": args.wrist_env,
         "pacing": {
             "mode": TIMER,
             "countdown_beats": COUNTDOWN_BEATS,
@@ -369,13 +370,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--wrist-source",
         help="where the glove's wrist came from, e.g. hand_tracking or controller; "
-        f"defaults to ${WRIST_ENV} when set",
+        "defaults to the --plugin's $NAME_WRIST_SOURCE when set, e.g. "
+        "$WUJI_GLOVE_WRIST_SOURCE for wuji_glove_plugin",
     )
     parser.add_argument("--note", default="", help="free text kept with the take")
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args(argv)
     args.plugin_version = [_pair(parser, item) for item in args.plugin_version]
-    args.wrist_source = args.wrist_source or os.environ.get(WRIST_ENV)
+    args.wrist_env = wrist.read(args.plugin, os.environ)
+    try:
+        args.wrist_source = args.wrist_source or wrist.label(args.wrist_env)
+    except ValueError as disagree:
+        parser.error(f"{disagree}; pass --wrist-source")
 
     repo = Path(__file__).resolve().parents[6]
     roots = _roots(repo)
