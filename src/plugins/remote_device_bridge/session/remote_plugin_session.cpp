@@ -4,8 +4,11 @@
 #include "inc/remote_plugin_session/remote_plugin_session.hpp"
 
 #include "inc/remote_plugin_session/clock_offset_estimator.hpp"
+#include "inc/remote_plugin_session/protocol_frame.hpp"
+#include "inc/remote_plugin_session/protocol_payloads.hpp"
+#include "inc/remote_plugin_session/remote_address.hpp"
 #include "inc/remote_plugin_session/tcp_socket.hpp"
-#include "inc/remote_plugin_session/wire_codec.hpp"
+#include "inc/remote_plugin_session/tcp_transport.hpp"
 
 #include <log_bridge/logger.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -17,6 +20,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -24,6 +28,8 @@
 
 namespace remote_plugin_session
 {
+
+namespace protocol = remote_plugin_protocol;
 
 namespace
 {
@@ -33,7 +39,6 @@ std::shared_ptr<spdlog::logger> logger()
     return isaaccapture::Logger::get("isaaccapture.plugins.remote_device_bridge.RemotePluginSession");
 }
 
-constexpr std::chrono::milliseconds kConnectTimeout{ 3000 };
 // The bridge answers HELLO only after its OpenXR session is up, which waits for a headset; on CloudXR that
 // routinely takes longer than a few seconds.
 constexpr std::chrono::milliseconds kHandshakeTimeout{ 30000 };
@@ -52,7 +57,7 @@ using FrameBytes = std::vector<uint8_t>; // one encoded wire message, header inc
 
 struct ChannelQueue
 {
-    wire::FrameType type = wire::FrameType::HandSample;
+    protocol::FrameType type = protocol::FrameType::HandSample;
     std::deque<FrameBytes> frames;
     size_t bytes = 0;
     uint64_t dropped = 0;
@@ -73,10 +78,11 @@ public:
             throw std::invalid_argument("RemotePluginSession: transport is null");
         }
 
-        wire::Hello hello;
+        protocol::Hello hello;
         hello.app_name = app_name;
         hello.requirements = requirements;
-        FrameBytes hello_frame = wire::encode_frame(wire::FrameType::Hello, wire::kSessionChannelId, wire::encode(hello));
+        FrameBytes hello_frame = protocol::encode_frame(
+            protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
         if (!send_now(hello_frame))
         {
             throw std::runtime_error("RemotePluginSession: failed to send HELLO");
@@ -90,13 +96,13 @@ public:
                                          "RemotePluginSession: timed out waiting for HELLO_ACK" :
                                          "RemotePluginSession: connection lost while waiting for HELLO_ACK");
         }
-        const wire::Frame frame = wire::split_frame(std::move(bytes));
-        if (frame.header.type != wire::FrameType::HelloAck)
+        const protocol::Frame frame = protocol::split_frame(std::move(bytes));
+        if (frame.header.type != protocol::FrameType::HelloAck)
         {
-            throw std::runtime_error(std::string("RemotePluginSession: expected HELLO_ACK, received ") +
-                                     wire::to_string(frame.header.type));
+            throw std::runtime_error("RemotePluginSession: expected HELLO_ACK, received frame type " +
+                                     std::to_string(static_cast<int>(frame.header.type)));
         }
-        const wire::HelloAck ack = wire::decode_hello_ack(frame.payload);
+        const protocol::HelloAck ack = protocol::decode_hello_ack(frame.payload);
         if (!ack.accepted)
         {
             throw std::runtime_error("RemotePluginSession: bridge rejected the session: " + ack.reason);
@@ -173,7 +179,7 @@ public:
     }
 
     //! Allocates a channel id and queues its OPEN_* frame; ids are never reused within a session.
-    uint16_t open_channel(wire::FrameType type, std::vector<uint8_t> payload)
+    uint16_t open_channel(protocol::FrameType type, std::vector<uint8_t> payload)
     {
         require_connected();
         uint16_t channel_id = 0;
@@ -190,7 +196,7 @@ public:
         return channel_id;
     }
 
-    void send_control(wire::FrameType type, uint16_t channel_id, std::vector<uint8_t> payload)
+    void send_control(protocol::FrameType type, uint16_t channel_id, std::vector<uint8_t> payload)
     {
         require_connected();
         enqueue_control(type, channel_id, std::move(payload));
@@ -216,12 +222,12 @@ public:
         }
         if (m_connected.load())
         {
-            enqueue_control(wire::FrameType::Close, channel_id, {});
+            enqueue_control(protocol::FrameType::Close, channel_id, {});
         }
     }
 
     //! Per-channel latest-wins queue; control frames are never dropped.
-    void push_sample(wire::FrameType type, uint16_t channel_id, FrameBytes frame)
+    void push_sample(protocol::FrameType type, uint16_t channel_id, FrameBytes frame)
     {
         if (!m_connected.load())
         {
@@ -251,16 +257,10 @@ public:
         m_queue_cv.notify_one();
     }
 
-    bool claim_pull_channel()
-    {
-        std::lock_guard<std::mutex> lock(m_state_mutex);
-        return !std::exchange(m_pull_channel_claimed, true);
-    }
-
-    core::WristTrackingSample latest_wrist(bool is_left) const
+    core::WristTrackingSample latest_wrist(XrHandEXT hand) const
     {
         std::lock_guard<std::mutex> lock(m_wrist_mutex);
-        return m_wrist[is_left ? 0 : 1];
+        return m_wrist[hand == XR_HAND_LEFT_EXT ? 0 : 1];
     }
 
     void shutdown()
@@ -279,7 +279,7 @@ public:
         {
             for (auto it = remaining.rbegin(); it != remaining.rend(); ++it)
             {
-                enqueue_control(wire::FrameType::Close, *it, {});
+                enqueue_control(protocol::FrameType::Close, *it, {});
             }
         }
 
@@ -306,9 +306,9 @@ public:
     }
 
 private:
-    void enqueue_control(wire::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
+    void enqueue_control(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
     {
-        FrameBytes frame = wire::encode_frame(type, channel_id, payload);
+        FrameBytes frame = protocol::encode_frame(type, channel_id, payload);
         {
             std::lock_guard<std::mutex> lock(m_queue_mutex);
             m_control_queue.push_back(std::move(frame));
@@ -316,10 +316,16 @@ private:
         m_queue_cv.notify_one();
     }
 
-    //! Stamps seq/t_send and sends one frame. Constructor thread during the handshake, sender thread after.
+    //! Stamps seq/t_send (and a PONG's pong_sent_ns) and sends one frame. Constructor thread during the handshake,
+    //! sender thread after.
     bool send_now(FrameBytes& frame)
     {
-        wire::stamp_header(frame.data(), m_next_seq++, core::os_monotonic_now_ns());
+        const int64_t t_send_ns = core::os_monotonic_now_ns();
+        protocol::stamp_header(frame, m_next_seq++, t_send_ns);
+        if (protocol::decode_header(frame).type == protocol::FrameType::Pong)
+        {
+            protocol::set_pong_sent_time(frame, t_send_ns);
+        }
         if (!m_transport->send(frame.data(), frame.size()))
         {
             return false;
@@ -356,7 +362,7 @@ private:
             batch.push_back(std::move(queue.frames.front()));
             queue.frames.pop_front();
             --m_queued_samples;
-            (queue.type == wire::FrameType::HandSample ? m_sent_hand : m_sent_schema).fetch_add(1);
+            (queue.type == protocol::FrameType::HandSample ? m_sent_hand : m_sent_schema).fetch_add(1);
         }
         return batch;
     }
@@ -420,7 +426,7 @@ private:
             const auto now = std::chrono::steady_clock::now();
             if (batch.empty() && now - last_send >= kHeartbeatPeriod)
             {
-                batch.push_back(wire::encode_frame(wire::FrameType::Heartbeat, wire::kSessionChannelId, {}));
+                batch.push_back(protocol::encode_frame(protocol::FrameType::Heartbeat, protocol::kSessionChannelId, {}));
                 m_heartbeats.fetch_add(1);
             }
             for (FrameBytes& frame : batch)
@@ -473,56 +479,57 @@ private:
     {
         try
         {
-            const wire::Frame frame = wire::split_frame(std::move(bytes));
+            const protocol::Frame frame = protocol::split_frame(std::move(bytes));
             {
                 std::lock_guard<std::mutex> lock(m_clock_mutex);
                 m_clock.add_sample(frame.header.t_send_monotonic_ns, t_recv_ns);
             }
             switch (frame.header.type)
             {
-            case wire::FrameType::WristSample:
+            case protocol::FrameType::WristSample:
             {
                 // sample_time_ns is dropped: core::WristTrackingSample has no timestamp field and P0 serves the
                 // latest sample.
-                const wire::WristSample sample = wire::decode_wrist_sample(frame.payload);
+                const protocol::WristSample sample = protocol::decode_wrist_sample(frame.payload);
                 m_wrist_rx.fetch_add(1);
                 std::lock_guard<std::mutex> lock(m_wrist_mutex);
-                m_wrist[sample.is_left ? 0 : 1] = sample.sample;
+                m_wrist[sample.hand == XR_HAND_LEFT_EXT ? 0 : 1] = sample.sample;
                 break;
             }
-            case wire::FrameType::Ping:
+            case protocol::FrameType::Ping:
             {
-                // Queued as control (never dropped); stamp_header() sets t3 when the sender thread sends it.
-                const wire::Ping ping = wire::decode_ping(frame.payload);
-                enqueue_control(wire::FrameType::Pong, wire::kSessionChannelId,
-                                wire::encode(wire::Pong{ ping.t1_ns, t_recv_ns, 0 }));
+                // Queued as control (never dropped); send_now() sets pong_sent_ns when the sender thread sends it.
+                const int64_t t1_ns = protocol::decode_ping(frame.payload);
+                enqueue_control(protocol::FrameType::Pong, protocol::kSessionChannelId,
+                                protocol::encode_pong(protocol::Pong{ t1_ns, t_recv_ns, 0 }));
                 if (!std::exchange(m_answered_ping, true))
                 {
                     logger()->info("[remote] clock: answering bridge PINGs (two-way offset)");
                 }
                 break;
             }
-            case wire::FrameType::Error:
+            case protocol::FrameType::Error:
             {
-                const wire::Error error = wire::decode_error(frame.payload);
-                if (frame.header.channel_id != wire::kSessionChannelId)
+                const std::string message = protocol::decode_error(frame.payload);
+                if (frame.header.channel_id != protocol::kSessionChannelId)
                 {
-                    refuse_channel(frame.header.channel_id, error.message);
+                    refuse_channel(frame.header.channel_id, message);
                     break;
                 }
-                logger()->error("[RemotePluginSession] bridge error: {}", error.message);
+                logger()->error("[RemotePluginSession] bridge error: {}", message);
                 on_disconnect("bridge reported an error");
                 break;
             }
-            case wire::FrameType::Heartbeat:
-            case wire::FrameType::HelloAck:
+            case protocol::FrameType::Heartbeat:
+            case protocol::FrameType::HelloAck:
                 break;
             default:
-                logger()->warn("[RemotePluginSession] ignoring unexpected frame {}", wire::to_string(frame.header.type));
+                logger()->warn(
+                    "[RemotePluginSession] ignoring unexpected frame type {}", static_cast<int>(frame.header.type));
                 break;
             }
         }
-        catch (const wire::DecodeError& e)
+        catch (const protocol::DecodeError& e)
         {
             logger()->error("[RemotePluginSession] {}", e.what());
             on_disconnect("undecodable frame from the bridge");
@@ -539,7 +546,6 @@ private:
     std::mutex m_state_mutex;
     uint16_t m_next_channel_id = 1;
     std::set<uint16_t> m_open_channels;
-    bool m_pull_channel_claimed = false;
 
     mutable std::mutex m_queue_mutex;
     std::condition_variable m_queue_cv;
@@ -596,8 +602,8 @@ public:
             return;
         }
         m_impl->push_sample(
-            wire::FrameType::HandSample, m_channel_id,
-            wire::encode_hand_sample_frame(m_channel_id, joint_locations, sample_time_local_common_clock_ns));
+            protocol::FrameType::HandSample, m_channel_id,
+            protocol::encode_hand_sample_frame(m_channel_id, joint_locations, sample_time_local_common_clock_ns));
     }
 
 private:
@@ -608,21 +614,14 @@ private:
 class RemoteSchemaPushChannel final : public core::ISchemaPushChannel
 {
 public:
-    RemoteSchemaPushChannel(std::shared_ptr<detail::RemotePluginSessionImpl> impl,
-                            uint16_t channel_id,
-                            core::SchemaPusherConfig config)
-        : m_impl(std::move(impl)), m_channel_id(channel_id), m_config(std::move(config))
+    RemoteSchemaPushChannel(std::shared_ptr<detail::RemotePluginSessionImpl> impl, uint16_t channel_id)
+        : m_impl(std::move(impl)), m_channel_id(channel_id)
     {
     }
 
     ~RemoteSchemaPushChannel() override
     {
         m_impl->close_channel(m_channel_id);
-    }
-
-    const core::SchemaPusherConfig& config() const override
-    {
-        return m_config;
     }
 
     void push_buffer(const uint8_t* buffer,
@@ -638,15 +637,15 @@ public:
         {
             return;
         }
-        m_impl->push_sample(wire::FrameType::SchemaSample, m_channel_id,
-                            wire::encode_schema_sample_frame(m_channel_id, buffer, size, sample_time_local_common_clock_ns,
-                                                             sample_time_raw_device_clock_ns));
+        m_impl->push_sample(
+            protocol::FrameType::SchemaSample, m_channel_id,
+            protocol::encode_schema_sample_frame(
+                m_channel_id, buffer, size, sample_time_local_common_clock_ns, sample_time_raw_device_clock_ns));
     }
 
 private:
     std::shared_ptr<detail::RemotePluginSessionImpl> m_impl;
     uint16_t m_channel_id;
-    core::SchemaPusherConfig m_config;
 };
 
 class RemoteWristTrackingSource final : public core::IWristTrackingSource
@@ -657,9 +656,9 @@ public:
     }
 
     // P0 returns the latest bridge sample; the requested time is not interpolated.
-    core::WristTrackingSample query(bool is_left, int64_t /*sample_time_local_common_clock_ns*/) override
+    core::WristTrackingSample query(XrHandEXT hand, int64_t /*sample_time_local_common_clock_ns*/) override
     {
-        return m_impl->latest_wrist(is_left);
+        return m_impl->latest_wrist(hand);
     }
 
 private:
@@ -669,9 +668,14 @@ private:
 class RemotePluginPullChannel final : public core::IPluginPullChannel
 {
 public:
-    RemotePluginPullChannel(std::shared_ptr<detail::RemotePluginSessionImpl> impl, uint16_t channel_id)
-        : m_impl(std::move(impl)), m_channel_id(channel_id)
+    explicit RemotePluginPullChannel(std::shared_ptr<detail::RemotePluginSessionImpl> impl)
+        : m_impl(std::move(impl)), m_channel_id(m_impl->open_channel(protocol::FrameType::OpenPull, {}))
     {
+        // The bridge streams WRIST_SAMPLEs on this channel when HELLO declared a wrist source.
+        if (m_impl->requirements().wrist_tracking_pull)
+        {
+            m_wrist_source.emplace(m_impl);
+        }
     }
 
     ~RemotePluginPullChannel() override
@@ -689,21 +693,20 @@ public:
         throw std::runtime_error("RemotePluginSession pull channel exposes no trackers (P0)");
     }
 
-    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source(
-        const core::WristTrackingSourceConfig& config) override
+    core::IWristTrackingSource& wrist_tracking_source() override
     {
-        if (!m_impl->requirements().wrist_tracking_pull)
+        if (!m_wrist_source)
         {
             throw std::logic_error(
                 "RemotePluginSession: wrist tracking pull was not declared in PluginSessionRequirements");
         }
-        m_impl->send_control(wire::FrameType::OpenWrist, m_channel_id, wire::encode(config));
-        return std::make_unique<RemoteWristTrackingSource>(m_impl);
+        return *m_wrist_source;
     }
 
 private:
     std::shared_ptr<detail::RemotePluginSessionImpl> m_impl;
     uint16_t m_channel_id;
+    std::optional<RemoteWristTrackingSource> m_wrist_source;
 };
 
 } // namespace
@@ -722,7 +725,8 @@ RemotePluginSession::RemotePluginSession(std::string host,
 RemotePluginSession::RemotePluginSession(std::unique_ptr<ITransport> transport,
                                          std::string app_name,
                                          core::PluginSessionRequirements requirements)
-    : m_impl(std::make_shared<detail::RemotePluginSessionImpl>(std::move(transport), app_name, requirements))
+    : m_impl(std::make_shared<detail::RemotePluginSessionImpl>(std::move(transport), app_name, requirements)),
+      m_pull_channel(std::make_unique<RemotePluginPullChannel>(m_impl))
 {
 }
 
@@ -731,14 +735,9 @@ RemotePluginSession::~RemotePluginSession()
     m_impl->shutdown();
 }
 
-std::unique_ptr<core::IPluginPullChannel> RemotePluginSession::create_pull_channel()
+core::IPluginPullChannel& RemotePluginSession::pull_channel()
 {
-    if (!m_impl->claim_pull_channel())
-    {
-        throw std::logic_error("RemotePluginSession supports only one pull channel per session");
-    }
-    const uint16_t channel_id = m_impl->open_channel(wire::FrameType::OpenPull, {});
-    return std::make_unique<RemotePluginPullChannel>(m_impl, channel_id);
+    return *m_pull_channel;
 }
 
 std::unique_ptr<core::ISchemaPushChannel> RemotePluginSession::create_schema_push_channel(
@@ -748,8 +747,9 @@ std::unique_ptr<core::ISchemaPushChannel> RemotePluginSession::create_schema_pus
     {
         throw std::logic_error("RemotePluginSession: schema push was not declared in PluginSessionRequirements");
     }
-    const uint16_t channel_id = m_impl->open_channel(wire::FrameType::OpenSchema, wire::encode(config));
-    return std::make_unique<RemoteSchemaPushChannel>(m_impl, channel_id, config);
+    const uint16_t channel_id =
+        m_impl->open_channel(protocol::FrameType::OpenSchema, protocol::encode_open_schema(config));
+    return std::make_unique<RemoteSchemaPushChannel>(m_impl, channel_id);
 }
 
 std::unique_ptr<core::IHandTrackingPushChannel> RemotePluginSession::create_hand_tracking_push_channel(XrHandEXT hand)
@@ -758,7 +758,7 @@ std::unique_ptr<core::IHandTrackingPushChannel> RemotePluginSession::create_hand
     {
         throw std::logic_error("RemotePluginSession: hand-tracking push was not declared in PluginSessionRequirements");
     }
-    const uint16_t channel_id = m_impl->open_channel(wire::FrameType::OpenHand, wire::encode(wire::OpenHand{ hand }));
+    const uint16_t channel_id = m_impl->open_channel(protocol::FrameType::OpenHand, protocol::encode_open_hand(hand));
     return std::make_unique<RemoteHandTrackingPushChannel>(m_impl, channel_id);
 }
 
@@ -775,6 +775,20 @@ int64_t RemotePluginSession::clock_offset_ns() const
 RemotePluginSession::Stats RemotePluginSession::stats() const
 {
     return m_impl->stats();
+}
+
+core::PluginSessionFactory make_remote_plugin_session_factory(std::string app_name, RemoteAddress remote)
+{
+    return [app_name = std::move(app_name), remote = std::move(remote)](
+               const core::PluginSessionRequirements& requirements,
+               std::vector<std::shared_ptr<core::ITracker>> trackers) -> std::unique_ptr<core::IPluginSession>
+    {
+        if (!trackers.empty())
+        {
+            throw std::logic_error("RemotePluginSession exposes no trackers; " + app_name + " passed some");
+        }
+        return std::make_unique<RemotePluginSession>(connect_transport(remote), app_name, requirements);
+    };
 }
 
 } // namespace remote_plugin_session
