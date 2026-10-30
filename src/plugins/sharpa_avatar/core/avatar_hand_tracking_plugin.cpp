@@ -953,8 +953,12 @@ void AvatarTracker::process_haptics()
         const size_t index = side_index(side);
         const auto& tracked = m_haptic_reader->get_data(*m_deviceio_session, to_string(side));
         HapticCommandDeliveryState& delivery = m_haptic_commands[index];
-        delivery.observe(tracked);
-        const core::HapticCommand* command = delivery.pending();
+        delivery.observe(tracked, now);
+        if (!glove(side).ready)
+        {
+            delivery.discard();
+        }
+        const core::HapticCommand* command = delivery.pending(now, kHapticCommandTimeout);
         if (command != nullptr)
         {
             const bool retry_ready = !m_haptic_retry_after[index] || now >= *m_haptic_retry_after[index];
