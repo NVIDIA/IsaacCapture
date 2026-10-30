@@ -12,8 +12,8 @@ All edits remain local; live connections only receive Isaac Capture data.
 
 ## Set up and launch
 
-Use an existing Isaac Capture environment with Python 3.11–3.13. Install the
-shared UI requirements into that environment:
+Use an existing Isaac Capture environment with Python 3.11 or newer. Install
+the shared UI requirements into that environment:
 
 ```bash
 cd scripts/tactile_metadata
@@ -58,7 +58,7 @@ Three pose datasets are displayed:
 - **Editing** contains editable segment and taxel binding poses plus Edit-mode
   URDF joint values.
 - **Saved** is the last loaded or saved metadata snapshot. Enable **Show Saved
-  Binding Poses** to render it at opacity 0.2.
+  Binding Poses** to render it at opacity 0.3.
 - **Preview** contains current segment poses and Preview-mode URDF joint values.
   Preview taxel poses are derived from the selected binding metadata.
 
@@ -68,9 +68,8 @@ Loading applies that transform; saving applies its inverse. Changing the
 alignment transforms the visible editor values without changing the underlying
 metadata coordinates.
 
-A fixed three-axis indicator in the top-right of the 3D view shows visualization
-space relative to the render camera. The Viser icon remains at the bottom-left,
-positioned above the fixed Info area.
+A three-axis indicator in the top-right shows visualization space relative to
+the camera.
 
 ## Edit metadata
 
@@ -82,19 +81,17 @@ The **Edit** mode contains three tabs.
 2. Use **URDF Alignment** to translate, rotate, and scale the model.
 3. Expand **URDF Joints** to adjust each movable joint.
 
-URDF Joints and the full Segment/Taxel lists are recursively collapsed by
-default. Each joint/entity item and each nested Taxel Binding folder also starts
-collapsed. Their displayed indices start at 0.
+URDF joints are direct sliders. Segment and Taxel lists start collapsed, and
+their displayed indices start at 0.
 
-URDF configuration is session-only and is not saved in tactile metadata. Its
-base opacity is 0.4, multiplied by the opacity of the dataset layer being
-rendered.
+URDF configuration is session-only and is not saved in tactile metadata. The
+model renders at opacity 0.2.
 
 ### Segments
 
 - Use **Segments Alignment** to align all metadata poses.
-- Add a segment from a HandJoint and XYZ position, or select **Add with URDF
-  Click** and click the model surface.
+- Add a segment from a HandJoint and XYZ position, or select **Add to URDF
+  Surface** and click the model.
 - Segments are flat-shaded cubes with side length 0.004 m. Smooth color
   gradients and cast/received shadows are disabled.
 - Expand **All Segments** to edit HandJoint, position, and XYZ rotation.
@@ -121,16 +118,14 @@ To bind taxels:
 3. Select **Complete**. The first Segment receives weight one; later Segments
    receive weight zero.
 
-The three buttons are vertical with down arrows between adjacent steps, and at
-most one is enabled at a time. Between steps, only the required 3D selection is
-available.
+At most one binding-step button is enabled at a time.
 
-Expand **All Taxels** to edit 50 rows at a time; Previous/Next switches pages
-without changing global Taxel indices. Each visible row contains pose, four
-segment slots, and four weights. `None` is an editor-only inactive slot with
-weight zero. Selecting the first active segment sets its weight to one; later
-segment selections start at zero. Editing a weight changes only that slot.
-Validation reports rows whose weights do not sum to one.
+Expand **All Taxels** to edit 50 rows at a time; **Previous Page** and **Next
+Page** switch pages without changing global Taxel indices. Each visible row
+contains pose, four segment slots, and four weights. `None` is an editor-only
+inactive slot with weight zero. Selecting the first active segment sets its
+weight to one; later segment selections start at zero. Editing a weight changes
+only that slot. Validation reports rows whose weights do not sum to one.
 
 ## Scene selection
 
@@ -146,7 +141,7 @@ Selected objects keep `SELECTED_COLOR`. Related objects use the separate
 weights to those HandJoints, while selecting taxels highlights their
 positive-weight segments. Zero-weight slots are ignored.
 
-The **Selected Objects** panel edits position and rotation, deletes selected
+The **Selected Object** panel edits position and rotation, deletes selected
 objects, and scales multi-selection positions about their center. Edit mode
 changes Editing data; Preview mode changes Preview segments. Preview taxels are
 derived and cannot be selected. With no selection, the panel remains visible,
@@ -231,26 +226,11 @@ binding metadata affects only taxel deformation; it never seeds Preview
 segments. Enabled JointState mappings update Preview URDF joints. Live frames
 overwrite manual Static values while connected.
 Tactile force magnitude maps from blue at 0 N to red at 30 N, with values above
-30 N clamped. Missing or inactive force data is light grey.
+30 N clamped. Missing or inactive force data uses the default taxel color.
 
-For multi-segment LBS, taxel orientation uses polar decomposition of the blended
-rotation. Single-segment bindings use their direct rigid transform; singular
-blends fall back to the taxel bind rotation.
+## Verify changes
 
-## Implementation
-
-- `document.py` defines editor-native segments, taxels, validation, and per-side
-  state.
-- `storage.py` converts between editor data and schema JSON and performs atomic
-  saves.
-- `geometry.py` handles URDF loading, scene transforms, picking, grid creation,
-  HandPose conversion, and LBS.
-- `sdk.py` receives HandPose, TactileMetadata/TactileDataArray, and optional
-  JointState in a child process started with the launching interpreter.
-- `ui.py` owns Viser controls, scene state, selection, and Edit/Preview workflow.
-- `editor_interactions.js` supplies list drag-and-drop and invalid-field styling.
-
-Local source checks:
+From `scripts/tactile_metadata`:
 
 ```bash
 ruff format --check tactile_metadata_editor
