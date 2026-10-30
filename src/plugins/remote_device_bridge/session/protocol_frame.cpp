@@ -14,6 +14,7 @@ namespace remote_plugin_protocol
 
 using detail::build_frame;
 using detail::Reader;
+using detail::store_le;
 using detail::Writer;
 
 namespace
@@ -27,14 +28,6 @@ constexpr size_t kSeqOffset = 8;
 constexpr size_t kPayloadSizeOffset = 12;
 constexpr size_t kSendTimeOffset = 16;
 
-void store_le(uint8_t* out, uint64_t value, size_t size)
-{
-    for (size_t i = 0; i < size; ++i)
-    {
-        out[i] = static_cast<uint8_t>(value >> (8 * i));
-    }
-}
-
 } // namespace
 
 namespace detail
@@ -44,7 +37,7 @@ void encode_header(const FrameHeader& header, uint8_t* out)
 {
     store_le(out, kMagic, sizeof(uint32_t));
     out[kTypeOffset] = static_cast<uint8_t>(header.type);
-    out[kVersionOffset] = header.version;
+    out[kVersionOffset] = kProtocolVersion;
     store_le(out + kChannelOffset, header.channel_id, sizeof(uint16_t));
     store_le(out + kSeqOffset, header.seq, sizeof(uint32_t));
     store_le(out + kPayloadSizeOffset, header.payload_size, sizeof(uint32_t));
@@ -101,10 +94,10 @@ FrameHeader decode_header(const uint8_t* in)
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }
     header.type = static_cast<FrameType>(type);
-    header.version = reader.u8();
-    if (header.version != kProtocolVersion)
+    const uint8_t version = reader.u8();
+    if (version != kProtocolVersion)
     {
-        throw DecodeError("protocol: unsupported protocol version " + std::to_string(header.version));
+        throw DecodeError("protocol: unsupported protocol version " + std::to_string(version));
     }
     header.channel_id = reader.u16();
     header.seq = reader.u32();

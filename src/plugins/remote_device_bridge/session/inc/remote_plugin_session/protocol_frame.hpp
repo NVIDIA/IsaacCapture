@@ -39,7 +39,7 @@ enum class FrameType : uint8_t
     SchemaSample = 9, // c->s
     WristSample = 10, // s->c
     Heartbeat = 11, // both
-    Error = 12, // s->c; on channel 0 the connection closes afterwards, on a channel id only that channel is refused
+    Error = 12, // s->c
     Ping = 13, // s->c
     Pong = 14, // c->s
 };
@@ -47,8 +47,7 @@ constexpr FrameType kLastFrameType = FrameType::Pong;
 
 struct FrameHeader
 {
-    FrameType type;
-    uint8_t version = kProtocolVersion;
+    FrameType type{}; // 0 is not a frame type
     uint16_t channel_id = kSessionChannelId;
     uint32_t seq = 0;
     uint32_t payload_size = 0;

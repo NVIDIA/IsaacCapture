@@ -18,6 +18,15 @@ namespace remote_plugin_protocol
 namespace detail
 {
 
+//! Stores the low `size` bytes of `value` little-endian at `out` (in-place patching).
+inline void store_le(uint8_t* out, uint64_t value, size_t size)
+{
+    for (size_t i = 0; i < size; ++i)
+    {
+        out[i] = static_cast<uint8_t>(value >> (8 * i));
+    }
+}
+
 //! Writes the header into the first kHeaderSize bytes of `out`.
 void encode_header(const FrameHeader& header, uint8_t* out);
 
@@ -32,6 +41,11 @@ public:
     void u8(uint8_t value)
     {
         m_out.push_back(value);
+    }
+
+    void boolean(bool value)
+    {
+        u8(value ? 1 : 0);
     }
 
     void u16(uint16_t value)
@@ -116,6 +130,16 @@ public:
     {
         need(1);
         return m_data[m_pos++];
+    }
+
+    bool boolean()
+    {
+        const uint8_t value = u8();
+        if (value > 1)
+        {
+            throw DecodeError(std::string("protocol: ") + m_what + ": invalid boolean value " + std::to_string(value));
+        }
+        return value == 1;
     }
 
     uint16_t u16()
