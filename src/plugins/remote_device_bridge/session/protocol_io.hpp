@@ -18,13 +18,24 @@ namespace remote_plugin_protocol
 namespace detail
 {
 
-//! Stores the low `size` bytes of `value` little-endian at `out` (in-place patching).
+//! Stores the low `size` bytes of `value` little-endian at `out`.
 inline void store_le(uint8_t* out, uint64_t value, size_t size)
 {
     for (size_t i = 0; i < size; ++i)
     {
         out[i] = static_cast<uint8_t>(value >> (8 * i));
     }
+}
+
+//! Loads `size` little-endian bytes from `in`.
+inline uint64_t load_le(const uint8_t* in, size_t size)
+{
+    uint64_t value = 0;
+    for (size_t i = 0; i < size; ++i)
+    {
+        value |= static_cast<uint64_t>(in[i]) << (8 * i);
+    }
+    return value;
 }
 
 //! Writes the header into the first kHeaderSize bytes of `out`.
@@ -50,26 +61,17 @@ public:
 
     void u16(uint16_t value)
     {
-        for (int i = 0; i < 2; ++i)
-        {
-            m_out.push_back(static_cast<uint8_t>(value >> (8 * i)));
-        }
+        append(value, sizeof(value));
     }
 
     void u32(uint32_t value)
     {
-        for (int i = 0; i < 4; ++i)
-        {
-            m_out.push_back(static_cast<uint8_t>(value >> (8 * i)));
-        }
+        append(value, sizeof(value));
     }
 
     void u64(uint64_t value)
     {
-        for (int i = 0; i < 8; ++i)
-        {
-            m_out.push_back(static_cast<uint8_t>(value >> (8 * i)));
-        }
+        append(value, sizeof(value));
     }
 
     void i64(int64_t value)
@@ -111,6 +113,13 @@ public:
     }
 
 private:
+    void append(uint64_t value, size_t size)
+    {
+        const size_t at = m_out.size();
+        m_out.resize(at + size);
+        store_le(m_out.data() + at, value, size);
+    }
+
     std::vector<uint8_t>& m_out;
 };
 
@@ -144,35 +153,17 @@ public:
 
     uint16_t u16()
     {
-        need(2);
-        uint16_t value = 0;
-        for (int i = 0; i < 2; ++i)
-        {
-            value = static_cast<uint16_t>(value | (static_cast<uint16_t>(m_data[m_pos++]) << (8 * i)));
-        }
-        return value;
+        return static_cast<uint16_t>(take(sizeof(uint16_t)));
     }
 
     uint32_t u32()
     {
-        need(4);
-        uint32_t value = 0;
-        for (int i = 0; i < 4; ++i)
-        {
-            value |= static_cast<uint32_t>(m_data[m_pos++]) << (8 * i);
-        }
-        return value;
+        return static_cast<uint32_t>(take(sizeof(uint32_t)));
     }
 
     uint64_t u64()
     {
-        need(8);
-        uint64_t value = 0;
-        for (int i = 0; i < 8; ++i)
-        {
-            value |= static_cast<uint64_t>(m_data[m_pos++]) << (8 * i);
-        }
-        return value;
+        return take(sizeof(uint64_t));
     }
 
     int64_t i64()
@@ -228,6 +219,14 @@ public:
     }
 
 private:
+    uint64_t take(size_t size)
+    {
+        need(size);
+        const uint64_t value = load_le(m_data + m_pos, size);
+        m_pos += size;
+        return value;
+    }
+
     void need(size_t count) const
     {
         if (m_size - m_pos < count)

@@ -223,21 +223,21 @@ std::vector<uint8_t> encode_pong(const Pong& value)
     return build_payload(
         [&](Writer& writer)
         {
-            writer.i64(value.t1_ns);
-            writer.i64(value.t2_ns);
-            writer.i64(value.t3_ns);
+            writer.i64(value.ping_sent_ns);
+            writer.i64(value.ping_received_ns);
+            writer.i64(value.pong_sent_ns);
         });
 }
 
-void set_pong_t3(std::vector<uint8_t>& pong_frame, int64_t t3_ns)
+void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns)
 {
-    // PONG payload: t1, t2, t3 (i64 each).
-    constexpr size_t kT3Offset = kHeaderSize + 2 * sizeof(int64_t);
-    if (pong_frame.size() != kHeaderSize + 3 * sizeof(int64_t) || decode_header(pong_frame.data()).type != FrameType::Pong)
+    // PONG payload: ping_sent, ping_received, pong_sent (i64 each).
+    constexpr size_t kPongSentOffset = kHeaderSize + 2 * sizeof(int64_t);
+    if (pong_frame.size() != kHeaderSize + 3 * sizeof(int64_t) || decode_header(pong_frame).type != FrameType::Pong)
     {
         throw std::invalid_argument("protocol: not an encoded PONG frame");
     }
-    detail::store_le(pong_frame.data() + kT3Offset, static_cast<uint64_t>(t3_ns), sizeof(int64_t));
+    detail::store_le(pong_frame.data() + kPongSentOffset, static_cast<uint64_t>(pong_sent_ns), sizeof(int64_t));
 }
 
 Hello decode_hello(const std::vector<uint8_t>& payload)
@@ -350,9 +350,9 @@ Pong decode_pong(const std::vector<uint8_t>& payload)
 {
     Reader reader(payload, "PONG");
     Pong value;
-    value.t1_ns = reader.i64();
-    value.t2_ns = reader.i64();
-    value.t3_ns = reader.i64();
+    value.ping_sent_ns = reader.i64();
+    value.ping_received_ns = reader.i64();
+    value.pong_sent_ns = reader.i64();
     reader.finish();
     return value;
 }

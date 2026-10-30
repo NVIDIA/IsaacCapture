@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -43,7 +44,6 @@ enum class FrameType : uint8_t
     Ping = 13, // s->c
     Pong = 14, // c->s
 };
-constexpr FrameType kLastFrameType = FrameType::Pong;
 
 struct FrameHeader
 {
@@ -66,9 +66,9 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-//! Reads the first kHeaderSize bytes of `in`. Throws DecodeError on bad magic, unknown type, unsupported version or an
-//! oversized payload.
-FrameHeader decode_header(const uint8_t* in);
+//! Reads the header from the first kHeaderSize bytes of `in`. Throws DecodeError if `in` is shorter, or on bad
+//! magic, unknown type, unsupported version or an oversized payload.
+FrameHeader decode_header(std::span<const uint8_t> in);
 
 //! Writes header + payload into one contiguous buffer. seq and t_send stay zero until stamp_header().
 std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload);
