@@ -41,10 +41,11 @@ Prerequisites
 
    ``BUILD_VIZ=ON`` additionally requires **glslangValidator** to compile shaders to SPIR-V
    (``glslang-tools`` on Linux, ``brew install glslang`` on macOS; ships with the Vulkan SDK
-   on Windows), and on Linux **wayland-scanner** (``libwayland-dev``) for GLFW's Wayland
-   backend — pass ``-DGLFW_BUILD_WAYLAND=OFF`` to build Televiz against X11 only instead.
-   Neither gates the auto-default: if one is missing, the configure fails naming it rather
-   than quietly dropping the module. Most users do not need any of this:
+   on Windows). On Linux, GLFW's Wayland backend also requires **wayland-scanner**
+   (``libwayland-dev``) and **xkbcommon >= 0.5.0** (``libxkbcommon-dev``). Pass
+   ``-DGLFW_BUILD_WAYLAND=OFF`` to build Televiz against X11 only instead.
+   These dependencies do not gate the auto-default: if one is missing, configure fails
+   naming it rather than quietly dropping the module. Most users do not need any of this:
    ``pip install isaaccapture`` already ships the compiled ``isaaccapture.viz`` module. See
    `Other Build options`_ for the full option table.
 
@@ -59,7 +60,9 @@ the list of dependencies. On **Ubuntu**, install build tools and clang-format:
 .. code-block:: bash
 
    sudo apt-get update
-   sudo apt-get install -y build-essential cmake libegl-dev libx11-dev libwayland-dev clang-format-14 ccache patchelf pkg-config glslang-tools
+   sudo apt-get install -y build-essential cmake clang-format-14 ccache patchelf pkg-config glslang-tools \
+       libegl-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev \
+       libxinerama-dev libxkbcommon-dev libxrandr-dev
 
 Runtime-only dependencies (needed to actually run teleop, not to build):
 
@@ -334,8 +337,16 @@ The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build
 
 The build writes two wheels to ``./install/wheels/``: ``isaaccapture`` and the ``isaacteleop``
 transition wheel it depends on. The ``isaaccapture`` wheel only installs on the Python version it
-was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so create and activate a venv
-with that version first.
+was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so install it into a virtual
+environment with that version. Without one, ``pip install`` fails on Ubuntu 24.04 with
+``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment found``.
+From the repository root:
+
+.. code-block:: bash
+
+   # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
 
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin

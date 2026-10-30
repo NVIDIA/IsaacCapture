@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -382,6 +383,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -660,15 +662,15 @@ is confirmed. Different or invalid metadata causes an error; after a producer
 restart, its metadata must be confirmed again. See <a class="reference internal" href="../../references/generated_trackers.html#tracker-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
 <p>The consumer’s <code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code> must be at least the producer’s declared
 sample size, including FlatBuffer overhead. The default is
-<code class="docutils literal notranslate"><span class="pre">TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE</span></code>; pass a larger
+<code class="docutils literal notranslate"><span class="pre">TactileTracker.</span><wbr><span class="pre">DEFAULT_</span><wbr><span class="pre">MAX_</span><wbr><span class="pre">FLATBUFFER_</span><wbr><span class="pre">SIZE</span></code>; pass a larger
 <code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code> to <code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> when the producer uses larger force
 samples. Metadata has its own
-<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> limit, including FlatBuffer overhead.
+<code class="docutils literal notranslate"><span class="pre">TRACKER_</span><wbr><span class="pre">METADATA_</span><wbr><span class="pre">MAX_</span><wbr><span class="pre">SIZE</span></code> limit, including FlatBuffer overhead.
 The data array length must match the metadata’s taxel count.</p>
 <p>Applications can read <code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> directly for live or replay data.
 Retargeting graphs can instead use <code class="docutils literal notranslate"><span class="pre">TactileSource(name,</span> <span class="pre">collection_id,</span>
 <span class="pre">num_segments,</span> <span class="pre">num_taxels)</span></code> from
-<code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeting_engine.deviceio_source_nodes</span></code>. It emits
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">engine.</span><wbr><span class="pre">deviceio_</span><wbr><span class="pre">source_</span><wbr><span class="pre">nodes</span></code>. It emits
 <code class="docutils literal notranslate"><span class="pre">taxel_forces</span></code> and <code class="docutils literal notranslate"><span class="pre">tactile_layout</span></code> arrays; constructor counts fix their
 shapes. It adapts the frame and static layout to graph tensors; the application
 supplies hand motion and evaluates the geometry mapping separately.</p>
@@ -832,7 +834,7 @@ automatically publish the common force-and-layout contract described above.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

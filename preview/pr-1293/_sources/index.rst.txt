@@ -55,6 +55,7 @@ Table of Contents
 
    teleop/quick_start
    teleop/synthetic_xr
+   getting_started/ovxr
    teleop/teleop_session
    teleop/control_state_machine
 
@@ -98,6 +99,7 @@ Table of Contents
    device/gamepads/index
    Spatial trackers <device/trackers/index>
    device/add_device
+   Device Conformance <conformance/overview>
 
 .. toctree::
    :maxdepth: 2

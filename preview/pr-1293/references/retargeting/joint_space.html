@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -379,6 +380,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -558,15 +560,17 @@ and flatten <code class="docutils literal notranslate"><span class="pre">ee_pose
 </section>
 <section id="run-the-example">
 <h2>Run the example<a class="headerlink" href="#run-the-example" title="Link to this heading">#</a></h2>
-<p>The repo ships <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/joint_space_device_example.py</span></code>:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Consumes<span class="w"> </span>the<span class="w"> </span>so101_leader<span class="w"> </span>plugin<span class="w"> </span>over<span class="w"> </span>OpenXR<span class="w"> </span><span class="o">(</span><span class="nb">source</span><span class="w"> </span>cloudxr.env<span class="w"> </span>first<span class="o">)</span>:
-<span class="gp">$ </span>python<span class="w"> </span>joint_space_device_example.py<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>joint<span class="w"> </span>--frames<span class="w"> </span><span class="m">8</span>
-<span class="gp">$ </span>python<span class="w"> </span>joint_space_device_example.py<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>/path/to/so101_new_calib.urdf
+<p>The repo ships <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py</span></code>:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+
+<span class="gp"># </span>Consumes<span class="w"> </span>the<span class="w"> </span>so101_leader<span class="w"> </span>plugin<span class="w"> </span>over<span class="w"> </span>OpenXR<span class="w"> </span><span class="o">(</span><span class="nb">source</span><span class="w"> </span>cloudxr.env<span class="w"> </span>first<span class="o">)</span>:
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>joint<span class="w"> </span>--frames<span class="w"> </span><span class="m">8</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>/path/to/so101_new_calib.urdf
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">so101_new_calib.urdf</span></code> is not shipped in this repo. It is <code class="docutils literal notranslate"><span class="pre">Simulation/SO101/so101_new_calib.urdf</span></code>
 in <a class="reference external" href="https://github.com/TheRobotStudio/SO-ARM100" rel="noopener noreferrer" target="_blank">TheRobotStudio/SO-ARM100</a>; pass its path to
-<code class="docutils literal notranslate"><span class="pre">--urdf</span></code>. Run the commands from <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">--urdf</span></code>. Run the commands from the repository root.</p>
 </section>
 <section id="validate">
 <h2>Validate<a class="headerlink" href="#validate" title="Link to this heading">#</a></h2>
@@ -721,7 +725,7 @@ SO-101 plugin, and MCAP record/replay.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

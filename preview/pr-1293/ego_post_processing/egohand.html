@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -379,6 +380,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -450,7 +452,7 @@
 video, camera calibration, and 2D hand boxes. It runs directly on decoded video
 frames, and the code lives in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/python/isaaccapture_egopost" rel="noopener noreferrer" target="_blank">src/python/isaaccapture_egopost</a>.
 The method is described in the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture_egopost/docs/EgoHand.pdf" rel="noopener noreferrer" target="_blank">EgoHand paper</a>.</p>
+<a class="reference external" href="https://arxiv.org/abs/2610.30293" rel="noopener noreferrer" target="_blank">EgoHand paper</a>.</p>
 <figure class="align-default" id="id2">
 <a class="no-image-zoom reference internal image-reference" href="../_images/egohand-showcase.gif"><img alt="EgoHand showcase: video frames, skeleton overlays, a hand close-up, and 3D meshes" class="no-image-zoom" src="../_images/egohand-showcase.gif" style="width: 100%;" />
 </a>
@@ -817,7 +819,7 @@ Challenge.</p></td>
 </section>
 <section id="command-line-reference">
 <h3>Command-line reference<a class="headerlink" href="#command-line-reference" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">run_egohand_inference_pipeline.py</span></code> options. <code class="docutils literal notranslate"><span class="pre">--input</span></code>, <code class="docutils literal notranslate"><span class="pre">--output_dir</span></code>, and
+<p><code class="docutils literal notranslate"><span class="pre">run_</span><wbr><span class="pre">egohand_</span><wbr><span class="pre">inference_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">py</span></code> options. <code class="docutils literal notranslate"><span class="pre">--input</span></code>, <code class="docutils literal notranslate"><span class="pre">--output_dir</span></code>, and
 <code class="docutils literal notranslate"><span class="pre">--bbox_detector_config</span></code> are required. <code class="docutils literal notranslate"><span class="pre">--intrinsics_json</span></code> is required with
 <code class="docutils literal notranslate"><span class="pre">--perspective_cropping</span></code> and strongly recommended otherwise.</p>
 <div class="pst-scrollable-table-container"><table class="table">
@@ -881,7 +883,7 @@ downloaded from <code class="docutils literal notranslate"><span class="pre">nvi
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--batch_size</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">32</span></code></p></td>
-<td><p>Reconstruction batch size. RT-DETR uses <code class="docutils literal notranslate"><span class="pre">rtdetr_config.batch_size</span></code>.</p></td>
+<td><p>Reconstruction batch size. RT-DETR uses <code class="docutils literal notranslate"><span class="pre">rtdetr_</span><wbr><span class="pre">config.</span><wbr><span class="pre">batch_</span><wbr><span class="pre">size</span></code>.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--dino_compile</span></code></p></td>
 <td><p>off</p></td>
@@ -1539,7 +1541,7 @@ options.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">timing_breakdown.json</span></code></p></td>
 <td><p>Preprocessing, fitting, and export timings.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">metric_preservation.json</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">metric_</span><wbr><span class="pre">preservation.</span><wbr><span class="pre">json</span></code></p></td>
 <td><p>Input-to-fit dimension diagnostics.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">overlay.mp4</span></code></p></td>
@@ -1874,7 +1876,7 @@ those materials. Use the software and external materials at your own risk.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

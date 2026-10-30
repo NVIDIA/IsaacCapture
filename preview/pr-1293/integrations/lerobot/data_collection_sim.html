@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -386,6 +387,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -562,15 +564,9 @@ this repository (<a class="reference external" href="https://github.com/NVIDIA/I
 source. If <code class="docutils literal notranslate"><span class="pre">./install/plugins/so101_leader/so101_leader_plugin</span></code> does not exist, this
 step has not been completed.</p>
 </div>
-<p>Install the build prerequisites first — a missing <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> is the most common
-cause of a failed build, because the format check is enforced by default on Linux:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
-sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libx11-dev<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools
-</pre></div>
-</div>
-<p>Then clone, configure, build, and install (see
-<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for the full prerequisite list and all
-build options):</p>
+<p>Install the <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a>
+first, including <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> for the Linux format check. Then clone, configure,
+build, and install:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/NVIDIA/IsaacCapture.git
 <span class="nb">cd</span><span class="w"> </span>IsaacCapture
 cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w">                       </span><span class="c1"># configure</span>
@@ -878,7 +874,7 @@ branch in Isaac Lab, which targets a different task and must be adapted.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

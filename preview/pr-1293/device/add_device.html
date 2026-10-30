@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="System Requirements" href="../references/requirements.html" />
+    <link rel="next" title="Device Conformance Testing" href="../conformance/overview.html" />
     <link rel="prev" title="VIVE Ultimate Tracker" href="trackers/vive_ultimate_tracker.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -379,6 +380,7 @@
 <li class="toctree-l1"><a class="reference internal" href="gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -541,6 +543,9 @@ which uses <code class="docutils literal notranslate"><span class="pre">SchemaPu
 <code class="docutils literal notranslate"><span class="pre">Pack()</span></code>, then call <code class="docutils literal notranslate"><span class="pre">pusher_.push_buffer(ptr,</span> <span class="pre">size,</span> <span class="pre">sample_time_local_common_clock_ns,</span>
 <span class="pre">sample_time_raw_device_clock_ns)</span></code>. Use a monotonic clock (e.g. <code class="docutils literal notranslate"><span class="pre">core::os_monotonic_now_ns()</span></code>)
 for the local common clock; use the device’s own clock for the raw device clock if available.</p></li>
+<li><p><strong>Shutdown</strong> — To stop a plugin, the plugin manager sends <code class="docutils literal notranslate"><span class="pre">SIGINT</span></code> and kills the process if
+it is still running 2 seconds later. A plugin that needs longer to close its files sets
+<code class="docutils literal notranslate"><span class="pre">shutdown_</span><wbr><span class="pre">timeout_</span><wbr><span class="pre">seconds</span></code> (greater than 0, at most 3600) in its <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>.</p></li>
 </ul>
 <p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
 <code class="docutils literal notranslate"><span class="pre">core::SchemaPusher</span></code> member, opens the Linux joystick device, maps axes to
@@ -716,6 +721,10 @@ trackers during the update loop.</p></li>
 </ul>
 <p>For the shared library build and contribution workflow, see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> and <a class="reference internal" href="../development/contributing.html"><span class="doc">Contributing</span></a>.</p>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p>Once your device publishes hand or full-body poses, prove it with <a class="reference internal" href="../conformance/overview.html"><span class="doc">Device Conformance Testing</span></a>.</p>
+</div>
 </section>
 </section>
 
@@ -739,11 +748,11 @@ trackers during the update loop.</p></li>
       </div>
     </a>
     <a class="right-next"
-       href="../references/requirements.html"
+       href="../conformance/overview.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">System Requirements</p>
+        <p class="prev-next-title">Device Conformance Testing</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -859,7 +868,7 @@ trackers during the update loop.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

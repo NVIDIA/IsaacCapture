@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -60,12 +60,12 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Teleop Control State Machine" href="control_state_machine.html" />
-    <link rel="prev" title="Synthetic XR Teleoperation" href="synthetic_xr.html" />
+    <link rel="prev" title="OVXR installation" href="../getting_started/ovxr.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -346,6 +346,7 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -379,6 +380,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -464,6 +466,14 @@ manage them directly:</p>
 <li><p>Runs retargeting pipeline with automatic updates</p></li>
 <li><p>Handles cleanup via RAII</p></li>
 </ol>
+<p>If resource cleanup fails during entry rollback or exit, <code class="docutils literal notranslate"><span class="pre">cleanup_failed</span></code>
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling <code class="docutils literal notranslate"><span class="pre">__exit__</span></code> again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.</p>
 </section>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
@@ -600,8 +610,13 @@ end-to-end.</p>
 and returns the latest completed <code class="docutils literal notranslate"><span class="pre">RetargeterIO</span></code>. On a normal hit this is often
 the previous application frame’s output. If that returned output came from
 request N-1, then <code class="docutils literal notranslate"><span class="pre">session.last_context</span></code> also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful <code class="docutils literal notranslate"><span class="pre">step()</span></code> return delivers it through <code class="docutils literal notranslate"><span class="pre">last_context</span></code>. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
 application needs exact current-frame sample/compute/return behavior.</p>
 <p>The return type is unchanged; inspect <code class="docutils literal notranslate"><span class="pre">session.last_step_info</span></code> for age and
 timing metadata such as <code class="docutils literal notranslate"><span class="pre">returned_frame_id</span></code>, <code class="docutils literal notranslate"><span class="pre">submitted_frame_id</span></code>,
@@ -684,7 +699,7 @@ the worker at roughly:</p>
 <p><code class="docutils literal notranslate"><span class="pre">predicted_next_step_time</span> <span class="pre">-</span> <span class="pre">estimated_retarget_cost</span> <span class="pre">-</span> <span class="pre">safety_margin_s</span></code>.</p>
 <p>The goal is to avoid starting too early, which uses older inputs, while still
 finishing before the application asks for the next action. If accumulated
-<code class="docutils literal notranslate"><span class="pre">session.last_step_info.frame_deadline_miss</span></code> counts rise, make the schedule
+<code class="docutils literal notranslate"><span class="pre">session.</span><wbr><span class="pre">last_</span><wbr><span class="pre">step_</span><wbr><span class="pre">info.</span><wbr><span class="pre">frame_</span><wbr><span class="pre">deadline_</span><wbr><span class="pre">miss</span></code> counts rise, make the schedule
 more conservative. If misses stay low but outputs use unnecessarily old inputs,
 make the schedule less conservative.</p>
 <div class="pst-scrollable-table-container"><table class="table">
@@ -881,11 +896,15 @@ and/or <code class="docutils literal notranslate"><span class="pre">HeadSource</
 <section id="complete-examples">
 <h3>Complete Examples<a class="headerlink" href="#complete-examples" title="Link to this heading">#</a></h3>
 <ol class="arabic">
-<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/gripper_retargeting_example_simple.py</span></code>
+<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py</span></code>
 – Shows the minimal configuration approach and demonstrates auto-creation
-of input sources. Run it from the project root, with the environment set up
-as in the <a class="reference internal" href="quick_start.html"><span class="doc">Quick Start</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
+of input sources. Install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> into the active environment first:
+from your source build as in
+<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">step 4 of Build from source</span></a>, or
+from the package index as in the <a class="reference internal" href="quick_start.html"><span class="doc">Quick Start</span></a>. Then install
+this example from the project root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple
 </pre></div>
 </div>
 </li>
@@ -1011,12 +1030,12 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="synthetic_xr.html"
+       href="../getting_started/ovxr.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Synthetic XR Teleoperation</p>
+        <p class="prev-next-title">OVXR installation</p>
       </div>
     </a>
     <a class="right-next"
@@ -1162,7 +1181,7 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>
