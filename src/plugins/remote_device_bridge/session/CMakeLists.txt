@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 find_package(Threads REQUIRED)
 
 add_library(remote_plugin_session STATIC
+    inc/remote_plugin_session/bridge_limits.hpp
     clock_offset_estimator.cpp
     inc/remote_plugin_session/clock_offset_estimator.hpp
     protocol_frame.cpp

@@ -10,17 +10,34 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 namespace plugin_utils
 {
 
 namespace
 {
+//! Callers that cannot link plugin_utils recognize it by name() and read code().value().
+class XrResultCategory final : public std::error_category
+{
+public:
+    const char* name() const noexcept override
+    {
+        return "XrResult";
+    }
+    std::string message(int value) const override
+    {
+        return std::to_string(value);
+    }
+};
+
 void CheckXrResult(XrResult result, const char* message)
 {
+    static const XrResultCategory category;
     if (XR_FAILED(result))
     {
-        throw std::runtime_error(std::string(message) + " failed with XrResult: " + std::to_string(result));
+        // what() reads "<message> failed with XrResult: <code>".
+        throw std::system_error(result, category, std::string(message) + " failed with XrResult");
     }
 }
 } // namespace
