@@ -39,8 +39,8 @@ struct SampleCsvRow
 /*!
  * @brief --stats-csv writer.
  *
- * The bridge parent calls create() once (truncate + header); every forked client appends each row with one
- * write(2) on an O_APPEND descriptor, so rows from concurrent clients never split.
+ * The bridge parent opens it once; forked clients inherit the descriptor and append each row with one write(2)
+ * (O_APPEND), so rows from concurrent clients never split.
  */
 class SampleCsv
 {
@@ -48,13 +48,10 @@ public:
     static constexpr const char* kHeader =
         "push_mono_ns,recv_mono_ns,capture_sender_ns,capture_mapped_ns,age_ms,side,seq,curl\n";
 
-    //! Truncates `path` and writes the header; throws std::runtime_error.
-    static void create(const std::string& path);
-
-    //! Opens `path` for appending; throws std::runtime_error.
+    //! Truncates `path`, writes the header and keeps it open for appending; throws std::runtime_error.
     explicit SampleCsv(const std::string& path);
 
-    void write(const SampleCsvRow& row);
+    void write(const SampleCsvRow& row) const;
 
 private:
     struct FileCloser
@@ -64,9 +61,6 @@ private:
             std::fclose(file);
         }
     };
-
-    //! Formats one row (newline included) without allocating; returns the snprintf result.
-    static int format(char* out, size_t size, const SampleCsvRow& row);
 
     std::unique_ptr<std::FILE, FileCloser> m_file;
 };
