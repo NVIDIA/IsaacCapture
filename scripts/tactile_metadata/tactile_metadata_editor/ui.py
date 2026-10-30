@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import json
 import logging
 import math
@@ -371,7 +372,9 @@ class Editor:
             callback() if value is None else callback(value)
         except Exception as exc:
             LOG.exception("Editor action failed")
-            self.info.value = f'<span style="color:#d32f2f">Error: {exc}</span>'
+            self.info.value = (
+                f'<span style="color:#d32f2f">Error: {html.escape(str(exc))}</span>'
+            )
         else:
             message = self.info.value
             if self.mode_value == "Preview":
@@ -809,7 +812,7 @@ class Editor:
                         messages = [issue["message"] for issue in row_issues]
                         error = self.server.gui.add_html(
                             '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
-                            + "<br>".join(messages)
+                            + "<br>".join(map(html.escape, messages))
                             + "</div>",
                             visible=bool(messages),
                         )
@@ -983,7 +986,7 @@ class Editor:
                         messages = [issue["message"] for issue in row_issues]
                         error = self.server.gui.add_html(
                             '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
-                            + "<br>".join(dict.fromkeys(messages))
+                            + "<br>".join(map(html.escape, dict.fromkeys(messages)))
                             + "</div>",
                             visible=bool(messages),
                         )
@@ -1073,7 +1076,7 @@ class Editor:
     def _set_error_widget(widget, messages) -> None:
         widget.content = (
             '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
-            + "<br>".join(dict.fromkeys(messages))
+            + "<br>".join(map(html.escape, dict.fromkeys(messages)))
             + "</div>"
         )
         widget.visible = bool(messages)
@@ -1326,7 +1329,9 @@ class Editor:
     def _update_preview_error(self) -> None:
         _, errors, _ = self._rendered_preview_taxels()
         self.preview_error.value = (
-            '<span style="color:#d32f2f">' + "<br>".join(errors) + "</span>"
+            '<span style="color:#d32f2f">'
+            + "<br>".join(map(html.escape, errors))
+            + "</span>"
             if errors
             else ""
         )
@@ -1337,7 +1342,7 @@ class Editor:
         for issue in self.document.validate():
             label = labels.get(issue["kind"], issue["kind"].title())
             location = f"{label} {issue['row']}" if issue["row"] is not None else label
-            messages.append(f"{location}: {issue['message']}")
+            messages.append(html.escape(f"{location}: {issue['message']}"))
         return (
             '<span style="color:#d32f2f">' + "<br>".join(messages) + "</span>"
             if messages
@@ -1477,9 +1482,7 @@ class Editor:
             self._sync_preview_values()
             self._update_preview_error()
         except (ValueError, TypeError, KeyError, IndexError) as exc:
-            self.preview_error.value = (
-                f'<span style="color:#d32f2f">Live error: {exc}</span>'
-            )
+            self.preview_error.value = f'<span style="color:#d32f2f">Live error: {html.escape(str(exc))}</span>'
         self.redraw = True
 
     def _sync_preview_values(self) -> None:

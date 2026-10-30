@@ -53,6 +53,28 @@ class EditorTests(unittest.TestCase):
         self.assertEqual(editor.document.segments, editor.preview_document.segments)
         self.assertEqual(editor.document.q, editor.preview_document.q)
 
+    def test_error_html_escapes_external_text(self):
+        editor = self.make_editor()
+        payload = '<img src=x onerror="alert(1)">'
+        editor.document.taxels[0].segments[0] = payload
+        validation = editor._document_error_html()
+
+        editor.preview_error = editor.info
+        editor._rendered_preview_taxels = Mock(return_value=([], [payload], 0))
+        editor._update_preview_error()
+        preview = editor.info.value
+
+        widget = SimpleNamespace(content="", visible=False)
+        editor._set_error_widget(widget, [payload, payload])
+        self.assertTrue(widget.visible)
+        self.assertEqual(widget.content.count("&lt;img"), 1)
+
+        with self.assertLogs("isaaccapture.tactile_metadata.editor", level="ERROR"):
+            editor._run_action(Mock(side_effect=ValueError(payload)))
+        for rendered in (validation, preview, widget.content, editor.info.value):
+            self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;", rendered)
+            self.assertNotIn(payload, rendered)
+
     def test_start_binding_reuses_only_selected_taxels(self):
         for kind, rows in (
             ("taxels", [0]),
