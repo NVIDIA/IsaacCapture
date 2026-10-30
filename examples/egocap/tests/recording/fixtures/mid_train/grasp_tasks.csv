@@ -1,0 +1,3 @@
+Task #,Task Name,Task Description,Primitive(s),Props,Left Hand Grasp,Right Hand Grasp
+1,unscrew_cap,Unscrew the bottle cap.,unscrew,bottle,"Power Disk [10] (cap)","Quadpod [27] (peach)"
+2,shake_then_pour,Shake then pour the contents.,shake + pour,bottle,"Power Disk [10] (cap)",""

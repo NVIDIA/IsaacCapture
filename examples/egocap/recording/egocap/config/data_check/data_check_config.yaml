@@ -1,0 +1,125 @@
+# Ego Capture UI per-episode data-quality thresholds.
+#
+# Reference data documenting the threshold values capture_qc.py's own defaults are based on;
+# this file is not read by any code. Each section maps to a check; an episode is marked bad if
+# any enabled check reports an issue. Tune these to your station's tolerances.
+
+# --- Timestamp / frame-rate health (per device: cameras, pico, manus) ---
+timestamp:
+  enabled: true
+  # Fail if a device's average FPS deviates from its configured record_fps by
+  # more than this percentage. Generous so brief startup transients don't fail.
+  fps_deviation_pct: 10.0
+  # Fail if any consecutive frame gap exceeds this many expected frame periods.
+  max_missing_frames: 3.0
+  # Sustained-drop window: fail if any 1s window holds < 60% of expected frames
+  # (catches a stream that stalls mid-episode, not just a single dropped frame).
+  frame_drop_window_s: 1.0
+  frame_drop_min_fps_ratio: 0.6
+  # Fail if devices' time ranges overlap less than this (one source truncated).
+  coverage_threshold: 0.90
+
+# --- Episode length bounds (seconds) ---
+duration:
+  default:
+    min_duration_s: 1.0
+    max_duration_s: 600.0
+
+# --- Camera resolution must match each source's params.camera_resolution ---
+resolution:
+  enabled: true
+
+# --- Guardrails: post-recording capture QC ---
+# All capture QC (frame drops / freezes / disconnects) runs here, post-recording,
+# where the whole episode is visible. Nothing is gated live during capture:
+# frames can arrive late and would cause false positives. A frozen glove/hand is
+# also how a dying battery surfaces — a frozen episode is marked bad and the
+# operator is prompted to check the glove battery/connection.
+#
+# Three gates are fatal; every other check is ADVISORY (logged to errors.jsonl and
+# written to episode metadata as frame_drops / quality_warnings, never failing
+# the episode):
+#   * a FROZEN stream (the freeze_* block below) marks the take bad: it is kept
+#     in place, flagged and listed as discarded;
+#   * a dead avatar hand (avatar_hand_liveness_*) marks the take bad the same way;
+#   * a camera below its minimum FPS (camera_min_fps_*) REJECTS the take: it is
+#     not saved at all.
+guardrails:
+  enabled: true
+  # "Quarantined" in this file means marked bad, not moved: a frozen episode is
+  # still finalized into its normal studio folder, flagged (freeze_check_passed
+  # = false) and listed in the dataset's discarded_episode_indices. Nothing is
+  # uploaded or routed elsewhere; downstream tooling skips the discarded list.
+
+  # --- Sustained freeze: the ONLY fatal (mark-bad) condition ---
+  # Per stream (each wrist/hand/headset judged independently): the longest
+  # continuous window where the per-frame max-abs pose delta stays <= freeze_eps.
+  # The episode is frozen (marked bad) if ANY stream stays frozen for at least
+  # freeze_seconds — catching any mid-episode dropout of that duration, not just
+  # streams dead for the whole take.
+  freeze_enabled: true
+  freeze_eps: 1.0e-6
+  freeze_seconds: 1.0
+
+  # --- Advisory only (logged + stored, never fatal) ---
+  # Dropped-frame counts are recorded to metadata (window max + lifetime total)
+  # so we can mine the real distribution and pick thresholds later.
+  max_dropped_frames: 6
+  drop_window_s: 2.0
+  # A sustained no-motion window of at least this many seconds is flagged as a
+  # "flat" advisory (a glove/controller that dropped its last pose).
+  flat_seconds: 2.0
+  # Per-frame max-abs pose delta at or below this counts as "no motion".
+  flat_motion_eps: 0.001
+  # Pico poses whose max-abs value is under this are treated as all-zero/no-signal.
+  zero_pose_eps: 0.0001
+  # --- Dead-stream ("dead-hand") detection — advisory, per stream ---
+  # Each pose stream is checked INDEPENDENTLY for being frozen the whole episode,
+  # so a single dead controller/glove is surfaced as a warning.
+  dead_stream_enabled: true
+  # Mean per-element std-over-time below this => the stream never varied.
+  dead_std_eps: 1.0e-6
+  # OR this fraction of frames byte-identical to frame 0 => pinned/frozen.
+  dead_frac_identical: 0.95
+
+  # --- Avatar per-hand liveness: FATAL (dead / disconnected glove) ---
+  # A never-connected or mid-session-dropped avatar (Sharpa exo) glove leaves a
+  # whole hand pinned at its default (identity keypoints / zero joints) with 0
+  # live states while the other hand keeps moving. This gate fails the episode
+  # (-> marked bad) when a hand is absent, has fewer than avatar_min_states rows,
+  # or is frozen for the entire episode. Only avatar-glove stations expose the
+  # *_hand_keypoints fields, so this is inert for pico/manus/wuji configs.
+  avatar_hand_liveness_enabled: true
+  avatar_min_states: 2
+
+  # --- Camera frame-count parity: DISABLED (superseded by camera_min_fps) ---
+  # Parity compared absolute frame counts between the ego and wrist cameras, so
+  # the ego OAK's known ~57-58 Hz ceiling at 60 Hz (a device-side limit,
+  # upstream of the host) failed every take longer than ~20 s even though
+  # timestamp-based alignment handles the skew without cumulative drift.
+  # Replaced by the per-camera minimum-fps gate below.
+  camera_frame_parity_enabled: false
+  camera_frame_parity_max_diff: 50
+
+  # --- Camera minimum FPS: FATAL / REJECT (per camera) ---
+  # Each parity camera (ego + left/right wrist) must average at least
+  # camera_min_fps_ratio x its configured record_fps over the episode
+  # (0.86 x 60 = 51.6 Hz). Below that a camera genuinely dropped out or
+  # stalled; the recorder REJECTS the take (it is not saved at all, unlike a
+  # frozen take, which is saved and flagged) and the operator re-records the slot.
+  camera_min_fps_enabled: true
+  camera_min_fps_ratio: 0.86
+
+# --- Pico full-body tracking, when recorded, must be valid ---
+pico_body_joints:
+  enabled: true
+  device: pico_controller
+  field: body_joints_pose
+  valid_field: body_joints_valid
+  # Keep false for controller-only sessions. Set true for sessions where
+  # whole-body trackers are required.
+  required: false
+  require_valid_field: true
+  max_invalid_frames: 0
+  max_identity_frames: 0
+  identity_atol: 1.0e-6

@@ -1,0 +1,137 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "egocap"
+version = "0.1.0"
+description = "Ego Capture UI: the recording module library and standalone CaptureServer, as one consolidated project. See AGENTS.md for why this is one pyproject.toml, not one per subpackage."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+# Union of recording/'s, capture_server/'s and backend/'s own dependency lists,
+# resolved together so the packages can never disagree on a shared dependency's
+# version.
+dependencies = [
+    # --- recording (egocap/) ---
+    "numpy>=1.26.4",            # array handling across recording/ and backend/.
+    "zarr==3.1.6",               # episode storage format.
+    "PyYAML>=6.0",              # ruamel.yaml's fallback; station/task-library configs
+    "ruamel.yaml",              # round-trip YAML preserving operator comments (config_io.py)
+    "loguru>=0.7.3",            # logging (episode_error_log.py)
+    "Pillow>=10",                # JPEG decode in client.py's CaptureImage.decode() (no
+    # OpenCV) and the mock sources' own JPEG fixtures.
+    "scipy==1.17.1",             # used directly by backend/egocap_web/viser_scene.py and
+                                 # recording_adapter.py; pure math, no hardware access.
+    "opencv-python==4.12.0.88",  # Used directly by egocap/recording/dataset_check.py,
+                                 # dataset_reader.py and video_writer_backends.py to
+                                 # decode/encode MP4 files on disk.
+    # --- capture_server ---
+    "websockets>=17.2",
+    # --- backend (egocap_web) ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "viser==0.2.23",             # the 3D tracking view, on by default and embedded by iframe
+                                 # (backend/egocap_web/viser_scene.py); EGOCAP_VISER_ENABLED=0 turns it off.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+    "httpx",
+]
+oak = [
+    "depthai==3.6.1",
+]
+gmsl = [
+    # GMSL camera feed over the station's CUDA IPC socket (capture_server/gmsl_ipc): frames live in GPU
+    # rings exported as CUDA IPC handles, so reading them needs a CUDA array library. Same major pin as the
+    # receiver that publishes them.
+    "cupy-cuda12x>=13,<14",
+]
+
+[project.scripts]
+capture-server = "capture_server.__main__:main"
+
+[tool.ruff]
+# This repo's shared lint job never reaches this tree, so this is egocap's
+# own, self-contained ruff config for a local `ruff check .` run from this
+# directory.
+line-length = 115
+target-version = "py312"
+# Without this, isort can't tell recording/egocap, capture_server/capture_server
+# or backend/egocap_web are first-party (their package directories aren't at
+# this file's own level), and sorts them as third-party -- splitting one
+# package's imports across two blocks. Each subpackage directory matches its
+# own [tool.setuptools.packages.find].where entry below.
+src = ["recording", "capture_server", "backend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+# Stop pytest's config-file discovery from walking up into the monorepo
+# root, which would put the monorepo on sys.path and change what an
+# ambiguous top-level import name resolves to.
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+# No single [tool.coverage.report] fail_under here: recording/ and
+# capture_server/ have different, independently-tracked coverage targets
+# (recording/ requires 100%, capture_server/ does not yet), and one shared
+# resolution across the combined tree (currently ~97%) would either hide a
+# real regression in recording/ or be unsatisfiable for capture_server/.
+# Check and gate each package separately with its own --cov-fail-under, not
+# an aggregate number that can't honestly represent either policy -- see
+# AGENTS.md and each package's own CI/review history for its target.
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.setuptools.packages.find]
+# Each subpackage keeps its own real importable package one level down
+# (recording/egocap/, recording/recording_service/, capture_server/capture_server/,
+# backend/egocap_web/) -- multiple `where` roots tells setuptools to look for
+# top-level packages in each of these directories independently, matching
+# recording/'s own prior "package content lives one level down from
+# pyproject.toml" convention. A future subpackage adds its own directory to
+# this list, not a new pyproject.toml.
+where = ["recording", "capture_server", "backend"]
+# Explicit include, not just an exclude pattern: only these four real
+# importable packages (and their subpackages) are ever part of the shipped
+# wheel. Without this, `where`'s broad auto-discovery would also package
+# any future stray top-level directory under recording/, capture_server/
+# or backend/ (scratch scripts, generated tooling output, etc.) as its own
+# top-level distribution package the moment one appears -- this makes
+# "what ships" an explicit allowlist instead of "whatever happens to exist".
+include = [
+  "egocap", "egocap.*",
+  "recording_service", "recording_service.*",
+  "capture_server", "capture_server.*",
+  "egocap_web", "egocap_web.*",
+]
+# No "tests*" exclude needed: tests/ now lives at egocap/ root, outside
+# every `where` root entirely, so setuptools' package discovery (scoped to
+# recording/, capture_server/ and backend/) never sees it in the first place --
+# the explicit `include` allowlist above is what actually keeps the wheel
+# limited to these real packages.
+
+# No [tool.setuptools.package-data] section: recording/egocap/*.json and
+# *.yaml (egocap_stations.example.json, stations/ego_stations.example.yaml,
+# config/data_recording/*.yaml, config/data_check/data_check_config.yaml)
+# are checkout-local example/reference station configs, not resources any
+# installed-package code loads via a relative/importlib.resources path --
+# confirmed by grepping recording/egocap for their filenames outside tests.
+# They are deliberately NOT part of the shipped wheel; verified by
+# `uv build && unzip -l` showing none of them present. A real deployed
+# station supplies its own config, it does not ship with this package.
+
+[tool.uv.workspace]
+# Marks this pyproject.toml as its own workspace root, so `uv sync`/`uv lock` run from inside this
+# tree do not discover an ancestor pyproject.toml and pull it into the lockfile's manifest metadata.
+members = []

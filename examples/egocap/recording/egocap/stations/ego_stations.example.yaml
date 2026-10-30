@@ -1,0 +1,83 @@
+# Per-station recording configuration. EGOCAP_STATION_CONFIG (see
+# backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
+# consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,
+# meta.task_description, recording.data_dir, and each video_sources entry's name/type (as the
+# cameras requested from CaptureServer). numeric_sources and the rest of each video_sources entry
+# (frame_type, latency, params) are reference data for other tooling, not consumed here --
+# CaptureServer owns actually opening the selected cameras/devices. Each video_sources name MUST
+# match one of the names the running CaptureServer instance actually knows about (its own
+# --camera list, mock or real) -- an unknown name rejects the whole capture session, not just
+# that one camera.
+# The loader's "stations" schema can hold more than one entry (see
+# backend/egocap_web/station_config.py's own tests), but only the first is ever read -- there is
+# no selector. This template ships exactly one, deliberately: a second entry here would silently
+# never be used, which is worse than not showing the schema's multi-entry shape at all. A real
+# multi-station deployment needs its own EGOCAP_STATION_CONFIG file per station.
+# This is a template: copy it to a path outside the repo or to a gitignored name, then fill in
+# your own values. Operator name is empty in the public template; fill it in only in your local
+# copy.
+stations:
+  station_01:
+    recording:
+      data_dir: ~/egocap_data/recordings
+      record_fps: 60
+      stream_fps: 60
+      verbose: false
+      video_frame_type: RGBCameraFrame
+      numeric_frame_type: TrackingFrame
+    meta:
+      egocap_station_name: Station 01
+      task_description: 'Place the object in the tray.'
+      operator_name: ''
+      # Off by default: the operator entry field starts empty and the operator types their own
+      # name. Set true only for a station that genuinely has one fixed, known operator -- even
+      # then this only prefills the field's draft text; the operator still has to press "Set
+      # operator" before any recording command is accepted.
+      auto_fill_operator_name: false
+    video_sources:
+    - type: oak_camera
+      name: head_human_camera
+      frame_type: RGBCameraFrame
+      latency: 0.0875
+      params:
+        camera_resolution:
+        - 640
+        - 480
+        fps: 60
+        enable_color: true
+        enable_mono_cameras: false
+    - type: oak_camera
+      name: wrist_human_camera_left
+      frame_type: RGBCameraFrame
+      latency: 0.0875
+      params:
+        camera_resolution:
+        - 640
+        - 480
+        fps: 60
+        enable_color: true
+        enable_mono_cameras: false
+    - type: oak_camera
+      name: wrist_human_camera_right
+      frame_type: RGBCameraFrame
+      latency: 0.0875
+      params:
+        camera_resolution:
+        - 640
+        - 480
+        fps: 60
+        enable_color: true
+        enable_mono_cameras: false
+    numeric_sources:
+    - type: pico
+      name: pico_controller
+      record_fps: 60
+      stream_fps: 60
+      frame_type: PicoTrackingFrame
+      latency: 0.05
+    - type: manus
+      name: manus_glove
+      record_fps: 60
+      stream_fps: 60
+      frame_type: ManusFrame
+      latency: 0.05
