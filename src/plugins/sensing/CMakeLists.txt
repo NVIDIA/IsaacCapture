@@ -14,9 +14,15 @@
 #
 # The Jetson SDK checks below gate the whole plugin, tools/ included.
 #
-# Prerequisites:
-#   src/plugins/sensing/setup_container.sh   # fetches the Multimedia API,
-#                                            # locates jetson_sipl_api
+# Prerequisites (match the L4T release in /etc/nv_tegra_release; the examples
+# use R39.2.1). Neither is installed by the setup scripts:
+#   Jetson Multimedia API  nvidia-l4t-jetson-multimedia-api_<rel>-*_arm64.deb from
+#     https://repo.download.nvidia.com/jetson/common/pool/main/n/nvidia-l4t-jetson-multimedia-api/
+#     dpkg-deb -x <deb> <dir> && sudo cp -a <dir>/usr/src/jetson_multimedia_api /usr/src/
+#   Jetson SIPL API        Jetson_SIPL_API_R<rel>_aarch64.tbz2, e.g.
+#     https://developer.nvidia.com/downloads/embedded/L4T/r39_Release_v2.1/release/Jetson_SIPL_API_R39.2.1_aarch64.tbz2
+#     sudo tar xf <tbz2> -C /      # unpacks to /usr/src/jetson_sipl_api
+# See "Build prerequisites" in docs/source/device/camera/sensing.rst.
 #
 # Configure with:
 #   cmake -B build -DBUILD_PLUGIN_SENSING=ON
@@ -41,7 +47,7 @@ endif()
 # SIPL
 # ==============================================================================
 # Headers ship in Jetson_SIPL_API_R<rel>_aarch64.tbz2, published alongside the
-# L4T release. Not in any apt pool, so setup_container.sh fetches it by URL.
+# L4T release. Not in any apt pool: download it by URL (see Prerequisites above).
 if(NOT SIPL_API_DIR)
     find_path(SIPL_API_DIR sipl/include/NvSIPLCamera.hpp
         PATHS "/usr/src/jetson_sipl_api"
@@ -55,8 +61,9 @@ if(NOT SIPL_API_DIR)
         "================================================================================\n"
         "SENSING camera plugin requires the Jetson SIPL API headers.\n"
         "\n"
-        "Run the container setup, which fetches them:\n"
-        "  src/plugins/sensing/setup_container.sh\n"
+        "Download Jetson_SIPL_API_R<rel>_aarch64.tbz2 for your L4T release, e.g. R39.2.1:\n"
+        "  https://developer.nvidia.com/downloads/embedded/L4T/r39_Release_v2.1/release/Jetson_SIPL_API_R39.2.1_aarch64.tbz2\n"
+        "  sudo tar xf Jetson_SIPL_API_R39.2.1_aarch64.tbz2 -C /\n"
         "\n"
         "Or point CMake at an existing copy:\n"
         "  cmake -B build -DSIPL_API_DIR=/path/to/jetson_sipl_api\n"
@@ -84,7 +91,7 @@ foreach(_lib nvsipl nvsipl_query nvscibuf nvscisync nvbufsurface_nvsci)
     if(NOT ${_upper}_LIBRARY)
         message(FATAL_ERROR
             "lib${_lib} not found. It is supplied by the L4T BSP and, in a container, by the "
-            "NVIDIA container runtime. Run src/plugins/sensing/verify.sh to see what is missing.")
+            "NVIDIA container runtime. Run src/plugins/sensing/scripts/verify.sh to see what is missing.")
     endif()
     list(APPEND SIPL_LIBRARIES ${${_upper}_LIBRARY})
 endforeach()
@@ -114,8 +121,11 @@ if(NOT JETSON_MMAPI_DIR)
         "================================================================================\n"
         "SENSING camera plugin requires the Jetson Multimedia API encoder sources.\n"
         "\n"
-        "setup_container.sh fetches the version matching /etc/nv_tegra_release:\n"
-        "  src/plugins/sensing/setup_container.sh\n"
+        "Download the nvidia-l4t-jetson-multimedia-api deb matching /etc/nv_tegra_release from\n"
+        "  https://repo.download.nvidia.com/jetson/common/pool/main/n/nvidia-l4t-jetson-multimedia-api/\n"
+        "and unpack it:\n"
+        "  dpkg-deb -x nvidia-l4t-jetson-multimedia-api_<rel>-*_arm64.deb /tmp/mmapi\n"
+        "  sudo cp -a /tmp/mmapi/usr/src/jetson_multimedia_api /usr/src/\n"
         "\n"
         "Or point CMake at an existing tree:\n"
         "  cmake -B build -DJETSON_MMAPI_DIR=/path/to/jetson_multimedia_api\n"

@@ -118,6 +118,27 @@ For custom images, :code-file:`docker/Dockerfile.example
 ``--json`` emits the same flags as a JSON array. These runtime helpers do not
 install the SDK headers needed to compile SIPL applications.
 
+Build prerequisites
+~~~~~~~~~~~~~~~~~~~
+
+Building ``camera_plugin_sensing`` needs two Jetson SDKs that the setup scripts do not install.
+Take the versions matching the L4T release in ``/etc/nv_tegra_release`` (the examples use
+R39.2.1). CMake stops with these same instructions when either is missing.
+
+- **Jetson SIPL API headers** — ``Jetson_SIPL_API_R<rel>_aarch64.tbz2``, for example
+  `R39.2.1
+  <https://developer.nvidia.com/downloads/embedded/L4T/r39_Release_v2.1/release/Jetson_SIPL_API_R39.2.1_aarch64.tbz2>`_.
+  Unpack it with ``sudo tar xf Jetson_SIPL_API_R39.2.1_aarch64.tbz2 -C /``, which creates
+  ``/usr/src/jetson_sipl_api``.
+- **Jetson Multimedia API** — the ``nvidia-l4t-jetson-multimedia-api_<rel>-*_arm64.deb`` package
+  from the `Jetson package pool
+  <https://repo.download.nvidia.com/jetson/common/pool/main/n/nvidia-l4t-jetson-multimedia-api/>`_.
+  Unpack it without installing it:
+  ``dpkg-deb -x nvidia-l4t-jetson-multimedia-api_<rel>-*_arm64.deb /tmp/mmapi`` then
+  ``sudo cp -a /tmp/mmapi/usr/src/jetson_multimedia_api /usr/src/``.
+
+If they live elsewhere, pass ``-DSIPL_API_DIR=PATH`` and ``-DJETSON_MMAPI_DIR=PATH`` to CMake.
+
 Building and running
 --------------------
 
