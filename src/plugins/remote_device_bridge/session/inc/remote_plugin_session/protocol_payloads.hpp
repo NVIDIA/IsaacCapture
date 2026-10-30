@@ -59,12 +59,12 @@ struct WristSample
     core::WristTrackingSample sample;
 };
 
-//! Times are CLOCK_MONOTONIC ns of the side that took them.
+//! Two-way clock exchange; times are CLOCK_MONOTONIC ns of the side that took them.
 struct Pong
 {
-    int64_t t1_ns = 0;
-    int64_t t2_ns = 0;
-    int64_t t3_ns = 0;
+    int64_t ping_sent_ns = 0; //!< bridge clock, echoed from the PING
+    int64_t ping_received_ns = 0; //!< client clock
+    int64_t pong_sent_ns = 0; //!< client clock, set by set_pong_sent_time when the frame is sent
 };
 
 constexpr size_t kPoseSize = 7 * sizeof(float);
@@ -83,8 +83,9 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value);
 std::vector<uint8_t> encode_error(const std::string& message);
 std::vector<uint8_t> encode_ping(int64_t t1_ns);
 std::vector<uint8_t> encode_pong(const Pong& value);
-//! Sets t3 in an encoded PONG frame; call where the frame is sent, so t3 is when it left, not when it was queued.
-void set_pong_t3(std::vector<uint8_t>& pong_frame, int64_t t3_ns);
+//! Sets pong_sent_ns in an encoded PONG frame; call where the frame is sent, so it records when the frame left,
+//! not when it was queued.
+void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns);
 
 // Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,

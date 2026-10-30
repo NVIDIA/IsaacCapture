@@ -95,7 +95,7 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     REQUIRE(bytes[2] == 0x53);
     REQUIRE(bytes[3] == 0x30);
 
-    const protocol::FrameHeader decoded = protocol::decode_header(bytes);
+    const protocol::FrameHeader decoded = protocol::decode_header({ bytes, protocol::kHeaderSize });
     REQUIRE(decoded.type == protocol::FrameType::HandSample);
     REQUIRE(decoded.channel_id == 0xBEEF);
     REQUIRE(decoded.seq == 0x01020304);
@@ -105,22 +105,22 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     SECTION("bad magic is rejected")
     {
         bytes[0] ^= 0xFF;
-        REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
     SECTION("unknown type is rejected")
     {
         bytes[4] = 200;
-        REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
     SECTION("other protocol versions are rejected")
     {
         bytes[5] = 1;
-        REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
     SECTION("oversized payloads are rejected")
     {
         std::memset(bytes + 12, 0xFF, 4);
-        REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
 }
 
@@ -152,7 +152,7 @@ TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device
     for (const uint8_t type : { 0, 6, 15 })
     {
         bytes[4] = type;
-        REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
 }
 
@@ -317,7 +317,7 @@ TEST_CASE("ERROR carries a message and empty payloads decode", "[remote_device_b
     REQUIRE_THROWS_AS(protocol::decode_error({ 4, 0, 0, 0, 'a' }), protocol::DecodeError);
 }
 
-TEST_CASE("PING and PONG round-trip and PONG t3 is stamped at send time", "[remote_device_bridge][unit]")
+TEST_CASE("PING and PONG round-trip and PONG records its send time", "[remote_device_bridge][unit]")
 {
     const std::vector<uint8_t> ping = protocol::encode_ping(-123456789012345LL);
     REQUIRE(ping.size() == 8);
@@ -327,26 +327,26 @@ TEST_CASE("PING and PONG round-trip and PONG t3 is stamped at send time", "[remo
     const std::vector<uint8_t> payload = protocol::encode_pong(protocol::Pong{ 1, 2, 3 });
     REQUIRE(payload.size() == 24);
     const protocol::Pong pong = protocol::decode_pong(payload);
-    REQUIRE(pong.t1_ns == 1);
-    REQUIRE(pong.t2_ns == 2);
-    REQUIRE(pong.t3_ns == 3);
+    REQUIRE(pong.ping_sent_ns == 1);
+    REQUIRE(pong.ping_received_ns == 2);
+    REQUIRE(pong.pong_sent_ns == 3);
     REQUIRE_THROWS_AS(protocol::decode_pong(std::vector<uint8_t>(25, 0)), protocol::DecodeError);
 
     std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, protocol::kSessionChannelId, payload);
     protocol::stamp_header(frame, 7, 0x0102030405060708LL);
-    REQUIRE(protocol::decode_pong(protocol::split_frame(frame).payload).t3_ns == 3); // header only
-    protocol::set_pong_t3(frame, 0x0102030405060708LL);
+    REQUIRE(protocol::decode_pong(protocol::split_frame(frame).payload).pong_sent_ns == 3); // header only
+    protocol::set_pong_sent_time(frame, 0x0102030405060708LL);
     const protocol::Frame split = protocol::split_frame(frame);
     REQUIRE(split.header.type == protocol::FrameType::Pong);
     REQUIRE(split.header.t_send_monotonic_ns == 0x0102030405060708LL);
     const protocol::Pong stamped = protocol::decode_pong(split.payload);
-    REQUIRE(stamped.t1_ns == 1);
-    REQUIRE(stamped.t2_ns == 2);
-    REQUIRE(stamped.t3_ns == 0x0102030405060708LL);
+    REQUIRE(stamped.ping_sent_ns == 1);
+    REQUIRE(stamped.ping_received_ns == 2);
+    REQUIRE(stamped.pong_sent_ns == 0x0102030405060708LL);
 
     std::vector<uint8_t> ping_frame =
         protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, ping);
-    REQUIRE_THROWS_AS(protocol::set_pong_t3(ping_frame, 42), std::invalid_argument);
+    REQUIRE_THROWS_AS(protocol::set_pong_sent_time(ping_frame, 42), std::invalid_argument);
     REQUIRE_THROWS_WITH(protocol::decode_ping({ 1, 2, 3 }), Catch::Matchers::ContainsSubstring("PING"));
     REQUIRE_THROWS_WITH(protocol::decode_pong({ 1 }), Catch::Matchers::ContainsSubstring("PONG"));
 }
@@ -407,7 +407,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         REQUIRE(payload.size() == protocol::kHandSamplePayloadSize);
         const std::vector<uint8_t> frame = protocol::encode_hand_sample_frame(0x0102, sample.joints.data(), -42);
         REQUIRE(frame.size() == protocol::kHeaderSize + protocol::kHandSamplePayloadSize);
-        const protocol::FrameHeader header = protocol::decode_header(frame.data());
+        const protocol::FrameHeader header = protocol::decode_header(frame);
         REQUIRE(header.type == protocol::FrameType::HandSample);
         REQUIRE(header.channel_id == 0x0102);
         REQUIRE(header.payload_size == protocol::kHandSamplePayloadSize);

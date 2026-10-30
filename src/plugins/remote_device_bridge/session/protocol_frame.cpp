@@ -20,13 +20,38 @@ using detail::Writer;
 namespace
 {
 
-constexpr uint8_t kUnassignedFrameType = 6;
 constexpr size_t kTypeOffset = 4;
 constexpr size_t kVersionOffset = 5;
 constexpr size_t kChannelOffset = 6;
 constexpr size_t kSeqOffset = 8;
 constexpr size_t kPayloadSizeOffset = 12;
 constexpr size_t kSendTimeOffset = 16;
+static_assert(kTypeOffset == sizeof(kMagic) && kVersionOffset == kTypeOffset + 1 && kChannelOffset == kVersionOffset + 1 &&
+              kSeqOffset == kChannelOffset + sizeof(uint16_t) && kPayloadSizeOffset == kSeqOffset + sizeof(uint32_t) &&
+              kSendTimeOffset == kPayloadSizeOffset + sizeof(uint32_t) &&
+              kHeaderSize == kSendTimeOffset + sizeof(int64_t));
+
+bool is_frame_type(uint8_t value)
+{
+    switch (static_cast<FrameType>(value))
+    {
+    case FrameType::Hello:
+    case FrameType::HelloAck:
+    case FrameType::OpenHand:
+    case FrameType::OpenSchema:
+    case FrameType::OpenPull:
+    case FrameType::Close:
+    case FrameType::HandSample:
+    case FrameType::SchemaSample:
+    case FrameType::WristSample:
+    case FrameType::Heartbeat:
+    case FrameType::Error:
+    case FrameType::Ping:
+    case FrameType::Pong:
+        return true;
+    }
+    return false;
+}
 
 } // namespace
 
@@ -63,7 +88,7 @@ Frame split_frame(std::vector<uint8_t> message)
         throw DecodeError("protocol: message shorter than a header");
     }
     Frame frame;
-    frame.header = decode_header(message.data());
+    frame.header = decode_header(message);
     if (message.size() != kHeaderSize + frame.header.payload_size)
     {
         throw DecodeError("protocol: message length does not match payload_size");
@@ -79,17 +104,20 @@ std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std
         type, channel_id, payload.size(), [&payload](Writer& writer) { writer.bytes(payload.data(), payload.size()); });
 }
 
-FrameHeader decode_header(const uint8_t* in)
+FrameHeader decode_header(std::span<const uint8_t> in)
 {
-    Reader reader(in, kHeaderSize, "header");
+    if (in.size() < kHeaderSize)
+    {
+        throw DecodeError("protocol: header: truncated");
+    }
+    Reader reader(in.data(), kHeaderSize, "header");
     if (reader.u32() != kMagic)
     {
         throw DecodeError("protocol: bad frame magic");
     }
     FrameHeader header;
     const uint8_t type = reader.u8();
-    if (type < static_cast<uint8_t>(FrameType::Hello) || type > static_cast<uint8_t>(kLastFrameType) ||
-        type == kUnassignedFrameType)
+    if (!is_frame_type(type))
     {
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }
