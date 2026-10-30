@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import numpy as np
 
+from tactile_metadata_editor import storage
 from tactile_metadata_editor.document import Segment, State, Taxel
 from tactile_metadata_editor.ui import Editor
 
@@ -70,6 +71,25 @@ class EditorTests(unittest.TestCase):
                 self.assertTrue(editor.binding_start.disabled)
                 self.assertEqual(editor.binding_next.disabled, not expected)
                 self.assertTrue(editor.binding_complete.disabled)
+
+    def test_deleted_segment_remains_invalid_after_round_trip(self):
+        document = self.make_editor().document
+        document.segments.append(Segment("INDEX_TIP"))
+        document.taxels[0].segments[0] = "INDEX_TIP"
+        document.delete("segments", [1])
+
+        encoded = storage.metadata(document)
+        expected = [{"values": [0xFFFFFFFF, 0, 0, 0]}]
+        self.assertEqual(encoded["geometry_mapping"]["taxel_segment_indices"], expected)
+
+        loaded = storage.parse(encoded, document.side)
+        self.assertTrue(
+            any(issue["field"] == "segment0" for issue in loaded.validate())
+        )
+        self.assertEqual(
+            storage.metadata(loaded)["geometry_mapping"]["taxel_segment_indices"],
+            expected,
+        )
 
 
 if __name__ == "__main__":

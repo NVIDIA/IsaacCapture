@@ -108,7 +108,6 @@ def metadata(document: Document) -> dict:
     inverse = np.linalg.inv(np.asarray(document.alignment, dtype=float))
     joints = [segment.joint for segment in document.segments]
     indices = {joint: row for row, joint in enumerate(joints)}
-    fallback = 0
     segment_poses = [
         _json_pose(pose(inverse @ matrix(segment.pose)))
         for segment in document.segments
@@ -117,7 +116,12 @@ def metadata(document: Document) -> dict:
         _json_pose(pose(inverse @ matrix(taxel.pose))) for taxel in document.taxels
     ]
     binding_indices = [
-        {"values": [indices.get(joint, fallback) for joint in taxel.segments]}
+        {
+            "values": [
+                indices.get(joint, 0 if joint is None else 0xFFFFFFFF)
+                for joint in taxel.segments
+            ]
+        }
         for taxel in document.taxels
     ]
     binding_weights = [{"values": list(taxel.weights)} for taxel in document.taxels]
