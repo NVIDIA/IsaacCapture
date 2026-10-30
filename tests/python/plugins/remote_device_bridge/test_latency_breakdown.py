@@ -137,18 +137,7 @@ def write_pair(directory: Path) -> tuple[Path, Path]:
     bridge = directory / "bridge.csv"
     with open(bridge, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(
-            [
-                "push_mono_ns",
-                "recv_mono_ns",
-                "capture_sender_ns",
-                "capture_mapped_ns",
-                "age_ms",
-                "side",
-                "seq",
-                "curl",
-            ]
-        )
+        w.writerow(BRIDGE_HEADER)
         for i in range(len(capture_s)):
             age = (push[i] - capture_mapped[i]) / 1e6
             w.writerow(
