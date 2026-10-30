@@ -76,6 +76,10 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.
 
 
+### Synthetic XR Teleoperation (Preview)
+
+Try desktop controller input without an XR headset using the [Synthetic XR example](examples/synthetic_xr/README.md). Build this checkout's WebXR client to enable the controls. Host CloudXR requirements still apply.
+
 ### Install & Run Isaac Lab
 
 The latest [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) release, [3.0.0 EA](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-EA), includes Isaac Capture, previously released as Isaac Teleop.

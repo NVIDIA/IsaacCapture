@@ -74,6 +74,15 @@ a:focus {
     text-decoration: underline !important;
 }
 
+.doc-video {
+    display: block;
+    width: 100%;
+    margin: 1rem 0 0.5rem;
+    border: 1px solid var(--pst-color-border);
+    border-radius: 0.5rem;
+    background: #000;
+}
+
 /* for the announcement link */
 .bd-header-announcement a,
 .bd-header-version-warning a {
@@ -272,4 +281,14 @@ figure a.no-image-zoom:has(> img) {
 /* Lighter text for trademark notice (theme muted color; works in light and dark mode) */
 .trademark-notice {
     color: var(--pst-color-text-muted) !important;
+}
+
+/* Leave room for both navigation toggles on narrow documentation screens. */
+@media (max-width: 575.98px) {
+    .bd-header .logo__title {
+        max-width: calc(100vw - 9rem);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 }

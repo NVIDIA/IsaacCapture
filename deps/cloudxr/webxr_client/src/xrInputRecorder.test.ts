@@ -45,7 +45,7 @@ function pose(x: number, y = 0, z = 0, orientation: DOMPointInit = { w: 1 }): XR
     emulatedPosition: false,
     linearVelocity: null,
     angularVelocity: null,
-  } as XRPose;
+  } as unknown as XRPose;
 }
 
 function jointPose(x: number, radius = 0.01): XRJointPose {
@@ -56,7 +56,7 @@ function gamepad(axis: number): Gamepad {
   return {
     axes: [axis],
     buttons: [{ value: axis, pressed: axis > 0, touched: true }],
-  } as Gamepad;
+  } as unknown as Gamepad;
 }
 
 type PoseResolver = (space: XRSpace, baseSpace: XRSpace) => XRPose | null;
@@ -68,7 +68,7 @@ function makeFrame(
   getJointPose: JointResolver = () => null,
   predictedDisplayTime = 0
 ): XRFrame {
-  const session = { inputSources } as XRSession;
+  const session = { inputSources } as unknown as XRSession;
   return {
     session,
     predictedDisplayTime,
@@ -360,8 +360,8 @@ describe('scoped CloudXR replay frame', () => {
     expect(adapted.session.inputSources).toBe(replaySources);
     expect(replaySources[0].gamepad).toBe(replaySources[0].gamepad);
     expect(replaySources[0].gamepad?.axes).toEqual([3]);
-    expect(adapted.getJointPose(wrist, cloudSpace)?.transform.position.x).toBe(15);
-    expect(adapted.getJointPose(wrist, cloudSpace)?.radius).toBe(0.02);
+    expect(adapted.getJointPose!(wrist, cloudSpace)?.transform.position.x).toBe(15);
+    expect(adapted.getJointPose!(wrist, cloudSpace)?.radius).toBe(0.02);
   });
 
   test('delegates unknown spaces and joints to the real frame', () => {
@@ -378,7 +378,7 @@ describe('scoped CloudXR replay frame', () => {
     const adapted = recorder.adaptTrackingFrame(frame);
 
     expect(adapted.getPose(unknownSpace, sceneSpace)?.transform.position.x).toBe(7);
-    expect(adapted.getJointPose(unknownJoint, sceneSpace)?.transform.position.x).toBe(8);
+    expect(adapted.getJointPose!(unknownJoint, sceneSpace)?.transform.position.x).toBe(8);
   });
 });
 

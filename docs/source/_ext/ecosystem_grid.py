@@ -699,6 +699,28 @@ class EcoBlock(Directive):
         return [node]
 
 
+class DocVideo(Directive):
+    """Embed a responsive video while retaining a link in non-HTML output."""
+
+    required_arguments = 1
+    has_content = False
+
+    def run(self) -> list[nodes.Node]:
+        source = self.arguments[0]
+        video = _element(
+            "video",
+            ["doc-video"],
+            controls="controls",
+            preload="metadata",
+            playsinline="playsinline",
+            src=source,
+        )
+        fallback = nodes.paragraph()
+        fallback += nodes.reference("Open the video.", "Open the video.", refuri=source)
+        video += fallback
+        return [video]
+
+
 class DeviceCount(SphinxRole):
     """``:device-count:`input``` — rows in one table section, group, or ``all``.
 
@@ -735,5 +757,6 @@ def setup(app):
         )
     app.add_directive("device-matrix", DeviceMatrix)
     app.add_directive("eco-block", EcoBlock)
+    app.add_directive("doc-video", DocVideo)
     app.add_role("device-count", DeviceCount())
     return {"version": "1.0", "parallel_read_safe": True, "parallel_write_safe": True}

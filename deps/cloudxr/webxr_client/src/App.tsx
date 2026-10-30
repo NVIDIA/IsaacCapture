@@ -69,6 +69,7 @@ import { readUrlParam } from './config/resolve';
 import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
+import { SyntheticXRFrameObserver, SyntheticXRPanel } from './syntheticXR/SyntheticXRPanel';
 import { TraceVisualization } from './TraceVisualization';
 import {
   formatSystemNotice,
@@ -1002,7 +1003,6 @@ function AppContent() {
   };
 
   // Memo config based on configVersion (manual dependency tracker incremented on config changes)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const config = useMemo(
     () => (cloudXR2DUI ? cloudXR2DUI.getConfiguration() : null),
     [cloudXR2DUI, configVersion]
@@ -1148,6 +1148,13 @@ function AppContent() {
 
   return (
     <>
+      <SyntheticXRPanel
+        ready={iwerLoaded}
+        connected={isConnected}
+        replaying={recorder.mode === 'replaying'}
+        onStartTeleop={handleStartTeleop}
+        startingOrRunning={isCountingDown || isTeleopRunning}
+      />
       <Canvas
         events={noEvents}
         style={{
@@ -1176,6 +1183,7 @@ function AppContent() {
         }}
       >
         <SuppressWebGLRendererWhenHeadless headless={!!config?.headless} />
+        <SyntheticXRFrameObserver />
         <PointerEvents batchEvents={false} />
         <XR store={store}>
           <SimpleEnvironment />

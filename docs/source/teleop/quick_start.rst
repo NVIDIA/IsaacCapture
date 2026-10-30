@@ -8,6 +8,8 @@ This guide walks through running a teleoperation session with an XR headset usin
 end you will have the retargeting pipeline processing live hand/controller data and printing gripper
 commands to the terminal.
 
+No headset? See :doc:`synthetic_xr` for desktop controller inputs and examples.
+
 .. contents:: Steps
    :local:
    :depth: 1
