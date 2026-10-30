@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 j-mex. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-jmex"
+version = "0.0.0"  # Internal example - not versioned
+description = "j-mex AgileMaster full body: G1 upper-body teleop in Isaac Lab, MCAP recording"
+requires-python = ">=3.11,<3.14"
+# No version on isaaccapture: the example runs against the one built from this
+# checkout. isaaclab, gymnasium and pink are left out on purpose: jmex_g1_tasks
+# runs inside the Isaac Lab environment, which provides them, and README.md
+# installs this example into that interpreter.
+dependencies = [
+    "isaaccapture[cloudxr]",
+    "numpy>=1.23.0",
+    "scipy>=1.15.0",
+]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# jmex -- see the packaging rules in examples/README.md.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/jmex"]
+sources = ["python"]
+
+[tool.uv.sources]
+# Editable, so edits under src/python/ need no rebuild.
+isaaccapture = { path = "../..", editable = true }
