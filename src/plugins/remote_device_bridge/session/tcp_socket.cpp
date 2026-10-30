@@ -302,10 +302,6 @@ bool TcpSocket::send_all(const uint8_t* data, size_t size)
             }
             return false;
         }
-        if (n == 0)
-        {
-            return false;
-        }
         sent += static_cast<size_t>(n);
     }
     return true;

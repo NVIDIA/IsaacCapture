@@ -33,10 +33,10 @@ public:
 
     //! Client role: sends the upgrade for `path` with `host_header` ("host:port") and throws
     //! std::runtime_error unless the server answers 101.
-    static std::unique_ptr<WebSocketTransport> connect(TcpSocket socket,
-                                                       const std::string& host_header,
-                                                       const std::string& path,
-                                                       std::chrono::milliseconds timeout = kConnectTimeout);
+    WebSocketTransport(TcpSocket socket,
+                       const std::string& host_header,
+                       const std::string& path,
+                       std::chrono::milliseconds timeout = kConnectTimeout);
 
     //! Like TcpTransport::accept; the upgrade happens on the first receive().
     static std::unique_ptr<ITransport> accept(TcpSocket& listener,

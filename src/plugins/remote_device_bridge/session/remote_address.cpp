@@ -106,7 +106,8 @@ std::unique_ptr<ITransport> connect_transport(const RemoteAddress& remote, std::
     {
         return std::make_unique<TcpTransport>(std::move(socket));
     }
-    return WebSocketTransport::connect(std::move(socket), host_header(remote.endpoint), *remote.ws_path, timeout);
+    return std::make_unique<WebSocketTransport>(
+        std::move(socket), host_header(remote.endpoint), *remote.ws_path, timeout);
 }
 
 } // namespace remote_plugin_session
