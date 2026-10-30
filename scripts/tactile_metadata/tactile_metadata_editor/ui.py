@@ -22,7 +22,7 @@ from .document import Document, IDENTITY_POSE, JOINTS, Segment, State, Taxel
 LOG = logging.getLogger("isaaccapture.tactile_metadata.editor")
 
 SEGMENT_CUBE_SIDE_M = 0.004
-TAXEL_SIDE_M = 0.002
+TAXEL_SIDE_M = 0.0015
 URDF_OPACITY = 0.2
 SEGMENT_FLAT_SHADING = True
 VISUALIZER_CAST_SHADOW = False
