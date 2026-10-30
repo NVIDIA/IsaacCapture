@@ -397,7 +397,6 @@ void ManusTracker::initialize(const ManusPluginSessionFactory& plugin_session_fa
                 core::WristTrackingSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
                                                  .left_aim_to_wrist = kLeftHandOffset,
                                                  .right_aim_to_wrist = kRightHandOffset });
-            m_logger->info("Wrist tracking source initialized");
         }
         else
         {

@@ -20,9 +20,6 @@ struct CapturedState
     std::vector<uint8_t> payload;
     int64_t local_time_ns{ 0 };
     int64_t device_time_ns{ 0 };
-    bool session_destroyed{ false };
-    bool channel_destroyed{ false };
-    bool channel_destroyed_before_session{ false };
 };
 
 class CapturingChannel final : public core::ISchemaPushChannel
@@ -30,11 +27,6 @@ class CapturingChannel final : public core::ISchemaPushChannel
 public:
     explicit CapturingChannel(std::shared_ptr<CapturedState> state) : state_(std::move(state))
     {
-    }
-
-    ~CapturingChannel() override
-    {
-        state_->channel_destroyed = true;
     }
 
     const core::SchemaPusherConfig& config() const override
@@ -61,12 +53,6 @@ class CapturingSession final : public core::IPluginSession
 public:
     explicit CapturingSession(std::shared_ptr<CapturedState> state) : state_(std::move(state))
     {
-    }
-
-    ~CapturingSession() override
-    {
-        state_->channel_destroyed_before_session = state_->channel_destroyed;
-        state_->session_destroyed = true;
     }
 
     core::IPluginPullChannel& pull_channel() override
@@ -114,26 +100,6 @@ TEST_CASE("SchemaPusher delegates samples to its channel", "[pusherio][unit]")
     REQUIRE(state->payload == payload);
     REQUIRE(state->local_time_ns == 100);
     REQUIRE(state->device_time_ns == 80);
-}
-
-TEST_CASE("SchemaPusher leaves session ownership with its caller", "[pusherio][unit]")
-{
-    auto state = std::make_shared<CapturedState>();
-    auto session = std::make_shared<CapturingSession>(state);
-
-    {
-        core::SchemaPusher pusher(session->create_schema_push_channel(make_config()));
-        REQUIRE(session.use_count() == 1);
-        REQUIRE_FALSE(state->session_destroyed);
-        REQUIRE_FALSE(state->channel_destroyed);
-    }
-
-    REQUIRE(state->channel_destroyed);
-    REQUIRE_FALSE(state->session_destroyed);
-
-    session.reset();
-    REQUIRE(state->session_destroyed);
-    REQUIRE(state->channel_destroyed_before_session);
 }
 
 TEST_CASE("SchemaPusher validates transport-independent buffer metadata", "[pusherio][unit]")

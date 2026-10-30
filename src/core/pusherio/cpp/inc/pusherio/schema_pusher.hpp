@@ -41,14 +41,13 @@ struct SchemaPusherConfig
     //! Human-readable description for debugging and runtime display.
     std::string localized_name;
 
-    //! Optional producer label for backend diagnostics.
+    //! OpenXR application name. If empty, defaults to "Pusher" or "Reader".
     std::string app_name = "";
 };
 
 /*!
  * @brief Transport-owned channel for one configured schema stream.
  *
- * OpenXR and remote transports implement this operation-specific interface.
  * Implementations own any child resources needed to keep the channel valid.
  */
 class ISchemaPushChannel
@@ -69,8 +68,8 @@ public:
  * @brief Pushes FlatBuffer schema data through a transport-owned channel.
  *
  * This is the plugin-facing facade. It preserves the existing opaque FlatBuffer
- * contract while allowing the owning session to select the local OpenXR or remote
- * transport implementation. Use composition to add typed push methods where useful.
+ * contract while the owning session selects the channel implementation. Use
+ * composition to add typed push methods where useful.
  *
  * Example usage with composition:
  * @code
@@ -144,8 +143,7 @@ public:
      * The local OpenXR channel converts the local common clock value to XrTime
      * before storing; the reader side (SchemaTracker) converts it back so that
      * DeviceDataTimestamp carries monotonic nanoseconds in both local-common-clock
-     * fields. A remote channel owns any client-to-server monotonic clock mapping
-     * needed before its server-side OpenXR injection.
+     * fields.
      *
      * If the raw device clock is not available, pass the local common clock value
      * as a best-effort substitute.

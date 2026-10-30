@@ -20,8 +20,7 @@ class IHandTrackingPushChannel
 {
 public:
     // Orderly destruction closes the logical hand stream and makes it inactive
-    // at the receiver. Remote implementations must also expire active state
-    // after an unexpected transport disconnect.
+    // at the receiver.
     virtual ~IHandTrackingPushChannel() = default;
 
     // joint_locations contains XR_HAND_JOINT_COUNT_EXT entries and is borrowed
