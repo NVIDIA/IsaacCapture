@@ -5,34 +5,31 @@
 
 #include "inc/pusherio/openxr_schema_push_channel.hpp"
 
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace core
 {
 
-namespace
+std::vector<std::string> SchemaPusher::get_required_extensions()
 {
+    return OpenXRSchemaPushChannel::get_required_extensions();
+}
 
-const SchemaPusherConfig& require_channel_config(const std::unique_ptr<ISchemaPushChannel>& channel)
+SchemaPusher::SchemaPusher(const OpenXRSessionHandles& handles, SchemaPusherConfig config)
+    : SchemaPusher(std::make_unique<OpenXRSchemaPushChannel>(handles, std::move(config)))
 {
-    if (!channel)
+}
+
+SchemaPusher::SchemaPusher(std::unique_ptr<ISchemaPushChannel> channel) : m_channel(std::move(channel))
+{
+    if (!m_channel)
     {
         throw std::invalid_argument("SchemaPusher requires a schema push channel");
     }
-    return channel->config();
-}
-
-} // namespace
-
-SchemaPusher::SchemaPusher(const OpenXRSessionHandles& handles, SchemaPusherConfig config)
-    : SchemaPusher(make_openxr_schema_push_channel(handles, std::move(config)))
-{
-}
-
-SchemaPusher::SchemaPusher(std::unique_ptr<ISchemaPushChannel> channel)
-    : m_config(require_channel_config(channel)), m_channel(std::move(channel))
-{
 }
 
 SchemaPusher::~SchemaPusher() = default;
@@ -42,11 +39,12 @@ void SchemaPusher::push_buffer(const uint8_t* buffer,
                                int64_t sample_time_local_common_clock_ns,
                                int64_t sample_time_raw_device_clock_ns)
 {
-    if (size > m_config.max_flatbuffer_size)
+    const size_t max_flatbuffer_size = m_channel->config().max_flatbuffer_size;
+    if (size > max_flatbuffer_size)
     {
         throw std::runtime_error("Serialized data size (" + std::to_string(size) +
-                                 " bytes) exceeds max_flatbuffer_size (" +
-                                 std::to_string(m_config.max_flatbuffer_size) + " bytes)");
+                                 " bytes) exceeds max_flatbuffer_size (" + std::to_string(max_flatbuffer_size) +
+                                 " bytes)");
     }
     if (sample_time_raw_device_clock_ns < 0)
     {
@@ -63,7 +61,7 @@ void SchemaPusher::push_buffer(const uint8_t* buffer,
 
 const SchemaPusherConfig& SchemaPusher::config() const
 {
-    return m_config;
+    return m_channel->config();
 }
 
 } // namespace core

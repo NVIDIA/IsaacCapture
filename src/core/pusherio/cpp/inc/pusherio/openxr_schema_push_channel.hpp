@@ -5,8 +5,11 @@
 
 #include "schema_pusher.hpp"
 
+#include <log_bridge/logger.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
+#include <oxr_utils/oxr_time.hpp>
 
+#include <XR_NVX1_push_tensor.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,11 +43,14 @@ public:
                      int64_t sample_time_raw_device_clock_ns) override;
 
 private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
-};
+    void create_tensor_collection(const OpenXRSessionHandles& handles, PFN_xrCreatePushTensorCollectionNV create_fn);
 
-std::unique_ptr<ISchemaPushChannel> make_openxr_schema_push_channel(const OpenXRSessionHandles& handles,
-                                                                    SchemaPusherConfig config);
+    SchemaPusherConfig config_;
+    XrTimeConverter time_converter_;
+    std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.OpenXRSchemaPushChannel");
+    XrPushTensorCollectionNV push_tensor_{ XR_NULL_HANDLE };
+    PFN_xrPushTensorCollectionDataNV push_fn_{ nullptr };
+    PFN_xrDestroyPushTensorCollectionNV destroy_fn_{ nullptr };
+};
 
 } // namespace core

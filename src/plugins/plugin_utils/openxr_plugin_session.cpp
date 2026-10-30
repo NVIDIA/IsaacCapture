@@ -231,7 +231,7 @@ std::unique_ptr<core::ISchemaPushChannel> OpenXRPluginSession::create_schema_pus
     {
         throw std::logic_error("OpenXRPluginSession: schema push was not declared in PluginSessionRequirements");
     }
-    return core::make_openxr_schema_push_channel(session_->get_handles(), config);
+    return std::make_unique<core::OpenXRSchemaPushChannel>(session_->get_handles(), config);
 }
 
 std::unique_ptr<core::IHandTrackingPushChannel> OpenXRPluginSession::create_hand_tracking_push_channel(XrHandEXT hand)

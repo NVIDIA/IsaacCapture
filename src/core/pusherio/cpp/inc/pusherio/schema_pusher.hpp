@@ -103,15 +103,7 @@ public:
      *
      * Includes platform-specific time conversion extension.
      */
-    static std::vector<std::string> get_required_extensions()
-    {
-        std::vector<std::string> required_extensions = { "XR_NVX1_push_tensor", "XR_NVX1_tensor_data" };
-        for (const auto& ext : XrTimeConverter::get_required_extensions())
-        {
-            required_extensions.push_back(ext);
-        }
-        return required_extensions;
-    }
+    static std::vector<std::string> get_required_extensions();
 
     /*!
      * @brief Constructs the pusher and initializes the OpenXR tensor collection.
@@ -175,7 +167,6 @@ public:
     const SchemaPusherConfig& config() const;
 
 private:
-    SchemaPusherConfig m_config;
     std::unique_ptr<ISchemaPushChannel> m_channel;
 };
 
