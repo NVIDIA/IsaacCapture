@@ -85,15 +85,6 @@ core::WristTrackingSourceMode from_wire_mode(uint8_t mode)
     }
 }
 
-bool to_bool(uint8_t value)
-{
-    if (value > 1)
-    {
-        throw DecodeError("protocol: invalid boolean value " + std::to_string(value));
-    }
-    return value == 1;
-}
-
 void write_wrist_config(Writer& writer, const core::WristTrackingSourceConfig& value)
 {
     writer.u8(to_wire_mode(value.mode));
@@ -164,11 +155,11 @@ std::vector<uint8_t> encode_hello(const Hello& value)
     return build_payload(
         [&](Writer& writer)
         {
-            writer.u16(value.proto_version);
+            writer.u16(kHelloVersion);
             writer.str(value.app_name);
-            writer.u8(value.requirements.schema_push ? 1 : 0);
-            writer.u8(value.requirements.hand_tracking_push ? 1 : 0);
-            writer.u8(value.requirements.wrist_tracking_pull ? 1 : 0);
+            writer.boolean(value.requirements.schema_push);
+            writer.boolean(value.requirements.hand_tracking_push);
+            writer.boolean(value.requirements.wrist_tracking_pull.has_value());
             if (value.requirements.wrist_tracking_pull)
             {
                 write_wrist_config(writer, *value.requirements.wrist_tracking_pull);
@@ -181,7 +172,7 @@ std::vector<uint8_t> encode_hello_ack(const HelloAck& value)
     return build_payload(
         [&](Writer& writer)
         {
-            writer.u8(value.accepted ? 1 : 0);
+            writer.boolean(value.accepted);
             writer.str(value.reason);
         });
 }
@@ -211,8 +202,8 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value)
         {
             writer.i64(value.sample_time_ns);
             writer.u8(to_wire_is_left(value.hand));
-            writer.u8(value.sample.valid ? 1 : 0);
-            writer.u8(value.sample.tracked ? 1 : 0);
+            writer.boolean(value.sample.valid);
+            writer.boolean(value.sample.tracked);
             writer.pose(value.sample.pose);
         });
 }
@@ -246,26 +237,21 @@ void set_pong_t3(std::vector<uint8_t>& pong_frame, int64_t t3_ns)
     {
         throw std::invalid_argument("protocol: not an encoded PONG frame");
     }
-    const uint64_t bits = static_cast<uint64_t>(t3_ns);
-    for (size_t i = 0; i < sizeof(int64_t); ++i)
-    {
-        pong_frame[kT3Offset + i] = static_cast<uint8_t>(bits >> (8 * i));
-    }
+    detail::store_le(pong_frame.data() + kT3Offset, static_cast<uint64_t>(t3_ns), sizeof(int64_t));
 }
 
 Hello decode_hello(const std::vector<uint8_t>& payload)
 {
     Reader reader(payload, "HELLO");
     Hello value;
-    value.proto_version = reader.u16();
-    if (value.proto_version != kHelloVersion)
+    if (const uint16_t version = reader.u16(); version != kHelloVersion)
     {
-        throw DecodeError("protocol: unsupported HELLO version " + std::to_string(value.proto_version));
+        throw DecodeError("protocol: unsupported HELLO version " + std::to_string(version));
     }
     value.app_name = reader.str();
-    value.requirements.schema_push = to_bool(reader.u8());
-    value.requirements.hand_tracking_push = to_bool(reader.u8());
-    if (to_bool(reader.u8()))
+    value.requirements.schema_push = reader.boolean();
+    value.requirements.hand_tracking_push = reader.boolean();
+    if (reader.boolean())
     {
         value.requirements.wrist_tracking_pull = read_wrist_config(reader);
     }
@@ -277,7 +263,7 @@ HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
 {
     Reader reader(payload, "HELLO_ACK");
     HelloAck value;
-    value.accepted = to_bool(reader.u8());
+    value.accepted = reader.boolean();
     value.reason = reader.str();
     reader.finish();
     return value;
@@ -336,9 +322,9 @@ WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
     Reader reader(payload, "WRIST_SAMPLE");
     WristSample value;
     value.sample_time_ns = reader.i64();
-    value.hand = to_bool(reader.u8()) ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
-    value.sample.valid = to_bool(reader.u8());
-    value.sample.tracked = to_bool(reader.u8());
+    value.hand = reader.boolean() ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+    value.sample.valid = reader.boolean();
+    value.sample.tracked = reader.boolean();
     value.sample.pose = reader.pose();
     reader.finish();
     return value;

@@ -97,7 +97,6 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
 
     const protocol::FrameHeader decoded = protocol::decode_header(bytes);
     REQUIRE(decoded.type == protocol::FrameType::HandSample);
-    REQUIRE(decoded.version == protocol::kProtocolVersion);
     REQUIRE(decoded.channel_id == 0xBEEF);
     REQUIRE(decoded.seq == 0x01020304);
     REQUIRE(decoded.payload_size == protocol::kHandSamplePayloadSize);
@@ -147,7 +146,7 @@ TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device
     protocol::stamp_header(frame, 0x0C0D0E0F, 0x1112131415161718LL);
     const std::vector<uint8_t> expected = { 0x52, 0x50, 0x53, 0x30, 14,   0,    0x0B, 0x0A, 0x0F, 0x0E, 0x0D, 0x0C,
                                             24,   0,    0,    0,    0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11 };
-    REQUIRE(std::vector<uint8_t>(frame.begin(), frame.begin() + 24) == expected);
+    REQUIRE(std::vector<uint8_t>(frame.begin(), frame.begin() + protocol::kHeaderSize) == expected);
     uint8_t* bytes = frame.data();
 
     for (const uint8_t type : { 0, 6, 15 })
@@ -168,7 +167,6 @@ TEST_CASE("HELLO and HELLO_ACK round-trip", "[remote_device_bridge][unit]")
     };
     hello.requirements = { .schema_push = true, .hand_tracking_push = false, .wrist_tracking_pull = wrist };
     const protocol::Hello decoded = protocol::decode_hello(protocol::encode_hello(hello));
-    REQUIRE(decoded.proto_version == protocol::kHelloVersion);
     REQUIRE(decoded.app_name == "ManusHandPlugin");
     REQUIRE(decoded.requirements.schema_push);
     REQUIRE_FALSE(decoded.requirements.hand_tracking_push);
@@ -180,8 +178,9 @@ TEST_CASE("HELLO and HELLO_ACK round-trip", "[remote_device_bridge][unit]")
     hello.requirements.wrist_tracking_pull.reset();
     REQUIRE_FALSE(protocol::decode_hello(protocol::encode_hello(hello)).requirements.wrist_tracking_pull);
 
-    hello.proto_version = 1;
-    REQUIRE_THROWS_AS(protocol::decode_hello(protocol::encode_hello(hello)), protocol::DecodeError);
+    std::vector<uint8_t> old_version = protocol::encode_hello(hello);
+    old_version[0] = 1; // HELLO version u16 leads the payload
+    REQUIRE_THROWS_AS(protocol::decode_hello(old_version), protocol::DecodeError);
 
     const protocol::HelloAck ack =
         protocol::decode_hello_ack(protocol::encode_hello_ack(protocol::HelloAck{ false, "no runtime" }));
@@ -230,7 +229,7 @@ TEST_CASE("HELLO rejects an unknown wrist source mode", "[remote_device_bridge][
                                                                               .left_aim_to_wrist = make_pose(0.1f),
                                                                               .right_aim_to_wrist = make_pose(0.7f) };
     std::vector<uint8_t> bytes = protocol::encode_hello(hello);
-    // proto_version u16, app_name (u32 length, empty), three flags, then the wrist mode byte.
+    // version u16, app_name (u32 length, empty), three flags, then the wrist mode byte.
     const size_t mode_offset = sizeof(uint16_t) + sizeof(uint32_t) + 3;
     REQUIRE(bytes[mode_offset] == 0);
     bytes[mode_offset] = 7;
@@ -378,16 +377,18 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         protocol::stamp_header(frame, 0x11223344u, 0x0807060504030201LL);
         REQUIRE(std::vector<uint8_t>(frame.begin() + 8, frame.begin() + 12) ==
                 std::vector<uint8_t>{ 0x44, 0x33, 0x22, 0x11 });
-        REQUIRE(std::vector<uint8_t>(frame.begin() + 16, frame.begin() + 24) ==
+        REQUIRE(std::vector<uint8_t>(frame.begin() + 16, frame.begin() + protocol::kHeaderSize) ==
                 std::vector<uint8_t>{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 });
-        REQUIRE(std::equal(frame.begin() + 24, frame.end(), golden.begin() + 24)); // payload untouched
+        REQUIRE(std::equal(
+            frame.begin() + protocol::kHeaderSize, frame.end(), golden.begin() + protocol::kHeaderSize)); // payload
+                                                                                                          // untouched
 
         const protocol::Frame split = protocol::split_frame(frame);
         REQUIRE(split.header.type == protocol::FrameType::SchemaSample);
         REQUIRE(split.header.channel_id == 3);
         REQUIRE(split.header.seq == 0x11223344u);
         REQUIRE(split.header.t_send_monotonic_ns == 0x0807060504030201LL);
-        REQUIRE(split.payload == std::vector<uint8_t>(golden.begin() + 24, golden.end()));
+        REQUIRE(split.payload == std::vector<uint8_t>(golden.begin() + protocol::kHeaderSize, golden.end()));
         protocol::SchemaSample decoded = protocol::decode_schema_sample(split.payload);
         REQUIRE(decoded.bytes == bytes);
         REQUIRE(decoded.sample_time_raw_device_clock_ns == -1);
@@ -410,7 +411,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         REQUIRE(header.type == protocol::FrameType::HandSample);
         REQUIRE(header.channel_id == 0x0102);
         REQUIRE(header.payload_size == protocol::kHandSamplePayloadSize);
-        REQUIRE(std::equal(frame.begin() + 24, frame.end(), payload.begin(), payload.end()));
+        REQUIRE(std::equal(frame.begin() + protocol::kHeaderSize, frame.end(), payload.begin(), payload.end()));
         REQUIRE(protocol::encode_frame(protocol::FrameType::HandSample, 0x0102, payload) == frame);
     }
     SECTION("split_frame rejects short or inconsistent messages")
