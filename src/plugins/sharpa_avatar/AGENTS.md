@@ -58,6 +58,9 @@ SPDX-License-Identifier: Apache-2.0
   sufficient alone. Before stopping a glove handle, best-effort clear manual
   haptics. Isolate dynamic output setup failures to that side and retry without
   terminating the plugin.
+- Bound pending haptic commands by source observation freshness and discard them
+  while a glove is unready. Delivery retries may retain only commands the source
+  keeps refreshing; a cached command must never replay after reconnection.
 - Treat a successful `list_device_info()` result as the handle-lifecycle
   authority: retain handles while their row exists (including `online=false`),
   and release them only when a successful snapshot drops the row. A failed

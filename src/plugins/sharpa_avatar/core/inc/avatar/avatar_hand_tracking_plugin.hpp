@@ -142,33 +142,41 @@ struct GloveState
 class HapticCommandDeliveryState
 {
 public:
-    void observe(const core::Serialized<core::HapticCommand>& command)
+    using Clock = std::chrono::steady_clock;
+
+    void observe(const core::Serialized<core::HapticCommand>& command, Clock::time_point observed_at)
     {
         if (command.get() != m_latest.get())
         {
             m_latest = command;
-            m_pending = command.get() != nullptr;
+            m_pending_since = command.get() != nullptr ? std::make_optional(observed_at) : std::nullopt;
         }
     }
 
-    const core::HapticCommand* pending() const noexcept
+    const core::HapticCommand* pending(Clock::time_point now, Clock::duration freshness_timeout) noexcept
     {
-        return m_pending ? m_latest.get() : nullptr;
+        if (!m_pending_since || now - *m_pending_since >= freshness_timeout)
+        {
+            m_pending_since.reset();
+            return nullptr;
+        }
+        return m_latest.get();
     }
 
     void acknowledge() noexcept
     {
-        m_pending = false;
+        m_pending_since.reset();
     }
 
     void discard() noexcept
     {
-        m_pending = false;
+        // Retain the identity so a cached tracker value cannot become a new command.
+        m_pending_since.reset();
     }
 
 private:
     core::Serialized<core::HapticCommand> m_latest;
-    bool m_pending = false;
+    std::optional<Clock::time_point> m_pending_since;
 };
 
 class __attribute__((visibility("default"))) AvatarTracker

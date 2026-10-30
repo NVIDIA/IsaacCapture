@@ -223,41 +223,65 @@ TEST_CASE("Ingress signals keep callbacks scoped to one device generation", "[sh
 
 TEST_CASE("Haptic delivery keeps failed commands pending until success", "[sharpa_avatar][haptic]")
 {
+    using namespace std::chrono_literals;
+
     core::HapticCommandT first_native;
     first_native.values = { 0.5f, 0.0f, 0.0f, 0.0f, 0.0f };
     const auto first = core::pack<core::HapticCommand>(first_native);
+    const auto observed_at = HapticCommandDeliveryState::Clock::time_point{};
 
     HapticCommandDeliveryState delivery;
-    delivery.observe(first);
-    REQUIRE(delivery.pending() == first.get());
+    delivery.observe(first, observed_at);
+    REQUIRE(delivery.pending(observed_at, 200ms) == first.get());
 
-    delivery.observe(first);
-    CHECK(delivery.pending() == first.get());
+    delivery.observe(first, observed_at + 100ms);
+    CHECK(delivery.pending(observed_at + 100ms, 200ms) == first.get());
 
     delivery.acknowledge();
-    CHECK(delivery.pending() == nullptr);
-    delivery.observe(first);
-    CHECK(delivery.pending() == nullptr);
+    CHECK(delivery.pending(observed_at + 100ms, 200ms) == nullptr);
+    delivery.observe(first, observed_at + 100ms);
+    CHECK(delivery.pending(observed_at + 100ms, 200ms) == nullptr);
 }
 
 TEST_CASE("Haptic delivery retains the newest command during retry backoff", "[sharpa_avatar][haptic]")
 {
+    using namespace std::chrono_literals;
+
     core::HapticCommandT first_native;
     first_native.values = { 0.5f, 0.0f, 0.0f, 0.0f, 0.0f };
     const auto first = core::pack<core::HapticCommand>(first_native);
     core::HapticCommandT second_native;
     second_native.values = { 0.0f, 0.5f, 0.0f, 0.0f, 0.0f };
     const auto second = core::pack<core::HapticCommand>(second_native);
+    const auto observed_at = HapticCommandDeliveryState::Clock::time_point{};
 
     HapticCommandDeliveryState delivery;
-    delivery.observe(first);
-    delivery.observe(second);
-    CHECK(delivery.pending() == second.get());
+    delivery.observe(first, observed_at);
+    delivery.observe(second, observed_at + 150ms);
+    CHECK(delivery.pending(observed_at + 250ms, 200ms) == second.get());
 
     delivery.discard();
-    CHECK(delivery.pending() == nullptr);
-    delivery.observe(second);
-    CHECK(delivery.pending() == nullptr);
+    CHECK(delivery.pending(observed_at + 250ms, 200ms) == nullptr);
+    delivery.observe(second, observed_at + 250ms);
+    CHECK(delivery.pending(observed_at + 250ms, 200ms) == nullptr);
+}
+
+TEST_CASE("Haptic delivery expires commands that are no longer observed", "[sharpa_avatar][haptic]")
+{
+    using namespace std::chrono_literals;
+
+    core::HapticCommandT command_native;
+    command_native.values = { 0.5f, 0.0f, 0.0f, 0.0f, 0.0f };
+    const auto command = core::pack<core::HapticCommand>(command_native);
+    const auto observed_at = HapticCommandDeliveryState::Clock::time_point{};
+
+    HapticCommandDeliveryState delivery;
+    delivery.observe(command, observed_at);
+    CHECK(delivery.pending(observed_at + 199ms, 200ms) == command.get());
+    CHECK(delivery.pending(observed_at + 200ms, 200ms) == nullptr);
+
+    delivery.observe(command, observed_at + 201ms);
+    CHECK(delivery.pending(observed_at + 201ms, 200ms) == nullptr);
 }
 
 TEST_CASE("Dongle detection handles complete and incomplete USB enumeration", "[sharpa_avatar][health]")
