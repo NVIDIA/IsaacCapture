@@ -10,6 +10,13 @@ previewing glove tactile metadata. It loads URDF models and
 [`TactileMetadata`](../../src/core/schema/fbs/tactile_metadata.fbs) JSON files.
 All edits remain local; live connections only receive Isaac Capture data.
 
+> [!WARNING]
+> The editor is designed for completing all work in one run. Saved metadata
+> contains only schema fields, so ending the session loses editor-specific
+> configuration such as URDF paths, alignments, and URDF joint values.
+
+**Todo**: add cross-run project saving-loading.
+
 ## Set up and launch
 
 Use an existing Isaac Capture environment with Python 3.11 or newer. Install
