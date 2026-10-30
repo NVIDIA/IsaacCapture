@@ -299,7 +299,7 @@ async def _invoke(callback: Callback[T] | None, value: T) -> None:
         return
     result = callback(value)
     if _is_awaitable(result):
-        await result
+        await result  # discarding the return value is intentional: this runs the callback for its side effects
 
 
 @dataclass

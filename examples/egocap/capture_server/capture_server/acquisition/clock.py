@@ -23,6 +23,7 @@ __all__ = ["Clock", "MonotonicClock"]
 
 
 class Clock(Protocol):
+    # Protocol method declaration: `...` is the standard stub body, not a no-op mistake.
     def monotonic(self) -> float: ...
 
 
