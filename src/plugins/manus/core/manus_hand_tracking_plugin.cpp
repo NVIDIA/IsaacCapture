@@ -395,10 +395,6 @@ void ManusTracker::initialize() noexcept(false)
                 core::WristTrackingSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
                                                  .left_aim_to_wrist = kLeftHandOffset,
                                                  .right_aim_to_wrist = kRightHandOffset });
-            if (!m_wrist_tracking_source)
-            {
-                throw std::runtime_error("The plugin session could not provide a wrist tracking source");
-            }
             m_logger->info("Wrist tracking source initialized");
         }
         else

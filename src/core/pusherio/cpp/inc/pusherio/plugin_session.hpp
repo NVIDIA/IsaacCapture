@@ -40,7 +40,7 @@ public:
 
     virtual void update() = 0;
 
-    //! Returns null when the requested source mode is unavailable after capability negotiation.
+    //! Throws std::logic_error unless wrist tracking pull was declared. Never returns null.
     virtual std::unique_ptr<IWristTrackingSource> create_wrist_tracking_source(const WristTrackingSourceConfig& config) = 0;
 };
 

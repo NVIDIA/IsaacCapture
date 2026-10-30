@@ -47,7 +47,6 @@ private:
     core::PluginSessionRequirements requirements_;
     std::vector<std::shared_ptr<core::ITracker>> trackers_;
     std::shared_ptr<core::ControllerTracker> wrist_controller_tracker_;
-    bool native_hand_tracking_enabled_ = false;
     bool pull_channel_creation_attempted_ = false;
     std::shared_ptr<core::OpenXRSession> session_;
 };
