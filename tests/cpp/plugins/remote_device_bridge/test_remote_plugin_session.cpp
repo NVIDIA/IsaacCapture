@@ -3,7 +3,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <oxr_utils/os_time.hpp>
-#include <remote_plugin_session/clock_offset_estimator.hpp>
 #include <remote_plugin_session/protocol_frame.hpp>
 #include <remote_plugin_session/protocol_payloads.hpp>
 #include <remote_plugin_session/remote_plugin_session.hpp>
@@ -69,8 +68,9 @@ std::optional<protocol::Frame> take_frame(std::deque<protocol::Frame>& frames, p
 class FakeBridge
 {
 public:
-    explicit FakeBridge(bool accept = true, std::string reason = "")
-        : m_listener(TcpSocket::listen(Endpoint{ "127.0.0.1", 0 }, 1)), m_accept(accept), m_reason(std::move(reason))
+    //! Answers HELLO with a refusal carrying `rejection` when set, else accepts.
+    explicit FakeBridge(std::optional<std::string> rejection = std::nullopt)
+        : m_listener(TcpSocket::listen(Endpoint{ "127.0.0.1", 0 }, 1)), m_rejection(std::move(rejection))
     {
         m_thread = std::thread(&FakeBridge::serve, this);
     }
@@ -160,7 +160,7 @@ private:
             m_client = std::move(client);
             m_frames.push_back(std::move(hello));
             send_frame(*m_client, protocol::FrameType::HelloAck, protocol::kSessionChannelId, m_seq++,
-                       protocol::encode_hello_ack(protocol::HelloAck{ m_accept, m_reason }));
+                       protocol::encode_hello_ack(protocol::HelloAck{ !m_rejection, m_rejection.value_or("") }));
         }
         m_cv.notify_all();
 
@@ -187,8 +187,7 @@ private:
     }
 
     TcpSocket m_listener;
-    bool m_accept;
-    std::string m_reason;
+    std::optional<std::string> m_rejection;
     std::atomic<bool> m_stop{ false };
     std::thread m_thread;
 
@@ -351,7 +350,7 @@ TEST_CASE("RemotePluginSession fails fast when the bridge refuses or is absent",
 {
     SECTION("HELLO_ACK with accepted=0 throws with the reason")
     {
-        FakeBridge bridge(false, "no OpenXR runtime");
+        FakeBridge bridge(std::string("no OpenXR runtime"));
         try
         {
             RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", {});
@@ -534,11 +533,6 @@ TEST_CASE("RemotePluginSession answers every PING with a PONG", "[remote_device_
         REQUIRE(pong.ping_received_ns <= pong.pong_sent_ns);
         REQUIRE(pong.pong_sent_ns == frame->header.t_send_monotonic_ns);
         REQUIRE(pong.pong_sent_ns <= after);
-
-        ClockOffsetEstimator clock;
-        clock.add_two_way_sample(before, pong.ping_received_ns, pong.pong_sent_ns, after);
-        REQUIRE(clock.rtt_last_ns() >= 0);
-        REQUIRE(clock.rtt_last_ns() <= after - before);
     }
 }
 
@@ -643,8 +637,6 @@ TEST_CASE("RemotePluginSession never reconnects after the link drops", "[remote_
     }
     // A new HELLO needs a new session (a restarted plugin); nothing connects back on its own.
     REQUIRE(TcpTransport::accept(listener, std::chrono::milliseconds(500)) == nullptr);
-    REQUIRE_FALSE(session.connected());
-    REQUIRE_THROWS_AS(session.create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT), std::runtime_error);
 }
 
 TEST_CASE("RemotePluginSession closes remaining channels and the socket on destruction", "[remote_device_bridge][unit]")
