@@ -9,7 +9,7 @@
 #include <log_bridge/logger.hpp>
 #include <openxr/openxr_platform.h>
 #include <plugin_utils/plugin_device_status_publisher.hpp>
-#include <pusherio/hand_tracking_pusher.hpp>
+#include <pusherio/hand_tracking_push_channel.hpp>
 #include <pusherio/plugin_session.hpp>
 #include <pusherio/schema_pusher.hpp>
 
@@ -143,8 +143,8 @@ private:
     // Plugin session state
     ManusPluginSessionFactory m_plugin_session_factory;
     core::PluginSessionHandle m_plugin_session;
-    std::unique_ptr<core::HandTrackingPusher> m_left_hand_pusher;
-    std::unique_ptr<core::HandTrackingPusher> m_right_hand_pusher;
+    std::unique_ptr<core::IHandTrackingPushChannel> m_left_hand_channel;
+    std::unique_ptr<core::IHandTrackingPushChannel> m_right_hand_channel;
     // Inbound HapticCommand tensor; collection identity in
     // inc/manus/manus_glove_collection.hpp. Read each frame in update().
     std::shared_ptr<core::HapticCommandReaderTracker> m_haptic_reader;

@@ -5,10 +5,8 @@ cmake_minimum_required(VERSION 3.20)
 
 # PusherIO library (static; consumed in-tree via pusherio::pusherio)
 add_library(pusherio STATIC
-    hand_tracking_pusher.cpp
     openxr_schema_push_channel.cpp
     inc/pusherio/hand_tracking_push_channel.hpp
-    inc/pusherio/hand_tracking_pusher.hpp
     inc/pusherio/openxr_schema_push_channel.hpp
     inc/pusherio/plugin_session.hpp
     inc/pusherio/wrist_tracking_source.hpp

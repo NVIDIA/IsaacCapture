@@ -363,10 +363,8 @@ void ManusTracker::initialize() noexcept(false)
 
         if (m_config.human)
         {
-            m_left_hand_pusher = std::make_unique<core::HandTrackingPusher>(
-                m_plugin_session->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT));
-            m_right_hand_pusher = std::make_unique<core::HandTrackingPusher>(
-                m_plugin_session->create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT));
+            m_left_hand_channel = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+            m_right_hand_channel = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT);
         }
 
         if (m_config.sensors)
@@ -420,8 +418,8 @@ void ManusTracker::initialize() noexcept(false)
         m_logger->warn("Plugin session initialization failed: {}", error_msg);
         // Drop session-created objects before the session that owns their transport.
         m_wrist_tracking_source.reset();
-        m_left_hand_pusher.reset();
-        m_right_hand_pusher.reset();
+        m_left_hand_channel.reset();
+        m_right_hand_channel.reset();
         m_left_sensor_pusher.reset();
         m_right_sensor_pusher.reset();
         m_haptic_reader.reset();
@@ -1042,11 +1040,11 @@ void ManusTracker::inject_hand_data()
 
         if (is_left)
         {
-            m_left_hand_pusher->push(joints, sample_time_ns);
+            m_left_hand_channel->push(joints, sample_time_ns);
         }
         else
         {
-            m_right_hand_pusher->push(joints, sample_time_ns);
+            m_right_hand_channel->push(joints, sample_time_ns);
         }
     };
 
