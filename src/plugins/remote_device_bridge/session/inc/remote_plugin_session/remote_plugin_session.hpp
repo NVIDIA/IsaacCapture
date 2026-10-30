@@ -49,18 +49,12 @@ public:
         std::map<uint16_t, std::string> refused_channels; //!< channel id -> the bridge's reason
     };
 
-    //! Connects over TCP, sends HELLO and waits for HELLO_ACK; throws std::runtime_error on any failure.
-    RemotePluginSession(std::string host, uint16_t port, std::string app_name, core::PluginSessionRequirements requirements);
-    //! Same handshake over an already connected transport.
+    //! Sends HELLO over a connected transport (see connect_transport()) and waits for HELLO_ACK; throws
+    //! std::runtime_error on any failure.
     RemotePluginSession(std::unique_ptr<ITransport> transport,
                         std::string app_name,
                         core::PluginSessionRequirements requirements);
     ~RemotePluginSession() override;
-
-    RemotePluginSession(const RemotePluginSession&) = delete;
-    RemotePluginSession& operator=(const RemotePluginSession&) = delete;
-    RemotePluginSession(RemotePluginSession&&) = delete;
-    RemotePluginSession& operator=(RemotePluginSession&&) = delete;
 
     core::IPluginPullChannel& pull_channel() override;
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override;
@@ -68,13 +62,13 @@ public:
 
     //! False once the transport failed; channel creation then throws and pushes are dropped.
     bool connected() const;
-    //! Estimated bridge-to-local clock offset in ns (local ~= bridge + offset); 0 before the first frame.
+    //! Estimated bridge-to-local clock offset in ns (local ~= bridge + offset), measured from HELLO_ACK onward.
     int64_t clock_offset_ns() const;
-    //! Cumulative counters; also logged periodically as one "5s:" line.
+    //! Cumulative counters; their deltas are also logged periodically.
     Stats stats() const;
 
 private:
-    std::shared_ptr<detail::RemotePluginSessionImpl> m_impl;
+    std::unique_ptr<detail::RemotePluginSessionImpl> m_impl;
     std::unique_ptr<core::IPluginPullChannel> m_pull_channel;
 };
 

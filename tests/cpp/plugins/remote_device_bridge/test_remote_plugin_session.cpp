@@ -326,13 +326,18 @@ bool wait_until(const std::function<bool()>& predicate, std::chrono::millisecond
     return true;
 }
 
+std::unique_ptr<ITransport> connect_to(uint16_t port)
+{
+    return std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", port }, kConnectTimeout));
+}
+
 } // namespace
 
 TEST_CASE("RemotePluginSession performs the HELLO handshake", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
     RemotePluginSession session(
-        "127.0.0.1", bridge.port(), "test_app", { .schema_push = true, .hand_tracking_push = true });
+        connect_to(bridge.port()), "test_app", { .schema_push = true, .hand_tracking_push = true });
     REQUIRE(session.connected());
 
     const auto hello = bridge.wait_for(protocol::FrameType::Hello);
@@ -353,7 +358,7 @@ TEST_CASE("RemotePluginSession fails fast when the bridge refuses or is absent",
         FakeBridge bridge(std::string("no OpenXR runtime"));
         try
         {
-            RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", {});
+            RemotePluginSession session(connect_to(bridge.port()), "test_app", {});
             FAIL("expected std::runtime_error");
         }
         catch (const std::runtime_error& e)
@@ -366,7 +371,7 @@ TEST_CASE("RemotePluginSession fails fast when the bridge refuses or is absent",
         TcpSocket probe = TcpSocket::listen(Endpoint{ "127.0.0.1", 0 }, 1);
         const uint16_t free_port = probe.local_port();
         probe.close();
-        REQUIRE_THROWS_AS(RemotePluginSession("127.0.0.1", free_port, "test_app", {}), std::runtime_error);
+        REQUIRE_THROWS_AS(RemotePluginSession(connect_to(free_port), "test_app", {}), std::runtime_error);
     }
     SECTION("a null transport is rejected")
     {
@@ -390,7 +395,7 @@ TEST_CASE("RemotePluginSession enforces declared requirements", "[remote_device_
 {
     FakeBridge bridge;
     RemotePluginSession session(
-        "127.0.0.1", bridge.port(), "test_app", { .schema_push = false, .hand_tracking_push = true });
+        connect_to(bridge.port()), "test_app", { .schema_push = false, .hand_tracking_push = true });
 
     REQUIRE_THROWS_AS(session.create_schema_push_channel(core::SchemaPusherConfig{}), std::logic_error);
     core::IPluginPullChannel& pull = session.pull_channel();
@@ -404,7 +409,7 @@ TEST_CASE("RemotePluginSession rejects hand-tracking push when it was not declar
 {
     FakeBridge bridge;
     RemotePluginSession session(
-        "127.0.0.1", bridge.port(), "test_app", { .schema_push = true, .hand_tracking_push = false });
+        connect_to(bridge.port()), "test_app", { .schema_push = true, .hand_tracking_push = false });
 
     REQUIRE_THROWS_AS(session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT), std::logic_error);
     REQUIRE_FALSE(bridge.wait_for(protocol::FrameType::OpenHand, std::chrono::milliseconds(200)).has_value());
@@ -413,7 +418,7 @@ TEST_CASE("RemotePluginSession rejects hand-tracking push when it was not declar
 TEST_CASE("RemotePluginSession forwards OPEN_HAND, HAND_SAMPLE and CLOSE bit-exact", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
-    RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", { .hand_tracking_push = true });
+    RemotePluginSession session(connect_to(bridge.port()), "test_app", { .hand_tracking_push = true });
 
     uint16_t channel_id = 0;
     {
@@ -447,7 +452,7 @@ TEST_CASE("RemotePluginSession forwards OPEN_HAND, HAND_SAMPLE and CLOSE bit-exa
 TEST_CASE("RemotePluginSession forwards schema channels", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
-    RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", { .schema_push = true });
+    RemotePluginSession session(connect_to(bridge.port()), "test_app", { .schema_push = true });
 
     const core::SchemaPusherConfig config{ .collection_id = "collection",
                                            .max_flatbuffer_size = 64,
@@ -478,7 +483,7 @@ TEST_CASE("RemotePluginSession exposes bridge wrist samples through the pull cha
     config.mode = core::WristTrackingSourceMode::HandTracking;
     config.left_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.5f, 0.0f, 0.0f } };
     config.right_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", { .wrist_tracking_pull = config });
+    RemotePluginSession session(connect_to(bridge.port()), "test_app", { .wrist_tracking_pull = config });
 
     const auto hello = bridge.wait_for(protocol::FrameType::Hello);
     REQUIRE(hello.has_value());
@@ -515,7 +520,7 @@ TEST_CASE("RemotePluginSession exposes bridge wrist samples through the pull cha
 TEST_CASE("RemotePluginSession answers every PING with a PONG", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
-    RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", { .hand_tracking_push = true });
+    RemotePluginSession session(connect_to(bridge.port()), "test_app", { .hand_tracking_push = true });
     REQUIRE(bridge.wait_for(protocol::FrameType::Hello).has_value());
 
     for (int64_t t1 : { 111LL, 222LL, 333LL })
@@ -540,7 +545,7 @@ TEST_CASE("RemotePluginSession keeps the session when the bridge refuses one cha
 {
     FakeBridge bridge;
     RemotePluginSession session(
-        "127.0.0.1", bridge.port(), "test_app", { .schema_push = true, .hand_tracking_push = true });
+        connect_to(bridge.port()), "test_app", { .schema_push = true, .hand_tracking_push = true });
     core::SchemaPusherConfig config;
     config.collection_id = "tactile";
     config.max_flatbuffer_size = 40960;
@@ -587,11 +592,10 @@ TEST_CASE("RemotePluginSession keeps the session when the bridge refuses one cha
 TEST_CASE("RemotePluginSession survives the bridge dropping the socket", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
-    std::unique_ptr<core::IHandTrackingPushChannel> channel;
     {
-        RemotePluginSession session("127.0.0.1", bridge.port(), "test_app",
-                                    { .hand_tracking_push = true, .wrist_tracking_pull = kWristConfig });
-        channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+        RemotePluginSession session(
+            connect_to(bridge.port()), "test_app", { .hand_tracking_push = true, .wrist_tracking_pull = kWristConfig });
+        auto channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
         REQUIRE(bridge.wait_for(protocol::FrameType::OpenHand).has_value());
 
         bridge.drop_connection();
@@ -601,10 +605,8 @@ TEST_CASE("RemotePluginSession survives the bridge dropping the socket", "[remot
         REQUIRE_NOTHROW(channel->push(joints.data(), 1));
         REQUIRE_NOTHROW(session.pull_channel().update());
         REQUIRE_THROWS_AS(session.create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT), std::runtime_error);
+        REQUIRE_NOTHROW(channel.reset());
     }
-    // Channels outliving a dead session must still be destroyable.
-    REQUIRE_NOTHROW(channel->push(make_joints(0.5f).data(), 2));
-    REQUIRE_NOTHROW(channel.reset());
 }
 
 TEST_CASE("RemotePluginSession never reconnects after the link drops", "[remote_device_bridge][unit]")
@@ -622,7 +624,7 @@ TEST_CASE("RemotePluginSession never reconnects after the link drops", "[remote_
                            protocol::encode_hello_ack(protocol::HelloAck{ true, "" }));
             }
         });
-    RemotePluginSession session("127.0.0.1", listener.local_port(), "test_app", { .hand_tracking_push = true });
+    RemotePluginSession session(connect_to(listener.local_port()), "test_app", { .hand_tracking_push = true });
     accept_once.join();
     REQUIRE(bridge_side);
     auto channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
@@ -644,7 +646,7 @@ TEST_CASE("RemotePluginSession closes remaining channels and the socket on destr
     FakeBridge bridge;
     std::unique_ptr<core::IHandTrackingPushChannel> channel;
     {
-        RemotePluginSession session("127.0.0.1", bridge.port(), "test_app", { .hand_tracking_push = true });
+        RemotePluginSession session(connect_to(bridge.port()), "test_app", { .hand_tracking_push = true });
         channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
         REQUIRE(bridge.wait_for(protocol::FrameType::OpenHand).has_value());
     }
@@ -737,7 +739,7 @@ TEST_CASE("RemotePluginSession drops a channel's pending samples when the channe
     auto filler = session.create_schema_push_channel(filler_config);
     REQUIRE(link.wait_for(protocol::FrameType::OpenSchema).has_value());
 
-    // Stall the sender on a filler sample. A paused TCP peer is not enough: with 8 MiB socket buffers the kernel
+    // Stall the sender on a filler sample. A paused TCP peer is not enough: with enlarged socket buffers the kernel
     // absorbs the filler and the hand samples leave before the CLOSE.
     link.hold(true);
     const std::vector<uint8_t> filler_bytes = { 0xCD };
