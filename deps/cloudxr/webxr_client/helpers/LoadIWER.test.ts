@@ -27,7 +27,7 @@ describe('loadIWERIfNeeded', () => {
   let loadIWERIfNeeded: () => Promise<IWERLoadResult>;
   let XRDevice: jest.Mock;
   let DevUI: jest.Mock;
-  let device: { installDevUI: jest.Mock; installRuntime: jest.Mock };
+  let device: { installDevUI: jest.Mock; installRuntime: jest.Mock; uninstallRuntime: jest.Mock };
 
   beforeEach(() => {
     originalXRDescriptor = Object.getOwnPropertyDescriptor(navigator, 'xr');
@@ -36,7 +36,25 @@ describe('loadIWERIfNeeded', () => {
     ({ loadIWERIfNeeded } = require('./LoadIWER'));
     ({ XRDevice } = jest.requireMock('iwer'));
     ({ DevUI } = jest.requireMock('@iwer/devui'));
-    device = { installDevUI: jest.fn(), installRuntime: jest.fn() };
+    let previousXR: PropertyDescriptor | undefined;
+    let runtimeInstalled = false;
+    device = {
+      installDevUI: jest.fn(),
+      uninstallRuntime: jest.fn(() => {
+        if (!runtimeInstalled) return;
+        runtimeInstalled = false;
+        if (previousXR) Object.defineProperty(navigator, 'xr', previousXR);
+        else delete (navigator as Navigator & { xr?: XRSystem }).xr;
+      }),
+      installRuntime: jest.fn(() => {
+        previousXR = Object.getOwnPropertyDescriptor(navigator, 'xr');
+        runtimeInstalled = true;
+        Object.defineProperty(navigator, 'xr', {
+          configurable: true,
+          value: { isSessionSupported: jest.fn().mockResolvedValue(true) },
+        });
+      }),
+    };
     XRDevice.mockReturnValue(device);
   });
 
@@ -89,6 +107,56 @@ describe('loadIWERIfNeeded', () => {
     expect(second).toEqual(first);
     expect(XRDevice).toHaveBeenCalledTimes(1);
     expect(device.installRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a skipped installation and retries when the runtime becomes available', async () => {
+    const nativeXR = { isSessionSupported: jest.fn().mockResolvedValue(false) };
+    Object.defineProperty(navigator, 'xr', { configurable: true, value: nativeXR });
+    device.installRuntime.mockImplementationOnce(() => {});
+
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: false,
+      iwerLoaded: false,
+    });
+    expect(navigator.xr).toBe(nativeXR);
+    expect(device.uninstallRuntime).toHaveBeenCalledTimes(1);
+    expect(device.installDevUI).not.toHaveBeenCalled();
+    expect(window.xrDevice).toBeUndefined();
+
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: true,
+      iwerLoaded: true,
+    });
+    expect(window.xrDevice).toBe(device);
+    expect(device.installRuntime).toHaveBeenCalledTimes(2);
+  });
+
+  it('rolls back an unsupported runtime before retrying without duplicating DevUI', async () => {
+    const installRuntime = device.installRuntime.getMockImplementation()!;
+    device.installRuntime.mockImplementationOnce(() => {
+      installRuntime();
+      Object.defineProperty(navigator, 'xr', {
+        configurable: true,
+        value: { isSessionSupported: jest.fn().mockResolvedValue(false) },
+      });
+    });
+
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: false,
+      iwerLoaded: false,
+    });
+    expect(device.uninstallRuntime).toHaveBeenCalledTimes(1);
+    expect(device.installDevUI).not.toHaveBeenCalled();
+    expect(window.xrDevice).toBeUndefined();
+
+    await expect(loadIWERIfNeeded()).resolves.toEqual({
+      supportsImmersive: true,
+      iwerLoaded: true,
+    });
+    expect(device.installDevUI).toHaveBeenCalledTimes(1);
+    expect(device.installRuntime).toHaveBeenCalledTimes(2);
+    expect(device.uninstallRuntime).toHaveBeenCalledTimes(1);
+    expect(window.xrDevice).toBe(device);
   });
 
   it('retries a failed runtime installation', async () => {
