@@ -135,6 +135,29 @@ class EditorTests(unittest.TestCase):
                 self.assertEqual(editor.selected_rows, [] if cleared else [1])
                 self.assertEqual(editor._sync_selection.call_count, int(cleared))
 
+    def test_reset_preview_refreshes_selection_without_retargeting_it(self):
+        for editing, joints in (
+            (False, ["PALM", "WRIST"]),
+            (False, ["WRIST"]),
+            (True, ["PALM", "WRIST"]),
+        ):
+            with self.subTest(editing=editing, joints=joints):
+                editor = self.make_live_editor({})
+                editor.mode_edit.value = editing
+                editor.preview_document.segments = [Segment(joint) for joint in joints]
+                editor.document.segments[0].pose[0] = 0.02
+                editor.selected_kind, editor.selected_rows = "segments", [0]
+
+                editor._restore_preview()
+
+                cleared = not editing and joints != ["WRIST"]
+                self.assertEqual(editor.selected_kind, None if cleared else "segments")
+                self.assertEqual(editor.selected_rows, [] if cleared else [0])
+                self.assertEqual(editor._sync_selection.call_count, int(not editing))
+                self.assertEqual(
+                    editor.preview_document.segments, editor.document.segments
+                )
+
     def test_apply_all_preserves_rendered_taxels(self):
         editor = self.make_editor()
         editor.preview_document.segments[0].pose[0] = 0.01

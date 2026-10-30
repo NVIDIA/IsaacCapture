@@ -1396,6 +1396,10 @@ class Editor:
         preview.q = replacement.q
         if old_joints != [segment.joint for segment in preview.segments]:
             self._rebuild_preview_segments()
+            if self.mode_value == "Preview":
+                self.selected_kind, self.selected_rows = None, []
+        if self.mode_value == "Preview":
+            self._sync_selection()
         self._sync_preview_values()
         self._update_preview_error()
         self.info.value = "Preview data reset from Edit data."
