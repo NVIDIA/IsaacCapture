@@ -173,16 +173,16 @@ class LatencyBreakdownTest(unittest.TestCase):
                 latency_breakdown.load_bridge(str(bridge_csv), "right"),
                 latency_breakdown.load_probe(str(probe_csv), "right"),
             )
-        self.assertAlmostEqual(r["network_p50"], NETWORK_MS, delta=5)
-        self.assertAlmostEqual(r["bridge_p50"], BRIDGE_MS, delta=5)
-        self.assertAlmostEqual(r["consumer_p50"], CONSUMER_MS, delta=5)
-        self.assertAlmostEqual(r["edge_p50"], CONSUMER_MS, delta=5)
-        self.assertGreater(len(r["edge_delays_ms"]), 40)
+        self.assertAlmostEqual(r.network_p50, NETWORK_MS, delta=5)
+        self.assertAlmostEqual(r.bridge_p50, BRIDGE_MS, delta=5)
+        self.assertAlmostEqual(r.consumer_p50, CONSUMER_MS, delta=5)
+        self.assertAlmostEqual(r.edge_p50, CONSUMER_MS, delta=5)
+        self.assertGreater(len(r.edge_delays_ms), 40)
         self.assertAlmostEqual(
-            r["total_p50"], NETWORK_MS + BRIDGE_MS + CONSUMER_MS, delta=5
+            r.total_p50, NETWORK_MS + BRIDGE_MS + CONSUMER_MS, delta=5
         )
-        self.assertAlmostEqual(r["offset_ms"], OFFSET_NS / 1e6, delta=1e-3)
-        self.assertTrue(r["estimated"])
+        self.assertAlmostEqual(r.offset_ms, OFFSET_NS / 1e6, delta=1e-3)
+        self.assertTrue(r.estimated)
 
     def test_recovers_110_2_25_ms_with_three_edges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,13 +191,13 @@ class LatencyBreakdownTest(unittest.TestCase):
                 latency_breakdown.load_bridge(str(bridge_csv), "right"),
                 latency_breakdown.load_probe(str(probe_csv), "right"),
             )
-        self.assertTrue(r["estimated"])
-        self.assertEqual(len(r["edge_delays_ms"]), 3)
-        self.assertAlmostEqual(r["network_p50"], 110, delta=5)
-        self.assertAlmostEqual(r["bridge_p50"], 2, delta=5)
-        self.assertAlmostEqual(r["consumer_p50"], 25, delta=5)
-        self.assertAlmostEqual(r["edge_p50"], 25, delta=5)
-        self.assertAlmostEqual(r["total_p50"], 137, delta=5)
+        self.assertTrue(r.estimated)
+        self.assertEqual(len(r.edge_delays_ms), 3)
+        self.assertAlmostEqual(r.network_p50, 110, delta=5)
+        self.assertAlmostEqual(r.bridge_p50, 2, delta=5)
+        self.assertAlmostEqual(r.consumer_p50, 25, delta=5)
+        self.assertAlmostEqual(r.edge_p50, 25, delta=5)
+        self.assertAlmostEqual(r.total_p50, 137, delta=5)
 
     def test_static_hand_with_uncorrelated_noise_is_not_estimated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

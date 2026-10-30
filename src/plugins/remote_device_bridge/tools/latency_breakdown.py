@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -30,6 +31,28 @@ DEFAULT_MIN_XCORR = 0.6
 DEFAULT_MIN_EDGES = 3
 MIN_OVERLAP_NS = 2_000_000_000
 NOT_ESTIMATED = "consumer lag: not estimated (low correlation / too few edges)"
+
+
+@dataclass(frozen=True)
+class Breakdown:
+    """Stage latencies in ms; consumer_p50 and total_p50 are NaN unless `estimated`."""
+
+    network_p50: float
+    network_p99: float
+    bridge_p50: float
+    bridge_p99: float
+    consumer_p50: float
+    consumer_windows: int
+    windows_total: int
+    xcorr_median: float
+    edge_delays_ms: list[float]
+    edges_paired: int
+    edges_discarded: int
+    edge_p50: float
+    estimated: bool
+    offset_ms: float
+    total_p50: float
+    samples: int
 
 
 class InputError(Exception):
@@ -137,8 +160,8 @@ def breakdown(
     probe: dict[str, np.ndarray],
     min_xcorr: float = DEFAULT_MIN_XCORR,
     min_edges: int = DEFAULT_MIN_EDGES,
-) -> dict:
-    """Raises InputError for unusable input. consumer_p50 and total_p50 are NaN unless `estimated`."""
+) -> Breakdown:
+    """Raises InputError for unusable input."""
     check_inputs(bridge, probe)
     network_ms = (bridge["recv_mono_ns"] - bridge["capture_mapped_ns"]) / 1e6
     bridge_ms = (bridge["push_mono_ns"] - bridge["recv_mono_ns"]) / 1e6
@@ -187,24 +210,24 @@ def breakdown(
     estimated = len(window_lags) > 0 and len(edge_ms) >= min_edges
     consumer_ms = np.array(window_lags)
     consumer_p50 = pct(consumer_ms, 50) if estimated else float("nan")
-    return {
-        "network_p50": pct(network_ms, 50),
-        "network_p99": pct(network_ms, 99),
-        "bridge_p50": pct(bridge_ms, 50),
-        "bridge_p99": pct(bridge_ms, 99),
-        "consumer_p50": consumer_p50,
-        "consumer_windows": len(window_lags),
-        "windows_total": windows_total,
-        "xcorr_median": pct(np.array(scores), 50),
-        "edge_delays_ms": edge_ms.tolist(),
-        "edges_paired": edges_paired,
-        "edges_discarded": edges_paired - len(edge_ms),
-        "edge_p50": pct(edge_ms, 50),
-        "estimated": estimated,
-        "offset_ms": pct(offset_ms, 50),
-        "total_p50": pct(network_ms, 50) + pct(bridge_ms, 50) + consumer_p50,
-        "samples": len(bridge["push_mono_ns"]),
-    }
+    return Breakdown(
+        network_p50=pct(network_ms, 50),
+        network_p99=pct(network_ms, 99),
+        bridge_p50=pct(bridge_ms, 50),
+        bridge_p99=pct(bridge_ms, 99),
+        consumer_p50=consumer_p50,
+        consumer_windows=len(window_lags),
+        windows_total=windows_total,
+        xcorr_median=pct(np.array(scores), 50),
+        edge_delays_ms=edge_ms.tolist(),
+        edges_paired=edges_paired,
+        edges_discarded=edges_paired - len(edge_ms),
+        edge_p50=pct(edge_ms, 50),
+        estimated=estimated,
+        offset_ms=pct(offset_ms, 50),
+        total_p50=pct(network_ms, 50) + pct(bridge_ms, 50) + consumer_p50,
+        samples=len(bridge["push_mono_ns"]),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,35 +263,35 @@ def main(argv: list[str] | None = None) -> int:
     except InputError as e:
         print(f"latency_breakdown: side={args.side}: {e}", file=sys.stderr)
         return 2
-    edges_ms = ", ".join(f"{d:.0f}" for d in r["edge_delays_ms"][:20])
+    edges_ms = ", ".join(f"{d:.0f}" for d in r.edge_delays_ms[:20])
     print(
-        f"side={args.side} bridge samples={r['samples']} offset_ms={r['offset_ms']:.3f} (capture_mapped - capture_sender)"
+        f"side={args.side} bridge samples={r.samples} offset_ms={r.offset_ms:.3f} (capture_mapped - capture_sender)"
     )
     print(f"{'stage':<40}{'p50 ms':>10}{'p99 ms':>10}")
     print(
-        f"{'(a) network+queue  recv - capture_mapped':<40}{r['network_p50']:>10.1f}{r['network_p99']:>10.1f}"
+        f"{'(a) network+queue  recv - capture_mapped':<40}{r.network_p50:>10.1f}{r.network_p99:>10.1f}"
     )
     print(
-        f"{'(b) bridge         push - recv':<40}{r['bridge_p50']:>10.1f}{r['bridge_p99']:>10.1f}"
+        f"{'(b) bridge         push - recv':<40}{r.bridge_p50:>10.1f}{r.bridge_p99:>10.1f}"
     )
     print(
-        f"xcorr windows used {r['consumer_windows']}/{r['windows_total']} (peak >= {args.min_xcorr:.2f}),"
-        f" median peak {r['xcorr_median']:.2f}"
+        f"xcorr windows used {r.consumer_windows}/{r.windows_total} (peak >= {args.min_xcorr:.2f}),"
+        f" median peak {r.xcorr_median:.2f}"
     )
     print(
-        f"step edges paired {r['edges_paired']}, discarded {r['edges_discarded']} (outside median +- {EDGE_MAD_K:g} MAD),"
-        f" kept {len(r['edge_delays_ms'])} (need {args.min_edges})"
+        f"step edges paired {r.edges_paired}, discarded {r.edges_discarded} (outside median +- {EDGE_MAD_K:g} MAD),"
+        f" kept {len(r.edge_delays_ms)} (need {args.min_edges})"
     )
-    if not r["estimated"]:
+    if not r.estimated:
         print(NOT_ESTIMATED)
         return 0
     print(
-        f"{'(c) consumer       xcorr probe vs bridge':<40}{r['consumer_p50']:>10.1f}{'':>10}  ({r['consumer_windows']} x {WINDOW_NS / 1e9:g} s windows)"
+        f"{'(c) consumer       xcorr probe vs bridge':<40}{r.consumer_p50:>10.1f}{'':>10}  ({r.consumer_windows} x {WINDOW_NS / 1e9:g} s windows)"
     )
     print(
-        f"{'    step edges     probe - bridge':<40}{r['edge_p50']:>10.1f}{'':>10}  n={len(r['edge_delays_ms'])}: {edges_ms}"
+        f"{'    step edges     probe - bridge':<40}{r.edge_p50:>10.1f}{'':>10}  n={len(r.edge_delays_ms)}: {edges_ms}"
     )
-    print(f"{'(d) total          (a)+(b)+(c)':<40}{r['total_p50']:>10.1f}")
+    print(f"{'(d) total          (a)+(b)+(c)':<40}{r.total_p50:>10.1f}")
     return 0
 
 
