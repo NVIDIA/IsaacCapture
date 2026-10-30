@@ -239,6 +239,146 @@ The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
 — without it, ``uv`` may resolve against the system Python and fail to match
 the lockfile.
 
+SOMA body workflows
+^^^^^^^^^^^^^^^^^^^
+
+The body commands accept ``--body-schema full-body-pose`` (default) or
+``--body-schema soma``. SOMA mode supports both ``SomaBodyJointRotations`` and
+``SomaBodyJointPoses``. They render the native 77-joint body topology, including
+available finger joints, without converting to ``FullBodyPose``. See
+:doc:`/device/soma` for the transport contract.
+
+FullBodyPose mode includes controllers by default. SOMA mode uses only the
+body stream, including available finger joints. Pass ``--controllers`` to
+include controller recording, or ``--no-controllers`` to disable it for
+FullBodyPose. Standalone hands use the separate hand commands; these examples
+do not extract or fuse them with the body.
+
+Install the example and demo publisher into a configured development checkout:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/soma_body_publisher
+
+Start the live viewer and connect a CloudXR client. Live preview does not read
+or write an MCAP file:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.live_full_body \
+     --accept-eula --body-schema soma --soma-body-representation joint-rotations
+
+In a second terminal, start the existing publisher after the runtime is running:
+
+.. code-block:: bash
+
+   source ~/.cloudxr/run/cloudxr.env
+   uv run --no-sync python -m isaaccapture_examples.soma_body_publisher \
+     --body-representation joint-rotations --loop
+
+Record in another terminal, then stop the live viewer and publisher before
+replaying on the same Viser port:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.record_full_body \
+     10 recordings/soma_body_joint-rotations_demo.mcap \
+     --accept-eula --body-schema soma --soma-body-representation joint-rotations
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
+     recordings/soma_body_joint-rotations_demo.mcap \
+     --body-schema soma --soma-body-representation joint-rotations
+
+For evaluated poses, use ``--soma-body-representation joint-poses`` on the
+viewer, recorder, and replay commands, and ``--body-representation joint-poses``
+on the publisher. Use a separate output file. Replay works without OpenXR.
+As with the other viewers, ``--host`` and ``--port`` control browser access.
+
+The recorder stores received SOMA payloads unchanged, without FK. Viewing joint
+rotations uses ``SomaBodySource`` and its existing FK helper against a prepared
+neutral model. Viewing joint poses maps directly without loading SOMA-X assets
+or running FK. Unavailable joints and connecting bones are hidden.
+
+``--soma-body-collection-id`` selects the publisher collection and MCAP channel
+base. Its default, ``soma_body_demo``, matches the publisher's ``--collection-id``.
+Replay reads
+``<collection>/soma_body_joint_rotations_tracked`` or
+``<collection>/soma_body_joint_poses_tracked``. If no file is supplied, it selects
+the newest ``soma_body_<representation>_*.mcap`` under ``./recordings/``.
+
+Native replay still advances one tracked sample per update. The viewer uses the
+selected channel's average capture rate for pacing; ``--rate`` overrides it
+(``0`` is unpaced). It does not resample or synchronize streams. FullBodyPose
+and OpenXR hand replay retain their 60 Hz, duration-based playback.
+
+SOMA hand workflows
+^^^^^^^^^^^^^^^^^^^
+
+The hand commands accept ``--hand-schema openxr-hand-pose`` (default) or
+``--hand-schema soma``. SOMA mode supports ``SomaHandJointRotations`` and
+``SomaHandJointPoses``. Each left/right collection retains its anatomical
+``hand_side`` and uses the native 25-joint Wrist/finger layout. These commands
+do not fuse standalone hands with a body stream.
+
+Install the MCAP example and the existing hand publisher:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/soma_hand_publisher
+
+Start the viewer and connect a CloudXR client:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.live_hand \
+     --accept-eula --hand-schema soma --soma-hand-representation joint-rotations
+
+After the runtime is running, start the publisher in a second terminal:
+
+.. code-block:: bash
+
+   source ~/.cloudxr/run/cloudxr.env
+   uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
+     --hand-representation joint-rotations --loop
+
+Record in another terminal, then stop the viewer and publisher before replaying
+on the same Viser port:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.record_hand \
+     10 recordings/soma_hand_joint-rotations_demo.mcap \
+     --accept-eula --hand-schema soma --soma-hand-representation joint-rotations
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.replay_hand \
+     recordings/soma_hand_joint-rotations_demo.mcap \
+     --hand-schema soma --soma-hand-representation joint-rotations
+
+For evaluated poses, use ``--soma-hand-representation joint-poses`` on the
+viewer, recorder, and replay commands, and ``--hand-representation joint-poses``
+on the publisher. Use a separate output file. Live preview does not read or
+write MCAP; replay does not require OpenXR. ``--host`` and ``--port`` control
+browser access.
+
+Recording preserves received payloads without FK. Viewing rotations uses
+``SomaHandSource`` FK against prepared neutral models. Joint poses map directly
+without loading models. The viewer colors left green and right blue and hides
+unavailable joints and bones.
+
+``--soma-left-hand-collection-id`` and ``--soma-right-hand-collection-id`` default
+to ``soma_hand_left_demo`` and ``soma_hand_right_demo``, matching the publisher's
+``--left-collection-id`` and ``--right-collection-id``. Replay reads each
+collection's ``soma_hand_joint_rotations_tracked`` or
+``soma_hand_joint_poses_tracked`` channel. With no file argument, it selects the
+newest ``soma_hand_<representation>_*.mcap`` under ``./recordings/``.
+
+The trackers retain independent, one-sample-per-update replay. Pacing defaults
+to the busier selected hand's average capture rate; ``--rate`` overrides it.
+Missing or exhausted hands are hidden, and playback repeats after the longer
+channel finishes. No timestamp synchronization or resampling is added.
+
 API Reference
 -------------
 
