@@ -131,10 +131,7 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto& tracker = ManusTracker::instance(
-        config, [app_name = config.app_name](const core::PluginSessionRequirements& requirements,
-                                             std::vector<std::shared_ptr<core::ITracker>> trackers)
-        { return std::make_unique<plugin_utils::OpenXRPluginSession>(app_name, requirements, std::move(trackers)); });
+    auto& tracker = ManusTracker::instance(config, plugin_utils::make_openxr_plugin_session_factory(config.app_name));
 
     logger->info("Plugin running. Press Ctrl+C to stop.");
 

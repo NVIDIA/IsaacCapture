@@ -129,12 +129,12 @@ public:
 
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig&) override
     {
-        return nullptr;
+        throw std::logic_error("FakePluginSession has no schema push");
     }
 
     std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT) override
     {
-        return nullptr;
+        throw std::logic_error("FakePluginSession has no hand tracking push");
     }
 
 private:

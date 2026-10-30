@@ -4,12 +4,15 @@
 #pragma once
 
 #include "hand_tracking_push_channel.hpp"
-#include "schema_pusher.hpp"
+#include "schema_push_channel.hpp"
 #include "wrist_tracking_source.hpp"
 
 #include <deviceio_base/tracker.hpp>
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace core
 {
@@ -24,7 +27,8 @@ struct PluginSessionRequirements
 {
     bool schema_push = false;
     bool hand_tracking_push = false;
-    bool wrist_tracking_pull = false;
+    //! Wrist source mode the pull channel will serve; empty when wrist tracking is not pulled.
+    std::optional<WristTrackingSourceMode> wrist_tracking_pull;
 };
 
 /*!
@@ -36,11 +40,9 @@ struct PluginSessionRequirements
 class IPluginPullChannel : public ITrackerSession
 {
 public:
-    virtual ~IPluginPullChannel() = default;
-
     virtual void update() = 0;
 
-    //! Throws std::logic_error unless wrist tracking pull was declared. Never returns null.
+    //! Throws std::logic_error unless wrist tracking pull was declared with config.mode. Never returns null.
     virtual std::unique_ptr<IWristTrackingSource> create_wrist_tracking_source(const WristTrackingSourceConfig& config) = 0;
 };
 
@@ -48,7 +50,8 @@ public:
  * @brief Session abstraction that creates operation-specific plugin channels.
  *
  * The caller must keep the session alive until all push channels and wrist
- * sources created from it have been destroyed.
+ * sources created from it have been destroyed. The create_* methods throw
+ * std::logic_error for a channel type that was not declared and never return null.
  */
 class IPluginSession
 {
@@ -59,5 +62,9 @@ public:
     virtual std::unique_ptr<ISchemaPushChannel> create_schema_push_channel(const SchemaPusherConfig& config) = 0;
     virtual std::unique_ptr<IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) = 0;
 };
+
+//! Creates a plugin session for the given requirements; the trackers join its pull channel.
+using PluginSessionFactory =
+    std::function<std::unique_ptr<IPluginSession>(const PluginSessionRequirements&, std::vector<std::shared_ptr<ITracker>>)>;
 
 } // namespace core

@@ -25,7 +25,6 @@
 #include <oxr_utils/math.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <oxr_utils/pose_conversions.hpp>
-#include <pusherio/schema_pusher.hpp>
 #include <schema/haptic_command_generated.h>
 #include <schema/joint_se3_pose_generated.h>
 
@@ -40,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -62,6 +62,7 @@ SDKReturnCode get_raw_skeleton_node_count(uint32_t glove_id, uint32_t& node_coun
 // Must agree with JointSe3PoseTracker::DEFAULT_MAX_FLATBUFFER_SIZE on the consumer side
 // (src/core/deviceio_trackers/trackers.toml).
 constexpr size_t kSensorFlatbufferSize = 1024;
+constexpr auto kWristSourceMode = core::WristTrackingSourceMode::Auto;
 constexpr auto kSkeletonStaleThreshold = std::chrono::milliseconds(200);
 // MANUS supplies 25 nodes. Injection expands them to OpenXR's 26 joints by
 // deriving the palm from the final MANUS node.
@@ -108,7 +109,7 @@ static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }
 static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
 
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
-                                     const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
+                                     const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
 {
     static ManusTracker s(config, plugin_session_factory);
     return s;
@@ -121,14 +122,14 @@ ManusTracker& ManusTracker::instance()
 
 void ManusTracker::update()
 {
-    if (!m_pull_channel)
+    if (!m_plugin_session)
     {
         // The configured plugin session is unavailable, so no session-backed
         // pull, positioning, or output can be updated.
         return;
     }
 
-    m_pull_channel->update();
+    m_plugin_session->pull_channel().update();
     try
     {
         publish_device_status();
@@ -157,11 +158,11 @@ void ManusTracker::update()
     // collection, so read each side separately -- reading a single latest sample
     // would let whichever hand was pushed last clobber the other. Non-5-finger
     // payloads are ignored (this plugin only drives 5-finger gloves).
-    if (m_haptic_reader)
+    if (m_session_channels.haptic_reader)
     {
         for (const std::string_view endpoint : { std::string_view("left"), std::string_view("right") })
         {
-            const auto& tracked = m_haptic_reader->get_data(*m_pull_channel, endpoint);
+            const auto& tracked = m_session_channels.haptic_reader->get_data(m_plugin_session->pull_channel(), endpoint);
             const core::HapticCommand* command = tracked.get();
             if (command != nullptr && command->values() != nullptr && command->values()->size() == kManusFingerCount)
             {
@@ -254,7 +255,7 @@ void ManusTracker::apply_haptic_command(bool is_left, const std::array<float, kM
 }
 
 ManusTracker::ManusTracker(const ManusPluginConfig& config,
-                           const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
+                           const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
     : m_config(config)
 {
     initialize(plugin_session_factory);
@@ -274,7 +275,7 @@ ManusTracker::~ManusTracker()
     shutdown_sdk();
 }
 
-void ManusTracker::initialize(const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
+void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
 {
     if (m_config.monitoring_plugin_root_id && m_config.monitoring_plugin_root_id->empty())
     {
@@ -351,50 +352,50 @@ void ManusTracker::initialize(const ManusPluginSessionFactory& plugin_session_fa
         {
             // The reader's buffer must be >= the producer's collection sample size; use the shared
             // default (matching the producer's PushTensorHapticDevice), not a Manus-specific size.
-            m_haptic_reader = std::make_shared<core::HapticCommandReaderTracker>(MANUS_GLOVE_COLLECTION_ID);
-            trackers.push_back(m_haptic_reader);
+            m_session_channels.haptic_reader =
+                std::make_shared<core::HapticCommandReaderTracker>(MANUS_GLOVE_COLLECTION_ID);
+            trackers.push_back(m_session_channels.haptic_reader);
         }
 
         m_plugin_session = plugin_session_factory(
             core::PluginSessionRequirements{ .schema_push = m_config.sensors || monitoring_enabled,
                                              .hand_tracking_push = m_config.human,
-                                             .wrist_tracking_pull = m_config.human },
+                                             .wrist_tracking_pull =
+                                                 m_config.human ? std::optional(kWristSourceMode) : std::nullopt },
             std::move(trackers));
 
         if (monitoring_enabled)
         {
-            m_status_publisher = std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(
+            m_session_channels.status_publisher = std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(
                 *m_plugin_session, *m_config.monitoring_plugin_root_id);
         }
 
         if (m_config.human)
         {
-            m_left_hand_channel = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
-            m_right_hand_channel = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT);
+            m_session_channels.left_hand = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+            m_session_channels.right_hand = m_plugin_session->create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT);
         }
 
         if (m_config.sensors)
         {
-            m_left_sensor_pusher = std::make_unique<core::SchemaPusher>(m_plugin_session->create_schema_push_channel(
+            m_session_channels.left_sensor = m_plugin_session->create_schema_push_channel(
                 core::SchemaPusherConfig{ .collection_id = MANUS_SENSORS_LEFT_COLLECTION_ID,
                                           .max_flatbuffer_size = kSensorFlatbufferSize,
                                           .tensor_identifier = "joint_se3_pose",
                                           .localized_name = "Manus Sensors Left",
-                                          .app_name = m_config.app_name }));
-            m_right_sensor_pusher = std::make_unique<core::SchemaPusher>(m_plugin_session->create_schema_push_channel(
+                                          .app_name = m_config.app_name });
+            m_session_channels.right_sensor = m_plugin_session->create_schema_push_channel(
                 core::SchemaPusherConfig{ .collection_id = MANUS_SENSORS_RIGHT_COLLECTION_ID,
                                           .max_flatbuffer_size = kSensorFlatbufferSize,
                                           .tensor_identifier = "joint_se3_pose",
                                           .localized_name = "Manus Sensors Right",
-                                          .app_name = m_config.app_name }));
+                                          .app_name = m_config.app_name });
         }
-
-        m_pull_channel = &m_plugin_session->pull_channel();
 
         if (m_config.human)
         {
-            m_wrist_tracking_source = m_pull_channel->create_wrist_tracking_source(
-                core::WristTrackingSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
+            m_session_channels.wrist_source = m_plugin_session->pull_channel().create_wrist_tracking_source(
+                core::WristTrackingSourceConfig{ .mode = kWristSourceMode,
                                                  .left_aim_to_wrist = kLeftHandOffset,
                                                  .right_aim_to_wrist = kRightHandOffset });
         }
@@ -414,14 +415,7 @@ void ManusTracker::initialize(const ManusPluginSessionFactory& plugin_session_fa
     {
         m_logger->warn("Plugin session initialization failed: {}", error_msg);
         // Drop session-created objects before the session that owns their transport.
-        m_wrist_tracking_source.reset();
-        m_left_hand_channel.reset();
-        m_right_hand_channel.reset();
-        m_left_sensor_pusher.reset();
-        m_right_sensor_pusher.reset();
-        m_haptic_reader.reset();
-        m_status_publisher.reset();
-        m_pull_channel = nullptr;
+        m_session_channels = {};
         m_plugin_session.reset();
 
         if (monitoring_enabled)
@@ -821,19 +815,19 @@ void ManusTracker::OnRawDeviceDataStream(const RawDeviceDataInfo* raw_device_dat
 
 void ManusTracker::push_sensor_states()
 {
-    if (m_left_sensor_pusher)
+    if (m_session_channels.left_sensor)
     {
-        push_sensor_side(true, *m_left_sensor_pusher);
+        push_sensor_side(true, *m_session_channels.left_sensor);
     }
-    if (m_right_sensor_pusher)
+    if (m_session_channels.right_sensor)
     {
-        push_sensor_side(false, *m_right_sensor_pusher);
+        push_sensor_side(false, *m_session_channels.right_sensor);
     }
 }
 
 void ManusTracker::publish_device_status()
 {
-    if (!m_status_publisher)
+    if (!m_session_channels.status_publisher)
     {
         return;
     }
@@ -891,10 +885,10 @@ void ManusTracker::publish_device_status()
                     has_current_usable_skeleton(m_right_hand_nodes, m_skeleton_stamps[1], now));
     }
 
-    m_status_publisher->publish_if_changed(entries, steady_now_ns());
+    m_session_channels.status_publisher->publish_if_changed(entries, steady_now_ns());
 }
 
-void ManusTracker::push_sensor_side(bool is_left, core::SchemaPusher& pusher)
+void ManusTracker::push_sensor_side(bool is_left, core::ISchemaPushChannel& channel)
 {
     const size_t side = is_left ? 0 : 1;
     uint32_t count = 0;
@@ -930,7 +924,7 @@ void ManusTracker::push_sensor_side(bool is_left, core::SchemaPusher& pusher)
     // reader's LookupByKey searching an unsorted vector.
     const auto joints_offset = builder.CreateVectorOfSortedStructs(&joints);
     builder.Finish(core::CreateJointSe3PoseOutput(builder, core::JointType_HAND_RAW, joints_offset, device_id));
-    pusher.push_buffer(builder.GetBufferPointer(), builder.GetSize(), sample_time_ns, sample_time_ns);
+    channel.push_buffer(builder.GetBufferPointer(), builder.GetSize(), sample_time_ns, sample_time_ns);
 }
 
 void ManusTracker::inject_hand_data()
@@ -962,7 +956,7 @@ void ManusTracker::inject_hand_data()
         bool is_root_tracked = false;
 
         const core::WristTrackingSample wrist =
-            m_wrist_tracking_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns);
+            m_session_channels.wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns);
         if (wrist.valid)
         {
             if (is_left)
@@ -1037,11 +1031,11 @@ void ManusTracker::inject_hand_data()
 
         if (is_left)
         {
-            m_left_hand_channel->push(joints, sample_time_ns);
+            m_session_channels.left_hand->push(joints, sample_time_ns);
         }
         else
         {
-            m_right_hand_channel->push(joints, sample_time_ns);
+            m_session_channels.right_hand->push(joints, sample_time_ns);
         }
     };
 

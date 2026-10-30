@@ -30,11 +30,9 @@ class OpenXRPluginSession final : public core::IPluginSession
 public:
     OpenXRPluginSession(std::string app_name,
                         core::PluginSessionRequirements requirements,
-                        std::vector<std::shared_ptr<core::ITracker>> trackers = {});
+                        std::vector<std::shared_ptr<core::ITracker>> trackers);
     ~OpenXRPluginSession() override;
 
-    OpenXRPluginSession(const OpenXRPluginSession&) = delete;
-    OpenXRPluginSession& operator=(const OpenXRPluginSession&) = delete;
     OpenXRPluginSession(OpenXRPluginSession&&) = delete;
     OpenXRPluginSession& operator=(OpenXRPluginSession&&) = delete;
 
@@ -47,5 +45,8 @@ private:
     std::unique_ptr<core::OpenXRSession> session_;
     std::unique_ptr<core::IPluginPullChannel> pull_channel_;
 };
+
+//! Factory that builds an OpenXRPluginSession under app_name.
+core::PluginSessionFactory make_openxr_plugin_session_factory(std::string app_name);
 
 } // namespace plugin_utils

@@ -11,7 +11,7 @@
 #include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <pusherio/hand_tracking_push_channel.hpp>
 #include <pusherio/plugin_session.hpp>
-#include <pusherio/schema_pusher.hpp>
+#include <pusherio/schema_push_channel.hpp>
 
 #include <ManusSDK.h>
 #include <array>
@@ -42,22 +42,17 @@ struct ManusPluginConfig
     std::string left_calibration_file;
     std::string right_calibration_file;
     bool human = true; // hand tracking push
-    bool sensors = true; // RawDeviceData -> SchemaPusher
+    bool sensors = true; // RawDeviceData -> schema push channel
     bool haptic = true; // inbound HapticCommandReaderTracker
 };
-
-// Called once from initialize() with the requirements ManusTracker derives
-// from its config and the trackers it owns.
-using ManusPluginSessionFactory = std::function<std::unique_ptr<core::IPluginSession>(
-    const core::PluginSessionRequirements&, std::vector<std::shared_ptr<core::ITracker>>)>;
 
 class __attribute__((visibility("default"))) ManusTracker
 {
 public:
-    /// Get the singleton instance. The first call constructs with ``config``;
-    /// later calls ignore all arguments.
+    /// Get the singleton instance. The first call constructs with ``config`` and
+    /// calls ``plugin_session_factory`` once from initialize(); later calls ignore all arguments.
     static ManusTracker& instance(const ManusPluginConfig& config,
-                                  const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
+                                  const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
 
     void update();
     std::vector<SkeletonNode> get_left_hand_nodes() const;
@@ -83,14 +78,14 @@ private:
     // For the SDK callbacks, which run only after instance(config, factory) has constructed the tracker.
     static ManusTracker& instance();
     ManusTracker(const ManusPluginConfig& config,
-                 const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
+                 const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
     ~ManusTracker();
 
     ManusTracker(const ManusTracker&) = delete;
     ManusTracker& operator=(const ManusTracker&) = delete;
     ManusTracker(ManusTracker&&) = delete;
     ManusTracker& operator=(ManusTracker&&) = delete;
-    void initialize(const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
+    void initialize(const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
     void shutdown_sdk();
 
     // ManusSDK specific methods
@@ -108,7 +103,7 @@ private:
     static void OnLog(LogSeverity p_Severity, const char* p_Log, uint32_t p_Length) noexcept;
 
     void push_sensor_states();
-    void push_sensor_side(bool is_left, core::SchemaPusher& pusher);
+    void push_sensor_side(bool is_left, core::ISchemaPushChannel& channel);
     void publish_device_status();
 
     // Hand-publishing methods
@@ -143,18 +138,22 @@ private:
     std::array<uint32_t, 2> m_sensor_count{ { 0, 0 } };
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
 
-    // Plugin session state
+    // Plugin session state. Everything created from the session lives in
+    // m_session_channels, declared after it so it is destroyed first.
+    struct SessionChannels
+    {
+        std::unique_ptr<core::IHandTrackingPushChannel> left_hand;
+        std::unique_ptr<core::IHandTrackingPushChannel> right_hand;
+        // Inbound HapticCommand tensor; collection identity in
+        // inc/manus/manus_glove_collection.hpp. Read each frame in update().
+        std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader;
+        std::unique_ptr<core::IWristTrackingSource> wrist_source;
+        std::unique_ptr<core::ISchemaPushChannel> left_sensor;
+        std::unique_ptr<core::ISchemaPushChannel> right_sensor;
+        std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> status_publisher;
+    };
     std::unique_ptr<core::IPluginSession> m_plugin_session;
-    std::unique_ptr<core::IHandTrackingPushChannel> m_left_hand_channel;
-    std::unique_ptr<core::IHandTrackingPushChannel> m_right_hand_channel;
-    // Inbound HapticCommand tensor; collection identity in
-    // inc/manus/manus_glove_collection.hpp. Read each frame in update().
-    std::shared_ptr<core::HapticCommandReaderTracker> m_haptic_reader;
-    core::IPluginPullChannel* m_pull_channel = nullptr; // owned by m_plugin_session
-    std::unique_ptr<core::IWristTrackingSource> m_wrist_tracking_source;
-    std::unique_ptr<core::SchemaPusher> m_left_sensor_pusher;
-    std::unique_ptr<core::SchemaPusher> m_right_sensor_pusher;
-    std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> m_status_publisher;
+    SessionChannels m_session_channels;
     bool m_status_publish_error_logged = false;
 
     // Persistent root poses (initialized to identity)

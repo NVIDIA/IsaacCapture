@@ -9,7 +9,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,15 +33,10 @@ public:
     static constexpr int64_t HEARTBEAT_PERIOD_NS = 1'000'000'000;
     static constexpr int64_t STALE_TIMEOUT_NS = 3'000'000'000;
 
-    using PushBufferFunction = std::function<void(const uint8_t*, size_t, int64_t, int64_t)>;
-
     PluginDeviceStatusPublisher(const core::OpenXRSessionHandles& handles, const std::string& plugin_root_id);
 
     // The session must have been created with PluginSessionRequirements::schema_push.
     PluginDeviceStatusPublisher(core::IPluginSession& session, const std::string& plugin_root_id);
-
-    // An injected transport keeps scheduling and encoding testable without an OpenXR runtime.
-    PluginDeviceStatusPublisher(const std::string& plugin_root_id, PushBufferFunction push_buffer);
 
     PluginDeviceStatusPublisher(const PluginDeviceStatusPublisher&) = delete;
     PluginDeviceStatusPublisher& operator=(const PluginDeviceStatusPublisher&) = delete;
@@ -65,8 +59,7 @@ private:
     void push_snapshot(const std::vector<PluginDeviceStatusEntry>& entries, int64_t now_ns);
 
     std::string collection_id_;
-    std::unique_ptr<core::SchemaPusher> pusher_;
-    PushBufferFunction push_buffer_;
+    std::unique_ptr<core::ISchemaPushChannel> channel_;
     std::vector<PluginDeviceStatusEntry> latest_entries_;
     int64_t last_publish_ns_ = 0;
     bool has_published_ = false;

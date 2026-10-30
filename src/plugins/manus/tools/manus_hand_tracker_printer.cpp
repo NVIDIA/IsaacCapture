@@ -11,9 +11,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <thread>
-#include <utility>
 #include <vector>
 
 // This tool is a standalone diagnostic CLI whose whole product is joint data
@@ -39,9 +37,7 @@ try
     plugins::manus::ManusPluginConfig config;
     config.app_name = "ManusHandPrinter";
     auto& tracker = plugins::manus::ManusTracker::instance(
-        config, [app_name = config.app_name](const core::PluginSessionRequirements& requirements,
-                                             std::vector<std::shared_ptr<core::ITracker>> trackers)
-        { return std::make_unique<plugin_utils::OpenXRPluginSession>(app_name, requirements, std::move(trackers)); });
+        config, plugin_utils::make_openxr_plugin_session_factory(config.app_name));
 
     // Start Vulkan visualizer in a background thread.
     // If X11 or Vulkan is unavailable the thread exits cleanly and printing

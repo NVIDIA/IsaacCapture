@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -24,9 +25,20 @@ struct PublishedSnapshot
     std::vector<plugin_utils::PluginDeviceStatusEntry> devices;
 };
 
-auto capture_into(std::vector<PublishedSnapshot>& published)
+class CapturingChannel final : public core::ISchemaPushChannel
 {
-    return [&published](const uint8_t* buffer, size_t, int64_t local_time_ns, int64_t raw_time_ns)
+public:
+    CapturingChannel(core::SchemaPusherConfig config, std::vector<PublishedSnapshot>& published)
+        : config_(std::move(config)), published_(published)
+    {
+    }
+
+    const core::SchemaPusherConfig& config() const override
+    {
+        return config_;
+    }
+
+    void push_buffer(const uint8_t* buffer, size_t, int64_t local_time_ns, int64_t raw_time_ns) override
     {
         const auto* snapshot = flatbuffers::GetRoot<core::PluginDeviceStatusSnapshot>(buffer);
         PublishedSnapshot captured{
@@ -48,9 +60,39 @@ auto capture_into(std::vector<PublishedSnapshot>& published)
                 });
             }
         }
-        published.push_back(std::move(captured));
-    };
-}
+        published_.push_back(std::move(captured));
+    }
+
+private:
+    core::SchemaPusherConfig config_;
+    std::vector<PublishedSnapshot>& published_;
+};
+
+class CapturingSession final : public core::IPluginSession
+{
+public:
+    explicit CapturingSession(std::vector<PublishedSnapshot>& published) : published_(published)
+    {
+    }
+
+    core::IPluginPullChannel& pull_channel() override
+    {
+        throw std::logic_error("CapturingSession has no pull channel");
+    }
+
+    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
+    {
+        return std::make_unique<CapturingChannel>(config, published_);
+    }
+
+    std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT) override
+    {
+        throw std::logic_error("CapturingSession has no hand tracking push");
+    }
+
+private:
+    std::vector<PublishedSnapshot>& published_;
+};
 
 plugin_utils::PluginDeviceStatusEntry connected(std::string path)
 {
@@ -70,7 +112,8 @@ TEST_CASE("Plugin device status publisher exposes the monitoring contract", "[pl
     static_assert(plugin_utils::PluginDeviceStatusPublisher::STALE_TIMEOUT_NS == 3'000'000'000);
 
     std::vector<PublishedSnapshot> published;
-    plugin_utils::PluginDeviceStatusPublisher publisher("/plugin/example", capture_into(published));
+    CapturingSession session(published);
+    plugin_utils::PluginDeviceStatusPublisher publisher(session, "/plugin/example");
 
     CHECK(publisher.collection_id() == "/plugin/example/device_status");
     CHECK(publisher.get_required_extensions() == core::SchemaPusher::get_required_extensions());
@@ -79,7 +122,8 @@ TEST_CASE("Plugin device status publisher exposes the monitoring contract", "[pl
 TEST_CASE("Plugin device status publisher sends changes and heartbeats", "[plugin_utils][device_status]")
 {
     std::vector<PublishedSnapshot> published;
-    plugin_utils::PluginDeviceStatusPublisher publisher("/plugin/example", capture_into(published));
+    CapturingSession session(published);
+    plugin_utils::PluginDeviceStatusPublisher publisher(session, "/plugin/example");
     const auto left = connected("/input/left");
     const auto right = connected("/input/right");
 
@@ -112,14 +156,14 @@ TEST_CASE("Plugin device status publisher sends changes and heartbeats", "[plugi
 TEST_CASE("Plugin device status publisher validates input before transport", "[plugin_utils][device_status]")
 {
     std::vector<PublishedSnapshot> published;
+    CapturingSession session(published);
 
-    CHECK_THROWS_AS(plugin_utils::PluginDeviceStatusPublisher("", capture_into(published)), std::invalid_argument);
+    CHECK_THROWS_AS(plugin_utils::PluginDeviceStatusPublisher(session, ""), std::invalid_argument);
     const std::string longest_root(XR_MAX_TENSOR_IDENTIFIER_SIZE - 1 - std::string("/device_status").size(), 'a');
-    CHECK_NOTHROW(plugin_utils::PluginDeviceStatusPublisher(longest_root, capture_into(published)));
-    CHECK_THROWS_AS(
-        plugin_utils::PluginDeviceStatusPublisher(longest_root + "a", capture_into(published)), std::invalid_argument);
+    CHECK_NOTHROW(plugin_utils::PluginDeviceStatusPublisher(session, longest_root));
+    CHECK_THROWS_AS(plugin_utils::PluginDeviceStatusPublisher(session, longest_root + "a"), std::invalid_argument);
 
-    plugin_utils::PluginDeviceStatusPublisher publisher("/plugin/example", capture_into(published));
+    plugin_utils::PluginDeviceStatusPublisher publisher(session, "/plugin/example");
     CHECK_THROWS_AS(publisher.publish_if_changed({ connected("") }, 1), std::invalid_argument);
     CHECK_THROWS_AS(publisher.publish_if_changed({ connected("/same"), connected("/same") }, 1), std::invalid_argument);
     CHECK(published.empty());

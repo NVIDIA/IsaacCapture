@@ -3,15 +3,25 @@
 
 #pragma once
 
-#include <oxr_utils/oxr_session_handles.hpp>
-#include <pusherio/hand_tracking_push_channel.hpp>
+#include "inc/plugin_utils/hand_injector.hpp"
 
-#include <memory>
+#include <oxr_utils/oxr_session_handles.hpp>
+#include <oxr_utils/oxr_time.hpp>
+#include <pusherio/hand_tracking_push_channel.hpp>
 
 namespace plugin_utils
 {
 
-std::unique_ptr<core::IHandTrackingPushChannel> make_openxr_hand_tracking_push_channel(
-    const core::OpenXRSessionHandles& handles, XrHandEXT hand);
+class OpenXRHandTrackingPushChannel final : public core::IHandTrackingPushChannel
+{
+public:
+    OpenXRHandTrackingPushChannel(const core::OpenXRSessionHandles& handles, XrHandEXT hand);
+
+    void push(const XrHandJointLocationEXT* joint_locations, int64_t sample_time_local_common_clock_ns) override;
+
+private:
+    core::XrTimeConverter time_converter_;
+    HandInjector injector_;
+};
 
 } // namespace plugin_utils

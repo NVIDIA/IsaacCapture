@@ -4,6 +4,7 @@
 #include "inc/plugin_utils/plugin_device_status_publisher.hpp"
 
 #include <flatbuffers/flatbuffers.h>
+#include <pusherio/openxr_schema_push_channel.hpp>
 
 #include <algorithm>
 #include <memory>
@@ -32,28 +33,19 @@ core::SchemaPusherConfig make_pusher_config(const std::string& collection_id)
 PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(const core::OpenXRSessionHandles& handles,
                                                          const std::string& plugin_root_id)
     : collection_id_(make_collection_id(plugin_root_id)),
-      pusher_(std::make_unique<core::SchemaPusher>(handles, make_pusher_config(collection_id_)))
+      channel_(std::make_unique<core::OpenXRSchemaPushChannel>(handles, make_pusher_config(collection_id_)))
 {
 }
 
 PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(core::IPluginSession& session, const std::string& plugin_root_id)
     : collection_id_(make_collection_id(plugin_root_id)),
-      pusher_(std::make_unique<core::SchemaPusher>(session.create_schema_push_channel(make_pusher_config(collection_id_))))
+      channel_(session.create_schema_push_channel(make_pusher_config(collection_id_)))
 {
-}
-
-PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(const std::string& plugin_root_id, PushBufferFunction push_buffer)
-    : collection_id_(make_collection_id(plugin_root_id)), push_buffer_(std::move(push_buffer))
-{
-    if (!push_buffer_)
-    {
-        throw std::invalid_argument("PluginDeviceStatusPublisher requires a push transport");
-    }
 }
 
 std::vector<std::string> PluginDeviceStatusPublisher::get_required_extensions()
 {
-    return core::SchemaPusher::get_required_extensions();
+    return core::OpenXRSchemaPushChannel::get_required_extensions();
 }
 
 bool PluginDeviceStatusPublisher::publish_if_changed(const std::vector<PluginDeviceStatusEntry>& entries, int64_t now_ns)
@@ -140,14 +132,7 @@ void PluginDeviceStatusPublisher::push_snapshot(const std::vector<PluginDeviceSt
         throw std::length_error("PluginDeviceStatusPublisher snapshot exceeds the tracker maximum size");
     }
 
-    if (pusher_)
-    {
-        pusher_->push_buffer(builder.GetBufferPointer(), builder.GetSize(), now_ns, now_ns);
-    }
-    else
-    {
-        push_buffer_(builder.GetBufferPointer(), builder.GetSize(), now_ns, now_ns);
-    }
+    channel_->push_buffer(builder.GetBufferPointer(), builder.GetSize(), now_ns, now_ns);
 }
 
 } // namespace plugin_utils

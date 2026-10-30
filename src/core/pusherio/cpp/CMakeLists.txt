@@ -10,7 +10,7 @@ add_library(pusherio STATIC
     inc/pusherio/openxr_schema_push_channel.hpp
     inc/pusherio/plugin_session.hpp
     inc/pusherio/wrist_tracking_source.hpp
-    schema_pusher.cpp
+    inc/pusherio/schema_push_channel.hpp
     inc/pusherio/schema_pusher.hpp
 )
 
