@@ -50,6 +50,7 @@ import type {
   NetworkMetricsUpdate,
   RenderMetricsUpdate,
 } from '@helpers/metricsUpdates';
+import { getOobControlToken } from '@helpers/oobControlToken';
 import { overridePressureObserver } from '@helpers/overridePressureObserver';
 import { kPerformanceOptions } from '@helpers/PerformanceProfiles';
 import CloudXRComponent from '@helpers/react/CloudXRComponent';
@@ -972,7 +973,7 @@ function AppContent() {
 
     const channel = new HeadsetControlChannel({
       url: hubWsUrl,
-      token: readUrlParam(p, 'controlToken') ?? undefined,
+      token: getOobControlToken(p),
       onConfig: () => {
         // Config push handling deferred to phase 2.
       },
