@@ -19,20 +19,6 @@
 namespace remote_plugin_session
 {
 
-//! Where a client connects: plain "host[:port]" (TCP) or "ws://host[:port][/path]" (WebSocket).
-struct RemoteAddress
-{
-    Endpoint endpoint;
-    bool websocket = false;
-    std::string path = "/";
-};
-
-//! Throws std::invalid_argument; wss:// is refused (terminate TLS in a proxy in front of the bridge).
-RemoteAddress parse_remote(const std::string& text, uint16_t default_port);
-//! Connects (and for ws:// completes the upgrade) within `timeout`; throws std::runtime_error.
-std::unique_ptr<ITransport> connect_transport(const RemoteAddress& remote,
-                                              std::chrono::milliseconds timeout = std::chrono::milliseconds{ 3000 });
-
 /*!
  * @brief RFC 6455 transport: each wire frame travels as one binary WebSocket message. No TLS, no extensions.
  *
@@ -48,12 +34,13 @@ public:
         Server,
     };
 
-    //! Server: no I/O. Client: sends the upgrade for `host`/`path` and throws std::runtime_error unless 101.
+    //! Server: no I/O. Client: sends the upgrade for `path` with `host_header` ("host:port") and throws
+    //! std::runtime_error unless 101.
     WebSocketTransport(TcpSocket socket,
                        Role role,
-                       const std::string& host = "",
+                       const std::string& host_header = "",
                        const std::string& path = "/",
-                       std::chrono::milliseconds timeout = std::chrono::milliseconds{ 3000 });
+                       std::chrono::milliseconds timeout = kConnectTimeout);
 
     //! Like TcpTransport::accept; the upgrade happens on the first receive().
     static std::unique_ptr<ITransport> accept(TcpSocket& listener,

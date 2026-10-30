@@ -3,19 +3,18 @@
 
 #include "inc/remote_plugin_session/tcp_socket.hpp"
 
-#include "inc/remote_plugin_session/protocol_frame.hpp"
+#include "inc/remote_plugin_session/transport.hpp"
 
 #include <arpa/inet.h>
-#include <log_bridge/logger.hpp>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <oxr_utils/os_time.hpp>
 #include <sys/socket.h>
 
-#include <atomic>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
 #include <netdb.h>
 #include <poll.h>
 #include <stdexcept>
@@ -25,15 +24,12 @@
 namespace remote_plugin_session
 {
 
-namespace protocol = remote_plugin_protocol;
-
 namespace
 {
 
 // A send may stall as long as the peer timeout tolerates silence; liveness is decided by the receive side.
 constexpr std::chrono::milliseconds kSendTimeout{ 3000 };
-constexpr std::chrono::milliseconds kMidMessageStall{ 3000 };
-// Best effort: the kernel clamps to its rmem/wmem maximum; the effective sizes are logged once.
+// Best effort: the kernel clamps to its rmem/wmem maximum.
 constexpr int kSocketBufferBytes = 4 * 1024 * 1024;
 
 std::string errno_string(const char* what)
@@ -55,27 +51,25 @@ void set_blocking(int fd, bool blocking)
     }
 }
 
+template <typename T>
+void set_option(int fd, int level, int name, const T& value, const char* what)
+{
+    if (setsockopt(fd, level, name, &value, sizeof(value)) < 0)
+    {
+        throw std::runtime_error(errno_string(what));
+    }
+}
+
 void configure_stream(int fd)
 {
-    const int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    set_option(fd, IPPROTO_TCP, TCP_NODELAY, 1, "setsockopt(TCP_NODELAY)");
     timeval send_timeout{};
     send_timeout.tv_sec = static_cast<time_t>(kSendTimeout.count() / 1000);
     send_timeout.tv_usec = static_cast<suseconds_t>((kSendTimeout.count() % 1000) * 1000);
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
-
-    int snd = kSocketBufferBytes;
-    int rcv = kSocketBufferBytes;
-    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
-    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
-    static std::atomic<bool> logged{ false };
-    socklen_t len = sizeof(snd);
-    if (!logged.exchange(true) && getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &snd, &len) == 0 &&
-        getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, &len) == 0)
-    {
-        isaaccapture::Logger::get("isaaccapture.plugins.remote_device_bridge.TcpSocket")
-            ->info("[tcp] socket buffers: SO_SNDBUF={} SO_RCVBUF={} (requested {})", snd, rcv, kSocketBufferBytes);
-    }
+    set_option(fd, SOL_SOCKET, SO_SNDTIMEO, send_timeout, "setsockopt(SO_SNDTIMEO)");
+    // Buffer sizes are a hint the kernel may clamp; a refusal is not an error.
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &kSocketBufferBytes, sizeof(kSocketBufferBytes));
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &kSocketBufferBytes, sizeof(kSocketBufferBytes));
 }
 
 int poll_fd(int fd, short events, std::chrono::milliseconds timeout)
@@ -94,17 +88,7 @@ int poll_fd(int fd, short events, std::chrono::milliseconds timeout)
     }
 }
 
-struct AddrInfoList
-{
-    addrinfo* head = nullptr;
-    ~AddrInfoList()
-    {
-        if (head)
-        {
-            freeaddrinfo(head);
-        }
-    }
-};
+using AddrInfoList = std::unique_ptr<addrinfo, decltype(&freeaddrinfo)>;
 
 AddrInfoList resolve(const Endpoint& endpoint, bool passive)
 {
@@ -112,83 +96,81 @@ AddrInfoList resolve(const Endpoint& endpoint, bool passive)
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = passive ? (AI_PASSIVE | AI_NUMERICSERV) : AI_NUMERICSERV;
-    AddrInfoList list;
+    addrinfo* head = nullptr;
     const std::string service = std::to_string(endpoint.port);
-    const int rc =
-        getaddrinfo(endpoint.host.empty() ? nullptr : endpoint.host.c_str(), service.c_str(), &hints, &list.head);
+    const int rc = getaddrinfo(endpoint.host.empty() ? nullptr : endpoint.host.c_str(), service.c_str(), &hints, &head);
     if (rc != 0)
     {
         throw std::runtime_error("getaddrinfo(" + endpoint.host + "): " + gai_strerror(rc));
     }
-    return list;
+    return AddrInfoList(head, &freeaddrinfo);
 }
 
-//! Non-blocking connect with a deadline; on failure `last_error` says why and the caller tries the next address.
-bool try_connect(TcpSocket& socket, const addrinfo& ai, std::chrono::milliseconds timeout, std::string& last_error)
+//! Non-blocking connect with a deadline. Throws std::runtime_error with the reason.
+void try_connect(TcpSocket& socket, const addrinfo& ai, std::chrono::milliseconds timeout)
 {
     set_blocking(socket.fd(), false);
     const int rc = ::connect(socket.fd(), ai.ai_addr, ai.ai_addrlen);
     if (rc < 0 && errno != EINPROGRESS)
     {
-        last_error = errno_string("connect");
-        return false;
+        throw std::runtime_error(errno_string("connect"));
     }
     if (rc < 0)
     {
         const int ready = poll_fd(socket.fd(), POLLOUT, timeout);
         if (ready <= 0)
         {
-            last_error = ready == 0 ? "connect timed out" : errno_string("poll");
-            return false;
+            throw std::runtime_error(ready == 0 ? "connect timed out" : errno_string("poll"));
         }
         int so_error = 0;
         socklen_t len = sizeof(so_error);
         if (getsockopt(socket.fd(), SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 || so_error != 0)
         {
-            last_error = std::string("connect: ") + std::strerror(so_error != 0 ? so_error : errno);
-            return false;
+            throw std::runtime_error(std::string("connect: ") + std::strerror(so_error != 0 ? so_error : errno));
         }
     }
     set_blocking(socket.fd(), true);
     configure_stream(socket.fd());
-    return true;
 }
 
-bool try_listen(TcpSocket& socket, const addrinfo& ai, int backlog, std::string& last_error)
+//! Throws std::runtime_error with the reason.
+void try_listen(TcpSocket& socket, const addrinfo& ai, int backlog)
 {
-    const int one = 1;
-    setsockopt(socket.fd(), SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    set_option(socket.fd(), SOL_SOCKET, SO_REUSEADDR, 1, "setsockopt(SO_REUSEADDR)");
     if (::bind(socket.fd(), ai.ai_addr, ai.ai_addrlen) < 0)
     {
-        last_error = errno_string("bind");
-        return false;
+        throw std::runtime_error(errno_string("bind"));
     }
     if (::listen(socket.fd(), backlog) < 0)
     {
-        last_error = errno_string("listen");
-        return false;
+        throw std::runtime_error(errno_string("listen"));
     }
-    return true;
 }
 
-//! Runs `attempt` on a fresh socket for each resolved address; the first success wins. `what` names the caller.
+//! Runs `attempt` on a fresh socket for each resolved address; the first that does not throw wins. `what` names
+//! the caller.
 template <typename Attempt>
 TcpSocket for_each_address(const Endpoint& endpoint, bool passive, const char* what, Attempt attempt)
 {
     const AddrInfoList addresses = resolve(endpoint, passive);
     std::string last_error = "no addresses";
 
-    for (const addrinfo* ai = addresses.head; ai != nullptr; ai = ai->ai_next)
+    for (const addrinfo* ai = addresses.get(); ai != nullptr; ai = ai->ai_next)
     {
-        TcpSocket socket(::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
-        if (!socket.valid())
+        try
         {
-            last_error = errno_string("socket");
-            continue;
-        }
-        if (attempt(socket, *ai, last_error))
-        {
+            const int fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            if (fd < 0)
+            {
+                throw std::runtime_error(errno_string("socket"));
+            }
+            TcpSocket socket(fd);
+            attempt(socket, *ai);
             return socket;
+        }
+        catch (const std::runtime_error& e)
+        {
+            last_error = e.what();
         }
     }
 
@@ -202,28 +184,48 @@ Endpoint parse_endpoint(const std::string& text, uint16_t default_port)
 {
     Endpoint endpoint;
     endpoint.port = default_port;
-    const size_t colon = text.rfind(':');
-    if (colon == std::string::npos)
+    std::string port_text;
+    bool has_port = false;
+    if (!text.empty() && text.front() == '[')
     {
-        endpoint.host = text;
+        // "[v6-address]" or "[v6-address]:port"
+        const size_t close = text.find(']');
+        if (close == std::string::npos || (close + 1 < text.size() && text[close + 1] != ':'))
+        {
+            throw std::invalid_argument("invalid bracketed host in endpoint '" + text + "'");
+        }
+        endpoint.host = text.substr(1, close - 1);
+        has_port = close + 1 < text.size();
+        port_text = has_port ? text.substr(close + 2) : "";
+    }
+    else if (std::count(text.begin(), text.end(), ':') > 1)
+    {
+        endpoint.host = text; // bare IPv6 address, no port
     }
     else
     {
+        const size_t colon = text.find(':');
         endpoint.host = text.substr(0, colon);
-        const std::string port_text = text.substr(colon + 1);
+        has_port = colon != std::string::npos;
+        port_text = has_port ? text.substr(colon + 1) : "";
+    }
+    if (has_port)
+    {
+        unsigned long port = 0;
+        size_t parsed = 0;
         try
         {
-            const unsigned long port = std::stoul(port_text);
-            if (port_text.empty() || port == 0 || port > 65535)
-            {
-                throw std::out_of_range("port");
-            }
-            endpoint.port = static_cast<uint16_t>(port);
+            port = std::stoul(port_text, &parsed);
         }
         catch (const std::exception&)
         {
+            parsed = 0;
+        }
+        if (parsed == 0 || parsed != port_text.size() || port == 0 || port > 65535)
+        {
             throw std::invalid_argument("invalid port in endpoint '" + text + "'");
         }
+        endpoint.port = static_cast<uint16_t>(port);
     }
     if (endpoint.host.empty())
     {
@@ -258,18 +260,16 @@ TcpSocket& TcpSocket::operator=(TcpSocket&& other) noexcept
 TcpSocket TcpSocket::connect(const Endpoint& endpoint, std::chrono::milliseconds timeout)
 {
     return for_each_address(endpoint, false, "connect",
-                            [timeout](TcpSocket& socket, const addrinfo& ai, std::string& last_error)
-                            { return try_connect(socket, ai, timeout, last_error); });
+                            [timeout](TcpSocket& socket, const addrinfo& ai) { try_connect(socket, ai, timeout); });
 }
 
 TcpSocket TcpSocket::listen(const Endpoint& endpoint, int backlog)
 {
     return for_each_address(endpoint, true, "listen",
-                            [backlog](TcpSocket& socket, const addrinfo& ai, std::string& last_error)
-                            { return try_listen(socket, ai, backlog, last_error); });
+                            [backlog](TcpSocket& socket, const addrinfo& ai) { try_listen(socket, ai, backlog); });
 }
 
-TcpSocket TcpSocket::accept(std::chrono::milliseconds timeout)
+TcpSocket TcpSocket::accept(std::chrono::milliseconds timeout, std::string* peer)
 {
     const int ready = poll_fd(m_fd, POLLIN, timeout);
     if (ready == 0)
@@ -283,7 +283,7 @@ TcpSocket TcpSocket::accept(std::chrono::milliseconds timeout)
     const int fd = ::accept(m_fd, nullptr, nullptr);
     if (fd < 0)
     {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED || errno == EINTR)
+        if (errno == ECONNABORTED || errno == EINTR)
         {
             return TcpSocket();
         }
@@ -291,6 +291,10 @@ TcpSocket TcpSocket::accept(std::chrono::milliseconds timeout)
     }
     TcpSocket client(fd);
     configure_stream(fd);
+    if (peer != nullptr)
+    {
+        *peer = client.peer_name();
+    }
     return client;
 }
 
@@ -378,7 +382,7 @@ TcpSocket::RecvResult TcpSocket::recv_all(uint8_t* data, size_t size, std::chron
         const ssize_t n = ::recv(m_fd, data + received, size - received, 0);
         if (n < 0)
         {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+            if (errno == EINTR)
             {
                 continue;
             }
@@ -408,68 +412,6 @@ void TcpSocket::close()
         ::close(m_fd);
         m_fd = -1;
     }
-}
-
-TcpTransport::TcpTransport(TcpSocket socket) : m_socket(std::move(socket))
-{
-}
-
-bool TcpTransport::send(const uint8_t* frame, size_t size)
-{
-    return m_socket.send_all(frame, size);
-}
-
-ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::milliseconds timeout)
-{
-    frame.resize(protocol::kHeaderSize);
-    switch (m_socket.recv_all(frame.data(), protocol::kHeaderSize, timeout))
-    {
-    case TcpSocket::RecvResult::Timeout:
-        return ReceiveResult::Timeout;
-    case TcpSocket::RecvResult::Closed:
-        return ReceiveResult::Closed;
-    case TcpSocket::RecvResult::Ok:
-        break;
-    }
-
-    uint32_t payload_size = 0;
-    try
-    {
-        payload_size = protocol::decode_header(frame).payload_size;
-    }
-    catch (const protocol::DecodeError&)
-    {
-        return ReceiveResult::Malformed;
-    }
-    if (payload_size == 0)
-    {
-        return ReceiveResult::Ok;
-    }
-    frame.resize(protocol::kHeaderSize + payload_size);
-    // A header without its payload within the stall window is a broken peer, not a quiet one.
-    return m_socket.recv_all(frame.data() + protocol::kHeaderSize, payload_size, kMidMessageStall) ==
-                   TcpSocket::RecvResult::Ok ?
-               ReceiveResult::Ok :
-               ReceiveResult::Closed;
-}
-
-void TcpTransport::shutdown()
-{
-    m_socket.shutdown();
-}
-
-std::unique_ptr<ITransport> TcpTransport::accept(TcpSocket& listener, std::chrono::milliseconds poll, std::string* peer)
-{
-    TcpSocket client = listener.accept(poll);
-    if (!client.valid())
-    {
-        return nullptr;
-    }
-    if (peer != nullptr)
-    {
-        *peer = client.peer_name();
-    }
-    return std::make_unique<TcpTransport>(std::move(client));
 }
 
 } // namespace remote_plugin_session

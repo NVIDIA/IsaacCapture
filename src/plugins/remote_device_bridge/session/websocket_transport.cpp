@@ -20,10 +20,16 @@ namespace protocol = remote_plugin_protocol;
 namespace
 {
 
-constexpr std::chrono::milliseconds kStall{ 3000 }; // matches TcpTransport's mid-message stall
 constexpr size_t kMaxHttpHead = 8192;
 constexpr uint64_t kMaxMessage = protocol::kHeaderSize + protocol::kMaxPayloadSize;
 constexpr char kAcceptGuid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+constexpr uint8_t kFinBit = 0x80;
+constexpr uint8_t kRsvBits = 0x70;
+constexpr uint8_t kOpcodeMask = 0x0F;
+constexpr uint8_t kControlBit = 0x08;
+constexpr uint8_t kMaskBit = 0x80;
+constexpr uint8_t kLengthMask = 0x7F;
 
 constexpr uint8_t kContinuation = 0x0;
 constexpr uint8_t kBinary = 0x2;
@@ -132,7 +138,7 @@ ReceiveResult read_http_head(TcpSocket& socket, std::chrono::milliseconds timeou
             return ReceiveResult::Malformed;
         }
         uint8_t byte = 0;
-        const TcpSocket::RecvResult result = socket.recv_all(&byte, 1, text.empty() ? timeout : kStall);
+        const TcpSocket::RecvResult result = socket.recv_all(&byte, 1, text.empty() ? timeout : kMidMessageStall);
         if (result != TcpSocket::RecvResult::Ok)
         {
             return result == TcpSocket::RecvResult::Timeout && text.empty() ? ReceiveResult::Timeout :
@@ -167,45 +173,11 @@ std::string header(const HttpHead& head, const std::string& name)
 
 } // namespace
 
-RemoteAddress parse_remote(const std::string& text, uint16_t default_port)
-{
-    const std::string scheme = "ws://";
-    if (text.rfind("wss://", 0) == 0)
-    {
-        throw std::invalid_argument("wss:// is not supported ('" + text + "'); terminate TLS in a proxy, use ws://");
-    }
-    RemoteAddress remote;
-    if (text.rfind(scheme, 0) != 0)
-    {
-        remote.endpoint = parse_endpoint(text, default_port);
-        return remote;
-    }
-    remote.websocket = true;
-    std::string authority = text.substr(scheme.size());
-    const size_t slash = authority.find('/');
-    if (slash != std::string::npos)
-    {
-        remote.path = authority.substr(slash);
-        authority.resize(slash);
-    }
-    remote.endpoint = parse_endpoint(authority, default_port);
-    return remote;
-}
-
-std::unique_ptr<ITransport> connect_transport(const RemoteAddress& remote, std::chrono::milliseconds timeout)
-{
-    TcpSocket socket = TcpSocket::connect(remote.endpoint, timeout);
-    if (!remote.websocket)
-    {
-        return std::make_unique<TcpTransport>(std::move(socket));
-    }
-    return std::make_unique<WebSocketTransport>(std::move(socket), WebSocketTransport::Role::Client,
-                                                remote.endpoint.host + ":" + std::to_string(remote.endpoint.port),
-                                                remote.path, timeout);
-}
-
-WebSocketTransport::WebSocketTransport(
-    TcpSocket socket, Role role, const std::string& host, const std::string& path, std::chrono::milliseconds timeout)
+WebSocketTransport::WebSocketTransport(TcpSocket socket,
+                                       Role role,
+                                       const std::string& host_header,
+                                       const std::string& path,
+                                       std::chrono::milliseconds timeout)
     : m_socket(std::move(socket)), m_role(role), m_mask_rng(std::random_device{}())
 {
     if (role == Role::Server)
@@ -215,22 +187,33 @@ WebSocketTransport::WebSocketTransport(
     std::array<uint8_t, 16> nonce{};
     std::generate(nonce.begin(), nonce.end(), [this] { return static_cast<uint8_t>(m_mask_rng()); });
     const std::string key = base64(nonce.data(), nonce.size());
-    const std::string request = "GET " + path + " HTTP/1.1\r\nHost: " + host +
+    const std::string request = "GET " + path + " HTTP/1.1\r\nHost: " + host_header +
                                 "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key +
                                 "\r\nSec-WebSocket-Version: 13\r\n\r\n";
-    HttpHead response;
-    if (!m_socket.send_all(reinterpret_cast<const uint8_t*>(request.data()), request.size()) ||
-        read_http_head(m_socket, timeout, response) != ReceiveResult::Ok)
+    const std::string target = host_header + path;
+    if (!m_socket.send_all(reinterpret_cast<const uint8_t*>(request.data()), request.size()))
     {
-        throw std::runtime_error("WebSocket upgrade to " + host + path + ": no HTTP response");
+        throw std::runtime_error("WebSocket upgrade to " + target + ": sending the request failed");
+    }
+    HttpHead response;
+    switch (read_http_head(m_socket, timeout, response))
+    {
+    case ReceiveResult::Ok:
+        break;
+    case ReceiveResult::Timeout:
+        throw std::runtime_error("WebSocket upgrade to " + target + ": no HTTP response within the timeout");
+    case ReceiveResult::Closed:
+        throw std::runtime_error("WebSocket upgrade to " + target + ": connection closed before the response");
+    case ReceiveResult::Malformed:
+        throw std::runtime_error("WebSocket upgrade to " + target + ": malformed HTTP response");
     }
     if (response.start_line.rfind("HTTP/1.1 101", 0) != 0)
     {
-        throw std::runtime_error("WebSocket upgrade to " + host + path + " refused: " + response.start_line);
+        throw std::runtime_error("WebSocket upgrade to " + target + " refused: " + response.start_line);
     }
     if (header(response, "sec-websocket-accept") != accept_key(key))
     {
-        throw std::runtime_error("WebSocket upgrade to " + host + path + ": wrong Sec-WebSocket-Accept");
+        throw std::runtime_error("WebSocket upgrade to " + target + ": wrong Sec-WebSocket-Accept");
     }
     m_open = true;
 }
@@ -239,16 +222,8 @@ std::unique_ptr<ITransport> WebSocketTransport::accept(TcpSocket& listener,
                                                        std::chrono::milliseconds poll,
                                                        std::string* peer)
 {
-    TcpSocket client = listener.accept(poll);
-    if (!client.valid())
-    {
-        return nullptr;
-    }
-    if (peer != nullptr)
-    {
-        *peer = client.peer_name();
-    }
-    return std::make_unique<WebSocketTransport>(std::move(client), Role::Server);
+    TcpSocket client = listener.accept(poll, peer);
+    return client.valid() ? std::make_unique<WebSocketTransport>(std::move(client), Role::Server) : nullptr;
 }
 
 ReceiveResult WebSocketTransport::accept_upgrade(std::chrono::milliseconds timeout)
@@ -290,8 +265,8 @@ bool WebSocketTransport::send_message(uint8_t opcode, const uint8_t* data, size_
 {
     std::lock_guard<std::mutex> lock(m_send_mutex);
     std::vector<uint8_t>& out = m_send_buffer;
-    out.assign(1, static_cast<uint8_t>(0x80 | opcode)); // FIN: never fragmented on send
-    const uint8_t mask_bit = m_role == Role::Client ? 0x80 : 0x00;
+    out.assign(1, static_cast<uint8_t>(kFinBit | opcode)); // never fragmented on send
+    const uint8_t mask_bit = m_role == Role::Client ? kMaskBit : 0x00;
     if (size < 126)
     {
         out.push_back(static_cast<uint8_t>(mask_bit | size));
@@ -344,27 +319,28 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
                                                               std::chrono::duration_cast<std::chrono::milliseconds>(
                                                                   deadline - std::chrono::steady_clock::now()));
         uint8_t head[2];
-        const TcpSocket::RecvResult first = m_socket.recv_all(head, sizeof(head), in_message ? kStall : remaining);
+        const TcpSocket::RecvResult first =
+            m_socket.recv_all(head, sizeof(head), in_message ? kMidMessageStall : remaining);
         if (first != TcpSocket::RecvResult::Ok)
         {
             return first == TcpSocket::RecvResult::Timeout && !in_message ? ReceiveResult::Timeout :
                                                                             ReceiveResult::Closed;
         }
-        const bool fin = (head[0] & 0x80) != 0;
-        const uint8_t opcode = head[0] & 0x0F;
-        const bool masked = (head[1] & 0x80) != 0;
-        const bool control = (opcode & 0x08) != 0;
-        uint64_t length = head[1] & 0x7F;
+        const bool fin = (head[0] & kFinBit) != 0;
+        const uint8_t opcode = head[0] & kOpcodeMask;
+        const bool masked = (head[1] & kMaskBit) != 0;
+        const bool control = (opcode & kControlBit) != 0;
+        uint64_t length = head[1] & kLengthMask;
         // RSV bits need an extension we never negotiate; clients must mask and servers must not.
-        if ((head[0] & 0x70) != 0 || masked != (m_role == Role::Server))
+        if ((head[0] & kRsvBits) != 0 || masked != (m_role == Role::Server))
         {
-            return ReceiveResult::Closed;
+            return ReceiveResult::Malformed;
         }
         if (length >= 126)
         {
             std::array<uint8_t, 8> ext{};
             const size_t ext_size = length == 126 ? 2 : 8;
-            if (m_socket.recv_all(ext.data(), ext_size, kStall) != TcpSocket::RecvResult::Ok)
+            if (m_socket.recv_all(ext.data(), ext_size, kMidMessageStall) != TcpSocket::RecvResult::Ok)
             {
                 return ReceiveResult::Closed;
             }
@@ -375,7 +351,7 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
             }
         }
         std::array<uint8_t, 4> mask{};
-        if (masked && m_socket.recv_all(mask.data(), mask.size(), kStall) != TcpSocket::RecvResult::Ok)
+        if (masked && m_socket.recv_all(mask.data(), mask.size(), kMidMessageStall) != TcpSocket::RecvResult::Ok)
         {
             return ReceiveResult::Closed;
         }
@@ -386,7 +362,7 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
         {
             if (!fin || length > 125)
             {
-                return ReceiveResult::Closed;
+                return ReceiveResult::Malformed;
             }
             control_payload.resize(length);
             dest = control_payload.data();
@@ -395,7 +371,7 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
         {
             if (opcode != (in_message ? kContinuation : kBinary))
             {
-                return ReceiveResult::Closed; // text frames, unknown opcodes, broken fragmentation
+                return ReceiveResult::Malformed; // text frames, unknown opcodes, broken fragmentation
             }
             if (length > kMaxMessage - frame.size())
             {
@@ -405,7 +381,7 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
             frame.resize(offset + length);
             dest = frame.data() + offset;
         }
-        if (length > 0 && m_socket.recv_all(dest, length, kStall) != TcpSocket::RecvResult::Ok)
+        if (length > 0 && m_socket.recv_all(dest, length, kMidMessageStall) != TcpSocket::RecvResult::Ok)
         {
             return ReceiveResult::Closed;
         }
