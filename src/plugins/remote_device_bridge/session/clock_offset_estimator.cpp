@@ -78,9 +78,9 @@ int64_t ClockOffsetEstimator::rtt_last_ns() const
     return m_exchanges.empty() ? 0 : m_exchanges.back().rtt_ns;
 }
 
-const char* ClockOffsetEstimator::offset_source() const
+ClockOffsetEstimator::Source ClockOffsetEstimator::offset_source() const
 {
-    return m_exchanges.empty() ? "one-way" : "two-way";
+    return m_exchanges.empty() ? Source::OneWay : Source::TwoWay;
 }
 
 PingScheduler::PingScheduler(int64_t start_ns) : m_start_ns(start_ns), m_next_ns(start_ns)

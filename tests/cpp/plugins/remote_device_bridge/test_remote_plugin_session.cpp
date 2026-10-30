@@ -344,6 +344,7 @@ TEST_CASE("RemotePluginSession performs the HELLO handshake", "[remote_device_br
     REQUIRE(hello.has_value());
     REQUIRE(hello->header.channel_id == protocol::kSessionChannelId);
     REQUIRE(hello->header.seq == 0);
+    REQUIRE(protocol::decode_hello(hello->payload).app_name == "test_app");
     const protocol::Hello decoded = protocol::decode_hello(hello->payload);
     REQUIRE(decoded.app_name == "test_app");
     REQUIRE(decoded.requirements.schema_push);
@@ -377,18 +378,6 @@ TEST_CASE("RemotePluginSession fails fast when the bridge refuses or is absent",
     {
         REQUIRE_THROWS_AS(RemotePluginSession(std::unique_ptr<ITransport>(), "test_app", {}), std::invalid_argument);
     }
-}
-
-TEST_CASE("RemotePluginSession accepts an already connected transport", "[remote_device_bridge][unit]")
-{
-    FakeBridge bridge;
-    RemotePluginSession session(
-        std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", bridge.port() }, kWait)),
-        "via_transport", { .hand_tracking_push = true });
-    REQUIRE(session.connected());
-    const auto hello = bridge.wait_for(protocol::FrameType::Hello);
-    REQUIRE(hello.has_value());
-    REQUIRE(protocol::decode_hello(hello->payload).app_name == "via_transport");
 }
 
 TEST_CASE("RemotePluginSession enforces declared requirements", "[remote_device_bridge][unit]")
@@ -641,18 +630,16 @@ TEST_CASE("RemotePluginSession never reconnects after the link drops", "[remote_
     REQUIRE(TcpTransport::accept(listener, std::chrono::milliseconds(500)) == nullptr);
 }
 
-TEST_CASE("RemotePluginSession closes remaining channels and the socket on destruction", "[remote_device_bridge][unit]")
+TEST_CASE("RemotePluginSession closes its channels and the socket on destruction", "[remote_device_bridge][unit]")
 {
     FakeBridge bridge;
-    std::unique_ptr<core::IHandTrackingPushChannel> channel;
     {
         RemotePluginSession session(connect_to(bridge.port()), "test_app", { .hand_tracking_push = true });
-        channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+        auto channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
         REQUIRE(bridge.wait_for(protocol::FrameType::OpenHand).has_value());
     }
     REQUIRE(bridge.wait_for(protocol::FrameType::Close).has_value());
     REQUIRE(bridge.client_closed());
-    REQUIRE_NOTHROW(channel.reset());
 }
 
 TEST_CASE("RemotePluginSession keeps the newest samples per channel while the link is stalled",

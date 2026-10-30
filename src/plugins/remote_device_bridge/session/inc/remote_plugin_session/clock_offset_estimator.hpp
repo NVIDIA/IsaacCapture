@@ -23,6 +23,12 @@ namespace remote_plugin_session
 class ClockOffsetEstimator
 {
 public:
+    enum class Source
+    {
+        OneWay,
+        TwoWay, //!< once an exchange was added
+    };
+
     //! One-way: at most `max_samples` within `window_ns`; two-way: the last `two_way_window` exchanges.
     explicit ClockOffsetEstimator(size_t max_samples = 200, int64_t window_ns = 5'000'000'000, size_t two_way_window = 32);
 
@@ -36,8 +42,7 @@ public:
     //! Zero until the first two-way exchange.
     int64_t rtt_min_ns() const;
     int64_t rtt_last_ns() const;
-    //! "two-way" once an exchange was added, else "one-way".
-    const char* offset_source() const;
+    Source offset_source() const;
 
 private:
     struct Sample

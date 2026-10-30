@@ -71,7 +71,7 @@ class detail::RemotePluginSessionImpl
 {
 public:
     RemotePluginSessionImpl(std::unique_ptr<ITransport> transport,
-                            const std::string& app_name,
+                            std::string app_name,
                             core::PluginSessionRequirements requirements)
         : m_requirements(requirements), m_transport(std::move(transport))
     {
@@ -81,7 +81,7 @@ public:
         }
 
         protocol::Hello hello;
-        hello.app_name = app_name;
+        hello.app_name = std::move(app_name);
         hello.requirements = requirements;
         FrameBytes hello_frame = protocol::encode_frame(
             protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
@@ -222,10 +222,6 @@ public:
     //! Per-channel latest-wins queue; control frames are never dropped.
     void push_sample(uint16_t channel_id, FrameBytes frame)
     {
-        if (!m_connected.load())
-        {
-            return;
-        }
         {
             std::lock_guard<std::mutex> lock(m_queue_mutex);
             const auto it = m_sample_queues.find(channel_id);
@@ -258,24 +254,8 @@ public:
 
     void shutdown()
     {
-        if (m_shutdown.exchange(true))
-        {
-            return;
-        }
-
-        std::set<uint16_t> remaining;
-        {
-            std::lock_guard<std::mutex> lock(m_state_mutex);
-            remaining.swap(m_open_channels);
-        }
-        if (m_connected.load())
-        {
-            for (auto it = remaining.rbegin(); it != remaining.rend(); ++it)
-            {
-                enqueue_control(protocol::FrameType::Close, *it, {});
-            }
-        }
-
+        // Runs once: from the destructor, or from a constructor that throws (and so never destructs). Every
+        // channel has already sent its CLOSE, as IPluginSession has the owner destroy channels first.
         {
             std::unique_lock<std::mutex> lock(m_queue_mutex);
             m_stop = true;
@@ -376,17 +356,16 @@ private:
         return batch;
     }
 
-    void log_stats()
+    void log_stats(RemotePluginSession::Stats& last)
     {
         const RemotePluginSession::Stats now = stats();
-        const RemotePluginSession::Stats& last = m_logged_stats;
         logger()->info(
             "{}s: sent hand={} schema={} wrist_rx={} hb={} | dropped queue={} | tx_bytes={} | offset_ns={} | "
             "connected={:d}",
             kStatsPeriod.count(), now.sent_hand - last.sent_hand, now.sent_schema - last.sent_schema,
             now.wrist_rx - last.wrist_rx, now.heartbeats - last.heartbeats, now.dropped_queue - last.dropped_queue,
             now.tx_bytes - last.tx_bytes, clock_offset_ns(), m_connected.load());
-        m_logged_stats = now;
+        last = now;
     }
 
     void on_disconnect(const std::string& reason)
@@ -421,6 +400,7 @@ private:
     {
         auto last_send = std::chrono::steady_clock::now();
         auto next_stats = last_send + kStatsPeriod;
+        RemotePluginSession::Stats logged_stats;
         while (true)
         {
             std::vector<FrameBytes> batch = next_batch(std::min(last_send + kHeartbeatPeriod, next_stats));
@@ -449,7 +429,7 @@ private:
             }
             if (now >= next_stats)
             {
-                log_stats();
+                log_stats(logged_stats);
                 next_stats += kStatsPeriod;
             }
         }
@@ -544,7 +524,6 @@ private:
 
     std::atomic<bool> m_connected{ false };
     std::atomic<bool> m_stop{ false };
-    std::atomic<bool> m_shutdown{ false };
 
     std::mutex m_state_mutex;
     uint16_t m_next_channel_id = 1;
@@ -565,7 +544,6 @@ private:
     std::atomic<uint64_t> m_wrist_rx{ 0 };
     std::atomic<uint64_t> m_heartbeats{ 0 };
     std::atomic<uint64_t> m_tx_bytes{ 0 };
-    RemotePluginSession::Stats m_logged_stats; // sender thread only
 
     mutable std::mutex m_wrist_mutex;
     core::WristTrackingSample m_wrist[2];
@@ -714,7 +692,7 @@ private:
 RemotePluginSession::RemotePluginSession(std::unique_ptr<ITransport> transport,
                                          std::string app_name,
                                          core::PluginSessionRequirements requirements)
-    : m_impl(std::make_unique<detail::RemotePluginSessionImpl>(std::move(transport), app_name, requirements)),
+    : m_impl(std::make_unique<detail::RemotePluginSessionImpl>(std::move(transport), std::move(app_name), requirements)),
       m_pull_channel(std::make_unique<RemotePluginPullChannel>(*m_impl))
 {
 }
