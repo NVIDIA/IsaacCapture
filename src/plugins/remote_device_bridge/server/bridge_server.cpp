@@ -64,6 +64,9 @@ constexpr std::chrono::milliseconds kHandshakeTimeout{ 3000 };
 constexpr std::chrono::milliseconds kReceivePoll{ 100 };
 constexpr std::chrono::nanoseconds kHeartbeatPeriod{ 500'000'000 };
 constexpr std::chrono::nanoseconds kPeerTimeout{ 3'000'000'000 };
+//! After a failed send, how long the reader gets to see the hang-up and apply the client's last frames before the
+//! session ends anyway (a stalled link).
+constexpr std::chrono::milliseconds kSendFailureGrace{ 500 };
 // A refused client gets "bridge full" as soon as its transport is up (ws://: after the upgrade, waited for this
 // long), then the connection lingers this long so the ACK is delivered and a late HELLO is read, not reset.
 constexpr std::chrono::milliseconds kLingerWait{ 1000 };
@@ -199,6 +202,7 @@ public:
         const auto period = std::chrono::nanoseconds(1'000'000'000 / m_options.wrist_rate_hz);
         auto next_tick = std::chrono::steady_clock::now() + period;
         auto next_stats = std::chrono::steady_clock::now() + m_options.stats_period;
+        std::optional<std::chrono::steady_clock::time_point> send_failed_deadline;
 
         while (!stop.load() && !m_done.load())
         {
@@ -238,6 +242,18 @@ public:
             }
 
             const auto now = std::chrono::steady_clock::now();
+            if (m_send_failed)
+            {
+                if (!send_failed_deadline)
+                {
+                    send_failed_deadline = now + kSendFailureGrace;
+                }
+                else if (now >= *send_failed_deadline)
+                {
+                    logger()->warn("{} sending to the client failed; closing", m_tag);
+                    return;
+                }
+            }
             if (now >= next_tick)
             {
                 tick(now_ns);
@@ -248,7 +264,7 @@ public:
                 }
             }
             poll_pings(now_ns);
-            if (!m_done.load() && now_ns - m_last_send_ns > kHeartbeatPeriod.count())
+            if (now_ns - m_last_send_ns > kHeartbeatPeriod.count())
             {
                 send(protocol::FrameType::Heartbeat, protocol::kSessionChannelId, {});
             }
@@ -344,7 +360,7 @@ private:
 
         send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
              protocol::encode_hello_ack(protocol::HelloAck{ true, "" }));
-        if (m_done.load())
+        if (m_send_failed)
         {
             refuse_handshake("HELLO_ACK not delivered");
         }
@@ -705,7 +721,7 @@ private:
                     sample.hand = hand;
                     sample.sample = wrist->query(hand, now_ns);
                     send(protocol::FrameType::WristSample, m_pull->id, protocol::encode_wrist_sample(sample));
-                    if (m_done.load())
+                    if (m_send_failed)
                     {
                         return;
                     }
@@ -719,15 +735,20 @@ private:
         }
     }
 
-    //! A failed send ends the session (sets m_done).
+    //! After a failed send the rest are dropped; run() ends the session once the reader has seen the hang-up (so the
+    //! client's last frames still apply) or kSendFailureGrace has passed.
     void send(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
     {
+        if (m_send_failed)
+        {
+            return;
+        }
         std::vector<uint8_t> frame = protocol::encode_frame(type, channel_id, payload);
         m_last_send_ns = core::os_monotonic_now_ns();
         protocol::stamp_header(frame, m_next_seq++, m_last_send_ns);
         if (!m_transport->send(frame.data(), frame.size()))
         {
-            m_done.store(true);
+            m_send_failed = true;
         }
     }
 
@@ -794,6 +815,7 @@ private:
     std::deque<Received> m_queue;
     std::atomic<bool> m_reader_closed{ false };
     std::atomic<bool> m_done{ false };
+    bool m_send_failed = false; //!< run thread only (the handshake runs on it too)
 };
 
 //! Runs one client to completion in the forked child; false after a fatal error.
