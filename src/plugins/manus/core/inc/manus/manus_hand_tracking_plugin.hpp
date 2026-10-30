@@ -8,7 +8,6 @@
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <log_bridge/logger.hpp>
 #include <openxr/openxr_platform.h>
-#include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <pusherio/hand_tracking_push_channel.hpp>
 #include <pusherio/plugin_session.hpp>
 #include <pusherio/schema_push_channel.hpp>
@@ -24,6 +23,11 @@
 #include <string>
 #include <vector>
 
+namespace plugin_utils
+{
+class PluginDeviceStatusPublisher;
+}
+
 namespace plugins
 {
 namespace manus
@@ -37,6 +41,7 @@ inline constexpr std::size_t kManusFingerCount = 5;
 /// Runtime feature flags for manus_hand_plugin (parsed from --datasets=...).
 struct ManusPluginConfig
 {
+    std::string app_name = "ManusHandPlugin"; // OpenXR application name of the session instance(config) opens
     std::optional<std::string> monitoring_plugin_root_id;
     std::string left_calibration_file;
     std::string right_calibration_file;
@@ -52,6 +57,9 @@ public:
     /// ``plugin_session_factory`` once during construction; later calls ignore all arguments.
     static ManusTracker& instance(const ManusPluginConfig& config,
                                   const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
+    /// Same, with the local OpenXR plugin session. The OpenXR loader lives in this library only; an
+    /// executable that linked its own copy would create the instance in one loader and query it in the other.
+    static ManusTracker& instance(const ManusPluginConfig& config) noexcept(false);
 
     void update();
     std::vector<SkeletonNode> get_left_hand_nodes() const;

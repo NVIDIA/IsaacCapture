@@ -25,6 +25,8 @@
 #include <oxr_utils/math.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <oxr_utils/pose_conversions.hpp>
+#include <plugin_utils/openxr_plugin_session.hpp>
+#include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <schema/haptic_command_generated.h>
 #include <schema/joint_se3_pose_generated.h>
 
@@ -116,6 +118,11 @@ ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
 {
     const ConstructionArgs args{ config, plugin_session_factory };
     return instance(&args);
+}
+
+ManusTracker& ManusTracker::instance(const ManusPluginConfig& config) noexcept(false)
+{
+    return instance(config, plugin_utils::make_openxr_plugin_session_factory(config.app_name));
 }
 
 ManusTracker& ManusTracker::instance(const ConstructionArgs* args)

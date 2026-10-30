@@ -14,11 +14,12 @@ target_include_directories(manus_plugin_core
 target_link_libraries(manus_plugin_core
   PUBLIC
     ManusSDK::ManusSDK
-    Teleop::plugin_utils
     deviceio::deviceio_trackers
     pusherio::pusherio
     log_bridge::log_bridge_core
   PRIVATE
+    # Carries the static OpenXR loader; PUBLIC would link a second copy into every executable.
+    Teleop::plugin_utils
     oxr::oxr_utils
     isaacteleop_schema
 )

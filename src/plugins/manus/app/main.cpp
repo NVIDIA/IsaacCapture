@@ -3,7 +3,6 @@
 
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
-#include <plugin_utils/openxr_plugin_session.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -131,7 +130,7 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto& tracker = ManusTracker::instance(config, plugin_utils::make_openxr_plugin_session_factory("ManusHandPlugin"));
+    auto& tracker = ManusTracker::instance(config);
 
     logger->info("Plugin running. Press Ctrl+C to stop.");
 
