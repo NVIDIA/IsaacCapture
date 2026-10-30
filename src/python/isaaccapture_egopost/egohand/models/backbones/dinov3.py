@@ -165,7 +165,9 @@ class DinoV3Backbone(nn.Module):
         (DINOv3 SSL artifact, harmless at inference).
         """
         Log.info(f"[DinoV3Backbone] Loading pretrained weights from {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        # Checkpoints are data, not trusted code. Restricted loading rejects
+        # pickle globals while preserving tensors and primitive metadata.
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         sd = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
 
         prefix = "backbone.encoder."

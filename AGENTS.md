@@ -240,6 +240,8 @@ pre-commit install --hook-type commit-msg
 
 ## Remote pushes
 
+- Default security-fix pull requests to `main`; use a release branch only when
+  the user explicitly requests that backport target.
 - When moving a focused fix from a release branch onto `main`, identify its
   original base and replay only the fix commits. Do not carry release-only CI
   changes or duplicate upstream features into the new branch.
