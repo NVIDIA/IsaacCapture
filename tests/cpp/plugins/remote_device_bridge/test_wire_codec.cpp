@@ -18,7 +18,6 @@ namespace protocol = remote_plugin_protocol;
 namespace
 {
 
-constexpr size_t kWristConfigPayloadSize = sizeof(uint8_t) + 2 * protocol::kPoseSize;
 constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + protocol::kPoseSize;
 
 bool same_pose(const XrPosef& a, const XrPosef& b)
@@ -126,20 +125,21 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     }
 }
 
-TEST_CASE("Wire contract is 14 frame types in a 24-byte header", "[remote_device_bridge][unit]")
+TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device_bridge][unit]")
 {
-    // Frame type numbers are part of the wire contract.
-    const std::vector<protocol::FrameType> contract = {
-        protocol::FrameType::Hello,       protocol::FrameType::HelloAck,   protocol::FrameType::OpenHand,
-        protocol::FrameType::OpenSchema,  protocol::FrameType::OpenPull,   protocol::FrameType::OpenWrist,
-        protocol::FrameType::Close,       protocol::FrameType::HandSample, protocol::FrameType::SchemaSample,
-        protocol::FrameType::WristSample, protocol::FrameType::Heartbeat,  protocol::FrameType::Error,
-        protocol::FrameType::Ping, // bridge -> sender, t1
-        protocol::FrameType::Pong, // sender -> bridge, t1 t2 t3
+    // Frame type numbers are part of the wire contract; 6 is unassigned.
+    const std::vector<std::pair<protocol::FrameType, uint8_t>> contract = {
+        { protocol::FrameType::Hello, 1 },        { protocol::FrameType::HelloAck, 2 },
+        { protocol::FrameType::OpenHand, 3 },     { protocol::FrameType::OpenSchema, 4 },
+        { protocol::FrameType::OpenPull, 5 },     { protocol::FrameType::Close, 7 },
+        { protocol::FrameType::HandSample, 8 },   { protocol::FrameType::SchemaSample, 9 },
+        { protocol::FrameType::WristSample, 10 }, { protocol::FrameType::Heartbeat, 11 },
+        { protocol::FrameType::Error, 12 },       { protocol::FrameType::Ping, 13 },
+        { protocol::FrameType::Pong, 14 },
     };
-    for (size_t i = 0; i < contract.size(); ++i)
+    for (const auto& [type, number] : contract)
     {
-        REQUIRE(static_cast<uint8_t>(contract[i]) == i + 1);
+        REQUIRE(static_cast<uint8_t>(type) == number);
     }
 
     // magic u32 @0, type u8 @4, version u8 @5, channel u16 @6, seq u32 @8, payload size u32 @12, t_send i64 @16.
@@ -150,7 +150,7 @@ TEST_CASE("Wire contract is 14 frame types in a 24-byte header", "[remote_device
     REQUIRE(std::vector<uint8_t>(frame.begin(), frame.begin() + 24) == expected);
     uint8_t* bytes = frame.data();
 
-    for (const uint8_t type : { 0, 15 })
+    for (const uint8_t type : { 0, 6, 15 })
     {
         bytes[4] = type;
         REQUIRE_THROWS_AS(protocol::decode_header(bytes), protocol::DecodeError);
@@ -223,25 +223,18 @@ TEST_CASE("OPEN_SCHEMA round-trips SchemaPusherConfig", "[remote_device_bridge][
     REQUIRE_THROWS_AS(protocol::decode_open_schema(truncated), protocol::DecodeError);
 }
 
-TEST_CASE("OPEN_WRIST round-trips WristTrackingSourceConfig", "[remote_device_bridge][unit]")
+TEST_CASE("HELLO rejects an unknown wrist source mode", "[remote_device_bridge][unit]")
 {
-    core::WristTrackingSourceConfig config;
-    config.mode = core::WristTrackingSourceMode::Controller;
-    config.left_aim_to_wrist = make_pose(0.1f);
-    config.right_aim_to_wrist = make_pose(0.7f);
-
-    const std::vector<uint8_t> bytes = protocol::encode_open_wrist(config);
-    REQUIRE(bytes.size() == kWristConfigPayloadSize);
-    const core::WristTrackingSourceConfig decoded = protocol::decode_open_wrist(bytes);
-    REQUIRE(decoded.mode == core::WristTrackingSourceMode::Controller);
-    REQUIRE(same_pose(decoded.left_aim_to_wrist, config.left_aim_to_wrist));
-    REQUIRE(same_pose(decoded.right_aim_to_wrist, config.right_aim_to_wrist));
-
-    REQUIRE(protocol::decode_open_wrist(protocol::encode_open_wrist(core::WristTrackingSourceConfig{})).mode ==
-            core::WristTrackingSourceMode::Auto);
-    std::vector<uint8_t> bad_mode = bytes;
-    bad_mode[0] = 7;
-    REQUIRE_THROWS_AS(protocol::decode_open_wrist(bad_mode), protocol::DecodeError);
+    protocol::Hello hello;
+    hello.requirements.wrist_tracking_pull = core::WristTrackingSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
+                                                                              .left_aim_to_wrist = make_pose(0.1f),
+                                                                              .right_aim_to_wrist = make_pose(0.7f) };
+    std::vector<uint8_t> bytes = protocol::encode_hello(hello);
+    // proto_version u16, app_name (u32 length, empty), three flags, then the wrist mode byte.
+    const size_t mode_offset = sizeof(uint16_t) + sizeof(uint32_t) + 3;
+    REQUIRE(bytes[mode_offset] == 0);
+    bytes[mode_offset] = 7;
+    REQUIRE_THROWS_AS(protocol::decode_hello(bytes), protocol::DecodeError);
 }
 
 TEST_CASE("HAND_SAMPLE is a bit-exact copy of 26 joints", "[remote_device_bridge][unit]")

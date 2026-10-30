@@ -204,11 +204,6 @@ std::vector<uint8_t> encode_open_schema(const core::SchemaPusherConfig& value)
         });
 }
 
-std::vector<uint8_t> encode_open_wrist(const core::WristTrackingSourceConfig& value)
-{
-    return build_payload([&](Writer& writer) { write_wrist_config(writer, value); });
-}
-
 std::vector<uint8_t> encode_wrist_sample(const WristSample& value)
 {
     return build_payload(
@@ -305,14 +300,6 @@ core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
     value.tensor_identifier = reader.str();
     value.localized_name = reader.str();
     value.app_name = reader.str();
-    reader.finish();
-    return value;
-}
-
-core::WristTrackingSourceConfig decode_open_wrist(const std::vector<uint8_t>& payload)
-{
-    Reader reader(payload, "OPEN_WRIST");
-    const core::WristTrackingSourceConfig value = read_wrist_config(reader);
     reader.finish();
     return value;
 }

@@ -19,6 +19,7 @@ using detail::Writer;
 namespace
 {
 
+constexpr uint8_t kUnassignedFrameType = 6;
 constexpr size_t kTypeOffset = 4;
 constexpr size_t kVersionOffset = 5;
 constexpr size_t kChannelOffset = 6;
@@ -94,7 +95,8 @@ FrameHeader decode_header(const uint8_t* in)
     }
     FrameHeader header;
     const uint8_t type = reader.u8();
-    if (type < static_cast<uint8_t>(FrameType::Hello) || type > static_cast<uint8_t>(kLastFrameType))
+    if (type < static_cast<uint8_t>(FrameType::Hello) || type > static_cast<uint8_t>(kLastFrameType) ||
+        type == kUnassignedFrameType)
     {
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }

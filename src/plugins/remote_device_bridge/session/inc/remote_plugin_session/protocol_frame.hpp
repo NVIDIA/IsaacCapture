@@ -33,7 +33,7 @@ enum class FrameType : uint8_t
     OpenHand = 3, // c->s
     OpenSchema = 4, // c->s
     OpenPull = 5, // c->s
-    OpenWrist = 6, // c->s, on the pull channel id
+    // 6 is unassigned: the wrist source config travels in HELLO.
     Close = 7, // c->s
     HandSample = 8, // c->s
     SchemaSample = 9, // c->s
