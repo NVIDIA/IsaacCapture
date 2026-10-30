@@ -1177,6 +1177,17 @@ class CaptureServer:
             # purely inside the close handshake itself. Set explicitly to
             # stay consistent with those existing numbers.
             close_timeout=_CLOSE_TIMEOUT_S,
+            # This endpoint serves native clients only (CaptureClient, replay
+            # tools) -- browser access goes through the web backend's own
+            # /api/session proxy instead, which is same-origin by construction.
+            # origins=[None] rejects any handshake that carries an Origin
+            # header (i.e. any browser-initiated connection) while still
+            # accepting the missing-Origin native clients this server
+            # actually has. This is origin filtering, not authentication: a
+            # non-browser client can still omit/spoof Origin, so a remotely
+            # exposed deployment still needs its own network/auth/TLS
+            # controls; the loopback default remains the real boundary.
+            origins=[None],
         )
         mode_label = "MOCK" if self._mode == p.CaptureMode.MOCK else "LIVE"
         default_note = (
