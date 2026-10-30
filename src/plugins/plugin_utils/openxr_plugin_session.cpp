@@ -3,6 +3,7 @@
 
 #include "inc/plugin_utils/openxr_plugin_session.hpp"
 
+#include "inc/plugin_utils/hand_injector.hpp"
 #include "inc/plugin_utils/wrist_pose_source.hpp"
 #include "openxr_hand_tracking_push_channel.hpp"
 
@@ -13,7 +14,6 @@
 #include <oxr_utils/oxr_time.hpp>
 #include <pusherio/openxr_schema_push_channel.hpp>
 
-#include <XR_NVX1_device_interface.h>
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -38,6 +38,7 @@ void append_unique(std::vector<std::string>& extensions, const std::vector<std::
     }
 }
 
+// DeviceIOSession::get_required_extensions already includes the XrTimeConverter extensions.
 std::vector<std::string> make_required_extensions(const core::PluginSessionRequirements& requirements,
                                                   const std::vector<std::shared_ptr<core::ITracker>>& trackers,
                                                   const std::vector<const char*>& wrist_extensions)
@@ -52,8 +53,7 @@ std::vector<std::string> make_required_extensions(const core::PluginSessionRequi
 
     if (requirements.hand_tracking_push)
     {
-        append_unique(extensions, { XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME });
-        append_unique(extensions, core::XrTimeConverter::get_required_extensions());
+        append_unique(extensions, HandInjector::get_required_extensions());
     }
 
     return extensions;
@@ -86,10 +86,10 @@ class OpenXRPluginPullChannel final : public core::IPluginPullChannel
 public:
     OpenXRPluginPullChannel(const core::OpenXRSessionHandles& handles,
                             const std::vector<std::shared_ptr<core::ITracker>>& trackers,
-                            std::optional<core::WristTrackingSourceMode> wrist_mode,
+                            std::optional<core::WristTrackingSourceConfig> wrist_config,
                             std::shared_ptr<core::ControllerTracker> wrist_controller_tracker)
         : handles_(handles),
-          wrist_mode_(wrist_mode),
+          wrist_config_(std::move(wrist_config)),
           wrist_controller_tracker_(std::move(wrist_controller_tracker)),
           deviceio_session_(core::DeviceIOSession::run(trackers, handles_))
     {
@@ -105,70 +105,76 @@ public:
         return deviceio_session_->get_tracker_impl(tracker);
     }
 
-    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source(
-        const core::WristTrackingSourceConfig& config) override
+    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source() override
     {
-        if (wrist_mode_ != config.mode)
+        if (!wrist_config_)
         {
             throw std::logic_error(
-                "OpenXRPluginSession: wrist tracking pull was not declared for this mode in PluginSessionRequirements");
+                "OpenXRPluginSession: wrist tracking pull was not declared in PluginSessionRequirements");
         }
         return std::make_unique<OpenXRWristTrackingSource>(
-            config, handles_, deviceio_session_.get(), wrist_controller_tracker_);
+            *wrist_config_, handles_, deviceio_session_.get(), wrist_controller_tracker_);
     }
 
 private:
     core::OpenXRSessionHandles handles_;
-    std::optional<core::WristTrackingSourceMode> wrist_mode_;
+    std::optional<core::WristTrackingSourceConfig> wrist_config_;
     std::shared_ptr<core::ControllerTracker> wrist_controller_tracker_;
     std::unique_ptr<core::DeviceIOSession> deviceio_session_;
 };
 
+class OpenXRPluginSession final : public core::IPluginSession
+{
+public:
+    OpenXRPluginSession(const std::string& app_name,
+                        const core::PluginSessionRequirements& requirements,
+                        std::vector<std::shared_ptr<core::ITracker>> trackers)
+        : requirements_(requirements)
+    {
+        WristPoseSource::Requirements wrist;
+        if (requirements_.wrist_tracking_pull)
+        {
+            wrist = WristPoseSource::collect_requirements(requirements_.wrist_tracking_pull->mode);
+            trackers.insert(trackers.end(), wrist.trackers.begin(), wrist.trackers.end());
+        }
+
+        session_ = std::make_unique<core::OpenXRSession>(
+            app_name, make_required_extensions(requirements_, trackers, wrist.extensions));
+        pull_channel_ = std::make_unique<OpenXRPluginPullChannel>(
+            session_->get_handles(), trackers, requirements_.wrist_tracking_pull, std::move(wrist.controller_tracker));
+    }
+
+    core::IPluginPullChannel& pull_channel() override
+    {
+        return *pull_channel_;
+    }
+
+    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
+    {
+        if (!requirements_.schema_push)
+        {
+            throw std::logic_error("OpenXRPluginSession: schema push was not declared in PluginSessionRequirements");
+        }
+        return std::make_unique<core::OpenXRSchemaPushChannel>(session_->get_handles(), config);
+    }
+
+    std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) override
+    {
+        if (!requirements_.hand_tracking_push)
+        {
+            throw std::logic_error(
+                "OpenXRPluginSession: hand-tracking push was not declared in PluginSessionRequirements");
+        }
+        return std::make_unique<OpenXRHandTrackingPushChannel>(session_->get_handles(), hand);
+    }
+
+private:
+    core::PluginSessionRequirements requirements_;
+    std::unique_ptr<core::OpenXRSession> session_;
+    std::unique_ptr<core::IPluginPullChannel> pull_channel_;
+};
+
 } // anonymous namespace
-
-OpenXRPluginSession::OpenXRPluginSession(std::string app_name,
-                                         core::PluginSessionRequirements requirements,
-                                         std::vector<std::shared_ptr<core::ITracker>> trackers)
-    : requirements_(requirements)
-{
-    WristPoseSource::Requirements wrist;
-    if (requirements_.wrist_tracking_pull)
-    {
-        wrist = WristPoseSource::collect_requirements(*requirements_.wrist_tracking_pull);
-        trackers.insert(trackers.end(), wrist.trackers.begin(), wrist.trackers.end());
-    }
-
-    session_ = std::make_unique<core::OpenXRSession>(
-        app_name, make_required_extensions(requirements_, trackers, wrist.extensions));
-    pull_channel_ = std::make_unique<OpenXRPluginPullChannel>(
-        session_->get_handles(), trackers, requirements_.wrist_tracking_pull, std::move(wrist.controller_tracker));
-}
-
-OpenXRPluginSession::~OpenXRPluginSession() = default;
-
-core::IPluginPullChannel& OpenXRPluginSession::pull_channel()
-{
-    return *pull_channel_;
-}
-
-std::unique_ptr<core::ISchemaPushChannel> OpenXRPluginSession::create_schema_push_channel(
-    const core::SchemaPusherConfig& config)
-{
-    if (!requirements_.schema_push)
-    {
-        throw std::logic_error("OpenXRPluginSession: schema push was not declared in PluginSessionRequirements");
-    }
-    return std::make_unique<core::OpenXRSchemaPushChannel>(session_->get_handles(), config);
-}
-
-std::unique_ptr<core::IHandTrackingPushChannel> OpenXRPluginSession::create_hand_tracking_push_channel(XrHandEXT hand)
-{
-    if (!requirements_.hand_tracking_push)
-    {
-        throw std::logic_error("OpenXRPluginSession: hand-tracking push was not declared in PluginSessionRequirements");
-    }
-    return std::make_unique<OpenXRHandTrackingPushChannel>(session_->get_handles(), hand);
-}
 
 core::PluginSessionFactory make_openxr_plugin_session_factory(std::string app_name)
 {

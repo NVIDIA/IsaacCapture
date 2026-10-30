@@ -25,6 +25,11 @@ void CheckXrResult(XrResult result, const char* message)
 }
 } // namespace
 
+std::vector<std::string> HandInjector::get_required_extensions()
+{
+    return { XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME };
+}
+
 HandInjector::HandInjector(XrInstance instance, XrSession session, XrHandEXT hand, XrSpace base_space)
     : time_converter_(core::OpenXRSessionHandles{ instance, session, base_space, ::xrGetInstanceProcAddr })
 {

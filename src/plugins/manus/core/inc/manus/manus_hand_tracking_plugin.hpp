@@ -75,8 +75,10 @@ public:
 
 private:
     // Lifecycle
-    // For the SDK callbacks, which run only after instance(config, factory) has constructed the tracker.
+    // For the SDK callbacks, which are registered while instance(config, factory) constructs
+    // the tracker; asserts that call came first.
     static ManusTracker& instance();
+    static inline std::atomic<bool> s_instance_requested{ false };
     ManusTracker(const ManusPluginConfig& config,
                  const core::PluginSessionFactory& plugin_session_factory) noexcept(false);
     ~ManusTracker();
@@ -138,8 +140,9 @@ private:
     std::array<uint32_t, 2> m_sensor_count{ { 0, 0 } };
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
 
-    // Plugin session state. Everything created from the session lives in
-    // m_session_channels, declared after it so it is destroyed first.
+    // Plugin session state. The channels and wrist source created from the session,
+    // and the haptic reader it pulls, live in m_session_channels, declared after the
+    // session so they are destroyed first.
     struct SessionChannels
     {
         std::unique_ptr<core::IHandTrackingPushChannel> left_hand;

@@ -27,8 +27,8 @@ struct PluginSessionRequirements
 {
     bool schema_push = false;
     bool hand_tracking_push = false;
-    //! Wrist source mode the pull channel will serve; empty when wrist tracking is not pulled.
-    std::optional<WristTrackingSourceMode> wrist_tracking_pull;
+    //! Wrist source the pull channel will serve; empty when wrist tracking is not pulled.
+    std::optional<WristTrackingSourceConfig> wrist_tracking_pull;
 };
 
 /*!
@@ -42,8 +42,9 @@ class IPluginPullChannel : public ITrackerSession
 public:
     virtual void update() = 0;
 
-    //! Throws std::logic_error unless wrist tracking pull was declared with config.mode. Never returns null.
-    virtual std::unique_ptr<IWristTrackingSource> create_wrist_tracking_source(const WristTrackingSourceConfig& config) = 0;
+    //! Creates the declared wrist source. Throws std::logic_error unless wrist tracking pull was declared.
+    //! Never returns null.
+    virtual std::unique_ptr<IWristTrackingSource> create_wrist_tracking_source() = 0;
 };
 
 /*!

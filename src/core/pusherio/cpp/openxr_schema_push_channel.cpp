@@ -3,11 +3,13 @@
 
 #include "inc/pusherio/openxr_schema_push_channel.hpp"
 
+#include <log_bridge/logger.hpp>
 #include <oxr_utils/oxr_funcs.hpp>
 
 #include <XR_NVX1_push_tensor.h>
 #include <XR_NVX1_tensor_data.h>
-#include <cassert>
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -27,17 +29,22 @@ constexpr uint32_t DLPACK_DTYPE_UINT8 = (1 << 8) | 8;
 } // namespace
 
 OpenXRSchemaPushChannel::OpenXRSchemaPushChannel(const OpenXRSessionHandles& handles, SchemaPusherConfig config)
-    : config_(std::move(config)), time_converter_(handles), push_tensor_(create_tensor_collection(handles))
+    : config_(std::move(config)),
+      time_converter_(handles),
+      padded_buffer_(config_.max_flatbuffer_size, 0),
+      push_tensor_(create_tensor_collection(handles))
 {
     loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrPushTensorCollectionDataNV",
                           reinterpret_cast<PFN_xrVoidFunction*>(&push_fn_));
 
-    logger_->info("OpenXRSchemaPushChannel initialized for collection: {}", config_.collection_id);
+    isaaccapture::Logger::get("isaaccapture.core.OpenXRSchemaPushChannel")
+        ->info("OpenXRSchemaPushChannel initialized for collection: {}", config_.collection_id);
 }
 
 std::vector<std::string> OpenXRSchemaPushChannel::get_required_extensions()
 {
-    std::vector<std::string> required_extensions = { "XR_NVX1_push_tensor", "XR_NVX1_tensor_data" };
+    std::vector<std::string> required_extensions = { XR_NVX1_PUSH_TENSOR_EXTENSION_NAME,
+                                                     XR_NVX1_TENSOR_DATA_EXTENSION_NAME };
     for (const auto& ext : XrTimeConverter::get_required_extensions())
     {
         required_extensions.push_back(ext);
@@ -65,27 +72,26 @@ void OpenXRSchemaPushChannel::push_buffer(const uint8_t* buffer,
     {
         throw std::invalid_argument("push_buffer: buffer is null for a non-empty sample");
     }
-
-    std::vector<uint8_t> padded_buffer(config_.max_flatbuffer_size, 0);
-    if (size != 0)
-    {
-        std::memcpy(padded_buffer.data(), buffer, size);
-    }
-
-    const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(sample_time_local_common_clock_ns);
-
     if (sample_time_raw_device_clock_ns < 0)
     {
         throw std::runtime_error("push_buffer: sample_time_raw_device_clock_ns is negative (" +
                                  std::to_string(sample_time_raw_device_clock_ns) + ")");
     }
 
+    if (size != 0)
+    {
+        std::memcpy(padded_buffer_.data(), buffer, size);
+    }
+    std::fill(padded_buffer_.begin() + static_cast<std::ptrdiff_t>(size), padded_buffer_.end(), uint8_t{ 0 });
+
+    const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(sample_time_local_common_clock_ns);
+
     XrPushTensorCollectionDataNV tensor_data{};
     tensor_data.type = XR_TYPE_PUSH_TENSOR_COLLECTION_DATA_NV;
     tensor_data.next = nullptr;
     tensor_data.timestamp = xr_time;
     tensor_data.rawDeviceTimestamp = static_cast<uint64_t>(sample_time_raw_device_clock_ns);
-    tensor_data.buffer = padded_buffer.data();
+    tensor_data.buffer = padded_buffer_.data();
     tensor_data.bufferSize = static_cast<uint32_t>(config_.max_flatbuffer_size);
 
     const XrResult result = push_fn_(push_tensor_.get(), &tensor_data);
@@ -97,10 +103,6 @@ void OpenXRSchemaPushChannel::push_buffer(const uint8_t* buffer,
 
 OpenXRSchemaPushChannel::PushTensorPtr OpenXRSchemaPushChannel::create_tensor_collection(const OpenXRSessionHandles& handles)
 {
-    assert(handles.instance != XR_NULL_HANDLE && "OpenXR instance handle cannot be null");
-    assert(handles.session != XR_NULL_HANDLE && "OpenXR session handle cannot be null");
-    assert(handles.xrGetInstanceProcAddr && "xrGetInstanceProcAddr cannot be null");
-
     PFN_xrCreatePushTensorCollectionNV create_fn{ nullptr };
     PFN_xrDestroyPushTensorCollectionNV destroy_fn{ nullptr };
     loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrCreatePushTensorCollectionNV",

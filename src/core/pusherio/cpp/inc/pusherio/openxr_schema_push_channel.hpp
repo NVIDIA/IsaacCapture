@@ -5,7 +5,6 @@
 
 #include "schema_push_channel.hpp"
 
-#include <log_bridge/logger.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
 #include <oxr_utils/oxr_time.hpp>
 
@@ -34,15 +33,13 @@ public:
     OpenXRSchemaPushChannel(const OpenXRSessionHandles& handles, SchemaPusherConfig config);
     ~OpenXRSchemaPushChannel() override = default;
 
-    OpenXRSchemaPushChannel(const OpenXRSchemaPushChannel&) = delete;
-    OpenXRSchemaPushChannel& operator=(const OpenXRSchemaPushChannel&) = delete;
     OpenXRSchemaPushChannel(OpenXRSchemaPushChannel&&) = delete;
     OpenXRSchemaPushChannel& operator=(OpenXRSchemaPushChannel&&) = delete;
 
     //! Required OpenXR extensions, including the platform time-conversion extension.
     static std::vector<std::string> get_required_extensions();
 
-    const SchemaPusherConfig& config() const override;
+    const SchemaPusherConfig& config() const;
 
     /*!
      * Pads the sample to max_flatbuffer_size to satisfy the fixed-size tensor, and
@@ -66,7 +63,7 @@ private:
 
     SchemaPusherConfig config_;
     XrTimeConverter time_converter_;
-    std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.OpenXRSchemaPushChannel");
+    std::vector<uint8_t> padded_buffer_;
     PFN_xrPushTensorCollectionDataNV push_fn_{ nullptr };
     PushTensorPtr push_tensor_;
 };

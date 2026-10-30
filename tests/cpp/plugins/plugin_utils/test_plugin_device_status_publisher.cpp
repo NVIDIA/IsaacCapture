@@ -28,14 +28,8 @@ struct PublishedSnapshot
 class CapturingChannel final : public core::ISchemaPushChannel
 {
 public:
-    CapturingChannel(core::SchemaPusherConfig config, std::vector<PublishedSnapshot>& published)
-        : config_(std::move(config)), published_(published)
+    explicit CapturingChannel(std::vector<PublishedSnapshot>& published) : published_(published)
     {
-    }
-
-    const core::SchemaPusherConfig& config() const override
-    {
-        return config_;
     }
 
     void push_buffer(const uint8_t* buffer, size_t, int64_t local_time_ns, int64_t raw_time_ns) override
@@ -64,7 +58,6 @@ public:
     }
 
 private:
-    core::SchemaPusherConfig config_;
     std::vector<PublishedSnapshot>& published_;
 };
 
@@ -80,9 +73,9 @@ public:
         throw std::logic_error("CapturingSession has no pull channel");
     }
 
-    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
+    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig&) override
     {
-        return std::make_unique<CapturingChannel>(config, published_);
+        return std::make_unique<CapturingChannel>(published_);
     }
 
     std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT) override

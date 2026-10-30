@@ -48,8 +48,6 @@ class ISchemaPushChannel
 public:
     virtual ~ISchemaPushChannel() = default;
 
-    virtual const SchemaPusherConfig& config() const = 0;
-
     /*!
      * @brief Push one serialized FlatBuffer sample.
      *

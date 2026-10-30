@@ -10,6 +10,8 @@
 #include <oxr_utils/oxr_time.hpp>
 
 #include <XR_NVX1_device_interface.h>
+#include <string>
+#include <vector>
 
 namespace plugin_utils
 {
@@ -33,6 +35,9 @@ public:
 
     HandInjector(HandInjector&&) = delete;
     HandInjector& operator=(HandInjector&&) = delete;
+
+    /** @brief OpenXR extensions the session must enable for push devices. */
+    static std::vector<std::string> get_required_extensions();
 
     /** @brief Push a full set of joint locations. */
     void push(const XrHandJointLocationEXT* joints, XrTime timestamp);

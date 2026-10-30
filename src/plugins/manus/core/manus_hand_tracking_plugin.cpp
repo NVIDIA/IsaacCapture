@@ -32,6 +32,7 @@
 #include <ManusSDKTypeInitializers.h>
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -62,7 +63,6 @@ SDKReturnCode get_raw_skeleton_node_count(uint32_t glove_id, uint32_t& node_coun
 // Must agree with JointSe3PoseTracker::DEFAULT_MAX_FLATBUFFER_SIZE on the consumer side
 // (src/core/deviceio_trackers/trackers.toml).
 constexpr size_t kSensorFlatbufferSize = 1024;
-constexpr auto kWristSourceMode = core::WristTrackingSourceMode::Auto;
 constexpr auto kSkeletonStaleThreshold = std::chrono::milliseconds(200);
 // MANUS supplies 25 nodes. Injection expands them to OpenXR's 26 joints by
 // deriving the palm from the final MANUS node.
@@ -107,16 +107,23 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
 
 static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }, { -0.1f, 0.02f, -0.02f } };
 static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
+static constexpr core::WristTrackingSourceConfig kWristSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
+                                                                     .left_aim_to_wrist = kLeftHandOffset,
+                                                                     .right_aim_to_wrist = kRightHandOffset };
 
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
                                      const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
 {
+    s_instance_requested.store(true);
     static ManusTracker s(config, plugin_session_factory);
     return s;
 }
 
 ManusTracker& ManusTracker::instance()
 {
+    assert(s_instance_requested.load() && "Manus SDK callbacks run only after instance(config, factory)");
+    // The arguments are ignored: the static above is constructed or under construction,
+    // and its initialization guard makes callback threads wait for it.
     return instance(ManusPluginConfig{}, {});
 }
 
@@ -361,7 +368,7 @@ void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_f
             core::PluginSessionRequirements{ .schema_push = m_config.sensors || monitoring_enabled,
                                              .hand_tracking_push = m_config.human,
                                              .wrist_tracking_pull =
-                                                 m_config.human ? std::optional(kWristSourceMode) : std::nullopt },
+                                                 m_config.human ? std::optional(kWristSourceConfig) : std::nullopt },
             std::move(trackers));
 
         if (monitoring_enabled)
@@ -382,22 +389,17 @@ void ManusTracker::initialize(const core::PluginSessionFactory& plugin_session_f
                 core::SchemaPusherConfig{ .collection_id = MANUS_SENSORS_LEFT_COLLECTION_ID,
                                           .max_flatbuffer_size = kSensorFlatbufferSize,
                                           .tensor_identifier = "joint_se3_pose",
-                                          .localized_name = "Manus Sensors Left",
-                                          .app_name = m_config.app_name });
+                                          .localized_name = "Manus Sensors Left" });
             m_session_channels.right_sensor = m_plugin_session->create_schema_push_channel(
                 core::SchemaPusherConfig{ .collection_id = MANUS_SENSORS_RIGHT_COLLECTION_ID,
                                           .max_flatbuffer_size = kSensorFlatbufferSize,
                                           .tensor_identifier = "joint_se3_pose",
-                                          .localized_name = "Manus Sensors Right",
-                                          .app_name = m_config.app_name });
+                                          .localized_name = "Manus Sensors Right" });
         }
 
         if (m_config.human)
         {
-            m_session_channels.wrist_source = m_plugin_session->pull_channel().create_wrist_tracking_source(
-                core::WristTrackingSourceConfig{ .mode = kWristSourceMode,
-                                                 .left_aim_to_wrist = kLeftHandOffset,
-                                                 .right_aim_to_wrist = kRightHandOffset });
+            m_session_channels.wrist_source = m_plugin_session->pull_channel().create_wrist_tracking_source();
         }
         else
         {
