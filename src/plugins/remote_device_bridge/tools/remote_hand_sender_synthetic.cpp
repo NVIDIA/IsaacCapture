@@ -12,10 +12,9 @@
 
 #include <log_bridge/logger.hpp>
 #include <oxr_utils/os_time.hpp>
-#include <pusherio/hand_tracking_pusher.hpp>
 #include <remote_plugin_session/bridge_limits.hpp>
+#include <remote_plugin_session/remote_address.hpp>
 #include <remote_plugin_session/remote_plugin_session.hpp>
-#include <remote_plugin_session/websocket_transport.hpp>
 
 #include <array>
 #include <atomic>
@@ -26,6 +25,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -262,30 +262,25 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    std::cout << "remote_hand_sender_synthetic: connecting to " << (options.remote.websocket ? "ws://" : "")
+    std::cout << "remote_hand_sender_synthetic: connecting to " << (options.remote.ws_path ? "ws://" : "")
               << options.remote.endpoint.host << ":" << options.remote.endpoint.port
-              << (options.remote.websocket ? options.remote.path : "") << std::endl;
+              << options.remote.ws_path.value_or("") << std::endl;
     remote_plugin_session::RemotePluginSession session(
         remote_plugin_session::connect_transport(options.remote), "remote_hand_sender_synthetic",
-        core::PluginSessionRequirements{ .schema_push = options.schema_bytes > 0,
-                                         .hand_tracking_push = options.hands,
-                                         .wrist_tracking_pull = options.wrist });
+        core::PluginSessionRequirements{
+            .schema_push = options.schema_bytes > 0,
+            .hand_tracking_push = options.hands,
+            .wrist_tracking_pull = options.wrist ? std::optional(core::WristTrackingSourceConfig{}) : std::nullopt });
 
-    std::unique_ptr<core::IPluginPullChannel> pull_channel;
-    std::unique_ptr<core::IWristTrackingSource> wrist_source;
-    if (options.wrist)
-    {
-        pull_channel = session.create_pull_channel();
-        wrist_source = pull_channel->create_wrist_tracking_source(core::WristTrackingSourceConfig{});
-    }
-    std::unique_ptr<core::HandTrackingPusher> left_pusher;
-    std::unique_ptr<core::HandTrackingPusher> right_pusher;
+    // Session-owned; null when --wrist=0.
+    core::IPluginPullChannel* pull_channel = options.wrist ? &session.pull_channel() : nullptr;
+    core::IWristTrackingSource* wrist_source = pull_channel ? &pull_channel->wrist_tracking_source() : nullptr;
+    std::unique_ptr<core::IHandTrackingPushChannel> left_pusher;
+    std::unique_ptr<core::IHandTrackingPushChannel> right_pusher;
     if (options.hands)
     {
-        left_pusher =
-            std::make_unique<core::HandTrackingPusher>(session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT));
-        right_pusher =
-            std::make_unique<core::HandTrackingPusher>(session.create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT));
+        left_pusher = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+        right_pusher = session.create_hand_tracking_push_channel(XR_HAND_RIGHT_EXT);
     }
     std::unique_ptr<core::ISchemaPushChannel> schema_channel;
     std::vector<uint8_t> schema_payload(options.schema_bytes, 0x5A);
@@ -361,7 +356,8 @@ try
         for (const bool is_left : { true, false })
         {
             core::WristTrackingSample& sample = wrist[is_left ? 0 : 1];
-            sample = wrist_source ? wrist_source->query(is_left, sample_time_ns) : core::WristTrackingSample{};
+            sample = wrist_source ? wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns) :
+                                    core::WristTrackingSample{};
             if (!left_pusher)
             {
                 continue;
@@ -399,8 +395,6 @@ try
     left_pusher.reset();
     right_pusher.reset();
     schema_channel.reset();
-    wrist_source.reset();
-    pull_channel.reset();
     return exit_code;
 }
 catch (const std::exception& e)

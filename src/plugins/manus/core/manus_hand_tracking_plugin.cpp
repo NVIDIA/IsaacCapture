@@ -613,7 +613,7 @@ void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_in
     }
 }
 
-//! Every 5 s, in local and --remote mode alike (next to RemotePluginSession's "[remote] 5s:" line).
+//! Every 5 s, in local and --remote mode alike (next to RemotePluginSession's "5s:" line).
 void ManusTracker::log_status()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -628,7 +628,7 @@ void ManusTracker::log_status()
         return;
     }
     std::lock_guard<std::mutex> lock(landscape_mutex);
-    m_logger->info("[Manus] 5s: gloves={} license={}", m_sdk_glove_count,
+    m_logger->info("5s: gloves={} license={}", m_sdk_glove_count,
                    !m_license_ok ? "unknown" :
                    *m_license_ok ? "ok" :
                                    "missing");

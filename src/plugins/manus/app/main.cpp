@@ -180,8 +180,7 @@ try
                                      const core::PluginSessionRequirements& requirements,
                                      std::vector<std::shared_ptr<core::ITracker>>) -> std::unique_ptr<core::IPluginSession>
         {
-            isaaccapture::Logger::get("isaaccapture.plugins.manus.main")
-                ->info("[Manus] Using remote plugin session at {}", remote);
+            isaaccapture::Logger::get("isaaccapture.plugins.manus.main")->info("Using remote plugin session at {}", remote);
             return std::make_unique<remote_plugin_session::RemotePluginSession>(
                 remote_plugin_session::connect_transport(remote_plugin_session::parse_remote(remote, 47500)),
                 "ManusHandPlugin", requirements);
