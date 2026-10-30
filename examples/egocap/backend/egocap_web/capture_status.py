@@ -510,4 +510,4 @@ class CaptureStatusMonitor:
             try:
                 await asyncio.wait_for(self._startup_task, timeout=1.0)
             except (TimeoutError, asyncio.CancelledError):
-                pass
+                pass  # expected: the attempt either timed out or was already cancelled

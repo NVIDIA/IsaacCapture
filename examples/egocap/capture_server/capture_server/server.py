@@ -1255,7 +1255,7 @@ class CaptureServer:
             async for raw in ws:
                 await self._handle_message(ws, raw)
         except ConnectionClosed:
-            pass
+            pass  # normal client-initiated close
         finally:
             # Connection-level bookkeeping release is its own guaranteed
             # finally, independent of whatever the session-stop handling

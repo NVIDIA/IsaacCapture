@@ -336,6 +336,6 @@ class FeedClient:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)
             except OSError:
-                pass
+                pass  # already shut down/broken -- close() below still runs
             self._sock.close()
             self._sock = None

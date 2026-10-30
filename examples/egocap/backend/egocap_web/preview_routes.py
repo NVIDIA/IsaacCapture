@@ -151,7 +151,7 @@ async def _drain_receiver(
                 termination.request(code=1013, reason="reply backlog too large")
                 break
     except WebSocketDisconnect:
-        pass
+        pass  # normal viewer disconnect
     finally:
         disconnected.set()
 
@@ -417,7 +417,7 @@ async def _serve_session(
             try:
                 await asyncio.wait_for(disconnected.wait(), timeout=SENDER_INTERVAL_S)
             except TimeoutError:
-                pass
+                pass  # normal poll interval elapsed; loop re-checks disconnected
     finally:
         receiver_task.cancel()
         try:
