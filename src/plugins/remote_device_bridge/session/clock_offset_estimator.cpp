@@ -9,10 +9,10 @@
 namespace remote_plugin_session
 {
 
-ClockOffsetEstimator::ClockOffsetEstimator(size_t max_samples, int64_t window_ns)
-    : m_max_samples(max_samples), m_window_ns(window_ns)
+ClockOffsetEstimator::ClockOffsetEstimator(size_t max_samples, int64_t window_ns, size_t two_way_window)
+    : m_max_samples(max_samples), m_window_ns(window_ns), m_two_way_window(two_way_window)
 {
-    if (max_samples == 0 || window_ns <= 0)
+    if (max_samples == 0 || window_ns <= 0 || two_way_window == 0)
     {
         throw std::invalid_argument("ClockOffsetEstimator requires a non-empty window");
     }
@@ -46,20 +46,21 @@ void ClockOffsetEstimator::add_two_way_sample(int64_t t1_ns, int64_t t2_ns, int6
     // local - remote, the same sign as the one-way offset.
     const int64_t offset_ns = ((t1_ns - t2_ns) + (t4_ns - t3_ns)) / 2;
     m_exchanges.push_back(Exchange{ rtt_ns, offset_ns });
-    if (m_exchanges.size() > kTwoWayWindow)
+    if (m_exchanges.size() > m_two_way_window)
     {
         m_exchanges.pop_front();
     }
-    const Exchange& best = *std::min_element(m_exchanges.begin(), m_exchanges.end(),
-                                             [](const Exchange& a, const Exchange& b) { return a.rtt_ns < b.rtt_ns; });
-    m_two_way_offset_ns = best.offset_ns;
-    m_rtt_min_ns = best.rtt_ns;
-    m_rtt_last_ns = rtt_ns;
+}
+
+const ClockOffsetEstimator::Exchange& ClockOffsetEstimator::best_exchange() const
+{
+    return *std::min_element(m_exchanges.begin(), m_exchanges.end(),
+                             [](const Exchange& a, const Exchange& b) { return a.rtt_ns < b.rtt_ns; });
 }
 
 int64_t ClockOffsetEstimator::offset_ns() const
 {
-    return m_exchanges.empty() ? m_offset_ns : m_two_way_offset_ns;
+    return m_exchanges.empty() ? m_offset_ns : best_exchange().offset_ns;
 }
 
 int64_t ClockOffsetEstimator::remote_to_local(int64_t remote_ns) const
@@ -69,12 +70,12 @@ int64_t ClockOffsetEstimator::remote_to_local(int64_t remote_ns) const
 
 int64_t ClockOffsetEstimator::rtt_min_ns() const
 {
-    return m_rtt_min_ns;
+    return m_exchanges.empty() ? 0 : best_exchange().rtt_ns;
 }
 
 int64_t ClockOffsetEstimator::rtt_last_ns() const
 {
-    return m_rtt_last_ns;
+    return m_exchanges.empty() ? 0 : m_exchanges.back().rtt_ns;
 }
 
 const char* ClockOffsetEstimator::offset_source() const
@@ -88,13 +89,13 @@ PingScheduler::PingScheduler(int64_t start_ns) : m_start_ns(start_ns), m_next_ns
 
 PingScheduler::Action PingScheduler::poll(int64_t now_ns)
 {
-    if (m_gave_up)
+    if (m_state == State::GaveUp)
     {
         return Action::None;
     }
-    if (!m_got_pong && now_ns - m_start_ns >= kPongTimeoutNs)
+    if (m_state == State::Waiting && now_ns - m_start_ns >= kPongTimeoutNs)
     {
-        m_gave_up = true;
+        m_state = State::GaveUp;
         return Action::GiveUp;
     }
     if (now_ns < m_next_ns)
@@ -108,12 +109,15 @@ PingScheduler::Action PingScheduler::poll(int64_t now_ns)
 
 void PingScheduler::on_pong()
 {
-    m_got_pong = true;
+    if (m_state == State::Waiting)
+    {
+        m_state = State::GotPong;
+    }
 }
 
 bool PingScheduler::active() const
 {
-    return !m_gave_up;
+    return m_state != State::GaveUp;
 }
 
 } // namespace remote_plugin_session

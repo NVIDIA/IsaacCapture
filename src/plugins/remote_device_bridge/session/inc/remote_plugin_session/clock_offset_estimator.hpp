@@ -16,16 +16,15 @@ namespace remote_plugin_session
  * One-way: fed with (remote send time, local receive time) of every received
  * frame; the offset is the running minimum of (local - remote) over a sliding
  * window, which hides one minimum one-way delay. Two-way: once a PING/PONG
- * exchange arrives the offset comes from the minimum-RTT exchange of the last
- * kTwoWayWindow instead (NTP filter; error = path asymmetry / 2) and one-way
+ * exchange arrives the offset comes from the minimum-RTT exchange of the
+ * two-way window instead (NTP filter; error = path asymmetry / 2) and one-way
  * samples no longer move it. Not thread-safe; the owner serializes access.
  */
 class ClockOffsetEstimator
 {
 public:
-    static constexpr size_t kTwoWayWindow = 32;
-
-    explicit ClockOffsetEstimator(size_t max_samples = 200, int64_t window_ns = 5'000'000'000);
+    //! One-way: at most `max_samples` within `window_ns`; two-way: the last `two_way_window` exchanges.
+    explicit ClockOffsetEstimator(size_t max_samples = 200, int64_t window_ns = 5'000'000'000, size_t two_way_window = 32);
 
     void add_sample(int64_t remote_t_send_ns, int64_t local_t_recv_ns);
     //! t1/t4: local PING send / PONG receive; t2/t3: remote PING receive / PONG send. Negative RTTs are ignored.
@@ -52,14 +51,14 @@ private:
         int64_t offset_ns;
     };
 
+    const Exchange& best_exchange() const;
+
     size_t m_max_samples;
     int64_t m_window_ns;
+    size_t m_two_way_window;
     std::deque<Sample> m_samples;
     int64_t m_offset_ns = 0;
     std::deque<Exchange> m_exchanges;
-    int64_t m_two_way_offset_ns = 0;
-    int64_t m_rtt_min_ns = 0;
-    int64_t m_rtt_last_ns = 0;
 };
 
 /*!
@@ -91,11 +90,17 @@ public:
     bool active() const;
 
 private:
+    enum class State
+    {
+        Waiting,
+        GotPong,
+        GaveUp,
+    };
+
     int64_t m_start_ns;
     int64_t m_next_ns;
     int m_sent = 0;
-    bool m_got_pong = false;
-    bool m_gave_up = false;
+    State m_state = State::Waiting;
 };
 
 //! True when a mapped sample time is older than now - max_age; max_age <= 0 disables the guard. After a link

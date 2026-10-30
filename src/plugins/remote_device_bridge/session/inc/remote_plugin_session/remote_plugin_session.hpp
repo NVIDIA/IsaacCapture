@@ -22,18 +22,17 @@ class RemotePluginSessionImpl;
 }
 
 /*!
- * @brief Plugin session that forwards every channel over TCP to a remote_device_bridge.
+ * @brief Plugin session that forwards every channel over an ITransport to a remote_device_bridge.
  *
  * Same contract as the OpenXR plugin session: the session owns its pull channel
  * (opened with the session, with the wrist source HELLO declared) and the owner
  * destroys all push channels before the session. After the transport
  * drops, pushes become silent no-ops and channels stay safe to destroy.
- * Each push channel has a latest-wins queue (4 samples / 8 MiB); on a stalled
- * link the oldest samples of that channel are dropped, other channels are
- * unaffected. A channel the bridge refuses (ERROR on its channel id) turns
- * into a no-op; the session and its other channels continue. P0: the pull
- * channel exposes no trackers; wrist poses are the latest bridge samples (no
- * interpolation).
+ * Each push channel has a small latest-wins queue; on a stalled link the oldest
+ * samples of that channel are dropped, other channels are unaffected. A channel
+ * the bridge refuses (ERROR on its channel id) turns into a no-op; the session
+ * and its other channels continue. The pull channel exposes no trackers; wrist
+ * poses are the latest bridge samples (no interpolation).
  */
 class RemotePluginSession final : public core::IPluginSession
 {
@@ -71,7 +70,7 @@ public:
     bool connected() const;
     //! Estimated bridge-to-local clock offset in ns (local ~= bridge + offset); 0 before the first frame.
     int64_t clock_offset_ns() const;
-    //! Cumulative counters; also logged every 5 s as one "[remote] 5s:" line.
+    //! Cumulative counters; also logged periodically as one "5s:" line.
     Stats stats() const;
 
 private:
