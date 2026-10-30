@@ -61,6 +61,7 @@ struct FakeBehavior
 {
     int first_push_delay_ms = 0;
     XrResult hand_create_result = XR_SUCCESS; //!< xrCreatePushDeviceNV result the fake reports
+    int pull_update_delay_ms = 0; //!< stands in for the OpenXR work of a real pull update
 };
 FakeBehavior g_fake;
 
@@ -158,6 +159,7 @@ public:
     }
     void update() override
     {
+        std::this_thread::sleep_for(Ms(g_fake.pull_update_delay_ms));
     }
     const core::ITrackerImpl& get_tracker_impl(const core::ITracker&) const override
     {
@@ -882,6 +884,27 @@ TEST_CASE("A HELLO of another version gets HELLO_ACK(false) with the logged reas
     // The bridge keeps serving.
     auto current = connect(bridge.port(), "current");
     REQUIRE(current->connected());
+}
+
+TEST_CASE("With wrist pull, a hang-up still applies the client's CLOSEs and logs the disconnect",
+          "[remote_device_bridge][unit]")
+{
+    // A slow pull update keeps the run thread inside tick(), so its next wrist send is the first to see the hang-up.
+    g_fake.pull_update_delay_ms = 20;
+    BridgeProcess bridge;
+    g_fake.pull_update_delay_ms = 0;
+    {
+        auto client = connect(bridge.port(), "wrist");
+        auto left = client->create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+        left->push(kJoints.data(), core::os_monotonic_now_ns());
+        REQUIRE(bridge.wait_log("push hand left"));
+        REQUIRE(wait_until([&] { return client->stats().wrist_rx > 100; }));
+    }
+    REQUIRE(bridge.wait_log("session closed"));
+    const std::string log = bridge.log();
+    REQUIRE(count(log, "hand channel 2 closed") == 1);
+    REQUIRE(count(log, "(pull) closed") == 1);
+    REQUIRE(count(log, "client disconnected") == 1);
 }
 
 TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applies every control frame",
