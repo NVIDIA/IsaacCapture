@@ -40,7 +40,7 @@ SELECTION_GIZMO_SCALE_M = 0.005
 SELECTION_GIZMO_LINE_WIDTH = 2.5
 ACTIVE_DATASET_OPACITY = 1
 BINDING_OVERLAY_OPACITY = 0.4
-SAVED_BINDING_OPACITY = 0.2
+SAVED_BINDING_OPACITY = 0.3
 
 
 class Editor:
@@ -70,8 +70,12 @@ class Editor:
         self.preview_segment_folder = None
         self.selection_folder = None
         self.segment_widgets, self.taxel_widgets = [], []
+        self.segment_item_folders = []
+        self.segment_error_widgets, self.taxel_error_widgets = [], []
         self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
         self.preview_segment_widgets = []
+        self.new_taxel_binding = Taxel()
+        self.new_taxel_binding_widgets = []
         self.selected_kind: str | None = None
         self.selected_rows: list[int] = []
         self.binding_phase: str | None = None
@@ -108,6 +112,8 @@ class Editor:
         )
         self.selection_gizmo.on_update(self._selection_gizmo_event)
         self._sync_side()
+        if self.state.side in self.state.paths:
+            self.info.value = f"{self.state.side.title()} metadata loaded."
         if args.urdf:
             self.urdf_path.value = str(Path(args.urdf).expanduser().resolve())
             self._load_urdf()
@@ -182,7 +188,7 @@ class Editor:
                 )
                 self._action_button("Add with Input", self._add_segment_input)
                 self.segment_click_button = self._action_button(
-                    "Add with URDF Click", self._pick_segment
+                    "Add to URDF Surface", self._pick_segment
                 )
             self.segment_row_folder = gui.add_folder(
                 "All Segments", expand_by_default=False
@@ -203,8 +209,34 @@ class Editor:
                     "Center Position", (0.0, 0.0, 0.0), 0.001
                 )
                 self.grid_rotation = self._sliders("Rotation", (0.0, 0.0, 0.0))
+                gui.add_html('<span data-tactile-binding-title="add">Binding</span>')
+                options = self._taxel_segment_options()
+                segment_fields = [
+                    self.server.gui.add_dropdown(
+                        f"Segment {slot}", options, initial_value="None"
+                    )
+                    for slot in range(4)
+                ]
+                for slot, segment in enumerate(segment_fields):
+                    weight = self._weight_widget(0.0, True, False, slot)
+                    self._watch(
+                        segment,
+                        lambda value, slot=slot: self._set_new_taxel_segment(
+                            slot, value
+                        ),
+                    )
+                    self._watch(
+                        weight,
+                        lambda value, slot=slot: self._set_new_taxel_weight(
+                            slot, value
+                        ),
+                    )
+                    self.new_taxel_binding_widgets.append((segment, weight))
                 self.taxel_capture_button = self._action_button(
                     "Capture URDF Surface Pose", self._capture_taxel_pose
+                )
+                self.segment_capture_button = self._action_button(
+                    "Capture Segment Pose", self._capture_segment_pose
                 )
                 self._action_button("Add Taxels", self._add_taxels_input)
             with gui.add_folder("Bind Taxels to Segments"):
@@ -295,8 +327,6 @@ class Editor:
 
         self.selection_panel = gui.add_panel()
         self.selection_tab = self.selection_panel.add_tab("Selected Object")
-        with self.selection_tab:
-            self.selection_folder = gui.add_folder("Selection")
         self.selection_panel.float(x=10, y=140, width=320, height=520)
 
     def _numbers(self, prefix: str, values, step: float):
@@ -344,8 +374,16 @@ class Editor:
             LOG.exception("Editor action failed")
             self.info.value = f'<span style="color:#d32f2f">Error: {exc}</span>'
         else:
-            if self.mode_value == "Preview" and self.preview_has_errors:
+            message = self.info.value
+            if self.mode_value == "Preview":
                 self._update_preview_error()
+                errors = self.info.value
+            else:
+                errors = self._document_error_html()
+            if message and message != errors:
+                self.info.value = f"{message}<br>{errors}" if errors else message
+            elif errors:
+                self.info.value = errors
         self.redraw = True
 
     def _request_draw(self) -> None:
@@ -365,10 +403,10 @@ class Editor:
         other.value = False
         self.edit_tabs.visible = mode == "Edit"
         self.preview_panel.visible = mode == "Preview"
-        self.pick_mode = None
+        self._set_pick_mode(None)
         self.selected_kind, self.selected_rows = None, []
         self._cancel_binding()
-        self._rebuild_selection()
+        self._sync_selection()
         if mode == "Preview":
             self._update_preview_error()
 
@@ -379,9 +417,7 @@ class Editor:
 
     def _sync_side(self) -> None:
         self.live_document, self.live_metadata_key = None, ""
-        self.pick_mode = None
-        self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_capture_button.label = "Capture URDF Surface Pose"
+        self._set_pick_mode(None)
         self.binding_source_editor.value = True
         self.binding_source_live.value = False
         self.binding_source_live.disabled = True
@@ -401,7 +437,6 @@ class Editor:
         self._rebuild_edit_lists()
         self._rebuild_joint_controls()
         self._rebuild_preview_segments()
-        self._rebuild_selection()
         self.redraw = True
 
     @staticmethod
@@ -428,6 +463,8 @@ class Editor:
         self.state.replace(document, path)
         self.preview[self.state.side] = self._preview_from(document)
         self._sync_side()
+        self.info.value = f"{self.state.side.title()} metadata loaded."
+        LOG.info("Metadata loaded from %s", path)
 
     def _save(self) -> None:
         path = self.metadata_path.value.strip()
@@ -453,7 +490,11 @@ class Editor:
             )
 
         async def cancel(_):
-            self.events.put(modal.close)
+            def cancel_save():
+                modal.close()
+                self.info.value = "Save canceled."
+
+            self.events.put(lambda: self._run_action(cancel_save))
 
         save_button.on_click(save)
         cancel_button.on_click(cancel)
@@ -461,6 +502,7 @@ class Editor:
     def _write_save(self, path: str) -> None:
         storage.save(self.state, path)
         self.metadata_path.value = self.state.paths[self.state.side]
+        self.info.value = f"{self.state.side.title()} metadata saved."
         self.redraw = True
 
     def _reset_camera(self) -> None:
@@ -476,6 +518,9 @@ class Editor:
             self.model.remove()
         self.model = geo.Model(path)
         self._rebuild_joint_controls()
+        self.info.value = (
+            f"{self.info.value}<br>URDF loaded." if self.info.value else "URDF loaded."
+        )
 
     def _update_urdf_alignment(self) -> None:
         self.urdf_alignment = geo.transform(
@@ -590,18 +635,50 @@ class Editor:
             )
             output[joint.name] = widget
 
+    @staticmethod
+    def _sync_joint_widget_values(document: Document, widgets: dict) -> None:
+        for name, widget in widgets.items():
+            value = float(document.q.get(name, 0.0))
+            widget.value = min(float(widget.max), max(float(widget.min), value))
+
     def _add_segment_input(self) -> None:
         pose = IDENTITY_POSE.copy()
         pose[:3] = [float(widget.value) for widget in self.new_segment_position]
         row = self.document.add_segment(self.new_segment_joint.value, pose)
         self.selected_kind, self.selected_rows = "segments", [row]
         self._rebuild_edit_lists()
-        self._rebuild_selection()
+        self.info.value = "Segment added."
 
     def _pick_segment(self) -> None:
-        self.pick_mode = None if self.pick_mode == "segment" else "segment"
+        self._toggle_pick_mode("segment")
+
+    def _toggle_pick_mode(self, mode: str) -> None:
+        if self.pick_mode == mode:
+            self._set_pick_mode(None)
+            self.info.value = {
+                "segment": "Add Segment canceled.",
+                "taxel_pose": "Capture URDF Surface Pose canceled.",
+                "segment_pose": "Capture Segment Pose canceled.",
+            }[mode]
+            return
+        self._set_pick_mode(mode)
+
+    def _set_pick_mode(self, mode: str | None) -> None:
+        self.pick_mode = None if self.pick_mode == mode else mode
         self.segment_click_button.label = (
-            "● Add with URDF Click" if self.pick_mode else "Add with URDF Click"
+            "● Add to URDF Surface"
+            if self.pick_mode == "segment"
+            else "Add to URDF Surface"
+        )
+        self.taxel_capture_button.label = (
+            "● Capture URDF Surface Pose"
+            if self.pick_mode == "taxel_pose"
+            else "Capture URDF Surface Pose"
+        )
+        self.segment_capture_button.label = (
+            "● Capture Segment Pose"
+            if self.pick_mode == "segment_pose"
+            else "Capture Segment Pose"
         )
 
     def _grid_values(self):
@@ -615,27 +692,62 @@ class Editor:
             geo.transform(center, [widget.value for widget in self.grid_rotation]),
         )
 
+    def _sync_new_taxel_binding_widgets(self) -> None:
+        options = self._taxel_segment_options()
+        for slot, (segment, weight) in enumerate(self.new_taxel_binding_widgets):
+            selected = self.new_taxel_binding.segments[slot]
+            if selected not in options:
+                selected = None
+                self.new_taxel_binding.segments[slot] = None
+                self.new_taxel_binding.weights[slot] = 0.0
+            segment.options = options
+            segment.value = selected or "None"
+            weight.value = self.new_taxel_binding.weights[slot]
+            weight.disabled = selected is None
+
+    def _set_new_taxel_segment(self, slot: int, value: str) -> None:
+        first = value != "None" and not any(self.new_taxel_binding.segments)
+        self.new_taxel_binding.segments[slot] = None if value == "None" else value
+        if self.new_taxel_binding.segments[slot] is None:
+            self.new_taxel_binding.weights[slot] = 0.0
+        elif first:
+            self.new_taxel_binding.weights[slot] = 1.0
+        self._sync_new_taxel_binding_widgets()
+
+    def _set_new_taxel_weight(self, slot: int, value) -> None:
+        try:
+            Document.set_taxel_weight(self.new_taxel_binding, slot, float(value))
+        finally:
+            self._sync_new_taxel_binding_widgets()
+
     def _add_taxels_input(self) -> None:
         center, width, height, rows, columns, frame = self._grid_values()
         selected = self.document.add_taxels(
             geo.grid_poses(center, width, height, rows, columns, frame)
         )
+        for row in selected:
+            self.document.taxels[row].segments = copy.deepcopy(
+                self.new_taxel_binding.segments
+            )
+            self.document.taxels[row].weights = copy.deepcopy(
+                self.new_taxel_binding.weights
+            )
         self.selected_kind, self.selected_rows = "taxels", selected
         self._rebuild_edit_lists()
-        self._rebuild_selection()
+        noun = "taxel" if len(selected) == 1 else "taxels"
+        self.info.value = f"{len(selected)} {noun} added."
 
     def _capture_taxel_pose(self) -> None:
-        self.pick_mode = None if self.pick_mode == "taxel_pose" else "taxel_pose"
-        self.taxel_capture_button.label = (
-            "● Capture URDF Surface Pose"
-            if self.pick_mode
-            else "Capture URDF Surface Pose"
-        )
+        self._toggle_pick_mode("taxel_pose")
+
+    def _capture_segment_pose(self) -> None:
+        self._toggle_pick_mode("segment_pose")
 
     def _rebuild_edit_lists(self) -> None:
         self._rebuild_segment_list()
         self._rebuild_taxel_list()
-        self._rebuild_selection()
+        self._sync_new_taxel_binding_widgets()
+        self._sync_selection()
         self._update_preview_error()
         self.redraw = True
 
@@ -643,6 +755,8 @@ class Editor:
         if self.segment_row_folder is not None:
             self.segment_row_folder.remove()
         self.segment_widgets = []
+        self.segment_item_folders = []
+        self.segment_error_widgets = []
         issues = self.document.validate()
         with self.segments_tab:
             self.segment_row_folder = self.server.gui.add_folder(
@@ -655,9 +769,10 @@ class Editor:
                         for issue in issues
                         if issue["kind"] == "segments" and issue["row"] == row
                     ]
-                    with self.server.gui.add_folder(
+                    folder = self.server.gui.add_folder(
                         f"{row}: {segment.joint}", expand_by_default=False
-                    ):
+                    )
+                    with folder:
                         joint = self.server.gui.add_dropdown(
                             "⚠ Name"
                             if any(issue["field"] == "joint" for issue in row_issues)
@@ -691,20 +806,30 @@ class Editor:
                                 ),
                             )
                         messages = [issue["message"] for issue in row_issues]
-                        if messages:
-                            self.server.gui.add_html(
-                                '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
-                                + "<br>".join(messages)
-                                + "</div>"
-                            )
+                        error = self.server.gui.add_html(
+                            '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
+                            + "<br>".join(messages)
+                            + "</div>",
+                            visible=bool(messages),
+                        )
+                        self.segment_item_folders.append(folder)
+                        self.segment_error_widgets.append(error)
                         self.segment_widgets.append((joint, positions, rotations))
+
+    def _taxel_segment_options(self) -> tuple[str, ...]:
+        # Dropdown values must stay unique even when the draft contains duplicate joints.
+        return (
+            "None",
+            *dict.fromkeys(segment.joint for segment in self.document.segments),
+        )
 
     def _rebuild_taxel_list(self) -> None:
         if self.taxel_row_folder is not None:
             self.taxel_row_folder.remove()
         self.taxel_widgets = []
+        self.taxel_error_widgets = []
         issues = self.document.validate()
-        options = ("None", *[segment.joint for segment in self.document.segments])
+        options = self._taxel_segment_options()
         with self.taxels_tab:
             self.taxel_row_folder = self.server.gui.add_folder(
                 "All Taxels", expand_by_default=False
@@ -736,6 +861,9 @@ class Editor:
                                     self._set_pose_rotation("taxels", row, axis, value)
                                 ),
                             )
+                        self.server.gui.add_html(
+                            '<span data-tactile-binding-title="taxel">Binding</span>'
+                        )
                         slots = []
                         segment_fields = []
                         for slot in range(4):
@@ -779,12 +907,13 @@ class Editor:
                             )
                             slots.append((segment, weight))
                         messages = [issue["message"] for issue in row_issues]
-                        if messages:
-                            self.server.gui.add_html(
-                                '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
-                                + "<br>".join(dict.fromkeys(messages))
-                                + "</div>"
-                            )
+                        error = self.server.gui.add_html(
+                            '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
+                            + "<br>".join(dict.fromkeys(messages))
+                            + "</div>",
+                            visible=bool(messages),
+                        )
+                        self.taxel_error_widgets.append(error)
                         self.taxel_widgets.append((positions, rotations, slots))
 
     def _weight_widget(self, value, disabled: bool, invalid: bool, slot: int):
@@ -796,9 +925,87 @@ class Editor:
             )
         return self.server.gui.add_text(label, str(value), disabled=disabled)
 
+    @staticmethod
+    def _set_error_widget(widget, messages) -> None:
+        widget.content = (
+            '<div style="color:#d32f2f;border:1px solid #d32f2f;padding:4px">'
+            + "<br>".join(dict.fromkeys(messages))
+            + "</div>"
+        )
+        widget.visible = bool(messages)
+
+    def _sync_segment_validation_widgets(self) -> None:
+        issues = self.document.validate()
+        for row, segment in enumerate(self.document.segments):
+            row_issues = [
+                issue
+                for issue in issues
+                if issue["kind"] == "segments" and issue["row"] == row
+            ]
+            self.segment_item_folders[row].label = f"{row}: {segment.joint}"
+            self.segment_widgets[row][0].label = (
+                "⚠ Name"
+                if any(issue["field"] == "joint" for issue in row_issues)
+                else "Name"
+            )
+            self._set_error_widget(
+                self.segment_error_widgets[row],
+                [issue["message"] for issue in row_issues],
+            )
+
+    def _sync_taxel_binding_widgets(self, rows) -> None:
+        issues = self.document.validate()
+        options = self._taxel_segment_options()
+        for row in dict.fromkeys(rows):
+            if not 0 <= row < len(self.document.taxels):
+                continue
+            taxel = self.document.taxels[row]
+            row_issues = [
+                issue
+                for issue in issues
+                if issue["kind"] == "taxels" and issue["row"] == row
+            ]
+            for slot, (segment, weight) in enumerate(self.taxel_widgets[row][2]):
+                selected = (
+                    taxel.segments[slot] if taxel.segments[slot] in options else "None"
+                )
+                segment.options = options
+                segment.value = selected
+                segment.label = (
+                    f"⚠ Segment {slot}"
+                    if any(
+                        issue["field"] in (f"segment{slot}", "binding")
+                        for issue in row_issues
+                    )
+                    else f"Segment {slot}"
+                )
+                weight.value = (
+                    str(taxel.weights[slot])
+                    if isinstance(weight.value, str)
+                    else taxel.weights[slot]
+                )
+                weight.disabled = selected == "None"
+                weight.label = (
+                    f"⚠ Weight {slot}"
+                    if any(
+                        issue["field"] in (f"weight{slot}", "weights")
+                        for issue in row_issues
+                    )
+                    else f"Weight {slot}"
+                )
+            self._set_error_widget(
+                self.taxel_error_widgets[row],
+                [issue["message"] for issue in row_issues],
+            )
+        if self.mode_value == "Preview":
+            self._update_preview_error()
+        self.redraw = True
+
     def _set_segment_joint(self, row: int, value: str) -> None:
         self.document.segments[row].joint = value
-        self._rebuild_edit_lists()
+        self._sync_segment_validation_widgets()
+        self._sync_taxel_binding_widgets(range(len(self.document.taxels)))
+        self._sync_new_taxel_binding_widgets()
 
     def _values(self, kind: str):
         return self.document.segments if kind == "segments" else self.document.taxels
@@ -817,21 +1024,22 @@ class Editor:
 
     def _set_taxel_segment(self, row: int, slot: int, value: str) -> None:
         taxel = self.document.taxels[row]
+        first = value != "None" and not any(taxel.segments)
         taxel.segments[slot] = None if value == "None" else value
         if taxel.segments[slot] is None:
             taxel.weights[slot] = 0.0
-        self._rebuild_taxel_list()
+        elif first:
+            taxel.weights[slot] = 1.0
+        self._sync_taxel_binding_widgets([row])
 
     def _set_taxel_weight(self, row: int, slot: int, value) -> None:
         try:
             self.document.set_weight(row, slot, float(value))
         finally:
-            self._rebuild_taxel_list()
+            self._sync_taxel_binding_widgets([row])
 
     def _start_binding(self) -> None:
-        self.pick_mode = None
-        self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_capture_button.label = "Capture URDF Surface Pose"
+        self._set_pick_mode(None)
         self.binding_phase = "taxels"
         self.binding_taxels, self.binding_segments = [], []
         self.selected_kind, self.selected_rows = None, []
@@ -840,6 +1048,7 @@ class Editor:
             "Select taxel(s) to bind in 3D scene. Hold Shift to multi-select. "
             'Click "Select Segments" after selecting taxels. Click another area to cancel.'
         )
+        self.info.value = "Binding started."
 
     def _select_binding_segments(self) -> None:
         if not self.binding_taxels:
@@ -850,6 +1059,7 @@ class Editor:
             'Select 1-4 segment(s). Hold Shift to multi-select. Click "Complete" '
             "after selecting segments. Click another area to cancel."
         )
+        self.info.value = "Taxels selected. Select segments."
 
     def _complete_binding(self) -> None:
         if not 1 <= len(self.binding_segments) <= 4:
@@ -860,21 +1070,26 @@ class Editor:
                 "to start over.</span>"
             )
             return
-        self.document.assign(self.binding_taxels, self.binding_segments)
+        rows = list(self.binding_taxels)
+        self.document.assign(rows, self.binding_segments)
         self._cancel_binding()
-        self._rebuild_taxel_list()
+        self._sync_taxel_binding_widgets(rows)
+        noun = "taxel" if len(rows) == 1 else "taxels"
+        self.info.value = f"Binding completed for {len(rows)} {noun}."
 
     def _set_binding_button(self, active: str | None) -> None:
         self.binding_start.disabled = active != "start"
         self.binding_next.disabled = active != "next"
         self.binding_complete.disabled = active != "complete"
 
-    def _cancel_binding(self) -> None:
+    def _cancel_binding(self, report: bool = False) -> None:
         self.binding_phase = None
         self.binding_taxels, self.binding_segments = [], []
         if hasattr(self, "binding_next"):
             self._set_binding_button("start")
             self.binding_info.content = ""
+        if report:
+            self.info.value = "Binding canceled."
 
     def _joint_enabled(self, enabled: bool) -> None:
         self.joint_collection.disabled = not enabled
@@ -882,7 +1097,7 @@ class Editor:
 
     def _connect(self) -> None:
         if self.receiver is not None:
-            self._disconnect()
+            self._disconnect(report=True)
             return
         config = {
             "side": self.state.side,
@@ -894,14 +1109,17 @@ class Editor:
         self.receiver = sdk.Receiver(config)
         self.connect_button.label = "Disconnect Live"
         self.live_status.content = "Current Status: Connecting"
+        self.info.value = "Connecting Live."
 
-    def _disconnect(self) -> None:
+    def _disconnect(self, report: bool = False) -> None:
         if self.receiver is not None:
             self.receiver.close()
             self.receiver = None
         self.connect_button.label = "Connect Live"
         self.live_status.content = "Current Status: Disconnected"
         self._update_preview_error()
+        if report:
+            self.info.value = "Live disconnected."
         self.redraw = True
 
     @property
@@ -963,35 +1181,58 @@ class Editor:
         self.apply_segments_button.disabled = False
         self.apply_urdf_button.disabled = False
 
+    def _document_error_html(self) -> str:
+        messages = []
+        labels = {"segments": "Segment", "taxels": "Taxel"}
+        for issue in self.document.validate():
+            label = labels.get(issue["kind"], issue["kind"].title())
+            location = f"{label} {issue['row']}" if issue["row"] is not None else label
+            messages.append(f"{location}: {issue['message']}")
+        return (
+            '<span style="color:#d32f2f">' + "<br>".join(messages) + "</span>"
+            if messages
+            else ""
+        )
+
     def _apply_preview_segments(self) -> None:
         self.document.segments = copy.deepcopy(self.preview_document.segments)
         self._rebuild_edit_lists()
+        self.info.value = "Preview segments applied to Edit data."
 
     def _apply_preview_taxels(self) -> None:
         rows, _, _ = self._rendered_preview_taxels()
         self.document.taxels = copy.deepcopy([taxel for _, taxel in rows])
         self._rebuild_edit_lists()
+        self.info.value = "Preview taxels applied to Edit data."
 
     def _apply_preview_urdf(self) -> None:
         self.document.q = copy.deepcopy(self.preview_document.q)
-        self._rebuild_joint_controls()
+        self._sync_joint_widget_values(self.document, self.edit_joint_widgets)
+        self.info.value = "Preview URDF joints applied to Edit data."
 
     def _apply_preview_all(self) -> None:
-        replacement = Document(self.state.side)
-        replacement.alignment = copy.deepcopy(self.document.alignment)
-        replacement.segments = copy.deepcopy(self.preview_document.segments)
+        document = self.document
+        document.segments = copy.deepcopy(self.preview_document.segments)
         rows, _, _ = self._rendered_preview_taxels()
-        replacement.taxels = copy.deepcopy([taxel for _, taxel in rows])
-        replacement.q = copy.deepcopy(self.preview_document.q)
-        self.state.documents[self.state.side] = replacement
+        document.taxels = copy.deepcopy([taxel for _, taxel in rows])
+        document.q = copy.deepcopy(self.preview_document.q)
         self._rebuild_edit_lists()
-        self._rebuild_joint_controls()
+        self._sync_joint_widget_values(document, self.edit_joint_widgets)
+        self.info.value = "Preview data applied to Edit data."
 
     def _restore_preview(self) -> None:
-        self.preview[self.state.side] = self._preview_from(self.document)
-        self._rebuild_joint_controls()
-        self._rebuild_preview_segments()
+        preview = self.preview_document
+        replacement = self._preview_from(self.document)
+        old_joints = [segment.joint for segment in preview.segments]
+        preview.alignment = replacement.alignment
+        preview.segments = replacement.segments
+        preview.taxels = replacement.taxels
+        preview.q = replacement.q
+        if old_joints != [segment.joint for segment in preview.segments]:
+            self._rebuild_preview_segments()
+        self._sync_preview_values()
         self._update_preview_error()
+        self.info.value = "Preview data reset from Edit data."
 
     def _rebuild_preview_segments(self) -> None:
         if self.preview_segment_folder is not None:
@@ -1184,10 +1425,10 @@ class Editor:
         chosen = {kind: rows for kind, rows in chosen.items() if rows}
         if not chosen:
             if self.binding_phase is not None:
-                self._cancel_binding()
+                self._cancel_binding(report=True)
             else:
                 self.selected_kind, self.selected_rows = None, []
-                self._rebuild_selection()
+                self._sync_selection()
             self.redraw = True
             return
         kind = (
@@ -1217,10 +1458,10 @@ class Editor:
                 return
             self.selected_kind = kind
             self.selected_rows = sorted(set(self.selected_rows) | set(rows))
-            self._rebuild_selection()
+            self._sync_selection()
         elif self.selected_kind != kind or self.selected_rows != rows:
             self.selected_kind, self.selected_rows = kind, rows
-            self._rebuild_selection()
+            self._sync_selection()
         self.redraw = True
 
     @staticmethod
@@ -1289,9 +1530,22 @@ class Editor:
         return rows
 
     def _handle_pick(self, event) -> None:
-        mode, self.pick_mode = self.pick_mode, None
-        self.segment_click_button.label = "Add with URDF Click"
-        self.taxel_capture_button.label = "Capture URDF Surface Pose"
+        mode = self.pick_mode
+        self._set_pick_mode(None)
+        if mode == "segment_pose":
+            rows = self._ray_rows(
+                event, "segments", list(enumerate(self.document.segments))
+            )
+            if not rows:
+                self.info.value = "Capture Segment Pose canceled."
+                return
+            position, rotation = geo.components(
+                geo.matrix(self.document.segments[rows[0]].pose)
+            )
+            self._set_values(self.grid_center, position)
+            self._set_values(self.grid_rotation, rotation)
+            self.info.value = "Segment pose captured."
+            return
         if self.model is None:
             raise ValueError("Load a URDF before using URDF Click")
         hit = self.model.hit(
@@ -1302,6 +1556,11 @@ class Editor:
             self.urdf_scale,
         )
         if hit is None:
+            self.info.value = (
+                "Add Segment canceled."
+                if mode == "segment"
+                else "Capture URDF Surface Pose canceled."
+            )
             return
         if mode == "segment":
             value = IDENTITY_POSE.copy()
@@ -1309,11 +1568,13 @@ class Editor:
             row = self.document.add_segment(self.new_segment_joint.value, value)
             self.selected_kind, self.selected_rows = "segments", [row]
             self._rebuild_edit_lists()
+            self.info.value = "Segment added."
         else:
             frame = geo.surface_frame(hit[1], hit[2])
             position, rotation = geo.components(frame)
             self._set_values(self.grid_center, position)
             self._set_values(self.grid_rotation, rotation)
+            self.info.value = "URDF surface pose captured."
 
     def _selection_values(self):
         if self.selected_kind is None:
@@ -1322,65 +1583,75 @@ class Editor:
             return self.preview_document.segments
         return self._values(self.selected_kind)
 
-    def _rebuild_selection(self) -> None:
-        if self.selection_folder is not None:
-            self.selection_folder.remove()
+    def _sync_selection(self) -> None:
         values = self._selection_values()
         rows = [row for row in self.selected_rows if 0 <= row < len(values)]
         self.selected_rows = rows
-        with self.selection_tab:
-            self.selection_folder = self.server.gui.add_folder("Selection")
-        with self.selection_folder:
-            self.server.gui.add_markdown(
-                f"Type: **{self.selected_kind if rows else 'None'}**  \n"
-                f"Count: **{len(rows)}**"
-            )
-            names = [
-                values[row].joint
-                if self.selected_kind == "segments"
-                else f"Taxel {row}"
-                for row in rows
-            ]
-            self.server.gui.add_text(
-                "Name",
-                names[0] if len(names) == 1 else json.dumps(names, indent=2),
-                multiline=True,
-                disabled=True,
-            )
-            center = (
-                np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)
-                if rows
-                else np.zeros(3)
-            )
-            if len(rows) == 1:
-                _, rotation = geo.components(geo.matrix(values[rows[0]].pose))
-            else:
-                rotation = (0.0, 0.0, 0.0)
-            self.selection_position_widgets = self._numbers("Position", center, 0.001)
-            self.selection_rotation_widgets = self._sliders("Rotation", rotation)
-            self.selection_rotation = np.asarray(rotation, dtype=float)
-            for widget in (
-                *self.selection_position_widgets,
-                *self.selection_rotation_widgets,
-            ):
-                widget.disabled = not rows
-            for axis, widget in enumerate(self.selection_position_widgets):
-                self._watch(
-                    widget,
-                    lambda value, axis=axis: self._set_selection_position(axis, value),
+        if self.selection_folder is None:
+            with self.selection_tab:
+                self.selection_folder = self.server.gui.add_folder("Selection")
+            with self.selection_folder:
+                self.selection_summary = self.server.gui.add_markdown("")
+                self.selection_names = self.server.gui.add_text(
+                    "__Selected Object Names", "", multiline=True, disabled=True
                 )
-            for axis, widget in enumerate(self.selection_rotation_widgets):
-                self._watch(
-                    widget,
-                    lambda value, axis=axis: self._set_selection_rotation(axis, value),
+                self.selection_position_widgets = self._numbers(
+                    "Position", np.zeros(3), 0.001
                 )
-            self.selection_scale = 1.0
-            self.selection_scale_widget = self.server.gui.add_number(
-                "Scale", 1.0, min=1e-6, step=0.01, disabled=len(rows) < 2
-            )
-            self._watch(self.selection_scale_widget, self._set_selection_scale)
-            delete = self._action_button("Delete", self._delete_selection)
-            delete.disabled = not rows
+                self.selection_rotation_widgets = self._sliders("Rotation", np.zeros(3))
+                for axis, widget in enumerate(self.selection_position_widgets):
+                    self._watch(
+                        widget,
+                        lambda value, axis=axis: self._set_selection_position(
+                            axis, value
+                        ),
+                    )
+                for axis, widget in enumerate(self.selection_rotation_widgets):
+                    self._watch(
+                        widget,
+                        lambda value, axis=axis: self._set_selection_rotation(
+                            axis, value
+                        ),
+                    )
+                self.selection_scale_widget = self.server.gui.add_number(
+                    "Scale", 1.0, min=1e-6, step=0.01
+                )
+                self._watch(self.selection_scale_widget, self._set_selection_scale)
+                self.selection_delete = self._action_button(
+                    "Delete", self._delete_selection
+                )
+
+        self.selection_summary.content = (
+            f"Type: **{self.selected_kind if rows else 'None'}**  \n"
+            f"Count: **{len(rows)}**"
+        )
+        names = [
+            values[row].joint if self.selected_kind == "segments" else f"Taxel {row}"
+            for row in rows
+        ]
+        self.selection_names.value = "\n".join(names)
+        center = (
+            np.asarray([values[row].pose[:3] for row in rows]).mean(axis=0)
+            if rows
+            else np.zeros(3)
+        )
+        rotation = (
+            geo.components(geo.matrix(values[rows[0]].pose))[1]
+            if len(rows) == 1
+            else np.zeros(3)
+        )
+        self._set_values(self.selection_position_widgets, center)
+        self._set_values(self.selection_rotation_widgets, rotation)
+        self.selection_rotation = np.asarray(rotation, dtype=float)
+        for widget in (
+            *self.selection_position_widgets,
+            *self.selection_rotation_widgets,
+        ):
+            widget.disabled = not rows
+        self.selection_scale = 1.0
+        self.selection_scale_widget.value = 1.0
+        self.selection_scale_widget.disabled = len(rows) < 2
+        self.selection_delete.disabled = not rows
 
     def _set_selection_position(self, axis: int, value: float) -> None:
         values = self._selection_values()
@@ -1447,9 +1718,11 @@ class Editor:
             self._update_preview_error()
         else:
             self.document.delete(self.selected_kind, self.selected_rows)
+            self.selected_kind, self.selected_rows = None, []
             self._rebuild_edit_lists()
+            return
         self.selected_kind, self.selected_rows = None, []
-        self._rebuild_selection()
+        self._sync_selection()
 
     def _draw_instances(
         self,
@@ -1578,7 +1851,11 @@ class Editor:
                 color = SELECTED_COLOR
             if self.binding_phase == "taxels" and active:
                 color = INACTIVE_COLOR
-            if self.pick_mode is not None and active:
+            if (
+                self.pick_mode is not None
+                and self.pick_mode != "segment_pose"
+                and active
+            ):
                 color = INACTIVE_COLOR
             segment_colors.append(color)
         taxel_colors = [TAXEL_COLOR] * len(taxels)
@@ -1599,10 +1876,6 @@ class Editor:
         for row in range(len(taxels)):
             if row in side_taxel_rows:
                 taxel_colors[row] = SIDE_HIGHLIGHT_COLOR
-            if self.selected_kind == "taxels" and row in self.selected_rows and active:
-                taxel_colors[row] = SELECTED_COLOR
-            if self.binding_phase == "taxels" and row in self.binding_taxels:
-                taxel_colors[row] = SELECTED_COLOR
             if self.binding_phase == "segments" and active:
                 taxel_colors[row] = INACTIVE_COLOR
             if self.pick_mode is not None and active:
@@ -1616,6 +1889,16 @@ class Editor:
             for row in error_rows:
                 if 0 <= row < len(taxel_colors):
                     taxel_colors[row] = ERROR_COLOR
+        # Selection is the final visual state so invalid selected taxels stay visible.
+        if active and self.pick_mode is None:
+            if self.selected_kind == "taxels":
+                for row in self.selected_rows:
+                    if 0 <= row < len(taxel_colors):
+                        taxel_colors[row] = SELECTED_COLOR
+            if self.binding_phase == "taxels":
+                for row in self.binding_taxels:
+                    if 0 <= row < len(taxel_colors):
+                        taxel_colors[row] = SELECTED_COLOR
         self._draw_instances(
             prefix + "/segments", "segments", segments, segment_colors, opacity
         )
@@ -1656,7 +1939,7 @@ class Editor:
                 q,
                 self.urdf_alignment,
                 self.urdf_scale,
-                highlighted=self.pick_mode is not None,
+                highlighted=self.pick_mode in ("segment", "taxel_pose"),
                 opacity=URDF_OPACITY * active_opacity,
             )
         if self.mode_value == "Edit":

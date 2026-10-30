@@ -109,24 +109,29 @@ invalid and outlined in red.
 
 Set Rows, Columns, Area Width, Area Height, Center Position, and Rotation.
 **Capture URDF Surface Pose** copies a clicked surface position and orientation
-into those fields without creating taxels. **Add Taxels** then creates the
-row-major planar grid. Taxels are squares with side length 0.002 m. A taxel with
-any validation error uses `ERROR_COLOR` as its fill color.
+into those fields without creating taxels. **Capture Segment Pose** copies the
+complete pose of a clicked Editing segment. **Add Taxels** then creates the
+row-major planar grid and copies the four Segment/Weight fields above the
+capture buttons into every new Taxel. Taxels are squares with side length
+0.002 m. A taxel with any validation error uses `ERROR_COLOR`;
+`SELECTED_COLOR` overrides it while that taxel is selected.
 
 To bind taxels:
 
 1. Select **Start Binding to Segments** and select taxels in the scene.
 2. Select **Select Segments** and choose one to four segments.
-3. Select **Complete**. Initial active weights are equal.
+3. Select **Complete**. The first Segment receives weight one; later Segments
+   receive weight zero.
 
 The three buttons are vertical with down arrows between adjacent steps, and at
 most one is enabled at a time. Between steps, only the required 3D selection is
 available.
 
 Expand **All Taxels** to edit pose, four segment slots, and four weights. `None`
-is an editor-only inactive slot with weight zero. Editing a weight preserves the
-entered value and adjusts other active weights proportionally so the row sums to
-one. If only one slot is active, its weight is one.
+is an editor-only inactive slot with weight zero. Selecting the first active
+segment sets its weight to one; later segment selections start at zero. Editing
+a weight changes only that slot. Validation reports rows whose weights do not
+sum to one.
 
 ## Scene selection
 

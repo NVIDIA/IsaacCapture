@@ -117,36 +117,23 @@ class Document:
             if not 0 <= row < len(self.segments):
                 raise ValueError("Selected segment no longer exists")
             joints.append(self.segments[row].joint)
-        weights = [1.0 / len(joints)] * len(joints)
+        weights = [1.0] + [0.0] * (len(joints) - 1)
         for row in taxels:
             if 0 <= row < len(self.taxels):
                 self.taxels[row].segments = joints + [None] * (4 - len(joints))
                 self.taxels[row].weights = weights + [0.0] * (4 - len(joints))
 
     def set_weight(self, taxel_row: int, slot: int, value: float) -> None:
-        taxel = self.taxels[taxel_row]
+        self.set_taxel_weight(self.taxels[taxel_row], slot, value)
+
+    @staticmethod
+    def set_taxel_weight(taxel: Taxel, slot: int, value: float) -> None:
         if taxel.segments[slot] is None:
             raise ValueError("Select a segment before editing its weight")
         value = float(value)
         if not math.isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("Weight must be from 0 to 1")
-        active = [i for i, segment in enumerate(taxel.segments) if segment is not None]
-        if len(active) == 1:
-            taxel.weights = [1.0 if i == slot else 0.0 for i in range(4)]
-            return
-        others = [i for i in active if i != slot]
-        remainder = 1.0 - value
-        total = sum(taxel.weights[i] for i in others)
         taxel.weights[slot] = value
-        for i in range(4):
-            if taxel.segments[i] is None:
-                taxel.weights[i] = 0.0
-        if total > 0.0:
-            for i in others:
-                taxel.weights[i] = taxel.weights[i] / total * remainder
-        else:
-            for i in others:
-                taxel.weights[i] = remainder / len(others)
 
     def validate(self) -> list[dict]:
         issues: list[dict] = []
@@ -182,12 +169,12 @@ class Document:
                         )
                 elif joint not in joints:
                     issue("taxels", row, f"segment{slot}", f"Missing segment {joint}")
-                elif not valid_weight or weight <= 0.0:
+                elif not valid_weight or weight < 0.0:
                     issue(
                         "taxels",
                         row,
                         f"weight{slot}",
-                        "Selected segment weight must be greater than zero",
+                        "Selected segment weight must be nonnegative",
                     )
             if not any(
                 joint in joints for joint in taxel.segments if joint is not None

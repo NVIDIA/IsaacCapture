@@ -17,26 +17,24 @@
   )?.set;
 
   const findBridge = (name) => {
-    for (const input of document.querySelectorAll("input")) {
-      let parent = input;
-      for (let depth = 0; parent && depth < 5; ++depth, parent = parent.parentElement) {
-        if (parent.textContent?.includes(name)) {
-          input.style.position = "absolute";
-          input.style.width = "1px";
-          input.style.height = "1px";
-          input.style.opacity = "0";
-          input.style.pointerEvents = "none";
-          input.tabIndex = -1;
-          for (const label of parent.querySelectorAll("label")) {
-            if (label.textContent?.includes(name)) {
-              label.style.display = "none";
-            }
-          }
-          return input;
-        }
-      }
+    const label = [...document.querySelectorAll("label")].find(
+      (candidate) => candidate.textContent?.trim() === name,
+    );
+    let input = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+    let row = label?.parentElement;
+    while (!input && row) {
+      input = row.querySelector("input");
+      row = row.parentElement;
     }
-    return null;
+    if (!(input instanceof HTMLInputElement)) return null;
+    input.style.position = "absolute";
+    input.style.width = "1px";
+    input.style.height = "1px";
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+    input.tabIndex = -1;
+    label.style.display = "none";
+    return input;
   };
 
   // Place Viser's logo above the fixed bottom Info area.
@@ -99,19 +97,42 @@
     }
   };
 
-  const folderFromLabel = (name) => {
-    const label = [...document.querySelectorAll("div")].find(
-      (element) => element.textContent?.trim() === name && element.querySelector("svg"),
-    );
-    return label?.parentElement || null;
-  };
-
   const directChild = (parent, descendant) => {
     let child = descendant;
     while (child?.parentElement && child.parentElement !== parent) {
       child = child.parentElement;
     }
     return child?.parentElement === parent ? child : null;
+  };
+
+  const layoutSelectedNames = () => {
+    for (const label of document.querySelectorAll("label")) {
+      if (label.textContent?.trim() !== "__Selected Object Names") continue;
+      let row = label.parentElement;
+      while (row && !row.querySelector("textarea")) row = row.parentElement;
+      if (!row) continue;
+      const textarea = row.querySelector("textarea");
+      const labelColumn = directChild(row, label);
+      const valueColumn = directChild(row, textarea);
+      if (!labelColumn || !valueColumn) continue;
+      labelColumn.style.display = "none";
+      valueColumn.style.flex = "1 1 100%";
+      valueColumn.style.width = "100%";
+      row.style.width = "100%";
+      if (textarea.dataset.tactileFixedRows !== "true") {
+        const style = getComputedStyle(textarea);
+        const fontSize = Number.parseFloat(style.fontSize);
+        const lineHeight =
+          Number.parseFloat(style.lineHeight) || (Number.isFinite(fontSize) ? fontSize * 1.5 : 20);
+        const chrome = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
+          .map((name) => Number.parseFloat(style[name]) || 0)
+          .reduce((sum, value) => sum + value, 0);
+        textarea.rows = 2;
+        textarea.style.height = `${Math.ceil(2 * lineHeight + chrome)}px`;
+        textarea.style.overflowY = "auto";
+        textarea.dataset.tactileFixedRows = "true";
+      }
+    }
   };
 
   const layoutTaxelBindings = () => {
@@ -141,62 +162,62 @@
       if (children.some((child) => !child) || new Set(children).size !== names.length) {
         continue;
       }
+      const title = container.querySelector("[data-tactile-binding-title]");
+      const titleChild = directChild(container, title);
+      if (!title || !titleChild) continue;
       const bindingChildren = new Set(children);
       Object.assign(container.style, {
         display: "grid",
-        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-        gap: "8px",
+        gridTemplateColumns: "6em repeat(4, minmax(0, 1fr))",
+        gap: "0",
         alignItems: "end",
       });
       // Only bindings use the four columns; all other taxel controls stay full-width.
       for (const child of container.children) {
-        child.style.gridColumn = bindingChildren.has(child) ? "auto" : "1 / -1";
-        if (bindingChildren.has(child)) child.style.minWidth = "0";
+        if (child === titleChild) {
+          child.style.gridColumn = "1";
+          child.style.gridRow = "span 2";
+          child.style.alignSelf = "center";
+          child.style.margin = "0";
+          child.style.padding = "0 0.5em";
+        } else if (bindingChildren.has(child)) {
+          child.style.gridColumn = "auto";
+          child.style.minWidth = "0";
+          child.style.margin = "0";
+          child.style.padding = "0";
+        } else {
+          child.style.gridColumn = "1 / -1";
+        }
       }
-      for (const field of fields) field.style.display = "none";
-    }
-  };
-
-  const freezeMainMenu = () => {
-    const general = folderFromLabel("General");
-    const preview = folderFromLabel("Preview");
-    const tabNames = new Set(["URDF", "Segments", "Taxels"]);
-    const tabs = [...document.querySelectorAll("button")].filter((button) =>
-      tabNames.has(button.textContent?.trim()),
-    );
-    if (!general || tabs.length !== 3) return;
-    const tabGroup = tabs[0].closest("[data-dock-group]");
-    if (!tabGroup) return;
-    let root = general.parentElement;
-    while (root && !root.contains(tabGroup)) root = root.parentElement;
-    if (!root) return;
-    const generalChild = directChild(root, general);
-    const tabsChild = directChild(root, tabGroup);
-    const previewChild = preview ? directChild(root, preview) : null;
-    if (!generalChild || !tabsChild) return;
-
-    Object.assign(root.style, {
-      display: "flex",
-      flexDirection: "column",
-      height: "100%",
-      minHeight: "0",
-      overflow: "hidden",
-    });
-    Object.assign(generalChild.style, {
-      flex: "0 0 auto",
-      zIndex: "30",
-    });
-    Object.assign(tabsChild.style, {
-      flex: "1 1 0",
-      minHeight: "0",
-      overflow: "hidden",
-    });
-    if (previewChild) {
-      Object.assign(previewChild.style, {
-        flex: "1 1 0",
-        minHeight: "0",
-        overflowY: "auto",
+      Object.assign(title.style, {
+        color: "var(--mantine-color-dimmed)",
+        fontSize: "0.875em",
+        fontWeight: "450",
       });
+      for (const field of fields) {
+        let row = field.parentElement;
+        while (row && !row.querySelector("input, button")) row = row.parentElement;
+        if (!row) continue;
+        const control = row.querySelector("input, button");
+        const labelColumn = directChild(row, field);
+        const valueColumn = directChild(row, control);
+        if (!labelColumn || !valueColumn) continue;
+        // Hiding only the label text leaves Viser's fixed-width label column empty.
+        labelColumn.style.display = "none";
+        valueColumn.style.flex = "1 1 100%";
+        valueColumn.style.width = "100%";
+        valueColumn.style.minWidth = "0";
+        row.style.width = "100%";
+        row.style.margin = "0";
+        control.style.borderRadius = "0";
+      }
+      if (title.dataset.tactileBindingTitle === "add") {
+        const capture = [...container.querySelectorAll("button")].find(
+          (button) => button.textContent?.trim() === "Capture URDF Surface Pose",
+        );
+        const captureChild = directChild(container, capture);
+        if (captureChild) captureChild.style.marginTop = "0.5em";
+      }
     }
   };
 
@@ -209,7 +230,12 @@
       input.dataset.tactileNumberDraft = "true";
       input.addEventListener("input", () => {
         const value = input.value;
-        if (/^[+-]?(?:\d+)?\.$/.test(value)) {
+        const parsed = Number(value);
+        if (
+          value === "" ||
+          !Number.isFinite(parsed) ||
+          String(parsed) !== value
+        ) {
           numberDrafts.set(input, value);
         } else {
           numberDrafts.delete(input);
@@ -223,7 +249,7 @@
     findBridge("__Tactile Info");
     positionViserLogo();
     boldChoiceLabels();
-    freezeMainMenu();
+    layoutSelectedNames();
     preservePartialNumbers();
     layoutTaxelBindings();
     for (const label of document.querySelectorAll("label")) {
