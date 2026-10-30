@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -19,11 +19,27 @@
 namespace core
 {
 
+namespace detail
+{
+
+inline bool is_valid_schema_sample_layout(uint32_t sample_size,
+                                          uint32_t sample_stride,
+                                          size_t maximum_sample_size,
+                                          size_t maximum_sample_stride) noexcept
+{
+    return sample_size > 0 && sample_size <= maximum_sample_size && sample_stride >= sample_size &&
+           sample_stride <= maximum_sample_stride;
+}
+
+} // namespace detail
+
 /*!
  * @brief Configuration for OpenXR tensor-backed FlatBuffer readers (used by SchemaTracker).
  */
 struct SchemaTrackerConfig
 {
+    static constexpr size_t DEFAULT_MAX_SAMPLE_BATCH_STRIDE = 1024 * 1024;
+
     //! Tensor collection identifier for discovery (e.g., "head_data").
     std::string collection_id;
 
@@ -35,6 +51,9 @@ struct SchemaTrackerConfig
 
     //! Human-readable description for debugging and runtime display.
     std::string localized_name;
+
+    //! Maximum allocation for one runtime-padded sample retrieval.
+    size_t max_sample_batch_stride = DEFAULT_MAX_SAMPLE_BATCH_STRIDE;
 };
 
 /*!
@@ -90,30 +109,15 @@ public:
     };
 
     /*!
-     * @brief Read ALL pending samples from the tensor collection.
-     *
-     * Drains every available sample since the last read, appending each to the
-     * output vector with timestamps converted from XrTensorSampleMetadataNV:
-     *   - available_time_local_common_clock = arrivalTimestamp → local monotonic nanoseconds
-     *   - sample_time_local_common_clock    = timestamp → local monotonic nanoseconds
-     *   - sample_time_raw_device_clock      = rawDeviceTimestamp (raw device clock, not converted)
-     *
-     * A @c false return does not imply that no samples were appended — use
-     * @c samples.size() to determine how many were read. The return value only
-     * indicates whether the target collection is currently reachable, which lets
-     * callers distinguish between "tracker disappeared" (false) and "update called
-     * before any new samples arrived" (true, zero appended).
-     *
-     * @param samples Output vector; new samples are appended (not cleared).
-     * @return @c true if the target collection is present; @c false if it has not
-     *         been discovered yet or has disappeared.
-     */
-    bool read_all_samples(std::vector<SampleResult>& samples);
-
-    /*!
      * @brief Access the configuration.
      */
     const SchemaTrackerConfig& config() const;
+
+protected:
+    // Raw tensor bytes stay behind the typed SchemaTracker boundary so every
+    // hand-written reader must pass through schema verification before field access.
+    bool read_all_samples(std::vector<SampleResult>& samples);
+    void note_rejected_flatbuffer_samples(size_t count);
 
 private:
     void initialize_tensor_data_functions();
@@ -141,6 +145,8 @@ private:
     uint32_t m_sample_size{ 0 };
 
     uint64_t m_cached_generation{ 0 };
+    uint64_t m_rejected_flatbuffer_samples{ 0 };
+    uint64_t m_next_rejection_warning{ 1 };
 
     std::optional<int64_t> m_last_sample_index;
 };

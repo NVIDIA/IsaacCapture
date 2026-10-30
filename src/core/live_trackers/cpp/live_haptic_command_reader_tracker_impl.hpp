@@ -52,7 +52,6 @@ private:
     std::map<std::string, Serialized<HapticCommand>, std::less<>> tracked_by_endpoint_;
     // Endpoint of the most recently drained sample, backing the no-arg get_data().
     std::string latest_endpoint_;
-    std::vector<SchemaTrackerBase::SampleResult> samples_;
 };
 
 } // namespace core
