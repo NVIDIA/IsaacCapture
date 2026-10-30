@@ -42,7 +42,6 @@ def _joint_name(value: object) -> str:
 
 def parse(
     value: object,
-    side: str,
     alignment: np.ndarray | list[list[float]] | None = None,
 ) -> Document:
     if not isinstance(value, dict):
@@ -65,7 +64,7 @@ def parse(
     transform = np.asarray(
         VISUALIZATION_FROM_HAND if alignment is None else alignment, dtype=float
     )
-    document = Document(side)
+    document = Document()
     document.alignment = transform.tolist()
     names = [_joint_name(joint) for joint in joints]
     document.segments = [
@@ -140,11 +139,10 @@ def metadata(document: Document) -> dict:
 
 def load(
     path: str | Path,
-    side: str,
     alignment: np.ndarray | list[list[float]] | None = None,
 ) -> Document:
     with Path(path).expanduser().resolve().open() as stream:
-        return parse(json.load(stream), side, alignment)
+        return parse(json.load(stream), alignment)
 
 
 def write(path: str | Path, value: object) -> None:
@@ -162,6 +160,4 @@ def write(path: str | Path, value: object) -> None:
 
 def save(state: State, path: str | Path) -> None:
     write(path, metadata(state.document))
-    state.paths[state.side] = str(Path(path).expanduser().resolve())
-    state.saved[state.side] = state.document.clone()
-    state.saved[state.side].q = {}
+    state.replace(state.document, str(Path(path).expanduser().resolve()))

@@ -21,10 +21,9 @@ def main() -> int:
         from .ui import Editor
 
         state = State()
-        state.side = args.side
         if args.metadata:
             path = Path(args.metadata).expanduser().resolve()
-            state.replace(storage.load(path, args.side), str(path))
+            state.replace(storage.load(path), str(path))
         Editor(state, args).run()
         return 0
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:

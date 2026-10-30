@@ -80,10 +80,7 @@ def pose_error(values: object) -> str | None:
 class Document:
     """Editor-native data. Poses and semantic bindings never use FlatBuffer row indices."""
 
-    def __init__(self, side: str):
-        if side not in ("left", "right"):
-            raise ValueError("Side must be left or right")
-        self.side = side
+    def __init__(self):
         self.segments: list[Segment] = []
         self.taxels: list[Taxel] = []
         self.q: dict[str, float] = {}
@@ -191,18 +188,13 @@ class Document:
 
 class State:
     def __init__(self):
-        self.documents = {side: Document(side) for side in ("left", "right")}
-        self.saved: dict[str, Document | None] = {"left": None, "right": None}
-        self.paths: dict[str, str] = {}
-        self.side = "left"
-
-    @property
-    def document(self) -> Document:
-        return self.documents[self.side]
+        self.document = Document()
+        self.saved: Document | None = None
+        self.path = ""
 
     def replace(self, document: Document, path: str | None = None) -> None:
-        self.documents[document.side] = document
-        self.saved[document.side] = document.clone()
-        self.saved[document.side].q = {}
+        self.document = document
+        self.saved = document.clone()
+        self.saved.q = {}
         if path is not None:
-            self.paths[document.side] = path
+            self.path = path

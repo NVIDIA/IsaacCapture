@@ -50,12 +50,8 @@ class Editor:
 
     def __init__(self, state: State, args):
         self.state = state
-        for document in state.documents.values():
-            document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
-        self.preview = {
-            side: self._preview_from(document)
-            for side, document in state.documents.items()
-        }
+        self.document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
+        self.preview_document = self._preview_from(self.document)
         self.live_document: Document | None = None
         self.live_metadata_key = ""
         self.receiver: sdk.Receiver | None = None
@@ -109,7 +105,7 @@ class Editor:
         self.server.gui.configure_theme(control_width="medium", show_share_button=False)
         self.main_panel = self.server.gui.main_panel
         self.main_panel.dock_right()
-        self._build_gui()
+        self._build_gui(args.side)
         self._register_scene_events()
         self.selection_gizmo = self.server.scene.add_transform_controls(
             "/selection/translation",
@@ -121,9 +117,9 @@ class Editor:
             visible=False,
         )
         self.selection_gizmo.on_update(self._selection_gizmo_event)
-        self._sync_side()
-        if self.state.side in self.state.paths:
-            self.info.value = f"{self.state.side.title()} metadata loaded."
+        self._sync_document()
+        if self.state.path:
+            self.info.value = "Metadata loaded."
         if args.urdf:
             self.urdf_path.value = str(Path(args.urdf).expanduser().resolve())
             self._load_urdf()
@@ -132,23 +128,21 @@ class Editor:
     def document(self) -> Document:
         return self.state.document
 
-    @property
-    def preview_document(self) -> Document:
-        return self.preview[self.state.side]
-
     @staticmethod
     def _preview_from(document: Document) -> Document:
         preview = document.clone()
         preview.taxels = []
         return preview
 
-    def _build_gui(self) -> None:
+    def _build_gui(self, hand_side: str) -> None:
         gui = self.server.gui
         self.general_panel = gui.add_panel()
         self.general_tab = self.general_panel.add_tab("General")
         with self.general_tab:
-            self.side_text = gui.add_markdown("")
-            self._action_button("Toggle Side", self._toggle_side)
+            self.hand_side = gui.add_dropdown(
+                "Hand Side", ("left", "right"), initial_value=hand_side
+            )
+            self._watch(self.hand_side, self._hand_side_changed)
             self.metadata_path = gui.add_text("Metadata Path", "")
             self._action_button("New", self._new)
             self._action_button("Save", self._save)
@@ -415,19 +409,20 @@ class Editor:
         if mode == "Preview":
             self._update_preview_error()
 
-    def _toggle_side(self) -> None:
+    def _hand_side_changed(self, _: str) -> None:
+        self._reset_live_metadata()
         self._disconnect()
-        self.state.side = "right" if self.state.side == "left" else "left"
-        self._sync_side()
 
-    def _sync_side(self) -> None:
+    def _reset_live_metadata(self) -> None:
         self.live_document, self.live_metadata_key = None, ""
-        self._set_pick_mode(None)
         self.binding_source_editor.value = True
         self.binding_source_live.value = False
         self.binding_source_live.disabled = True
-        self.side_text.content = f"**Side: {self.state.side.title()}**"
-        self.metadata_path.value = self.state.paths.get(self.state.side, "")
+
+    def _sync_document(self) -> None:
+        self._reset_live_metadata()
+        self._set_pick_mode(None)
+        self.metadata_path.value = self.state.path
         position, rotation = geo.components(
             np.asarray(self.document.alignment, dtype=float)
         )
@@ -450,25 +445,25 @@ class Editor:
             widget.value = float(value)
 
     def _new(self) -> None:
-        document = Document(self.state.side)
+        document = Document()
         document.alignment = geo.VISUALIZATION_FROM_HAND.tolist()
-        document.segments = geo.default_segments(self.state.side)
-        self.state.documents[self.state.side] = document
-        self.state.saved[self.state.side] = None
-        self.state.paths.pop(self.state.side, None)
-        self.preview[self.state.side] = self._preview_from(document)
-        self._sync_side()
-        self.info.value = f"New {self.state.side} metadata created."
+        document.segments = geo.default_segments(self.hand_side.value)
+        self.state.document = document
+        self.state.saved = None
+        self.state.path = ""
+        self.preview_document = self._preview_from(document)
+        self._sync_document()
+        self.info.value = "New metadata created."
 
     def _load(self) -> None:
         path = self.metadata_path.value.strip()
         if not path:
             raise ValueError("Enter Metadata Path")
-        document = storage.load(path, self.state.side)
+        document = storage.load(path)
         self.state.replace(document, path)
-        self.preview[self.state.side] = self._preview_from(document)
-        self._sync_side()
-        self.info.value = f"{self.state.side.title()} metadata loaded."
+        self.preview_document = self._preview_from(document)
+        self._sync_document()
+        self.info.value = "Metadata loaded."
         LOG.info("Metadata loaded from %s", path)
 
     def _save(self) -> None:
@@ -506,8 +501,8 @@ class Editor:
 
     def _write_save(self, path: str) -> None:
         storage.save(self.state, path)
-        self.metadata_path.value = self.state.paths[self.state.side]
-        self.info.value = f"{self.state.side.title()} metadata saved."
+        self.metadata_path.value = self.state.path
+        self.info.value = "Metadata saved."
         self.redraw = True
 
     def _reset_camera(self) -> None:
@@ -543,7 +538,7 @@ class Editor:
             [widget.value for widget in self.segment_rotation],
         )
         delta = geo.realign(self.document, alignment)
-        saved = self.state.saved[self.state.side]
+        saved = self.state.saved
         if saved is not None:
             geo.apply_delta(saved.segments, list(range(len(saved.segments))), delta)
             geo.apply_delta(saved.taxels, list(range(len(saved.taxels))), delta)
@@ -1260,7 +1255,7 @@ class Editor:
             self._disconnect(report=True)
             return
         config = {
-            "side": self.state.side,
+            "side": self.hand_side.value,
             "collection": self.collection.value,
             "joint_state": self.joint_collection.value
             if self.joint_enabled.value
@@ -1448,7 +1443,7 @@ class Editor:
             key = json.dumps(raw_metadata, sort_keys=True)
             if key != self.live_metadata_key:
                 self.live_document = storage.parse(
-                    raw_metadata, self.state.side, self.document.alignment
+                    raw_metadata, self.document.alignment
                 )
                 self.live_metadata_key = key
                 self.binding_source_live.disabled = False
@@ -2221,7 +2216,7 @@ class Editor:
                 )
             else:
                 self._hide_prefix("/edit")
-        saved = self.state.saved[self.state.side]
+        saved = self.state.saved
         if self.show_saved.value and saved is not None:
             self._draw_dataset(
                 "/saved",

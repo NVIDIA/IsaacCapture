@@ -20,7 +20,7 @@ class EditorTests(unittest.TestCase):
         editor.document.taxels = [
             Taxel(segments=["WRIST", None, None, None], weights=[1.0, 0.0, 0.0, 0.0])
         ]
-        editor.preview = {"left": editor._preview_from(editor.document)}
+        editor.preview_document = editor._preview_from(editor.document)
         editor.binding_source_live = SimpleNamespace(value=False)
         editor.info = SimpleNamespace(value="")
         editor.edit_joint_widgets = {}
@@ -82,7 +82,7 @@ class EditorTests(unittest.TestCase):
         expected = [{"values": [0xFFFFFFFF, 0, 0, 0]}]
         self.assertEqual(encoded["geometry_mapping"]["taxel_segment_indices"], expected)
 
-        loaded = storage.parse(encoded, document.side)
+        loaded = storage.parse(encoded)
         self.assertTrue(
             any(issue["field"] == "segment0" for issue in loaded.validate())
         )
@@ -90,6 +90,35 @@ class EditorTests(unittest.TestCase):
             storage.metadata(loaded)["geometry_mapping"]["taxel_segment_indices"],
             expected,
         )
+
+    def test_hand_side_change_preserves_document_and_snapshots(self):
+        editor = self.make_editor()
+        editor.state.replace(editor.document, "metadata.json")
+        document, saved = editor.document, editor.state.saved
+        preview = editor.preview_document
+        receiver = SimpleNamespace(close=Mock())
+        editor.receiver = receiver
+        editor.connect_button = SimpleNamespace(label="Disconnect Live")
+        editor.live_status = SimpleNamespace(content="Live")
+        editor._update_preview_error = Mock()
+        editor.live_document, editor.live_metadata_key = document.clone(), "left"
+        editor.binding_source_editor = SimpleNamespace(value=False)
+        editor.binding_source_live = SimpleNamespace(value=True, disabled=False)
+
+        editor._hand_side_changed("right")
+
+        receiver.close.assert_called_once()
+        editor._update_preview_error.assert_called_once()
+        self.assertIsNone(editor.receiver)
+        self.assertIs(editor.document, document)
+        self.assertIs(editor.state.saved, saved)
+        self.assertIs(editor.preview_document, preview)
+        self.assertEqual(editor.state.path, "metadata.json")
+        self.assertIsNone(editor.live_document)
+        self.assertEqual(editor.live_metadata_key, "")
+        self.assertTrue(editor.binding_source_editor.value)
+        self.assertFalse(editor.binding_source_live.value)
+        self.assertTrue(editor.binding_source_live.disabled)
 
 
 if __name__ == "__main__":

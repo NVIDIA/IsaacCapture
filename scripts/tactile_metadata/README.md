@@ -36,7 +36,8 @@ python -m tactile_metadata_editor.cli \
   --urdf <path-to-urdf>
 ```
 
-`--side` defaults to `left`. Paths beginning with `~` are expanded.
+`--side` defaults to `left` and initializes **Hand Side**. Paths beginning with
+`~` are expanded.
 
 Offline editing uses Viser, NumPy, yourdfpy, trimesh, and rtree. Live reception
 also requires the Isaac Capture SDK, a compatible OpenXR runtime, and an
@@ -44,8 +45,10 @@ available HMD system in the same Python environment.
 
 ## Data and coordinates
 
-The editor maintains independent left- and right-hand documents. **Toggle Side**
-selects the active document; each side has its own metadata path and data.
+The editor maintains one metadata document and file path. **Hand Side** selects
+the default poses used by **New** and the hand stream used by **Connect Live**.
+Changing it disconnects Live and clears received metadata without switching,
+mirroring, or replacing the current document or its Saved and Preview datasets.
 General uses a separate right-docked menu above the Editor/Preview menu. The
 Selected Object panel is always present as a floating window on the left.
 The **Mode** section uses bold, mutually exclusive **Edit** and **Preview**
@@ -167,9 +170,9 @@ Enter **Metadata Path**, then use **Load** or **Save**. Saving validates the
 current document. If errors remain, the editor asks whether to continue; invalid
 drafts can still be written.
 
-**New** resets the active side and initializes all OpenXR HandJoint segments in
-the neutral hand pose. The left-hand defaults are mirrored before conversion to
-visualization space.
+**New** resets the document and initializes all OpenXR HandJoint segments in the
+neutral pose for **Hand Side**. The left-hand defaults are mirrored before
+conversion to visualization space.
 
 The JSON contains only schema fields:
 
