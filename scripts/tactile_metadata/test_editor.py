@@ -401,6 +401,34 @@ class EditorTests(unittest.TestCase):
         self.assertFalse(editor.binding_source_live.value)
         self.assertTrue(editor.binding_source_live.disabled)
 
+    def test_connect_discards_metadata_from_the_previous_stream(self):
+        editor = self.make_live_editor({})
+        editor.receiver = None
+        editor.live_document, editor.live_metadata_key = (
+            editor.document.clone(),
+            "previous",
+        )
+        editor.binding_source_editor = SimpleNamespace(value=False)
+        editor.binding_source_live = SimpleNamespace(value=True, disabled=False)
+        editor.hand_side = SimpleNamespace(value="left")
+        editor.collection = SimpleNamespace(value="next_collection")
+        editor.connect_button = SimpleNamespace(label="Connect Live")
+        preview = editor.preview_document
+
+        with patch("tactile_metadata_editor.ui.sdk.Receiver") as receiver:
+            editor._connect()
+
+        receiver.assert_called_once_with(
+            {"side": "left", "collection": "next_collection", "joint_state": ""}
+        )
+        self.assertIs(editor.receiver, receiver.return_value)
+        self.assertIsNone(editor.live_document)
+        self.assertEqual(editor.live_metadata_key, "")
+        self.assertTrue(editor.binding_source_editor.value)
+        self.assertFalse(editor.binding_source_live.value)
+        self.assertTrue(editor.binding_source_live.disabled)
+        self.assertIs(editor.preview_document, preview)
+
 
 if __name__ == "__main__":
     unittest.main()

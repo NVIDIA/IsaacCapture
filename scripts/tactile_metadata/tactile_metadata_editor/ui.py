@@ -1266,6 +1266,7 @@ class Editor:
             else "",
         }
         self.receiver = sdk.Receiver(config)
+        self._reset_live_metadata()
         self.connect_button.label = "Disconnect Live"
         self.live_status.content = "Current Status: Connecting"
         self.info.value = "Connecting Live."
