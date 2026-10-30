@@ -59,7 +59,7 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Generated Tracker Code" href="generated_trackers.html" />
+    <link rel="next" title="Wheel contents SBOM and license evidence" href="sbom.html" />
     <link rel="prev" title="System Requirements" href="requirements.html" />
 
 
@@ -395,8 +395,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -422,13 +427,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -437,7 +444,6 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -519,6 +525,8 @@
 │   ├── teleop_session_manager/ # Teleop session manager (Python)
 │   ├── cloudxr/                # CloudXR runtime helper (Python)
 │   └── python/                 # Python wheel packaging (when BUILD_PYTHON_BINDINGS=ON)
+├── src/python/isaaccapture/
+│   └── ovxr_session_manager/   # OVXR session ownership and presentation
 ├── src/plugins/                # Built when BUILD_PLUGINS=ON
 │   ├── plugin_utils/
 │   ├── controller_synthetic_hands/
@@ -526,6 +534,8 @@
 │   ├── manus/
 │   ├── oak/                    # When BUILD_PLUGIN_OAK_CAMERA=ON
 |   └── haptikos/
+├── tests/python/core/
+│   └── ovxr_session_manager/   # OVXR session and presentation tests
 └── examples/
     ├── oxr/                    # OpenXR examples (C++ and Python)
     ├── retargeting/
@@ -542,15 +552,16 @@
 </section>
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
-<p>After building, install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Install the wheel by path so a newer release on the index cannot win over the local build</span>
-<span class="c1"># (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.</span>
-<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>-t<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
+<p>After building, activate a virtual environment with the build’s Python version (step 4 of
+<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> shows how), then install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or
+<code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code>
+file):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># The pin keeps a newer release on the index from winning over the local build.</span>
 <span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 
 <span class="c1"># or</span>
-pip<span class="w"> </span>install<span class="w"> </span>install/wheels/isaaccapture-*.whl
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
 </pre></div>
 </div>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
@@ -563,7 +574,8 @@ in 1.9, so
 and produces a wheel under <code class="docutils literal notranslate"><span class="pre">install/wheels/</span></code>), the repository ships a root
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> that exposes <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> through the
 <a class="reference external" href="https://scikit-build-core.readthedocs.io/" rel="noopener noreferrer" target="_blank">scikit-build-core</a> build backend,
-driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist):</p>
+driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist). Run it inside an
+activated virtual environment as well:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">            </span><span class="c1"># build + install the compiled wheel from source</span>
 pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w">         </span><span class="c1"># editable / developer install</span>
 </pre></div>
@@ -680,11 +692,11 @@ in <a class="reference internal" href="../development/build_from_source/index.ht
       </div>
     </a>
     <a class="right-next"
-       href="generated_trackers.html"
+       href="sbom.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Generated Tracker Code</p>
+        <p class="prev-next-title">Wheel contents SBOM and license evidence</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -805,7 +817,7 @@ in <a class="reference internal" href="../development/build_from_source/index.ht
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

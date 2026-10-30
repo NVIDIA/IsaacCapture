@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Teleop Control State Machine" href="control_state_machine.html" />
-    <link rel="prev" title="Quick Start" href="quick_start.html" />
+    <link rel="prev" title="OVXR installation" href="../getting_started/ovxr.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -395,8 +395,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -422,13 +427,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -437,7 +444,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -500,7 +506,7 @@ examples more readable by focusing on <strong>what</strong> you want to do rathe
 <p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/src/python/isaaccapture/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp" rel="noopener noreferrer" target="_blank">DeviceIOSession</a>
-and <a class="reference internal" href="../device/trackers.html"><span class="doc">device trackers</span></a> so that callers don’t need to
+and <a class="reference internal" href="../device/trackers/index.html"><span class="doc">device trackers</span></a> so that callers don’t need to
 manage them directly:</p>
 <ol class="arabic simple">
 <li><p>Creates and configures trackers (head, hands, controllers)</p></li>
@@ -509,6 +515,14 @@ manage them directly:</p>
 <li><p>Runs retargeting pipeline with automatic updates</p></li>
 <li><p>Handles cleanup via RAII</p></li>
 </ol>
+<p>If resource cleanup fails during entry rollback or exit, <code class="docutils literal notranslate"><span class="pre">cleanup_failed</span></code>
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling <code class="docutils literal notranslate"><span class="pre">__exit__</span></code> again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.</p>
 </section>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
@@ -617,7 +631,7 @@ tracker’s default vendor. Because the vendor travels with the source, it is pa
 of the pipeline: <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> picks it up automatically, and
 <code class="docutils literal notranslate"><span class="pre">get_required_oxr_extensions_from_pipeline(pipeline)</span></code> reports the matching
 OpenXR extensions with no extra argument (important for the external-<code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>
-flow). See <a class="reference internal" href="../device/trackers.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
+flow). See <a class="reference internal" href="../device/trackers/index.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
 available vendor ids.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
@@ -645,8 +659,13 @@ end-to-end.</p>
 and returns the latest completed <code class="docutils literal notranslate"><span class="pre">RetargeterIO</span></code>. On a normal hit this is often
 the previous application frame’s output. If that returned output came from
 request N-1, then <code class="docutils literal notranslate"><span class="pre">session.last_context</span></code> also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful <code class="docutils literal notranslate"><span class="pre">step()</span></code> return delivers it through <code class="docutils literal notranslate"><span class="pre">last_context</span></code>. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code> when the
 application needs exact current-frame sample/compute/return behavior.</p>
 <p>The return type is unchanged; inspect <code class="docutils literal notranslate"><span class="pre">session.last_step_info</span></code> for age and
 timing metadata such as <code class="docutils literal notranslate"><span class="pre">returned_frame_id</span></code>, <code class="docutils literal notranslate"><span class="pre">submitted_frame_id</span></code>,
@@ -926,11 +945,15 @@ and/or <code class="docutils literal notranslate"><span class="pre">HeadSource</
 <section id="complete-examples">
 <h3>Complete Examples<a class="headerlink" href="#complete-examples" title="Link to this heading">#</a></h3>
 <ol class="arabic">
-<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/gripper_retargeting_example_simple.py</span></code>
+<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py</span></code>
 – Shows the minimal configuration approach and demonstrates auto-creation
-of input sources. Run it from the project root, with the environment set up
-as in the <a class="reference internal" href="quick_start.html"><span class="doc">Quick Start</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
+of input sources. Install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> into the active environment first:
+from your source build as in
+<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">step 4 of Build from source</span></a>, or
+from the package index as in the <a class="reference internal" href="quick_start.html"><span class="doc">Quick Start</span></a>. Then install
+this example from the project root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple
 </pre></div>
 </div>
 </li>
@@ -1056,12 +1079,12 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="quick_start.html"
+       href="../getting_started/ovxr.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Quick Start</p>
+        <p class="prev-next-title">OVXR installation</p>
       </div>
     </a>
     <a class="right-next"
@@ -1207,7 +1230,7 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

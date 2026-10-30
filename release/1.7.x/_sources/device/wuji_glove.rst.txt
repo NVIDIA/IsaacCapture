@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=hand_tracking/wuji_glove.html
+
 Wuji Glove
 ==========
 

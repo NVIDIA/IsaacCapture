@@ -1,0 +1,734 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Wheel contents SBOM and license evidence &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'references/sbom';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Generated Tracker Code" href="generated_trackers.html" />
+    <link rel="prev" title="Build System" href="build.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.7.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+
+<!-- The theme mirrors every navbar item into the mobile drawer, so this renders
+     twice per page: label implicitly, or the two copies collide on one id. -->
+<label class="version-switcher">
+  <span class="version-switcher__label">Version</span>
+  <select class="version-switcher__select" onchange="location = this.value;">
+    <option value="../../../main/references/sbom.html" >main</option>
+    <option value="../../1.0.x/index.html" >release/1.0.x</option>
+    <option value="../../1.1.x/index.html" >release/1.1.x</option>
+    <option value="../../1.2.x/index.html" >release/1.2.x</option>
+    <option value="../../1.3.x/index.html" >release/1.3.x</option>
+    <option value="../../1.4.x/index.html" >release/1.4.x</option>
+    <option value="../../1.5.x/index.html" >release/1.5.x</option>
+    <option value="../../1.6.x/index.html" >release/1.6.x</option>
+    <option value="sbom.html" selected>release/1.7.x</option>
+    <option value="../../../v1.5.175/index.html" >v1.5.175</option>
+    <option value="../../../v1.4.145/index.html" >v1.4.145</option>
+    <option value="../../../v1.4.142/index.html" >v1.4.142</option>
+    <option value="../../../v1.3.131/index.html" >v1.3.131</option>
+    <option value="../../../v1.1.8/index.html" >v1.1.8</option>
+    <option value="../../../v1.1.5/index.html" >v1.1.5</option>
+    <option value="../../../v1.0.193/index.html" >v1.0.193</option>
+    <option value="../../../v1.0.191/index.html" >v1.0.191</option>
+  </select>
+</label>
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+
+<!-- The theme mirrors every navbar item into the mobile drawer, so this renders
+     twice per page: label implicitly, or the two copies collide on one id. -->
+<label class="version-switcher">
+  <span class="version-switcher__label">Version</span>
+  <select class="version-switcher__select" onchange="location = this.value;">
+    <option value="../../../main/references/sbom.html" >main</option>
+    <option value="../../1.0.x/index.html" >release/1.0.x</option>
+    <option value="../../1.1.x/index.html" >release/1.1.x</option>
+    <option value="../../1.2.x/index.html" >release/1.2.x</option>
+    <option value="../../1.3.x/index.html" >release/1.3.x</option>
+    <option value="../../1.4.x/index.html" >release/1.4.x</option>
+    <option value="../../1.5.x/index.html" >release/1.5.x</option>
+    <option value="../../1.6.x/index.html" >release/1.6.x</option>
+    <option value="sbom.html" selected>release/1.7.x</option>
+    <option value="../../../v1.5.175/index.html" >v1.5.175</option>
+    <option value="../../../v1.4.145/index.html" >v1.4.145</option>
+    <option value="../../../v1.4.142/index.html" >v1.4.142</option>
+    <option value="../../../v1.3.131/index.html" >v1.3.131</option>
+    <option value="../../../v1.1.8/index.html" >v1.1.8</option>
+    <option value="../../../v1.1.5/index.html" >v1.1.5</option>
+    <option value="../../../v1.0.193/index.html" >v1.0.193</option>
+    <option value="../../../v1.0.191/index.html" >v1.0.191</option>
+  </select>
+</label>
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.7.x" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk/release/6" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Wheel contents SBOM and license evidence</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="wheel-contents-sbom-and-license-evidence">
+<h1>Wheel contents SBOM and license evidence<a class="headerlink" href="#wheel-contents-sbom-and-license-evidence" title="Link to this heading">#</a></h1>
+<p>Every published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel lists what it redistributes and carries the license
+text behind each obligation. You can check both offline, without installing the wheel. The
+Release build refuses to ship a wheel with a gap in either.</p>
+<p>To check a wheel, see <a class="reference internal" href="#verifying-a-wheel">Verifying a wheel</a>. To learn how the evidence is worked out, or why
+a build stopped, see the collector’s developer README, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/scripts/sbom/README.md" rel="noopener noreferrer" target="_blank">scripts/sbom/README.md</a>.</p>
+<section id="what-a-wheel-carries">
+<h2>What a wheel carries<a class="headerlink" href="#what-a-wheel-carries" title="Link to this heading">#</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
+└── isaaccapture-&lt;version&gt;.dist-info/
+    ├── METADATA                       # License-Expression + one License-File per text below
+    ├── licenses/
+    │   ├── LICENSE.md                 # this project's own license
+    │   ├── LICENSES/&lt;id&gt;.txt          # this project's license texts
+    │   ├── THIRD-PARTY-NOTICES.md     # each component, its license, and where the text is
+    │   └── third-party/&lt;component&gt;/   # the component's own license file, or a reference text
+    └── sboms/
+        └── &lt;wheel filename&gt;.spdx.json # SPDX 2.3 contents inventory
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>The SBOM</strong> lists every file in the wheel but <code class="docutils literal notranslate"><span class="pre">RECORD</span></code> and itself: where it came from,
+under what license, and its digest. It describes the wheel’s own contents only. Build
+tools, dependencies this wheel does not carry (the build evidence records them with
+<code class="docutils literal notranslate"><span class="pre">&quot;in_this_wheel&quot;:</span> <span class="pre">false</span></code>),
+install-time dependencies (<code class="docutils literal notranslate"><span class="pre">Requires-Dist</span></code> stays authoritative; the SBOM records the
+requirement, never a license for it), source distributions and <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">.</span></code>,
+containers and the web client are not covered.</p></li>
+<li><p><strong>Each third-party component</strong> ships its own license file or, for material checked into
+this repository, the reference text for its declared license beside its copyright
+notice.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sboms/</span></code> may also hold a CycloneDX document <code class="docutils literal notranslate"><span class="pre">auditwheel</span></code> writes for the libraries it
+bundled.</p></li>
+</ul>
+</section>
+<section id="evidence-published-with-a-release">
+<h2>Evidence published with a release<a class="headerlink" href="#evidence-published-with-a-release" title="Link to this heading">#</a></h2>
+<p>Each tagged GitHub release carries one archive, <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;.zip</span></code>. Unpacked,
+its <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;/</span></code> directory holds, for every wheel:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.spdx.json</span></code></dt><dd><p>An exact copy of the document embedded in the wheel.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.md</span></code> / <code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.json</span></code></dt><dd><p>Each redistributed component, the license concluded for it and the file it was read
+from, how it reaches the wheel, and what the installation environment supplies instead.
+It covers this wheel only; what the build used but did not ship is in the build evidence.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.build-evidence.json</span></code></dt><dd><p>Resolved commits, declared constraints, archive digests and build options, from the
+build machine, and every component the build resolved, whether or not it reached the
+wheel.</p>
+</dd>
+</dl>
+<p>and, once per release:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-manifest.json</span></code></dt><dd><p>Each wheel’s filename and SHA-256 and its evidence files’ digests, recorded after the
+last change to the wheel, so a wheel touched since no longer matches.</p>
+</dd>
+</dl>
+</section>
+<section id="verifying-a-wheel">
+<h2>Verifying a wheel<a class="headerlink" href="#verifying-a-wheel" title="Link to this heading">#</a></h2>
+<p>You need <code class="docutils literal notranslate"><span class="pre">uv</span></code> and a clone of this repository:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/NVIDIA/IsaacCapture
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--wheel<span class="w"> </span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
+</pre></div>
+</div>
+<p>To check a whole release, unpack its archive and put every wheel its manifest lists, for
+each Python version and architecture, in a directory of their own. A wheel or evidence file
+the manifest does not name fails the check:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>unzip<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;.zip
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check-set<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--manifest<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;/isaaccapture-sbom-manifest.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--wheel-dir<span class="w"> </span>wheels<span class="w"> </span>--evidence-dir<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">check</span></code> confirms the SBOM accounts for every file, its digests match the wheel and its
+<code class="docutils literal notranslate"><span class="pre">RECORD</span></code>, each license text it cites is packaged where it says, and every
+<code class="docutils literal notranslate"><span class="pre">LicenseRef-</span></code> carries its text; add <code class="docutils literal notranslate"><span class="pre">--build-evidence</span></code> or <code class="docutils literal notranslate"><span class="pre">--manifest</span></code> to check
+against the release evidence too.</p>
+<p>The SBOM describes a wheel; it is not a signature. Integrity is the wheel’s <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>,
+which installers check. These releases carry no
+<a class="reference external" href="https://peps.python.org/pep-0740/" rel="noopener noreferrer" target="_blank">PEP 740</a> attestations.</p>
+<p>To read the inventory, open <code class="docutils literal notranslate"><span class="pre">.dist-info/sboms/*.spdx.json</span></code> with any SPDX 2.3 tool. A
+file’s <code class="docutils literal notranslate"><span class="pre">SPDXID</span></code> changes only when its path does, so two releases can be diffed.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="build.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Build System</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="generated_trackers.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Generated Tracker Code</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-a-wheel-carries">What a wheel carries</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#evidence-published-with-a-release">Evidence published with a release</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#verifying-a-wheel">Verifying a wheel</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

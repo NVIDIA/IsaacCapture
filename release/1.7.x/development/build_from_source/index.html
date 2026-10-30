@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Build WebXR Client" href="webxr.html" />
-    <link rel="prev" title="Teleop Control State Machine" href="../../teleop/control_state_machine.html" />
+    <link rel="prev" title="EgoHand" href="../../ego_post_processing/egohand.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -395,8 +395,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="current nav bd-sidenav">
@@ -425,13 +430,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -440,7 +447,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -518,7 +524,8 @@ examples. The instructions align with the project’s CMake configuration and th
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
 <ul class="simple">
 <li><p><strong>CMake</strong> 3.24 or higher (Ubuntu 22.04’s apt <code class="docutils literal notranslate"><span class="pre">cmake</span></code> is 3.22 — install a newer one
-from <a class="reference external" href="https://apt.kitware.com/" rel="noopener noreferrer" target="_blank">Kitware’s APT repository</a> or with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cmake</span></code>)</p></li>
+from <a class="reference external" href="https://apt.kitware.com/" rel="noopener noreferrer" target="_blank">Kitware’s APT repository</a> or with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cmake</span></code>).
+A Release wheel with its contents SBOM needs 3.27, which added <code class="docutils literal notranslate"><span class="pre">cmake_file_api()</span></code>.</p></li>
 <li><p><strong>C++20</strong> compatible compiler</p></li>
 <li><p><strong>Python</strong> 3.11, 3.12, or 3.13 (default 3.11; see <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> in root <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>)</p></li>
 <li><p><strong>uv</strong> for Python dependency management and managed Python</p></li>
@@ -539,10 +546,11 @@ installer.</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">BUILD_VIZ=ON</span></code> additionally requires <strong>glslangValidator</strong> to compile shaders to SPIR-V
 (<code class="docutils literal notranslate"><span class="pre">glslang-tools</span></code> on Linux, <code class="docutils literal notranslate"><span class="pre">brew</span> <span class="pre">install</span> <span class="pre">glslang</span></code> on macOS; ships with the Vulkan SDK
-on Windows), and on Linux <strong>wayland-scanner</strong> (<code class="docutils literal notranslate"><span class="pre">libwayland-dev</span></code>) for GLFW’s Wayland
-backend — pass <code class="docutils literal notranslate"><span class="pre">-DGLFW_BUILD_WAYLAND=OFF</span></code> to build Televiz against X11 only instead.
-Neither gates the auto-default: if one is missing, the configure fails naming it rather
-than quietly dropping the module. Most users do not need any of this:
+on Windows). On Linux, GLFW’s Wayland backend also requires <strong>wayland-scanner</strong>
+(<code class="docutils literal notranslate"><span class="pre">libwayland-dev</span></code>) and <strong>xkbcommon &gt;= 0.5.0</strong> (<code class="docutils literal notranslate"><span class="pre">libxkbcommon-dev</span></code>). Pass
+<code class="docutils literal notranslate"><span class="pre">-DGLFW_BUILD_WAYLAND=OFF</span></code> to build Televiz against X11 only instead.
+These dependencies do not gate the auto-default: if one is missing, configure fails
+naming it rather than quietly dropping the module. Most users do not need any of this:
 <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaaccapture</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module. See
 <a class="reference internal" href="#other-build-options">Other Build options</a> for the full option table.</p>
 </div>
@@ -552,7 +560,9 @@ than quietly dropping the module. Most users do not need any of this:
 <p>Install build tools and dependencies, such as CMake, clang-format. See <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository for
 the list of dependencies. On <strong>Ubuntu</strong>, install build tools and clang-format:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
-sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libegl-dev<span class="w"> </span>libx11-dev<span class="w"> </span>libwayland-dev<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools
+sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libegl-dev<span class="w"> </span>libwayland-dev<span class="w"> </span>libx11-dev<span class="w"> </span>libxcursor-dev<span class="w"> </span>libxext-dev<span class="w"> </span>libxi-dev<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libxinerama-dev<span class="w"> </span>libxkbcommon-dev<span class="w"> </span>libxrandr-dev
 </pre></div>
 </div>
 <p>Runtime-only dependencies (needed to actually run teleop, not to build):</p>
@@ -829,29 +839,31 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
 </section>
 <section id="install-the-isaaccapture-pip-package">
 <h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a><a class="headerlink" href="#install-the-isaaccapture-pip-package" title="Link to this heading">#</a></h2>
-<p>The wheels are built in the <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code> directory. Install the package from the wheels.
-Using <code class="docutils literal notranslate"><span class="pre">pip</span></code>, you need to pass the <code class="docutils literal notranslate"><span class="pre">--no-index</span></code> option to automatically find the right wheel
-based on the Python version.  Note that <code class="docutils literal notranslate"><span class="pre">pip</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code> has slightly different options.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pass --no-index to use only wheels in ./install/wheels/;</span>
-<span class="c1"># Pass --force-reinstall to replace an existing install.</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--no-index<span class="w"> </span>--force-reinstall
+<p>The build writes two wheels to <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>: <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code>
+transition wheel it depends on. The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel only installs on the Python version it
+was built for (<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code>, 3.11 by default), so install it into a virtual
+environment with that version. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04 with
+<code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span> <span class="pre">found</span></code>.
+From the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.</span>
+uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </pre></div>
 </div>
-<p>With <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code>, <code class="docutils literal notranslate"><span class="pre">--find-links</span></code> still consults the package index and installs the highest
-version it finds, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> there silently wins over your local build.
-<code class="docutils literal notranslate"><span class="pre">--no-index</span></code> is not a fix either: the wheel’s dependencies are not in <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>, so
-the install fails. Install the local wheel by path instead. That always selects your build, while
-the index stays available for its dependencies:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).</span>
-<span class="c1"># -t sorts by modification time so head -1 selects the most recent build if older wheels remain.</span>
-<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>-t<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
-
-<span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
-<span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
+<p>Install it by version. A local build is always <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code>, where <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> is the first two
+numbers of the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file; they also appear in the wheel’s file name. The pin
+selects your build for the venv’s Python, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> cannot replace it.
+<code class="docutils literal notranslate"><span class="pre">--find-links</span></code> supplies the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> transition wheel and the other dependencies come
+from the package index, so do not add <code class="docutils literal notranslate"><span class="pre">--no-index</span></code>. The two tools name the reinstall option
+differently:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace X.Y with your build's version. --force-reinstall replaces an existing install.</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--force-reinstall
 </pre></div>
 </div>
-<p>Check that the installed version ends in <code class="docutils literal notranslate"><span class="pre">+local</span></code> with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">list</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">isaaccapture</span></code>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
+</pre></div>
+</div>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
 in 1.9, so
 <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
@@ -951,12 +963,12 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../../teleop/control_state_machine.html"
+       href="../../ego_post_processing/egohand.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Teleop Control State Machine</p>
+        <p class="prev-next-title">EgoHand</p>
       </div>
     </a>
     <a class="right-next"
@@ -1088,7 +1100,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>

@@ -46,6 +46,14 @@ change opens a fresh 60-second recovery episode. Override the positive,
 finite values with ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC`` and
 ``TELEOP_OOB_RETRY_INTERVAL_SEC``; invalid values fail host preflight.
 
+At INFO, OOB progress reports headset waiting and connection, browser readiness,
+and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
+USB-health blocks remain visible with operator action. An unchanged wait for
+an absent headset is announced once; routine setup steps are DEBUG messages.
+Progress uses the ``isaaccapture.cloudxr.oob_teleop_env.oob-progress`` logger.
+It remains visible through filters selecting its parent logger, while embedded
+applications can also select progress alone.
+
 To start the hub **without** any ``adb`` interaction — useful in containers,
 CI, or wireless-only environments — set ``TELEOP_OOB_HUB_ONLY=1`` and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
@@ -77,14 +85,18 @@ You should see output confirming the hub is running:
 
 If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with **all three** required query
-parameters — ``oobEnable``, ``serverIP``, and ``port``:
+parameters — ``oobEnable``, ``serverIP``, and ``port`` — plus the hub's
+``controlToken``:
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
 
 Replace ``<HOST_IP>`` with the streaming host's LAN IP. The ``port`` must
-match the proxy port (default 48322).
+match the proxy port (default 48322). ``<CONTROL_TOKEN>`` is the value of
+``CONTROL_TOKEN``, or the generated token printed in the startup banner; the
+banner's bookmark shows it as ``<REDACTED>``, so substitute it before pasting.
+Without the token the hub rejects the headset and the client does not retry.
 
 .. note::
 
@@ -99,7 +111,7 @@ self-signed certificate check):
 
 .. code-block:: bash
 
-   curl -k https://<HOST_IP>:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state
 
 You should see the headset listed under ``"headsets"`` with
 ``"connected": true``:
@@ -135,7 +147,7 @@ configuration overrides via the HTTP config API:
 
 .. code-block:: bash
 
-   curl -k "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
 
 See ``GET /api/oob/v1/config`` below for all supported keys.
 
@@ -149,7 +161,7 @@ from a PC to collect them:
 .. code-block:: bash
 
    # Poll every 2 seconds (adjust to taste)
-   watch -n 2 'curl -sk https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
+   watch -n 2 'curl -sk -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
 
 The ``metricsByCadence`` field on each headset entry will now contain live streaming metrics.
 
@@ -220,7 +232,7 @@ Registration (first message)
      "payload": {
        "role": "headset",
        "deviceLabel": "Quest 3",
-       "token": "<optional CONTROL_TOKEN>"
+       "token": "<CONTROL_TOKEN>"
      }
    }
 
@@ -436,7 +448,7 @@ version.
 
 .. code-block:: bash
 
-   curl -k https://localhost:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/state
 
 Example response:
 
@@ -469,7 +481,7 @@ Push config to connected headsets via query parameters:
 
 .. code-block:: bash
 
-   curl -k "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
 
 Example response:
 
@@ -489,11 +501,17 @@ if not connected).
 Authentication
 --------------
 
-Set ``CONTROL_TOKEN=<secret>`` to require a token on all hub operations.
-Pass it as:
+Every hub operation requires a token. Set ``CONTROL_TOKEN=<secret>`` to choose
+it; if it is unset or empty, the hub generates a random token for the session and
+prints it in the startup banner. Requests without the token, and WebSocket
+``register`` frames without it, are rejected. Pass it as:
 
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
+
+The headset bookmark carries the token as ``controlToken`` in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (``--host-client``).
 
 Web client integration
 ----------------------
@@ -503,7 +521,7 @@ The web client connects to the hub when the page URL contains
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
 
 The client builds ``wss://{serverIP}:{port}/oob/v1/ws`` and:
 
@@ -543,7 +561,7 @@ Environment variables
        and signaling share this socket. In ``--usb-local`` mode
        ``adb reverse`` maps it to the headset.
    * - ``CONTROL_TOKEN``
-     - Optional auth token for hub access
+     - Auth token for hub access; a random per-session token is generated if unset
    * - ``TELEOP_STREAM_SERVER_IP``
      - Override the auto-detected LAN IP in hub initial config
    * - ``TELEOP_PROXY_HOST``

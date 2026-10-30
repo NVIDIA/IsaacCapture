@@ -59,7 +59,7 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Teleop Session" href="teleop_session.html" />
+    <link rel="next" title="OVXR installation" href="../getting_started/ovxr.html" />
     <link rel="prev" title="Ecosystem" href="../overview/ecosystem.html" />
 
 
@@ -395,8 +395,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -422,13 +427,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -437,7 +444,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -526,13 +532,26 @@ renamed from <code class="docutils literal notranslate"><span class="pre">isaact
 replaces the legacy package and keeps old imports working temporarily.
 See <a class="reference internal" href="../development/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 </div>
-<p>In a new terminal, activate your preferred virtual or conda environment, then install the latest
-stable release from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span>
+<p>Install the package into a virtual environment. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04
+with <code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span>
+<span class="pre">found</span></code>. In a new terminal, from the repository root, create and activate one with
+<a class="reference external" href="https://docs.astral.sh/uv/" rel="noopener noreferrer" target="_blank">uv</a>, which downloads the requested Python if the system lacks it
+(Python 3.11 to 3.13 are supported). If <code class="docutils literal notranslate"><span class="pre">uv</span></code> is missing, install it first as shown in
+<a class="reference internal" href="../development/build_from_source/index.html#one-time-setup"><span class="std std-ref">One time setup</span></a>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># --seed adds pip, so plain pip install also works in this venv.</span>
+uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</pre></div>
+</div>
+<p>To use an existing venv, or a conda environment other than <code class="docutils literal notranslate"><span class="pre">base</span></code> (<code class="docutils literal notranslate"><span class="pre">uv</span></code> treats <code class="docutils literal notranslate"><span class="pre">base</span></code> as a
+system Python), activate it and skip <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">venv</span></code>. Activate the environment again in every new
+terminal you use for the steps below.</p>
+<p>Install the latest stable release from PyPI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span>
 </pre></div>
 </div>
 <p>Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions — shown here with <a class="reference external" href="https://docs.astral.sh/uv/" rel="noopener noreferrer" target="_blank">uv</a>:</p>
+and an opt-in to pre-release versions:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">      </span>--extra-index-url<span class="w"> </span>https://pypi.nvidia.com<span class="w"> </span>--prerelease<span class="o">=</span>allow
 </pre></div>
@@ -567,7 +586,7 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.ser
 </pre></div>
 </div>
 <p>The same <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> flag is available on the teleop examples under
-<code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code>, which register CloudXR’s launcher arguments through
+<code class="docutils literal notranslate"><span class="pre">examples/teleop</span></code>, which register CloudXR’s launcher arguments through
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.add_launcher_arguments()</span></code> — but it applies only when the
 example is the one starting the runtime. With a service already running the
 example attaches to it instead, and prints which settings it had to ignore (see
@@ -664,6 +683,14 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 in a <strong>desktop browser</strong> — IWER (Immersive Web Emulator Runtime) loads automatically and
 emulates a Meta Quest 3 headset.</p>
 <p class="sd-card-text">For a real headset, open the same URL in your <strong>Meta Quest or PICO browser</strong>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p class="sd-card-text">The default client shows an in-XR control panel with connection information and controls
+useful during development. To hide it, open <strong>Advanced settings → In-XR comfort</strong> before
+connecting and set <strong>Control panel when entering XR (saved per teleop application)</strong> to
+<strong>Hide control panel</strong>. Use the small <strong>Show</strong> control to reopen it in XR. See
+<a class="reference internal" href="../references/camera_streaming.html#camera-streaming-web-client"><span class="std std-ref">Web client for camera visualization</span></a>.</p>
+</div>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
 <p class="sd-card-text">If using a physical headset, make sure it is updated to the latest firmware before connecting.
@@ -743,6 +770,10 @@ Certificate accepted</label><div class="sd-tab-content docutils">
 </ol>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
+<p class="sd-card-text">On PICO 4 Ultra, the web client refreshes after session ends and connection
+failures by default, keeping the last error visible until a stream connects.
+See <a class="reference internal" href="../references/cloudxr.html#cloudxr-web-client-refresh"><span class="std std-ref">web client refresh troubleshooting</span></a>
+for refresh settings and retry behavior.</p>
 <p class="sd-card-text">For advanced usage and troubleshooting of CloudXR, see the <a class="reference external" href="https://docs.nvidia.com/cloudxr-sdk/latest/index.html" rel="noopener noreferrer" target="_blank">CloudXR documentation</a> for more
 details.</p>
 </div>
@@ -775,31 +806,52 @@ to connect to Isaac Teleop.</p>
 </details></section>
 <section id="run-a-teleop-example">
 <span id="run-teleop-example"></span><h2>6. Run a teleop example<a class="headerlink" href="#run-a-teleop-example" title="Link to this heading">#</a></h2>
-<p>Run the simplified gripper retargeting example. This demonstrates the full
+<p>Install the teleop examples into the environment from step 2, then run the
+simplified gripper retargeting example. This demonstrates the full
 pipeline: reading XR controller input via CloudXR, retargeting it through the
 <code class="docutils literal notranslate"><span class="pre">GripperRetargeter</span></code>, and printing the resulting gripper command values:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple
 </pre></div>
 </div>
-<p>Once running, squeeze the controller triggers on your XR headset to control
-the gripper. You should see periodic status output:</p>
+<p>Once running, squeeze the <strong>right controller trigger</strong> to control the gripper.
+<code class="docutils literal notranslate"><span class="pre">GripperRetargeter</span></code> emits binary commands: <code class="docutils literal notranslate"><span class="pre">+1.00</span></code> means open and <code class="docutils literal notranslate"><span class="pre">-1.00</span></code>
+means closed. With the default configuration, trigger values above <code class="docutils literal notranslate"><span class="pre">0.5</span></code>
+close the gripper; values at or below <code class="docutils literal notranslate"><span class="pre">0.5</span></code> open it. The analog trigger value
+is thresholded by the retargeter, so intermediate output values are not expected.
+You should see periodic status output:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>============================================================
 Gripper Retargeting - Squeeze triggers to control grippers
 ============================================================
 
-[  0.5s] Right: 0.00
-[  1.0s] Right: 0.73
+Gripper command: +1.00 = open, -1.00 = closed (trigger &gt; 0.5).
+Running until Ctrl+C.
+[  0.5s] Right: 1.00
+[  1.0s] Right: -1.00
 [  1.5s] Right: 1.00
 ...
 </pre></div>
 </div>
-<p>The example runs for 20 seconds and then exits. To try other examples, see
-<code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> — for instance:</p>
+<p>The example runs until you press <strong>Ctrl+C</strong>. To stop automatically after a
+chosen duration, measured after session startup, pass <code class="docutils literal notranslate"><span class="pre">--duration</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple<span class="w"> </span>--duration<span class="w"> </span><span class="m">20</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--duration</span> <span class="pre">0</span></code> also runs until Ctrl+C. Both a timed run and Ctrl+C announce
+that the session is closing, then print <code class="docutils literal notranslate"><span class="pre">Session</span> <span class="pre">closed.</span></code> after cleanup.
+Stream or cleanup errors still propagate; a browser stream error is not the
+expected completion message. For troubleshooting, retain the Python traceback,
+CloudXR runtime logs, and browser error and stop-reason codes.</p>
+<p>For proportional controller input, read <code class="docutils literal notranslate"><span class="pre">ControllerInputIndex.</span><wbr><span class="pre">TRIGGER_</span><wbr><span class="pre">VALUE</span></code>
+or use <code class="docutils literal notranslate"><span class="pre">SO101GripperRetargeter</span></code> for SO-101 jaw closedness in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>
+(<code class="docutils literal notranslate"><span class="pre">0</span></code> open, <code class="docutils literal notranslate"><span class="pre">1</span></code> closed); see <a class="reference internal" href="../references/retargeting/so101.html"><span class="doc">Retargeters: SO-101 (5-DOF arm)</span></a>.</p>
+<p>To try other examples, run another module of <code class="docutils literal notranslate"><span class="pre">isaaccapture_</span><wbr><span class="pre">examples.</span><wbr><span class="pre">teleop</span></code>
+the same way; <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.7.x/examples/teleop/README.md" rel="noopener noreferrer" target="_blank">examples/teleop/README.md</a> lists them all. For instance:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">se3_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — maps hand or controller poses to
-end-effector poses (absolute or relative)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> — bimanual dexterous hand retargeting</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gripper_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — full gripper example with more
+<li><p><code class="docutils literal notranslate"><span class="pre">se3_retargeting_example</span></code> — maps hand or controller poses to
+end-effector poses (absolute or relative), with the same <code class="docutils literal notranslate"><span class="pre">--duration</span></code> and Ctrl+C behavior</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example</span></code> — bimanual dexterous hand retargeting</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gripper_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example</span></code> — full gripper example with more
 configuration options</p></li>
 </ul>
 </section>
@@ -872,11 +924,11 @@ from source</p></li>
       </div>
     </a>
     <a class="right-next"
-       href="teleop_session.html"
+       href="../getting_started/ovxr.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Teleop Session</p>
+        <p class="prev-next-title">OVXR installation</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -991,7 +1043,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
       <br/>
     
   </p>
