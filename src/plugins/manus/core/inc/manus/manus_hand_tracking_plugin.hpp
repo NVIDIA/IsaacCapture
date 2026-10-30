@@ -118,7 +118,9 @@ private:
 
     // Lifecycle
     std::mutex m_lifecycle_mutex;
-    bool m_initialized = false;
+    // Cleared by the dtor. SDK callbacks reach the tracker through instance(), whose
+    // static init guard holds them until the constructor has returned.
+    bool m_initialized = true;
 
     // ManusSDK State
     mutable std::mutex landscape_mutex;

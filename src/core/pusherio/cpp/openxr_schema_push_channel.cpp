@@ -26,17 +26,24 @@ namespace
 // Formula: (code << 8) | bits
 constexpr uint32_t DLPACK_DTYPE_UINT8 = (1 << 8) | 8;
 
+template <typename Fn>
+Fn load_function(const OpenXRSessionHandles& handles, const char* name)
+{
+    Fn fn = nullptr;
+    loadExtensionFunction(
+        handles.instance, handles.xrGetInstanceProcAddr, name, reinterpret_cast<PFN_xrVoidFunction*>(&fn));
+    return fn;
+}
+
 } // namespace
 
 OpenXRSchemaPushChannel::OpenXRSchemaPushChannel(const OpenXRSessionHandles& handles, SchemaPusherConfig config)
     : config_(std::move(config)),
       time_converter_(handles),
       padded_buffer_(config_.max_flatbuffer_size, 0),
+      push_fn_(load_function<PFN_xrPushTensorCollectionDataNV>(handles, "xrPushTensorCollectionDataNV")),
       push_tensor_(create_tensor_collection(handles))
 {
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrPushTensorCollectionDataNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&push_fn_));
-
     isaaccapture::Logger::get("isaaccapture.core.OpenXRSchemaPushChannel")
         ->info("OpenXRSchemaPushChannel initialized for collection: {}", config_.collection_id);
 }
@@ -103,12 +110,9 @@ void OpenXRSchemaPushChannel::push_buffer(const uint8_t* buffer,
 
 OpenXRSchemaPushChannel::PushTensorPtr OpenXRSchemaPushChannel::create_tensor_collection(const OpenXRSessionHandles& handles)
 {
-    PFN_xrCreatePushTensorCollectionNV create_fn{ nullptr };
-    PFN_xrDestroyPushTensorCollectionNV destroy_fn{ nullptr };
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrCreatePushTensorCollectionNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&create_fn));
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrDestroyPushTensorCollectionNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&destroy_fn));
+    const auto create_fn = load_function<PFN_xrCreatePushTensorCollectionNV>(handles, "xrCreatePushTensorCollectionNV");
+    const auto destroy_fn =
+        load_function<PFN_xrDestroyPushTensorCollectionNV>(handles, "xrDestroyPushTensorCollectionNV");
 
     XrPushTensorDlpackCreateInfoNV dlpack_info{};
     dlpack_info.type = XR_TYPE_PUSH_TENSOR_DLPACK_CREATE_INFO_NV;

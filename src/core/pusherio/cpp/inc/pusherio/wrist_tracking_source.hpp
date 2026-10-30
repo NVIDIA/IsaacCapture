@@ -25,8 +25,8 @@ struct WristTrackingSourceConfig
     // Rigid transform from the controller aim pose to the wrist joint, per
     // hand. Depends on the controller model and how it is mounted on the
     // glove, so each plugin supplies its own calibrated pair.
-    XrPosef left_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    XrPosef right_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+    XrPosef left_aim_to_wrist;
+    XrPosef right_aim_to_wrist;
 };
 
 /** @brief One wrist query result, in the session base space. */

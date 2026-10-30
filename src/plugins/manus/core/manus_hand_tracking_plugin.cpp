@@ -103,13 +103,13 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
     return data;
 }
 
-} // anonymous namespace
+constexpr core::WristTrackingSourceConfig kWristSourceConfig{
+    .mode = core::WristTrackingSourceMode::Auto,
+    .left_aim_to_wrist = { { -0.70710678f, -0.5f, 0.0f, 0.5f }, { -0.1f, 0.02f, -0.02f } },
+    .right_aim_to_wrist = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } }
+};
 
-static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }, { -0.1f, 0.02f, -0.02f } };
-static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
-static constexpr core::WristTrackingSourceConfig kWristSourceConfig{ .mode = core::WristTrackingSourceMode::Auto,
-                                                                     .left_aim_to_wrist = kLeftHandOffset,
-                                                                     .right_aim_to_wrist = kRightHandOffset };
+} // anonymous namespace
 
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
                                      const core::PluginSessionFactory& plugin_session_factory) noexcept(false)
@@ -328,8 +328,6 @@ ManusTracker::ManusTracker(const ConstructionArgs& args) noexcept(false) : m_con
     if (!needs_plugin_session)
     {
         m_logger->info("No session datasets enabled; running Manus-only (skeleton callbacks only).");
-        std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
-        m_initialized = true;
         return;
     }
 
@@ -409,9 +407,6 @@ ManusTracker::ManusTracker(const ConstructionArgs& args) noexcept(false) : m_con
         m_logger->warn(
             "Continuing in unmanaged Manus-only mode (no hand injection, sensor push, or session positioning).");
     }
-
-    std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
-    m_initialized = true;
 }
 
 ManusTracker::~ManusTracker()

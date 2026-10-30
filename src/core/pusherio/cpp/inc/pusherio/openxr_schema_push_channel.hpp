@@ -63,7 +63,7 @@ private:
     SchemaPusherConfig config_;
     XrTimeConverter time_converter_;
     std::vector<uint8_t> padded_buffer_;
-    PFN_xrPushTensorCollectionDataNV push_fn_{ nullptr };
+    PFN_xrPushTensorCollectionDataNV push_fn_;
     PushTensorPtr push_tensor_;
 };
 
