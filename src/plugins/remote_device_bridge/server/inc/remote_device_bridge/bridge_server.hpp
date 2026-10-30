@@ -24,6 +24,16 @@ namespace remote_device_bridge
 
 class SampleCsv;
 
+namespace detail
+{
+//! Hand push-device owners shared with the forked children (defined in the .cpp).
+struct HandOwners;
+struct HandOwnersUnmap
+{
+    void operator()(HandOwners* owners) const noexcept;
+};
+} // namespace detail
+
 enum class ClockSource
 {
     TwoWay, //!< PING/PONG min-RTT offset; one-way only when no PONG answers
@@ -71,21 +81,16 @@ public:
     //! Accept loop; returns once stop becomes true and every client has been reaped.
     void run(const std::atomic<bool>& stop);
 
-    //! Hand push-device owners shared with the forked children (defined in the .cpp).
-    struct HandOwners;
-
 private:
     struct ClientRecord;
-    struct HandOwnersUnmap
-    {
-        void operator()(HandOwners* owners) const noexcept;
-    };
 
     //! Logs and forgets clients that have exited, without blocking.
     void reap_finished();
     //! Asks every child to stop and blocks until all are reaped (SIGKILL after a grace period).
     void stop_and_reap_all();
     void on_reaped(const ClientRecord& client, int status);
+    //! Frees every hand `client` claimed.
+    void release_hands(const ClientRecord& client);
     void admit_client(std::unique_ptr<remote_plugin_session::ITransport> client,
                       const std::string& peer,
                       const std::atomic<bool>& stop);
@@ -94,7 +99,7 @@ private:
     SessionFactory m_session_factory;
     remote_plugin_session::TcpSocket m_listener;
     remote_plugin_session::TcpSocket m_ws_listener;
-    std::unique_ptr<HandOwners, HandOwnersUnmap> m_hand_owners;
+    std::unique_ptr<detail::HandOwners, detail::HandOwnersUnmap> m_hand_owners;
     std::unique_ptr<SampleCsv> m_csv; //!< --stats-csv, opened before the first fork
     std::list<ClientRecord> m_clients;
     uint32_t m_accepted = 0;
