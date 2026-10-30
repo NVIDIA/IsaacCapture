@@ -8,9 +8,11 @@
 #include <remote_plugin_session/bridge_limits.hpp>
 #include <remote_plugin_session/clock_offset_estimator.hpp>
 #include <remote_plugin_session/latency_stats.hpp>
+#include <remote_plugin_session/protocol_frame.hpp>
+#include <remote_plugin_session/protocol_payloads.hpp>
 #include <remote_plugin_session/tcp_socket.hpp>
+#include <remote_plugin_session/tcp_transport.hpp>
 #include <remote_plugin_session/websocket_transport.hpp>
-#include <remote_plugin_session/wire_codec.hpp>
 #include <sys/mman.h>
 #include <sys/wait.h>
 
@@ -49,7 +51,7 @@ using remote_plugin_session::ClockOffsetEstimator;
 using remote_plugin_session::ITransport;
 using remote_plugin_session::PingScheduler;
 using remote_plugin_session::ReceiveResult;
-namespace wire = remote_plugin_session::wire;
+namespace protocol = remote_plugin_protocol;
 
 std::shared_ptr<spdlog::logger> logger()
 {
@@ -69,14 +71,14 @@ constexpr size_t kMaxRefusing = 16;
 constexpr std::chrono::milliseconds kReapPoll{ 100 };
 constexpr std::chrono::seconds kStopGrace{ 3 };
 
-bool is_sample(wire::FrameType type)
+bool is_sample(protocol::FrameType type)
 {
-    return type == wire::FrameType::HandSample || type == wire::FrameType::SchemaSample;
+    return type == protocol::FrameType::HandSample || type == protocol::FrameType::SchemaSample;
 }
 
 struct Received
 {
-    wire::Frame frame;
+    protocol::Frame frame;
     int64_t t_recv_ns;
 };
 
@@ -165,8 +167,8 @@ public:
         {
             close_channel(m_schema_channels.begin()->first);
         }
-        m_wrist_source.reset();
-        m_pull_channel.reset();
+        m_pull_channel = nullptr;
+        m_wrist_source = nullptr;
         m_session.reset();
     }
 
@@ -177,35 +179,28 @@ public:
     bool handshake()
     {
         std::vector<uint8_t> bytes;
-        wire::Frame frame;
-        wire::Hello hello;
+        protocol::Frame frame;
+        protocol::Hello hello;
         try
         {
             if (m_transport->receive(bytes, kHandshakeTimeout) != ReceiveResult::Ok)
             {
-                throw wire::DecodeError("no frame");
+                throw protocol::DecodeError("no frame");
             }
-            frame = wire::split_frame(std::move(bytes));
-            if (frame.header.type != wire::FrameType::Hello)
+            frame = protocol::split_frame(std::move(bytes));
+            if (frame.header.type != protocol::FrameType::Hello)
             {
-                throw wire::DecodeError(std::string("expected HELLO, got ") + wire::to_string(frame.header.type));
+                throw protocol::DecodeError("expected HELLO, got frame type " +
+                                            std::to_string(static_cast<int>(frame.header.type)));
             }
-            hello = wire::decode_hello(frame.payload);
+            hello = protocol::decode_hello(frame.payload);
         }
-        catch (const wire::DecodeError& e)
+        catch (const protocol::DecodeError& e)
         {
             logger()->warn("{} bad HELLO ({}); dropping connection", m_tag, e.what());
             return false;
         }
         note_received(frame.header, core::os_monotonic_now_ns());
-
-        if (hello.proto_version > wire::kHelloVersion)
-        {
-            send(wire::FrameType::HelloAck, wire::kSessionChannelId,
-                 wire::encode(
-                     wire::HelloAck{ false, "unsupported protocol version " + std::to_string(hello.proto_version) }));
-            return false;
-        }
 
         std::string app_name = !m_options.app_name.empty() ? m_options.app_name :
                                !hello.app_name.empty()     ? hello.app_name :
@@ -214,7 +209,7 @@ public:
             "{} HELLO from '{}' (schema_push={:d} hand_tracking_push={:d} wrist_tracking_pull={:d}); OpenXR app "
             "name '{}'",
             m_tag, hello.app_name, hello.requirements.schema_push, hello.requirements.hand_tracking_push,
-            hello.requirements.wrist_tracking_pull, app_name);
+            hello.requirements.wrist_tracking_pull.has_value(), app_name);
 
         logger()->info("{} creating OpenXR plugin session (waits for a headset)", m_tag);
         try
@@ -224,27 +219,23 @@ public:
         catch (const std::exception& e)
         {
             logger()->error("{} OpenXR session creation failed: {}", m_tag, e.what());
-            send(wire::FrameType::HelloAck, wire::kSessionChannelId,
-                 wire::encode(wire::HelloAck{ false, std::string("OpenXR session creation failed: ") + e.what() }));
+            send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+                 protocol::encode_hello_ack(
+                     protocol::HelloAck{ false, std::string("OpenXR session creation failed: ") + e.what() }));
             return false;
         }
         logger()->info("{} OpenXR plugin session ready", m_tag);
+        m_wrist_declared = hello.requirements.wrist_tracking_pull.has_value();
 
-        if (!send(wire::FrameType::HelloAck, wire::kSessionChannelId, wire::encode(wire::HelloAck{ true, "" })))
+        if (!send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+                  protocol::encode_hello_ack(protocol::HelloAck{ true, "" })))
         {
             return false;
         }
         m_reader = std::thread(&ClientSession::reader_loop, this);
         if (m_options.clock_source == ClockSource::TwoWay)
         {
-            if (hello.proto_version >= 1)
-            {
-                m_pings.emplace(core::os_monotonic_now_ns());
-            }
-            else
-            {
-                logger()->warn("{} WARN clock: HELLO v0 client cannot answer PING, using one-way", m_tag);
-            }
+            m_pings.emplace(core::os_monotonic_now_ns());
         }
         return true;
     }
@@ -295,7 +286,7 @@ public:
             poll_pings(now_ns);
             if (!m_done.load() && now_ns - m_last_send_ns > kHeartbeatPeriod.count())
             {
-                send(wire::FrameType::Heartbeat, wire::kSessionChannelId, {});
+                send(protocol::FrameType::Heartbeat, protocol::kSessionChannelId, {});
             }
             if (now >= next_stats)
             {
@@ -323,9 +314,9 @@ private:
             Received received{ {}, core::os_monotonic_now_ns() };
             try
             {
-                received.frame = wire::split_frame(std::move(bytes));
+                received.frame = protocol::split_frame(std::move(bytes));
             }
-            catch (const wire::DecodeError&)
+            catch (const protocol::DecodeError&)
             {
                 break;
             }
@@ -358,10 +349,10 @@ private:
         }
         for (size_t i = 0; i < batch.size(); ++i)
         {
-            const wire::FrameHeader& header = batch[i].frame.header;
+            const protocol::FrameHeader& header = batch[i].frame.header;
             if (is_sample(header.type))
             {
-                ++(header.type == wire::FrameType::HandSample ? m_rx_hand : m_rx_schema);
+                ++(header.type == protocol::FrameType::HandSample ? m_rx_hand : m_rx_schema);
                 if (newest[header.channel_id] != i)
                 {
                     ++m_coalesced;
@@ -378,7 +369,7 @@ private:
         return true;
     }
 
-    void note_received(const wire::FrameHeader& header, int64_t t_recv_ns)
+    void note_received(const protocol::FrameHeader& header, int64_t t_recv_ns)
     {
         m_clock.add_sample(header.t_send_monotonic_ns, t_recv_ns);
         m_last_recv_ns = t_recv_ns;
@@ -386,7 +377,7 @@ private:
 
     void apply(const Received& received)
     {
-        const wire::FrameHeader& header = received.frame.header;
+        const protocol::FrameHeader& header = received.frame.header;
         const std::vector<uint8_t>& payload = received.frame.payload;
         note_received(header, received.t_recv_ns);
 
@@ -394,12 +385,12 @@ private:
         {
             switch (header.type)
             {
-            case wire::FrameType::OpenHand:
+            case protocol::FrameType::OpenHand:
             {
-                const wire::OpenHand open = wire::decode_open_hand(payload);
+                const XrHandEXT open_hand = protocol::decode_open_hand(payload);
                 require_free_channel(header.channel_id);
-                const char* const side = open.hand == XR_HAND_LEFT_EXT ? "left" : "right";
-                const size_t hand = open.hand == XR_HAND_LEFT_EXT ? 0 : 1;
+                const char* const side = open_hand == XR_HAND_LEFT_EXT ? "left" : "right";
+                const size_t hand = open_hand == XR_HAND_LEFT_EXT ? 0 : 1;
                 // The runtime allows one push device per hand; refuse a second owner before it gets there.
                 if (const uint32_t owner = m_hand_owners.claim(hand, m_client_id); owner != 0)
                 {
@@ -408,7 +399,7 @@ private:
                 }
                 try
                 {
-                    auto channel = m_session->create_hand_tracking_push_channel(open.hand);
+                    auto channel = m_session->create_hand_tracking_push_channel(open_hand);
                     m_hand_channels[header.channel_id] = { std::move(channel), 0, side, hand };
                 }
                 catch (const std::exception& e)
@@ -426,9 +417,9 @@ private:
                 logger()->info("{} channel {}: hand {} opened", m_tag, header.channel_id, side);
                 break;
             }
-            case wire::FrameType::OpenSchema:
+            case protocol::FrameType::OpenSchema:
             {
-                const core::SchemaPusherConfig config = wire::decode_open_schema(payload);
+                const core::SchemaPusherConfig config = protocol::decode_open_schema(payload);
                 require_free_channel(header.channel_id);
                 // The runtime tensor is max_flatbuffer_size bytes whatever the sample holds.
                 if (const std::string error = remote_plugin_session::schema_cap_error(
@@ -437,41 +428,32 @@ private:
                 {
                     throw ChannelRefused(error);
                 }
-                m_schema_channels[header.channel_id].channel = m_session->create_schema_push_channel(config);
+                auto& schema = m_schema_channels[header.channel_id];
+                schema.channel = m_session->create_schema_push_channel(config);
+                schema.collection_id = config.collection_id;
+                schema.max_bytes = config.max_flatbuffer_size;
                 logger()->info("{} channel {}: schema '{}' opened", m_tag, header.channel_id, config.collection_id);
                 break;
             }
-            case wire::FrameType::OpenPull:
+            case protocol::FrameType::OpenPull:
             {
                 if (m_pull_channel)
                 {
                     throw std::runtime_error("only one pull channel per session");
                 }
                 require_free_channel(header.channel_id);
-                m_pull_channel = m_session->create_pull_channel();
+                // The session built the pull channel, and the wrist source HELLO declared, when it was created.
+                m_pull_channel = &m_session->pull_channel();
+                m_wrist_source = m_wrist_declared ? &m_pull_channel->wrist_tracking_source() : nullptr;
                 m_pull_channel_id = header.channel_id;
-                logger()->info("{} channel {}: pull channel opened", m_tag, header.channel_id);
+                logger()->info("{} channel {}: pull channel opened{}", m_tag, header.channel_id,
+                               m_wrist_source != nullptr ? " with wrist source" : "");
                 break;
             }
-            case wire::FrameType::OpenWrist:
-            {
-                const core::WristTrackingSourceConfig config = wire::decode_open_wrist(payload);
-                if (!m_pull_channel || header.channel_id != m_pull_channel_id)
-                {
-                    throw std::runtime_error("OPEN_WRIST requires the open pull channel id");
-                }
-                m_wrist_source = m_pull_channel->create_wrist_tracking_source(config);
-                if (!m_wrist_source)
-                {
-                    throw std::runtime_error("wrist tracking source unavailable for the requested mode");
-                }
-                logger()->info("{} channel {}: wrist source opened", m_tag, header.channel_id);
-                break;
-            }
-            case wire::FrameType::Close:
+            case protocol::FrameType::Close:
                 close_channel(header.channel_id);
                 break;
-            case wire::FrameType::HandSample:
+            case protocol::FrameType::HandSample:
             {
                 const auto it = m_hand_channels.find(header.channel_id);
                 if (it == m_hand_channels.end())
@@ -482,7 +464,7 @@ private:
                     }
                     throw std::runtime_error("HAND_SAMPLE on unknown channel " + std::to_string(header.channel_id));
                 }
-                const wire::HandSample sample = wire::decode_hand_sample(payload);
+                const protocol::HandSample sample = protocol::decode_hand_sample(payload);
                 const int64_t t_ns = m_clock.remote_to_local(sample.sample_time_ns);
                 const int64_t now_ns = core::os_monotonic_now_ns();
                 if (stale(t_ns, now_ns))
@@ -500,7 +482,7 @@ private:
                 }
                 break;
             }
-            case wire::FrameType::SchemaSample:
+            case protocol::FrameType::SchemaSample:
             {
                 const auto it = m_schema_channels.find(header.channel_id);
                 if (it == m_schema_channels.end())
@@ -511,9 +493,9 @@ private:
                     }
                     throw std::runtime_error("SCHEMA_SAMPLE on unknown channel " + std::to_string(header.channel_id));
                 }
-                const wire::SchemaSample sample = wire::decode_schema_sample(payload);
+                const protocol::SchemaSample sample = protocol::decode_schema_sample(payload);
                 // OpenXRSchemaPushChannel copies into a max_flatbuffer_size buffer without checking.
-                if (sample.bytes.size() > it->second.channel->config().max_flatbuffer_size)
+                if (sample.bytes.size() > it->second.max_bytes)
                 {
                     throw std::runtime_error("SCHEMA_SAMPLE of " + std::to_string(sample.bytes.size()) +
                                              " bytes exceeds the channel's max_flatbuffer_size");
@@ -529,15 +511,16 @@ private:
                 ++m_applied;
                 break;
             }
-            case wire::FrameType::Pong:
+            case protocol::FrameType::Pong:
             {
-                const wire::Pong pong = wire::decode_pong(payload);
+                const protocol::Pong pong = protocol::decode_pong(payload);
                 if (!m_pings || !m_pings->active())
                 {
                     break;
                 }
                 m_pings->on_pong();
-                m_clock.add_two_way_sample(pong.t1_ns, pong.t2_ns, pong.t3_ns, received.t_recv_ns);
+                m_clock.add_two_way_sample(
+                    pong.ping_sent_ns, pong.ping_received_ns, pong.pong_sent_ns, received.t_recv_ns);
                 if (!std::exchange(m_logged_pong, true))
                 {
                     logger()->info(
@@ -545,11 +528,11 @@ private:
                 }
                 break;
             }
-            case wire::FrameType::Heartbeat:
-            case wire::FrameType::Hello:
+            case protocol::FrameType::Heartbeat:
+            case protocol::FrameType::Hello:
                 break;
             default:
-                throw std::runtime_error(std::string("unexpected frame ") + wire::to_string(header.type));
+                throw std::runtime_error("unexpected frame type " + std::to_string(static_cast<int>(header.type)));
             }
         }
         catch (const ChannelRefused& e)
@@ -577,7 +560,7 @@ private:
 
     void require_free_channel(uint16_t channel_id) const
     {
-        if (channel_id == wire::kSessionChannelId || m_hand_channels.count(channel_id) != 0 ||
+        if (channel_id == protocol::kSessionChannelId || m_hand_channels.count(channel_id) != 0 ||
             m_schema_channels.count(channel_id) != 0 || m_refused_channels.count(channel_id) != 0 ||
             (m_pull_channel && channel_id == m_pull_channel_id))
         {
@@ -600,15 +583,15 @@ private:
         if (const auto schema = m_schema_channels.find(channel_id); schema != m_schema_channels.end())
         {
             const uint64_t pushes = schema->second.pushes;
-            const std::string collection_id = schema->second.channel->config().collection_id;
+            const std::string collection_id = schema->second.collection_id;
             m_schema_channels.erase(schema);
             logger()->info("{} schema channel {} ({}) closed after {} pushes", m_tag, channel_id, collection_id, pushes);
             return;
         }
         if (m_pull_channel && channel_id == m_pull_channel_id)
         {
-            m_wrist_source.reset();
-            m_pull_channel.reset();
+            m_pull_channel = nullptr;
+            m_wrist_source = nullptr;
             logger()->info("{} channel {} (pull) closed", m_tag, channel_id);
             return;
         }
@@ -628,7 +611,8 @@ private:
         switch (m_pings->poll(now_ns))
         {
         case PingScheduler::Action::Ping:
-            send(wire::FrameType::Ping, wire::kSessionChannelId, wire::encode(wire::Ping{ core::os_monotonic_now_ns() }));
+            send(protocol::FrameType::Ping, protocol::kSessionChannelId,
+                 protocol::encode_ping(core::os_monotonic_now_ns()));
             break;
         case PingScheduler::Action::GiveUp:
             logger()->warn("{} WARN clock: no PONG, falling back to one-way", m_tag);
@@ -649,13 +633,13 @@ private:
             m_pull_channel->update();
             if (m_wrist_source)
             {
-                for (const bool is_left : { true, false })
+                for (const XrHandEXT hand : { XR_HAND_LEFT_EXT, XR_HAND_RIGHT_EXT })
                 {
-                    wire::WristSample sample;
+                    protocol::WristSample sample;
                     sample.sample_time_ns = now_ns;
-                    sample.is_left = is_left;
-                    sample.sample = m_wrist_source->query(is_left, now_ns);
-                    if (!send(wire::FrameType::WristSample, m_pull_channel_id, wire::encode(sample)))
+                    sample.hand = hand;
+                    sample.sample = m_wrist_source->query(hand, now_ns);
+                    if (!send(protocol::FrameType::WristSample, m_pull_channel_id, protocol::encode_wrist_sample(sample)))
                     {
                         return;
                     }
@@ -669,11 +653,11 @@ private:
         }
     }
 
-    bool send(wire::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
+    bool send(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
     {
-        std::vector<uint8_t> frame = wire::encode_frame(type, channel_id, payload);
+        std::vector<uint8_t> frame = protocol::encode_frame(type, channel_id, payload);
         m_last_send_ns = core::os_monotonic_now_ns();
-        wire::stamp_header(frame.data(), m_next_seq++, m_last_send_ns);
+        protocol::stamp_header(frame, m_next_seq++, m_last_send_ns);
         if (!m_transport->send(frame.data(), frame.size()))
         {
             m_done.store(true);
@@ -686,13 +670,13 @@ private:
     {
         logger()->warn("{} channel {} refused: {}", m_tag, channel_id, message);
         m_refused_channels.insert(channel_id);
-        send(wire::FrameType::Error, channel_id, wire::encode(wire::Error{ message }));
+        send(protocol::FrameType::Error, channel_id, protocol::encode_error(message));
     }
 
     void fail(const std::string& message)
     {
         logger()->error("{} error: {}; closing connection", m_tag, message);
-        send(wire::FrameType::Error, wire::kSessionChannelId, wire::encode(wire::Error{ message }));
+        send(protocol::FrameType::Error, protocol::kSessionChannelId, protocol::encode_error(message));
         m_done.store(true);
     }
 
@@ -714,6 +698,8 @@ private:
         uint64_t pushes = 0;
         const char* side = ""; //!< hand channels: "left" / "right"
         size_t hand = 0; //!< hand channels: HandOwners index
+        std::string collection_id; //!< schema channels
+        size_t max_bytes = 0; //!< schema channels: max_flatbuffer_size
     };
 
     std::unique_ptr<ITransport> m_transport;
@@ -726,13 +712,14 @@ private:
     std::unique_ptr<core::IPluginSession> m_session;
     std::map<uint16_t, CountedChannel<core::IHandTrackingPushChannel>> m_hand_channels;
     std::map<uint16_t, CountedChannel<core::ISchemaPushChannel>> m_schema_channels;
-    std::unique_ptr<core::IPluginPullChannel> m_pull_channel;
-    std::unique_ptr<core::IWristTrackingSource> m_wrist_source;
+    core::IPluginPullChannel* m_pull_channel = nullptr; //!< owned by m_session; set while OPEN_PULL is open
+    core::IWristTrackingSource* m_wrist_source = nullptr; //!< owned by m_session; set when HELLO declared one
+    bool m_wrist_declared = false;
     uint16_t m_pull_channel_id = 0;
     std::set<uint16_t> m_refused_channels; //!< until the client's CLOSE
 
     ClockOffsetEstimator m_clock;
-    std::optional<PingScheduler> m_pings; //!< set for --clock-source=two-way with a v1 client
+    std::optional<PingScheduler> m_pings; //!< set for --clock-source=two-way
     bool m_logged_pong = false;
     std::vector<int64_t> m_ages_ns; //!< since the last 5 s line
     std::unique_ptr<remote_plugin_session::SampleCsv> m_csv;
@@ -786,7 +773,7 @@ void send_bridge_full(ITransport& client, std::vector<uint8_t> ack)
     {
         return;
     }
-    wire::stamp_header(ack.data(), 0, core::os_monotonic_now_ns());
+    protocol::stamp_header(ack, 0, core::os_monotonic_now_ns());
     if (!client.send(ack.data(), ack.size()))
     {
         return;
@@ -850,8 +837,8 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
     {
         remote_plugin_session::SampleCsv::create(m_options.stats_csv);
     }
-    m_bridge_full_ack = wire::encode_frame(
-        wire::FrameType::HelloAck, wire::kSessionChannelId, wire::encode(wire::HelloAck{ false, "bridge full" }));
+    m_bridge_full_ack = protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+                                               protocol::encode_hello_ack(protocol::HelloAck{ false, "bridge full" }));
     logger()->info(
         "remote_device_bridge listening on {}:{} (wrist {} Hz, process per client, max {}, max sample age {} ms, max "
         "schema {} bytes)",
@@ -945,7 +932,7 @@ void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::s
         if (refusing >= kMaxRefusing)
         {
             std::vector<uint8_t> ack = m_bridge_full_ack;
-            wire::stamp_header(ack.data(), 0, core::os_monotonic_now_ns());
+            protocol::stamp_header(ack, 0, core::os_monotonic_now_ns());
             client->send(ack.data(), ack.size());
             return;
         }

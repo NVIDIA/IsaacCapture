@@ -8,10 +8,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <remote_device_bridge/bridge_server.hpp>
+#include <remote_plugin_session/protocol_frame.hpp>
+#include <remote_plugin_session/protocol_payloads.hpp>
 #include <remote_plugin_session/remote_plugin_session.hpp>
 #include <remote_plugin_session/tcp_socket.hpp>
+#include <remote_plugin_session/tcp_transport.hpp>
 #include <remote_plugin_session/websocket_transport.hpp>
-#include <remote_plugin_session/wire_codec.hpp>
 #include <sys/wait.h>
 
 #include <algorithm>
@@ -45,6 +47,7 @@
 using namespace remote_plugin_session;
 using remote_device_bridge::BridgeOptions;
 using remote_device_bridge::BridgeServer;
+namespace protocol = remote_plugin_protocol;
 
 namespace
 {
@@ -128,10 +131,6 @@ public:
     {
         log_event("close schema " + m_config.collection_id);
     }
-    const core::SchemaPusherConfig& config() const override
-    {
-        return m_config;
-    }
     void push_buffer(const uint8_t*, size_t size, int64_t, int64_t) override
     {
         log_event("push schema " + m_config.collection_id + " size=" + std::to_string(size));
@@ -144,22 +143,18 @@ private:
 class FakeWristSource final : public core::IWristTrackingSource
 {
 public:
-    core::WristTrackingSample query(bool, int64_t) override
+    core::WristTrackingSample query(XrHandEXT, int64_t) override
     {
         return {};
     }
 };
 
+//! Created with the session, like the OpenXR one; the wrist source exists only when HELLO declared it.
 class FakePullChannel final : public core::IPluginPullChannel
 {
 public:
-    FakePullChannel()
+    explicit FakePullChannel(bool has_wrist) : m_has_wrist(has_wrist)
     {
-        log_event("open pull");
-    }
-    ~FakePullChannel() override
-    {
-        log_event("close pull");
     }
     void update() override
     {
@@ -168,16 +163,25 @@ public:
     {
         throw std::runtime_error("no trackers");
     }
-    std::unique_ptr<core::IWristTrackingSource> create_wrist_tracking_source(const core::WristTrackingSourceConfig&) override
+    core::IWristTrackingSource& wrist_tracking_source() override
     {
-        return std::make_unique<FakeWristSource>();
+        if (!m_has_wrist)
+        {
+            throw std::logic_error("wrist tracking pull was not declared");
+        }
+        return m_wrist;
     }
+
+private:
+    bool m_has_wrist;
+    FakeWristSource m_wrist;
 };
 
 class FakeSession final : public core::IPluginSession
 {
 public:
-    explicit FakeSession(const std::string& app_name)
+    FakeSession(const std::string& app_name, const core::PluginSessionRequirements& requirements)
+        : m_pull(requirements.wrist_tracking_pull.has_value())
     {
         log_event("session open app=" + app_name);
     }
@@ -185,9 +189,9 @@ public:
     {
         log_event("session closed");
     }
-    std::unique_ptr<core::IPluginPullChannel> create_pull_channel() override
+    core::IPluginPullChannel& pull_channel() override
     {
-        return std::make_unique<FakePullChannel>();
+        return m_pull;
     }
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
     {
@@ -203,6 +207,9 @@ public:
         }
         return std::make_unique<FakeHandChannel>(hand);
     }
+
+private:
+    FakePullChannel m_pull;
 };
 
 bool wait_until(const std::function<bool()>& predicate, Ms timeout = kWait)
@@ -365,8 +372,9 @@ private:
         std::array<uint16_t, 2> ports{};
         try
         {
-            BridgeServer server(options, [](const std::string& app_name, const core::PluginSessionRequirements&)
-                                { return std::make_unique<FakeSession>(app_name); });
+            BridgeServer server(options,
+                                [](const std::string& app_name, const core::PluginSessionRequirements& requirements)
+                                { return std::make_unique<FakeSession>(app_name, requirements); });
             ports = { server.port(), server.ws_port() };
             (void)!write(ready_fd, ports.data(), sizeof(ports));
             close(ready_fd);
@@ -388,29 +396,30 @@ private:
     uint16_t m_ws_port = 0;
 };
 
-//! Speaks the wire protocol by hand: any HELLO version, any capture time, no PONGs. Heartbeats keep the bridge's
+//! Speaks the wire protocol by hand: optionally no HELLO, any capture time, no PONGs. Heartbeats keep the bridge's
 //! 3 s peer timeout away.
 class RawClient
 {
 public:
-    explicit RawClient(uint16_t port, std::optional<uint16_t> hello_version = wire::kHelloVersion)
+    explicit RawClient(uint16_t port, bool send_hello = true)
         : m_transport(std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", port }, kWait)))
     {
-        if (!hello_version)
+        if (!send_hello)
         {
             return;
         }
-        wire::Hello hello;
-        hello.proto_version = *hello_version;
+        protocol::Hello hello;
         hello.app_name = "raw";
-        hello.requirements = { .schema_push = true, .hand_tracking_push = true, .wrist_tracking_pull = true };
-        send(wire::FrameType::Hello, wire::kSessionChannelId, wire::encode(hello));
+        hello.requirements = { .schema_push = true,
+                               .hand_tracking_push = true,
+                               .wrist_tracking_pull = core::WristTrackingSourceConfig{} };
+        send(protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
         m_heartbeat = std::thread(
             [this]
             {
                 while (!m_stop.load())
                 {
-                    send(wire::FrameType::Heartbeat, wire::kSessionChannelId, {});
+                    send(protocol::FrameType::Heartbeat, protocol::kSessionChannelId, {});
                     std::this_thread::sleep_for(Ms(300));
                 }
             });
@@ -421,19 +430,19 @@ public:
         disconnect();
     }
 
-    bool send(wire::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
+    bool send(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
     {
-        return send_frame(wire::encode_frame(type, channel_id, payload));
+        return send_frame(protocol::encode_frame(type, channel_id, payload));
     }
 
     bool send_hand_sample(uint16_t channel_id, int64_t capture_ns)
     {
         const std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-        return send_frame(wire::encode_hand_sample_frame(channel_id, joints.data(), capture_ns));
+        return send_frame(protocol::encode_hand_sample_frame(channel_id, joints.data(), capture_ns));
     }
 
     //! Next frame of `type`; frames of other types are counted and skipped.
-    std::optional<wire::Frame> wait_for(wire::FrameType type, Ms timeout = kWait)
+    std::optional<protocol::Frame> wait_for(protocol::FrameType type, Ms timeout = kWait)
     {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline)
@@ -449,7 +458,7 @@ public:
             {
                 return std::nullopt;
             }
-            wire::Frame frame = wire::split_frame(std::move(bytes));
+            protocol::Frame frame = protocol::split_frame(std::move(bytes));
             m_receive_ns[frame.header.type].push_back(core::os_monotonic_now_ns());
             if (frame.header.type == type)
             {
@@ -460,7 +469,7 @@ public:
     }
 
     //! Receive times of every frame of `type` seen so far.
-    const std::vector<int64_t>& received(wire::FrameType type)
+    const std::vector<int64_t>& received(protocol::FrameType type)
     {
         return m_receive_ns[type];
     }
@@ -479,22 +488,22 @@ private:
     bool send_frame(std::vector<uint8_t> frame)
     {
         std::lock_guard<std::mutex> lock(m_send_mutex);
-        wire::stamp_header(frame.data(), m_seq++, core::os_monotonic_now_ns());
+        protocol::stamp_header(frame, m_seq++, core::os_monotonic_now_ns());
         return m_transport->send(frame.data(), frame.size());
     }
 
     std::unique_ptr<ITransport> m_transport;
     std::mutex m_send_mutex;
     uint32_t m_seq = 0;
-    std::map<wire::FrameType, std::vector<int64_t>> m_receive_ns;
+    std::map<protocol::FrameType, std::vector<int64_t>> m_receive_ns;
     std::atomic<bool> m_stop{ false };
     std::thread m_heartbeat;
 };
 
 bool accepted(RawClient& client)
 {
-    const auto ack = client.wait_for(wire::FrameType::HelloAck);
-    return ack.has_value() && wire::decode_hello_ack(ack->payload).accepted;
+    const auto ack = client.wait_for(protocol::FrameType::HelloAck);
+    return ack.has_value() && protocol::decode_hello_ack(ack->payload).accepted;
 }
 
 core::SchemaPusherConfig schema_config(const std::string& collection_id, size_t max_flatbuffer_size)
@@ -509,8 +518,9 @@ core::SchemaPusherConfig schema_config(const std::string& collection_id, size_t 
 std::unique_ptr<RemotePluginSession> connect(uint16_t port, const std::string& app_name)
 {
     return std::make_unique<RemotePluginSession>(
-        "127.0.0.1", port, app_name,
-        core::PluginSessionRequirements{ .schema_push = true, .hand_tracking_push = true, .wrist_tracking_pull = true });
+        std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", port }, kWait)), app_name,
+        core::PluginSessionRequirements{
+            .schema_push = true, .hand_tracking_push = true, .wrist_tracking_pull = core::WristTrackingSourceConfig{} });
 }
 
 const std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> kJoints{};
@@ -555,26 +565,25 @@ TEST_CASE("Bridge opens plugin-session channels only on OPEN and releases them o
     std::this_thread::sleep_for(Ms(300));
     REQUIRE(bridge.count("] open ") == 0);
 
-    REQUIRE(client.send(wire::FrameType::OpenHand, 1, wire::encode(wire::OpenHand{ XR_HAND_LEFT_EXT })));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 1, protocol::encode_open_hand(XR_HAND_LEFT_EXT)));
     REQUIRE(bridge.wait_log("open hand left"));
-    REQUIRE(client.send(wire::FrameType::Close, 1, {}));
+    REQUIRE(client.send(protocol::FrameType::Close, 1, {}));
     REQUIRE(bridge.wait_log("close hand left"));
 
-    REQUIRE(client.send(wire::FrameType::OpenHand, 2, wire::encode(wire::OpenHand{ XR_HAND_RIGHT_EXT })));
-    REQUIRE(client.send(wire::FrameType::OpenSchema, 3, wire::encode(schema_config("sensors", 256))));
-    REQUIRE(client.send(wire::FrameType::OpenPull, 4, {}));
-    REQUIRE(bridge.wait_log("open pull"));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 2, protocol::encode_open_hand(XR_HAND_RIGHT_EXT)));
+    REQUIRE(client.send(protocol::FrameType::OpenSchema, 3, protocol::encode_open_schema(schema_config("sensors", 256))));
+    REQUIRE(client.send(protocol::FrameType::OpenPull, 4, {}));
+    REQUIRE(bridge.wait_log("channel 4: pull channel opened with wrist source"));
 
-    // Disconnect without CLOSE: the bridge releases everything, channels before the session.
+    // Disconnect without CLOSE: the bridge releases everything, push channels before the session (which owns the
+    // pull channel).
     client.disconnect();
     REQUIRE(bridge.wait_log("session closed"));
     const std::string log = bridge.log();
     REQUIRE(count(log, "close hand right") == 1);
     REQUIRE(count(log, "close schema sensors") == 1);
-    REQUIRE(count(log, "close pull") == 1);
-    REQUIRE(log.find("close hand right") < log.find("close pull"));
-    REQUIRE(log.find("close schema sensors") < log.find("close pull"));
-    REQUIRE(log.find("close pull") < log.find("session closed"));
+    REQUIRE(log.find("close hand right") < log.find("session closed"));
+    REQUIRE(log.find("close schema sensors") < log.find("session closed"));
 }
 
 TEST_CASE("Bridge maps the sender's capture time by the clock offset only", "[remote_device_bridge][unit]")
@@ -582,7 +591,7 @@ TEST_CASE("Bridge maps the sender's capture time by the clock offset only", "[re
     BridgeProcess bridge;
     RawClient client(bridge.port());
     REQUIRE(accepted(client));
-    REQUIRE(client.send(wire::FrameType::OpenHand, 1, wire::encode(wire::OpenHand{ XR_HAND_LEFT_EXT })));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 1, protocol::encode_open_hand(XR_HAND_LEFT_EXT)));
     REQUIRE(bridge.wait_log("open hand left"));
 
     // Same host, same CLOCK_MONOTONIC: the offset is ~0, so the pushed time is the capture time give or take
@@ -688,13 +697,13 @@ TEST_CASE("Any other runtime failure opening a hand ends the session", "[remote_
     g_fake.hand_create_result = XR_SUCCESS;
     RawClient client(bridge.port());
     REQUIRE(accepted(client));
-    REQUIRE(client.send(wire::FrameType::OpenHand, 1, wire::encode(wire::OpenHand{ XR_HAND_LEFT_EXT })));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 1, protocol::encode_open_hand(XR_HAND_LEFT_EXT)));
 
     const std::string message = "xrCreatePushDeviceNV(left) failed with XrResult: " + std::to_string(result);
-    const auto error = client.wait_for(wire::FrameType::Error);
+    const auto error = client.wait_for(protocol::FrameType::Error);
     REQUIRE(error.has_value());
-    REQUIRE(error->header.channel_id == wire::kSessionChannelId);
-    REQUIRE(wire::decode_error(error->payload).message == message);
+    REQUIRE(error->header.channel_id == protocol::kSessionChannelId);
+    REQUIRE(protocol::decode_error(error->payload) == message);
     REQUIRE(bridge.wait_log("[bridge c1] error: " + message + "; closing connection"));
     REQUIRE(bridge.wait_log("session closed"));
     REQUIRE(bridge.count("refused") == 0);
@@ -765,14 +774,14 @@ TEST_CASE("The 9th client gets HELLO_ACK 'bridge full' within 500 ms", "[remote_
     SECTION("a client that never sends HELLO")
     {
         const auto start = std::chrono::steady_clock::now();
-        RawClient silent(bridge.port(), std::nullopt);
-        const auto ack = silent.wait_for(wire::FrameType::HelloAck, Ms(1000));
+        RawClient silent(bridge.port(), false);
+        const auto ack = silent.wait_for(protocol::FrameType::HelloAck, Ms(1000));
         REQUIRE(ack.has_value());
         const auto took = std::chrono::steady_clock::now() - start;
         std::cout << "bridge full (no HELLO) after " << std::chrono::duration<double, std::milli>(took).count() << " ms"
                   << std::endl;
         REQUIRE(took < Ms(500));
-        const wire::HelloAck decoded = wire::decode_hello_ack(ack->payload);
+        const protocol::HelloAck decoded = protocol::decode_hello_ack(ack->payload);
         REQUIRE_FALSE(decoded.accepted);
         REQUIRE(decoded.reason == "bridge full");
     }
@@ -792,11 +801,11 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
     auto first = connect(bridge.port(), "first");
     REQUIRE(bridge.wait_log("session open app=first"));
 
-    wire::Hello hello;
+    protocol::Hello hello;
     hello.app_name = "late";
     std::vector<uint8_t> hello_frame =
-        wire::encode_frame(wire::FrameType::Hello, wire::kSessionChannelId, wire::encode(hello));
-    wire::stamp_header(hello_frame.data(), 0, core::os_monotonic_now_ns());
+        protocol::encode_frame(protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
+    protocol::stamp_header(hello_frame, 0, core::os_monotonic_now_ns());
 
     const auto start = std::chrono::steady_clock::now();
     std::unique_ptr<ITransport> late;
@@ -813,7 +822,8 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
         REQUIRE(bridge.ws_port() != 0);
         TcpSocket socket = TcpSocket::connect(Endpoint{ "127.0.0.1", bridge.ws_port() }, kWait);
         std::this_thread::sleep_for(Ms(400));
-        late = std::make_unique<WebSocketTransport>(std::move(socket), WebSocketTransport::Role::Client, "127.0.0.1");
+        late = std::make_unique<WebSocketTransport>(
+            std::move(socket), "127.0.0.1:" + std::to_string(bridge.ws_port()), "/", kWait);
     }
     REQUIRE(late->send(hello_frame.data(), hello_frame.size()));
     if (bytes.empty())
@@ -823,9 +833,9 @@ TEST_CASE("A refused client whose HELLO is 400 ms late still gets 'bridge full'"
     const auto took = std::chrono::steady_clock::now() - start;
     std::cout << "bridge full (HELLO 400 ms late) after " << std::chrono::duration<double, std::milli>(took).count()
               << " ms" << std::endl;
-    const wire::Frame frame = wire::split_frame(std::move(bytes));
-    REQUIRE(frame.header.type == wire::FrameType::HelloAck);
-    const wire::HelloAck ack = wire::decode_hello_ack(frame.payload);
+    const protocol::Frame frame = protocol::split_frame(std::move(bytes));
+    REQUIRE(frame.header.type == protocol::FrameType::HelloAck);
+    const protocol::HelloAck ack = protocol::decode_hello_ack(frame.payload);
     REQUIRE_FALSE(ack.accepted);
     REQUIRE(ack.reason == "bridge full");
     // The refusal child read the late HELLO and closed; nothing else follows the ACK.
@@ -846,7 +856,7 @@ TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applie
 
     RawClient client(bridge.port());
     REQUIRE(accepted(client));
-    REQUIRE(client.send(wire::FrameType::OpenHand, 1, wire::encode(wire::OpenHand{ XR_HAND_LEFT_EXT })));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 1, protocol::encode_open_hand(XR_HAND_LEFT_EXT)));
     REQUIRE(bridge.wait_log("open hand left"));
 
     REQUIRE(client.send_hand_sample(1, core::os_monotonic_now_ns()));
@@ -859,14 +869,15 @@ TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applie
         REQUIRE(client.send_hand_sample(1, newest_ns - (9 - i) * 10 * kMs));
         if (i == 4)
         {
-            REQUIRE(client.send(wire::FrameType::OpenSchema, 2, wire::encode(schema_config("control", 64))));
-            REQUIRE(client.send(wire::FrameType::OpenPull, 3, {}));
+            REQUIRE(client.send(
+                protocol::FrameType::OpenSchema, 2, protocol::encode_open_schema(schema_config("control", 64))));
+            REQUIRE(client.send(protocol::FrameType::OpenPull, 3, {}));
         }
     }
 
     REQUIRE(bridge.wait_log("push hand left", 2));
     REQUIRE(bridge.wait_log("open schema control"));
-    REQUIRE(bridge.wait_log("open pull"));
+    REQUIRE(bridge.wait_log("pull channel opened"));
     REQUIRE(wait_until([&] { return status_sum(bridge.log(), "coalesced") == 9; }));
     const std::vector<int64_t> pushed = pushed_times(bridge.log(), "left");
     REQUIRE(pushed.size() == 2);
@@ -880,31 +891,33 @@ TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applie
     REQUIRE(status_sum(bridge.log(), "applied") == 2);
 }
 
-TEST_CASE("A HELLO v0 client streams on the one-way offset with exactly one WARN", "[remote_device_bridge][unit]")
+TEST_CASE("With --clock-source=one-way the bridge never PINGs and streams on the one-way offset",
+          "[remote_device_bridge][unit]")
 {
-    BridgeProcess bridge;
-    RawClient client(bridge.port(), 0);
+    BridgeOptions options;
+    options.clock_source = remote_device_bridge::ClockSource::OneWay;
+    BridgeProcess bridge(options);
+    RawClient client(bridge.port());
     REQUIRE(accepted(client));
-    REQUIRE(client.send(wire::FrameType::OpenHand, 1, wire::encode(wire::OpenHand{ XR_HAND_RIGHT_EXT })));
+    REQUIRE(client.send(protocol::FrameType::OpenHand, 1, protocol::encode_open_hand(XR_HAND_RIGHT_EXT)));
     REQUIRE(client.send_hand_sample(1, core::os_monotonic_now_ns()));
     REQUIRE(bridge.wait_log("push hand right"));
 
-    // Past the PING burst and the 2 s PONG timeout: a v0 client is never PINGed.
-    REQUIRE_FALSE(client.wait_for(wire::FrameType::Ping, Ms(2500)).has_value());
-    REQUIRE(client.received(wire::FrameType::Ping).empty());
-    REQUIRE(bridge.count(" WARN") == 1); // the message word, not the logger's "[WARN ]" level column
-    REQUIRE(bridge.count("WARN clock: HELLO v0 client cannot answer PING, using one-way") == 1);
+    // Past the PING burst and the 2 s PONG timeout.
+    REQUIRE_FALSE(client.wait_for(protocol::FrameType::Ping, Ms(2500)).has_value());
+    REQUIRE(client.received(protocol::FrameType::Ping).empty());
+    REQUIRE(bridge.count(" WARN") == 0); // the message word, not the logger's "[WARN ]" level column
 }
 
-TEST_CASE("A v1 client that never answers PING gets 10 PINGs at 50 ms, one at 1 Hz, then one-way",
+TEST_CASE("A client that never answers PING gets 10 PINGs at 50 ms, one at 1 Hz, then one-way",
           "[remote_device_bridge][unit]")
 {
     BridgeProcess bridge;
     RawClient client(bridge.port());
     REQUIRE(accepted(client));
-    REQUIRE_FALSE(client.wait_for(wire::FrameType::Error, Ms(3000)).has_value());
+    REQUIRE_FALSE(client.wait_for(protocol::FrameType::Error, Ms(3000)).has_value());
 
-    const std::vector<int64_t>& pings = client.received(wire::FrameType::Ping);
+    const std::vector<int64_t>& pings = client.received(protocol::FrameType::Ping);
     REQUIRE(pings.size() == 11);
     for (size_t i = 1; i < 10; ++i)
     {
@@ -931,7 +944,7 @@ TEST_CASE("The 5 s status line carries age, RTT, offset and clock", "[remote_dev
     const std::string log = bridge.log();
     const std::regex pattern(
         "\\[bridge c1\\] 5s: rx hand=[0-9]+ schema=0 \\| applied=[0-9]+ coalesced=[0-9]+ "
-        "stale=[0-9]+ \\| tx wrist=0 \\| offset_ns=-?[0-9]+ \\| age_ms p50=-?[0-9.]+ "
+        "stale=[0-9]+ \\| tx wrist=[1-9][0-9]* \\| offset_ns=-?[0-9]+ \\| age_ms p50=-?[0-9.]+ "
         "p99=-?[0-9.]+ max=-?[0-9.]+ \\| rtt_ms min=[0-9.]+ last=[0-9.]+ \\| "
         "offset_ms=-?[0-9.]+ clock=two-way\n");
     std::smatch match;

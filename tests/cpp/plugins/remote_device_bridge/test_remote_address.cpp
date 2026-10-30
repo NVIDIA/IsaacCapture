@@ -44,3 +44,10 @@ TEST_CASE("parse_endpoint validates ports and accepts IPv6 hosts", "[remote_devi
     REQUIRE(bare_v6.port == 47500);
     REQUIRE(parse_endpoint("[::1]", 47500).port == 47500);
 }
+
+TEST_CASE("parse_bridge_remote defaults to the bridge port of the scheme", "[remote_device_bridge][unit]")
+{
+    REQUIRE(parse_bridge_remote("10.0.0.2").endpoint.port == kDefaultBridgePort);
+    REQUIRE(parse_bridge_remote("ws://10.0.0.2").endpoint.port == kDefaultBridgeWsPort);
+    REQUIRE(parse_bridge_remote("ws://10.0.0.2:9000/bridge").endpoint.port == 9000);
+}
