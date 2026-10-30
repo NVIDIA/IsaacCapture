@@ -101,8 +101,7 @@ Options parse_args(int argc, char** argv)
         const std::string arg = argv[i];
         if (starts_with(arg, "--remote="))
         {
-            options.remote = remote_plugin_session::parse_remote(
-                arg.substr(std::string("--remote=").size()), remote_plugin_session::kDefaultBridgePort);
+            options.remote = remote_plugin_session::parse_bridge_remote(arg.substr(std::string("--remote=").size()));
         }
         else if (starts_with(arg, "--rate-hz="))
         {

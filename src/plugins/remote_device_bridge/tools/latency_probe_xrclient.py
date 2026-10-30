@@ -47,16 +47,16 @@ def main() -> None:
         "--out", required=True, help="CSV path (mono_ns,side,curl,n_set)"
     )
     parser.add_argument(
-        "--hz", type=float, default=200.0, help="sample rate (default 200)"
+        "--hz", type=float, default=200.0, help="sample rate (default %(default)s)"
     )
     parser.add_argument(
-        "--seconds", type=float, default=60.0, help="duration (default 60)"
+        "--seconds", type=float, default=60.0, help="duration (default %(default)s)"
     )
     parser.add_argument(
-        "--sides", default="left,right", help="comma list (default left,right)"
+        "--sides", default="left,right", help="comma list (default %(default)s)"
     )
     parser.add_argument(
-        "--host", default="127.0.0.1", help="xr_server host (default 127.0.0.1)"
+        "--host", default="127.0.0.1", help="xr_server host (default %(default)s)"
     )
     parser.add_argument(
         "--port", type=int, default=None, help="xr_server port (default XRClient's)"
