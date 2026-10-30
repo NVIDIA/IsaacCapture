@@ -23,7 +23,15 @@
  * to descendant components.
  */
 
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { type Recording, type ReplayPacing, XRInputRecorder } from './xrInputRecorder';
 
@@ -37,6 +45,8 @@ export interface RecorderContextValue {
   stopRecord: () => void;
   startReplay: () => void;
   stopReplay: () => void;
+  recordingInterrupted: boolean;
+  onFrameState: () => void;
   setReplayPacing: (pacing: ReplayPacing) => void;
   onSaveRecording: () => void;
   onLoadRecording: () => void;
@@ -59,6 +69,7 @@ function setLoadStatus(message: string, type: 'success' | 'error'): void {
 
 export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const recorder = useMemo(() => new XRInputRecorder(), []);
+  useEffect(() => () => recorder.dispose(), [recorder]);
   const [mode, setMode] = useState<'idle' | 'recording' | 'replaying'>('idle');
   const [savedRecording, setSavedRecordingState] = useState<Recording | null>(null);
   const [recordedFrameCount, setRecordedFrameCount] = useState(0);
@@ -92,6 +103,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     recorder.stopReplay();
     setMode('idle');
   }, [recorder]);
+
+  const onFrameState = useCallback(() => {
+    if (mode !== recorder.mode) {
+      if (mode === 'recording') {
+        setSavedRecordingState(recorder.getRecording());
+        setRecordedFrameCount(recorder.recordedFrameCount);
+      }
+      setMode(recorder.mode);
+    }
+  }, [mode, recorder]);
 
   const setReplayPacing = useCallback((pacing: ReplayPacing) => {
     setReplayPacingState(pacing);
@@ -155,6 +176,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     stopRecord,
     startReplay,
     stopReplay,
+    recordingInterrupted: recorder.recordingInterrupted,
+    onFrameState,
     setReplayPacing,
     onSaveRecording,
     onLoadRecording,
@@ -179,4 +202,118 @@ export function useRecorder(): RecorderContextValue {
   const ctx = useContext(RecorderContext);
   if (!ctx) throw new Error('useRecorder must be used inside RecorderProvider');
   return ctx;
+}
+
+/**
+ * True when a plain letter is being typed rather than used as a shortcut.
+ *
+ * Shared with CloudXRUI's panel-reset key, which runs off the same listener:
+ * one definition means the two cannot disagree about what counts as typing.
+ */
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target instanceof HTMLInputElement) return target.type !== 'file';
+  return target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+}
+
+interface TeleopKeyboardShortcutOptions {
+  /**
+   * showRecordingControls. Gates every shortcut, T and X included: it is off by
+   * default, which leaves these letters to host keyboard teleop.
+   */
+  recordingEnabled: boolean;
+  startTeleop?: () => void;
+  teleopStartDisabled?: boolean;
+  /** Reset Teleop. Only reachable as a key because its button lives in the XR canvas. */
+  resetTeleop?: () => void;
+}
+
+/**
+ * Build the keydown handler for the Teleop Play and recording controls exposed by the XR UI.
+ *
+ * Returns a handler rather than registering a listener: CloudXRUI already owns a
+ * window keydown listener for the panel-reset key, and a second one would mean two
+ * places deciding what a letter means. The caller reports whether the key was
+ * consumed, so its own keys can be skipped when this one handles the event.
+ */
+export function useTeleopShortcutHandler({
+  recordingEnabled,
+  startTeleop,
+  teleopStartDisabled = false,
+  resetTeleop,
+}: TeleopKeyboardShortcutOptions): (event: KeyboardEvent) => boolean {
+  const {
+    recorder,
+    savedRecording,
+    startRecord,
+    stopRecord,
+    startReplay,
+    stopReplay,
+    onSaveRecording,
+  } = useRecorder();
+
+  return useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (!recordingEnabled) return false;
+
+      const key =
+        event.code === 'KeyT'
+          ? 't'
+          : event.code === 'KeyC'
+            ? 'c'
+            : event.code === 'KeyP'
+              ? 'p'
+              : event.code === 'KeyS'
+                ? 's'
+                : event.code === 'KeyX'
+                  ? 'x'
+                  : event.key.toLowerCase();
+
+      if (key === 't') {
+        if (!startTeleop || teleopStartDisabled) return false;
+        startTeleop();
+      } else if (key === 'c') {
+        if (recorder.mode === 'recording') {
+          stopRecord();
+        } else if (recorder.mode === 'idle') {
+          startRecord();
+        } else {
+          return false;
+        }
+      } else if (key === 'p') {
+        if (recorder.mode === 'replaying') {
+          stopReplay();
+        } else if (recorder.mode === 'idle' && savedRecording) {
+          startReplay();
+        } else {
+          return false;
+        }
+      } else if (key === 's') {
+        if (recorder.mode !== 'idle' || !savedRecording) return false;
+        onSaveRecording();
+      } else if (key === 'x') {
+        if (!resetTeleop) return false;
+        resetTeleop();
+      } else {
+        return false;
+      }
+
+      event.preventDefault();
+      return true;
+    },
+    [
+      recorder,
+      onSaveRecording,
+      recordingEnabled,
+      savedRecording,
+      startRecord,
+      startReplay,
+      startTeleop,
+      stopRecord,
+      stopReplay,
+      teleopStartDisabled,
+      resetTeleop,
+    ]
+  );
 }
