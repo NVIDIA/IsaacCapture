@@ -9,6 +9,15 @@ add_library(remote_plugin_session STATIC
     protocol_io.hpp
     inc/remote_plugin_session/protocol_frame.hpp
     inc/remote_plugin_session/protocol_payloads.hpp
+    remote_address.cpp
+    inc/remote_plugin_session/remote_address.hpp
+    tcp_socket.cpp
+    inc/remote_plugin_session/tcp_socket.hpp
+    tcp_transport.cpp
+    inc/remote_plugin_session/tcp_transport.hpp
+    inc/remote_plugin_session/transport.hpp
+    websocket_transport.cpp
+    inc/remote_plugin_session/websocket_transport.hpp
 )
 
 target_include_directories(remote_plugin_session
