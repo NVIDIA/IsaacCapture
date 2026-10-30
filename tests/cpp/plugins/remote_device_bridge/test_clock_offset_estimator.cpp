@@ -65,6 +65,7 @@ TEST_CASE("ClockOffsetEstimator rejects an empty window", "[remote_device_bridge
 {
     REQUIRE_THROWS_AS(ClockOffsetEstimator(0, 1), std::invalid_argument);
     REQUIRE_THROWS_AS(ClockOffsetEstimator(1, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(ClockOffsetEstimator(1, 1, 0), std::invalid_argument);
 }
 
 TEST_CASE("should_drop_stale keeps fresh samples and drops the backlog after a stall", "[remote_device_bridge][unit]")

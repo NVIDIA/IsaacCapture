@@ -26,7 +26,7 @@ void ClockOffsetEstimator::add_sample(int64_t remote_t_send_ns, int64_t local_t_
     {
         m_samples.pop_front();
     }
-    while (!m_samples.empty() && m_samples.front().local_t_recv_ns < local_t_recv_ns - m_window_ns)
+    while (m_samples.front().local_t_recv_ns < local_t_recv_ns - m_window_ns)
     {
         m_samples.pop_front();
     }
