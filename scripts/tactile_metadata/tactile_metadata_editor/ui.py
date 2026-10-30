@@ -36,7 +36,7 @@ ERROR_COLOR = (255, 0, 0)
 FORCE_MIN_COLOR = (0, 0, 255)
 FORCE_MAX_COLOR = (255, 0, 0)
 FORCE_MAX_N = 30.0
-SELECTION_GIZMO_SCALE_M = 0.005
+SELECTION_GIZMO_SCALE_M = 0.01
 SELECTION_GIZMO_LINE_WIDTH = 2.5
 ACTIVE_DATASET_OPACITY = 1.0
 BINDING_OVERLAY_OPACITY = 0.4
@@ -1349,9 +1349,16 @@ class Editor:
         self._rebuild_edit_lists()
         self.info.value = "Preview segments applied to Edit data."
 
+    def _applied_preview_taxels(self) -> list[Taxel]:
+        # Invalid rows keep their binding metadata so row order still matches forces.
+        rows, _ = self._preview_taxels()
+        sources = self._binding_document().taxels
+        return copy.deepcopy(
+            [source if row is None else row for source, row in zip(sources, rows)]
+        )
+
     def _apply_preview_taxels(self) -> None:
-        rows, _, _ = self._rendered_preview_taxels()
-        self.document.taxels = copy.deepcopy([taxel for _, taxel in rows])
+        self.document.taxels = self._applied_preview_taxels()
         self._rebuild_edit_lists()
         self.info.value = "Preview taxels applied to Edit data."
 
@@ -1362,9 +1369,9 @@ class Editor:
 
     def _apply_preview_all(self) -> None:
         document = self.document
-        rows, _, _ = self._rendered_preview_taxels()
+        taxels = self._applied_preview_taxels()
         document.segments = copy.deepcopy(self.preview_document.segments)
-        document.taxels = copy.deepcopy([taxel for _, taxel in rows])
+        document.taxels = taxels
         document.q = copy.deepcopy(self.preview_document.q)
         self._rebuild_edit_lists()
         self._sync_joint_widget_values(document, self.edit_joint_widgets)
