@@ -3,10 +3,16 @@
 
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
+#if defined(MANUS_HAVE_REMOTE_PLUGIN_SESSION)
+#    include <remote_plugin_session/remote_address.hpp>
+#    include <remote_plugin_session/remote_plugin_session.hpp>
+#endif
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -55,10 +61,18 @@ std::vector<std::string> split_csv(const std::string& text)
     return out;
 }
 
-ManusPluginConfig parse_args(int argc, char** argv)
+struct AppArgs
 {
     ManusPluginConfig config;
-    std::string datasets_arg = "human,sensors,haptic";
+    //! host[:port] or ws://host[:port][/path] of a remote_device_bridge; empty selects the local OpenXR session.
+    std::string remote_endpoint;
+};
+
+AppArgs parse_args(int argc, char** argv)
+{
+    AppArgs args;
+    ManusPluginConfig& config = args.config;
+    std::optional<std::string> datasets_arg;
     auto logger = isaaccapture::Logger::get("isaaccapture.plugins.manus.main");
 
     for (int i = 1; i < argc; ++i)
@@ -67,6 +81,10 @@ ManusPluginConfig parse_args(int argc, char** argv)
         if (starts_with(arg, "--datasets="))
         {
             datasets_arg = arg.substr(std::string("--datasets=").size());
+        }
+        else if (starts_with(arg, "--remote="))
+        {
+            args.remote_endpoint = arg.substr(std::string("--remote=").size());
         }
         else if (starts_with(arg, "--left-calibration="))
         {
@@ -89,7 +107,7 @@ ManusPluginConfig parse_args(int argc, char** argv)
     config.human = false;
     config.sensors = false;
     config.haptic = false;
-    for (const auto& ds : split_csv(datasets_arg))
+    for (const auto& ds : split_csv(datasets_arg.value_or("human,sensors,haptic")))
     {
         if (ds == "human")
         {
@@ -114,7 +132,20 @@ ManusPluginConfig parse_args(int argc, char** argv)
         throw std::runtime_error("ManusHandPlugin: --datasets must enable at least one of human,sensors,haptic");
     }
 
-    return config;
+    // RemotePluginSession's pull channel exposes no trackers, so the haptic reader cannot run over --remote.
+    if (!args.remote_endpoint.empty() && config.haptic)
+    {
+        if (datasets_arg)
+        {
+            throw std::invalid_argument(
+                "ManusHandPlugin: --remote cannot be combined with the 'haptic' data set; "
+                "use --datasets=human,sensors");
+        }
+        config.haptic = false;
+        logger->info("ManusHandPlugin: --remote given; defaulting to --datasets=human,sensors");
+    }
+
+    return args;
 }
 
 } // namespace
@@ -125,12 +156,29 @@ try
     auto logger = isaaccapture::Logger::get("isaaccapture.plugins.manus.main");
     logger->info("Manus Hand Plugin starting...");
 
-    const ManusPluginConfig config = parse_args(argc, argv);
+    const AppArgs args = parse_args(argc, argv);
+    const ManusPluginConfig& config = args.config;
+
+    // Empty for the local path: ManusTracker then opens its own OpenXR session, so this executable links no loader.
+    core::PluginSessionFactory remote_session_factory;
+    if (!args.remote_endpoint.empty())
+    {
+#if defined(MANUS_HAVE_REMOTE_PLUGIN_SESSION)
+        // Parsed here so a malformed --remote fails at startup, not when ManusTracker opens its session.
+        remote_session_factory = remote_plugin_session::make_remote_plugin_session_factory(
+            "ManusHandPlugin", remote_plugin_session::parse_bridge_remote(args.remote_endpoint));
+        logger->info("Using remote plugin session at {}", args.remote_endpoint);
+#else
+        throw std::invalid_argument(
+            "ManusHandPlugin: --remote requires a build with BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE=ON");
+#endif
+    }
 
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto& tracker = ManusTracker::instance(config);
+    auto& tracker = remote_session_factory ? ManusTracker::instance(config, remote_session_factory) :
+                                             ManusTracker::instance(config);
 
     logger->info("Plugin running. Press Ctrl+C to stop.");
 

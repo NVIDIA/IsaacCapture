@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "remote-device-bridge-tests"
+version = "0.0.0"  # Internal tests - not versioned
+description = "remote_device_bridge tools unit tests"
+requires-python = ">=3.11,<3.14"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py"]
+norecursedirs = [".git", ".venv", "build", "dist", "*.egg", "__pycache__"]

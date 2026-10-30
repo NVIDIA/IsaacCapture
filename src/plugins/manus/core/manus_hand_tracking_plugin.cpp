@@ -140,6 +140,8 @@ ManusTracker& ManusTracker::instance(const ConstructionArgs* args)
 
 void ManusTracker::update()
 {
+    log_status();
+
     if (!m_plugin_session)
     {
         // The configured plugin session is unavailable, so no session-backed
@@ -611,6 +613,22 @@ void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_in
     }
 }
 
+//! Operator liveness line for the gloves and the Manus license, once per kStatusInterval.
+void ManusTracker::log_status()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now < m_next_status)
+    {
+        return;
+    }
+    m_next_status = now + kStatusInterval;
+    std::lock_guard<std::mutex> lock(landscape_mutex);
+    m_logger->info("{}s: gloves={} license={}", kStatusInterval.count(), m_sdk_glove_count,
+                   !m_license_ok ? "unknown" :
+                   *m_license_ok ? "ok" :
+                                   "missing");
+}
+
 void ManusTracker::OnLandscapeStream(const Landscape* landscape)
 {
     auto& tracker = instance(nullptr);
@@ -623,6 +641,8 @@ void ManusTracker::OnLandscapeStream(const Landscape* landscape)
     const auto& gloves = landscape->gloveDevices;
 
     std::lock_guard<std::mutex> landscape_lock(tracker.landscape_mutex);
+    tracker.m_sdk_glove_count = gloves.gloveCount;
+    tracker.m_license_ok = landscape->settings.license.sdk || landscape->settings.license.integrated;
 
     // We only support one left and one right glove
     if (gloves.gloveCount > 2)
