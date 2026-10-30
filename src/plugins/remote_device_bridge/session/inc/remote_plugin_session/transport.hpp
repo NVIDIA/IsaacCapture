@@ -11,6 +11,11 @@
 namespace remote_plugin_session
 {
 
+//! Default connect/upgrade timeout for client transports.
+constexpr std::chrono::milliseconds kConnectTimeout{ 3000 };
+//! A frame that has started arriving must finish within this window, or the peer counts as gone.
+constexpr std::chrono::milliseconds kMidMessageStall{ 3000 };
+
 enum class ReceiveResult
 {
     Ok,
@@ -22,8 +27,8 @@ enum class ReceiveResult
 /*!
  * @brief Message transport between a RemotePluginSession and the bridge.
  *
- * A frame is one complete wire message (24-byte header + payload) as built by
- * protocol::encode_frame. send() and receive() may run concurrently on two
+ * A frame is one complete wire message (protocol kHeaderSize header + payload)
+ * as built by protocol::encode_frame. send() and receive() may run concurrently on two
  * threads; shutdown() unblocks both. Framing (TCP is a stream) lives in the
  * implementation, not in the callers.
  */

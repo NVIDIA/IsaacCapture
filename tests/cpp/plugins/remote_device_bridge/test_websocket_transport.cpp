@@ -4,6 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <remote_plugin_session/protocol_frame.hpp>
+#include <remote_plugin_session/remote_address.hpp>
+#include <remote_plugin_session/tcp_transport.hpp>
 #include <remote_plugin_session/websocket_transport.hpp>
 #include <sys/socket.h>
 
@@ -107,8 +109,7 @@ std::unique_ptr<WebSocketTransport> upgraded_server(TcpSocket server_end, TcpSoc
 {
     auto server = std::make_unique<WebSocketTransport>(std::move(server_end), Role::Server);
     raw_send(raw_client, kSampleUpgrade);
-    std::vector<uint8_t> frame;
-    REQUIRE(server->receive(frame, kShort) == ReceiveResult::Timeout);
+    REQUIRE(server->wait_ready(kWait) == ReceiveResult::Ok);
     const std::string response = raw_recv_head(raw_client);
     REQUIRE(response.rfind("HTTP/1.1 101", 0) == 0);
     REQUIRE(response.find("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n") != std::string::npos);
@@ -128,8 +129,7 @@ Connected connected_pair()
     pair.server = std::make_unique<WebSocketTransport>(std::move(server_end), Role::Server);
     std::thread client(
         [&] { pair.client = std::make_unique<WebSocketTransport>(std::move(client_end), Role::Client, "h:1", "/x"); });
-    std::vector<uint8_t> frame;
-    REQUIRE(pair.server->receive(frame, kShort) == ReceiveResult::Timeout);
+    REQUIRE(pair.server->wait_ready(kWait) == ReceiveResult::Ok);
     client.join();
     REQUIRE(pair.client);
     return pair;
@@ -140,22 +140,38 @@ Connected connected_pair()
 TEST_CASE("parse_remote selects TCP or WebSocket", "[remote_device_bridge][unit]")
 {
     const RemoteAddress tcp = parse_remote("10.0.0.2:5000", 47500);
-    REQUIRE_FALSE(tcp.websocket);
+    REQUIRE_FALSE(tcp.ws_path);
     REQUIRE(tcp.endpoint.host == "10.0.0.2");
     REQUIRE(tcp.endpoint.port == 5000);
 
     const RemoteAddress ws = parse_remote("ws://bridge.local:8080/teleop", 47500);
-    REQUIRE(ws.websocket);
+    REQUIRE(ws.ws_path);
     REQUIRE(ws.endpoint.host == "bridge.local");
     REQUIRE(ws.endpoint.port == 8080);
-    REQUIRE(ws.path == "/teleop");
+    REQUIRE(*ws.ws_path == "/teleop");
 
     const RemoteAddress bare = parse_remote("ws://bridge.local", 47500);
     REQUIRE(bare.endpoint.port == 47500);
-    REQUIRE(bare.path == "/");
+    REQUIRE(*bare.ws_path == "/");
 
     REQUIRE_THROWS_AS(parse_remote("wss://bridge.local", 47500), std::invalid_argument);
     REQUIRE_THROWS_AS(parse_remote("ws:///teleop", 47500), std::invalid_argument);
+}
+
+TEST_CASE("parse_endpoint validates ports and accepts IPv6 hosts", "[remote_device_bridge][unit]")
+{
+    for (const char* bad : { "host:", "host:0", "host:70000", "host:80x", "[::1", "[::1]x" })
+    {
+        INFO(bad);
+        REQUIRE_THROWS_AS(parse_endpoint(bad, 47500), std::invalid_argument);
+    }
+    const Endpoint bracketed = parse_endpoint("[::1]:8080", 47500);
+    REQUIRE(bracketed.host == "::1");
+    REQUIRE(bracketed.port == 8080);
+    const Endpoint bare_v6 = parse_endpoint("fe80::1", 47500);
+    REQUIRE(bare_v6.host == "fe80::1");
+    REQUIRE(bare_v6.port == 47500);
+    REQUIRE(parse_endpoint("[::1]", 47500).port == 47500);
 }
 
 TEST_CASE("WebSocketTransport round-trips frames of every length class", "[remote_device_bridge][unit]")
@@ -206,15 +222,15 @@ TEST_CASE("WebSocketTransport server role handles control frames and fragments",
         REQUIRE(server->receive(frame, kWait) == ReceiveResult::Closed);
         REQUIRE(raw_recv(raw, 4) == std::vector<uint8_t>{ 0x88, 0x02, 0x03, 0xE8 });
     }
-    SECTION("an unmasked client frame closes the connection")
+    SECTION("an unmasked client frame is malformed")
     {
-        raw_send(raw, raw_frame(0x2, true, frame_of_size(24), false));
-        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Closed);
+        raw_send(raw, raw_frame(0x2, true, frame_of_size(protocol::kHeaderSize), false));
+        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
     }
-    SECTION("text frames are refused")
+    SECTION("text frames are malformed")
     {
         raw_send(raw, raw_frame(0x1, true, { 'x' }));
-        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Closed);
+        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
     }
     SECTION("a message that is not exactly one wire frame is malformed")
     {
@@ -238,7 +254,7 @@ TEST_CASE("WebSocketTransport rejects bad handshakes", "[remote_device_bridge][u
         std::vector<uint8_t> frame;
         REQUIRE(server.receive(frame, kWait) == ReceiveResult::Malformed);
         REQUIRE(raw_recv_head(peer).rfind("HTTP/1.1 400", 0) == 0);
-        const std::vector<uint8_t> sent = frame_of_size(24);
+        const std::vector<uint8_t> sent = frame_of_size(protocol::kHeaderSize);
         REQUIRE_FALSE(server.send(sent.data(), sent.size()));
     }
     SECTION("client throws on a non-101 response")
@@ -266,10 +282,10 @@ TEST_CASE("connect_transport speaks ws:// to a listening WebSocketTransport", "[
     {
         server = WebSocketTransport::accept(listener, kShort);
     }
-    std::vector<uint8_t> frame;
-    REQUIRE(server->receive(frame, kShort) == ReceiveResult::Timeout);
+    REQUIRE(server->wait_ready(kWait) == ReceiveResult::Ok);
     connector.join();
     REQUIRE(client);
+    std::vector<uint8_t> frame;
 
     const std::vector<uint8_t> sent = frame_of_size(200);
     REQUIRE(client->send(sent.data(), sent.size()));
@@ -277,4 +293,48 @@ TEST_CASE("connect_transport speaks ws:// to a listening WebSocketTransport", "[
     REQUIRE(frame == sent);
     client->shutdown();
     REQUIRE(server->receive(frame, kWait) == ReceiveResult::Closed);
+}
+
+TEST_CASE("TcpTransport delimits frames by the header and reports broken peers", "[remote_device_bridge][unit]")
+{
+    auto [peer, transport_end] = socket_pair();
+    TcpTransport transport(std::move(transport_end));
+    std::vector<uint8_t> frame;
+
+    SECTION("a header-only frame arrives on its own")
+    {
+        const std::vector<uint8_t> sent = protocol::encode_frame(protocol::FrameType::Heartbeat, 0, {});
+        raw_send(peer, sent);
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Ok);
+        REQUIRE(frame == sent);
+    }
+    SECTION("a frame with a payload arrives whole")
+    {
+        const std::vector<uint8_t> sent = frame_of_size(protocol::kHeaderSize + 100);
+        raw_send(peer, sent);
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Ok);
+        REQUIRE(frame == sent);
+    }
+    SECTION("nothing within the timeout")
+    {
+        REQUIRE(transport.receive(frame, kShort) == ReceiveResult::Timeout);
+    }
+    SECTION("a bad magic is malformed")
+    {
+        std::vector<uint8_t> sent = protocol::encode_frame(protocol::FrameType::Heartbeat, 0, {});
+        sent[0] ^= 0xFF;
+        raw_send(peer, sent);
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Malformed);
+    }
+    SECTION("a header whose payload never arrives counts as closed")
+    {
+        const std::vector<uint8_t> sent = frame_of_size(protocol::kHeaderSize + 100);
+        raw_send(peer, std::vector<uint8_t>(sent.begin(), sent.begin() + protocol::kHeaderSize));
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Closed);
+    }
+    SECTION("peer EOF is closed")
+    {
+        peer.shutdown();
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Closed);
+    }
 }
