@@ -28,7 +28,7 @@ def hand(wrist_at_origin: bool) -> np.ndarray:
 
 class FingertipsCurlTest(unittest.TestCase):
     def test_wrist_at_origin_still_gives_curl(self):
-        # Manus without a headset wrist pose: wrist slot is exactly eye(4), the W1/W2 n_set=24 case.
+        # Manus without a headset wrist pose: the wrist slot is exactly eye(4).
         curl, n_set = probe.fingertips_curl(hand(wrist_at_origin=True))
         self.assertEqual(n_set, 24)
         self.assertAlmostEqual(curl, float(np.linalg.norm(TIP)))

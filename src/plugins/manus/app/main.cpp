@@ -4,7 +4,6 @@
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
 #if defined(MANUS_HAVE_REMOTE_PLUGIN_SESSION)
-#    include <remote_plugin_session/bridge_limits.hpp>
 #    include <remote_plugin_session/remote_address.hpp>
 #    include <remote_plugin_session/remote_plugin_session.hpp>
 #endif
@@ -166,21 +165,9 @@ try
     {
 #if defined(MANUS_HAVE_REMOTE_PLUGIN_SESSION)
         // Parsed here so a malformed --remote fails at startup, not when ManusTracker opens its session.
-        const remote_plugin_session::RemoteAddress remote =
-            remote_plugin_session::parse_bridge_remote(args.remote_endpoint);
-        remote_session_factory =
-            [remote, logger, text = args.remote_endpoint](
-                const core::PluginSessionRequirements& requirements,
-                std::vector<std::shared_ptr<core::ITracker>> trackers) -> std::unique_ptr<core::IPluginSession>
-        {
-            if (!trackers.empty())
-            {
-                throw std::logic_error("ManusHandPlugin: the remote plugin session exposes no trackers");
-            }
-            logger->info("Using remote plugin session at {}", text);
-            return std::make_unique<remote_plugin_session::RemotePluginSession>(
-                remote_plugin_session::connect_transport(remote), "ManusHandPlugin", requirements);
-        };
+        remote_session_factory = remote_plugin_session::make_remote_plugin_session_factory(
+            "ManusHandPlugin", remote_plugin_session::parse_bridge_remote(args.remote_endpoint));
+        logger->info("Using remote plugin session at {}", args.remote_endpoint);
 #else
         throw std::invalid_argument(
             "ManusHandPlugin: --remote requires a build with BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE=ON");

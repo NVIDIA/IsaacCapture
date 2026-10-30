@@ -88,42 +88,37 @@ std::string mode_string(const Options& options)
     return count == 1 ? mode + "-only" : mode;
 }
 
-bool starts_with(const std::string& value, const std::string& prefix)
-{
-    return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
-}
-
 Options parse_args(int argc, char** argv)
 {
     Options options;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
-        if (starts_with(arg, "--remote="))
+        if (arg.starts_with("--remote="))
         {
             options.remote = remote_plugin_session::parse_bridge_remote(arg.substr(std::string("--remote=").size()));
         }
-        else if (starts_with(arg, "--rate-hz="))
+        else if (arg.starts_with("--rate-hz="))
         {
             options.rate_hz = std::stoi(arg.substr(std::string("--rate-hz=").size()));
         }
-        else if (starts_with(arg, "--duration-s="))
+        else if (arg.starts_with("--duration-s="))
         {
             options.duration_s = std::stod(arg.substr(std::string("--duration-s=").size()));
         }
-        else if (starts_with(arg, "--schema-bytes="))
+        else if (arg.starts_with("--schema-bytes="))
         {
             options.schema_bytes = std::stoul(arg.substr(std::string("--schema-bytes=").size()));
         }
-        else if (starts_with(arg, "--schema-rate-hz="))
+        else if (arg.starts_with("--schema-rate-hz="))
         {
             options.schema_rate_hz = std::stoi(arg.substr(std::string("--schema-rate-hz=").size()));
         }
-        else if (starts_with(arg, "--hands="))
+        else if (arg.starts_with("--hands="))
         {
             options.hands = parse_bool("--hands", arg.substr(std::string("--hands=").size()));
         }
-        else if (starts_with(arg, "--wrist="))
+        else if (arg.starts_with("--wrist="))
         {
             options.wrist = parse_bool("--wrist", arg.substr(std::string("--wrist=").size()));
         }
@@ -358,7 +353,7 @@ try
             core::WristTrackingSample& sample = wrist[is_left ? 0 : 1];
             sample = wrist_source ? wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns) :
                                     core::WristTrackingSample{};
-            if (!left_pusher)
+            if (!options.hands)
             {
                 continue;
             }
@@ -369,7 +364,7 @@ try
             generate_hand(joints, pose, is_left, curl);
             (is_left ? left_pusher : right_pusher)->push(joints, sample_time_ns);
         }
-        frames_sent += left_pusher ? 1 : 0;
+        frames_sent += options.hands ? 1 : 0;
 
         if (now >= next_status)
         {
