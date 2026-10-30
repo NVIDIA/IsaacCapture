@@ -293,6 +293,22 @@ bool to_bool(uint8_t value)
     return value == 1;
 }
 
+void write_wrist_config(Writer& writer, const core::WristTrackingSourceConfig& value)
+{
+    writer.u8(to_wire_mode(value.mode));
+    writer.pose(value.left_aim_to_wrist);
+    writer.pose(value.right_aim_to_wrist);
+}
+
+core::WristTrackingSourceConfig read_wrist_config(Reader& reader)
+{
+    core::WristTrackingSourceConfig value;
+    value.mode = from_wire_mode(reader.u8());
+    value.left_aim_to_wrist = reader.pose();
+    value.right_aim_to_wrist = reader.pose();
+    return value;
+}
+
 } // namespace
 
 const char* to_string(FrameType type)
@@ -467,6 +483,10 @@ std::vector<uint8_t> encode(const Hello& value)
     writer.u8(value.requirements.schema_push ? 1 : 0);
     writer.u8(value.requirements.hand_tracking_push ? 1 : 0);
     writer.u8(value.requirements.wrist_tracking_pull ? 1 : 0);
+    if (value.requirements.wrist_tracking_pull)
+    {
+        write_wrist_config(writer, *value.requirements.wrist_tracking_pull);
+    }
     return out;
 }
 
@@ -503,9 +523,7 @@ std::vector<uint8_t> encode(const core::WristTrackingSourceConfig& value)
 {
     std::vector<uint8_t> out;
     Writer writer(out);
-    writer.u8(to_wire_mode(value.mode));
-    writer.pose(value.left_aim_to_wrist);
-    writer.pose(value.right_aim_to_wrist);
+    write_wrist_config(writer, value);
     return out;
 }
 
@@ -552,10 +570,18 @@ Hello decode_hello(const std::vector<uint8_t>& payload)
     Reader reader(payload);
     Hello value;
     value.proto_version = reader.u16();
+    if (value.proto_version < kHelloVersion)
+    {
+        throw DecodeError("wire: HELLO version " + std::to_string(value.proto_version) + " is older than " +
+                          std::to_string(kHelloVersion));
+    }
     value.app_name = reader.str();
     value.requirements.schema_push = to_bool(reader.u8());
     value.requirements.hand_tracking_push = to_bool(reader.u8());
-    value.requirements.wrist_tracking_pull = to_bool(reader.u8());
+    if (to_bool(reader.u8()))
+    {
+        value.requirements.wrist_tracking_pull = read_wrist_config(reader);
+    }
     reader.finish();
     return value;
 }
@@ -595,10 +621,7 @@ core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
 core::WristTrackingSourceConfig decode_open_wrist(const std::vector<uint8_t>& payload)
 {
     Reader reader(payload);
-    core::WristTrackingSourceConfig value;
-    value.mode = from_wire_mode(reader.u8());
-    value.left_aim_to_wrist = reader.pose();
-    value.right_aim_to_wrist = reader.pose();
+    const core::WristTrackingSourceConfig value = read_wrist_config(reader);
     reader.finish();
     return value;
 }
