@@ -26,6 +26,10 @@ add_subdirectory(rebot_devarm_leader)
 add_subdirectory(manus)
 add_subdirectory(haptikos)
 
+if(BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE)
+    add_subdirectory(remote_device_bridge)
+endif()
+
 if(BUILD_PLUGIN_NOITOM_MOCAP)
     add_subdirectory(noitom_mocap)
 endif()
