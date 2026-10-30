@@ -18,14 +18,12 @@ namespace remote_plugin_protocol
 {
 
 /*!
- * Payload builders and parsers, one pair per frame type. `str` = u32 length +
- * bytes, `pose` = 7 x f32 in XrPosef order (orientation x,y,z,w then position
- * x,y,z). Swapping the hand payload for a FlatBuffer later only changes the
- * HAND_SAMPLE pair here.
+ * Payload builders and parsers. `str` = u32 length + bytes, `pose` = 7 x f32 in
+ * XrPosef order (orientation x,y,z,w then position x,y,z).
  */
 
-//! HELLO proto_version: 2 = requirements carry the wrist source config (not a flag) and the client answers
-//! PING with PONG. decode_hello rejects older versions, whose payload layout differs.
+//! HELLO proto_version: the requirements carry the wrist source config, and the client answers PING with PONG.
+//! decode_hello accepts only this version.
 constexpr uint16_t kHelloVersion = 2;
 
 struct Hello
@@ -54,6 +52,7 @@ struct SchemaSample
     std::vector<uint8_t> bytes;
 };
 
+//! On the wire the hand is one byte, 1 = left and 0 = right.
 struct WristSample
 {
     int64_t sample_time_ns = 0;
@@ -72,15 +71,13 @@ struct Pong
 constexpr size_t kPoseSize = 7 * sizeof(float);
 constexpr size_t kJointSize = sizeof(uint64_t) + kPoseSize + sizeof(float);
 constexpr size_t kHandSamplePayloadSize = sizeof(int64_t) + XR_HAND_JOINT_COUNT_EXT * kJointSize;
-constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + kPoseSize;
-constexpr size_t kWristConfigPayloadSize = sizeof(uint8_t) + 2 * kPoseSize;
 
 static_assert(kJointSize == 40);
 static_assert(kHandSamplePayloadSize == 1048);
-static_assert(sizeof(XrSpaceLocationFlags) == sizeof(uint64_t));
 
 std::vector<uint8_t> encode_hello(const Hello& value);
 std::vector<uint8_t> encode_hello_ack(const HelloAck& value);
+//! One byte: 0 = left, 1 = right.
 std::vector<uint8_t> encode_open_hand(XrHandEXT hand);
 std::vector<uint8_t> encode_open_schema(const core::SchemaPusherConfig& value);
 std::vector<uint8_t> encode_open_wrist(const core::WristTrackingSourceConfig& value);
@@ -88,6 +85,8 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value);
 std::vector<uint8_t> encode_error(const std::string& message);
 std::vector<uint8_t> encode_ping(int64_t t1_ns);
 std::vector<uint8_t> encode_pong(const Pong& value);
+//! Sets t3 in an encoded PONG frame; call where the frame is sent, so t3 is when it left, not when it was queued.
+void set_pong_t3(std::vector<uint8_t>& pong_frame, int64_t t3_ns);
 
 // Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
@@ -99,7 +98,7 @@ std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
                                                 int64_t sample_time_local_common_clock_ns,
                                                 int64_t sample_time_raw_device_clock_ns);
 
-// Parsers throw DecodeError, naming the frame type, on truncated, over-long or out-of-range payloads.
+// Parsers throw DecodeError, naming the frame, on truncated, over-long or out-of-range payloads.
 Hello decode_hello(const std::vector<uint8_t>& payload);
 HelloAck decode_hello_ack(const std::vector<uint8_t>& payload);
 XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload);

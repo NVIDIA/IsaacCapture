@@ -18,6 +18,9 @@ namespace remote_plugin_protocol
 namespace detail
 {
 
+//! Writes the header into the first kHeaderSize bytes of `out`.
+void encode_header(const FrameHeader& header, uint8_t* out);
+
 //! Appends little-endian fields to a caller-owned buffer.
 class Writer
 {

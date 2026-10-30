@@ -3,9 +3,6 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-# Transport-only library shared by the bridge, the synthetic sender and any
-# plugin that offers --remote. It must never link the OpenXR loader or
-# plugin_utils: plugin processes using it stay free of an OpenXR runtime.
 add_library(remote_plugin_session STATIC
     protocol_frame.cpp
     protocol_payloads.cpp

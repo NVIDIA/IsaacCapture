@@ -9,7 +9,6 @@ add_executable(remote_plugin_session_tests
 
 target_link_libraries(remote_plugin_session_tests PRIVATE
     Teleop::remote_plugin_session
-    pusherio::pusherio
     Catch2::Catch2WithMain
 )
 
