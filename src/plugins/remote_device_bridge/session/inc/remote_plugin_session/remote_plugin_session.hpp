@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "remote_address.hpp"
 #include "transport.hpp"
 
 #include <pusherio/plugin_session.hpp>
@@ -23,8 +24,9 @@ class RemotePluginSessionImpl;
 /*!
  * @brief Plugin session that forwards every channel over TCP to a remote_device_bridge.
  *
- * Same contract as OpenXRPluginSession: the owner destroys all channels before
- * the session and may call create_pull_channel() once. After the transport
+ * Same contract as the OpenXR plugin session: the session owns its pull channel
+ * (opened with the session, with the wrist source HELLO declared) and the owner
+ * destroys all push channels before the session. After the transport
  * drops, pushes become silent no-ops and channels stay safe to destroy.
  * Each push channel has a latest-wins queue (4 samples / 8 MiB); on a stalled
  * link the oldest samples of that channel are dropped, other channels are
@@ -61,7 +63,7 @@ public:
     RemotePluginSession(RemotePluginSession&&) = delete;
     RemotePluginSession& operator=(RemotePluginSession&&) = delete;
 
-    std::unique_ptr<core::IPluginPullChannel> create_pull_channel() override;
+    core::IPluginPullChannel& pull_channel() override;
     std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override;
     std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) override;
 
@@ -74,6 +76,11 @@ public:
 
 private:
     std::shared_ptr<detail::RemotePluginSessionImpl> m_impl;
+    std::unique_ptr<core::IPluginPullChannel> m_pull_channel;
 };
+
+//! Connects each session it builds to `remote`. The remote session exposes no trackers, so the factory throws
+//! std::logic_error when handed any.
+core::PluginSessionFactory make_remote_plugin_session_factory(std::string app_name, RemoteAddress remote);
 
 } // namespace remote_plugin_session

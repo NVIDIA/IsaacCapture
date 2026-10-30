@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+find_package(Threads REQUIRED)
+
 add_library(remote_plugin_session STATIC
     clock_offset_estimator.cpp
     inc/remote_plugin_session/clock_offset_estimator.hpp
@@ -30,6 +32,9 @@ target_include_directories(remote_plugin_session
 target_link_libraries(remote_plugin_session
     PUBLIC
         pusherio::pusherio
+    PRIVATE
+        log_bridge::log_bridge_core
+        Threads::Threads
 )
 
 add_library(Teleop::remote_plugin_session ALIAS remote_plugin_session)
