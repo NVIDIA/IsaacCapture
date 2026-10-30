@@ -127,11 +127,12 @@ The three buttons are vertical with down arrows between adjacent steps, and at
 most one is enabled at a time. Between steps, only the required 3D selection is
 available.
 
-Expand **All Taxels** to edit pose, four segment slots, and four weights. `None`
-is an editor-only inactive slot with weight zero. Selecting the first active
-segment sets its weight to one; later segment selections start at zero. Editing
-a weight changes only that slot. Validation reports rows whose weights do not
-sum to one.
+Expand **All Taxels** to edit 50 rows at a time; Previous/Next switches pages
+without changing global Taxel indices. Each visible row contains pose, four
+segment slots, and four weights. `None` is an editor-only inactive slot with
+weight zero. Selecting the first active segment sets its weight to one; later
+segment selections start at zero. Editing a weight changes only that slot.
+Validation reports rows whose weights do not sum to one.
 
 ## Scene selection
 
@@ -152,6 +153,9 @@ objects, and scales multi-selection positions about their center. Edit mode
 changes Editing data; Preview mode changes Preview segments. Preview taxels are
 derived and cannot be selected. With no selection, the panel remains visible,
 shows Type `None` and Count `0`, and disables its input fields.
+Exactly one selected Segment reveals its HandJoint editor; exactly one selected
+Taxel reveals its four Segment/Weight binding slots. These editors reuse one
+control set rather than creating controls for every Taxel.
 
 The selected-object 3-axis control supports axis-only translation. Dragging an
 axis moves every selected object by the same delta. Single selections use the

@@ -41,6 +41,7 @@ SELECTION_GIZMO_LINE_WIDTH = 2.5
 ACTIVE_DATASET_OPACITY = 1
 BINDING_OVERLAY_OPACITY = 0.4
 SAVED_BINDING_OPACITY = 0.3
+TAXEL_PAGE_SIZE = 50
 
 
 class Editor:
@@ -65,17 +66,21 @@ class Editor:
         self.scene_handles: dict[str, object] = {}
         self.segment_row_folder = None
         self.taxel_row_folder = None
+        self.taxel_page_container = None
         self.edit_joint_folder = None
         self.preview_joint_folder = None
         self.preview_segment_folder = None
         self.selection_folder = None
-        self.segment_widgets, self.taxel_widgets = [], []
+        self.segment_widgets = []
+        self.taxel_widgets = {}
         self.segment_item_folders = []
-        self.segment_error_widgets, self.taxel_error_widgets = [], []
+        self.segment_error_widgets = []
+        self.taxel_error_widgets = {}
         self.edit_joint_widgets, self.preview_joint_widgets = {}, {}
         self.preview_segment_widgets = []
         self.new_taxel_binding = Taxel()
         self.new_taxel_binding_widgets = []
+        self.taxel_page = 0
         self.selected_kind: str | None = None
         self.selected_rows: list[int] = []
         self.binding_phase: str | None = None
@@ -141,10 +146,10 @@ class Editor:
             self._action_button("New", self._new)
             self._action_button("Save", self._save)
             self._action_button("Load", self._load)
-            self._action_button("Reset Camera", self._reset_camera)
             with gui.add_folder("Mode"):
                 self.mode_edit = gui.add_checkbox("Edit", True)
                 self.mode_preview = gui.add_checkbox("Preview", False)
+            self._action_button("Reset Camera", self._reset_camera)
             self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
             self._watch(self.mode_edit, lambda checked: self._set_mode("Edit", checked))
             self._watch(
@@ -564,9 +569,8 @@ class Editor:
             position, rotation = geo.components(geo.matrix(segment.pose))
             self._set_values(positions, position)
             self._set_values(rotations, rotation)
-        for taxel, (positions, rotations, _) in zip(
-            self.document.taxels, self.taxel_widgets
-        ):
+        for row, (positions, rotations, _) in self.taxel_widgets.items():
+            taxel = self.document.taxels[row]
             position, rotation = geo.components(geo.matrix(taxel.pose))
             self._set_values(positions, position)
             self._set_values(rotations, rotation)
@@ -733,6 +737,8 @@ class Editor:
                 self.new_taxel_binding.weights
             )
         self.selected_kind, self.selected_rows = "taxels", selected
+        if selected:
+            self.taxel_page = selected[0] // TAXEL_PAGE_SIZE
         self._rebuild_edit_lists()
         noun = "taxel" if len(selected) == 1 else "taxels"
         self.info.value = f"{len(selected)} {noun} added."
@@ -823,19 +829,48 @@ class Editor:
             *dict.fromkeys(segment.joint for segment in self.document.segments),
         )
 
+    def _taxel_page_count(self) -> int:
+        return max(1, math.ceil(len(self.document.taxels) / TAXEL_PAGE_SIZE))
+
+    def _change_taxel_page(self, delta: int) -> None:
+        page = min(
+            self._taxel_page_count() - 1,
+            max(0, self.taxel_page + delta),
+        )
+        if page == self.taxel_page:
+            return
+        self.taxel_page = page
+        self._rebuild_taxel_list()
+
     def _rebuild_taxel_list(self) -> None:
-        if self.taxel_row_folder is not None:
-            self.taxel_row_folder.remove()
-        self.taxel_widgets = []
-        self.taxel_error_widgets = []
+        if self.taxel_page_container is not None:
+            self.taxel_page_container.remove()
+        self.taxel_widgets = {}
+        self.taxel_error_widgets = {}
         issues = self.document.validate()
         options = self._taxel_segment_options()
-        with self.taxels_tab:
-            self.taxel_row_folder = self.server.gui.add_folder(
-                "All Taxels", expand_by_default=False
-            )
-            with self.taxel_row_folder:
-                for row, taxel in enumerate(self.document.taxels):
+        page_count = self._taxel_page_count()
+        self.taxel_page = min(self.taxel_page, page_count - 1)
+        first = self.taxel_page * TAXEL_PAGE_SIZE
+        last = min(first + TAXEL_PAGE_SIZE, len(self.document.taxels))
+        with self.taxel_row_folder:
+            self.taxel_page_container = self.server.gui.add_folder(None)
+            with self.taxel_page_container:
+                previous = self._action_button(
+                    "Previous Page", lambda: self._change_taxel_page(-1)
+                )
+                previous.disabled = self.taxel_page == 0
+                shown = f"{first}-{last - 1}" if last > first else "None"
+                self.server.gui.add_markdown(
+                    f"Page **{self.taxel_page + 1} / {page_count}**  \n"
+                    f"Taxels: **{shown}** of **{len(self.document.taxels)}**"
+                )
+                next_page = self._action_button(
+                    "Next Page", lambda: self._change_taxel_page(1)
+                )
+                next_page.disabled = self.taxel_page >= page_count - 1
+                for row in range(first, last):
+                    taxel = self.document.taxels[row]
                     row_issues = [
                         issue
                         for issue in issues
@@ -913,8 +948,8 @@ class Editor:
                             + "</div>",
                             visible=bool(messages),
                         )
-                        self.taxel_error_widgets.append(error)
-                        self.taxel_widgets.append((positions, rotations, slots))
+                        self.taxel_error_widgets[row] = error
+                        self.taxel_widgets[row] = (positions, rotations, slots)
 
     def _weight_widget(self, value, disabled: bool, invalid: bool, slot: int):
         label = f"{'⚠ ' if invalid else ''}Weight {slot}"
@@ -960,12 +995,15 @@ class Editor:
             if not 0 <= row < len(self.document.taxels):
                 continue
             taxel = self.document.taxels[row]
+            widgets = self.taxel_widgets.get(row)
+            if widgets is None:
+                continue
             row_issues = [
                 issue
                 for issue in issues
                 if issue["kind"] == "taxels" and issue["row"] == row
             ]
-            for slot, (segment, weight) in enumerate(self.taxel_widgets[row][2]):
+            for slot, (segment, weight) in enumerate(widgets[2]):
                 selected = (
                     taxel.segments[slot] if taxel.segments[slot] in options else "None"
                 )
@@ -1006,6 +1044,7 @@ class Editor:
         self._sync_segment_validation_widgets()
         self._sync_taxel_binding_widgets(range(len(self.document.taxels)))
         self._sync_new_taxel_binding_widgets()
+        self._sync_selection()
 
     def _values(self, kind: str):
         return self.document.segments if kind == "segments" else self.document.taxels
@@ -1031,12 +1070,14 @@ class Editor:
         elif first:
             taxel.weights[slot] = 1.0
         self._sync_taxel_binding_widgets([row])
+        self._sync_selection()
 
     def _set_taxel_weight(self, row: int, slot: int, value) -> None:
         try:
             self.document.set_weight(row, slot, float(value))
         finally:
             self._sync_taxel_binding_widgets([row])
+            self._sync_selection()
 
     def _start_binding(self) -> None:
         self._set_pick_mode(None)
@@ -1613,6 +1654,47 @@ class Editor:
                             axis, value
                         ),
                     )
+                self.selection_segment_editor = self.server.gui.add_folder(
+                    "Segment Editor", visible=False
+                )
+                with self.selection_segment_editor:
+                    self.selection_segment_joint = self.server.gui.add_dropdown(
+                        "Name", tuple(JOINTS)
+                    )
+                    self._watch(
+                        self.selection_segment_joint,
+                        self._set_selected_segment_joint,
+                    )
+                self.selection_taxel_editor = self.server.gui.add_folder(
+                    "Taxel Editor", visible=False
+                )
+                self.selection_taxel_binding_widgets = []
+                with self.selection_taxel_editor:
+                    self.server.gui.add_html(
+                        '<span data-tactile-binding-title="selected">Binding</span>'
+                    )
+                    options = self._taxel_segment_options()
+                    segment_fields = [
+                        self.server.gui.add_dropdown(
+                            f"Segment {slot}", options, initial_value="None"
+                        )
+                        for slot in range(4)
+                    ]
+                    for slot, segment in enumerate(segment_fields):
+                        weight = self._weight_widget(0.0, True, False, slot)
+                        self._watch(
+                            segment,
+                            lambda value, slot=slot: self._set_selected_taxel_segment(
+                                slot, value
+                            ),
+                        )
+                        self._watch(
+                            weight,
+                            lambda value, slot=slot: self._set_selected_taxel_weight(
+                                slot, value
+                            ),
+                        )
+                        self.selection_taxel_binding_widgets.append((segment, weight))
                 self.selection_scale_widget = self.server.gui.add_number(
                     "Scale", 1.0, min=1e-6, step=0.01
                 )
@@ -1648,10 +1730,50 @@ class Editor:
             *self.selection_rotation_widgets,
         ):
             widget.disabled = not rows
+        single_segment = self.selected_kind == "segments" and len(rows) == 1
+        single_taxel = self.selected_kind == "taxels" and len(rows) == 1
+        self.selection_segment_editor.visible = single_segment
+        self.selection_taxel_editor.visible = single_taxel
+        if single_segment:
+            self.selection_segment_joint.value = values[rows[0]].joint
+        if single_taxel:
+            taxel = values[rows[0]]
+            options = self._taxel_segment_options()
+            for slot, (segment, weight) in enumerate(
+                self.selection_taxel_binding_widgets
+            ):
+                selected = (
+                    taxel.segments[slot] if taxel.segments[slot] in options else "None"
+                )
+                segment.options = options
+                segment.value = selected
+                weight.value = taxel.weights[slot]
+                weight.disabled = selected == "None"
         self.selection_scale = 1.0
         self.selection_scale_widget.value = 1.0
         self.selection_scale_widget.disabled = len(rows) < 2
         self.selection_delete.disabled = not rows
+
+    def _set_selected_segment_joint(self, value: str) -> None:
+        if self.selected_kind != "segments" or len(self.selected_rows) != 1:
+            return
+        row = self.selected_rows[0]
+        if self.mode_value == "Edit":
+            self._set_segment_joint(row, value)
+            return
+        self.preview_document.segments[row].joint = value
+        self._rebuild_preview_segments()
+        self._sync_selection()
+
+    def _set_selected_taxel_segment(self, slot: int, value: str) -> None:
+        if self.selected_kind != "taxels" or len(self.selected_rows) != 1:
+            return
+        self._set_taxel_segment(self.selected_rows[0], slot, value)
+
+    def _set_selected_taxel_weight(self, slot: int, value) -> None:
+        if self.selected_kind != "taxels" or len(self.selected_rows) != 1:
+            return
+        self._set_taxel_weight(self.selected_rows[0], slot, value)
 
     def _set_selection_position(self, axis: int, value: float) -> None:
         values = self._selection_values()
@@ -1696,13 +1818,19 @@ class Editor:
             )
             values = self._selection_values()
             for row in self.selected_rows:
-                if row >= len(widgets):
-                    continue
+                if self.selected_kind == "segments":
+                    if row >= len(widgets):
+                        continue
+                    row_widgets = widgets[row]
+                else:
+                    row_widgets = widgets.get(row)
+                    if row_widgets is None:
+                        continue
                 position, rotation = geo.components(geo.matrix(values[row].pose))
                 position_widgets, rotation_widgets = (
-                    (widgets[row][1], widgets[row][2])
+                    (row_widgets[1], row_widgets[2])
                     if self.selected_kind == "segments"
-                    else (widgets[row][0], widgets[row][1])
+                    else (row_widgets[0], row_widgets[1])
                 )
                 self._set_values(position_widgets, position)
                 self._set_values(rotation_widgets, rotation)
