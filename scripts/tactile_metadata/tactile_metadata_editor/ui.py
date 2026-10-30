@@ -1377,8 +1377,8 @@ class Editor:
 
     def _apply_preview_all(self) -> None:
         document = self.document
-        document.segments = copy.deepcopy(self.preview_document.segments)
         rows, _, _ = self._rendered_preview_taxels()
+        document.segments = copy.deepcopy(self.preview_document.segments)
         document.taxels = copy.deepcopy([taxel for _, taxel in rows])
         document.q = copy.deepcopy(self.preview_document.q)
         self._rebuild_edit_lists()

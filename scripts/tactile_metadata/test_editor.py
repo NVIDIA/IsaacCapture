@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import numpy as np
+
+from tactile_metadata_editor.document import Segment, State, Taxel
+from tactile_metadata_editor.ui import Editor
+
+
+class EditorTests(unittest.TestCase):
+    def make_editor(self):
+        editor = Editor.__new__(Editor)
+        editor.state = State()
+        editor.document.segments = [Segment("WRIST")]
+        editor.document.taxels = [
+            Taxel(segments=["WRIST", None, None, None], weights=[1.0, 0.0, 0.0, 0.0])
+        ]
+        editor.preview = {"left": editor._preview_from(editor.document)}
+        editor.binding_source_live = SimpleNamespace(value=False)
+        editor.info = SimpleNamespace(value="")
+        editor.edit_joint_widgets = {}
+        editor._rebuild_edit_lists = Mock()
+        editor._sync_joint_widget_values = Mock()
+        return editor
+
+    def test_apply_all_preserves_rendered_taxels(self):
+        editor = self.make_editor()
+        editor.preview_document.segments[0].pose[0] = 0.01
+        editor.preview_document.q = {"joint": 0.5}
+        rows, errors, _ = editor._rendered_preview_taxels()
+        self.assertFalse(errors)
+        expected = rows[0][1].pose
+        self.assertAlmostEqual(expected[0], 0.01)
+
+        editor._apply_preview_all()
+
+        np.testing.assert_allclose(editor.document.taxels[0].pose, expected)
+        self.assertEqual(editor.document.segments, editor.preview_document.segments)
+        self.assertEqual(editor.document.q, editor.preview_document.q)
+
+
+if __name__ == "__main__":
+    unittest.main()
