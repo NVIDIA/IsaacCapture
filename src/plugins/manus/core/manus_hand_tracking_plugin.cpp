@@ -108,11 +108,15 @@ static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }
 static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
 
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config,
-                                     ManusPluginSessionFactory plugin_session_factory,
-                                     std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader) noexcept(false)
+                                     const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
 {
-    static ManusTracker s(config, std::move(plugin_session_factory), std::move(haptic_reader));
+    static ManusTracker s(config, plugin_session_factory);
     return s;
+}
+
+ManusTracker& ManusTracker::instance()
+{
+    return instance(ManusPluginConfig{}, {});
 }
 
 void ManusTracker::update()
@@ -250,13 +254,10 @@ void ManusTracker::apply_haptic_command(bool is_left, const std::array<float, kM
 }
 
 ManusTracker::ManusTracker(const ManusPluginConfig& config,
-                           ManusPluginSessionFactory plugin_session_factory,
-                           std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader) noexcept(false)
-    : m_config(config),
-      m_plugin_session_factory(std::move(plugin_session_factory)),
-      m_haptic_reader(std::move(haptic_reader))
+                           const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
+    : m_config(config)
 {
-    initialize();
+    initialize(plugin_session_factory);
 }
 
 ManusTracker::~ManusTracker()
@@ -273,11 +274,18 @@ ManusTracker::~ManusTracker()
     shutdown_sdk();
 }
 
-void ManusTracker::initialize() noexcept(false)
+void ManusTracker::initialize(const ManusPluginSessionFactory& plugin_session_factory) noexcept(false)
 {
     if (m_config.monitoring_plugin_root_id && m_config.monitoring_plugin_root_id->empty())
     {
         throw std::invalid_argument("ManusTracker monitoring_plugin_root_id must not be empty");
+    }
+
+    const bool monitoring_enabled = m_config.monitoring_plugin_root_id.has_value();
+    const bool needs_plugin_session = m_config.human || m_config.sensors || m_config.haptic || monitoring_enabled;
+    if (needs_plugin_session && !plugin_session_factory)
+    {
+        throw std::invalid_argument("ManusTracker requires a plugin session factory for enabled session datasets");
     }
 
     if (!m_config.left_calibration_file.empty())
@@ -325,8 +333,6 @@ void ManusTracker::initialize() noexcept(false)
 
     ConnectToGloves();
 
-    const bool monitoring_enabled = m_config.monitoring_plugin_root_id.has_value();
-    const bool needs_plugin_session = m_config.human || m_config.sensors || m_config.haptic || monitoring_enabled;
     if (!needs_plugin_session)
     {
         m_logger->info("No session datasets enabled; running Manus-only (skeleton callbacks only).");
@@ -340,20 +346,20 @@ void ManusTracker::initialize() noexcept(false)
 
     try
     {
-        if (!m_plugin_session_factory)
+        std::vector<std::shared_ptr<core::ITracker>> trackers;
+        if (m_config.haptic)
         {
-            throw std::invalid_argument("ManusTracker requires a plugin session factory for enabled session datasets");
+            // The reader's buffer must be >= the producer's collection sample size; use the shared
+            // default (matching the producer's PushTensorHapticDevice), not a Manus-specific size.
+            m_haptic_reader = std::make_shared<core::HapticCommandReaderTracker>(MANUS_GLOVE_COLLECTION_ID);
+            trackers.push_back(m_haptic_reader);
         }
-        m_plugin_session = m_plugin_session_factory();
-        m_plugin_session_factory = {};
-        if (!m_plugin_session)
-        {
-            throw std::runtime_error("The plugin session factory returned no session");
-        }
-        if (m_config.haptic && !m_haptic_reader)
-        {
-            throw std::invalid_argument("ManusTracker requires a haptic reader when haptic input is enabled");
-        }
+
+        m_plugin_session = plugin_session_factory(
+            core::PluginSessionRequirements{ .schema_push = m_config.sensors || monitoring_enabled,
+                                             .hand_tracking_push = m_config.human,
+                                             .wrist_tracking_pull = m_config.human },
+            std::move(trackers));
 
         if (monitoring_enabled)
         {
@@ -418,7 +424,6 @@ void ManusTracker::initialize() noexcept(false)
         m_status_publisher.reset();
         m_pull_channel = nullptr;
         m_plugin_session.reset();
-        m_plugin_session_factory = {};
 
         if (monitoring_enabled)
         {

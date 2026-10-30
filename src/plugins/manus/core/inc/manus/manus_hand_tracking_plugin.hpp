@@ -46,16 +46,18 @@ struct ManusPluginConfig
     bool haptic = true; // inbound HapticCommandReaderTracker
 };
 
-using ManusPluginSessionFactory = std::function<std::unique_ptr<core::IPluginSession>()>;
+// Called once from initialize() with the requirements ManusTracker derives
+// from its config and the trackers it owns.
+using ManusPluginSessionFactory = std::function<std::unique_ptr<core::IPluginSession>(
+    const core::PluginSessionRequirements&, std::vector<std::shared_ptr<core::ITracker>>)>;
 
 class __attribute__((visibility("default"))) ManusTracker
 {
 public:
     /// Get the singleton instance. The first call constructs with ``config``;
-    /// later calls (e.g. from Manus SDK callbacks) ignore all arguments.
-    static ManusTracker& instance(const ManusPluginConfig& config = ManusPluginConfig{},
-                                  ManusPluginSessionFactory plugin_session_factory = {},
-                                  std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader = {}) noexcept(false);
+    /// later calls ignore all arguments.
+    static ManusTracker& instance(const ManusPluginConfig& config,
+                                  const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
 
     void update();
     std::vector<SkeletonNode> get_left_hand_nodes() const;
@@ -78,16 +80,17 @@ public:
 
 private:
     // Lifecycle
+    // For the SDK callbacks, which run only after instance(config, factory) has constructed the tracker.
+    static ManusTracker& instance();
     ManusTracker(const ManusPluginConfig& config,
-                 ManusPluginSessionFactory plugin_session_factory,
-                 std::shared_ptr<core::HapticCommandReaderTracker> haptic_reader) noexcept(false);
+                 const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
     ~ManusTracker();
 
     ManusTracker(const ManusTracker&) = delete;
     ManusTracker& operator=(const ManusTracker&) = delete;
     ManusTracker(ManusTracker&&) = delete;
     ManusTracker& operator=(ManusTracker&&) = delete;
-    void initialize() noexcept(false);
+    void initialize(const ManusPluginSessionFactory& plugin_session_factory) noexcept(false);
     void shutdown_sdk();
 
     // ManusSDK specific methods
@@ -141,7 +144,6 @@ private:
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
 
     // Plugin session state
-    ManusPluginSessionFactory m_plugin_session_factory;
     std::unique_ptr<core::IPluginSession> m_plugin_session;
     std::unique_ptr<core::IHandTrackingPushChannel> m_left_hand_channel;
     std::unique_ptr<core::IHandTrackingPushChannel> m_right_hand_channel;

@@ -5,12 +5,15 @@
 
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
+#include <plugin_utils/openxr_plugin_session.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // This tool is a standalone diagnostic CLI whose whole product is joint data
@@ -35,10 +38,10 @@ try
 
     plugins::manus::ManusPluginConfig config;
     config.app_name = "ManusHandPrinter";
-    config.human = false;
-    config.sensors = false;
-    config.haptic = false;
-    auto& tracker = plugins::manus::ManusTracker::instance(config);
+    auto& tracker = plugins::manus::ManusTracker::instance(
+        config, [app_name = config.app_name](const core::PluginSessionRequirements& requirements,
+                                             std::vector<std::shared_ptr<core::ITracker>> trackers)
+        { return std::make_unique<plugin_utils::OpenXRPluginSession>(app_name, requirements, std::move(trackers)); });
 
     // Start Vulkan visualizer in a background thread.
     // If X11 or Vulkan is unavailable the thread exits cleanly and printing
