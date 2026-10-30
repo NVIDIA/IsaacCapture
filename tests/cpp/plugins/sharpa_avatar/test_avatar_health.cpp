@@ -4,6 +4,7 @@
 #include <avatar/avatar_hand_tracking_plugin.hpp>
 #include <avatar/avatar_health.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <schema/serialized.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -14,6 +15,7 @@
 using plugins::avatar::DatasetHealthInput;
 using plugins::avatar::GloveIngressSignal;
 using plugins::avatar::GloveState;
+using plugins::avatar::HapticCommandDeliveryState;
 using plugins::avatar::PhysicalGloveHealthInput;
 using plugins::avatar::UsbDevicePresence;
 
@@ -217,6 +219,45 @@ TEST_CASE("Ingress signals keep callbacks scoped to one device generation", "[sh
     CHECK(retired->generation() == 2);
     CHECK(current->generation() == 0);
     CHECK_FALSE(current->last_event().has_value());
+}
+
+TEST_CASE("Haptic delivery keeps failed commands pending until success", "[sharpa_avatar][haptic]")
+{
+    core::HapticCommandT first_native;
+    first_native.values = { 0.5f, 0.0f, 0.0f, 0.0f, 0.0f };
+    const auto first = core::pack<core::HapticCommand>(first_native);
+
+    HapticCommandDeliveryState delivery;
+    delivery.observe(first);
+    REQUIRE(delivery.pending() == first.get());
+
+    delivery.observe(first);
+    CHECK(delivery.pending() == first.get());
+
+    delivery.acknowledge();
+    CHECK(delivery.pending() == nullptr);
+    delivery.observe(first);
+    CHECK(delivery.pending() == nullptr);
+}
+
+TEST_CASE("Haptic delivery retains the newest command during retry backoff", "[sharpa_avatar][haptic]")
+{
+    core::HapticCommandT first_native;
+    first_native.values = { 0.5f, 0.0f, 0.0f, 0.0f, 0.0f };
+    const auto first = core::pack<core::HapticCommand>(first_native);
+    core::HapticCommandT second_native;
+    second_native.values = { 0.0f, 0.5f, 0.0f, 0.0f, 0.0f };
+    const auto second = core::pack<core::HapticCommand>(second_native);
+
+    HapticCommandDeliveryState delivery;
+    delivery.observe(first);
+    delivery.observe(second);
+    CHECK(delivery.pending() == second.get());
+
+    delivery.discard();
+    CHECK(delivery.pending() == nullptr);
+    delivery.observe(second);
+    CHECK(delivery.pending() == nullptr);
 }
 
 TEST_CASE("Dongle detection handles complete and incomplete USB enumeration", "[sharpa_avatar][health]")

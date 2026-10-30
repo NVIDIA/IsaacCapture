@@ -82,6 +82,7 @@ LiveHandTrackerImpl::LiveHandTrackerImpl(const OpenXRSessionHandles& handles,
       pfn_locate_hand_joints_(nullptr),
       pfn_create_xdev_list_(nullptr),
       pfn_destroy_xdev_list_(nullptr),
+      pfn_get_xdev_list_generation_(nullptr),
       pfn_enumerate_xdevs_(nullptr),
       pfn_get_xdev_properties_(nullptr),
       mcap_channels_(std::move(mcap_channels))
@@ -210,36 +211,31 @@ void LiveHandTrackerImpl::initialize_xdev_hand_trackers(const OpenXRSessionHandl
 
     if (!load_optional_func("xrCreateXDevListMNDX", reinterpret_cast<PFN_xrVoidFunction*>(&pfn_create_xdev_list_)) ||
         !load_optional_func("xrDestroyXDevListMNDX", reinterpret_cast<PFN_xrVoidFunction*>(&pfn_destroy_xdev_list_)) ||
+        !load_optional_func("xrGetXDevListGenerationNumberMNDX",
+                            reinterpret_cast<PFN_xrVoidFunction*>(&pfn_get_xdev_list_generation_)) ||
         !load_optional_func("xrEnumerateXDevsMNDX", reinterpret_cast<PFN_xrVoidFunction*>(&pfn_enumerate_xdevs_)) ||
         !load_optional_func("xrGetXDevPropertiesMNDX", reinterpret_cast<PFN_xrVoidFunction*>(&pfn_get_xdev_properties_)))
     {
         pfn_create_xdev_list_ = nullptr;
         pfn_destroy_xdev_list_ = nullptr;
+        pfn_get_xdev_list_generation_ = nullptr;
         pfn_enumerate_xdevs_ = nullptr;
         pfn_get_xdev_properties_ = nullptr;
-        return;
-    }
-
-    XrCreateXDevListInfoMNDX create_info{ XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
-    XrResult result = pfn_create_xdev_list_(handles.session, &create_info, &xdev_list_);
-    if (XR_FAILED(result))
-    {
-        xdev_list_ = XR_NULL_HANDLE;
         return;
     }
 
     refresh_xdev_hand_trackers();
 }
 
-bool LiveHandTrackerImpl::enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& ordered_ids)
+bool LiveHandTrackerImpl::enumerate_xdev_ids(XrXDevListMNDX xdev_list, std::vector<XrXDevIdMNDX>& ordered_ids)
 {
-    if (xdev_list_ == XR_NULL_HANDLE)
+    if (xdev_list == XR_NULL_HANDLE)
     {
         return false;
     }
 
     uint32_t xdev_count = 0;
-    XrResult result = pfn_enumerate_xdevs_(xdev_list_, 0, &xdev_count, nullptr);
+    XrResult result = pfn_enumerate_xdevs_(xdev_list, 0, &xdev_count, nullptr);
     if (XR_FAILED(result))
     {
         return false;
@@ -247,7 +243,7 @@ bool LiveHandTrackerImpl::enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& ordered_
     std::vector<XrXDevIdMNDX> xdev_ids(xdev_count);
     if (xdev_count != 0)
     {
-        result = pfn_enumerate_xdevs_(xdev_list_, xdev_count, &xdev_count, xdev_ids.data());
+        result = pfn_enumerate_xdevs_(xdev_list, xdev_count, &xdev_count, xdev_ids.data());
         if (XR_FAILED(result))
         {
             return false;
@@ -263,7 +259,7 @@ bool LiveHandTrackerImpl::enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& ordered_
         get_info.id = xdev_id;
 
         XrXDevPropertiesMNDX properties{ XR_TYPE_XDEV_PROPERTIES_MNDX };
-        result = pfn_get_xdev_properties_(xdev_list_, &get_info, &properties);
+        result = pfn_get_xdev_properties_(xdev_list, &get_info, &properties);
         if (XR_FAILED(result))
         {
             return false;
@@ -287,14 +283,35 @@ bool LiveHandTrackerImpl::enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& ordered_
 
 bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
 {
-    std::vector<XrXDevIdMNDX> next_xdev_ids;
-    if (!enumerate_xdev_ids(next_xdev_ids))
+    if (pfn_create_xdev_list_ == nullptr || pfn_destroy_xdev_list_ == nullptr || pfn_get_xdev_list_generation_ == nullptr)
     {
         return false;
     }
-    if (next_xdev_ids == xdev_ids_)
+
+    XrXDevListMNDX next_xdev_list = XR_NULL_HANDLE;
+    XrCreateXDevListInfoMNDX create_info{ XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
+    if (XR_FAILED(pfn_create_xdev_list_(session_, &create_info, &next_xdev_list)))
     {
+        return false;
+    }
+
+    uint64_t next_generation = 0;
+    if (XR_FAILED(pfn_get_xdev_list_generation_(next_xdev_list, &next_generation)))
+    {
+        pfn_destroy_xdev_list_(next_xdev_list);
+        return false;
+    }
+    if (xdev_generation_ && next_generation == *xdev_generation_)
+    {
+        pfn_destroy_xdev_list_(next_xdev_list);
         return true;
+    }
+
+    std::vector<XrXDevIdMNDX> next_xdev_ids;
+    if (!enumerate_xdev_ids(next_xdev_list, next_xdev_ids))
+    {
+        pfn_destroy_xdev_list_(next_xdev_list);
+        return false;
     }
 
     std::vector<XrHandTrackerEXT> next_left_trackers;
@@ -305,9 +322,9 @@ bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
     for (const XrXDevIdMNDX xdev_id : next_xdev_ids)
     {
         const XDevTrackerCreation left_result =
-            try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
+            try_create_xdev_hand_tracker(session_, next_xdev_list, xdev_id, XR_HAND_LEFT_EXT, next_left_trackers);
         const XDevTrackerCreation right_result =
-            try_create_xdev_hand_tracker(session_, xdev_id, XR_HAND_RIGHT_EXT, next_right_trackers);
+            try_create_xdev_hand_tracker(session_, next_xdev_list, xdev_id, XR_HAND_RIGHT_EXT, next_right_trackers);
         retry_needed =
             left_result == XDevTrackerCreation::RETRY || right_result == XDevTrackerCreation::RETRY || retry_needed;
     }
@@ -316,29 +333,37 @@ bool LiveHandTrackerImpl::refresh_xdev_hand_trackers()
     {
         destroy_hand_trackers(next_left_trackers);
         destroy_hand_trackers(next_right_trackers);
+        pfn_destroy_xdev_list_(next_xdev_list);
         return false;
     }
 
+    const XrXDevListMNDX previous_xdev_list = xdev_list_;
+    xdev_list_ = next_xdev_list;
     left_xdev_hand_trackers_.swap(next_left_trackers);
     right_xdev_hand_trackers_.swap(next_right_trackers);
     destroy_hand_trackers(next_left_trackers);
     destroy_hand_trackers(next_right_trackers);
+    if (previous_xdev_list != XR_NULL_HANDLE)
+    {
+        pfn_destroy_xdev_list_(previous_xdev_list);
+    }
     xdev_ids_ = std::move(next_xdev_ids);
-    logger_->info("Refreshed XDev hand trackers (devices: {}, left: {}, right: {})", xdev_ids_.size(),
-                  left_xdev_hand_trackers_.size(), right_xdev_hand_trackers_.size());
+    xdev_generation_ = next_generation;
+    logger_->info("Refreshed XDev hand trackers (generation: {}, devices: {}, left: {}, right: {})", next_generation,
+                  xdev_ids_.size(), left_xdev_hand_trackers_.size(), right_xdev_hand_trackers_.size());
     return true;
 }
 
 LiveHandTrackerImpl::XDevTrackerCreation LiveHandTrackerImpl::try_create_xdev_hand_tracker(
-    XrSession session, XrXDevIdMNDX xdev_id, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers)
+    XrSession session, XrXDevListMNDX xdev_list, XrXDevIdMNDX xdev_id, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers)
 {
-    if (xdev_list_ == XR_NULL_HANDLE || xdev_id == 0)
+    if (xdev_list == XR_NULL_HANDLE || xdev_id == 0)
     {
         return XDevTrackerCreation::RETRY;
     }
 
     XrCreateHandTrackerXDevMNDX xdev_create_info{ XR_TYPE_CREATE_HAND_TRACKER_XDEV_MNDX };
-    xdev_create_info.xdevList = xdev_list_;
+    xdev_create_info.xdevList = xdev_list;
     xdev_create_info.id = xdev_id;
 
     XrHandTrackerCreateInfoEXT create_info{ XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
@@ -405,6 +430,7 @@ void LiveHandTrackerImpl::destroy_xdev_list()
     {
         pfn_destroy_xdev_list_(xdev_list_);
         xdev_list_ = XR_NULL_HANDLE;
+        xdev_generation_.reset();
     }
 }
 

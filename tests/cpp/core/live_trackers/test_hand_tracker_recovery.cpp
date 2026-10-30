@@ -23,6 +23,7 @@ class FakeHandRuntime
 public:
     enum class XDevBehavior
     {
+        FAIL_FIRST_LIST,
         FAIL_FIRST_LEFT,
         UNSUPPORTED,
     };
@@ -59,6 +60,16 @@ public:
         return left_xdev_create_attempts_;
     }
 
+    int xdev_list_create_attempts() const
+    {
+        return xdev_list_create_attempts_;
+    }
+
+    void advance_xdev_generation()
+    {
+        ++xdev_generation_;
+    }
+
 private:
     static XrResult XRAPI_CALL get_system(XrInstance, const XrSystemGetInfo*, XrSystemId* system_id)
     {
@@ -92,12 +103,26 @@ private:
 
     static XrResult XRAPI_CALL create_xdev_list(XrSession, const XrCreateXDevListInfoMNDX*, XrXDevListMNDX* list)
     {
-        *list = reinterpret_cast<XrXDevListMNDX>(1);
+        ++current_->xdev_list_create_attempts_;
+        if (current_->xdev_behavior_ == XDevBehavior::FAIL_FIRST_LIST && current_->fail_first_xdev_list_create_)
+        {
+            current_->fail_first_xdev_list_create_ = false;
+            return XR_ERROR_RUNTIME_FAILURE;
+        }
+        *list = reinterpret_cast<XrXDevListMNDX>(current_->next_xdev_list_handle_++);
+        current_->xdev_list_generations_[*list] = current_->xdev_generation_;
         return XR_SUCCESS;
     }
 
-    static XrResult XRAPI_CALL destroy_xdev_list(XrXDevListMNDX)
+    static XrResult XRAPI_CALL destroy_xdev_list(XrXDevListMNDX list)
     {
+        current_->xdev_list_generations_.erase(list);
+        return XR_SUCCESS;
+    }
+
+    static XrResult XRAPI_CALL get_xdev_list_generation(XrXDevListMNDX list, uint64_t* generation)
+    {
+        *generation = current_->xdev_list_generations_.at(list);
         return XR_SUCCESS;
     }
 
@@ -183,6 +208,7 @@ private:
             { "xrLocateSpace", reinterpret_cast<PFN_xrVoidFunction>(&locate_space) },
             { "xrCreateXDevListMNDX", reinterpret_cast<PFN_xrVoidFunction>(&create_xdev_list) },
             { "xrDestroyXDevListMNDX", reinterpret_cast<PFN_xrVoidFunction>(&destroy_xdev_list) },
+            { "xrGetXDevListGenerationNumberMNDX", reinterpret_cast<PFN_xrVoidFunction>(&get_xdev_list_generation) },
             { "xrEnumerateXDevsMNDX", reinterpret_cast<PFN_xrVoidFunction>(&enumerate_xdevs) },
             { "xrGetXDevPropertiesMNDX", reinterpret_cast<PFN_xrVoidFunction>(&get_xdev_properties) },
             { "xrCreateHandTrackerEXT", reinterpret_cast<PFN_xrVoidFunction>(&create_hand_tracker) },
@@ -199,8 +225,13 @@ private:
     inline static FakeHandRuntime* current_ = nullptr;
 
     uintptr_t next_tracker_handle_ = 1;
+    uintptr_t next_xdev_list_handle_ = 1;
     int left_xdev_create_attempts_ = 0;
+    int xdev_list_create_attempts_ = 0;
+    uint64_t xdev_generation_ = 1;
+    std::map<XrXDevListMNDX, uint64_t> xdev_list_generations_;
     XDevBehavior xdev_behavior_;
+    bool fail_first_xdev_list_create_ = true;
     bool fail_first_left_xdev_create_ = true;
 };
 
@@ -230,4 +261,33 @@ TEST_CASE("HandTracker caches XDevs that do not support hand tracking", "[unit][
     session->update();
 
     CHECK(runtime.left_xdev_create_attempts() == 1);
+}
+
+TEST_CASE("HandTracker recovers when the initial XDev list creation fails", "[unit][hand][xdev]")
+{
+    FakeHandRuntime runtime(FakeHandRuntime::XDevBehavior::FAIL_FIRST_LIST);
+    auto hand = std::make_shared<core::HandTracker>();
+    auto session = core::DeviceIOSession::run({ hand }, runtime.handles());
+
+    REQUIRE(runtime.xdev_list_create_attempts() == 1);
+    REQUIRE(runtime.left_xdev_create_attempts() == 0);
+
+    session->update();
+
+    CHECK(runtime.xdev_list_create_attempts() == 2);
+    CHECK(runtime.left_xdev_create_attempts() == 1);
+}
+
+TEST_CASE("HandTracker rebinds unchanged XDev IDs from a new generation", "[unit][hand][xdev]")
+{
+    FakeHandRuntime runtime(FakeHandRuntime::XDevBehavior::UNSUPPORTED);
+    auto hand = std::make_shared<core::HandTracker>();
+    auto session = core::DeviceIOSession::run({ hand }, runtime.handles());
+
+    REQUIRE(runtime.left_xdev_create_attempts() == 1);
+    runtime.advance_xdev_generation();
+
+    session->update();
+
+    CHECK(runtime.left_xdev_create_attempts() == 2);
 }

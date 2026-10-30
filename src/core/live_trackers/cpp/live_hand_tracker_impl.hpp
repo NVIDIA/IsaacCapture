@@ -51,9 +51,10 @@ private:
     };
 
     void initialize_xdev_hand_trackers(const OpenXRSessionHandles& handles);
-    bool enumerate_xdev_ids(std::vector<XrXDevIdMNDX>& xdev_ids);
+    bool enumerate_xdev_ids(XrXDevListMNDX xdev_list, std::vector<XrXDevIdMNDX>& xdev_ids);
     bool refresh_xdev_hand_trackers();
     XDevTrackerCreation try_create_xdev_hand_tracker(XrSession session,
+                                                     XrXDevListMNDX xdev_list,
                                                      XrXDevIdMNDX xdev_id,
                                                      XrHandEXT hand,
                                                      std::vector<XrHandTrackerEXT>& trackers);
@@ -77,6 +78,7 @@ private:
     std::vector<XrHandTrackerEXT> right_default_hand_trackers_;
     std::vector<XrXDevIdMNDX> xdev_ids_;
     XrXDevListMNDX xdev_list_;
+    std::optional<uint64_t> xdev_generation_;
     int64_t last_xdev_refresh_time_ = 0;
 
     // The snapshots published each frame, encoded from locals in update().
@@ -89,6 +91,7 @@ private:
     PFN_xrLocateHandJointsEXT pfn_locate_hand_joints_;
     PFN_xrCreateXDevListMNDX pfn_create_xdev_list_;
     PFN_xrDestroyXDevListMNDX pfn_destroy_xdev_list_;
+    PFN_xrGetXDevListGenerationNumberMNDX pfn_get_xdev_list_generation_;
     PFN_xrEnumerateXDevsMNDX pfn_enumerate_xdevs_;
     PFN_xrGetXDevPropertiesMNDX pfn_get_xdev_properties_;
 
