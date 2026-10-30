@@ -6,7 +6,6 @@ find_package(Threads REQUIRED)
 add_executable(remote_plugin_session_tests
     test_bridge_limits.cpp
     test_clock_offset_estimator.cpp
-    test_latency_stats.cpp
     test_remote_address.cpp
     test_remote_plugin_session.cpp
     test_tcp_transport.cpp

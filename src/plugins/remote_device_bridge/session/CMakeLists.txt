@@ -9,8 +9,6 @@ add_library(remote_plugin_session STATIC
     inc/remote_plugin_session/bridge_limits.hpp
     clock_offset_estimator.cpp
     inc/remote_plugin_session/clock_offset_estimator.hpp
-    latency_stats.cpp
-    inc/remote_plugin_session/latency_stats.hpp
     protocol_frame.cpp
     protocol_payloads.cpp
     protocol_io.hpp

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 
 namespace remote_plugin_session
@@ -13,12 +14,12 @@ namespace remote_plugin_session
 //! pushes and the runtime then drops the client's IPC.
 constexpr size_t kDefaultMaxSchemaBytes = 32 * 1024;
 
-//! Empty if a schema channel with this sample size fits the bridge cap, else the refusal text for the client.
-inline std::string schema_cap_error(const std::string& collection_id, size_t sample_bytes, size_t cap_bytes)
+//! The refusal text for the client when a schema channel with this sample size exceeds the bridge cap.
+inline std::optional<std::string> schema_cap_error(const std::string& collection_id, size_t sample_bytes, size_t cap_bytes)
 {
     if (sample_bytes <= cap_bytes)
     {
-        return {};
+        return std::nullopt;
     }
     return "schema '" + collection_id + "' sample size " + std::to_string(sample_bytes) + " bytes exceeds bridge cap " +
            std::to_string(cap_bytes) + " bytes (runtime limit); channel refused";

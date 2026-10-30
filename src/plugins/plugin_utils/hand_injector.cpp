@@ -17,7 +17,7 @@ namespace plugin_utils
 
 namespace
 {
-//! Callers that cannot link plugin_utils (remote_device_bridge) recognize it by name() and read code().value().
+//! Callers that cannot link plugin_utils recognize it by name() and read code().value().
 class XrResultCategory final : public std::error_category
 {
 public:

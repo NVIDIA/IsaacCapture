@@ -3,11 +3,12 @@
 
 #include "inc/remote_device_bridge/bridge_server.hpp"
 
+#include "inc/remote_device_bridge/latency_stats.hpp"
+
 #include <log_bridge/logger.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <remote_plugin_session/bridge_limits.hpp>
 #include <remote_plugin_session/clock_offset_estimator.hpp>
-#include <remote_plugin_session/latency_stats.hpp>
 #include <remote_plugin_session/protocol_frame.hpp>
 #include <remote_plugin_session/protocol_payloads.hpp>
 #include <remote_plugin_session/tcp_socket.hpp>
@@ -82,6 +83,17 @@ struct Received
     int64_t t_recv_ns;
 };
 
+//! HandOwners::owner index of a hand.
+size_t hand_index(XrHandEXT hand)
+{
+    return hand == XR_HAND_LEFT_EXT ? 0 : 1;
+}
+
+const char* hand_side(size_t hand_index)
+{
+    return hand_index == 0 ? "left" : "right";
+}
+
 } // namespace
 
 //! Bridge client id owning each hand's push device (0 = free). Lives in a MAP_SHARED page created before any
@@ -90,11 +102,14 @@ struct BridgeServer::HandOwners
 {
     std::array<std::atomic<uint32_t>, 2> owner{};
 
-    //! 0 when `client_id` now owns the hand, else the current owner.
-    uint32_t claim(size_t hand, uint32_t client_id)
+    //! Empty when `client_id` now owns the hand, else the current owner.
+    std::optional<uint32_t> claim(size_t hand, uint32_t client_id)
     {
         uint32_t expected = 0;
-        owner[hand].compare_exchange_strong(expected, client_id);
+        if (owner[hand].compare_exchange_strong(expected, client_id))
+        {
+            return std::nullopt;
+        }
         return expected;
     }
 
@@ -106,11 +121,23 @@ struct BridgeServer::HandOwners
 };
 static_assert(std::atomic<uint32_t>::is_always_lock_free, "hand owners are shared across processes");
 
+void BridgeServer::HandOwnersUnmap::operator()(HandOwners* owners) const noexcept
+{
+    munmap(owners, sizeof(HandOwners));
+}
+
 namespace
 {
 
 //! Refuses one OPEN_*: answered with ERROR on that channel id, the session and its other channels continue.
 class ChannelRefused : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
+//! The handshake did not produce a session; the reason is already logged.
+class HandshakeRefused : public std::runtime_error
 {
 public:
     using std::runtime_error::runtime_error;
@@ -127,10 +154,11 @@ bool push_device_owned_elsewhere(const std::exception& e)
            std::string(error->what()).rfind("xrCreatePushDeviceNV(", 0) == 0;
 }
 
-//! One accepted connection: owns the mirrored OpenXR session and its channels.
+//! One accepted connection: owns the mirrored plugin session and its channels.
 class ClientSession
 {
 public:
+    //! Reads HELLO, creates the session and answers HELLO_ACK; throws HandshakeRefused when the client is refused.
     ClientSession(std::unique_ptr<ITransport> transport,
                   uint32_t client_id,
                   const BridgeOptions& options,
@@ -140,12 +168,21 @@ public:
           m_client_id(client_id),
           m_tag("[bridge c" + std::to_string(client_id) + "]"),
           m_options(options),
-          m_session_factory(session_factory),
           m_hand_owners(hand_owners)
     {
-        if (!m_options.stats_csv.empty())
+        try
         {
-            m_csv = std::make_unique<remote_plugin_session::SampleCsv>(m_options.stats_csv);
+            if (m_options.stats_csv)
+            {
+                m_csv = std::make_unique<SampleCsv>(*m_options.stats_csv);
+            }
+            handshake(session_factory);
+        }
+        catch (...)
+        {
+            // The destructor does not run for a constructor that throws.
+            m_transport->shutdown();
+            throw;
         }
     }
 
@@ -153,12 +190,10 @@ public:
     {
         m_done = true;
         m_transport->shutdown();
-        if (m_reader.joinable())
-        {
-            m_reader.join();
-        }
+        m_reader.join();
 
-        // Teardown order mirrors OpenXRPluginSession's contract: channels before the session.
+        // Push channels close before the session, which owns the pull channel and wrist source (m_session is
+        // declared before the channel maps, so it is destroyed last).
         while (!m_hand_channels.empty())
         {
             close_channel(m_hand_channels.begin()->first);
@@ -167,82 +202,11 @@ public:
         {
             close_channel(m_schema_channels.begin()->first);
         }
-        m_pull_channel = nullptr;
-        m_wrist_source = nullptr;
-        m_session.reset();
-    }
-
-    ClientSession(const ClientSession&) = delete;
-    ClientSession& operator=(const ClientSession&) = delete;
-
-    //! Reads HELLO, creates the OpenXR session and answers HELLO_ACK. False means the client was refused.
-    bool handshake()
-    {
-        std::vector<uint8_t> bytes;
-        protocol::Frame frame;
-        protocol::Hello hello;
-        try
-        {
-            if (m_transport->receive(bytes, kHandshakeTimeout) != ReceiveResult::Ok)
-            {
-                throw protocol::DecodeError("no frame");
-            }
-            frame = protocol::split_frame(std::move(bytes));
-            if (frame.header.type != protocol::FrameType::Hello)
-            {
-                throw protocol::DecodeError("expected HELLO, got frame type " +
-                                            std::to_string(static_cast<int>(frame.header.type)));
-            }
-            hello = protocol::decode_hello(frame.payload);
-        }
-        catch (const protocol::DecodeError& e)
-        {
-            logger()->warn("{} bad HELLO ({}); dropping connection", m_tag, e.what());
-            return false;
-        }
-        note_received(frame.header, core::os_monotonic_now_ns());
-
-        std::string app_name = !m_options.app_name.empty() ? m_options.app_name :
-                               !hello.app_name.empty()     ? hello.app_name :
-                                                             std::string("remote_device_bridge");
-        logger()->info(
-            "{} HELLO from '{}' (schema_push={:d} hand_tracking_push={:d} wrist_tracking_pull={:d}); OpenXR app "
-            "name '{}'",
-            m_tag, hello.app_name, hello.requirements.schema_push, hello.requirements.hand_tracking_push,
-            hello.requirements.wrist_tracking_pull.has_value(), app_name);
-
-        logger()->info("{} creating OpenXR plugin session (waits for a headset)", m_tag);
-        try
-        {
-            m_session = m_session_factory(app_name, hello.requirements);
-        }
-        catch (const std::exception& e)
-        {
-            logger()->error("{} OpenXR session creation failed: {}", m_tag, e.what());
-            send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
-                 protocol::encode_hello_ack(
-                     protocol::HelloAck{ false, std::string("OpenXR session creation failed: ") + e.what() }));
-            return false;
-        }
-        logger()->info("{} OpenXR plugin session ready", m_tag);
-        m_wrist_declared = hello.requirements.wrist_tracking_pull.has_value();
-
-        if (!send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
-                  protocol::encode_hello_ack(protocol::HelloAck{ true, "" })))
-        {
-            return false;
-        }
-        m_reader = std::thread(&ClientSession::reader_loop, this);
-        if (m_options.clock_source == ClockSource::TwoWay)
-        {
-            m_pings.emplace(core::os_monotonic_now_ns());
-        }
-        return true;
     }
 
     void run(const std::atomic<bool>& stop)
     {
-        const auto period = std::chrono::nanoseconds(1'000'000'000 / std::max(1, m_options.wrist_rate_hz));
+        const auto period = std::chrono::nanoseconds(1'000'000'000 / m_options.wrist_rate_hz);
         auto next_tick = std::chrono::steady_clock::now() + period;
         auto next_stats = std::chrono::steady_clock::now() + m_options.stats_period;
 
@@ -261,8 +225,18 @@ public:
             {
                 // The reader never pushes after raising the flag, so one more pass picks up the client's last
                 // frames (typically CLOSE for the pull channel) that landed between the swap above and the check.
-                apply_queued();
-                logger()->info("{} client disconnected", m_tag);
+                if (!apply_queued())
+                {
+                    return;
+                }
+                if (m_reader_error.empty())
+                {
+                    logger()->info("{} client disconnected", m_tag);
+                }
+                else
+                {
+                    fail(m_reader_error);
+                }
                 return;
             }
 
@@ -297,6 +271,99 @@ public:
     }
 
 private:
+    struct HandChannel
+    {
+        std::unique_ptr<core::IHandTrackingPushChannel> channel;
+        size_t hand = 0; //!< HandOwners index
+        uint64_t pushes = 0;
+    };
+
+    struct SchemaChannel
+    {
+        std::unique_ptr<core::ISchemaPushChannel> channel;
+        std::string collection_id;
+        size_t max_bytes = 0; //!< max_flatbuffer_size
+        uint64_t pushes = 0;
+    };
+
+    struct Counters
+    {
+        uint64_t rx_hand = 0;
+        uint64_t rx_schema = 0;
+        uint64_t applied = 0;
+        uint64_t coalesced = 0;
+        uint64_t stale = 0;
+        uint64_t tx_wrist = 0;
+    };
+
+    [[noreturn]] void refuse_handshake(const std::string& reason)
+    {
+        logger()->warn("{} {}; dropping connection", m_tag, reason);
+        throw HandshakeRefused(reason);
+    }
+
+    void handshake(const SessionFactory& session_factory)
+    {
+        std::vector<uint8_t> bytes;
+        if (m_transport->receive(bytes, kHandshakeTimeout) != ReceiveResult::Ok)
+        {
+            refuse_handshake("bad HELLO (no frame)");
+        }
+        protocol::Frame frame;
+        protocol::Hello hello;
+        try
+        {
+            frame = protocol::split_frame(std::move(bytes));
+            if (frame.header.type != protocol::FrameType::Hello)
+            {
+                refuse_handshake("bad HELLO (expected HELLO, got frame type " +
+                                 std::to_string(static_cast<int>(frame.header.type)) + ")");
+            }
+            hello = protocol::decode_hello(frame.payload);
+        }
+        catch (const protocol::DecodeError& e)
+        {
+            refuse_handshake(std::string("bad HELLO (") + e.what() + ")");
+        }
+        note_received(frame.header, core::os_monotonic_now_ns());
+
+        const std::string app_name =
+            m_options.app_name.value_or(!hello.app_name.empty() ? hello.app_name : std::string("remote_device_bridge"));
+        logger()->info(
+            "{} HELLO from '{}' (schema_push={:d} hand_tracking_push={:d} wrist_tracking_pull={:d}); app name '{}'",
+            m_tag, hello.app_name, hello.requirements.schema_push, hello.requirements.hand_tracking_push,
+            hello.requirements.wrist_tracking_pull.has_value(), app_name);
+
+        logger()->info("{} creating plugin session", m_tag);
+        try
+        {
+            m_session = session_factory(app_name)(hello.requirements, {});
+        }
+        catch (const std::exception& e)
+        {
+            logger()->error("{} plugin session creation failed: {}", m_tag, e.what());
+            send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+                 protocol::encode_hello_ack(
+                     protocol::HelloAck{ false, std::string("plugin session creation failed: ") + e.what() }));
+            throw HandshakeRefused(e.what());
+        }
+        logger()->info("{} plugin session ready", m_tag);
+        m_wrist_declared = hello.requirements.wrist_tracking_pull.has_value();
+
+        send(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
+             protocol::encode_hello_ack(protocol::HelloAck{ true, "" }));
+        if (m_done.load())
+        {
+            refuse_handshake("HELLO_ACK not delivered");
+        }
+        if (m_options.clock_source == ClockSource::TwoWay)
+        {
+            m_pings.emplace(core::os_monotonic_now_ns());
+        }
+        // Last: nothing may throw once the reader runs.
+        m_reader = std::thread(&ClientSession::reader_loop, this);
+    }
+
     void reader_loop()
     {
         while (!m_done.load())
@@ -307,6 +374,11 @@ private:
             {
                 continue;
             }
+            if (result == ReceiveResult::Malformed)
+            {
+                m_reader_error = "malformed message from the transport";
+                break;
+            }
             if (result != ReceiveResult::Ok)
             {
                 break;
@@ -316,8 +388,9 @@ private:
             {
                 received.frame = protocol::split_frame(std::move(bytes));
             }
-            catch (const protocol::DecodeError&)
+            catch (const protocol::DecodeError& e)
             {
+                m_reader_error = std::string("bad frame: ") + e.what();
                 break;
             }
             {
@@ -352,10 +425,10 @@ private:
             const protocol::FrameHeader& header = batch[i].frame.header;
             if (is_sample(header.type))
             {
-                ++(header.type == protocol::FrameType::HandSample ? m_rx_hand : m_rx_schema);
+                ++(header.type == protocol::FrameType::HandSample ? m_counts.rx_hand : m_counts.rx_schema);
                 if (newest[header.channel_id] != i)
                 {
-                    ++m_coalesced;
+                    ++m_counts.coalesced;
                     note_received(header, batch[i].t_recv_ns);
                     continue;
                 }
@@ -375,6 +448,12 @@ private:
         m_last_recv_ns = t_recv_ns;
     }
 
+    //! Set while OPEN_PULL is open and HELLO declared a wrist source; owned by m_session.
+    core::IWristTrackingSource* wrist_source() const
+    {
+        return m_pull_channel != nullptr && m_wrist_declared ? &m_pull_channel->wrist_tracking_source() : nullptr;
+    }
+
     void apply(const Received& received)
     {
         const protocol::FrameHeader& header = received.frame.header;
@@ -389,18 +468,18 @@ private:
             {
                 const XrHandEXT open_hand = protocol::decode_open_hand(payload);
                 require_free_channel(header.channel_id);
-                const char* const side = open_hand == XR_HAND_LEFT_EXT ? "left" : "right";
-                const size_t hand = open_hand == XR_HAND_LEFT_EXT ? 0 : 1;
+                const size_t hand = hand_index(open_hand);
+                const char* const side = hand_side(hand);
                 // The runtime allows one push device per hand; refuse a second owner before it gets there.
-                if (const uint32_t owner = m_hand_owners.claim(hand, m_client_id); owner != 0)
+                if (const std::optional<uint32_t> owner = m_hand_owners.claim(hand, m_client_id))
                 {
                     throw ChannelRefused(std::string("hand ") + side + " is already owned by bridge client c" +
-                                         std::to_string(owner) + "; channel refused");
+                                         std::to_string(*owner) + "; channel refused");
                 }
                 try
                 {
                     auto channel = m_session->create_hand_tracking_push_channel(open_hand);
-                    m_hand_channels[header.channel_id] = { std::move(channel), 0, side, hand };
+                    m_hand_channels.emplace(header.channel_id, HandChannel{ std::move(channel), hand });
                 }
                 catch (const std::exception& e)
                 {
@@ -422,16 +501,14 @@ private:
                 const core::SchemaPusherConfig config = protocol::decode_open_schema(payload);
                 require_free_channel(header.channel_id);
                 // The runtime tensor is max_flatbuffer_size bytes whatever the sample holds.
-                if (const std::string error = remote_plugin_session::schema_cap_error(
-                        config.collection_id, config.max_flatbuffer_size, m_options.max_schema_bytes);
-                    !error.empty())
+                if (const std::optional<std::string> error = remote_plugin_session::schema_cap_error(
+                        config.collection_id, config.max_flatbuffer_size, m_options.max_schema_bytes))
                 {
-                    throw ChannelRefused(error);
+                    throw ChannelRefused(*error);
                 }
-                auto& schema = m_schema_channels[header.channel_id];
-                schema.channel = m_session->create_schema_push_channel(config);
-                schema.collection_id = config.collection_id;
-                schema.max_bytes = config.max_flatbuffer_size;
+                auto channel = m_session->create_schema_push_channel(config);
+                m_schema_channels.emplace(header.channel_id, SchemaChannel{ std::move(channel), config.collection_id,
+                                                                            config.max_flatbuffer_size });
                 logger()->info("{} channel {}: schema '{}' opened", m_tag, header.channel_id, config.collection_id);
                 break;
             }
@@ -444,10 +521,9 @@ private:
                 require_free_channel(header.channel_id);
                 // The session built the pull channel, and the wrist source HELLO declared, when it was created.
                 m_pull_channel = &m_session->pull_channel();
-                m_wrist_source = m_wrist_declared ? &m_pull_channel->wrist_tracking_source() : nullptr;
                 m_pull_channel_id = header.channel_id;
                 logger()->info("{} channel {}: pull channel opened{}", m_tag, header.channel_id,
-                               m_wrist_source != nullptr ? " with wrist source" : "");
+                               wrist_source() != nullptr ? " with wrist source" : "");
                 break;
             }
             case protocol::FrameType::Close:
@@ -473,12 +549,12 @@ private:
                 }
                 it->second.channel->push(sample.joints.data(), t_ns);
                 ++it->second.pushes;
-                ++m_applied;
+                ++m_counts.applied;
                 if (m_csv)
                 {
                     m_csv->write({ core::os_monotonic_now_ns(), received.t_recv_ns, sample.sample_time_ns, t_ns,
-                                   now_ns - t_ns, it->second.side, header.seq,
-                                   remote_plugin_session::index_curl_m(sample.joints.data()) });
+                                   now_ns - t_ns, hand_side(it->second.hand), header.seq,
+                                   index_curl_m(sample.joints.data()) });
                 }
                 break;
             }
@@ -508,7 +584,7 @@ private:
                 it->second.channel->push_buffer(
                     sample.bytes.data(), sample.bytes.size(), t_ns, sample.sample_time_raw_device_clock_ns);
                 ++it->second.pushes;
-                ++m_applied;
+                ++m_counts.applied;
                 break;
             }
             case protocol::FrameType::Pong:
@@ -529,8 +605,9 @@ private:
                 break;
             }
             case protocol::FrameType::Heartbeat:
-            case protocol::FrameType::Hello:
                 break;
+            case protocol::FrameType::Hello:
+                throw std::runtime_error("HELLO after the handshake");
             default:
                 throw std::runtime_error("unexpected frame type " + std::to_string(static_cast<int>(header.type)));
             }
@@ -545,16 +622,17 @@ private:
         }
     }
 
-    //! True (and counted) when the mapped sample time is older than --max-sample-age-ms. Records the age either way.
+    //! True (and counted) when the mapped sample time is older than max_sample_age. Records the age either way.
     bool stale(int64_t mapped_t_ns, int64_t now_ns)
     {
         m_ages_ns.push_back(now_ns - mapped_t_ns);
-        const int64_t max_age_ns = static_cast<int64_t>(m_options.max_sample_age_ms) * 1'000'000;
-        if (!remote_plugin_session::should_drop_stale(mapped_t_ns, now_ns, max_age_ns))
+        if (!m_options.max_sample_age ||
+            !remote_plugin_session::should_drop_stale(
+                mapped_t_ns, now_ns, std::chrono::nanoseconds(*m_options.max_sample_age).count()))
         {
             return false;
         }
-        ++m_stale;
+        ++m_counts.stale;
         return true;
     }
 
@@ -568,7 +646,7 @@ private:
         }
     }
 
-    //! Logs the per-channel push count: it is the evidence the loopback runbook reads.
+    //! Logs each push channel's push count as it closes.
     void close_channel(uint16_t channel_id)
     {
         if (const auto hand = m_hand_channels.find(channel_id); hand != m_hand_channels.end())
@@ -591,7 +669,6 @@ private:
         if (m_pull_channel && channel_id == m_pull_channel_id)
         {
             m_pull_channel = nullptr;
-            m_wrist_source = nullptr;
             logger()->info("{} channel {} (pull) closed", m_tag, channel_id);
             return;
         }
@@ -615,7 +692,7 @@ private:
                  protocol::encode_ping(core::os_monotonic_now_ns()));
             break;
         case PingScheduler::Action::GiveUp:
-            logger()->warn("{} WARN clock: no PONG, falling back to one-way", m_tag);
+            logger()->warn("{} clock: no PONG, falling back to one-way", m_tag);
             break;
         case PingScheduler::Action::None:
             break;
@@ -631,19 +708,20 @@ private:
         try
         {
             m_pull_channel->update();
-            if (m_wrist_source)
+            if (core::IWristTrackingSource* const wrist = wrist_source())
             {
                 for (const XrHandEXT hand : { XR_HAND_LEFT_EXT, XR_HAND_RIGHT_EXT })
                 {
                     protocol::WristSample sample;
                     sample.sample_time_ns = now_ns;
                     sample.hand = hand;
-                    sample.sample = m_wrist_source->query(hand, now_ns);
-                    if (!send(protocol::FrameType::WristSample, m_pull_channel_id, protocol::encode_wrist_sample(sample)))
+                    sample.sample = wrist->query(hand, now_ns);
+                    send(protocol::FrameType::WristSample, m_pull_channel_id, protocol::encode_wrist_sample(sample));
+                    if (m_done.load())
                     {
                         return;
                     }
-                    ++m_tx_wrist;
+                    ++m_counts.tx_wrist;
                 }
             }
         }
@@ -653,7 +731,8 @@ private:
         }
     }
 
-    bool send(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
+    //! A failed send ends the session (sets m_done).
+    void send(protocol::FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
     {
         std::vector<uint8_t> frame = protocol::encode_frame(type, channel_id, payload);
         m_last_send_ns = core::os_monotonic_now_ns();
@@ -661,9 +740,7 @@ private:
         if (!m_transport->send(frame.data(), frame.size()))
         {
             m_done.store(true);
-            return false;
         }
-        return true;
     }
 
     void refuse_channel(uint16_t channel_id, const std::string& message)
@@ -684,36 +761,24 @@ private:
     void log_stats()
     {
         logger()->info("{} 5s: rx hand={} schema={} | applied={} coalesced={} stale={} | tx wrist={} | offset_ns={}{}",
-                       m_tag, m_rx_hand - m_logged[0], m_rx_schema - m_logged[1], m_applied - m_logged[2],
-                       m_coalesced - m_logged[3], m_stale - m_logged[4], m_tx_wrist - m_logged[5], m_clock.offset_ns(),
-                       remote_plugin_session::format_clock_stats(m_ages_ns, m_clock));
-        m_logged = { m_rx_hand, m_rx_schema, m_applied, m_coalesced, m_stale, m_tx_wrist };
+                       m_tag, m_counts.rx_hand - m_logged.rx_hand, m_counts.rx_schema - m_logged.rx_schema,
+                       m_counts.applied - m_logged.applied, m_counts.coalesced - m_logged.coalesced,
+                       m_counts.stale - m_logged.stale, m_counts.tx_wrist - m_logged.tx_wrist, m_clock.offset_ns(),
+                       format_clock_stats(std::move(m_ages_ns), m_clock));
+        m_logged = m_counts;
         m_ages_ns.clear();
     }
-
-    template <typename Channel>
-    struct CountedChannel
-    {
-        std::unique_ptr<Channel> channel;
-        uint64_t pushes = 0;
-        const char* side = ""; //!< hand channels: "left" / "right"
-        size_t hand = 0; //!< hand channels: HandOwners index
-        std::string collection_id; //!< schema channels
-        size_t max_bytes = 0; //!< schema channels: max_flatbuffer_size
-    };
 
     std::unique_ptr<ITransport> m_transport;
     const uint32_t m_client_id;
     const std::string m_tag;
     const BridgeOptions& m_options;
-    const SessionFactory& m_session_factory;
     BridgeServer::HandOwners& m_hand_owners;
 
     std::unique_ptr<core::IPluginSession> m_session;
-    std::map<uint16_t, CountedChannel<core::IHandTrackingPushChannel>> m_hand_channels;
-    std::map<uint16_t, CountedChannel<core::ISchemaPushChannel>> m_schema_channels;
+    std::map<uint16_t, HandChannel> m_hand_channels;
+    std::map<uint16_t, SchemaChannel> m_schema_channels;
     core::IPluginPullChannel* m_pull_channel = nullptr; //!< owned by m_session; set while OPEN_PULL is open
-    core::IWristTrackingSource* m_wrist_source = nullptr; //!< owned by m_session; set when HELLO declared one
     bool m_wrist_declared = false;
     uint16_t m_pull_channel_id = 0;
     std::set<uint16_t> m_refused_channels; //!< until the client's CLOSE
@@ -721,20 +786,16 @@ private:
     ClockOffsetEstimator m_clock;
     std::optional<PingScheduler> m_pings; //!< set for --clock-source=two-way
     bool m_logged_pong = false;
-    std::vector<int64_t> m_ages_ns; //!< since the last 5 s line
-    std::unique_ptr<remote_plugin_session::SampleCsv> m_csv;
+    std::vector<int64_t> m_ages_ns; //!< since the last status line
+    std::unique_ptr<SampleCsv> m_csv;
     uint32_t m_next_seq = 0;
     int64_t m_last_send_ns = 0;
     int64_t m_last_recv_ns = 0;
-    uint64_t m_rx_hand = 0;
-    uint64_t m_rx_schema = 0;
-    uint64_t m_applied = 0;
-    uint64_t m_coalesced = 0;
-    uint64_t m_stale = 0;
-    uint64_t m_tx_wrist = 0;
-    std::array<uint64_t, 6> m_logged{};
+    Counters m_counts;
+    Counters m_logged; //!< m_counts at the previous status line
 
     std::thread m_reader;
+    std::string m_reader_error; //!< why the reader stopped, if not a clean close; written before m_reader_closed
     std::mutex m_queue_mutex;
     std::condition_variable m_queue_cv;
     std::deque<Received> m_queue;
@@ -742,27 +803,30 @@ private:
     std::atomic<bool> m_done{ false };
 };
 
-//! Runs one client to completion in the forked child.
-void serve_client(std::unique_ptr<ITransport> transport,
+//! Runs one client to completion in the forked child; false after a fatal error.
+bool serve_client(std::unique_ptr<ITransport> transport,
                   uint32_t client_id,
                   const BridgeOptions& options,
                   const SessionFactory& session_factory,
                   BridgeServer::HandOwners& hand_owners,
                   const std::atomic<bool>& stop)
 {
+    bool ok = true;
     try
     {
         ClientSession session(std::move(transport), client_id, options, session_factory, hand_owners);
-        if (session.handshake())
-        {
-            session.run(stop);
-        }
+        session.run(stop);
+    }
+    catch (const HandshakeRefused&)
+    {
     }
     catch (const std::exception& e)
     {
         logger()->error("[bridge c{}] fatal: {}", client_id, e.what());
+        ok = false;
     }
     logger()->info("[bridge c{}] session closed", client_id);
+    return ok;
 }
 
 //! Runs in a refusal child: HELLO_ACK first, then read until the client hangs up (it does once it reads the
@@ -818,13 +882,14 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
     {
         throw std::invalid_argument("BridgeServer requires a session factory");
     }
-    if (m_options.wrist_rate_hz <= 0 || m_options.max_clients <= 0 || m_options.max_sample_age_ms < 0)
+    if (m_options.wrist_rate_hz <= 0 || m_options.max_clients <= 0 ||
+        (m_options.max_sample_age && m_options.max_sample_age->count() <= 0))
     {
-        throw std::invalid_argument("--wrist-rate-hz and --max-clients must be positive, --max-sample-age-ms >= 0");
+        throw std::invalid_argument("--wrist-rate-hz, --max-clients and --max-sample-age-ms must be positive");
     }
     if (m_options.max_schema_bytes == 0)
     {
-        throw std::invalid_argument("--max-schema-bytes must be a positive integer (bytes); default 32768");
+        throw std::invalid_argument("--max-schema-bytes must be positive");
     }
     m_listener = remote_plugin_session::TcpSocket::listen(m_options.listen, m_options.max_clients);
     if (m_options.ws_listen)
@@ -833,91 +898,107 @@ BridgeServer::BridgeServer(BridgeOptions options, SessionFactory session_factory
         logger()->info(
             "remote_device_bridge listening for ws:// on {}:{}", m_options.ws_listen->host, m_ws_listener.local_port());
     }
-    if (!m_options.stats_csv.empty())
+    if (m_options.stats_csv)
     {
-        remote_plugin_session::SampleCsv::create(m_options.stats_csv);
+        SampleCsv::create(*m_options.stats_csv);
     }
     m_bridge_full_ack = protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
                                                protocol::encode_hello_ack(protocol::HelloAck{ false, "bridge full" }));
     logger()->info(
-        "remote_device_bridge listening on {}:{} (wrist {} Hz, process per client, max {}, max sample age {} ms, max "
+        "remote_device_bridge listening on {}:{} (wrist {} Hz, process per client, max {}, max sample age {}, max "
         "schema {} bytes)",
         m_options.listen.host, m_listener.local_port(), m_options.wrist_rate_hz, m_options.max_clients,
-        m_options.max_sample_age_ms, m_options.max_schema_bytes);
+        m_options.max_sample_age ? std::to_string(m_options.max_sample_age->count()) + " ms" : std::string("off"),
+        m_options.max_schema_bytes);
     logger()->info("remote_device_bridge clock={}{}",
                    m_options.clock_source == ClockSource::TwoWay ? "two-way" : "one-way",
-                   m_options.stats_csv.empty() ? "" : " stats-csv=" + m_options.stats_csv);
-    // Mapped last so a throw above cannot leak it.
+                   m_options.stats_csv ? " stats-csv=" + *m_options.stats_csv : std::string());
     void* const shared = mmap(nullptr, sizeof(HandOwners), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shared == MAP_FAILED)
     {
         throw std::runtime_error(std::string("mmap(hand owners): ") + std::strerror(errno));
     }
-    m_hand_owners = new (shared) HandOwners();
+    m_hand_owners.reset(new (shared) HandOwners());
 }
 
-BridgeServer::~BridgeServer()
-{
-    if (m_hand_owners != nullptr)
-    {
-        m_hand_owners->~HandOwners();
-        munmap(m_hand_owners, sizeof(HandOwners));
-    }
-}
+BridgeServer::~BridgeServer() = default;
 
 uint16_t BridgeServer::port() const
 {
     return m_listener.local_port();
 }
 
-uint16_t BridgeServer::ws_port() const
+std::optional<uint16_t> BridgeServer::ws_port() const
 {
-    return m_ws_listener.valid() ? m_ws_listener.local_port() : 0;
+    if (!m_ws_listener.valid())
+    {
+        return std::nullopt;
+    }
+    return m_ws_listener.local_port();
 }
 
-//! Logs and forgets finished clients; with `wait` it first asks children to stop and blocks for all of them.
-void BridgeServer::reap_clients(bool wait)
+void BridgeServer::on_reaped(const ClientRecord& client, int status)
 {
-    if (wait)
+    if (client.refusal)
     {
-        for (const ClientRecord& client : m_clients)
-        {
-            kill(client.pid, SIGTERM);
-        }
+        return;
     }
-    // A child still inside the OpenXRPluginSession constructor (waiting for a headset) never sees the stop flag,
-    // so the grace period ends in SIGKILL.
-    const auto grace_end = std::chrono::steady_clock::now() + kStopGrace;
+    for (size_t hand = 0; hand < m_hand_owners->owner.size(); ++hand)
+    {
+        m_hand_owners->release(hand, client.id);
+    }
+    logger()->info("[bridge] client pid {} exited ({}) after {:g} s", client.pid,
+                   WIFEXITED(status) ? "status " + std::to_string(WEXITSTATUS(status)) :
+                                       "signal " + std::to_string(WTERMSIG(status)),
+                   uptime_s(client.started));
+}
+
+void BridgeServer::reap_finished()
+{
     for (auto it = m_clients.begin(); it != m_clients.end();)
     {
         int status = 0;
-        pid_t reaped = waitpid(it->pid, &status, WNOHANG);
-        while (wait && reaped == 0)
+        if (waitpid(it->pid, &status, WNOHANG) != it->pid)
+        {
+            ++it;
+            continue;
+        }
+        on_reaped(*it, status);
+        it = m_clients.erase(it);
+    }
+}
+
+void BridgeServer::stop_and_reap_all()
+{
+    for (const ClientRecord& client : m_clients)
+    {
+        kill(client.pid, SIGTERM);
+    }
+    // A child still inside the session factory (the OpenXR one waits for a headset) never sees the stop flag, so
+    // the grace period ends in SIGKILL.
+    const auto grace_end = std::chrono::steady_clock::now() + kStopGrace;
+    for (const ClientRecord& client : m_clients)
+    {
+        int status = 0;
+        pid_t reaped = waitpid(client.pid, &status, WNOHANG);
+        while (reaped == 0)
         {
             if (std::chrono::steady_clock::now() >= grace_end)
             {
-                logger()->warn("[bridge] client pid {} killed after {} s grace", it->pid, kStopGrace.count());
-                kill(it->pid, SIGKILL);
-                reaped = waitpid(it->pid, &status, 0);
+                logger()->warn("[bridge] client pid {} killed after {} s grace", client.pid, kStopGrace.count());
+                kill(client.pid, SIGKILL);
+                reaped = waitpid(client.pid, &status, 0);
                 break;
             }
             std::this_thread::sleep_for(kReapPoll);
-            reaped = waitpid(it->pid, &status, WNOHANG);
+            reaped = waitpid(client.pid, &status, WNOHANG);
         }
-        const bool gone = reaped == it->pid;
-        if (gone && !it->refusal)
+        if (reaped == client.pid)
         {
-            for (size_t hand = 0; hand < m_hand_owners->owner.size(); ++hand)
-            {
-                m_hand_owners->release(hand, it->id);
-            }
-            logger()->info("[bridge] client pid {} exited ({}) after {:g} s", it->pid,
-                           WIFEXITED(status) ? "status " + std::to_string(WEXITSTATUS(status)) :
-                                               "signal " + std::to_string(WTERMSIG(status)),
-                           uptime_s(it->started));
+            on_reaped(client, status);
         }
-        it = gone ? m_clients.erase(it) : std::next(it);
     }
+    m_clients.clear();
 }
 
 void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::string& peer, const std::atomic<bool>& stop)
@@ -947,31 +1028,28 @@ void BridgeServer::admit_client(std::unique_ptr<ITransport> client, const std::s
         }
         if (pid < 0)
         {
-            logger()->error("[bridge] fork failed; closing refused client {}", peer);
+            logger()->error("[bridge] fork failed ({}); closing refused client {}", std::strerror(errno), peer);
             return;
         }
         m_clients.push_back(ClientRecord{ id, peer, std::chrono::steady_clock::now(), pid, true });
         return;
     }
 
-    // fork() is safe here because this process never creates threads or OpenXR objects: the child is a
-    // clean process that owns exactly one OpenXRPluginSession, like a local plugin process would. Threads
-    // are not an option: the OpenXR loader allows one XrInstance per process.
     const pid_t pid = fork();
     if (pid < 0)
     {
-        logger()->error("[bridge] fork failed; dropping client {}", peer);
+        logger()->error("[bridge] fork failed ({}); dropping client {}", std::strerror(errno), peer);
         return;
     }
     if (pid == 0)
     {
         m_listener.close();
         m_ws_listener.close();
-        serve_client(std::move(client), id, m_options, m_session_factory, *m_hand_owners, stop);
+        const bool ok = serve_client(std::move(client), id, m_options, m_session_factory, *m_hand_owners, stop);
         // _exit skips stdio teardown: flush the logger's file sink and stdout first.
         logger()->flush();
         std::fflush(nullptr);
-        _exit(0);
+        _exit(ok ? 0 : 1);
     }
     logger()->info("[bridge] client {} started (pid {}, c{})", peer, pid, id);
     m_clients.push_back(ClientRecord{ id, peer, std::chrono::steady_clock::now(), pid });
@@ -981,7 +1059,7 @@ void BridgeServer::run(const std::atomic<bool>& stop)
 {
     while (!stop.load())
     {
-        reap_clients(false);
+        reap_finished();
         std::array<pollfd, 2> listeners{ pollfd{ m_listener.fd(), POLLIN, 0 }, pollfd{ m_ws_listener.fd(), POLLIN, 0 } };
         const nfds_t count = m_ws_listener.valid() ? 2 : 1;
         const int ready = ::poll(listeners.data(), count, static_cast<int>(kAcceptPoll.count()));
@@ -1010,7 +1088,7 @@ void BridgeServer::run(const std::atomic<bool>& stop)
             }
         }
     }
-    reap_clients(true);
+    stop_and_reap_all();
 }
 
 } // namespace remote_device_bridge

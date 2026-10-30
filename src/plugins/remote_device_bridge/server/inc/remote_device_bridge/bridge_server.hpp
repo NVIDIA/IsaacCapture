@@ -31,46 +31,40 @@ enum class ClockSource
 struct BridgeOptions
 {
     remote_plugin_session::Endpoint listen{ "0.0.0.0", remote_plugin_session::kDefaultBridgePort };
-    //! Second listener speaking WebSocket (same frames, same --max-clients budget); off when unset.
+    //! Second listener speaking WebSocket (same frames, same --max-clients budget).
     std::optional<remote_plugin_session::Endpoint> ws_listen;
-    //! Overrides the HELLO app name when non-empty.
-    std::string app_name;
+    //! Overrides the HELLO app name.
+    std::optional<std::string> app_name;
     int wrist_rate_hz = 90;
     int max_clients = 8;
-    //! Samples whose mapped time is older than this are dropped instead of pushed; 0 disables.
-    int max_sample_age_ms = 250;
+    //! Samples whose mapped time is older than this are dropped instead of pushed.
+    std::optional<std::chrono::milliseconds> max_sample_age{ 250 };
     //! OPEN_SCHEMA with a larger max_flatbuffer_size is refused before it reaches the runtime.
     size_t max_schema_bytes = remote_plugin_session::kDefaultMaxSchemaBytes;
     ClockSource clock_source = ClockSource::TwoWay;
-    //! One CSV row per pushed hand sample (remote_plugin_session::SampleCsv); off when empty.
-    std::string stats_csv;
+    //! One CSV row per pushed hand sample (SampleCsv).
+    std::optional<std::string> stats_csv;
     //! Period of each client's status line; not a flag (tests shorten it).
     std::chrono::milliseconds stats_period{ 5000 };
 };
 
-//! Creates the session a client's channels are mirrored onto. Called in the forked child once HELLO arrived;
-//! the bridge binary passes one that builds an OpenXRPluginSession.
-using SessionFactory = std::function<std::unique_ptr<core::IPluginSession>(
-    const std::string& app_name, const core::PluginSessionRequirements& requirements)>;
+//! Returns the factory for a client's session, given the app name; called in the forked child once HELLO arrived.
+using SessionFactory = std::function<core::PluginSessionFactory(const std::string& app_name)>;
 
 /*!
- * @brief Accepts remote plugin sessions and mirrors each onto its own OpenXRPluginSession.
+ * @brief Accepts remote plugin sessions and mirrors each onto a session from the SessionFactory.
  *
- * The accept loop itself never touches OpenXR or creates threads: every client is served by a forked child
- * process (the OpenXR loader allows one XrInstance per process), and within it every OpenXR call happens on
- * one thread.
+ * Every client is served by its own forked child process (see this plugin's AGENTS.md for why).
  */
 class BridgeServer
 {
 public:
     BridgeServer(BridgeOptions options, SessionFactory session_factory);
     ~BridgeServer();
-    BridgeServer(const BridgeServer&) = delete;
-    BridgeServer& operator=(const BridgeServer&) = delete;
 
-    //! Bound ports (useful with port 0); ws_port() is 0 without --ws-listen.
+    //! Bound ports (useful with port 0).
     uint16_t port() const;
-    uint16_t ws_port() const;
+    std::optional<uint16_t> ws_port() const;
 
     //! Accept loop; returns once stop becomes true and every client has been reaped.
     void run(const std::atomic<bool>& stop);
@@ -80,8 +74,16 @@ public:
 
 private:
     struct ClientRecord;
+    struct HandOwnersUnmap
+    {
+        void operator()(HandOwners* owners) const noexcept;
+    };
 
-    void reap_clients(bool wait);
+    //! Logs and forgets clients that have exited, without blocking.
+    void reap_finished();
+    //! Asks every child to stop and blocks until all are reaped (SIGKILL after a grace period).
+    void stop_and_reap_all();
+    void on_reaped(const ClientRecord& client, int status);
     void admit_client(std::unique_ptr<remote_plugin_session::ITransport> client,
                       const std::string& peer,
                       const std::atomic<bool>& stop);
@@ -90,7 +92,7 @@ private:
     SessionFactory m_session_factory;
     remote_plugin_session::TcpSocket m_listener;
     remote_plugin_session::TcpSocket m_ws_listener;
-    HandOwners* m_hand_owners = nullptr;
+    std::unique_ptr<HandOwners, HandOwnersUnmap> m_hand_owners;
     std::vector<uint8_t> m_bridge_full_ack;
     std::list<ClientRecord> m_clients;
     uint32_t m_accepted = 0;
