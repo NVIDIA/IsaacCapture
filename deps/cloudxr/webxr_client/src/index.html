@@ -1570,7 +1570,7 @@ limitations under the License.
 
               <div class="config-section">
                 <label for="cloudxrWarmupBeginTimeoutMs" class="input-label"
-                  >Warm-up Begin Timeout (ms, default: 0 / disabled)</label
+                  >Warm-up Begin Timeout (ms, default: 10000 / 10 seconds)</label
                 >
                 <input
                   id="cloudxrWarmupBeginTimeoutMs"
@@ -1580,7 +1580,7 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up begin timeout in ms"
                   spellcheck="false"
-                  value="0"
+                  value="10000"
                 />
                 <div class="config-text">
                   How long to wait, after the stream attaches, for the first sign that decoder
@@ -1592,7 +1592,7 @@ limitations under the License.
 
               <div class="config-section">
                 <label for="cloudxrWarmupEndTimeoutMs" class="input-label"
-                  >Warm-up End Timeout (ms, default: 0 / disabled)</label
+                  >Warm-up End Timeout (ms, default: 30000 / 30 seconds)</label
                 >
                 <input
                   id="cloudxrWarmupEndTimeoutMs"
@@ -1602,7 +1602,7 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up end timeout in ms"
                   spellcheck="false"
-                  value="0"
+                  value="30000"
                 />
                 <div class="config-text">
                   How long to wait for decoder warm-up to finish once it has begun before treating

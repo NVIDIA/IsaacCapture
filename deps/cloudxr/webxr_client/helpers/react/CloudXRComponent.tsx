@@ -74,23 +74,23 @@ const WARMUP_COMPLETE_LOG_PATTERN =
 // override via the streamAttachTimeoutMs prop, not by lowering this default.
 const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
 
-// Debug log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
-// frames. Not currently emitted by CloudXR.js: until a release that emits it is consumed, and the
-// session logLevel includes Debug, none of the idle-frame handling below runs.
+// Info log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
+// frames. Emitted by CloudXR.js 6.4.1-isaaccapture and later; with an older SDK none of the
+// idle-frame handling below runs.
 const IDLE_FRAME_LOG_MESSAGE = 'Received idle frame';
 // Idle frames are sent about every 250 ms; this long with none means real frames have started
 // (or the stream stalled), so the warm-up watchdogs resume.
 const IDLE_FRAMES_QUIET_MS = 1000;
 
-// Defaults for the warmupBeginTimeoutMs/warmupEndTimeoutMs props below. 0 disables warm-up
-// detection: a CloudXR runtime with no OpenXR app streams idle frames that count as warm-up
-// frames, so a fixed deadline can tear down a healthy session that is only waiting for an app.
-// Callers that want detection (e.g. tests) set the props. Neither deadline grows per reconnect
-// attempt (see armWarmupBeginTimer/armWarmupEndTimer). Split into two because "no warm-up signal
-// at all since attaching" and "warm-up started but never finishes" are different failure modes
-// worth distinguishing in the synthetic error message.
-const WARMUP_BEGIN_BASE_TIMEOUT_MS = 0; // disabled; first warm-up log since onStreamStarted
-const WARMUP_END_BASE_TIMEOUT_MS = 0; // disabled; completion since warm-up began
+// Defaults for the warmupBeginTimeoutMs/warmupEndTimeoutMs props below. Both shorter than
+// STREAM_ATTACH_BASE_TIMEOUT_MS and, unlike it, neither grows per reconnect attempt (see
+// armWarmupBeginTimer/armWarmupEndTimer): once the stream has attached at all, decoder warm-up
+// is a fast, bounded startup step (server encoder priming), not something that legitimately
+// takes longer on a slow network the way the initial attach can. Split into two deadlines
+// because "no warm-up signal at all since attaching" and "warm-up started but never finishes"
+// are different failure modes worth distinguishing in the synthetic error message.
+const WARMUP_BEGIN_BASE_TIMEOUT_MS = 10000; // 10 seconds - first warm-up log since onStreamStarted
+const WARMUP_END_BASE_TIMEOUT_MS = 30000; // 30 seconds - completion since warm-up began
 
 // setTimeout's delay is stored as a 32-bit signed int internally; a value above this overflows
 // and fires (almost) immediately instead of waiting - the opposite of what a long configured
@@ -115,7 +115,7 @@ export interface WarmupStatus {
 
 /**
  * Server keep-alive ("idle") frame status for the current connection attempt, derived from the
- * SDK's 'Received idle frame' debug log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
+ * SDK's 'Received idle frame' log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
  * is alive but no OpenXR app is submitting frames. Reset at the start of each connection attempt.
  */
 export interface IdleStatus {
@@ -189,7 +189,7 @@ interface CloudXRComponentProps {
    * message. Like warmupEndTimeoutMs, does NOT grow per reconnect attempt - warm-up is a fast,
    * bounded server-side priming step once the stream has attached at all, not something that
    * legitimately takes longer under retry the way the initial attach can. Defaults to
-   * WARMUP_BEGIN_BASE_TIMEOUT_MS (0, disabled). A value <= 0 disables this detection, as does
+   * WARMUP_BEGIN_BASE_TIMEOUT_MS (10 seconds). A value <= 0 disables this detection, as does
    * warmupEndTimeoutMs <= 0.
    */
   warmupBeginTimeoutMs?: number;
@@ -200,7 +200,7 @@ interface CloudXRComponentProps {
    * the first warm-up log arrives and cleared by WARMUP_COMPLETE_LOG_PATTERN). See
    * warmupBeginTimeoutMs's doc comment for why this is a separate deadline. Does NOT grow per
    * reconnect attempt, for the same reason warmupBeginTimeoutMs doesn't. Defaults to
-   * WARMUP_END_BASE_TIMEOUT_MS (0, disabled). A value <= 0 disables this detection and
+   * WARMUP_END_BASE_TIMEOUT_MS (30 seconds). A value <= 0 disables this detection and
    * warmupBeginTimeoutMs too (all warm-up detection); stream-attach detection is unaffected.
    */
   warmupEndTimeoutMs?: number;
@@ -749,7 +749,7 @@ export default function CloudXRComponent({
             telemetry: {
               enabled: true,
               appInfo: {
-                version: '6.3.0',
+                version: '6.4.1-isaaccapture',
                 product: applicationName,
               },
             },
