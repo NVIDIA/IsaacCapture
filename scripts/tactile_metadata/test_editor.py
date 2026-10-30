@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -52,6 +52,9 @@ class EditorTests(unittest.TestCase):
         editor._sync_preview_values = Mock()
         editor._rebuild_preview_segments = Mock()
         editor._update_preview_error = Mock()
+        editor.mode_edit = SimpleNamespace(value=False)
+        editor.selected_kind, editor.selected_rows = None, []
+        editor._sync_selection = Mock()
         return editor
 
     def test_malformed_live_input_reports_an_error_without_raising(self):
@@ -105,6 +108,32 @@ class EditorTests(unittest.TestCase):
                     [segment.joint for segment in editor.preview_document.segments],
                     list(JOINTS),
                 )
+
+    def test_live_joint_changes_clear_only_preview_selection(self):
+        original = ["PALM", "WRIST", "THUMB_METACARPAL"]
+        for editing, joints in (
+            (False, original[1:]),
+            (False, original),
+            (True, original[1:]),
+        ):
+            with self.subTest(editing=editing, joints=joints):
+                editor = self.make_live_editor({"hand": {}})
+                editor.mode_edit.value = editing
+                editor.preview_document.segments = [
+                    Segment(joint) for joint in original
+                ]
+                editor.selected_kind, editor.selected_rows = "segments", [1]
+                with patch.object(
+                    geo,
+                    "hand_segments",
+                    return_value=[Segment(joint) for joint in joints],
+                ):
+                    editor._update_live()
+
+                cleared = not editing and joints != original
+                self.assertEqual(editor.selected_kind, None if cleared else "segments")
+                self.assertEqual(editor.selected_rows, [] if cleared else [1])
+                self.assertEqual(editor._sync_selection.call_count, int(cleared))
 
     def test_apply_all_preserves_rendered_taxels(self):
         editor = self.make_editor()

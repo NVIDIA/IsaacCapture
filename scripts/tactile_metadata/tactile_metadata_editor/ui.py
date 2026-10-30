@@ -1476,6 +1476,9 @@ class Editor:
                 self.preview_document.segments = updated
                 if signature != joints:
                     self._rebuild_preview_segments()
+                    if self.mode_value == "Preview":
+                        self.selected_kind, self.selected_rows = None, []
+                        self._sync_selection()
             else:
                 self.live_status.content = "Current Status: Data Invalid"
             if self.joint_enabled.value:
