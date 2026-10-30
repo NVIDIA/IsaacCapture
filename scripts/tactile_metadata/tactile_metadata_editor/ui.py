@@ -1206,9 +1206,13 @@ class Editor:
     def _start_binding(self) -> None:
         self._set_pick_mode(None)
         self.binding_phase = "taxels"
-        self.binding_taxels, self.binding_segments = [], []
-        self.selected_kind, self.selected_rows = None, []
-        self._set_binding_button(None)
+        self.binding_taxels = (
+            self.selected_rows.copy() if self.selected_kind == "taxels" else []
+        )
+        self.binding_segments = []
+        if not self.binding_taxels:
+            self.selected_kind, self.selected_rows = None, []
+        self._set_binding_button("next" if self.binding_taxels else None)
         self.binding_info.content = (
             "Select taxel(s) to bind in 3D scene. Hold Shift to multi-select. "
             'Click "Select Segments" after selecting taxels. Click another area to cancel.'
