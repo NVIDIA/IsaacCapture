@@ -3,7 +3,11 @@
 
 cmake_minimum_required(VERSION 3.20)
 
+find_package(Threads REQUIRED)
+
 add_library(remote_plugin_session STATIC
+    clock_offset_estimator.cpp
+    inc/remote_plugin_session/clock_offset_estimator.hpp
     protocol_frame.cpp
     protocol_payloads.cpp
     protocol_io.hpp
@@ -11,6 +15,8 @@ add_library(remote_plugin_session STATIC
     inc/remote_plugin_session/protocol_payloads.hpp
     remote_address.cpp
     inc/remote_plugin_session/remote_address.hpp
+    remote_plugin_session.cpp
+    inc/remote_plugin_session/remote_plugin_session.hpp
     tcp_socket.cpp
     inc/remote_plugin_session/tcp_socket.hpp
     tcp_transport.cpp
@@ -28,6 +34,9 @@ target_include_directories(remote_plugin_session
 target_link_libraries(remote_plugin_session
     PUBLIC
         pusherio::pusherio
+    PRIVATE
+        log_bridge::log_bridge_core
+        Threads::Threads
 )
 
 add_library(Teleop::remote_plugin_session ALIAS remote_plugin_session)
