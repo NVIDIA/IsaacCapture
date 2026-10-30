@@ -92,7 +92,6 @@ class Editor:
         self.binding_taxels: list[int] = []
         self.binding_segments: list[int] = []
         self.pick_mode: str | None = None
-        self.preview_has_errors = False
         self.selection_rotation = np.zeros(3)
         self.selection_scale = 1.0
         self.selection_gizmo_dragging = False
@@ -280,18 +279,10 @@ class Editor:
                 )
             self.show_binding = gui.add_checkbox("Show Binding Poses", False)
             self.collection = gui.add_text("Tactile Collection ID", "tactile")
-            self.apply_segments_button = self._action_button(
-                "Apply Segments", self._apply_preview_segments
-            )
-            self.apply_taxels_button = self._action_button(
-                "Apply Taxels", self._apply_preview_taxels
-            )
-            self.apply_urdf_button = self._action_button(
-                "Apply URDF", self._apply_preview_urdf
-            )
-            self.apply_all_button = self._action_button(
-                "Apply ALL", self._apply_preview_all
-            )
+            self._action_button("Apply Segments", self._apply_preview_segments)
+            self._action_button("Apply Taxels", self._apply_preview_taxels)
+            self._action_button("Apply URDF", self._apply_preview_urdf)
+            self._action_button("Apply ALL", self._apply_preview_all)
             gui.add_markdown(
                 "Apply ALL fully overrides the editor's segments, taxels, bindings, and URDF joint values."
             )
@@ -1339,16 +1330,11 @@ class Editor:
 
     def _update_preview_error(self) -> None:
         _, errors, _ = self._rendered_preview_taxels()
-        self.preview_has_errors = bool(errors)
         self.preview_error.value = (
             '<span style="color:#d32f2f">' + "<br>".join(errors) + "</span>"
             if errors
             else ""
         )
-        self.apply_taxels_button.disabled = False
-        self.apply_all_button.disabled = False
-        self.apply_segments_button.disabled = False
-        self.apply_urdf_button.disabled = False
 
     def _document_error_html(self) -> str:
         messages = []
@@ -1488,17 +1474,10 @@ class Editor:
                         self.preview_document.q[target] = raw * scale + offset
             self._sync_preview_values()
             self._update_preview_error()
-        except (
-            ValueError,
-            TypeError,
-            KeyError,
-            IndexError,
-            json.JSONDecodeError,
-        ) as exc:
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
             self.preview_error.value = (
                 f'<span style="color:#d32f2f">Live error: {exc}</span>'
             )
-            self.preview_has_errors = True
         self.redraw = True
 
     def _sync_preview_values(self) -> None:
@@ -2208,11 +2187,7 @@ class Editor:
                 True,
             )
         else:
-            try:
-                valid_rows, _, source_count = self._rendered_preview_taxels()
-            except (ValueError, TypeError, KeyError, IndexError):
-                valid_rows = []
-                source_count = 0
+            valid_rows, _, source_count = self._rendered_preview_taxels()
             preview_taxels = [taxel for _, taxel in valid_rows]
             raw_forces = (
                 self.receiver.latest.get("forces")
