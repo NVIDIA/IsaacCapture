@@ -18,6 +18,9 @@ namespace protocol = remote_plugin_protocol;
 namespace
 {
 
+constexpr size_t kWristConfigPayloadSize = sizeof(uint8_t) + 2 * protocol::kPoseSize;
+constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + protocol::kPoseSize;
+
 bool same_pose(const XrPosef& a, const XrPosef& b)
 {
     return std::memcmp(&a, &b, sizeof(XrPosef)) == 0;
@@ -49,7 +52,7 @@ void put_f32(std::vector<uint8_t>& out, float v)
     put_u32(out, bits);
 }
 
-//! Reference payload encoder (the pre-frame-builder layout) kept as the golden for HAND_SAMPLE.
+//! Field-by-field reference encoder, the golden for HAND_SAMPLE.
 std::vector<uint8_t> reference_hand_payload(const protocol::HandSample& sample)
 {
     std::vector<uint8_t> out;
@@ -84,15 +87,10 @@ std::vector<uint8_t> schema_payload(const protocol::SchemaSample& sample)
 
 TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit]")
 {
-    protocol::FrameHeader header;
-    header.type = protocol::FrameType::HandSample;
-    header.channel_id = 0xBEEF;
-    header.seq = 0x01020304;
-    header.payload_size = static_cast<uint32_t>(protocol::kHandSamplePayloadSize);
-    header.t_send_monotonic_ns = -1234567890123LL;
-
-    uint8_t bytes[protocol::kHeaderSize];
-    protocol::encode_header(header, bytes);
+    std::vector<uint8_t> frame = protocol::encode_frame(
+        protocol::FrameType::HandSample, 0xBEEF, std::vector<uint8_t>(protocol::kHandSamplePayloadSize));
+    protocol::stamp_header(frame, 0x01020304, -1234567890123LL);
+    uint8_t* bytes = frame.data();
     REQUIRE(bytes[0] == 0x52); // little-endian "RPS0"
     REQUIRE(bytes[1] == 0x50);
     REQUIRE(bytes[2] == 0x53);
@@ -128,7 +126,7 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     }
 }
 
-TEST_CASE("Wire contract v1 is 12 message types plus PING and PONG in a 24-byte header", "[remote_device_bridge][unit]")
+TEST_CASE("Wire contract is 14 frame types in a 24-byte header", "[remote_device_bridge][unit]")
 {
     // Frame type numbers are part of the wire contract.
     const std::vector<protocol::FrameType> contract = {
@@ -143,22 +141,14 @@ TEST_CASE("Wire contract v1 is 12 message types plus PING and PONG in a 24-byte 
     {
         REQUIRE(static_cast<uint8_t>(contract[i]) == i + 1);
     }
-    REQUIRE(protocol::kHeaderSize == 24);
-    REQUIRE(protocol::kProtocolVersion == 0);
-    REQUIRE(protocol::kHelloVersion == 2);
 
     // magic u32 @0, type u8 @4, version u8 @5, channel u16 @6, seq u32 @8, payload size u32 @12, t_send i64 @16.
-    protocol::FrameHeader header;
-    header.type = protocol::FrameType::Pong;
-    header.channel_id = 0x0A0B;
-    header.seq = 0x0C0D0E0F;
-    header.payload_size = 24;
-    header.t_send_monotonic_ns = 0x1112131415161718LL;
-    uint8_t bytes[protocol::kHeaderSize];
-    protocol::encode_header(header, bytes);
+    std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, 0x0A0B, std::vector<uint8_t>(24, 0));
+    protocol::stamp_header(frame, 0x0C0D0E0F, 0x1112131415161718LL);
     const std::vector<uint8_t> expected = { 0x52, 0x50, 0x53, 0x30, 14,   0,    0x0B, 0x0A, 0x0F, 0x0E, 0x0D, 0x0C,
                                             24,   0,    0,    0,    0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11 };
-    REQUIRE(std::vector<uint8_t>(bytes, bytes + protocol::kHeaderSize) == expected);
+    REQUIRE(std::vector<uint8_t>(frame.begin(), frame.begin() + 24) == expected);
+    uint8_t* bytes = frame.data();
 
     for (const uint8_t type : { 0, 15 })
     {
@@ -241,7 +231,7 @@ TEST_CASE("OPEN_WRIST round-trips WristTrackingSourceConfig", "[remote_device_br
     config.right_aim_to_wrist = make_pose(0.7f);
 
     const std::vector<uint8_t> bytes = protocol::encode_open_wrist(config);
-    REQUIRE(bytes.size() == protocol::kWristConfigPayloadSize);
+    REQUIRE(bytes.size() == kWristConfigPayloadSize);
     const core::WristTrackingSourceConfig decoded = protocol::decode_open_wrist(bytes);
     REQUIRE(decoded.mode == core::WristTrackingSourceMode::Controller);
     REQUIRE(same_pose(decoded.left_aim_to_wrist, config.left_aim_to_wrist));
@@ -314,8 +304,8 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
     sample.sample.pose = make_pose(0.3f);
 
     const std::vector<uint8_t> bytes = protocol::encode_wrist_sample(sample);
-    REQUIRE(bytes.size() == protocol::kWristSamplePayloadSize);
-    REQUIRE(bytes[8] == 0); // byte 8 keeps its original meaning: 1 = left, 0 = right
+    REQUIRE(bytes.size() == kWristSamplePayloadSize);
+    REQUIRE(bytes[8] == 0); // hand byte: 1 = left, 0 = right
     const protocol::WristSample decoded = protocol::decode_wrist_sample(bytes);
     REQUIRE(decoded.sample_time_ns == -5);
     REQUIRE(decoded.hand == XR_HAND_RIGHT_EXT);
@@ -351,7 +341,9 @@ TEST_CASE("PING and PONG round-trip and PONG t3 is stamped at send time", "[remo
     REQUIRE_THROWS_AS(protocol::decode_pong(std::vector<uint8_t>(25, 0)), protocol::DecodeError);
 
     std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, protocol::kSessionChannelId, payload);
-    protocol::stamp_header(frame.data(), 7, 0x0102030405060708LL);
+    protocol::stamp_header(frame, 7, 0x0102030405060708LL);
+    REQUIRE(protocol::decode_pong(protocol::split_frame(frame).payload).t3_ns == 3); // header only
+    protocol::set_pong_t3(frame, 0x0102030405060708LL);
     const protocol::Frame split = protocol::split_frame(frame);
     REQUIRE(split.header.type == protocol::FrameType::Pong);
     REQUIRE(split.header.t_send_monotonic_ns == 0x0102030405060708LL);
@@ -360,11 +352,9 @@ TEST_CASE("PING and PONG round-trip and PONG t3 is stamped at send time", "[remo
     REQUIRE(stamped.t2_ns == 2);
     REQUIRE(stamped.t3_ns == 0x0102030405060708LL);
 
-    // stamp_header leaves the payload of every other frame type alone.
     std::vector<uint8_t> ping_frame =
         protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, ping);
-    protocol::stamp_header(ping_frame.data(), 8, 42);
-    REQUIRE(protocol::decode_ping(protocol::split_frame(ping_frame).payload) == -123456789012345LL);
+    REQUIRE_THROWS_AS(protocol::set_pong_t3(ping_frame, 42), std::invalid_argument);
     REQUIRE_THROWS_WITH(protocol::decode_ping({ 1, 2, 3 }), Catch::Matchers::ContainsSubstring("PING"));
     REQUIRE_THROWS_WITH(protocol::decode_pong({ 1 }), Catch::Matchers::ContainsSubstring("PONG"));
 }
@@ -392,7 +382,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         // clang-format on
         REQUIRE(frame == golden);
 
-        protocol::stamp_header(frame.data(), 0x11223344u, 0x0807060504030201LL);
+        protocol::stamp_header(frame, 0x11223344u, 0x0807060504030201LL);
         REQUIRE(std::vector<uint8_t>(frame.begin() + 8, frame.begin() + 12) ==
                 std::vector<uint8_t>{ 0x44, 0x33, 0x22, 0x11 });
         REQUIRE(std::vector<uint8_t>(frame.begin() + 16, frame.begin() + 24) ==

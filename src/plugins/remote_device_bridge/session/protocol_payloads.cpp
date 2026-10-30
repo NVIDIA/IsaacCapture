@@ -17,42 +17,6 @@ using detail::Writer;
 namespace
 {
 
-const char* to_string(FrameType type)
-{
-    switch (type)
-    {
-    case FrameType::Hello:
-        return "HELLO";
-    case FrameType::HelloAck:
-        return "HELLO_ACK";
-    case FrameType::OpenHand:
-        return "OPEN_HAND";
-    case FrameType::OpenSchema:
-        return "OPEN_SCHEMA";
-    case FrameType::OpenPull:
-        return "OPEN_PULL";
-    case FrameType::OpenWrist:
-        return "OPEN_WRIST";
-    case FrameType::Close:
-        return "CLOSE";
-    case FrameType::HandSample:
-        return "HAND_SAMPLE";
-    case FrameType::SchemaSample:
-        return "SCHEMA_SAMPLE";
-    case FrameType::WristSample:
-        return "WRIST_SAMPLE";
-    case FrameType::Heartbeat:
-        return "HEARTBEAT";
-    case FrameType::Error:
-        return "ERROR";
-    case FrameType::Ping:
-        return "PING";
-    case FrameType::Pong:
-        return "PONG";
-    }
-    return "UNKNOWN";
-}
-
 uint8_t to_wire_hand(XrHandEXT hand)
 {
     switch (hand)
@@ -79,7 +43,6 @@ XrHandEXT from_wire_hand(uint8_t hand)
     }
 }
 
-// WRIST_SAMPLE keeps its original byte: 1 = left, 0 = right (OPEN_HAND uses 0 = left).
 uint8_t to_wire_is_left(XrHandEXT hand)
 {
     switch (hand)
@@ -147,6 +110,16 @@ core::WristTrackingSourceConfig read_wrist_config(Reader& reader)
     return value;
 }
 
+//! Runs `write` against a fresh payload buffer and returns it.
+template <typename Write>
+std::vector<uint8_t> build_payload(Write write)
+{
+    std::vector<uint8_t> out;
+    Writer writer(out);
+    write(writer);
+    return out;
+}
+
 } // namespace
 
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
@@ -188,104 +161,111 @@ std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
 
 std::vector<uint8_t> encode_hello(const Hello& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.u16(value.proto_version);
-    writer.str(value.app_name);
-    writer.u8(value.requirements.schema_push ? 1 : 0);
-    writer.u8(value.requirements.hand_tracking_push ? 1 : 0);
-    writer.u8(value.requirements.wrist_tracking_pull ? 1 : 0);
-    if (value.requirements.wrist_tracking_pull)
-    {
-        write_wrist_config(writer, *value.requirements.wrist_tracking_pull);
-    }
-    return out;
+    return build_payload(
+        [&](Writer& writer)
+        {
+            writer.u16(value.proto_version);
+            writer.str(value.app_name);
+            writer.u8(value.requirements.schema_push ? 1 : 0);
+            writer.u8(value.requirements.hand_tracking_push ? 1 : 0);
+            writer.u8(value.requirements.wrist_tracking_pull ? 1 : 0);
+            if (value.requirements.wrist_tracking_pull)
+            {
+                write_wrist_config(writer, *value.requirements.wrist_tracking_pull);
+            }
+        });
 }
 
 std::vector<uint8_t> encode_hello_ack(const HelloAck& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.u8(value.accepted ? 1 : 0);
-    writer.str(value.reason);
-    return out;
+    return build_payload(
+        [&](Writer& writer)
+        {
+            writer.u8(value.accepted ? 1 : 0);
+            writer.str(value.reason);
+        });
 }
 
 std::vector<uint8_t> encode_open_hand(XrHandEXT hand)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.u8(to_wire_hand(hand));
-    return out;
+    return build_payload([&](Writer& writer) { writer.u8(to_wire_hand(hand)); });
 }
 
 std::vector<uint8_t> encode_open_schema(const core::SchemaPusherConfig& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.str(value.collection_id);
-    writer.u64(static_cast<uint64_t>(value.max_flatbuffer_size));
-    writer.str(value.tensor_identifier);
-    writer.str(value.localized_name);
-    writer.str(value.app_name);
-    return out;
+    return build_payload(
+        [&](Writer& writer)
+        {
+            writer.str(value.collection_id);
+            writer.u64(static_cast<uint64_t>(value.max_flatbuffer_size));
+            writer.str(value.tensor_identifier);
+            writer.str(value.localized_name);
+            writer.str(value.app_name);
+        });
 }
 
 std::vector<uint8_t> encode_open_wrist(const core::WristTrackingSourceConfig& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    write_wrist_config(writer, value);
-    return out;
+    return build_payload([&](Writer& writer) { write_wrist_config(writer, value); });
 }
 
 std::vector<uint8_t> encode_wrist_sample(const WristSample& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.i64(value.sample_time_ns);
-    writer.u8(to_wire_is_left(value.hand));
-    writer.u8(value.sample.valid ? 1 : 0);
-    writer.u8(value.sample.tracked ? 1 : 0);
-    writer.pose(value.sample.pose);
-    return out;
+    return build_payload(
+        [&](Writer& writer)
+        {
+            writer.i64(value.sample_time_ns);
+            writer.u8(to_wire_is_left(value.hand));
+            writer.u8(value.sample.valid ? 1 : 0);
+            writer.u8(value.sample.tracked ? 1 : 0);
+            writer.pose(value.sample.pose);
+        });
 }
 
 std::vector<uint8_t> encode_error(const std::string& message)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.str(message);
-    return out;
+    return build_payload([&](Writer& writer) { writer.str(message); });
 }
 
 std::vector<uint8_t> encode_ping(int64_t t1_ns)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.i64(t1_ns);
-    return out;
+    return build_payload([&](Writer& writer) { writer.i64(t1_ns); });
 }
 
 std::vector<uint8_t> encode_pong(const Pong& value)
 {
-    std::vector<uint8_t> out;
-    Writer writer(out);
-    writer.i64(value.t1_ns);
-    writer.i64(value.t2_ns);
-    writer.i64(value.t3_ns);
-    return out;
+    return build_payload(
+        [&](Writer& writer)
+        {
+            writer.i64(value.t1_ns);
+            writer.i64(value.t2_ns);
+            writer.i64(value.t3_ns);
+        });
+}
+
+void set_pong_t3(std::vector<uint8_t>& pong_frame, int64_t t3_ns)
+{
+    // PONG payload: t1, t2, t3 (i64 each).
+    constexpr size_t kT3Offset = kHeaderSize + 2 * sizeof(int64_t);
+    if (pong_frame.size() != kHeaderSize + 3 * sizeof(int64_t) || decode_header(pong_frame.data()).type != FrameType::Pong)
+    {
+        throw std::invalid_argument("protocol: not an encoded PONG frame");
+    }
+    const uint64_t bits = static_cast<uint64_t>(t3_ns);
+    for (size_t i = 0; i < sizeof(int64_t); ++i)
+    {
+        pong_frame[kT3Offset + i] = static_cast<uint8_t>(bits >> (8 * i));
+    }
 }
 
 Hello decode_hello(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::Hello));
+    Reader reader(payload, "HELLO");
     Hello value;
     value.proto_version = reader.u16();
-    if (value.proto_version < kHelloVersion)
+    if (value.proto_version != kHelloVersion)
     {
-        throw DecodeError("protocol: HELLO version " + std::to_string(value.proto_version) + " is older than " +
-                          std::to_string(kHelloVersion));
+        throw DecodeError("protocol: unsupported HELLO version " + std::to_string(value.proto_version));
     }
     value.app_name = reader.str();
     value.requirements.schema_push = to_bool(reader.u8());
@@ -300,7 +280,7 @@ Hello decode_hello(const std::vector<uint8_t>& payload)
 
 HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::HelloAck));
+    Reader reader(payload, "HELLO_ACK");
     HelloAck value;
     value.accepted = to_bool(reader.u8());
     value.reason = reader.str();
@@ -310,7 +290,7 @@ HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
 
 XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::OpenHand));
+    Reader reader(payload, "OPEN_HAND");
     const XrHandEXT hand = from_wire_hand(reader.u8());
     reader.finish();
     return hand;
@@ -318,7 +298,7 @@ XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload)
 
 core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::OpenSchema));
+    Reader reader(payload, "OPEN_SCHEMA");
     core::SchemaPusherConfig value;
     value.collection_id = reader.str();
     value.max_flatbuffer_size = static_cast<size_t>(reader.u64());
@@ -331,7 +311,7 @@ core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
 
 core::WristTrackingSourceConfig decode_open_wrist(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::OpenWrist));
+    Reader reader(payload, "OPEN_WRIST");
     const core::WristTrackingSourceConfig value = read_wrist_config(reader);
     reader.finish();
     return value;
@@ -339,7 +319,7 @@ core::WristTrackingSourceConfig decode_open_wrist(const std::vector<uint8_t>& pa
 
 HandSample decode_hand_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::HandSample));
+    Reader reader(payload, "HAND_SAMPLE");
     HandSample value;
     value.sample_time_ns = reader.i64();
     for (XrHandJointLocationEXT& joint : value.joints)
@@ -354,7 +334,7 @@ HandSample decode_hand_sample(const std::vector<uint8_t>& payload)
 
 SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::SchemaSample));
+    Reader reader(payload, "SCHEMA_SAMPLE");
     SchemaSample value;
     value.sample_time_local_common_clock_ns = reader.i64();
     value.sample_time_raw_device_clock_ns = reader.i64();
@@ -366,7 +346,7 @@ SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload)
 
 WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::WristSample));
+    Reader reader(payload, "WRIST_SAMPLE");
     WristSample value;
     value.sample_time_ns = reader.i64();
     value.hand = to_bool(reader.u8()) ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
@@ -379,7 +359,7 @@ WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
 
 std::string decode_error(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::Error));
+    Reader reader(payload, "ERROR");
     std::string message = reader.str();
     reader.finish();
     return message;
@@ -387,7 +367,7 @@ std::string decode_error(const std::vector<uint8_t>& payload)
 
 int64_t decode_ping(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::Ping));
+    Reader reader(payload, "PING");
     const int64_t t1_ns = reader.i64();
     reader.finish();
     return t1_ns;
@@ -395,7 +375,7 @@ int64_t decode_ping(const std::vector<uint8_t>& payload)
 
 Pong decode_pong(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, to_string(FrameType::Pong));
+    Reader reader(payload, "PONG");
     Pong value;
     value.t1_ns = reader.i64();
     value.t2_ns = reader.i64();

@@ -5,7 +5,7 @@
 
 #include "protocol_io.hpp"
 
-#include <cstring>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -16,40 +16,50 @@ using detail::build_frame;
 using detail::Reader;
 using detail::Writer;
 
-void encode_header(const FrameHeader& header, uint8_t* out)
+namespace
 {
-    std::vector<uint8_t> bytes;
-    Writer writer(bytes);
-    writer.u32(kMagic);
-    writer.u8(static_cast<uint8_t>(header.type));
-    writer.u8(header.version);
-    writer.u16(header.channel_id);
-    writer.u32(header.seq);
-    writer.u32(header.payload_size);
-    writer.i64(header.t_send_monotonic_ns);
-    std::memcpy(out, bytes.data(), kHeaderSize);
+
+constexpr size_t kTypeOffset = 4;
+constexpr size_t kVersionOffset = 5;
+constexpr size_t kChannelOffset = 6;
+constexpr size_t kSeqOffset = 8;
+constexpr size_t kPayloadSizeOffset = 12;
+constexpr size_t kSendTimeOffset = 16;
+
+void store_le(uint8_t* out, uint64_t value, size_t size)
+{
+    for (size_t i = 0; i < size; ++i)
+    {
+        out[i] = static_cast<uint8_t>(value >> (8 * i));
+    }
 }
 
-void stamp_header(uint8_t* frame, uint32_t seq, int64_t t_send_monotonic_ns)
+} // namespace
+
+namespace detail
 {
-    // Byte offsets follow encode_header: seq at 8, t_send at 16.
-    for (int i = 0; i < 4; ++i)
+
+void encode_header(const FrameHeader& header, uint8_t* out)
+{
+    store_le(out, kMagic, sizeof(uint32_t));
+    out[kTypeOffset] = static_cast<uint8_t>(header.type);
+    out[kVersionOffset] = header.version;
+    store_le(out + kChannelOffset, header.channel_id, sizeof(uint16_t));
+    store_le(out + kSeqOffset, header.seq, sizeof(uint32_t));
+    store_le(out + kPayloadSizeOffset, header.payload_size, sizeof(uint32_t));
+    store_le(out + kSendTimeOffset, static_cast<uint64_t>(header.t_send_monotonic_ns), sizeof(int64_t));
+}
+
+} // namespace detail
+
+void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_monotonic_ns)
+{
+    if (frame.size() < kHeaderSize)
     {
-        frame[8 + i] = static_cast<uint8_t>(seq >> (8 * i));
+        throw std::invalid_argument("protocol: frame shorter than a header");
     }
-    const uint64_t t_send = static_cast<uint64_t>(t_send_monotonic_ns);
-    for (int i = 0; i < 8; ++i)
-    {
-        frame[16 + i] = static_cast<uint8_t>(t_send >> (8 * i));
-    }
-    // Pong payload: t1, t2, t3 (i64 each); t3 at payload offset 16.
-    if (frame[4] == static_cast<uint8_t>(FrameType::Pong) && decode_header(frame).payload_size == 3 * sizeof(int64_t))
-    {
-        for (int i = 0; i < 8; ++i)
-        {
-            frame[kHeaderSize + 16 + i] = static_cast<uint8_t>(t_send >> (8 * i));
-        }
-    }
+    store_le(frame.data() + kSeqOffset, seq, sizeof(uint32_t));
+    store_le(frame.data() + kSendTimeOffset, static_cast<uint64_t>(t_send_monotonic_ns), sizeof(int64_t));
 }
 
 Frame split_frame(std::vector<uint8_t> message)
@@ -84,7 +94,7 @@ FrameHeader decode_header(const uint8_t* in)
     }
     FrameHeader header;
     const uint8_t type = reader.u8();
-    if (type < static_cast<uint8_t>(FrameType::Hello) || type > static_cast<uint8_t>(FrameType::Pong))
+    if (type < static_cast<uint8_t>(FrameType::Hello) || type > static_cast<uint8_t>(kLastFrameType))
     {
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }
@@ -102,7 +112,6 @@ FrameHeader decode_header(const uint8_t* in)
         throw DecodeError("protocol: payload size " + std::to_string(header.payload_size) + " exceeds limit");
     }
     header.t_send_monotonic_ns = reader.i64();
-    reader.finish();
     return header;
 }
 
