@@ -151,7 +151,7 @@ TEST_CASE("Wire contract v1 is 12 message types plus PING and PONG in a 24-byte 
     }
     REQUIRE(wire::kHeaderSize == 24);
     REQUIRE(wire::kProtocolVersion == 0);
-    REQUIRE(wire::kHelloVersion == 1);
+    REQUIRE(wire::kHelloVersion == 2);
 
     // magic u32 @0, type u8 @4, version u8 @5, channel u16 @6, seq u32 @8, payload size u32 @12, t_send i64 @16.
     wire::FrameHeader header;
@@ -177,13 +177,27 @@ TEST_CASE("HELLO and HELLO_ACK round-trip", "[remote_device_bridge][unit]")
 {
     wire::Hello hello;
     hello.app_name = "ManusHandPlugin";
-    hello.requirements = { .schema_push = true, .hand_tracking_push = false, .wrist_tracking_pull = true };
+    const core::WristTrackingSourceConfig wrist{
+        .mode = core::WristTrackingSourceMode::Controller,
+        .left_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 1.0f, 2.0f, 3.0f } },
+        .right_aim_to_wrist = { { 0.0f, 1.0f, 0.0f, 0.0f }, { -1.0f, 0.5f, 0.25f } }
+    };
+    hello.requirements = { .schema_push = true, .hand_tracking_push = false, .wrist_tracking_pull = wrist };
     const wire::Hello decoded = wire::decode_hello(wire::encode(hello));
     REQUIRE(decoded.proto_version == wire::kHelloVersion);
     REQUIRE(decoded.app_name == "ManusHandPlugin");
     REQUIRE(decoded.requirements.schema_push);
     REQUIRE_FALSE(decoded.requirements.hand_tracking_push);
     REQUIRE(decoded.requirements.wrist_tracking_pull);
+    REQUIRE(decoded.requirements.wrist_tracking_pull->mode == core::WristTrackingSourceMode::Controller);
+    REQUIRE(decoded.requirements.wrist_tracking_pull->left_aim_to_wrist.position.y == 2.0f);
+    REQUIRE(decoded.requirements.wrist_tracking_pull->right_aim_to_wrist.orientation.y == 1.0f);
+
+    hello.requirements.wrist_tracking_pull.reset();
+    REQUIRE_FALSE(wire::decode_hello(wire::encode(hello)).requirements.wrist_tracking_pull);
+
+    hello.proto_version = 1;
+    REQUIRE_THROWS_AS(wire::decode_hello(wire::encode(hello)), wire::DecodeError);
 
     const wire::HelloAck ack = wire::decode_hello_ack(wire::encode(wire::HelloAck{ false, "no runtime" }));
     REQUIRE_FALSE(ack.accepted);

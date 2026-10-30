@@ -28,9 +28,9 @@ namespace wire
 
 constexpr uint32_t kMagic = 0x30535052u; // "RPS0"
 constexpr uint8_t kProtocolVersion = 0;
-//! HELLO proto_version: 1 = the client answers PING with PONG. The bridge still accepts 0 and never PINGs it
-//! (a v0 client fails on unknown frame types).
-constexpr uint16_t kHelloVersion = 1;
+//! HELLO proto_version: 2 = requirements carry the wrist source config (not a flag) and the client answers
+//! PING with PONG. decode_hello rejects older versions, whose payload layout differs.
+constexpr uint16_t kHelloVersion = 2;
 constexpr size_t kHeaderSize = 24;
 constexpr uint16_t kSessionChannelId = 0;
 constexpr uint32_t kMaxPayloadSize = 16u * 1024u * 1024u; // large tactile/sensor payloads; still bounded
