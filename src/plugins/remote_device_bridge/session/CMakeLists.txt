@@ -7,8 +7,11 @@ cmake_minimum_required(VERSION 3.20)
 # plugin that offers --remote. It must never link the OpenXR loader or
 # plugin_utils: plugin processes using it stay free of an OpenXR runtime.
 add_library(remote_plugin_session STATIC
-    wire_codec.cpp
-    inc/remote_plugin_session/wire_codec.hpp
+    protocol_frame.cpp
+    protocol_payloads.cpp
+    protocol_io.hpp
+    inc/remote_plugin_session/protocol_frame.hpp
+    inc/remote_plugin_session/protocol_payloads.hpp
 )
 
 target_include_directories(remote_plugin_session
