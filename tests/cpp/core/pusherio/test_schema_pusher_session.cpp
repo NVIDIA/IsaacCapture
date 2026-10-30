@@ -103,7 +103,7 @@ core::SchemaPusherConfig make_config()
 TEST_CASE("SchemaPusher delegates samples to its channel", "[pusherio][unit]")
 {
     auto state = std::make_shared<CapturedState>();
-    core::PluginSessionHandle session = std::make_shared<CapturingSession>(state);
+    auto session = std::make_unique<CapturingSession>(state);
     core::SchemaPusher pusher(session->create_schema_push_channel(make_config()));
     const std::vector<uint8_t> payload{ 1, 2, 3 };
 

@@ -60,6 +60,4 @@ public:
     virtual std::unique_ptr<IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT hand) = 0;
 };
 
-using PluginSessionHandle = std::shared_ptr<IPluginSession>;
-
 } // namespace core

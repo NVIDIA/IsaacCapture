@@ -148,7 +148,7 @@ TEST_CASE("Plugin pull channel supports typed trackers and optional sources", "[
 {
     auto state = std::make_shared<PullState>();
     auto controller_tracker = std::make_shared<core::ControllerTracker>();
-    core::PluginSessionHandle session = std::make_shared<FakePluginSession>(state, controller_tracker);
+    auto session = std::make_unique<FakePluginSession>(state, controller_tracker);
 
     auto& pull_channel = session->pull_channel();
     pull_channel.update();

@@ -46,7 +46,7 @@ struct ManusPluginConfig
     bool haptic = true; // inbound HapticCommandReaderTracker
 };
 
-using ManusPluginSessionFactory = std::function<core::PluginSessionHandle()>;
+using ManusPluginSessionFactory = std::function<std::unique_ptr<core::IPluginSession>()>;
 
 class __attribute__((visibility("default"))) ManusTracker
 {
@@ -142,7 +142,7 @@ private:
 
     // Plugin session state
     ManusPluginSessionFactory m_plugin_session_factory;
-    core::PluginSessionHandle m_plugin_session;
+    std::unique_ptr<core::IPluginSession> m_plugin_session;
     std::unique_ptr<core::IHandTrackingPushChannel> m_left_hand_channel;
     std::unique_ptr<core::IHandTrackingPushChannel> m_right_hand_channel;
     // Inbound HapticCommand tensor; collection identity in

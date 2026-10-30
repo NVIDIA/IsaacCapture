@@ -146,7 +146,7 @@ try
         {
             trackers.push_back(haptic_reader);
         }
-        return std::make_shared<plugin_utils::OpenXRPluginSession>(
+        return std::make_unique<plugin_utils::OpenXRPluginSession>(
             config.app_name,
             core::PluginSessionRequirements{ .schema_push = config.sensors || config.monitoring_plugin_root_id.has_value(),
                                              .hand_tracking_push = config.human,

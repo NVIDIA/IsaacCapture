@@ -138,7 +138,7 @@ OpenXRPluginSession::OpenXRPluginSession(std::string app_name,
 
     auto extensions = make_required_extensions(requirements_, trackers);
     append_unique(extensions, wrist_extensions);
-    session_ = std::make_shared<core::OpenXRSession>(app_name, extensions);
+    session_ = std::make_unique<core::OpenXRSession>(app_name, extensions);
     pull_channel_ = std::make_unique<OpenXRPluginPullChannel>(
         session_->get_handles(), trackers, std::move(wrist_controller_tracker));
 }

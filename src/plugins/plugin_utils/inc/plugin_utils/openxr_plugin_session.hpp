@@ -44,7 +44,7 @@ public:
 
 private:
     core::PluginSessionRequirements requirements_;
-    std::shared_ptr<core::OpenXRSession> session_;
+    std::unique_ptr<core::OpenXRSession> session_;
     std::unique_ptr<core::IPluginPullChannel> pull_channel_;
 };
 
