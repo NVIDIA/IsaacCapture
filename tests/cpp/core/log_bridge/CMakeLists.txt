@@ -7,6 +7,15 @@ add_executable(log_bridge_tests
     test_logger.cpp
 )
 
+if(NOT WIN32)
+    target_sources(log_bridge_tests PRIVATE
+        test_posix_secure_directory.cpp
+    )
+    target_include_directories(log_bridge_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/core/log_bridge/cpp
+    )
+endif()
+
 target_link_libraries(log_bridge_tests PRIVATE
     log_bridge::log_bridge_core
     Catch2::Catch2WithMain
