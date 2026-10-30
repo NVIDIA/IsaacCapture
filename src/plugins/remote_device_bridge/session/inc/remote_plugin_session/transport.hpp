@@ -23,7 +23,7 @@ enum class ReceiveResult
  * @brief Message transport between a RemotePluginSession and the bridge.
  *
  * A frame is one complete wire message (24-byte header + payload) as built by
- * wire::encode_frame. send() and receive() may run concurrently on two
+ * protocol::encode_frame. send() and receive() may run concurrently on two
  * threads; shutdown() unblocks both. Framing (TCP is a stream) lives in the
  * implementation, not in the callers.
  */

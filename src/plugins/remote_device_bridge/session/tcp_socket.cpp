@@ -3,7 +3,7 @@
 
 #include "inc/remote_plugin_session/tcp_socket.hpp"
 
-#include "inc/remote_plugin_session/wire_codec.hpp"
+#include "inc/remote_plugin_session/protocol_frame.hpp"
 
 #include <arpa/inet.h>
 #include <log_bridge/logger.hpp>
@@ -24,6 +24,8 @@
 
 namespace remote_plugin_session
 {
+
+namespace protocol = remote_plugin_protocol;
 
 namespace
 {
@@ -419,8 +421,8 @@ bool TcpTransport::send(const uint8_t* frame, size_t size)
 
 ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::milliseconds timeout)
 {
-    frame.resize(wire::kHeaderSize);
-    switch (m_socket.recv_all(frame.data(), wire::kHeaderSize, timeout))
+    frame.resize(protocol::kHeaderSize);
+    switch (m_socket.recv_all(frame.data(), protocol::kHeaderSize, timeout))
     {
     case TcpSocket::RecvResult::Timeout:
         return ReceiveResult::Timeout;
@@ -433,9 +435,9 @@ ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::mi
     uint32_t payload_size = 0;
     try
     {
-        payload_size = wire::decode_header(frame.data()).payload_size;
+        payload_size = protocol::decode_header(frame).payload_size;
     }
-    catch (const wire::DecodeError&)
+    catch (const protocol::DecodeError&)
     {
         return ReceiveResult::Malformed;
     }
@@ -443,9 +445,9 @@ ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::mi
     {
         return ReceiveResult::Ok;
     }
-    frame.resize(wire::kHeaderSize + payload_size);
+    frame.resize(protocol::kHeaderSize + payload_size);
     // A header without its payload within the stall window is a broken peer, not a quiet one.
-    return m_socket.recv_all(frame.data() + wire::kHeaderSize, payload_size, kMidMessageStall) ==
+    return m_socket.recv_all(frame.data() + protocol::kHeaderSize, payload_size, kMidMessageStall) ==
                    TcpSocket::RecvResult::Ok ?
                ReceiveResult::Ok :
                ReceiveResult::Closed;
