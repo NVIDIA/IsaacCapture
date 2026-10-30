@@ -3,8 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <remote_plugin_session/protocol_frame.hpp>
 #include <remote_plugin_session/websocket_transport.hpp>
-#include <remote_plugin_session/wire_codec.hpp>
 #include <sys/socket.h>
 
 #include <chrono>
@@ -16,6 +16,7 @@
 #include <vector>
 
 using namespace remote_plugin_session;
+namespace protocol = remote_plugin_protocol;
 using Role = WebSocketTransport::Role;
 
 namespace
@@ -34,12 +35,12 @@ std::pair<TcpSocket, TcpSocket> socket_pair()
 //! A wire frame whose WebSocket message (header + payload) is exactly `message_size` bytes.
 std::vector<uint8_t> frame_of_size(size_t message_size)
 {
-    std::vector<uint8_t> payload(message_size - wire::kHeaderSize);
+    std::vector<uint8_t> payload(message_size - protocol::kHeaderSize);
     for (size_t i = 0; i < payload.size(); ++i)
     {
         payload[i] = static_cast<uint8_t>(i * 31 + 7);
     }
-    return wire::encode_frame(wire::FrameType::SchemaSample, 3, payload);
+    return protocol::encode_frame(protocol::FrameType::SchemaSample, 3, payload);
 }
 
 //! Hand-built client frame (masked, length < 65536) for driving the server role directly.

@@ -3,7 +3,7 @@
 
 #include "inc/remote_plugin_session/websocket_transport.hpp"
 
-#include "inc/remote_plugin_session/wire_codec.hpp"
+#include "inc/remote_plugin_session/protocol_frame.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +15,14 @@
 namespace remote_plugin_session
 {
 
+namespace protocol = remote_plugin_protocol;
+
 namespace
 {
 
 constexpr std::chrono::milliseconds kStall{ 3000 }; // matches TcpTransport's mid-message stall
 constexpr size_t kMaxHttpHead = 8192;
-constexpr uint64_t kMaxMessage = wire::kHeaderSize + wire::kMaxPayloadSize;
+constexpr uint64_t kMaxMessage = protocol::kHeaderSize + protocol::kMaxPayloadSize;
 constexpr char kAcceptGuid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 constexpr uint8_t kContinuation = 0x0;
@@ -434,12 +436,12 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
         }
         try
         {
-            return frame.size() >= wire::kHeaderSize &&
-                           frame.size() == wire::kHeaderSize + wire::decode_header(frame.data()).payload_size ?
+            return frame.size() >= protocol::kHeaderSize &&
+                           frame.size() == protocol::kHeaderSize + protocol::decode_header(frame).payload_size ?
                        ReceiveResult::Ok :
                        ReceiveResult::Malformed;
         }
-        catch (const wire::DecodeError&)
+        catch (const protocol::DecodeError&)
         {
             return ReceiveResult::Malformed;
         }
