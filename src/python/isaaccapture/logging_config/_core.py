@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -107,21 +108,57 @@ def log_dir() -> Path:
     return directory
 
 
-def ensure_private_dir(directory: Path) -> Path:
-    """Create *directory* and make only newly created components owner-only."""
-    missing = []
-    probe = directory
-    while not probe.exists() and probe != probe.parent:
-        missing.append(probe)
-        probe = probe.parent
+def _validate_directory_chain(directory: Path, *, require_owner: bool) -> None:
+    current = directory
+    target = True
+    while True:
+        info = current.lstat()
+        mode = info.st_mode
+        if not stat.S_ISDIR(mode):
+            raise NotADirectoryError(current)
+        if target and require_owner and info.st_uid != os.getuid():
+            raise PermissionError(
+                f"refusing log directory not owned by this user: {current}"
+            )
+        publicly_writable = mode & (stat.S_IWGRP | stat.S_IWOTH)
+        if publicly_writable and (target or not mode & stat.S_ISVTX):
+            raise PermissionError(f"refusing replaceable log directory path: {current}")
+        if current == current.parent:
+            break
+        current = current.parent
+        target = False
 
-    try:
-        directory.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
+
+def ensure_private_dir(directory: Path) -> Path:
+    """Create *directory* owner-only and reject replaceable POSIX paths."""
+    if not _POSIX:
+        directory.mkdir(parents=True, exist_ok=True)
         return directory
-    if _POSIX:
-        for component in missing:
-            component.chmod(0o700)
+
+    missing: list[Path] = []
+    probe = directory
+    while True:
+        try:
+            probe.lstat()
+            break
+        except FileNotFoundError:
+            missing.append(probe)
+            if probe == probe.parent:
+                raise
+            probe = probe.parent
+
+    # Validate the existing prefix before creating through it; otherwise a
+    # symlinked parent could redirect even an owner-only child mkdir.
+    _validate_directory_chain(probe, require_owner=False)
+    for component in reversed(missing):
+        try:
+            # mkdir applies the restrictive mode atomically; chmod after a
+            # recursive mkdir would leave a world-writable race window.
+            component.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+
+    _validate_directory_chain(directory, require_owner=True)
     return directory
 
 

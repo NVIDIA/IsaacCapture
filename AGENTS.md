@@ -231,6 +231,9 @@ Signed-off-by: Your Name <your@email.com>
 The name and e-mail must match the committer's git identity
 (`git config user.name` / `git config user.email`).
 
+If a local pre-commit hook is installed, pass `SKIP=check-copyright-year` to
+`git commit` too; CI deliberately skips that annual rewrite.
+
 A `commit-msg` pre-commit hook enforces this. Install it **once per clone**
 (in addition to the usual `pre-commit install`):
 
@@ -338,6 +341,8 @@ heading that still said the opposite.
 
 - **High-level** expectations: boundaries between layers, what to avoid, naming or structural conventions, CMake/include policy at a glance, “always / never” rules that stay true across refactors.
 - **Style of work**: how minimal to keep diffs, when to ask for clarification, how this subsystem should relate to OpenXR/schema/deviceio, etc.
+- Split cross-language security changes when their toolchains and approval criteria differ; identify any merge-order dependency explicitly.
+- When a task names a finding identifier, verify its stated category and affected paths before choosing code; do not infer the target from report ordering.
 - For build-only requests, use the documented CMake flags and environment first (for example `-DISAAC_TELEOP_PYTHON_VERSION=...`) rather than patching build files to select options.
 
 **What does *not* belong in `AGENTS.md`**

@@ -139,6 +139,36 @@ class TestEnsurePrivateDir:
         assert _core.ensure_private_dir(existing) == existing
         assert stat.S_IMODE(existing.stat().st_mode) == 0o755
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_a_symlink_at_the_target(self, tmp_path):
+        private = tmp_path / "private"
+        private.mkdir()
+        link = tmp_path / "logs"
+        link.symlink_to(private, target_is_directory=True)
+
+        with pytest.raises(NotADirectoryError):
+            _core.ensure_private_dir(link)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_does_not_create_through_a_symlinked_parent(self, tmp_path):
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        link = tmp_path / "runtime"
+        link.symlink_to(destination, target_is_directory=True)
+
+        with pytest.raises(NotADirectoryError):
+            _core.ensure_private_dir(link / "logs")
+        assert not (destination / "logs").exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_a_replaceable_path_component(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir(mode=0o777)
+        shared.chmod(0o777)
+
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared / "logs")
+
     @not_root
     def test_raises_rather_than_returning_an_unusable_directory(self, tmp_path):
         locked = tmp_path / "locked"
