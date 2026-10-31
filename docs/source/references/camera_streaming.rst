@@ -378,7 +378,7 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
 .. _camera-streaming-cuda-ipc:
 
 Frames from another process (``cuda_ipc``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 A producer on the same machine publishes captured frames as CUDA device memory; camera_viz maps
 that memory once and renders from it. Nothing is encoded and nothing crosses host RAM, so the
