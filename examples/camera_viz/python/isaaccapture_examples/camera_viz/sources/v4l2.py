@@ -23,6 +23,7 @@ from typing import Optional
 import numpy as np
 
 from ._helpers import PolledSource
+from ._v4l2_backend import load_v4l2
 
 
 class V4l2Source(PolledSource):
@@ -39,6 +40,8 @@ class V4l2Source(PolledSource):
         fps: float = 30.0,
         fourcc: Optional[str] = None,
     ) -> None:
+        # A missing backend cannot recover in the camera reconnect loop.
+        self._cv2 = load_v4l2()
         super().__init__(name=name, width=width, height=height, staging_channels=3)
         self._device = device
         self._fps = float(fps)
@@ -51,20 +54,9 @@ class V4l2Source(PolledSource):
         # keeps the alpha channel untouched.
         self._gpu_bgr = self._cp.empty((height, width, 3), dtype=self._cp.uint8)
 
-        self._cv2 = None  # imported lazily in _open_device
         self._cap = None
 
     def _open_device(self) -> bool:
-        if self._cv2 is None:
-            try:
-                import cv2
-            except ImportError as e:
-                raise RuntimeError(
-                    "V4l2Source requires opencv-python. Install via "
-                    "`uv pip install opencv-python`."
-                ) from e
-            self._cv2 = cv2
-
         cv2 = self._cv2
         cap = cv2.VideoCapture(self._device, cv2.CAP_V4L2)
         if not cap.isOpened():

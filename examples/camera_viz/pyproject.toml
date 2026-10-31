@@ -31,10 +31,11 @@ dependencies = [
 # Vendor-SDK deps are optional. ``./camera_viz.sh setup`` installs all
 # extras by default; pass ``--no-<extra>`` to skip.
 [project.optional-dependencies]
-v4l2 = ["opencv-python>=4.5"]
+# OpenCV 5.0 wheels on aarch64 omit V4L2; keep camera installs on 4.x.
+v4l2 = ["opencv-python>=4.5,<5"]
 # type: video (file replay) decodes via OpenCV's FFmpeg backend — same
 # wheel as v4l2, listed separately so --no-v4l2 setups can still ask for it.
-video = ["opencv-python>=4.5"]
+video = ["opencv-python>=4.5,<5"]
 oakd = ["depthai>=3.0"]
 # pyzed isn't on PyPI — the ZED SDK's bundled ``get_python_api.py``
 # produces a Python-version-specific wheel. ``camera_viz.sh setup --with-zed``
@@ -63,7 +64,11 @@ viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 # this directory's .gitignore, so the codec build tree is excluded here.
 [tool.hatch.build]
 only-include = ["python/isaaccapture_examples/camera_viz"]
-exclude = ["/python/isaaccapture_examples/camera_viz/codec/build", "*.so"]
+exclude = [
+    "/python/isaaccapture_examples/camera_viz/codec/build",
+    "/python/isaaccapture_examples/camera_viz/argus/build",
+    "*.so",
+]
 
 [tool.hatch.build.targets.wheel]
 sources = ["python"]

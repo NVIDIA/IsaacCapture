@@ -4,7 +4,8 @@
 # Pure Python -- nothing here is compiled. The scene backend lives in
 # isaaccapture.viz.robot, which ships with Televiz on Linux.
 #
-#     uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/
+# Install isaaccapture as in examples/README.md, "Running an example", then:
+#
 #     uv pip install -e ./examples/robot_viz
 #     python -m isaaccapture_examples.robot_viz          # needs a headset; fetches its
 #                                                       # scene on the first run
@@ -23,10 +24,9 @@ description = "A robot's digital twin rendered into an Isaac Teleop Televiz XR s
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    # Unversioned, and a live hazard in both directions: until isaaccapture is
-    # published this does not resolve from an index at all, and once it is, it
-    # resolves happily against a release that is not this checkout's viz -- and
-    # against one with no robot twin at all. Install the locally built wheel first.
+    # Unversioned, and a live hazard: from a package index this resolves to a
+    # release that is not this checkout's viz, possibly one with no robot twin
+    # at all. Install the locally built wheel first.
     "isaaccapture[cloudxr]",
     # app.py imports numpy directly.
     "numpy",

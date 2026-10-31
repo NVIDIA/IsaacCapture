@@ -67,9 +67,8 @@ Running
 
 The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see :ref:`dedicated-cloudxr-runtime` to manage
-that service yourself). Install ``isaaccapture`` built from this tree into the
-active environment first, for example
-``uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/``.
+that service yourself). From the repository root, set up a venv and install
+``isaaccapture`` into it as in :ref:`step 4 of Build from source <build-from-source-install-package>`.
 Then install the example and run it:
 
 .. code-block:: bash

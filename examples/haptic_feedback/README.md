@@ -14,9 +14,8 @@ flushes to an `IHapticDevice` adapter each frame.
 | `controller_haptic_example` | Pull a controller trigger to rumble that same controller — the minimal in-process `HapticSink` → `ControllerHapticDevice` wiring. |
 | `hand_pinch_haptic_example` | Pinch a fingertip toward the thumb to vibrate a haptic glove — the cross-process path (`HapticSink` → `PushTensorHapticDevice`, pushing a `HapticCommand` to a glove plugin such as Manus). |
 
-Install `isaaccapture` built from this tree into the active environment
-first, for example
-`uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`.
+Set up the venv and install `isaaccapture` as in
+[Running an example](../README.md#running-an-example), then:
 
 ```bash
 uv pip install -e ./examples/haptic_feedback

@@ -32,7 +32,7 @@ Create the example virtual environment in this directory, install the
 ```bash
 cd examples/vehicle_teleop
 # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION and X.Y with the first two numbers of VERSION.
-uv venv --python 3.11 --seed .venv
+uv venv --python 3.11 --seed .venv   # skip if .venv already runs 3.11; --clear switches it (deletes its packages)
 source .venv/bin/activate
 uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=../../install/wheels/ --reinstall-package isaaccapture
 uv pip install -e .

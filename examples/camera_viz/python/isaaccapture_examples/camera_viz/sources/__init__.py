@@ -14,6 +14,7 @@ from typing import List
 from ..pipeline import FrameSource
 
 from ._helpers import PairedFrameSource, set_notify_sink, set_verbose
+from .argus import ArgusSource
 from .oakd import OakdSource
 from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
@@ -22,6 +23,7 @@ from .video_file import VideoFileSource
 from .zed import ZedSource
 
 __all__ = [
+    "ArgusSource",
     "OakdSource",
     "PairedFrameSource",
     "RtpH264Source",
@@ -95,6 +97,43 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
                 fourcc=spec.get("fourcc"),
             )
         ]
+    if kind == "argus":
+
+        def make_argus(source_name: str, sensor_ids: list[int]) -> ArgusSource:
+            return ArgusSource(
+                name=source_name,
+                sensor_ids=sensor_ids,
+                width=int(spec["width"]),
+                height=int(spec["height"]),
+                sensor_mode=int(spec.get("sensor_mode", 0)),
+                fps=float(spec.get("fps", 30.0)),
+                gpu_id=int(spec.get("gpu_id", 0)),
+                full_range=bool(spec.get("full_range", False)),
+                swap_uv=bool(spec.get("swap_uv", False)),
+                acquire_timeout_ms=int(spec.get("acquire_timeout_ms", 0xFFFFFFFF)),
+                repeat_capture=bool(spec.get("repeat_capture", True)),
+            )
+
+        if stereo:
+            left_id = int(spec.get("sensor_id_left", spec.get("left_sensor_id", 0)))
+            right_id = int(spec.get("sensor_id_right", spec.get("right_sensor_id", 1)))
+            sync_session = bool(spec.get("sync_session", False))
+            if sync_session:
+                source = make_argus(name, [left_id, right_id])
+                left = source.eye_source("left", f"{name}_left")
+                right = source.eye_source("right", f"{name}_right")
+            else:
+                left = make_argus(f"{name}_left", [left_id])
+                right = make_argus(f"{name}_right", [right_id])
+            emit_mode = spec.get("pair_emit_mode", "both")
+            return [
+                PairedFrameSource(
+                    name=name, left=left, right=right, emit_mode=emit_mode
+                )
+            ]
+
+        sensor_id = int(spec.get("sensor_id", spec.get("sensor_id_left", 0)))
+        return [make_argus(name, [sensor_id])]
     if kind == "oakd":
         # ``stereo: true`` shorthand for ``mode: stereo``; explicit mode wins.
         mode = spec.get("mode", "stereo" if stereo else "mono")
@@ -158,5 +197,5 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
         return eyes
     raise ValueError(
         f"build_local_camera: unknown camera type {kind!r} "
-        "(known: synthetic, v4l2, oakd, zed, video)"
+        "(known: synthetic, v4l2, argus, oakd, zed, video)"
     )
