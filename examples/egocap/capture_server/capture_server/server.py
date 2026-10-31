@@ -53,6 +53,15 @@ from websockets.server import ServerConnection
 
 from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
+from .acquisition.acquisition import _CLOSE_BUDGET_S as _SOURCE_RELEASE_TIMEOUT_S
+from .acquisition.sensing import (
+    SensingDescription,
+    SensingRigConfig,
+    SensingStationCamera,
+    inspect_rig,
+    load_sensing_station,
+    resolve_sensors,
+)
 
 __all__ = ["CaptureServer", "ServerConfig", "main"]
 
@@ -71,7 +80,6 @@ _QUEUE_CAPACITY = 3
 _CONTROL_QUEUE_CAPACITY = 64
 _SEND_DEADLINE_S = 2.0
 _CLOSE_TIMEOUT_S = 2.0
-_SOURCE_RELEASE_TIMEOUT_S = 5.0
 _COMPLETED_TOMBSTONE_CAPACITY = 16
 
 
@@ -153,21 +161,46 @@ class ServerConfig:
     # registry yet); set to reject an unknown camera name as INVALID_CONFIG
     # instead of inventing settings for it.
     known_cameras: tuple[str, ...] | None = None
-    # Real acquisition: logical camera name -> its station settings. When set, only these names are
-    # accepted and each stream uses its entry; None keeps the mock's fixed 1280x720@30 defaults.
-    cameras: dict[str, StationCamera] | None = None
+    # Logical camera name -> its station settings (OAK-D or SENSING). When set, only these names are
+    # accepted and each stream uses its entry, including in mock mode: a mock station with SENSING cameras
+    # therefore cannot also select the OAK mock cameras. None keeps the OAK mock's fixed 1280x720@30 defaults.
+    cameras: dict[str, StationCamera | SensingStationCamera] | None = None
     # Operator-facing note appended to the startup banner, saying where the served data comes from. None
     # prints the mode's default (the mock's SYNTHETIC-data warning, nothing for live); replay sets it so
     # recorded data is never announced as synthetic.
     data_note: str | None = None
+    # The one SENSING producer (at most one rig per session); required iff ``cameras`` has SENSING entries.
+    sensing_rig: SensingRigConfig | None = None
+    # Resolved once by the server before the first SENSING Begin and then reused (the platform is fixed).
+    sensing_description: SensingDescription | None = None
 
     def __post_init__(self) -> None:
-        """Reject one physical camera assigned to more than one logical name."""
+        """Reject a physical camera assigned to more than one logical name, within each identity domain.
+
+        OAK devices are identified by MXID and SENSING sensors by (module name, sensor index); the two never
+        collide. Final physical-pipeline duplicates are caught when the sensors are resolved. A SENSING camera
+        needs a rig whose declared backend matches ``mock``.
+        """
         if self.cameras is not None:
-            ids = [c.device_id for c in self.cameras.values()]
-            duplicates = sorted({i for i in ids if ids.count(i) > 1})
-            if duplicates:
-                raise ValueError(f"physical camera(s) assigned to more than one logical name: {duplicates}")
+            oak = [c.device_id for c in self.cameras.values() if isinstance(c, StationCamera)]
+            sensing = [
+                (c.module_name, c.sensor_index)
+                for c in self.cameras.values()
+                if isinstance(c, SensingStationCamera)
+            ]
+            for ids in (oak, sensing):
+                duplicates = sorted({i for i in ids if ids.count(i) > 1}, key=str)
+                if duplicates:
+                    raise ValueError(f"physical camera(s) assigned to more than one logical name: {duplicates}")
+            if sensing and self.sensing_rig is None:
+                raise ValueError("SENSING cameras are configured but no sensing_rig is")
+        if self.sensing_rig is not None:
+            required = "MOCK" if self.mock else "JETSON"
+            if self.sensing_rig.expected_backend != required:
+                raise ValueError(
+                    f"sensing_rig.expected_backend must be {required} when mock={self.mock}, "
+                    f"got {self.sensing_rig.expected_backend}"
+                )
 
 
 @dataclass
@@ -1131,6 +1164,7 @@ class CaptureServer:
         # ws.send() directly; everything (rejections, replays, session
         # lifecycle, status, frames) goes through this.
         self._outbox: _Outbox | None = None
+        self._sensing_inspection: asyncio.Future[SensingDescription] | None = None
         self._active_session: _Session | None = None
         # Scoped to the CURRENT owner connection, reset in _handle_connection
         # -- a session ID completed under a since-disconnected owner must
@@ -1148,6 +1182,19 @@ class CaptureServer:
     def _camera_stream_config(self, stream_id: int, camera: Any) -> p.CameraStreamConfig:
         """The server-owned settings for one requested camera: its station entry, else the mock defaults."""
         station = (self.config.cameras or {}).get(camera.name)
+        if isinstance(station, SensingStationCamera):
+            assert self.config.sensing_description is not None  # resolved by _prepare_sensing before this
+            sensor = resolve_sensors(self.config.sensing_description, {camera.name: station})[camera.name]
+            return p.CameraStreamConfig(
+                stream_id=stream_id,
+                name=camera.name,
+                type=camera.type,
+                required=station.required,
+                width=sensor.width,
+                height=sensor.height,
+                fps=station.delivery_fps,
+                jpeg_quality=station.jpeg_quality,
+            )
         return p.CameraStreamConfig(
             stream_id=stream_id,
             name=camera.name,
@@ -1158,6 +1205,61 @@ class CaptureServer:
             fps=station.fps if station else 30.0,
             jpeg_quality=station.jpeg_quality if station else 80,
         )
+
+    def _begin_gate_error(self) -> str | None:
+        """Why a Begin cannot be admitted right now (shutdown, or this connection's writer is gone), else None."""
+        if self._stop_event.is_set():
+            return "server is shutting down"
+        if self._outbox is None or self._outbox.closed:
+            return "this connection is no longer usable"
+        return None
+
+    async def _prepare_sensing(self, begin: p.BeginRequest) -> str | None:
+        """Validate requested camera types against the station and resolve SENSING sensors; error text or None.
+
+        The native inspection is blocking, so it runs off the event loop and its result is cached for the
+        server's lifetime (a failed inspection is not cached). It happens before the admission checks so
+        nothing awaits between admitting a Begin and recording it as the active session.
+        """
+        stations = self.config.cameras or {}
+        wanted: dict[str, SensingStationCamera] = {}
+        for camera in begin.cameras:
+            station = stations.get(camera.name)
+            if station is None:
+                if camera.type == p.CameraType.SENSING_COLOR:
+                    # Never let the permissive fallback build a mock OAK labelled as SENSING.
+                    return f"camera {camera.name!r} requests SENSING_COLOR but has no SENSING station entry"
+                continue
+            expected = (
+                p.CameraType.SENSING_COLOR
+                if isinstance(station, SensingStationCamera)
+                else p.CameraType.OAK_D_COLOR
+            )
+            if camera.type != expected:
+                return f"camera {camera.name!r} is a {expected.name} station camera, not {camera.type.name}"
+            if isinstance(station, SensingStationCamera):
+                wanted[camera.name] = station
+        # A Begin that is already BUSY (or a replay) builds nothing, so it never triggers an inspection.
+        if not wanted or self._active_session is not None:
+            return None
+        assert self.config.sensing_rig is not None  # ServerConfig requires it for SENSING cameras
+        try:
+            if self.config.sensing_description is None:
+                # One shared in-flight inspection: concurrent first Begins await the same blocking call.
+                if self._sensing_inspection is None:
+                    self._sensing_inspection = asyncio.ensure_future(
+                        asyncio.to_thread(inspect_rig, self.config.sensing_rig)
+                    )
+                task = self._sensing_inspection
+                try:
+                    self.config.sensing_description = await asyncio.shield(task)
+                finally:
+                    if task.done() and self._sensing_inspection is task:
+                        self._sensing_inspection = None
+            resolve_sensors(self.config.sensing_description, wanted)
+        except Exception as exc:  # noqa: BLE001 -- reported to the client as a configuration rejection
+            return f"SENSING camera selection failed: {exc}"
+        return None
 
     async def run(self) -> None:
         self._ws_server = await websockets.serve(
@@ -1374,13 +1476,8 @@ class CaptureServer:
         # session onto a dead writer would create a fresh quiesce
         # acknowledgment that writer will never resolve, hanging that
         # session's own _finalize forever.
-        if self._stop_event.is_set() or self._outbox is None or self._outbox.closed:
-            self._reject(
-                session_id,
-                p.MessageType.BEGIN,
-                p.RejectionReason.BUSY,
-                "server is shutting down" if self._stop_event.is_set() else "this connection is no longer usable",
-            )
+        if (gate_error := self._begin_gate_error()) is not None:
+            self._reject(session_id, p.MessageType.BEGIN, p.RejectionReason.BUSY, gate_error)
             return
         try:
             begin = p.parse_begin(data)
@@ -1418,6 +1515,16 @@ class CaptureServer:
                 p.RejectionReason.INVALID_CONFIG,
                 "an enabled plugin requires at least one tracking.sources entry",
             )
+            return
+
+        sensing_error = await self._prepare_sensing(begin)
+        if sensing_error is not None:
+            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.INVALID_CONFIG, sensing_error)
+            return
+        # The inspection may have awaited for seconds: shutdown or a dead writer can have happened meanwhile,
+        # so the gate is re-checked before admission rather than trusting the check made before the await.
+        if (gate_error := self._begin_gate_error()) is not None:
+            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.BUSY, gate_error)
             return
 
         if self._active_session is not None:
@@ -1645,6 +1752,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="NAME=DEVICE_ID",
         help="real only: station camera, logical NAME -> stable physical DEVICE_ID (OAK-D MXID); repeatable",
     )
+    parser.add_argument(
+        "--sensing-config",
+        default=None,
+        metavar="FILE",
+        help="YAML with the SENSING rig and its cameras (type SENSING_COLOR); works with --mock, "
+        "where the rig must be a MOCK build, and without it, where it must be a JETSON build",
+    )
     parser.add_argument("--camera-width", type=int, default=1280, help="real only")
     parser.add_argument("--camera-height", type=int, default=720, help="real only")
     parser.add_argument("--camera-fps", type=float, default=30.0, help="real only")
@@ -1782,12 +1896,21 @@ async def _run_cli(args: argparse.Namespace) -> int:
         elif args.gmsl_ipc is not None:
             config, source_factory = _gmsl_setup(args)
         else:
+            cameras: dict[str, Any] | None = _station_cameras(args)
+            sensing_rig = None
+            if args.sensing_config:
+                sensing_rig, sensing_cameras = load_sensing_station(args.sensing_config)
+                clash = sorted(set(cameras or {}) & set(sensing_cameras))
+                if clash:
+                    raise ValueError(f"camera name(s) configured both as --camera and SENSING: {clash}")
+                cameras = {**(cameras or {}), **sensing_cameras}
             config = ServerConfig(
                 mock=args.mock,
                 host=args.host,
                 port=args.port,
                 connect_delay=args.connect_delay,
-                cameras=_station_cameras(args),
+                cameras=cameras,
+                sensing_rig=sensing_rig,
             )
             # The one place the implementation is chosen, before any session is accepted.
             source_factory = build_source_factory(

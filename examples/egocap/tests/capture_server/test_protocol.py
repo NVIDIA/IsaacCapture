@@ -218,6 +218,58 @@ def test_camera_stream_descriptor_matches_doc_shape():
     assert p.CameraStream.from_json(descriptor) == stream
 
 
+def test_sensing_camera_descriptor_round_trips_with_jpeg_codec_and_oak_value_unchanged():
+    camera = p.CameraStreamConfig(
+        stream_id=1,
+        name="camera_left",
+        type=p.CameraType.SENSING_COLOR,
+        required=True,
+        width=2560,
+        height=1984,
+        fps=30.0,
+        jpeg_quality=80,
+    )
+    descriptor = p.camera_stream_descriptor(camera).to_json()
+    assert descriptor["type"] == 2 and descriptor["codec"] == int(p.ImageCodec.JPEG)
+    assert (descriptor["width"], descriptor["height"]) == (2560, 1984)
+    assert p.CameraStream.from_json(descriptor).type is p.CameraType.SENSING_COLOR
+    assert int(p.CameraType.OAK_D_COLOR) == 1  # the existing value is untouched
+    # An old peer that only knows OAK_D_COLOR cannot parse the new value; that is stated, not negotiated away.
+    with pytest.raises(p.ProtocolError):
+        p.CameraStream.from_json({**descriptor, "type": 3})
+
+
+def test_four_camera_streams_are_accepted_through_descriptor_status_and_counters():
+    camera = p.CameraStreamConfig(
+        stream_id=4,
+        name="right_wrist_camera",
+        type=p.CameraType.SENSING_COLOR,
+        required=False,
+        width=1920,
+        height=1536,
+        fps=15.0,
+        jpeg_quality=80,
+    )
+    stream = p.camera_stream_descriptor(camera)
+    assert p.CameraStream.from_json(stream.to_json()) == stream
+    counters = p.StreamCounters(stream_id=4, produced=1, sent=1, dropped=0)
+    assert p.StreamCounters.from_json(counters.to_json()) == counters
+    with pytest.raises(p.ProtocolError, match="1-4"):
+        p.CameraStream.from_json({**stream.to_json(), "stream_id": 5})
+    status = p.CameraStatus(
+        name="right_wrist_camera",
+        stream_id=4,
+        status=p.DeviceState.CONNECTED,
+        reason=p.StatusReason.NONE,
+        error="",
+    )
+    assert p.CameraStatus.from_json(status.to_json()) == status
+    with pytest.raises(p.ProtocolError, match="1-4"):
+        p.CameraStatus.from_json({**status.to_json(), "stream_id": 5})
+    four = tuple(p.CameraRequest(name=f"camera_{i}", type=p.CameraType.SENSING_COLOR) for i in range(4))
+    assert len(p.BeginRequest(tracking=p.TrackingConfig(sources=()), cameras=four).cameras) == 4
+
+
 def test_camera_stream_descriptor_with_intrinsics():
     camera = p.CameraStreamConfig(
         stream_id=2,
@@ -357,8 +409,8 @@ def test_begin_request_rejects_duplicate_plugin_kinds():
 
 
 def test_begin_request_rejects_too_many_cameras():
-    cameras = tuple(p.CameraRequest(name=f"camera_{i}", type=p.CameraType.OAK_D_COLOR) for i in range(4))
-    with pytest.raises(ValueError, match="at most 3"):
+    cameras = tuple(p.CameraRequest(name=f"camera_{i}", type=p.CameraType.OAK_D_COLOR) for i in range(5))
+    with pytest.raises(ValueError, match="at most 4"):
         p.BeginRequest(tracking=p.TrackingConfig(sources=()), cameras=cameras)
 
 
@@ -573,8 +625,8 @@ def test_parse_begin_rejects_cameras_not_a_list():
 
 
 def test_parse_begin_rejects_too_many_cameras():
-    cameras = [{"name": f"camera_{i}", "type": 1} for i in range(4)]
-    with pytest.raises(p.ProtocolError, match="at most 3"):
+    cameras = [{"name": f"camera_{i}", "type": 1} for i in range(5)]
+    with pytest.raises(p.ProtocolError, match="at most 4"):
         p.parse_begin(_valid_begin_dict(cameras=cameras))
 
 

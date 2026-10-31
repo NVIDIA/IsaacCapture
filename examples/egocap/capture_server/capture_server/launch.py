@@ -30,7 +30,15 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
 from . import protocol as p
-from .acquisition import Acquisition, DepthAIAdapter, IsaacCaptureAdapter, TrackingSelection
+from .acquisition import (
+    Acquisition,
+    DepthAIAdapter,
+    IsaacCaptureAdapter,
+    SensingAdapter,
+    SensingRig,
+    TrackingSelection,
+)
+from .acquisition.sensing import SensingStationCamera, resolve_sensors
 from .server import ServerConfig, StationCamera
 
 if TYPE_CHECKING:
@@ -86,15 +94,47 @@ def _tracking_adapter(
     )
 
 
+def _sensing_composition(
+    config: ServerConfig | None, cameras: tuple[p.CameraStreamConfig, ...]
+) -> tuple[SensingRig | None, dict[int, SensingAdapter]]:
+    """The shared SENSING rig and one adapter per SENSING-station camera, keyed by stream id.
+
+    Identical for mock and real: a SENSING camera always runs the native producer (its MOCK build on
+    desktop) writing H.264 files this process tails. ``(None, {})`` when no requested camera is a SENSING
+    station camera, so such sessions never construct a rig or load the decoder.
+    """
+    stations = (config.cameras if config else None) or {}
+    wanted = {c.name: stations[c.name] for c in cameras if isinstance(stations.get(c.name), SensingStationCamera)}
+    if not wanted:
+        return None, {}
+    if config is None or config.sensing_rig is None or config.sensing_description is None:
+        # Reached only if this factory was built from a different config object than the server's, so the
+        # server's inspection result never arrived: say so instead of rejecting with an empty message.
+        raise ValueError("SENSING cameras are requested but the factory has no rig or sensor description")
+    sensors = resolve_sensors(config.sensing_description, wanted)
+    rig = SensingRig(config.sensing_rig, tuple(sensors[name].pipeline_id for name in wanted))
+    adapters = {
+        c.stream_id: SensingAdapter(
+            rig=rig, sensor=sensors[c.name], camera=c, full_range=config.sensing_rig.full_range
+        )
+        for c in cameras
+        if c.name in wanted
+    }
+    return rig, adapters
+
+
 def build_mock_source_factory(
     *,
     scenario: str,
     seed: int,
     ic_faults: set[str] | frozenset[str] = frozenset(),
     camera_faults: set[str] | frozenset[str] = frozenset(),
+    config: ServerConfig | None = None,
 ) -> SourceFactory:
     """The default ``CaptureServer`` source factory, wired to the two mock
-    SDK files. ``ic_faults``/``camera_faults`` are captured here, once,
+    SDK files for tracking and OAK cameras (SENSING cameras always run the
+    real plugin executable, its mock backend on a desktop). ``ic_faults``/``camera_faults`` are
+    captured here, once,
     from CLI/test configuration -- "[e]xisting documented local CLI
     controls may delegate to the two mocks without becoming protocol
     fields" -- and baked into each new mock session/pipeline this
@@ -112,8 +152,11 @@ def build_mock_source_factory(
             ),
         )
 
+        rig, sensing_adapters = _sensing_composition(config, cameras)
         camera_adapters = tuple(
-            DepthAIAdapter(
+            sensing_adapters[camera.stream_id]
+            if camera.stream_id in sensing_adapters
+            else DepthAIAdapter(
                 sdk=mock_depthai,
                 pipeline_factory=partial(
                     mock_depthai.Pipeline,
@@ -125,7 +168,7 @@ def build_mock_source_factory(
             )
             for camera in cameras
         )
-        return Acquisition(tracking=tracking, cameras=camera_adapters)
+        return Acquisition(tracking=tracking, cameras=camera_adapters, sensing_rig=rig)
 
     # Lets CaptureServer reject a launch-built factory that disagrees with ServerConfig.mock;
     # untagged custom factories are not checked.
@@ -135,11 +178,15 @@ def build_mock_source_factory(
 
 def _real_camera_adapters(
     config: ServerConfig, cameras: tuple[p.CameraStreamConfig, ...]
-) -> tuple[DepthAIAdapter, ...]:
-    """One real OAK-D adapter per requested camera, each bound to its station-configured physical device."""
+) -> tuple[tuple[DepthAIAdapter | SensingAdapter, ...], SensingRig | None]:
+    """One adapter per requested camera: real OAK-D by station device ID, or SENSING by module name.
+
+    Also returns the SENSING rig when any camera uses it. The OAK SDK is imported only if an OAK camera
+    is requested.
+    """
     if not cameras:
-        return ()
-    # Every camera needs a station device: report that configuration error before importing the optional SDK.
+        return (), None
+    # Every camera needs a station entry: report that configuration error before importing optional SDKs.
     stations = {}
     for camera in cameras:
         station = (config.cameras or {}).get(camera.name)
@@ -148,17 +195,26 @@ def _real_camera_adapters(
                 f"camera {camera.name!r} has no station device; configure it with --camera NAME=DEVICE_ID"
             )
         stations[camera.name] = station
-    import depthai as dai
+    rig, sensing_adapters = _sensing_composition(config, cameras)
+    oak = [c for c in cameras if c.stream_id not in sensing_adapters]
+    dai = None
+    if oak:
+        import depthai as dai
 
-    return tuple(
-        DepthAIAdapter(
-            sdk=dai,
-            pipeline_factory=partial(
-                _open_pipeline, dai, stations[camera.name].device_id, stations[camera.name].max_usb_speed
-            ),
-            camera=camera,
-        )
-        for camera in cameras
+    return (
+        tuple(
+            sensing_adapters[camera.stream_id]
+            if camera.stream_id in sensing_adapters
+            else DepthAIAdapter(
+                sdk=dai,
+                pipeline_factory=partial(
+                    _open_pipeline, dai, stations[camera.name].device_id, stations[camera.name].max_usb_speed
+                ),
+                camera=camera,
+            )
+            for camera in cameras
+        ),
+        rig,
     )
 
 
@@ -184,7 +240,8 @@ def build_real_source_factory(config: ServerConfig) -> SourceFactory:
 
         sdk = load_isaac_capture() if begin.tracking.sources else None
         tracking = _tracking_adapter(begin, sdk=sdk, session_factory=sdk.TeleopSession) if sdk else None
-        return Acquisition(tracking=tracking, cameras=_real_camera_adapters(config, cameras))
+        camera_adapters, rig = _real_camera_adapters(config, cameras)
+        return Acquisition(tracking=tracking, cameras=camera_adapters, sensing_rig=rig)
 
     source_factory.mock = False  # type: ignore[attr-defined]
     return source_factory
@@ -368,5 +425,5 @@ def build_source_factory(
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown mock scenario {scenario!r}; choose one of {', '.join(SCENARIOS)}")
     return build_mock_source_factory(
-        scenario=scenario, seed=seed, ic_faults=set(faults), camera_faults=set(faults)
+        scenario=scenario, seed=seed, ic_faults=set(faults), camera_faults=set(faults), config=config
     )

@@ -226,10 +226,46 @@ def test_a_duplicate_video_source_name_is_a_station_config_error(tmp_path):
 
 
 def test_too_many_video_sources_is_a_station_config_error(tmp_path):
-    entries = "\n".join(f"- type: oak_camera\n  name: cam{i}" for i in range(4))
+    entries = "\n".join(f"- type: oak_camera\n  name: cam{i}" for i in range(5))
     path = _write(tmp_path, f"video_sources:\n{entries}\n")
-    with pytest.raises(StationConfigError, match="at most 3"):
+    with pytest.raises(StationConfigError, match="at most 4"):
         load_station_config(path)
+
+
+def test_sensing_camera_video_source_is_accepted(tmp_path):
+    path = _write(
+        tmp_path,
+        "video_sources:\n- type: sensing_camera\n  name: head_left\n",
+    )
+    resolved = load_station_config(path)
+    assert resolved.cameras == (p.CameraSelection(name="head_left", type=p.CameraType.SENSING_COLOR),)
+
+
+def test_four_sensing_cameras_are_accepted_and_forwarded(tmp_path):
+    entries = "\n".join(f"- type: sensing_camera\n  name: cam{i}" for i in range(4))
+    path = _write(tmp_path, f"video_sources:\n{entries}\n")
+    resolved = load_station_config(path)
+    assert len(resolved.cameras) == 4
+    assert all(c["type"] == p.CameraType.SENSING_COLOR for c in resolved.cameras)
+    assert [c["name"] for c in resolved.cameras] == [f"cam{i}" for i in range(4)]
+
+
+def test_oak_and_sensing_cameras_can_be_mixed_in_one_station(tmp_path):
+    path = _write(
+        tmp_path,
+        "video_sources:\n"
+        "- type: oak_camera\n  name: ego\n"
+        "- type: sensing_camera\n  name: head_left\n"
+        "- type: sensing_camera\n  name: head_right\n"
+        "- type: sensing_camera\n  name: wrist_left\n",
+    )
+    resolved = load_station_config(path)
+    assert resolved.cameras == (
+        p.CameraSelection(name="ego", type=p.CameraType.OAK_D_COLOR),
+        p.CameraSelection(name="head_left", type=p.CameraType.SENSING_COLOR),
+        p.CameraSelection(name="head_right", type=p.CameraType.SENSING_COLOR),
+        p.CameraSelection(name="wrist_left", type=p.CameraType.SENSING_COLOR),
+    )
 
 
 def test_station_config_path_from_env(monkeypatch, tmp_path):

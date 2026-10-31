@@ -6,16 +6,22 @@
 acquisition adapters directly: an object whose own `__enter__()` raised
 must never see a matching `__exit__()` call, while an object that *did*
 enter must still be released. See isaac_capture.py's `close()` and
-depthai.py's `close()` for the guard these tests cover."""
+depthai.py's `close()` for the guard these tests cover.
+
+Also exercises Acquisition._close_rig_chain's exception-priority rule: a
+cancellation collected alongside another close failure must still be the
+one raised, never silently dropped in favor of the other failure."""
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from unittest.mock import patch
 
 import pytest
 
 from capture_server import protocol as p
+from capture_server.acquisition.acquisition import Acquisition
 from capture_server.acquisition.depthai import DepthAIAdapter
 from capture_server.acquisition.errors import CameraSourceError, SourceError
 from capture_server.acquisition.isaac_capture import IsaacCaptureAdapter, TrackingSelection
@@ -80,3 +86,52 @@ async def test_depthai_skips_pipeline_exit_when_pipeline_enter_raised():
         await adapter.close()
 
         pipeline_exit.assert_not_called()
+
+
+class _FakeRigAdapter:
+    """A minimal adapter standing in for a SENSING stream in `_close_rig_chain`."""
+
+    borrows_rig = True
+
+    def __init__(self, close_raises: BaseException | None = None) -> None:
+        self._close_raises = close_raises
+
+    async def close(self) -> bool:
+        if self._close_raises is not None:
+            raise self._close_raises
+        return True
+
+
+class _FakeRig:
+    """A minimal stand-in for `SensingRig`, closed after its adapters in `_close_rig_chain`."""
+
+    def __init__(self, close_raises: BaseException | None = None) -> None:
+        self._close_raises = close_raises
+
+    async def close(self) -> bool:
+        if self._close_raises is not None:
+            raise self._close_raises
+        return True
+
+
+async def test_close_rig_chain_raises_cancellation_over_a_concurrent_close_failure():
+    """One adapter's close() is cancelled while another's raises an ordinary error. The cancellation must win even
+    though the ordinary failure is first in iteration order: silently raising it instead would defeat the
+    caller's own cancellation."""
+    acquisition = Acquisition(tracking=None, cameras=(), sensing_rig=_FakeRig())
+    failed = _FakeRigAdapter(close_raises=RuntimeError("ordinary close failure"))
+    cancelled = _FakeRigAdapter(close_raises=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await acquisition._close_rig_chain([failed, cancelled])
+
+
+async def test_close_rig_chain_raises_cancellation_from_the_rig_itself():
+    """The rig's own close() raising CancelledError must take priority over an adapter's ordinary failure too."""
+    acquisition = Acquisition(
+        tracking=None, cameras=(), sensing_rig=_FakeRig(close_raises=asyncio.CancelledError())
+    )
+    failed = _FakeRigAdapter(close_raises=RuntimeError("ordinary close failure"))
+
+    with pytest.raises(asyncio.CancelledError):
+        await acquisition._close_rig_chain([failed])

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Latest-sample preview cache: one tracking slot and at most three camera
+"""Latest-sample preview cache: one tracking slot and at most four camera
 slots, each holding its immutable callback value and backend-local receipt
 time. Replacing a slot drops the superseded value -- there is no history,
 replay queue or recording buffer here.
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 # capture.
 MAX_TRACKING_PAYLOAD_BYTES = 64 * 1024
 MAX_CAMERA_JPEG_BYTES = 8 * 1024 * 1024
-MAX_CAMERAS = 3
+MAX_CAMERAS = 4
 
 
 @dataclass(frozen=True)

@@ -305,7 +305,7 @@ async def _invoke(callback: Callback[T] | None, value: T) -> None:
 @dataclass
 class _StreamRegistry:
     """Caches SessionInit's stream descriptors for decoding binary
-    messages -- a tracking stream (ID 0) and up to three camera streams."""
+    messages -- a tracking stream (ID 0) and up to four camera streams."""
 
     tracking: p.TrackingStream | None = None
     cameras: dict[int, p.CameraStream] = dataclass_field(default_factory=dict)

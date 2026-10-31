@@ -82,6 +82,19 @@ the link at USB 2; some host ports or cables cannot boot an OAK-D at USB 3. The 
 runs on-device NV12 to MJPEG; each frame's own intrinsics are reported in the camera
 status when the device provides them.
 
+**SENSING cameras.** Cameras served by IsaacCapture's SENSING plugin are configured with one
+YAML file (`sensing_rig:` plus `cameras:` entries of `type: SENSING_COLOR`) and
+`--sensing-config FILE`; the file format is documented on `load_sensing_station` in
+`capture_server/acquisition/sensing.py`. The server launches the plugin's executable itself, reads each
+sensor's H.264 output file, decodes it on the CPU (every unit in order) and sends the newest decoded frame as a JPEG
+(`av`, i.e. PyAV, is a declared dependency; nothing is loaded unless a SENSING stream is used).
+`--mock` with a SENSING station requires the plugin's MOCK build, whose encoder must write real H.264;
+an older mock encoder wrote placeholder bytes that are not video, which the decoder rejects, so such a
+build shows a degraded camera instead of pictures. With `--sensing-config`, `cameras` accepts only the
+SENSING names it lists (`--camera` is real-acquisition only), so the OAK mock cameras cannot be mixed in.
+Measure per-frame cost on the target with `tests/capture_server/bench_sensing_decode.py`
+before choosing `delivery_fps`.
+
 **Failure policy.** A camera that produces no frame for max(5 s, five frame periods)
 counts as failed. A required camera failure ends the session; an optional one reports
 a degraded camera. There is no automatic reconnection: retry by starting a new session.

@@ -135,6 +135,7 @@ class WireDType(IntEnum):
 
 class CameraType(IntEnum):
     OAK_D_COLOR = 1
+    SENSING_COLOR = 2
 
 
 class ImageCodec(IntEnum):
@@ -701,7 +702,7 @@ def tracking_stream_descriptor(
 
 
 # ---------------------------------------------------------------------------
-# Camera stream descriptor (stream IDs 1-3).
+# Camera stream descriptor (stream IDs 1-4).
 # ---------------------------------------------------------------------------
 
 
@@ -745,7 +746,7 @@ class CameraStreamConfig:
 
 @dataclass(frozen=True)
 class CameraStream:
-    """One camera descriptor (stream_id 1-3) of SessionInit's ``streams``
+    """One camera descriptor (stream_id 1-4) of SessionInit's ``streams``
     array."""
 
     stream_id: int
@@ -798,8 +799,8 @@ class CameraStream:
             "a camera stream descriptor",
         )
         stream_id = data.get("stream_id")
-        if type(stream_id) is not int or not (1 <= stream_id <= 3):
-            raise ProtocolError("camera stream descriptor stream_id must be an integer 1-3")
+        if type(stream_id) is not int or not (1 <= stream_id <= 4):
+            raise ProtocolError("camera stream descriptor stream_id must be an integer 1-4")
         name = data.get("name")
         if not isinstance(name, str) or not name:
             raise ProtocolError("camera stream.name must be a nonempty string")
@@ -855,7 +856,7 @@ def camera_stream_descriptor(camera: CameraStreamConfig) -> CameraStream:
 
 _MAX_SESSION_ID_LEN = 128
 _MAX_RATE_HZ = 120.0
-_MAX_CAMERAS = 3
+_MAX_CAMERAS = 4
 
 
 def _require_keys(data: Any, allowed: set[str], context: str) -> dict:
@@ -1482,8 +1483,8 @@ class CameraStatus:
         if not isinstance(name, str) or not name:
             raise ProtocolError("camera status name must be a nonempty string")
         stream_id = data.get("stream_id")
-        if type(stream_id) is not int or not (1 <= stream_id <= 3):
-            raise ProtocolError("camera status stream_id must be an integer 1-3")
+        if type(stream_id) is not int or not (1 <= stream_id <= 4):
+            raise ProtocolError("camera status stream_id must be an integer 1-4")
         error = data.get("error")
         if not isinstance(error, str):
             raise ProtocolError("camera status error must be a string")
@@ -1738,8 +1739,8 @@ class StreamCounters:
     def from_json(cls, data: Any) -> StreamCounters:
         _require_keys(data, {"stream_id", "produced", "sent", "dropped"}, "stream counters")
         stream_id = data.get("stream_id")
-        if type(stream_id) is not int or not (0 <= stream_id <= 3):
-            raise ProtocolError("stream counters stream_id must be an integer 0-3")
+        if type(stream_id) is not int or not (0 <= stream_id <= 4):
+            raise ProtocolError("stream counters stream_id must be an integer 0-4")
         values = {}
         for key in ("produced", "sent", "dropped"):
             value = data.get(key)

@@ -64,7 +64,12 @@ async def start_capture_server(
         effective_config,
         source_factory=source_factory
         or build_mock_source_factory(
-            scenario="demo", seed=1, ic_faults=ic_faults or set(), camera_faults=camera_faults or set()
+            scenario="demo",
+            seed=1,
+            ic_faults=ic_faults or set(),
+            camera_faults=camera_faults or set(),
+            # The SENSING composition shares this config with the server (its cached sensor description).
+            config=effective_config,
         ),
     )
     run_task = asyncio.ensure_future(server.run())
