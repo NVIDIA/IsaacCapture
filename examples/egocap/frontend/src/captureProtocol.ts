@@ -328,7 +328,7 @@ function parseStreamDescriptor(value: unknown, field: string): StreamDescriptor 
     };
   }
   // kind === StreamKind.IMAGE (the only other value expectEnum(StreamKind, ...) allows)
-  const streamId = expectBoundedPositiveInt(value.stream_id, `${field}.stream_id`, 3);
+  const streamId = expectBoundedPositiveInt(value.stream_id, `${field}.stream_id`, 4);
   return {
     kind: "camera",
     stream_id: streamId,

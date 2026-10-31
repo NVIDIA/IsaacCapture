@@ -32,6 +32,8 @@ dependencies = [
                                  # decode/encode MP4 files on disk.
     # --- capture_server ---
     "websockets>=17.2",
+    "av>=14",                    # PyAV: decodes the SENSING producer's H.264 output (capture_server's
+                                 # acquisition/sensing_h264.py); loaded lazily, only for SENSING streams.
     # --- backend (egocap_web) ---
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

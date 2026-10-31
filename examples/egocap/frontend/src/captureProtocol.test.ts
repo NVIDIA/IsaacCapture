@@ -131,6 +131,24 @@ describe("parseSnapshot", () => {
     expect(() => parseSnapshot(body)).toThrow(CapturePreviewParseError);
   });
 
+  it("accepts a camera stream_id of 4 and rejects 5", () => {
+    const parse = (streamId: number) =>
+      parseSnapshot(
+        validSnapshot({
+          capture: {
+            connecting: false,
+            started: startedWith([trackingStreamJson(), cameraStreamJson({ stream_id: streamId })]),
+            status: null,
+            stopped: null,
+            error_message: null,
+            binary_generation: null,
+          },
+        }),
+      );
+    expect(() => parse(4)).not.toThrow();
+    expect(() => parse(5)).toThrow(CapturePreviewParseError);
+  });
+
   it("rejects a duplicate field name in a tracking descriptor", () => {
     const stream = trackingStreamJson();
     (stream.layout as { fields: unknown[] }).fields.push({ name: "head.present", dtype: 1, shape: [], offset: 5 });
