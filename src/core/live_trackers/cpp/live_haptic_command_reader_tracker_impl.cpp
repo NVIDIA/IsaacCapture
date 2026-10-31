@@ -64,7 +64,7 @@ void LiveHapticCommandReaderTrackerImpl::update(int64_t /*monotonic_time_ns*/)
     // but the last one pushed each frame).
     for (auto& sample : samples_)
     {
-        const auto* fb = flatbuffers::GetRoot<HapticCommand>(sample.buffer.data());
+        const auto* fb = detail::verified_flatbuffer_root<HapticCommand>(sample.buffer);
         if (fb == nullptr)
         {
             continue;

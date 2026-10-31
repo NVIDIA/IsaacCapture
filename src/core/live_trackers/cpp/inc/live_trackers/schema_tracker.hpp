@@ -6,6 +6,7 @@
 #include "schema_tracker_base.hpp"
 
 #include <flatbuffers/flatbuffers.h>
+#include <flatbuffers/verifier.h>
 #include <mcap/tracker_channels.hpp>
 #include <schema/serialized.hpp>
 
@@ -14,6 +15,27 @@
 
 namespace core
 {
+
+namespace detail
+{
+
+template <typename DataTableT>
+const DataTableT* verified_flatbuffer_root(const std::vector<uint8_t>& buffer)
+{
+    if (buffer.empty())
+    {
+        return nullptr;
+    }
+
+    flatbuffers::Verifier verifier(buffer.data(), buffer.size());
+    if (!verifier.VerifyBuffer<DataTableT>(nullptr))
+    {
+        return nullptr;
+    }
+    return flatbuffers::GetRoot<DataTableT>(buffer.data());
+}
+
+} // namespace detail
 
 /**
  * @brief Typed SchemaTracker that optionally records to MCAP.
@@ -89,8 +111,8 @@ public:
             Serialized<RecordT> last_record;
             for (const auto& sample : samples_)
             {
-                auto fb = flatbuffers::GetRoot<DataTableT>(sample.buffer.data());
-                if (!fb)
+                const auto* fb = detail::verified_flatbuffer_root<DataTableT>(sample.buffer);
+                if (fb == nullptr)
                 {
                     continue;
                 }
@@ -112,10 +134,14 @@ public:
             }
         }
 
-        // Adopt the final sample's bytes rather than copying them: the wire type is the
-        // published type. Each tick owns its own buffer, so a consumer still holding last
-        // tick's handle keeps last tick's values.
-        out = Serialized<DataTableT>::adopt(std::move(samples_.back().buffer));
+        auto& latest_sample = samples_.back();
+        if (detail::verified_flatbuffer_root<DataTableT>(latest_sample.buffer) != nullptr)
+        {
+            // Adopt the final sample's bytes rather than copying them: the wire type is the
+            // published type. Each tick owns its own buffer, so a consumer still holding last
+            // tick's handle keeps last tick's values.
+            out = Serialized<DataTableT>::adopt(std::move(latest_sample.buffer));
+        }
     }
 
 private:

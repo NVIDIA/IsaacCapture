@@ -68,6 +68,7 @@ When adding MCAP support to a new **hand-written** tracker impl, all of the foll
 - The exception is a tracker that **retains by design**. `SchemaTracker` leaves the last-known handle in place on a tick with no new samples and empties it only when the collection goes away, so its trackers must not reset on entry. The test is whether the tracker is query-driven (reset) or sample-driven (retain).
 - Encode into a **new** buffer each frame rather than over the previous one. Consumers hold snapshots, so a caller that read last frame must keep seeing last frame's values; this is what removed the old "valid until the next `session.update()`" caveat.
 - `SchemaTracker` does this for tensor-sourced trackers, and does it without encoding at all: the wire already carries the payload table, so it **adopts the sample's buffer**. Do not reintroduce an unpack on that path — the only reason it materialises a native is MCAP recording, which is why that unpack is gated on `mcap_channels_`.
+- Keep release-branch security backports scoped to the required trust-boundary check; do not combine verification fixes with API visibility, state-policy, logging, or allocation-policy changes unless the advisory requires them.
 
 ## Related docs
 
