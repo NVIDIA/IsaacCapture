@@ -721,7 +721,7 @@ class _Session:
         if work_task in done:
             stop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await stop_task
+                _ = await stop_task  # intentionally discarded: only completion/cancellation matters here
             return work_task.result()
         # Stop won the race: leave work_task running in the background
         # (nothing here can force its underlying thread to stop) and
