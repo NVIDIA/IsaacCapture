@@ -34,9 +34,16 @@ from capture_server import protocol as p
 
 STATION_CONFIG_ENV = "EGOCAP_STATION_CONFIG"
 _DEFAULT_FLAT_STATION_ID = "station_01"
-#: Matches capture_server.protocol's own BeginRequest.cameras limit -- checked here too so an
-#: over-limit YAML is a configuration error, not a later capture-startup failure.
-_MAX_CAMERAS = 3
+#: capture_server.protocol's own BeginRequest.cameras limit, reused rather than duplicated so this
+#: loader and the server can never drift apart -- checked here too so an over-limit YAML is a
+#: configuration error, not a later capture-startup failure.
+_MAX_CAMERAS = p._MAX_CAMERAS
+
+#: Maps each supported YAML ``video_sources[].type`` spelling to its wire CameraType.
+_SOURCE_TYPES: dict[str, p.CameraType] = {
+    "oak_camera": p.CameraType.OAK_D_COLOR,
+    "sensing_camera": p.CameraType.SENSING_COLOR,
+}
 
 
 class StationConfigError(ValueError):
@@ -122,11 +129,13 @@ def _resolve_cameras(station_id: str, entry: dict) -> tuple[p.CameraSelection, .
             raise StationConfigError(f"station {station_id!r}: duplicate video source name {name!r}")
         seen_names.add(name)
         source_type = source.get("type")
-        if source_type != "oak_camera":
+        camera_type = _SOURCE_TYPES.get(source_type) if isinstance(source_type, str) else None
+        if camera_type is None:
+            supported = ", ".join(sorted(repr(t) for t in _SOURCE_TYPES))
             raise StationConfigError(
-                f"station {station_id!r}: video_sources[{i}].type {source_type!r} is not 'oak_camera'"
+                f"station {station_id!r}: video_sources[{i}].type {source_type!r} is not one of {supported}"
             )
-        cameras.append(p.CameraSelection(name=name, type=p.CameraType.OAK_D_COLOR))
+        cameras.append(p.CameraSelection(name=name, type=camera_type))
     return tuple(cameras)
 
 

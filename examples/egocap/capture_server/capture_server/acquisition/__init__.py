@@ -12,12 +12,15 @@ from .acquisition import Acquisition
 from .depthai import DepthAIAdapter
 from .errors import CameraSourceError, SourceError, SourceExited
 from .isaac_capture import IsaacCaptureAdapter, TrackingSelection
+from .sensing import SensingAdapter, SensingRig
 
 __all__ = [
     "Acquisition",
     "CameraSourceError",
     "DepthAIAdapter",
     "IsaacCaptureAdapter",
+    "SensingAdapter",
+    "SensingRig",
     "SourceError",
     "SourceExited",
     "TrackingSelection",

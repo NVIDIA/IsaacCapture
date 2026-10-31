@@ -107,7 +107,7 @@ Fixed defaults the backend starts with, set in `backend/egocap_web/config.py`'s
 | Station label | `Station 01` | the station YAML's label, see below |
 | Profile label | `Headset and hands` | fixed |
 | Sources | head, controllers, hands | fixed |
-| Cameras | none requested | the station YAML's `video_sources`, see below |
+| Cameras | none requested | the station YAML's `video_sources`, see below (`type` `1` = `OAK_D_COLOR`, `2` = `SENSING_COLOR`) |
 | Plugins | none | `EGOCAP_CAPTURE_PLUGINS`, a comma-separated list of plugin names (case-insensitive); only `manus` exists today, so `manus` requests glove hand tracking. An unknown name stops the backend at startup. |
 | Tracking sources | head, controllers, hands | `EGOCAP_CAPTURE_SOURCES`, a comma-separated list of `head`, `controllers`, `hands`, or `none` for a cameras-only session that needs no headset and no IsaacCapture (it cannot be combined with `EGOCAP_CAPTURE_PLUGINS`). |
 | Preview sample rates | 10 Hz cameras, 10 Hz tracking | `EGOCAP_CAMERA_SAMPLE_HZ`, `EGOCAP_TRACKING_SAMPLE_HZ`: how often the page is sent camera frames / tracking samples (positive Hz). Raise to the capture rate (e.g. `60`) to see the native feed; every viewer pays for each sample. |
