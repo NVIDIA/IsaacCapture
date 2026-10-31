@@ -30,6 +30,8 @@ Available Retargeters:
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
     - SO101GripperRetargeter: Proportional (analog) jaw closedness for the SO-101 gripper
+    - DVRKPSMClutchRetargeter: No-jump absolute tool-pose clutch for a dVRK PSM
+    - DVRKPSMGripperRetargeter: Intent-latched paired dVRK PSM jaw targets
     - WujiHandRetargeter: Retargeting for the Wuji hand via wuji_sdk.retargeting
     - JointStateRetargeter: Generic joint-space device (leader arm, exoskeleton) -> joint or EE action
     - EePoseRateLimiter / JointRateLimiter: Safety-harness velocity bounds for EE-pose / joint streams
@@ -226,6 +228,27 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "SO101GripperRetargeter",
         None,
     ),
+    # .DVRK (dVRK PSM: Cartesian clutch and paired jaw targets)
+    "DVRKPSMClutchConfig": (
+        ".DVRK.psm_retargeter",
+        "DVRKPSMClutchConfig",
+        None,
+    ),
+    "DVRKPSMClutchRetargeter": (
+        ".DVRK.psm_retargeter",
+        "DVRKPSMClutchRetargeter",
+        None,
+    ),
+    "DVRKPSMGripperConfig": (
+        ".DVRK.psm_retargeter",
+        "DVRKPSMGripperConfig",
+        None,
+    ),
+    "DVRKPSMGripperRetargeter": (
+        ".DVRK.psm_retargeter",
+        "DVRKPSMGripperRetargeter",
+        None,
+    ),
     # .wuji_hand_retargeter  (requires wuji extra: wuji-sdk[retarget],
     # which transitively pulls nlopt, pinocchio, scipy)
     "WujiHandRetargeter": (
@@ -407,6 +430,11 @@ __all__ = [
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",
+    # dVRK PSM retargeters
+    "DVRKPSMClutchConfig",
+    "DVRKPSMClutchRetargeter",
+    "DVRKPSMGripperConfig",
+    "DVRKPSMGripperRetargeter",
     # Wuji hand retargeters (require wuji extra: wuji-sdk[retarget])
     "WujiHandRetargeter",
     "WujiHandRetargeterConfig",
