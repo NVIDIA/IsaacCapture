@@ -1,0 +1,1011 @@
+:root {
+  --canvas: #0b1018;
+  --surface: #121a26;
+  --surface-raised: #182333;
+  --border: #2a384c;
+  --text-main: #f1f5f9;
+  --text-secondary: #b4c0d2;
+  --accent: #60a5fa;
+  --positive: #4ade80;
+  --warning: #fbbf24;
+  --critical: #f87171;
+  --radius-card: 10px;
+  --radius-card-lg: 14px;
+  --radius-chip: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text-main);
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.app-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.app-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.mode-badge {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-chip);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.feed-health {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-8) var(--space-8);
+}
+
+/* Compact status row: station, the real capture-lifecycle headline, and a
+link to the supporting session/provider details -- replaces the old large
+hero card so the tracking tree below starts near the top of the viewport. */
+.status-strip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-4);
+  color: var(--text-secondary);
+}
+
+.status-station {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.status-headline {
+  flex: 1 1 auto;
+}
+
+.status-strip.tone-positive .status-headline {
+  color: var(--positive);
+}
+
+.status-strip.tone-critical .status-headline {
+  color: var(--critical);
+}
+
+.status-strip.tone-warning .status-headline {
+  color: var(--warning);
+}
+
+.status-detail {
+  color: var(--text-secondary);
+}
+
+.freshness-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  padding: 2px 6px;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+.refresh-button {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.refresh-button:hover {
+  border-color: var(--accent);
+}
+
+.refresh-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.read-only-note {
+  white-space: nowrap;
+}
+
+.stale-banner {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: 13px;
+}
+
+.unavailable-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--warning);
+}
+
+.group-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 0 0 var(--space-2);
+}
+
+.group-sublabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.source-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.source-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  min-height: 40px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+}
+
+.source-row:last-child {
+  border-bottom: none;
+}
+
+.source-label {
+  flex: 1 1 auto;
+}
+
+.source-status {
+  font-weight: 600;
+}
+
+.tone-positive .source-status,
+.tone-positive {
+  color: var(--positive);
+}
+
+.tone-warning .source-status,
+.tone-warning {
+  color: var(--warning);
+}
+
+.tone-critical .source-status,
+.tone-critical {
+  color: var(--critical);
+}
+
+.tone-neutral .source-status {
+  color: var(--text-secondary);
+}
+
+.source-diagnostic {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.empty-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* The supporting session/provider/raw-diagnostics disclosure -- collapsed
+by default, below the tracking tree and camera grid. */
+.session-details {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-6);
+  margin-top: var(--space-6);
+}
+
+.session-details > summary {
+  cursor: pointer;
+}
+
+.session-details-body {
+  margin-top: var(--space-2);
+}
+
+.source-groups {
+  margin-top: var(--space-2);
+}
+
+.kv-list {
+  margin: 0;
+}
+
+.kv-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: 13px;
+}
+
+.kv-list dt {
+  color: var(--text-secondary);
+}
+
+.kv-list dd {
+  margin: 0;
+  text-align: right;
+}
+
+.selectable {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.technical-details {
+  margin-top: var(--space-4);
+}
+
+.technical-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.technical-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: auto;
+  max-height: 320px;
+  color: var(--text-secondary);
+  margin-top: var(--space-2);
+}
+
+/* The main tracking tree: one coherent disclosure surface for Head,
+Controllers and Hands, rather than a bordered card per field. */
+.capture-tree {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.capture-tree-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tree-age {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tree-caption {
+  color: var(--warning);
+  font-size: 13px;
+  margin: 0 0 var(--space-2);
+}
+
+.tree-branch {
+  border-top: 1px solid var(--border);
+}
+
+.tree-branch:first-of-type {
+  border-top: none;
+}
+
+.tree-branch > .tree-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tree-branch > .tree-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tree-branch > .tree-summary::before {
+  content: "▸";
+  color: var(--text-secondary);
+  width: 1em;
+  flex: none;
+}
+
+.tree-branch[open] > .tree-summary::before {
+  content: "▾";
+}
+
+.tree-branch > .tree-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tree-summary-name {
+  font-weight: 600;
+  min-width: 7em;
+}
+
+.tree-summary-value {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.tree-branch--nested {
+  margin-left: var(--space-6);
+  border-top: 1px solid var(--border);
+}
+
+.tree-branch--nested:first-of-type {
+  border-top: none;
+}
+
+.tree-flags {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.tree-table-pair {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.tree-table-pair .data-table-wrapper {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.data-table-wrapper {
+  overflow-x: auto;
+  margin-bottom: var(--space-3);
+}
+
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.data-table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.data-table th,
+.data-table td {
+  padding: 4px var(--space-2);
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  height: 28px;
+}
+
+.data-table th[scope="row"] {
+  text-align: left;
+  color: var(--text-secondary);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.data-table thead th {
+  text-align: right;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table thead th[scope="col"]:first-child {
+  text-align: left;
+}
+
+.data-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.num-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.data-table--hand {
+  min-width: 720px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.camera-grid {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.camera-grid-items {
+  display: grid;
+  /* auto-fit (not auto-fill): collapses empty tracks instead of reserving
+  them, so a tile actually gets the full width available to it rather than
+  being squeezed to share space with phantom empty columns. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.camera-tile {
+  margin: 0;
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.camera-tile img {
+  /* Native pixel size by default; only shrinks (preserving aspect ratio)
+  if the tile's own available width is actually narrower than the image --
+  never stretched or forced to a grid track smaller than necessary. */
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.camera-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.camera-tile figcaption {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.camera-retry-button {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+/* One shared workspace: the generic capture column and the Ego Capture UI recording
+panel sit side by side on wide screens (see the max-width:1024px override
+below for the narrow/stacked layout). */
+.app-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.app-capture-column {
+  min-width: 0;
+}
+
+.app-side-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.recording-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.recording-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.recording-panel-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-main);
+}
+
+.recording-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.recording-phase-badge--recording {
+  color: var(--critical);
+  border-color: color-mix(in srgb, var(--critical) 45%, var(--border));
+  background: color-mix(in srgb, var(--critical) 14%, var(--surface-raised));
+}
+
+.recording-phase-badge--busy {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+}
+
+.recording-phase-badge--warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface-raised));
+}
+
+.recording-phase-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.recording-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Control token entry/current state -------------------------------------- */
+
+.recording-control-token-entry,
+.recording-control-token-current {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+}
+
+.recording-control-token-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.recording-control-token-entry label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.recording-control-token-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.recording-control-token-row input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.recording-control-token-row input::placeholder {
+  color: var(--text-secondary);
+}
+
+.recording-control-token-row input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.recording-control-token-help {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.recording-control-token-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Status line -------------------------------------------------------------
+ * `.recording-status` stays one wrapper with the phase label as its first
+ * text node (tests match status text by prefix, e.g. /^Idle/), with the
+ * rest of the facts as separate spans purely for layout -- no text content
+ * is removed or reordered relative to what existing assertions check. */
+
+.recording-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.recording-status-phase {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.recording-status-fact {
+  color: var(--text-secondary);
+}
+
+.recording-status-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-main);
+}
+
+.recording-status-task {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Action buttons ------------------------------------------------------- */
+
+.recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.recording-actions--primary .recording-button {
+  flex: 1 1 0;
+}
+
+.recording-actions-divider {
+  border-top: 1px solid var(--border);
+  margin: var(--space-1) 0;
+}
+
+.recording-button {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recording-button kbd {
+  font: inherit;
+  font-weight: 400;
+}
+
+.recording-button:disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-color: var(--border);
+  opacity: 0.6;
+}
+
+.recording-button:enabled:hover {
+  border-color: var(--accent);
+}
+
+.recording-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.recording-button--record {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06111f;
+}
+
+.recording-button--record:enabled:hover {
+  filter: brightness(1.08);
+  border-color: var(--accent);
+}
+
+.recording-button--stop {
+  background: var(--positive);
+  border-color: var(--positive);
+  color: #06210f;
+}
+
+.recording-button--stop:enabled:hover {
+  filter: brightness(1.08);
+  border-color: var(--positive);
+}
+
+.recording-button--discard {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--critical) 55%, var(--border));
+  color: var(--critical);
+}
+
+.recording-button--discard:enabled:hover {
+  background: color-mix(in srgb, var(--critical) 12%, transparent);
+  border-color: var(--critical);
+}
+
+.recording-button--secondary {
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.recording-button--small {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.recording-task-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 100%;
+}
+
+.recording-task-editor-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.recording-task-editor-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.recording-task-editor-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.recording-feedback,
+.recording-last-result {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.recording-voice-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.recording-voice-feedback {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.recording-voice-feedback--error {
+  color: var(--warning);
+}
+
+@media (max-width: 1024px) {
+  .tree-table-pair {
+    flex-direction: column;
+  }
+
+  /* flex: 1 1 260px's 260px basis means width in the default row direction
+   * above, but becomes a HEIGHT basis once flex-direction switches to
+   * column here -- reset it to the wrapper's actual content height instead
+   * of forcing every stacked table to a 260px-tall box. */
+  .tree-table-pair .data-table-wrapper {
+    flex: 1 1 auto;
+  }
+
+  .app-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-header,
+  .app-main {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .tree-branch--nested {
+    margin-left: var(--space-3);
+  }
+}
+
+.pose-viser {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Viser's fixed control strip (control_width "small", 16em) plus its edge. */
+.pose-viser-viewport {
+  --viser-strip: 272px;
+  overflow: hidden;
+  height: 340px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.pose-viser-frame {
+  display: block;
+  /* The viewport's width plus the strip, so the scene is exactly as wide as the viewport and nothing of it is
+     clipped. The 576px floor is what keeps Viser in its desktop layout (below it, its narrow layout hides the scene
+     behind the controls); in a column narrower than 576px - 272px the scene is slightly wider than the viewport. */
+  width: max(calc(100% + var(--viser-strip)), 576px);
+  height: 100%;
+  border: 0;
+}
+
+.pose-viser-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.pose-viser-note {
+  margin: var(--space-3) 0 0;
+}
+
+@media (max-width: 640px) {
+  .pose-viser-viewport {
+    height: 320px;
+  }
+}
+
+/* Per-camera rate/latency readout under the tile name: monospace with tabular digits so a
+ * changing "47.9 / 60 Hz · 21 ms" doesn't jitter the layout. */
+.camera-tile figcaption .camera-stats {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-secondary);
+}

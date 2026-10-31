@@ -1,0 +1,103 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Data Recording Configuration
+# Composable data sources for video and numeric recording
+
+# General recording settings
+recording:
+  data_dir: "~/egocap_data/recordings"
+  # Default fps settings (can be overridden per source)
+  record_fps: 60
+  stream_fps: 60
+  verbose: false
+  # Video encoder for .mp4 files (ffmpeg only; no OpenCV encoder is available)
+  video_encoder: ffmpeg_h264
+  # Optional global ffmpeg_h264 settings (any camera in video_sources may
+  # override individual keys with its own video_encoder_options block):
+  #   crf: 0-51 (lower = higher quality/larger files)
+  #   preset: ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow|placebo
+  #   pix_fmt: yuv420p (needs even width/height) | yuv444p | yuvj444p (full range)
+  # video_encoder_options:
+  #   crf: 12
+  #   preset: medium
+  #   pix_fmt: yuv420p
+  # Frame type for video sources
+  # Options: RGBCameraFrame (no depth), RGBDCameraFrame (with depth)
+  video_frame_type: RGBCameraFrame
+  # Frame type for numeric sources
+  # Options: NumericFrame
+  numeric_frame_type: NumericFrame
+
+# Video sources - declares the recorded dataset's source names/rates/latency.
+# CaptureServer owns actually opening cameras; this section records what was
+# captured, not how to open it, so no device index/handle/launcher path
+# belongs in it.
+# Each source can specify its own settings (optional, uses defaults if not set):
+#   - record_fps, stream_fps: fps settings
+#   - frame_type: RGBCameraFrame or RGBDCameraFrame
+#   - latency: capture-to-receive latency in seconds (for time synchronization)
+video_sources:
+  - type: oak_camera
+    name: main_camera
+    # record_fps: 30    # Optional: override default
+    # stream_fps: 60    # Optional: override default
+    # frame_type: RGBCameraFrame  # Optional: override default
+    # video_encoder_options: {crf: 18}  # Optional: key-wise override of the global block
+    latency: 0.0875  # example capture-to-receive latency (seconds), not a certified value
+    params:
+      camera_resolution: [1280, 800]
+      fps: 30
+
+  # Example: Add more cameras by uncommenting
+  # - type: oak_camera
+  #   name: side_camera
+  #   record_fps: 15
+  #   stream_fps: 30
+  #   frame_type: RGBCameraFrame
+  #   latency: 0.0875
+  #   params:
+  #     camera_resolution: [1280, 800]
+  #     fps: 30
+
+# Numeric sources - sensors that provide numeric data
+# Supported types: Custom sources implementing device_name, get_frame(), start_streaming(), stop_streaming()
+# Each source can specify its own settings (optional, uses defaults if not set):
+#   - record_fps, stream_fps: fps settings
+#   - frame_type: NumericFrame (or custom frame types)
+#   - latency: capture-to-receive latency in seconds (for time synchronization)
+numeric_sources: []
+  # Example configurations:
+  #
+  # UMI Gripper - uart_device_name identifies the recorded source; CaptureServer
+  # owns opening the actual UART, not this config.
+  # - type: umi_gripper
+  #   name: right_umi_gripper
+  #   uart_device_name: "YOUR-GRIPPER-ID"  # Device name from UMI_GRIPPERS
+  #   record_fps: 45
+  #   stream_fps: 60
+  #   frame_type: GripperFrame
+  #   latency: 0.084
+  #   params:
+  #     config_file: "config/umi_gripper/gripper_config.yaml"
+  #     gear_radius: 26.0
+  #
+  #
+  # - type: encoder
+  #   name: xhand
+  #   record_fps: 100  # Encoders may need higher sampling rate
+  #   stream_fps: 200
+  #   frame_type: NumericFrame
+  #   latency: 0.0
+  #   params:
+  #     verbose: false
+  #
+  # - type: fsr_sensor
+  #   name: force_sensor
+  #   record_fps: 50
+  #   stream_fps: 100
+  #   frame_type: NumericFrame
+  #   latency: 0.0
+  #   params:
+  #     verbose: false
