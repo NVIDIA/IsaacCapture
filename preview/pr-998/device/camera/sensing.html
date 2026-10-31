@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -345,8 +345,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -376,13 +381,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -391,7 +398,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -537,6 +543,24 @@ capture check.</p>
 <code class="docutils literal notranslate"><span class="pre">setup_container.sh</span> <span class="pre">--print-args</span></code> prints shell-quoted Docker flags;
 <code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as a JSON array. These runtime helpers do not
 install the SDK headers needed to compile SIPL applications.</p>
+<section id="build-prerequisites">
+<h3>Build prerequisites<a class="headerlink" href="#build-prerequisites" title="Link to this heading">#</a></h3>
+<p>Building <code class="docutils literal notranslate"><span class="pre">camera_plugin_sensing</span></code> needs two Jetson SDKs that the setup scripts do not install.
+Take the versions matching the L4T release in <code class="docutils literal notranslate"><span class="pre">/etc/nv_tegra_release</span></code> (the examples use
+R39.2.1). CMake stops with these same instructions when either is missing.</p>
+<ul class="simple">
+<li><p><strong>Jetson SIPL API headers</strong> — <code class="docutils literal notranslate"><span class="pre">Jetson_SIPL_API_R&lt;rel&gt;_aarch64.tbz2</span></code>, for example
+<a class="reference external" href="https://developer.nvidia.com/downloads/embedded/L4T/r39_Release_v2.1/release/Jetson_SIPL_API_R39.2.1_aarch64.tbz2" rel="noopener noreferrer" target="_blank">R39.2.1</a>.
+Unpack it with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">tar</span> <span class="pre">xf</span> <span class="pre">Jetson_SIPL_API_R39.2.1_aarch64.tbz2</span> <span class="pre">-C</span> <span class="pre">/</span></code>, which creates
+<code class="docutils literal notranslate"><span class="pre">/usr/src/jetson_sipl_api</span></code>.</p></li>
+<li><p><strong>Jetson Multimedia API</strong> — the <code class="docutils literal notranslate"><span class="pre">nvidia-l4t-jetson-multimedia-api_&lt;rel&gt;-*_arm64.deb</span></code> package
+from the <a class="reference external" href="https://repo.download.nvidia.com/jetson/common/pool/main/n/nvidia-l4t-jetson-multimedia-api/" rel="noopener noreferrer" target="_blank">Jetson package pool</a>.
+Unpack it without installing it:
+<code class="docutils literal notranslate"><span class="pre">dpkg-deb</span> <span class="pre">-x</span> <span class="pre">nvidia-l4t-jetson-multimedia-api_&lt;rel&gt;-*_arm64.deb</span> <span class="pre">/tmp/mmapi</span></code> then
+<code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">cp</span> <span class="pre">-a</span> <span class="pre">/tmp/mmapi/usr/src/jetson_multimedia_api</span> <span class="pre">/usr/src/</span></code>.</p></li>
+</ul>
+<p>If they live elsewhere, pass <code class="docutils literal notranslate"><span class="pre">-DSIPL_API_DIR=PATH</span></code> and <code class="docutils literal notranslate"><span class="pre">-DJETSON_MMAPI_DIR=PATH</span></code> to CMake.</p>
+</section>
 </section>
 <section id="building-and-running">
 <h2>Building and running<a class="headerlink" href="#building-and-running" title="Link to this heading">#</a></h2>
@@ -795,7 +819,10 @@ when the plugin does not render.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-setup-and-preview">Host: setup and preview</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#container-setup-and-preview">Container: setup and preview</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-details">Setup details</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-details">Setup details</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#build-prerequisites">Build prerequisites</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#building-and-running">Building and running</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry-comes-from-the-platform-config">Geometry comes from the platform config</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#encoding-at-5-mp60">Encoding at 5 MP60</a></li>
@@ -889,7 +916,7 @@ when the plugin does not render.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

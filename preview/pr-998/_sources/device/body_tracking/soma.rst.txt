@@ -87,18 +87,14 @@ Build the examples
 
 Start with a configured Isaac Capture checkout. See
 :doc:`../../development/build_from_source/index` for the complete build
-prerequisites. Install the live viewer and both deterministic publishers:
+prerequisites. Install the live viewer and both deterministic publishers into a venv
+set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
    uv pip install -e ./examples/deviceio_live_view
    uv pip install -e ./examples/soma_body_publisher
    uv pip install -e ./examples/soma_hand_publisher
-
-   .venv/bin/cmake -S . -B build
-   .venv/bin/cmake --build build \
-     --target isaacteleop_python \
-     -j4
 
 The example packages install ``py-soma-x==0.3.1``.
 The publishers use the Python-accessible ``TensorPushTracker`` and its native

@@ -50,7 +50,7 @@ graph outputs and writes them *out* to a device after the graph runs.
 Example
 -------
 
-``examples/haptic_feedback/python/controller_haptic_example.py`` is the minimal
+``controller_haptic_example`` in ``examples/haptic_feedback`` is the minimal
 end-to-end wiring: pull a controller's trigger and that **same** controller
 rumbles. ``TriggerToTactile`` turns the trigger value into a ``TactileVector``,
 ``TactileVectorToControllerPulse`` turns that into a ``ControllerHapticPulse``,
@@ -67,12 +67,14 @@ Running
 
 The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see :ref:`dedicated-cloudxr-runtime` to manage
-that service yourself). Run it from the ``examples/haptic_feedback/python``
-directory:
+that service yourself). From the repository root, set up a venv and install
+``isaaccapture`` into it as in :ref:`step 4 of Build from source <build-from-source-install-package>`.
+Then install the example and run it:
 
 .. code-block:: bash
 
-   uv run controller_haptic_example.py
+   uv pip install -e ./examples/haptic_feedback
+   python -m isaaccapture_examples.haptic_feedback.controller_haptic_example
 
 No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
 exit. Runtimes that do not expose ``xrApplyHapticFeedback`` silently no-op rather
@@ -94,6 +96,6 @@ foundation.
 See also
 --------
 
-- Example + tests: ``examples/haptic_feedback/python/`` and
+- Example + tests: ``examples/haptic_feedback/`` and
   ``tests/python/core/retargeting_engine/test_haptic_devices.py`` /
   ``test_haptic_sink.py``.

@@ -20,7 +20,8 @@ Prerequisites
 -------------
 
 - **CMake** 3.24 or higher (Ubuntu 22.04's apt ``cmake`` is 3.22 — install a newer one
-  from `Kitware's APT repository <https://apt.kitware.com/>`_ or with ``pip install cmake``)
+  from `Kitware's APT repository <https://apt.kitware.com/>`_ or with ``pip install cmake``).
+  A Release wheel with its contents SBOM needs 3.27, which added ``cmake_file_api()``.
 - **C++20** compatible compiler
 - **Python** 3.11, 3.12, or 3.13 (default 3.11; see ``ISAAC_TELEOP_PYTHON_VERSION`` in root ``CMakeLists.txt``)
 - **uv** for Python dependency management and managed Python
@@ -40,10 +41,11 @@ Prerequisites
 
    ``BUILD_VIZ=ON`` additionally requires **glslangValidator** to compile shaders to SPIR-V
    (``glslang-tools`` on Linux, ``brew install glslang`` on macOS; ships with the Vulkan SDK
-   on Windows), and on Linux **wayland-scanner** (``libwayland-dev``) for GLFW's Wayland
-   backend — pass ``-DGLFW_BUILD_WAYLAND=OFF`` to build Televiz against X11 only instead.
-   Neither gates the auto-default: if one is missing, the configure fails naming it rather
-   than quietly dropping the module. Most users do not need any of this:
+   on Windows). On Linux, GLFW's Wayland backend also requires **wayland-scanner**
+   (``libwayland-dev``) and **xkbcommon >= 0.5.0** (``libxkbcommon-dev``). Pass
+   ``-DGLFW_BUILD_WAYLAND=OFF`` to build Televiz against X11 only instead.
+   These dependencies do not gate the auto-default: if one is missing, configure fails
+   naming it rather than quietly dropping the module. Most users do not need any of this:
    ``pip install isaaccapture`` already ships the compiled ``isaaccapture.viz`` module. See
    `Other Build options`_ for the full option table.
 
@@ -58,7 +60,9 @@ the list of dependencies. On **Ubuntu**, install build tools and clang-format:
 .. code-block:: bash
 
    sudo apt-get update
-   sudo apt-get install -y build-essential cmake libegl-dev libx11-dev libwayland-dev clang-format-14 ccache patchelf pkg-config glslang-tools
+   sudo apt-get install -y build-essential cmake clang-format-14 ccache patchelf pkg-config glslang-tools \
+       libegl-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev \
+       libxinerama-dev libxkbcommon-dev libxrandr-dev
 
 Runtime-only dependencies (needed to actually run teleop, not to build):
 
@@ -328,13 +332,26 @@ When ``BUILD_TESTING`` is ``ON``, CTest is enabled at the top level. Run all tes
 
 The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build-ubuntu.yml>`).
 
+.. _build-from-source-install-package:
+
 4. Install the ``isaaccapture`` pip package
 -------------------------------------------
 
 The build writes two wheels to ``./install/wheels/``: ``isaaccapture`` and the ``isaacteleop``
 transition wheel it depends on. The ``isaaccapture`` wheel only installs on the Python version it
-was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so create and activate a venv
-with that version first.
+was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so install it into a virtual
+environment with that version. Without one, ``pip install`` fails on Ubuntu 24.04 with
+``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment found``.
+From the repository root:
+
+.. code-block:: bash
+
+   # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
+
+If ``.venv`` already exists on the build's Python, activate it and skip ``uv venv``. To switch it
+to another Python, rerun ``uv venv`` with ``--clear``, which deletes everything installed in it.
 
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
@@ -352,6 +369,13 @@ differently:
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
+
+.. _build-from-source-editable-examples:
+
+An example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout replaces this
+wheel with an editable build of the checkout when you install it. Its first install compiles the
+extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
+``uv pip install -e ./examples/<name> --reinstall-package isaaccapture``.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so

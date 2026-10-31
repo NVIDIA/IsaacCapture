@@ -34,6 +34,9 @@ subsequent builds are fast.
 Prerequisites
 ~~~~~~~~~~~~~
 
+Complete the :doc:`source-build prerequisites </development/build_from_source/index>`
+first, then install the OAK-specific dependencies:
+
 .. code-block:: bash
 
    # Install build tools for vcpkg to build libusb (Linux)
@@ -169,9 +172,19 @@ controllers, etc.):
        while True:
            session.step()  # metadata is recorded each update
 
-See also :code-file:`examples/oxr/python/test_oak_camera.py` (``--mode
-schema-pusher``) for a standalone PluginManager + DeviceIOSession example of
-the same SchemaPusher flow.
+The test script :code-file:`tests/python/xr_runtime/test_oak_camera.py` runs the
+same SchemaPusher flow with ``PluginManager`` and ``DeviceIOSession`` directly.
+It loads the plugin from ``install/plugins``, so it needs a full build and install
+of the tree configured above, not only ``camera_plugin_oak``. With ``isaaccapture``
+installed in the active environment (step 4 of :doc:`/development/build_from_source/index`)
+and the CloudXR environment loaded (see :ref:`load-cloudxr-environment-variables`),
+run from the repository root:
+
+.. code-block:: bash
+
+   cmake --build build --parallel
+   cmake --install build
+   python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 
 Configuration
 -------------

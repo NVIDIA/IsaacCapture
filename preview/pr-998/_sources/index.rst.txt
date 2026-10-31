@@ -4,9 +4,16 @@
 Welcome to Isaac Capture
 ========================
 
-.. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
+|default-license| |egopost-license|
+
+.. |default-license| image:: https://img.shields.io/badge/Default-Apache--2.0-blue.svg
    :target: development/license.html
-   :alt: License
+   :alt: Default: Apache-2.0
+   :class: license-badge
+
+.. |egopost-license| image:: https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg
+   :target: https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt
+   :alt: EgoPost: OpenMDW-1.1
    :class: license-badge
 
 **NVIDIA Isaac Capture** is a shared library for teleoperation and egocentric data
@@ -47,8 +54,15 @@ Table of Contents
    :caption: Isaac Teleop
 
    teleop/quick_start
+   getting_started/ovxr
    teleop/teleop_session
    teleop/control_state_machine
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Ego Post Processing
+
+   ego_post_processing/egohand
 
 .. toctree::
    :maxdepth: 2
@@ -82,8 +96,9 @@ Table of Contents
    device/tactile/index
    device/spatial_controllers/index
    device/gamepads/index
-   Spatial trackers <device/trackers>
+   Spatial trackers <device/trackers/index>
    device/add_device
+   Device Conformance <conformance/overview>
 
 .. toctree::
    :maxdepth: 2
@@ -91,6 +106,7 @@ Table of Contents
 
    references/requirements
    references/build
+   references/sbom
    references/generated_trackers
    references/retargeting/index
    references/device_provider_monitoring
@@ -99,7 +115,6 @@ Table of Contents
    references/cloudxr
    references/oob_teleop_control
    references/haptic_feedback
-   references/egocentric_hand_reconstruction
 
 Indices and tables
 ------------------

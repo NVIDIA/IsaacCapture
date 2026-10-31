@@ -34,6 +34,8 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
    │   ├── teleop_session_manager/ # Teleop session manager (Python)
    │   ├── cloudxr/                # CloudXR runtime helper (Python)
    │   └── python/                 # Python wheel packaging (when BUILD_PYTHON_BINDINGS=ON)
+   ├── src/python/isaaccapture/
+   │   └── ovxr_session_manager/   # OVXR session ownership and presentation
    ├── src/plugins/                # Built when BUILD_PLUGINS=ON
    │   ├── plugin_utils/
    │   ├── controller_synthetic_hands/
@@ -41,6 +43,8 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
    │   ├── manus/
    │   ├── oak/                    # When BUILD_PLUGIN_OAK_CAMERA=ON
    |   └── haptikos/
+   ├── tests/python/core/
+   │   └── ovxr_session_manager/   # OVXR session and presentation tests
    └── examples/
        ├── oxr/                    # OpenXR examples (C++ and Python)
        ├── retargeting/
@@ -57,8 +61,10 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``, pinning the local build's version
-``X.Y+local`` (``X.Y`` from the repository's ``VERSION`` file):
+After building, activate a virtual environment with the build's Python version
+(:ref:`step 4 of Build from source <build-from-source-install-package>` shows how), then install the wheels with ``uv`` or
+``pip``, pinning the local build's version ``X.Y+local`` (``X.Y`` from the repository's ``VERSION``
+file):
 
 .. code-block:: bash
 
@@ -67,7 +73,7 @@ After building, install the wheels with ``uv`` or ``pip``, pinning the local bui
    uv pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/
+   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --force-reinstall
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
@@ -80,7 +86,8 @@ In addition to the classic CMake flow above (which stages the package
 and produces a wheel under ``install/wheels/``), the repository ships a root
 :code-file:`pyproject.toml` that exposes ``isaaccapture`` through the
 `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ build backend,
-driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
+driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist). Run it inside an
+activated virtual environment as well:
 
 .. code-block:: bash
 

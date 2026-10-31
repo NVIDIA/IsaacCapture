@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Build from Source" href="../development/build_from_source/index.html" />
+    <link rel="next" title="EgoHand" href="../ego_post_processing/egohand.html" />
     <link rel="prev" title="Teleop Session" href="teleop_session.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -345,8 +345,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -372,13 +377,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -387,7 +394,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -453,11 +459,11 @@ this output contract:</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">reset_event</span></code>: bool pulse</p></li>
 </ul>
 <p>When provided, <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> decodes these outputs into
-<code class="docutils literal notranslate"><span class="pre">ComputeContext.execution_events</span></code> so downstream retargeters and high-level app
+<code class="docutils literal notranslate"><span class="pre">ComputeContext.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events</span></code> so downstream retargeters and high-level app
 logic can read:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.execution_state</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.reset</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">state</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">reset</span></code></p></li>
 </ul>
 <p>Isaac Teleop provides <code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> as a ready-to-use default
 state machine. It should work for most setups, but you can also implement your
@@ -598,11 +604,11 @@ or other high-level behavior:</p>
       </div>
     </a>
     <a class="right-next"
-       href="../development/build_from_source/index.html"
+       href="../ego_post_processing/egohand.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Build from Source</p>
+        <p class="prev-next-title">EgoHand</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -713,7 +719,7 @@ or other high-level behavior:</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -345,8 +345,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -372,13 +377,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Retargeting Interface</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="sharpa.html">Retargeter: Manus to Sharpa</a></li>
@@ -393,7 +400,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -463,7 +469,7 @@
 <code class="docutils literal notranslate"><span class="pre">SomaBodyJointPoses</span></code> payload from a configured publisher collection. It
 runs upstream FK for rotations or directly maps evaluated poses, then emits
 an optional <code class="docutils literal notranslate"><span class="pre">SomaBodyInput</span></code> containing the 77 global SOMA joint poses.
-See <a class="reference internal" href="../../device/trackers.html"><span class="doc">Spatial Trackers and Device Data</span></a> and <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a>.</p></li>
+See <a class="reference internal" href="../../device/trackers/index.html"><span class="doc">Spatial Trackers and Device Data</span></a> and <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a>.</p></li>
 </ul>
 </section>
 <section id="available-retargeters">
@@ -626,7 +632,7 @@ names):</p>
 <span class="p">)</span>
 </pre></div>
 </div>
-<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_to_baselink_frame_transform</span></code> parameter is a 3x3
+<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_</span><wbr><span class="pre">to_</span><wbr><span class="pre">baselink_</span><wbr><span class="pre">frame_</span><wbr><span class="pre">transform</span></code> parameter is a 3x3
 rotation matrix flattened to 9 elements. Applied as
 <code class="docutils literal notranslate"><span class="pre">target_pos</span> <span class="pre">=</span> <span class="pre">joint_pos</span> <span class="pre">&#64;</span> <span class="pre">wrist_rotation</span> <span class="pre">&#64;</span> <span class="pre">transform_matrix</span></code>. Config default is <strong>Identity</strong>
 <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1)</span></code>. Common value for <strong>G1/Inspire</strong>: <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0)</span></code>
@@ -711,8 +717,8 @@ both hands with left and right VR controllers.</p>
 <p class="admonition-title">Tip</p>
 <p class="sd-card-text">For a complete hand retargeting example (e.g. <code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> + <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code> or
 <code class="docutils literal notranslate"><span class="pre">TriHandMotionControllerRetargeter</span></code>, connect and compute), see
-<code class="docutils literal notranslate"><span class="pre">g1_trihand_retargeting_example.py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/teleop/python" rel="noopener noreferrer" target="_blank">examples/teleop/python</a> directory.</p>
+<code class="docutils literal notranslate"><span class="pre">g1_</span><wbr><span class="pre">trihand_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/teleop/python/isaaccapture_examples/teleop" rel="noopener noreferrer" target="_blank">examples/teleop/python/isaaccapture_examples/teleop</a> directory.</p>
 </div>
 </div>
 </details><details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
@@ -735,7 +741,7 @@ still or when controllers are not available but the pipeline expects locomotion 
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">FootPedalRootCmdRetargeter</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">Maps 3-axis foot pedal input to the same 4D root command <code class="docutils literal notranslate"><span class="pre">[vel_x,</span> <span class="pre">vel_y,</span> <span class="pre">rot_vel_z,</span> <span class="pre">hip_height]</span></code>.
-Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.mode</span></code>):
+Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.</span><wbr><span class="pre">mode</span></code>):
 <code class="docutils literal notranslate"><span class="pre">&quot;horizontal&quot;</span></code> (right/left pedals = forward/back, rudder = yaw or strafe when pedal pressed)
 and <code class="docutils literal notranslate"><span class="pre">&quot;vertical&quot;</span></code> (left pedal drives hip height, rudder = yaw). Config includes velocity
 limits, squat range, deadzone and rudder thresholds.</p>
@@ -980,7 +986,7 @@ retargeter tuning UI.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

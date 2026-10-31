@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Generated Tracker Code" href="generated_trackers.html" />
+    <link rel="next" title="Wheel contents SBOM and license evidence" href="sbom.html" />
     <link rel="prev" title="System Requirements" href="requirements.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -345,8 +345,13 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
@@ -372,13 +377,15 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -387,7 +394,6 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -469,6 +475,8 @@
 │   ├── teleop_session_manager/ # Teleop session manager (Python)
 │   ├── cloudxr/                # CloudXR runtime helper (Python)
 │   └── python/                 # Python wheel packaging (when BUILD_PYTHON_BINDINGS=ON)
+├── src/python/isaaccapture/
+│   └── ovxr_session_manager/   # OVXR session ownership and presentation
 ├── src/plugins/                # Built when BUILD_PLUGINS=ON
 │   ├── plugin_utils/
 │   ├── controller_synthetic_hands/
@@ -476,6 +484,8 @@
 │   ├── manus/
 │   ├── oak/                    # When BUILD_PLUGIN_OAK_CAMERA=ON
 |   └── haptikos/
+├── tests/python/core/
+│   └── ovxr_session_manager/   # OVXR session and presentation tests
 └── examples/
     ├── oxr/                    # OpenXR examples (C++ and Python)
     ├── retargeting/
@@ -492,14 +502,16 @@
 </section>
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
-<p>After building, install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version
-<code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file):</p>
+<p>After building, activate a virtual environment with the build’s Python version
+(<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a> shows how), then install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or
+<code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code>
+file):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># The pin keeps a newer release on the index from winning over the local build.</span>
 <span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 
 <span class="c1"># or</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--force-reinstall
 </pre></div>
 </div>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
@@ -512,7 +524,8 @@ in 1.9, so
 and produces a wheel under <code class="docutils literal notranslate"><span class="pre">install/wheels/</span></code>), the repository ships a root
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> that exposes <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> through the
 <a class="reference external" href="https://scikit-build-core.readthedocs.io/" rel="noopener noreferrer" target="_blank">scikit-build-core</a> build backend,
-driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist):</p>
+driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist). Run it inside an
+activated virtual environment as well:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">            </span><span class="c1"># build + install the compiled wheel from source</span>
 pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w">         </span><span class="c1"># editable / developer install</span>
 </pre></div>
@@ -529,7 +542,7 @@ interpreter and ABI are baked into <code class="docutils literal notranslate"><s
 two build paths therefore never share a directory:</p>
 <ul>
 <li><p><strong>classic CMake</strong> → whatever you pass to <code class="docutils literal notranslate"><span class="pre">-B</span></code>, <code class="docutils literal notranslate"><span class="pre">build/</span></code> by convention.
-<code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code> selects the interpreter (default <code class="docutils literal notranslate"><span class="pre">3.11</span></code>), and
+<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> selects the interpreter (default <code class="docutils literal notranslate"><span class="pre">3.11</span></code>), and
 changing it on an existing tree is rejected with an error rather than silently
 reusing the old one — delete the tree to switch versions.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w">                                            </span><span class="c1"># default 3.11</span>
@@ -543,7 +556,7 @@ cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </s
 <li><p><strong>pip / scikit-build-core</strong> → <code class="docutils literal notranslate"><span class="pre">build-wheel/&lt;cache-tag&gt;/</span></code> (e.g.
 <code class="docutils literal notranslate"><span class="pre">build-wheel/cpython-312/</span></code>), set by <code class="docutils literal notranslate"><span class="pre">build-dir</span></code> in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> and chosen automatically per interpreter, keyed off
-<code class="docutils literal notranslate"><span class="pre">sys.implementation.cache_tag</span></code>. It lives outside <code class="docutils literal notranslate"><span class="pre">build/</span></code> so <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>
+<code class="docutils literal notranslate"><span class="pre">sys.</span><wbr><span class="pre">implementation.</span><wbr><span class="pre">cache_</span><wbr><span class="pre">tag</span></code>. It lives outside <code class="docutils literal notranslate"><span class="pre">build/</span></code> so <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>
 and a classic <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">-B</span> <span class="pre">build</span></code> never collide, and <code class="docutils literal notranslate"><span class="pre">rm</span> <span class="pre">-rf</span> <span class="pre">build</span></code> leaves the
 incremental wheel tree intact.</p></li>
 </ul>
@@ -591,7 +604,7 @@ incremental wheel tree intact.</p></li>
 </section>
 <section id="uv-or-python-version">
 <h3>uv or Python version<a class="headerlink" href="#uv-or-python-version" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">cmake/SetupPython.cmake</span></code> requires <strong>uv</strong> and uses <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code>. Install uv as
+<p><code class="docutils literal notranslate"><span class="pre">cmake/SetupPython.cmake</span></code> requires <strong>uv</strong> and uses <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code>. Install uv as
 in <a class="reference internal" href="../development/build_from_source/index.html#one-time-setup"><span class="std std-ref">One time setup</span></a> and pass <code class="docutils literal notranslate"><span class="pre">-DISAAC_TELEOP_PYTHON_VERSION=3.12</span></code> (or 3.11,
 3.13) if you need a specific version.</p>
 </section>
@@ -629,11 +642,11 @@ in <a class="reference internal" href="../development/build_from_source/index.ht
       </div>
     </a>
     <a class="right-next"
-       href="generated_trackers.html"
+       href="sbom.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Generated Tracker Code</p>
+        <p class="prev-next-title">Wheel contents SBOM and license evidence</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -754,7 +767,7 @@ in <a class="reference internal" href="../development/build_from_source/index.ht
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>
