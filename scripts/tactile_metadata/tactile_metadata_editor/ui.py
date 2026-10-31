@@ -367,6 +367,44 @@ class Editor:
         button.on_click(clicked)
         return button
 
+    def _update_interruption_listener(self) -> None:
+        if self.binding_phase is not None:
+            allowed = (self.binding_start, self.binding_next, self.binding_complete)
+        elif self.pick_mode is not None:
+            allowed = (
+                {
+                    "segment": self.segment_click_button,
+                    "taxel_pose": self.taxel_capture_button,
+                    "segment_pose": self.segment_capture_button,
+                }[self.pick_mode],
+            )
+        else:
+            allowed = ()
+        # Viser shares this list for accepted clicks and value changes. Replace
+        # it to preserve in-flight dispatches; prepend to queue interruption first.
+        for widget in self.server.gui._gui_input_handle_from_uuid.values():
+            callbacks = [
+                callback
+                for callback in widget._impl.update_cb
+                if callback != self._procedure_interaction
+            ]
+            if allowed and all(widget is not button for button in allowed):
+                callbacks.insert(0, self._procedure_interaction)
+            widget._impl.update_cb = callbacks
+
+    async def _procedure_interaction(self, event) -> None:
+        if event.client is not None and not event.target.disabled:
+            self.events.put(self._interrupt_procedure)
+
+    def _interrupt_procedure(self) -> None:
+        if self.binding_phase is not None:
+            self._cancel_binding(report=True)
+        elif self.pick_mode is not None:
+            self._toggle_pick_mode(self.pick_mode)
+        else:
+            return
+        self.redraw = True
+
     def _run_action(self, callback, value=None) -> None:
         self.info.value = ""
         try:
@@ -664,6 +702,7 @@ class Editor:
                 "taxel_pose": "Capture URDF Surface Pose canceled.",
                 "segment_pose": "Capture Segment Pose canceled.",
             }[mode]
+            LOG.warning("%s", self.info.value)
             return
         self._set_pick_mode(mode)
 
@@ -684,6 +723,10 @@ class Editor:
             if self.pick_mode == "segment_pose"
             else "Capture Segment Pose"
         )
+        if self.pick_mode is not None:
+            self.selected_kind, self.selected_rows = None, []
+            self._sync_selection()
+        self._update_interruption_listener()
 
     def _grid_values(self):
         center = [float(widget.value) for widget in self.grid_center]
@@ -1201,14 +1244,15 @@ class Editor:
             self.selected_rows.copy() if self.selected_kind == "taxels" else []
         )
         self.binding_segments = []
-        if not self.binding_taxels:
-            self.selected_kind, self.selected_rows = None, []
+        self.selected_kind, self.selected_rows = None, []
+        self._sync_selection()
         self._set_binding_button("next" if self.binding_taxels else None)
         self.binding_info.content = (
             "Select taxel(s) to bind in 3D scene. Hold Shift to multi-select. "
             'Click "Select Segments" after selecting taxels. Click another area to cancel.'
         )
         self.info.value = "Binding started."
+        self._update_interruption_listener()
 
     def _select_binding_segments(self) -> None:
         if not self.binding_taxels:
@@ -1233,7 +1277,9 @@ class Editor:
         rows = list(self.binding_taxels)
         self.document.assign(rows, self.binding_segments)
         self._cancel_binding()
+        self.selected_kind, self.selected_rows = "taxels", rows
         self._sync_taxel_binding_widgets(rows)
+        self._sync_selection()
         noun = "taxel" if len(rows) == 1 else "taxels"
         self.info.value = f"Binding completed for {len(rows)} {noun}."
 
@@ -1250,6 +1296,8 @@ class Editor:
             self.binding_info.content = ""
         if report:
             self.info.value = "Binding canceled."
+            LOG.warning("Binding canceled.")
+        self._update_interruption_listener()
 
     def _joint_enabled(self, enabled: bool) -> None:
         self.joint_collection.disabled = not enabled
@@ -1576,8 +1624,10 @@ class Editor:
         return self.document.segments, self.document.taxels
 
     def _handle_scene_event(self, event, box: bool) -> None:
-        if self.pick_mode is not None and not box:
-            self._handle_pick(event)
+        if self.pick_mode is not None:
+            # Captures consume clicks; rectangles must not select editable objects.
+            if not box:
+                self._handle_pick(event)
             return
         segments, taxels = self._display_values()
         candidates = {

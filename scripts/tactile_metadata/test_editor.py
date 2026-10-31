@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import queue
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -35,10 +37,64 @@ class EditorTests(unittest.TestCase):
         editor.preview_document = editor._preview_from(editor.document)
         editor.binding_source_live = SimpleNamespace(value=False)
         editor.info = SimpleNamespace(value="")
+        editor.binding_phase, editor.pick_mode = None, None
+        editor.events = queue.SimpleQueue()
+        editor.server = SimpleNamespace(
+            gui=SimpleNamespace(_gui_input_handle_from_uuid={})
+        )
+        editor.server.gui.add_button = lambda *args, **kwargs: self.make_input(editor)
         editor.edit_joint_widgets = {}
         editor._rebuild_edit_lists = Mock()
         editor._sync_joint_widget_values = Mock()
         return editor
+
+    def make_input(self, editor, value=None):
+        widget = SimpleNamespace(
+            value=value, disabled=False, _impl=SimpleNamespace(update_cb=[])
+        )
+        widget.on_update = widget._impl.update_cb.append
+        widget.on_click = widget._impl.update_cb.append
+        inputs = editor.server.gui._gui_input_handle_from_uuid
+        inputs[str(len(inputs))] = widget
+        return widget
+
+    def make_procedure_editor(self):
+        editor = self.make_editor()
+        editor.mode_edit = SimpleNamespace(value=True)
+        editor.selected_kind, editor.selected_rows = "taxels", [0]
+        editor.binding_info = SimpleNamespace(content="")
+        editor.binding_start = self.make_input(editor)
+        editor.binding_next = self.make_input(editor)
+        editor.binding_complete = self.make_input(editor)
+        editor._button(editor.binding_start, editor._start_binding)
+        editor._button(editor.binding_next, editor._select_binding_segments)
+        editor._button(editor.binding_complete, editor._complete_binding)
+        for mode, name in (
+            ("segment", "segment_click_button"),
+            ("taxel_pose", "taxel_capture_button"),
+            ("segment_pose", "segment_capture_button"),
+        ):
+            button = editor._action_button(
+                mode, lambda mode=mode: editor._toggle_pick_mode(mode)
+            )
+            setattr(editor, name, button)
+        editor._sync_selection = Mock()
+        editor._sync_taxel_binding_widgets = Mock()
+        editor._document_error_html = Mock(return_value="")
+        return editor
+
+    @staticmethod
+    def dispatch(widget, client=None):
+        async def emit():
+            for callback in widget._impl.update_cb:
+                await callback(SimpleNamespace(client=client, target=widget))
+
+        asyncio.run(emit())
+
+    @staticmethod
+    def drain_events(editor):
+        while not editor.events.empty():
+            editor.events.get_nowait()()
 
     def make_live_editor(self, frame):
         editor = self.make_editor()
@@ -292,26 +348,148 @@ class EditorTests(unittest.TestCase):
             (None, []),
         ):
             with self.subTest(kind=kind, rows=rows):
-                editor = self.make_editor()
+                editor = self.make_procedure_editor()
                 editor.document.taxels.append(Taxel())
                 editor.selected_kind, editor.selected_rows = kind, rows.copy()
-                editor._set_pick_mode = Mock()
-                editor.binding_info = SimpleNamespace(content="")
-                editor.binding_start = SimpleNamespace(disabled=False)
-                editor.binding_next = SimpleNamespace(disabled=True)
-                editor.binding_complete = SimpleNamespace(disabled=True)
 
                 editor._start_binding()
 
                 expected = rows if kind == "taxels" else []
                 self.assertEqual(editor.binding_taxels, expected)
                 self.assertEqual(editor.binding_segments, [])
-                self.assertEqual(editor.selected_rows, expected)
-                self.assertEqual(editor.selected_kind, "taxels" if expected else None)
+                self.assertEqual(editor.selected_rows, [])
+                self.assertIsNone(editor.selected_kind)
+                editor._sync_selection.assert_called_once()
                 self.assertEqual(editor.binding_phase, "taxels")
                 self.assertTrue(editor.binding_start.disabled)
                 self.assertEqual(editor.binding_next.disabled, not expected)
                 self.assertTrue(editor.binding_complete.disabled)
+
+    def test_procedures_listen_to_passive_inputs_and_remove_the_listener(self):
+        for mode in ("binding", "segment", "taxel_pose", "segment_pose"):
+            with self.subTest(mode=mode):
+                editor = self.make_procedure_editor()
+                widget = self.make_input(editor)
+                if mode == "binding":
+                    editor._start_binding()
+                else:
+                    editor._toggle_pick_mode(mode)
+                self.assertIsNone(editor.selected_kind)
+                self.assertEqual(editor.selected_rows, [])
+                editor._sync_selection.assert_called_once()
+
+                self.dispatch(widget)
+                widget.disabled = True
+                self.dispatch(widget, client=object())
+                self.assertTrue(editor.events.empty())
+
+                widget.disabled = False
+                self.dispatch(widget, client=object())
+                with self.assertLogs(
+                    "isaaccapture.tactile_metadata.editor", level="WARNING"
+                ) as logged:
+                    self.drain_events(editor)
+                self.assertEqual(len(logged.records), 1)
+                self.assertIsNone(editor.binding_phase)
+                self.assertIsNone(editor.pick_mode)
+                for handle in editor.server.gui._gui_input_handle_from_uuid.values():
+                    self.assertNotIn(
+                        editor._procedure_interaction, handle._impl.update_cb
+                    )
+                self.dispatch(widget, client=object())
+                self.assertTrue(editor.events.empty())
+
+    def test_interruption_runs_before_button_and_value_business_callbacks(self):
+        for button in (False, True):
+            with self.subTest(button=button):
+                editor = self.make_procedure_editor()
+                observed = []
+
+                def observe(*_, editor=editor, observed=observed):
+                    observed.append(editor.binding_phase)
+
+                if button:
+                    widget = editor._action_button("Other action", observe)
+                else:
+                    widget = self.make_input(editor, 2.0)
+
+                    async def flush_interruption(_, editor=editor):
+                        self.drain_events(editor)
+
+                    widget.on_update(flush_interruption)
+                    editor._watch(widget, observe)
+                editor._start_binding()
+
+                with self.assertLogs(
+                    "isaaccapture.tactile_metadata.editor", level="WARNING"
+                ):
+                    self.dispatch(widget, client=object())
+                    self.drain_events(editor)
+
+                self.assertEqual(observed, [None])
+
+    def test_binding_buttons_and_scene_picks_preserve_the_flow_until_completion(self):
+        editor = self.make_procedure_editor()
+        editor._start_binding()
+        self.dispatch(editor.binding_next, client=object())
+        self.drain_events(editor)
+        self.assertEqual(editor.binding_phase, "segments")
+
+        editor._handle_scene_event = Mock()
+        asyncio.run(editor._scene_click(SimpleNamespace()))
+        self.drain_events(editor)
+        editor._handle_scene_event.assert_called_once()
+        self.assertEqual(editor.binding_phase, "segments")
+
+        editor.binding_segments = [0]
+        editor._set_binding_button("complete")
+        self.dispatch(editor.binding_complete, client=object())
+        self.drain_events(editor)
+        self.assertIsNone(editor.binding_phase)
+        self.assertEqual(editor.selected_kind, "taxels")
+        self.assertEqual(editor.selected_rows, [0])
+        for widget in editor.server.gui._gui_input_handle_from_uuid.values():
+            self.assertNotIn(editor._procedure_interaction, widget._impl.update_cb)
+
+    def test_capture_rectangles_do_not_select_objects_or_enable_the_gizmo(self):
+        for mode in ("segment", "taxel_pose", "segment_pose"):
+            with self.subTest(mode=mode):
+                editor = self.make_procedure_editor()
+                editor.selection_gizmo = SimpleNamespace(visible=True)
+                editor._box_rows = Mock(return_value=[0])
+                editor._handle_pick = Mock()
+                editor._toggle_pick_mode(mode)
+                editor._sync_selection.reset_mock()
+                event = SimpleNamespace(modifier="shift")
+
+                editor._handle_scene_event(event, True)
+                editor._draw_selection_gizmo()
+
+                self.assertIsNone(editor.selected_kind)
+                self.assertEqual(editor.selected_rows, [])
+                self.assertEqual(editor.pick_mode, mode)
+                self.assertFalse(editor.selection_gizmo.visible)
+                editor._sync_selection.assert_not_called()
+                editor._box_rows.assert_not_called()
+                editor._handle_pick.assert_not_called()
+
+                editor._handle_scene_event(event, False)
+                editor._handle_pick.assert_called_once_with(event)
+
+    def test_capture_buttons_toggle_or_replace_the_active_procedure(self):
+        editor = self.make_procedure_editor()
+        editor._toggle_pick_mode("taxel_pose")
+        for button, expected in (
+            (editor.segment_capture_button, "segment_pose"),
+            (editor.segment_capture_button, None),
+        ):
+            self.dispatch(button, client=object())
+            with self.assertLogs(
+                "isaaccapture.tactile_metadata.editor", level="WARNING"
+            ) as logged:
+                self.drain_events(editor)
+            self.assertEqual(len(logged.records), 1)
+            self.assertEqual(editor.pick_mode, expected)
 
     def test_deleted_segment_remains_invalid_after_round_trip(self):
         document = self.make_editor().document
