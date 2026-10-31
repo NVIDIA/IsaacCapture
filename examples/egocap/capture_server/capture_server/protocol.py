@@ -395,7 +395,6 @@ def _build_ic_tracking_v1_fields() -> tuple[Field, ...]:
 
     right_hand = _hand_fields("hand_right", offset)
     fields.extend(right_hand)
-    offset = right_hand[-1].offset + right_hand[-1].nbytes
 
     return tuple(fields)
 
