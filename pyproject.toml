@@ -116,6 +116,8 @@ result = "{major}.{minor}+local"
 # [build-system], not [tool.uv]).
 [tool.uv]
 package = false
+# Ignore Viser's websockets requirement while preserving CloudXR's requirement.
+exclude-dependencies = [{ package = { name = "viser" }, dependencies = ["websockets"] }]
 
 [tool.uv.sources]
 isaacteleop = { path = "src/compat" }

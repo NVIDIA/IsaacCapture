@@ -12,4 +12,5 @@ runs:
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
       with:
         # Pinning explicitly avoids setup-uv version-resolution API calls and fallback paths.
-        version: "0.10.6"
+        # Required for package-scoped dependency exclusions in pyproject.toml.
+        version: "0.12.13"
