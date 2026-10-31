@@ -7,8 +7,29 @@
 
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+
+#if SENSING_WITH_LIVEKIT
+#    include "livekit_video_output.hpp"
+
+#    include <sensing_livekit/livekit_session.hpp>
+#else
+// Without LiveKit the members are never set; empty types let the camera's special members compile.
+namespace plugins
+{
+namespace sensing
+{
+class LiveKitSession
+{
+};
+class LiveKitVideoOutput
+{
+};
+} // namespace sensing
+} // namespace plugins
+#endif
 
 namespace plugins
 {
@@ -58,6 +79,24 @@ SensingCamera::SensingCamera(const SensingConfig& config,
     m_camera = std::make_unique<SiplCamera>(make_sipl_config(config));
     const auto& sensors = m_camera->sensors();
 
+#if SENSING_WITH_LIVEKIT
+    // Everything that needs no network is checked first, so a bad name or divisor fails before any
+    // connection is made.
+    std::set<std::string> livekit_tracks;
+    for (const auto& stream_config : streams)
+    {
+        if (stream_config.livekit_track.empty())
+            continue;
+        if (!livekit_tracks.insert(stream_config.livekit_track).second)
+            throw std::runtime_error("LiveKit track name '" + stream_config.livekit_track + "' is used twice");
+        for (const auto& sensor : sensors)
+        {
+            if (sensor.id == stream_config.sensor_id)
+                LiveKitVideoOutput::validate_geometry(sensor.width, sensor.height, config.livekit.scale_div);
+        }
+    }
+#endif
+
     m_streams.reserve(streams.size());
     for (const auto& stream_config : streams)
     {
@@ -91,6 +130,36 @@ SensingCamera::SensingCamera(const SensingConfig& config,
             ipc.sensor_id = found->id;
             ipc.gpu_id = config.gpu_id;
             stream.publisher = std::make_unique<CudaIpcPublisher>(ipc);
+        }
+
+        if (!stream_config.livekit_track.empty())
+        {
+#if SENSING_WITH_LIVEKIT
+            LiveKitOutputConfig output;
+            output.source_width = found->width;
+            output.source_height = found->height;
+            output.scale_div = config.livekit.scale_div;
+            output.fps = config.livekit.fps;
+            output.gpu_id = config.gpu_id;
+            output.bitrate_bps = config.livekit.bitrate_bps;
+            output.peak_bitrate_bps = config.livekit.bitrate_bps + config.livekit.bitrate_bps / 2;
+            output.gop = config.gop;
+            output.full_range = config.full_range;
+            if (!m_livekit)
+                m_livekit = LiveKitSession::connect(config.livekit.url, config.livekit.token);
+
+            PublishSpec spec;
+            spec.name = stream_config.livekit_track;
+            spec.width = found->width / output.scale_div;
+            spec.height = found->height / output.scale_div;
+            spec.max_bitrate_bps = output.peak_bitrate_bps;
+            spec.max_fps = static_cast<double>(std::min<double>(output.fps, found->fps));
+            stream.livekit = std::make_unique<LiveKitVideoOutput>(m_livekit->publish_video(spec), output);
+            std::cout << "LiveKit track '" << spec.name << "': " << spec.width << "x" << spec.height << " @ up to "
+                      << spec.max_fps << " fps" << std::endl;
+#else
+            throw std::runtime_error("this build has no LiveKit support; configure with -DSENSING_LIVEKIT=ON");
+#endif
         }
 
         m_streams.push_back(std::move(stream));
@@ -129,6 +198,12 @@ int64_t SensingCamera::take_capture_tsc(Stream& stream, int64_t timestamp_ns)
 
 void SensingCamera::update()
 {
+#if SENSING_WITH_LIVEKIT
+    // The room is gone for good: stop rather than keep capturing for nobody.
+    if (m_livekit && m_livekit->failed())
+        throw std::runtime_error(m_livekit->failure());
+#endif
+
     for (auto& stream : m_streams)
     {
         // Accept consumers and reap released slots even on a frameless tick,
@@ -148,6 +223,12 @@ void SensingCamera::update()
             // sensitive path, and the encoder submit below is pipelined anyway.
             if (stream.publisher)
                 stream.publisher->publish(view->ptr, view->pitch, view->timestamp_ns);
+
+#if SENSING_WITH_LIVEKIT
+            // A GPU snapshot only; the conversion and the network are on the output's own thread.
+            if (stream.livekit)
+                stream.livekit->submit(*view);
+#endif
 
             if (stream.encoder)
             {
@@ -170,6 +251,11 @@ void SensingCamera::update()
             }
         }
 
+#if SENSING_WITH_LIVEKIT
+        if (stream.livekit && stream.livekit->failed())
+            throw std::runtime_error("sensor " + std::to_string(stream.sensor_id) + ": " + stream.livekit->failure());
+#endif
+
         // Submission and output are decoupled: the V4L2 encoder needs several
         // input frames before it emits the first unit, so drain independently.
         // Each unit carries its own frame's stamp back from the output plane.
@@ -188,6 +274,10 @@ void SensingCamera::flush()
 {
     for (auto& stream : m_streams)
     {
+#if SENSING_WITH_LIVEKIT
+        if (stream.livekit)
+            stream.livekit->flush();
+#endif
         if (!stream.encoder)
             continue;
         auto unit = stream.encoder->end_of_stream();
@@ -234,6 +324,23 @@ void SensingCamera::print_stats() const
                       << stream.publisher->dropped_count() << " dropped"
                       << (stream.publisher->has_consumer() ? "" : ", no consumer");
         }
+#if SENSING_WITH_LIVEKIT
+        if (stream.livekit)
+        {
+            const auto s = stream.livekit->stats();
+            std::cout << " | livekit " << s.published << " published, " << s.paced_out << " paced out, " << s.replaced
+                      << " replaced";
+            if (s.encoder_busy)
+                std::cout << ", " << s.encoder_busy << " encoder busy";
+            if (s.rejected)
+                std::cout << ", " << s.rejected << " rejected";
+            if (s.keyframes_requested)
+                std::cout << ", " << s.keyframes_requested << " keyframes requested";
+            const std::string encoder = stream.livekit->describe();
+            if (!encoder.empty())
+                std::cout << " (" << encoder << ")";
+        }
+#endif
         std::cout << std::endl;
     }
 }

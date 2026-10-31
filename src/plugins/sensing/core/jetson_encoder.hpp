@@ -31,6 +31,9 @@ struct EncodedUnit
 {
     std::vector<uint8_t> data;
     int64_t timestamp_ns = 0;
+    /// The unit is an IDR (with its parameter sets), decodable on its own. Not set on the
+    /// concatenated tail from end_of_stream().
+    bool keyframe = false;
 
     bool empty() const
     {
@@ -43,6 +46,9 @@ struct EncodedUnit
  *
  * Jetson has no libnvidia-encode — the NVIDIA Video Codec SDK is dGPU-only —
  * so this wraps NvVideoEncoder from the Jetson Multimedia API instead.
+ *
+ * One thread must drive an encoder: submit(), poll(), request_keyframe() and set_bitrate() are not
+ * safe to call concurrently.
  *
  * Submission is asynchronous: the encoder needs several input frames before it
  * emits the first bitstream unit, so submit() never blocks waiting for output
@@ -72,8 +78,23 @@ public:
     /** @brief Take any completed unit; empty during encoder warmup. */
     EncodedUnit poll();
 
-    /** @brief Signal EOS and drain the remaining bitstream. */
+    /** @brief Signal EOS and drain the remaining bitstream, concatenated into one unit. */
     EncodedUnit end_of_stream();
+
+    /** @brief Signal EOS and drain the remaining bitstream, one unit per frame with its own stamp. */
+    std::vector<EncodedUnit> drain();
+
+    /** @brief Make the next submitted frame an IDR, preceded by SPS/PPS. */
+    void request_keyframe();
+
+    /**
+     * @brief Change the target bitrate of the running stream.
+     * @return false when this backend cannot change it while encoding.
+     */
+    bool set_bitrate(uint32_t bitrate_bps);
+
+    /** @brief Names the encoder behind this class, for diagnostics. */
+    static const char* backend_name();
 
 private:
     struct Impl;

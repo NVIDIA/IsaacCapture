@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <core/mock_test_hooks.hpp>
+#include <core/sensing_camera.hpp>
 #include <core/sipl_camera.hpp>
 
 extern "C"
@@ -15,6 +16,7 @@ extern "C"
 #include <libavutil/frame.h>
 }
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -272,6 +274,8 @@ struct Decoded
     int width = 0;
     int height = 0;
     double luma = 0;
+    double luma_left = 0; ///< mean luma of the left half
+    double luma_right = 0; ///< mean luma of the right half
 };
 
 /// Decodes an Annex-B stream with libavcodec's software H.264 decoder, in output order. Any parser or
@@ -307,13 +311,20 @@ inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& stream)
             picture.width = frame->width;
             picture.height = frame->height;
             double sum = 0;
+            double left = 0;
             for (int y = 0; y < frame->height; ++y)
             {
                 const uint8_t* row = frame->data[0] + static_cast<size_t>(y) * frame->linesize[0];
                 for (int x = 0; x < frame->width; ++x)
+                {
                     sum += row[x];
+                    left += x < frame->width / 2 ? row[x] : 0;
+                }
             }
-            picture.luma = sum / (static_cast<double>(frame->width) * frame->height);
+            const double pixels = static_cast<double>(frame->width) * frame->height;
+            picture.luma = sum / pixels;
+            picture.luma_left = left / (pixels / 2);
+            picture.luma_right = (sum - left) / (pixels / 2);
             out.push_back(picture);
         }
     };
@@ -347,5 +358,40 @@ inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& stream)
     avcodec_free_context(&context);
     return out;
 }
+
+/// Runs SensingCamera::update() on its own thread, as the plugin's main loop would.
+class UpdateLoop
+{
+public:
+    explicit UpdateLoop(plugins::sensing::SensingCamera& camera)
+        : m_thread(
+              [this, &camera]
+              {
+                  while (!m_stop.load())
+                  {
+                      camera.update();
+                      ++m_ticks;
+                      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                  }
+              })
+    {
+    }
+
+    ~UpdateLoop()
+    {
+        m_stop.store(true);
+        m_thread.join();
+    }
+
+    uint64_t ticks() const
+    {
+        return m_ticks.load();
+    }
+
+private:
+    std::atomic<bool> m_stop{ false };
+    std::atomic<uint64_t> m_ticks{ 0 };
+    std::thread m_thread;
+};
 
 } // namespace sensing_test

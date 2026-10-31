@@ -7,6 +7,7 @@
 #include <core/jetson_encoder.hpp>
 
 #include <cuda_runtime.h>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -36,6 +37,16 @@ public:
     void set(int gray)
     {
         cudaMemset2D(m_ptr, m_pitch, gray, kWidth * 4, kHeight);
+    }
+    /// Different random pixels for each seed: content no encoder can predict, so the bitrate target decides
+    /// how large a unit is.
+    void randomize(uint32_t seed)
+    {
+        std::mt19937 rng(seed);
+        std::vector<uint8_t> host(static_cast<size_t>(kWidth) * kHeight * 4);
+        for (auto& byte : host)
+            byte = static_cast<uint8_t>(rng());
+        cudaMemcpy2D(m_ptr, m_pitch, host.data(), kWidth * 4, kWidth * 4, kHeight, cudaMemcpyHostToDevice);
     }
     uintptr_t ptr() const
     {
@@ -120,7 +131,10 @@ TEST_CASE("the output decodes, in order, at the configured size", "[unit][gpu][s
     for (int i = 0; i < 4; ++i)
     {
         frame.set(40 + 50 * i);
-        REQUIRE(wait_for([&] { return encoder.submit(frame.ptr(), frame.pitch(), 1'000'000'000 + i * 33'333'000); }));
+        REQUIRE(wait_for(
+            [&] {
+                return encoder.submit(frame.ptr(), frame.pitch(), int64_t{ 1'000'000'000 } + i * int64_t{ 33'333'000 });
+            }));
         // The next frame is only written once the copy of this one is done: submit() has returned.
     }
     const auto tail = encoder.end_of_stream();
@@ -186,4 +200,78 @@ TEST_CASE("end of stream returns the tail as one unit carrying the last stamp", 
 
     CHECK(encoder.poll().empty());
     CHECK(encoder.end_of_stream().empty());
+}
+
+TEST_CASE("a lower bitrate target changes the encoded output and the stream still decodes", "[unit][gpu][sensing]")
+{
+    Frame frame;
+    auto config = make_config();
+    config.bitrate_bps = 4'000'000;
+    config.peak_bitrate_bps = 6'000'000;
+    JetsonEncoder encoder(config);
+
+    constexpr int kBefore = 20;
+    constexpr int kAfter = 40;
+    std::vector<EncodedUnit> units;
+    for (int i = 0; i < kBefore + kAfter; ++i)
+    {
+        if (i == kBefore)
+            REQUIRE(encoder.set_bitrate(400'000));
+        frame.randomize(1000 + i);
+        REQUIRE(wait_for(
+            [&] {
+                return encoder.submit(frame.ptr(), frame.pitch(), int64_t{ 1'000'000'000 } + i * int64_t{ 33'333'000 });
+            }));
+        std::this_thread::sleep_for(5ms);
+        for (auto unit = encoder.poll(); !unit.empty(); unit = encoder.poll())
+            units.push_back(std::move(unit));
+    }
+    for (auto& unit : encoder.drain())
+        units.push_back(std::move(unit));
+    REQUIRE(units.size() == kBefore + kAfter);
+
+    auto mean_size = [&](int from, int to)
+    {
+        double total = 0;
+        for (int i = from; i < to; ++i)
+            total += static_cast<double>(units[i].data.size());
+        return total / (to - from);
+    };
+    const double before = mean_size(3, kBefore);
+    const double after = mean_size(kBefore + 20, kBefore + kAfter); // after the rate control has settled
+    INFO("before " << before << " bytes, after " << after << " bytes");
+    CHECK(after < before * 0.4);
+
+    std::vector<uint8_t> stream;
+    for (const auto& unit : units)
+        stream.insert(stream.end(), unit.data.begin(), unit.data.end());
+    CHECK(decode_annex_b(stream).size() == units.size());
+}
+
+TEST_CASE("a keyframe request makes the next frame an IDR with parameter sets", "[unit][gpu][sensing]")
+{
+    Frame frame;
+    JetsonEncoder encoder(make_config()); // GOP of 150: no IDR but the first, unless asked for
+    std::vector<EncodedUnit> units;
+    for (int i = 0; i < 6; ++i)
+    {
+        if (i == 4)
+            encoder.request_keyframe();
+        REQUIRE(wait_for(
+            [&] {
+                return encoder.submit(frame.ptr(), frame.pitch(), int64_t{ 1'000'000'000 } + i * int64_t{ 33'333'000 });
+            }));
+        std::this_thread::sleep_for(20ms);
+    }
+    for (auto& unit : encoder.drain())
+        units.push_back(std::move(unit));
+    REQUIRE(units.size() == 6);
+
+    std::vector<bool> keyframes;
+    for (const auto& unit : units)
+        keyframes.push_back(unit.keyframe);
+    CHECK(keyframes == std::vector<bool>{ true, false, false, false, true, false });
+    const auto nals = split_annex_b(units[4].data);
+    REQUIRE(nals.size() >= 3);
+    CHECK(nals[0].type == kNalSps);
 }

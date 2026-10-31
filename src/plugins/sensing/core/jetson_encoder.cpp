@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -55,6 +56,7 @@ struct JetsonEncoder::Impl
     std::mutex mutex;
     std::deque<EncodedUnit> ready;
     bool eos_reached = false;
+    bool eos_sent = false; // driving thread only
 
     ~Impl()
     {
@@ -83,6 +85,7 @@ struct JetsonEncoder::Impl
             unit.data.assign(data, data + buffer->planes[0].bytesused);
             unit.timestamp_ns = static_cast<int64_t>(v4l2_buf->timestamp.tv_sec) * 1000000000LL +
                                 static_cast<int64_t>(v4l2_buf->timestamp.tv_usec) * 1000LL;
+            unit.keyframe = (v4l2_buf->flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
             std::lock_guard<std::mutex> lock(self->mutex);
             self->ready.push_back(std::move(unit));
         }
@@ -152,6 +155,9 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
     check(enc->setNumBFrames(0), "setNumBFrames");
     check(enc->setInsertSpsPpsAtIdrEnabled(true), "setInsertSpsPpsAtIdrEnabled");
     check(enc->setMaxPerfMode(1), "setMaxPerfMode");
+    // A separate control from the max-performance clocks: it trades quality for encoder throughput.
+    // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
+    check(enc->setHWPresetType(V4L2_ENC_HW_PRESET_FAST), "setHWPresetType");
 
     check(enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, kOutputBuffers, true, false), "output setupPlane");
     check(enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, kCaptureBuffers, true, false), "capture setupPlane");
@@ -195,12 +201,6 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     auto* enc = m_impl->encoder;
     const auto& config = m_impl->config;
 
-    launch_rgba_to_nv12(reinterpret_cast<const uint8_t*>(rgba_device_ptr), static_cast<int>(row_pitch_bytes), m_impl->d_y,
-                        static_cast<int>(m_impl->d_y_pitch), m_impl->d_uv, static_cast<int>(m_impl->d_uv_pitch),
-                        static_cast<int>(config.width), static_cast<int>(config.height), config.full_range, nullptr);
-    check_cuda(cudaGetLastError(), "rgba_to_nv12 launch");
-    check_cuda(cudaStreamSynchronize(nullptr), "rgba_to_nv12 sync");
-
     struct v4l2_buffer v4l2_buf;
     struct v4l2_plane planes[MAX_PLANES];
     std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
@@ -220,6 +220,14 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     {
         return false; // encoder still busy; drop this frame rather than block
     }
+
+    // An input buffer is ours now, so convert: a frame that would be dropped costs no conversion. A
+    // failure from here is terminal for the encoder, as a failed qBuffer is.
+    launch_rgba_to_nv12(reinterpret_cast<const uint8_t*>(rgba_device_ptr), static_cast<int>(row_pitch_bytes), m_impl->d_y,
+                        static_cast<int>(m_impl->d_y_pitch), m_impl->d_uv, static_cast<int>(m_impl->d_uv_pitch),
+                        static_cast<int>(config.width), static_cast<int>(config.height), config.full_range, nullptr);
+    check_cuda(cudaGetLastError(), "rgba_to_nv12 launch");
+    check_cuda(cudaStreamSynchronize(nullptr), "rgba_to_nv12 sync");
 
     check_cuda(cudaMemcpy2D(buffer->planes[0].data, buffer->planes[0].fmt.stride, m_impl->d_y, m_impl->d_y_pitch,
                             config.width, config.height, cudaMemcpyDeviceToHost),
@@ -253,37 +261,64 @@ EncodedUnit JetsonEncoder::poll()
     return out;
 }
 
-EncodedUnit JetsonEncoder::end_of_stream()
+std::vector<EncodedUnit> JetsonEncoder::drain()
 {
     auto* enc = m_impl->encoder;
 
-    // A zero-length output buffer is the EOS marker for the V4L2 encoder.
-    struct v4l2_buffer v4l2_buf;
-    struct v4l2_plane planes[MAX_PLANES];
-    std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-    std::memset(planes, 0, sizeof(planes));
-    v4l2_buf.m.planes = planes;
-
-    NvBuffer* buffer = nullptr;
-    if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 10) >= 0)
+    // A zero-length output buffer is the EOS marker for the V4L2 encoder. It is sent once: a second
+    // drain only returns what is left.
+    if (!m_impl->eos_sent)
     {
-        v4l2_buf.m.planes[0].bytesused = 0;
-        v4l2_buf.m.planes[1].bytesused = 0;
-        enc->output_plane.qBuffer(v4l2_buf, nullptr);
+        m_impl->eos_sent = true;
+        struct v4l2_buffer v4l2_buf;
+        struct v4l2_plane planes[MAX_PLANES];
+        std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+        std::memset(planes, 0, sizeof(planes));
+        v4l2_buf.m.planes = planes;
+
+        NvBuffer* buffer = nullptr;
+        if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 10) >= 0)
+        {
+            v4l2_buf.m.planes[0].bytesused = 0;
+            v4l2_buf.m.planes[1].bytesused = 0;
+            enc->output_plane.qBuffer(v4l2_buf, nullptr);
+        }
+
+        enc->capture_plane.waitForDQThread(2000);
     }
 
-    enc->capture_plane.waitForDQThread(2000);
-
-    EncodedUnit out;
     std::lock_guard<std::mutex> lock(m_impl->mutex);
+    std::vector<EncodedUnit> units(
+        std::make_move_iterator(m_impl->ready.begin()), std::make_move_iterator(m_impl->ready.end()));
+    m_impl->ready.clear();
+    return units;
+}
+
+EncodedUnit JetsonEncoder::end_of_stream()
+{
     // The tail is concatenated, so it carries the stamp of the last unit in it.
-    for (auto& chunk : m_impl->ready)
+    EncodedUnit out;
+    for (auto& chunk : drain())
     {
         out.data.insert(out.data.end(), chunk.data.begin(), chunk.data.end());
         out.timestamp_ns = chunk.timestamp_ns;
     }
-    m_impl->ready.clear();
     return out;
+}
+
+void JetsonEncoder::request_keyframe()
+{
+    check(m_impl->encoder->forceIDR(), "forceIDR");
+}
+
+bool JetsonEncoder::set_bitrate(uint32_t bitrate_bps)
+{
+    return m_impl->encoder->setBitrate(bitrate_bps) >= 0;
+}
+
+const char* JetsonEncoder::backend_name()
+{
+    return "Jetson V4L2 NVENC";
 }
 
 } // namespace sensing

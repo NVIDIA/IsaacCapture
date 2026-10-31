@@ -19,9 +19,9 @@ namespace plugins
 namespace sensing
 {
 
-/// One captured sensor and where its frames go. Either destination may be
-/// empty: an ipc-only stream skips the encoder entirely, which is the point of
-/// the CUDA path.
+/// One captured sensor and where its frames go. Any destination may be empty: an
+/// ipc-only stream skips the encoder entirely, and a livekit-only stream has no recording
+/// encoder, only the live track's own.
 struct StreamConfig
 {
     /// SIPL pipeline index, validated against the platform config at startup.
@@ -30,6 +30,23 @@ struct StreamConfig
     std::string output_path;
     /// Unix socket serving RGBA8 frames as CUDA memory; empty disables it.
     std::string ipc_socket_path;
+    /// Name of the LiveKit camera track carrying this sensor; empty disables it.
+    std::string livekit_track;
+};
+
+/// Where and how the livekit= streams are published.
+struct LiveKitConfig
+{
+    std::string url;
+    /// The join token itself, not a path. It names the room and the participant. Never logged.
+    std::string token;
+    /// Publication rate cap, independent of the capture rate.
+    uint32_t fps = 30;
+    /// Output-only uniform reduction of every track; 1 publishes the sensor's native size.
+    uint32_t scale_div = 1;
+    /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again. A
+    /// live transport, unlike the recording, cannot take the recording's rate.
+    uint32_t bitrate_bps = 8'000'000;
 };
 
 struct SensingConfig
@@ -58,6 +75,9 @@ struct SensingConfig
     bool swap_uv = false;
     /// ISP0 buffers per sensor, ~6 MB each at 2560x1984 NV12.
     uint32_t isp0_buffers = 6;
+
+    /// Used when any stream names a livekit= track.
+    LiveKitConfig livekit;
 };
 
 struct SensingFrame
