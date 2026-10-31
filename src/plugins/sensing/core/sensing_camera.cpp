@@ -113,11 +113,15 @@ int64_t SensingCamera::take_capture_tsc(Stream& stream, int64_t timestamp_ns)
     // The encoder returns units in submission order, so the match is at the
     // front. Anything older than the match was dropped by the encoder and is
     // discarded with it, which is what keeps this bounded.
+    //
+    // The stamp rides a V4L2 timeval, which holds microseconds, so the unit
+    // comes back with the submitted stamp truncated. Compare at that resolution.
+    constexpr int64_t kNsPerUs = 1000;
     while (!stream.pending_stamps.empty())
     {
         auto entry = stream.pending_stamps.front();
         stream.pending_stamps.pop_front();
-        if (entry.first == timestamp_ns)
+        if (entry.first / kNsPerUs == timestamp_ns / kNsPerUs)
             return entry.second;
     }
     return 0;

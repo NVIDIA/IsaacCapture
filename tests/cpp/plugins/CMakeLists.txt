@@ -16,3 +16,7 @@ endif()
 if(BUILD_PLUGIN_SENSING)
     add_subdirectory(sensing)
 endif()
+# Needs the MOCK backend; the JETSON backend is exercised on a rig, not here.
+if(BUILD_PLUGIN_SENSING AND SENSING_BACKEND_RESOLVED STREQUAL "MOCK")
+    add_subdirectory(sensing_mock)
+endif()
