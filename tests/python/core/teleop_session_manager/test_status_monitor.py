@@ -8,6 +8,12 @@ from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import pytest
+from isaaccapture.schema import (
+    PluginDeviceReason,
+    PluginDeviceState,
+    PluginDeviceStatus,
+    PluginDeviceStatusSnapshot,
+)
 from isaaccapture.teleop_session_manager import (
     DeviceState,
     ProviderState,
@@ -149,6 +155,12 @@ def make_monitor(*, entries=None, context=None, now_ns=10_000_000_000):
             DeviceState.UNKNOWN,
             StatusReason.NO_CURRENT_DATA,
         ),
+        (
+            "UNKNOWN",
+            "DEVICE_ERROR",
+            DeviceState.UNKNOWN,
+            StatusReason.DEVICE_ERROR,
+        ),
         ("CONNECTED", "NONE", DeviceState.CONNECTED, StatusReason.NONE),
         (
             "DISCONNECTED",
@@ -204,6 +216,42 @@ def test_all_schema_device_states_are_mapped(
     device = monitor.get_device_status("/provider/left")
     assert device.status == expected_state
     assert device.reason == expected_reason
+
+
+def test_inventory_failure_report_preserves_independent_device_states():
+    now_ns = 10_000_000_000
+    snapshot = PluginDeviceStatusSnapshot(
+        1,
+        now_ns,
+        [
+            PluginDeviceStatus(
+                "/left",
+                PluginDeviceState.UNKNOWN,
+                PluginDeviceReason.DEVICE_ERROR,
+                "Avatar SDK inventory is unavailable",
+            ),
+            PluginDeviceStatus(
+                "/right",
+                PluginDeviceState.DISABLED,
+                PluginDeviceReason.DISABLED_BY_CONFIGURATION,
+            ),
+        ],
+    )
+    monitor, tracker = make_monitor(now_ns=now_ns)
+    tracker.report = snapshot
+
+    monitor.refresh(object(), now_ns=now_ns)
+
+    left = monitor.get_device_status("/provider/left")
+    right = monitor.get_device_status("/provider/right")
+    assert (left.status, left.reason) == (
+        DeviceState.UNKNOWN,
+        StatusReason.DEVICE_ERROR,
+    )
+    assert (right.status, right.reason) == (
+        DeviceState.DISABLED,
+        StatusReason.DISABLED_BY_CONFIGURATION,
+    )
 
 
 @pytest.mark.parametrize(

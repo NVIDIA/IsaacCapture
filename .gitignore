@@ -77,6 +77,9 @@ MUJOCO_LOG.TXT
 # Agent session logs (never committed)
 tmp/
 
+# Local unpacked toolchain/dependency trees are not repository inputs.
+.local-deps/
+
 # SO-101 leader-gripper and follower-arm assets, fetched by
 # scripts/fetch-so-arm.sh into the package's assets directory, so only the
 # authored wrapper XML is tracked.

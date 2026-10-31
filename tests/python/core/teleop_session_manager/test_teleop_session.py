@@ -1609,7 +1609,7 @@ class TestStatusMonitoringIntegration:
                     == teleop_session_manager.DeviceState.CONNECTED
                 )
 
-    @pytest.mark.parametrize("plugin", ["spacemouse", "gamepad"])
+    @pytest.mark.parametrize("plugin", ["spacemouse", "gamepad", "avatar_hand_plugin"])
     def test_device_plugin_is_monitored(self, tmp_path, plugin):
         manager = MockPluginManager(plugin_names=[plugin])
         manager.get_plugin_info = MagicMock(

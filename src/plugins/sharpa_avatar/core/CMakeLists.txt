@@ -3,7 +3,9 @@
 
 add_library(avatar_plugin_core STATIC
   avatar_glove_collection.hpp
+  avatar_health.cpp
   avatar_hand_tracking_plugin.cpp
+  inc/avatar/avatar_health.hpp
   inc/avatar/avatar_hand_tracking_plugin.hpp
 )
 
