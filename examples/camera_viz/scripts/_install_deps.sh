@@ -555,6 +555,9 @@ $WITH_RTP  && PKGS+=("pybind11>=2.11" "PyGObject>=3.42,<3.52")
 # Local wheels keep version ``1.3+local`` across rebuilds; uv's --upgrade
 # no-ops on them. mtime probe forces a reinstall when the wheel's newer.
 EXTRA_UV=()
+# The wheel depends on the isaacteleop transition wheel built beside it, which
+# no index serves.
+[[ "$MODE" == full && -n "$WHEEL" ]] && EXTRA_UV+=(--find-links "$(dirname "$WHEEL")")
 if [[ "$MODE" == full && -f "$WHEEL" ]]; then
     wheel_mtime=$(stat -c %Y "$WHEEL" 2>/dev/null || echo 0)
     # Empty on a fresh venv; `|| true` keeps the no-match from aborting under pipefail+set -e.

@@ -9,6 +9,7 @@ Draws live DeviceIO human tracking — hands, head, controllers, full body — i
 browser with [viser](https://viser.studio). Trackers that are inactive or absent
 are hidden rather than drawn in an error color. `CloudXRLauncher` starts the
 CloudXR runtime and WSS proxy itself, so there is nothing to launch separately.
+In a venv set up as in [Running an example](../README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/deviceio_live_view
