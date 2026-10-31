@@ -304,6 +304,69 @@ class EditorTests(unittest.TestCase):
             self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;", rendered)
             self.assertNotIn(payload, rendered)
 
+    def test_list_pose_edits_refresh_selection_before_further_inspector_edits(self):
+        for editing, kind in (
+            (True, "segments"),
+            (True, "taxels"),
+            (False, "segments"),
+        ):
+            for rows in ([0], [0, 1]):
+                with self.subTest(editing=editing, kind=kind, rows=rows):
+                    editor = self.make_editor()
+                    editor.mode_edit = SimpleNamespace(value=editing)
+                    values = (
+                        editor._values(kind)
+                        if editing
+                        else editor.preview_document.segments
+                    )
+                    values.append(
+                        Segment("INDEX_TIP") if kind == "segments" else Taxel()
+                    )
+                    editor.selected_kind, editor.selected_rows = kind, rows.copy()
+                    editor.selection_folder = object()
+                    for name in (
+                        "selection_summary",
+                        "selection_names",
+                        "selection_segment_editor",
+                        "selection_taxel_editor",
+                        "selection_segment_joint",
+                        "selection_scale_widget",
+                        "selection_delete",
+                    ):
+                        setattr(editor, name, self.make_input(editor))
+                    editor.selection_position_widgets = [
+                        self.make_input(editor, 0.0) for _ in range(3)
+                    ]
+                    editor.selection_rotation_widgets = [
+                        self.make_input(editor, 0.0) for _ in range(3)
+                    ]
+                    editor.selection_taxel_binding_widgets = [
+                        (self.make_input(editor), self.make_input(editor))
+                        for _ in range(4)
+                    ]
+                    editor._update_preview_error = Mock()
+                    editor._sync_selected_list_values = Mock()
+                    editor._sync_selection()
+
+                    if editing:
+                        editor._set_pose_component(kind, 0, 0, 0.02)
+                        editor._set_pose_rotation(kind, 0, 2, 30.0)
+                    else:
+                        editor._set_preview_pose(0, 0, 0.02, False)
+                        editor._set_preview_pose(0, 2, 30.0, True)
+
+                    position = editor.selection_position_widgets[0].value
+                    rotation = editor.selection_rotation_widgets[2].value
+                    self.assertAlmostEqual(position, 0.02 / len(rows))
+                    self.assertAlmostEqual(rotation, 30.0 if len(rows) == 1 else 0.0)
+                    editor._set_selection_position(0, position + 0.001)
+                    editor._set_selection_rotation(2, rotation + 1.0)
+                    center = np.mean([values[row].pose[:3] for row in rows], axis=0)
+                    self.assertAlmostEqual(center[0], position + 0.001)
+                    self.assertAlmostEqual(
+                        geo.components(geo.matrix(values[0].pose))[1][2], 31.0
+                    )
+
     def test_binding_overlay_follows_selected_source_and_its_validation(self):
         editor = self.make_editor()
         editor.live_document = editor.document.clone()

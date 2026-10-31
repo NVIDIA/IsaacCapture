@@ -1209,6 +1209,12 @@ class Editor:
 
     def _set_pose_component(self, kind: str, row: int, axis: int, value) -> None:
         self._values(kind)[row].pose[axis] = float(value)
+        if (
+            self.mode_value == "Edit"
+            and self.selected_kind == kind
+            and row in self.selected_rows
+        ):
+            self._sync_selection()
         self.redraw = True
 
     def _set_pose_rotation(self, kind: str, row: int, axis: int, value) -> None:
@@ -1217,6 +1223,12 @@ class Editor:
         rotation = list(rotation)
         rotation[axis] = float(value)
         self._values(kind)[row].pose = geo.pose(geo.transform(position, rotation))
+        if (
+            self.mode_value == "Edit"
+            and self.selected_kind == kind
+            and row in self.selected_rows
+        ):
+            self._sync_selection()
         self.redraw = True
 
     def _set_taxel_segment(self, row: int, slot: int, value: str) -> None:
@@ -1498,6 +1510,8 @@ class Editor:
             rotation = list(rotation)
             rotation[axis] = float(value)
             segment.pose = geo.pose(geo.transform(position, rotation))
+        if self.mode_value == "Preview" and row in self.selected_rows:
+            self._sync_selection()
         self._update_preview_error()
         self.redraw = True
 
