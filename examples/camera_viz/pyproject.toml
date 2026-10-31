@@ -62,14 +62,16 @@ viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 # The native codec's .so is built in place by codec/build.sh, so it is picked up
 # from the source tree rather than shipped by this build. Hatchling reads only
 # this directory's .gitignore, so the codec build tree is excluded here.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/camera_viz"]
-sources = ["python"]
 exclude = [
     "/python/isaaccapture_examples/camera_viz/codec/build",
     "/python/isaaccapture_examples/camera_viz/argus/build",
     "*.so",
 ]
+
+[tool.hatch.build.targets.wheel]
+sources = ["python"]
 
 [tool.uv]
 python-preference = "only-managed"

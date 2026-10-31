@@ -24,6 +24,8 @@ dependencies = [
 #
 # vive_assets/ lives inside the package because the modules resolve it from
 # __file__, so the meshes must travel with them.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/cloudxr_mujoco_teleop"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]

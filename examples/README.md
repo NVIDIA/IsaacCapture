@@ -97,13 +97,23 @@ the smallest complete one.
 - With hatchling, use `only-include` + `sources`, **not** `packages`:
 
   ```toml
-  [tool.hatch.build.targets.wheel]
+  [tool.hatch.build]
   only-include = ["python/isaaccapture_examples/<name>"]
+
+  [tool.hatch.build.targets.wheel]
   sources = ["python"]
   ```
 
   `packages` keeps only the last path component, so it builds without complaint
-  and produces a wheel rooted at a bare top-level `<name>/`.
+  and produces a wheel rooted at a bare top-level `<name>/`. `only-include`
+  goes in `[tool.hatch.build]` so the sdist gets it too. Without it the sdist
+  takes the whole example directory: tracked media, stray `.mcap` recordings
+  and, in an example with its own `.gitignore` (hatchling reads only the
+  nearest one), `uv.lock` and build trees. Files the code reads from the
+  example root, such as teleop_ros2's `configs/`, are therefore not in the
+  sdist: run such an example from the source tree or the install tree.
+  `sources` stays on the wheel: the sdist must keep the `python/` prefix that
+  the wheel build looks for.
 - Keep `[tool.uv.sources]` last in the file. `install_python_example()` strips
   it from the installed copy by matching up to the next `[`, so a block after it
   loses its comments.
