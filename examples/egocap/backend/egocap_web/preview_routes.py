@@ -421,7 +421,7 @@ async def _serve_session(
     finally:
         receiver_task.cancel()
         try:
-            await receiver_task
+            _ = await receiver_task  # intentionally discarded: best-effort cleanup, only completion matters
         except (asyncio.CancelledError, Exception):  # noqa: BLE001 -- best-effort cleanup
             pass
         # The one actual close call for this viewer, regardless of why this

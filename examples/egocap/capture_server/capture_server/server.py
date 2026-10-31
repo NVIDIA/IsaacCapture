@@ -858,7 +858,7 @@ class _Session:
         if not stop_task.done():
             stop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await stop_task
+                _ = await stop_task  # intentionally discarded: only completion/cancellation matters here
         await self.stop_requested.wait()
 
     async def _finalize(self) -> None:
