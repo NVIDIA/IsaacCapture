@@ -38,12 +38,14 @@ from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from .oob_teleop_env import (
     default_web_client_origin,
     parse_env_port,
     build_headset_bookmark_url,
     client_ui_fields_from_env,
     oob_progress,
+    oob_replay_recording_from_env,
     redact_control_token,
     resolve_control_token,
     resolve_lan_host_for_oob,
@@ -1225,6 +1227,8 @@ _DEVTOOLS_SOCKET_RE = re.compile(r"@([A-Za-z0-9._+-]*_devtools_remote(?:_\d+)?)"
 def _discover_devtools_socket() -> str | None:
     """Return the bare name of the browser's DevTools abstract socket, or None.
 
+    When several tie on prefix, the one holding a teleop tab wins.
+
     Chromium-based Android browsers expose a Unix abstract socket matching
     ``@<prefix>_devtools_remote[_<pid>]`` in ``/proc/net/unix``.  Known
     prefixes in the wild:
@@ -1258,11 +1262,33 @@ def _discover_devtools_socket() -> str | None:
     # Prefer teleop-relevant prefixes in this order, otherwise fall back to
     # the first discovered socket.
     priority = ("weblayer", "com.oculus.browser", "chrome", "webview")
-    for prefix in priority:
-        for cand in candidates:
-            if cand.startswith(prefix):
-                return cand
-    return candidates[0]
+
+    def rank(name: str) -> int:
+        return next(
+            (i for i, pre in enumerate(priority) if name.startswith(pre)),
+            len(priority),
+        )
+
+    ranked = sorted(candidates, key=rank)
+    tied = [c for c in ranked if rank(c) == rank(ranked[0])]
+    if len(tied) == 1:
+        return tied[0]
+    # PICO exposes one weblayer_devtools_remote_<pid> per browser process, and
+    # the teleop tab can be on any of them: ask each.
+    for cand in tied:
+        try:
+            _adb_forward_cdp(cand, _CDP_LOCAL_PORT)
+        except (OobAdbError, subprocess.CalledProcessError, OSError) as exc:
+            log.debug("CDP: cannot forward to @%s: %s", cand, exc)
+            continue
+        if any(
+            "oobEnable=" in (t.get("url") or "")
+            for t in _cdp_list_tabs(_CDP_LOCAL_PORT)
+        ):
+            log.info("CDP: teleop tab found on @%s", cand)
+            return cand
+    # None has one yet, which is normal before the page is opened.
+    return tied[0]
 
 
 def _adb_forward_cdp(socket_name: str, local_port: int) -> None:
@@ -1522,12 +1548,89 @@ async def _cdp_send_reset_panel_key(ws_url: str) -> None:
     log.info("CDP: sent reset-panel key (%s)", _RESET_PANEL_KEY)
 
 
+_HEADSET_RECORDING_DIR = "/sdcard/Download"
+LATEST_RECORDING = "latest"
+# The client's Save names files isaacteleop-input-recording.json; the browser
+# adds " (N)" to repeats. ``latest`` only looks at these.
+_RECORDING_PREFIX = "isaacteleop-input-recording"
+# How long the client gets to read and validate a recording set over CDP.
+_RECORDING_LOAD_TIMEOUT = 10.0
+# The client reports each import in #loadRecordingStatus, as class
+# success or error plus a message.
+_CLEAR_LOAD_STATUS_JS = """(() => {
+    const el = document.getElementById('loadRecordingStatus');
+    if (el) { el.textContent = ''; el.className = 'load-recording-status'; }
+})()"""
+_READ_LOAD_STATUS_JS = """(() => {
+    const el = document.getElementById('loadRecordingStatus');
+    const state = ['success', 'error'].find((c) => el?.classList.contains(c));
+    return state ? { state, text: el.textContent } : null;
+})()"""
+
+
+def _newest_recording_on_headset() -> str:
+    """Path of the newest client recording in the headset's Download folder."""
+    out = _run_adb(
+        "newest recording",
+        [
+            "adb",
+            "shell",
+            f"ls -t {_HEADSET_RECORDING_DIR}/{_RECORDING_PREFIX}*.json 2>/dev/null"
+            " | head -n 1",
+        ],
+        timeout=10.0,
+    )
+    path = (out or "").strip()
+    if not path or not path.startswith(_HEADSET_RECORDING_DIR):
+        raise OobAdbError(
+            f"no recording found in {_HEADSET_RECORDING_DIR} on the headset; "
+            "record one first, or pass a host path instead of 'latest'"
+        )
+    log.info("newest recording on headset: %s", path)
+    return path
+
+
+def _resolve_recording(spec: str) -> str:
+    """Turn the configured recording into a path on the headset."""
+    if spec == LATEST_RECORDING:
+        return _newest_recording_on_headset()
+    return _push_recording_to_headset(spec)
+
+
+def _push_recording_to_headset(host_path: str) -> str:
+    """Copy a recording onto the headset and return its on-device path.
+
+    DOM.setFileInputFiles names a path in the *browser's* filesystem, so the
+    file has to exist on the headset first.
+    """
+    src = Path(host_path)
+    if not src.is_file():
+        raise OobAdbError(f"recording not found: {src}")
+    device_path = f"{_HEADSET_RECORDING_DIR}/{src.name}"
+    try:
+        _adb_run(
+            ["adb", "push", str(src), device_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or "(no adb output)"
+        raise OobAdbError(
+            f"adb push {src} -> {device_path} failed (rc={exc.returncode}): {detail}"
+        ) from exc
+    log.info("pushed recording to headset: %s", device_path)
+    return device_path
+
+
 async def _cdp_session_click_connect(
     ws_url: str,
     *,
     refresh_static_assets: bool = False,
     allow_navigation: bool = True,
     clear_stale_error: bool = False,
+    recording_device_path: str | None = None,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> None:
@@ -1544,7 +1647,7 @@ async def _cdp_session_click_connect(
 
     _seq = 0
 
-    async def send(ws, method, params=None):
+    async def send(ws, method, params=None, *, check=False):
         nonlocal _seq
         _seq += 1
         req_id = _seq
@@ -1554,6 +1657,8 @@ async def _cdp_session_click_connect(
         while True:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
             if msg.get("id") == req_id:
+                if check and "error" in msg:
+                    raise OobAdbError(f"CDP: {method} failed: {msg['error']}")
                 return msg.get("result", {})
 
     async with ws_connect(ws_url) as ws:
@@ -1745,6 +1850,56 @@ async def _cdp_session_click_connect(
             if isawaitable(result):
                 await result
 
+        # The file input is in the page from first render; fill it before
+        # the session goes immersive.
+        if recording_device_path:
+            await send(ws, "DOM.enable")
+            doc = await send(ws, "DOM.getDocument", {"depth": -1})
+            node = await send(
+                ws,
+                "DOM.querySelector",
+                {
+                    "nodeId": doc["root"]["nodeId"],
+                    "selector": "input[type=file]",
+                },
+            )
+            node_id = node.get("nodeId")
+            if not node_id:
+                raise OobAdbError(
+                    "CDP: the teleop page has no recording file input; "
+                    "the web client is older than the recorder UI"
+                )
+            await send(ws, "Runtime.evaluate", {"expression": _CLEAR_LOAD_STATUS_JS})
+            await send(
+                ws,
+                "DOM.setFileInputFiles",
+                {"nodeId": node_id, "files": [recording_device_path]},
+                check=True,
+            )
+            # Setting the input only starts the import; CONNECT without a
+            # replayable recording would make an unattended run worthless.
+            load_deadline = loop.time() + _RECORDING_LOAD_TIMEOUT
+            while True:
+                r = await send(
+                    ws,
+                    "Runtime.evaluate",
+                    {"expression": _READ_LOAD_STATUS_JS, "returnByValue": True},
+                )
+                status = (r.get("result") or {}).get("value") or {}
+                if status.get("state") == "success":
+                    break
+                if status.get("state") == "error":
+                    raise OobAdbError(
+                        f"CDP: the client rejected the recording: {status.get('text')}"
+                    )
+                if loop.time() > load_deadline:
+                    raise OobAdbError(
+                        "CDP: the client did not confirm the recording within "
+                        f"{_RECORDING_LOAD_TIMEOUT:.0f}s"
+                    )
+                await asyncio.sleep(1.0)
+            log.info("CDP: %s", status.get("text"))
+
         # Extra grace period: the CONNECT button can become enabled before the
         # React <XR> store is fully mounted, which causes "XR is not available"
         # errors if clicked immediately.
@@ -1934,6 +2089,7 @@ async def _find_and_click_teleop_tab(
     usb_local: bool = False,
     host_client: bool = False,
     refresh_static_assets: bool = False,
+    recording_device_path: str | None = None,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> str:
@@ -1985,8 +2141,23 @@ async def _find_and_click_teleop_tab(
     # (browser was being woken up), and a second intent reliably
     # navigates an already-warm tab.
     retry_at = time.monotonic() + (timeout / 2)
+    rescan_tick = 0
     while ws_url is None and time.monotonic() < deadline:
         await asyncio.sleep(1.0)
+        # The forward was chosen before the page existed, when stale-tab
+        # cleanup had left no teleop tab to tell the sockets apart. Re-probe
+        # every third pass so it follows the page once it appears.
+        rescan_tick += 1
+        if rescan_tick % 3 == 0:
+            rescanned = await asyncio.to_thread(_discover_devtools_socket)
+            # Discovery probes by forwarding, so the port may not point at it.
+            if rescanned:
+                try:
+                    await asyncio.to_thread(
+                        _adb_forward_cdp, rescanned, _CDP_LOCAL_PORT
+                    )
+                except (OobAdbError, subprocess.CalledProcessError, OSError) as exc:
+                    log.debug("CDP: re-forward to @%s failed: %s", rescanned, exc)
         for tab in await asyncio.to_thread(_cdp_list_tabs, _CDP_LOCAL_PORT):
             if "id" not in tab or not tab.get("webSocketDebuggerUrl"):
                 continue
@@ -2080,6 +2251,7 @@ async def _find_and_click_teleop_tab(
     await _cdp_session_click_connect(
         ws_url,
         refresh_static_assets=refresh_static_assets,
+        recording_device_path=recording_device_path,
         on_dispatched=on_dispatched,
         on_client_loaded=on_client_loaded,
     )
@@ -2138,6 +2310,12 @@ async def run_oob_connect(
     phase; callers should treat this as non-fatal and ask the user to tap
     CONNECT manually.
     """
+    # Before the deadline: a push can be slow, and a bad path should fail
+    # before the browser is launched.
+    recording = oob_replay_recording_from_env()
+    recording_device_path = (
+        await asyncio.to_thread(_resolve_recording, recording) if recording else None
+    )
     deadline = time.monotonic() + timeout
 
     # --- Step 0: close any stale teleop tabs from a prior session -----------
@@ -2218,7 +2396,7 @@ async def run_oob_connect(
         ) from exc
 
     try:
-        # --- Steps 3+4: find the teleop tab and click CONNECT ------------------
+        # --- Steps 3+4: find the teleop tab, load any recording, click CONNECT -
         ws_url = await _find_and_click_teleop_tab(
             resolved_port=resolved_port,
             deadline=deadline,
@@ -2226,6 +2404,7 @@ async def run_oob_connect(
             usb_local=usb_local,
             host_client=host_client,
             refresh_static_assets=usb_local or host_client,
+            recording_device_path=recording_device_path,
             on_dispatched=on_dispatched,
             on_client_loaded=on_client_loaded,
         )

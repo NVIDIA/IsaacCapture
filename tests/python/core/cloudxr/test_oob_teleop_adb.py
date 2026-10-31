@@ -1025,6 +1025,44 @@ def test_discover_devtools_socket_prefers_weblayer_over_generic(
     assert _discover_devtools_socket() == "weblayer_devtools_remote_777"
 
 
+_THREE_WEBLAYER_SOCKETS = (
+    "0: 00000003 00000000 00010000 0001 01 12345 @weblayer_devtools_remote_111\n"
+    "1: 00000003 00000000 00010000 0001 01 12346 @weblayer_devtools_remote_222\n"
+    "2: 00000003 00000000 00010000 0001 01 12347 @weblayer_devtools_remote_333\n"
+)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._cdp_list_tabs")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_picks_the_one_holding_the_teleop_tab(
+    mock_run_adb: MagicMock,
+    mock_forward: MagicMock,
+    mock_list_tabs: MagicMock,
+) -> None:
+    """PICO runs several WebLayer processes: skip a dead one, pass one without the page."""
+    mock_run_adb.return_value = _THREE_WEBLAYER_SOCKETS
+    mock_forward.side_effect = [OobAdbError("gone"), None, None]
+    mock_list_tabs.side_effect = [
+        [{"url": "about:blank"}],
+        [{"url": "https://h.test/?oobEnable=1&serverIP=10.0.0.1"}],
+    ]
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_333"
+
+
+@patch(
+    "cloudxr_py_test_ns.oob_teleop_adb._cdp_list_tabs",
+    return_value=[{"url": "about:blank"}],
+)
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch(
+    "cloudxr_py_test_ns.oob_teleop_adb._run_adb", return_value=_THREE_WEBLAYER_SOCKETS
+)
+def test_discover_devtools_socket_without_teleop_tab_keeps_first(*_mocks) -> None:
+    """No teleop tab anywhere is the normal state before ``am start``."""
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_111"
+
+
 @patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
 def test_discover_devtools_socket_falls_back_to_first_candidate(
     mock_run_adb: MagicMock,
@@ -1267,6 +1305,38 @@ class _CdpScript:
         raise AssertionError(f"unscripted CDP call: {method} {params}")
 
 
+class _CdpError(Exception):
+    """Returned by a script to answer with a CDP protocol error."""
+
+
+class _RecordingCdpScript(_CdpScript):
+    """Adds the recording file input and the client's #loadRecordingStatus."""
+
+    def __init__(self, statuses: list[dict | None], *, set_files_fails=False):
+        super().__init__()
+        self.statuses = statuses
+        self.set_files_fails = set_files_fails
+
+    def respond(self, method: str, params: dict):
+        expr = params.get("expression", "")
+        if method.startswith("DOM.") or "loadRecordingStatus" in expr:
+            self.calls.append((method, params))
+        if method == "DOM.enable" or "el.textContent = ''" in expr:
+            return {}
+        if method == "DOM.getDocument":
+            return {"root": {"nodeId": 1}}
+        if method == "DOM.querySelector":
+            return {"nodeId": 2}
+        if method == "DOM.setFileInputFiles":
+            return _CdpError("file not found") if self.set_files_fails else {}
+        if "loadRecordingStatus" in expr:
+            status = (
+                self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+            )
+            return {"result": {"value": status}}
+        return super().respond(method, params)
+
+
 @asynccontextmanager
 async def _fake_cdp_ws(script: _CdpScript):
     """Serves *script*'s responses on an OS-assigned port; yields the `ws://` URL to connect to."""
@@ -1275,7 +1345,11 @@ async def _fake_cdp_ws(script: _CdpScript):
         async for raw in websocket:
             msg = json.loads(raw)
             result = script.respond(msg["method"], msg.get("params", {}))
-            await websocket.send(json.dumps({"id": msg["id"], "result": result}))
+            if isinstance(result, _CdpError):
+                reply = {"id": msg["id"], "error": {"message": str(result)}}
+            else:
+                reply = {"id": msg["id"], "result": result}
+            await websocket.send(json.dumps(reply))
 
     async with ws_serve(handler, "localhost", 0) as server:
         port = server.sockets[0].getsockname()[1]
@@ -1318,6 +1392,47 @@ async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_click
         and p.get("expression") == "document.getElementById('startButton')?.click()"
     )
     assert click_index > dispatch_index
+
+
+async def test_cdp_recording_load_waits_for_the_client() -> None:
+    """A slow import is waited for, and CONNECT comes only after it succeeded."""
+    loaded = {"state": "success", "text": 'Loaded 3 frames from "r.json".'}
+    script = _RecordingCdpScript([None, None, loaded])
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(
+            ws_url, recording_device_path="/sdcard/Download/r.json"
+        )
+    methods = [m for m, _ in script.calls]
+    assert methods.index("DOM.setFileInputFiles") < methods.index(
+        "Input.dispatchMouseEvent"
+    )
+
+
+@pytest.mark.parametrize(
+    ("statuses", "set_files_fails", "match"),
+    [
+        ([None], True, "setFileInputFiles failed"),
+        (
+            [{"state": "error", "text": 'Could not load "r.json": bad version'}],
+            False,
+            "rejected the recording: Could not load",
+        ),
+        ([None], False, "did not confirm the recording"),
+    ],
+)
+async def test_cdp_recording_load_failure_stops_before_connect(
+    statuses, set_files_fails, match
+) -> None:
+    script = _RecordingCdpScript(statuses, set_files_fails=set_files_fails)
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch.object(adb_module, "_RECORDING_LOAD_TIMEOUT", 0.3),
+            pytest.raises(OobAdbError, match=match),
+        ):
+            await _cdp_session_click_connect(
+                ws_url, recording_device_path="/sdcard/Download/r.json"
+            )
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
 
 
 async def test_cdp_connect_waits_for_awake_before_mouse_dispatch() -> None:
@@ -1711,3 +1826,99 @@ async def test_monitor_without_callback_still_logs_and_keeps_watching() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_run")
+def test_recording_host_path_is_pushed_to_download(mock_adb, tmp_path):
+    with pytest.raises(OobAdbError, match="recording not found"):
+        adb_module._resolve_recording(str(tmp_path / "nope.json"))
+    mock_adb.assert_not_called()
+
+    rec = tmp_path / "pickplace-run1.json"
+    rec.write_text("{}", encoding="utf-8")
+    assert (
+        adb_module._resolve_recording(str(rec))
+        == "/sdcard/Download/pickplace-run1.json"
+    )
+    assert mock_adb.call_args.args[0][:2] == ["adb", "push"]
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_recording_latest_is_the_newest_client_save(mock_run):
+    mock_run.return_value = "/sdcard/Download/isaacteleop-input-recording (9).json\n"
+    assert (
+        adb_module._resolve_recording("latest")
+        == "/sdcard/Download/isaacteleop-input-recording (9).json"
+    )
+    assert "isaacteleop-input-recording*.json" in mock_run.call_args.args[1][2]
+
+    mock_run.return_value = ""
+    with pytest.raises(OobAdbError, match="no recording found"):
+        adb_module._resolve_recording("latest")
+
+
+# ---------------------------------------------------------------------------
+# CDP: _find_and_click_teleop_tab re-scans the DevTools sockets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_teleop_tab_follows_the_page_to_another_socket() -> None:
+    """The forward was chosen before the page existed; the wait loop must follow it."""
+    tabs_by_socket = {
+        "weblayer_devtools_remote_111": [
+            {
+                "id": "ntp",
+                "url": "https://browser.example/new",
+                "webSocketDebuggerUrl": "ws://ntp",
+            }
+        ],
+        "weblayer_devtools_remote_222": [
+            {
+                "id": "teleop",
+                "url": "https://10.0.0.2:48322/client/?oobEnable=1",
+                "webSocketDebuggerUrl": "ws://teleop",
+            }
+        ],
+    }
+    forwarded = {"socket": "weblayer_devtools_remote_111"}
+
+    def forward(socket_name: str, _port: int) -> None:
+        forwarded["socket"] = socket_name
+
+    def list_tabs(_port: int) -> list[dict]:
+        return tabs_by_socket[forwarded["socket"]]
+
+    real_sleep = asyncio.sleep
+
+    async def no_wait(_seconds: float) -> None:
+        await real_sleep(0)
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module.asyncio, "sleep", side_effect=no_wait),
+        patch.object(
+            adb_module,
+            "_discover_devtools_socket",
+            return_value="weblayer_devtools_remote_222",
+        ),
+        patch.object(adb_module, "_adb_forward_cdp", side_effect=forward),
+        patch.object(adb_module, "_cdp_list_tabs", side_effect=list_tabs),
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "run_adb_headset_bookmark") as relaunch,
+    ):
+        ws_url = await adb_module._find_and_click_teleop_tab(
+            resolved_port=48322,
+            deadline=time.monotonic() + 5.0,
+            timeout=60.0,
+        )
+
+    assert ws_url == "ws://teleop"
+    assert forwarded["socket"] == "weblayer_devtools_remote_222"
+    click.assert_awaited_once()
+    assert click.await_args.args == ("ws://teleop",)
+    # Found by moving the forward, not by the mid-timeout am start re-fire.
+    relaunch.assert_not_called()
