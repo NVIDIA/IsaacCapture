@@ -672,7 +672,11 @@ check for the matching NVRTC package.</p></td>
 <td><p>Install a locally built <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel instead of resolving one from the index — for
 developing Isaac Capture itself.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">VERSION</span></code></p></td>
+<td><p>Python for the venv that <code class="docutils literal notranslate"><span class="pre">setup</span></code> creates (default 3.12). An existing <code class="docutils literal notranslate"><span class="pre">.venv</span></code> keeps its
+Python.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code></p></td>
 <td><p>Skip the package index and build <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> from the surrounding checkout without
 prompting — a full C++ / CUDA / Vulkan build (see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>).</p></td>
@@ -680,8 +684,13 @@ prompting — a full C++ / CUDA / Vulkan build (see
 </tbody>
 </table>
 </div>
-<p>For example, to use a wheel built from this checkout, run from the repository root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--wheel<span class="w"> </span>build/wheels/isaaccapture-*.whl
+<p>For example, to use a wheel built from this checkout, run from the repository root. Name one
+wheel: <code class="docutils literal notranslate"><span class="pre">install/wheels/</span></code> keeps earlier builds, and <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> takes a single path. <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> is as
+in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>, and both the wheel’s
+<code class="docutils literal notranslate"><span class="pre">cp</span></code> tag and <code class="docutils literal notranslate"><span class="pre">--python</span></code> must match the build’s <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> (3.11 by
+default):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--wheel<span class="w"> </span>install/wheels/isaaccapture-X.Y+local-cp311-cp311-linux_x86_64.whl
 </pre></div>
 </div>
 <section id="using-an-external-virtual-environment">
@@ -1667,7 +1676,7 @@ the <a class="reference internal" href="retargeting/index.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

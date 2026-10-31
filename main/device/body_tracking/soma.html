@@ -601,15 +601,11 @@ canonical dense order when invoking its body or hand helpers.</p>
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Build the examples</a><a class="headerlink" href="#build-the-examples" title="Link to this heading">#</a></h2>
 <p>Start with a configured Isaac Capture checkout. See
 <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for the complete build
-prerequisites. Install the live viewer and both deterministic publishers:</p>
+prerequisites. Install the live viewer and both deterministic publishers into a venv
+set up as in <a class="reference internal" href="../../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/soma_body_publisher
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/soma_hand_publisher
-
-.venv/bin/cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
-.venv/bin/cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--target<span class="w"> </span>isaacteleop_python<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-j4
 </pre></div>
 </div>
 <p>The example packages install <code class="docutils literal notranslate"><span class="pre">py-soma-x==0.3.1</span></code>.
@@ -901,7 +897,7 @@ collection names.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

@@ -129,16 +129,24 @@ dependencies or vendor SDKs. Flags trim or extend that:
    * - ``--wheel PATH``
      - Install a locally built ``isaaccapture`` wheel instead of resolving one from the index — for
        developing Isaac Capture itself.
+   * - ``--python VERSION``
+     - Python for the venv that ``setup`` creates (default 3.12). An existing ``.venv`` keeps its
+       Python.
    * - ``--build-from-source``
      - Skip the package index and build ``isaaccapture`` from the surrounding checkout without
        prompting — a full C++ / CUDA / Vulkan build (see
        :doc:`/development/build_from_source/index`).
 
-For example, to use a wheel built from this checkout, run from the repository root:
+For example, to use a wheel built from this checkout, run from the repository root. Name one
+wheel: ``install/wheels/`` keeps earlier builds, and ``--wheel`` takes a single path. ``X.Y`` is as
+in :ref:`step 4 of Build from source <build-from-source-install-package>`, and both the wheel's
+``cp`` tag and ``--python`` must match the build's ``ISAAC_TELEOP_PYTHON_VERSION`` (3.11 by
+default):
 
 .. code-block:: bash
 
-   examples/camera_viz/camera_viz.sh setup --wheel build/wheels/isaaccapture-*.whl
+   examples/camera_viz/camera_viz.sh setup --python 3.11 \
+       --wheel install/wheels/isaaccapture-X.Y+local-cp311-cp311-linux_x86_64.whl
 
 .. _camera-streaming-external-venv:
 

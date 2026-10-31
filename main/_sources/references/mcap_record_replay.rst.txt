@@ -156,7 +156,7 @@ additional source nodes (``HeadSource``, ``ControllersSource``, …) in
 
 For a live browser view of **all** human DeviceIO trackers at once (hands, head,
 controllers, and full body), see ``examples/deviceio_live_view/`` and its
-``README.md``:
+``README.md``. From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
@@ -173,7 +173,7 @@ A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
 Live preview
 ^^^^^^^^^^^^
 
-From the repo root:
+From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
@@ -188,7 +188,7 @@ opened from another machine; pass ``--host 127.0.0.1`` to keep one local.
 Recording
 ^^^^^^^^^
 
-From the repo root:
+From the repo root, in the same venv:
 
 .. code-block:: bash
 
@@ -202,10 +202,10 @@ Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
 The example never downloads a published wheel — it runs against the
-``isaaccapture`` next to it, built from this checkout.  The first install
-compiles the extension modules and takes a few minutes; later ones reuse the
-cached build, and the install is editable, so edits under ``src/python/`` need
-no rebuild.  From ``install/examples/mcap_record_replay`` (after ``cmake
+``isaaccapture`` next to it, built from this checkout.  The install is editable,
+so edits under ``src/python/`` need no rebuild; for C++ changes see
+:ref:`step 4 of Build from source <build-from-source-editable-examples>`.  From
+``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
 :doc:`/development/build_from_source/index`.
 
@@ -234,10 +234,6 @@ The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
 ``replay_full_body`` module pairs use the same CLI (positional MCAP path,
 ``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
 ``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
-
-``uv run`` (instead of an activated venv) needs an explicit ``--python 3.11``
-— without it, ``uv`` may resolve against the system Python and fail to match
-the lockfile.
 
 API Reference
 -------------

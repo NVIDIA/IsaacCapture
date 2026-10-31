@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -582,7 +582,7 @@ additional source nodes (<code class="docutils literal notranslate"><span class=
 <code class="docutils literal notranslate"><span class="pre">common.py</span></code>.</p>
 <p>For a live browser view of <strong>all</strong> human DeviceIO trackers at once (hands, head,
 controllers, and full body), see <code class="docutils literal notranslate"><span class="pre">examples/deviceio_live_view/</span></code> and its
-<code class="docutils literal notranslate"><span class="pre">README.md</span></code>:</p>
+<code class="docutils literal notranslate"><span class="pre">README.md</span></code>. From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.deviceio_live_view<span class="w"> </span>--accept-eula
 </pre></div>
@@ -596,7 +596,7 @@ with <code class="docutils literal notranslate"><span class="pre">replay_full_bo
 </ul>
 <section id="live-preview">
 <h3>Live preview<a class="headerlink" href="#live-preview" title="Link to this heading">#</a></h3>
-<p>From the repo root:</p>
+<p>From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w"> </span>--accept-eula
@@ -608,7 +608,7 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 </section>
 <section id="recording">
 <h3>Recording<a class="headerlink" href="#recording" title="Link to this heading">#</a></h3>
-<p>From the repo root:</p>
+<p>From the repo root, in the same venv:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
 <span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.record_hand"</span>
 <span class="nv">$R</span><span class="w">              </span><span class="c1"># 5 s → ./recordings/hands_&lt;timestamp&gt;.mcap</span>
@@ -619,10 +619,10 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 <p>Recordings are written to <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> relative to where you run the
 command, and the replay scripts look there when given no path.</p>
 <p>The example never downloads a published wheel — it runs against the
-<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The first install
-compiles the extension modules and takes a few minutes; later ones reuse the
-cached build, and the install is editable, so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need
-no rebuild.  From <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
+<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The install is editable,
+so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need no rebuild; for C++ changes see
+<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-editable-examples"><span class="std std-ref">step 4 of Build from source</span></a>.  From
+<code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
 <span class="pre">--install</span></code>) it picks up the wheel you just built instead — see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
 <p>An active OpenXR runtime / headset must be connected, just like any other
@@ -646,9 +646,6 @@ left (green) and right (blue) hand skeletons update each frame.</p>
 <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
 <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
 <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
-<p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> (instead of an activated venv) needs an explicit <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">3.11</span></code>
-— without it, <code class="docutils literal notranslate"><span class="pre">uv</span></code> may resolve against the system Python and fail to match
-the lockfile.</p>
 </section>
 </section>
 <section id="api-reference">
@@ -839,7 +836,7 @@ When empty, <code class="docutils literal notranslate"><span class="pre">TeleopS
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 30, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 31, 2026.
       <br/>
     
   </p>

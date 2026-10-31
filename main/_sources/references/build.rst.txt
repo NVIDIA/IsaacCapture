@@ -61,8 +61,8 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, activate a virtual environment with the build's Python version (step 4 of
-:doc:`/development/build_from_source/index` shows how), then install the wheels with ``uv`` or
+After building, activate a virtual environment with the build's Python version
+(:ref:`step 4 of Build from source <build-from-source-install-package>` shows how), then install the wheels with ``uv`` or
 ``pip``, pinning the local build's version ``X.Y+local`` (``X.Y`` from the repository's ``VERSION``
 file):
 
@@ -73,7 +73,7 @@ file):
    uv pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/
+   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --force-reinstall
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
