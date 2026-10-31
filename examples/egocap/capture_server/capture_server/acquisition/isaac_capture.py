@@ -38,8 +38,6 @@ from .tensor_indices import ControllerInputIndex, HandInputIndex, HeadInputIndex
 
 __all__ = ["MANUS_PLUGIN_NAME", "IsaacCaptureAdapter"]
 
-_HAND_JOINT_ORDER = p.HAND_JOINT_NAMES
-
 #: The Manus glove plugin's manifest name. IsaacCapture's plugin manager registers every ``plugin.yaml``
 #: found under the configured search paths by that file's ``name`` field and resolves a
 #: ``PluginConfig.plugin_name`` by exact match (src/core/plugin_manager/cpp/plugin_manager.cpp,
