@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# chrony drop-in for the host PC — installed at /etc/chrony/conf.d/camera-server.conf
+#
+# The host PC is disciplined to the internet (pool lines in the base chrony.conf)
+# and re-serves that time to the robot AGX over the robot LAN. The robot-LAN NIC
+# has no PHC, so this is software timestamping (~10-50 us over the sub-ms link).
+
+# Clients allowed to query this server (the robot LAN).
+allow @ROBOT_LAN_SUBNET@
+
+# Keep serving even when the internet upstream is unreachable, so the AGX stays
+# disciplined to this host regardless of WAN state (offline-island mode).
+local stratum 10
+
+# Record the host<->internet clock relationship for dataset alignment / audit.
+log tracking measurements statistics
