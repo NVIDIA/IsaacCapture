@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Installed by deploy_argus_sender.sh; camera driver initialization is owned by the BSP.
+[Unit]
+Description=AVS1 Argus camera sender (:5000)
+# A bounded chrony wait improves frame timestamps while allowing an offline boot.
+Wants=chrony.service camera-time-sync.service camera-vi-error-trace.service
+After=nvargus-daemon.service nvpmodel.service chrony.service camera-time-sync.service camera-vi-error-trace.service
+Conflicts=nvargus-daemon.service
+# Bound retries while allowing transient camera startup failures to recover.
+StartLimitIntervalSec=200
+StartLimitBurst=6
+
+[Service]
+User=@AGX_USER@
+WorkingDirectory=@SENDER_DIR@
+ExecStartPre=-+/bin/bash /usr/local/lib/camera/lock_jetson_camera_clocks.sh
+# Conflicts enforces exclusive ownership; these also tolerate BSPs without a daemon unit.
+ExecStartPre=-+/usr/bin/systemctl stop nvargus-daemon.service
+ExecStartPre=-+/usr/bin/systemctl reset-failed nvargus-daemon.service
+ExecStartPre=/bin/sleep 2
+ExecStart=@SENDER_DIR@/build/argus_sender --config @SENDER_DIR@/configs/cameras.yaml
+Restart=always
+RestartSec=15
+TimeoutStopSec=45
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -12,17 +12,9 @@ import json
 import select
 import signal
 import socket
-import sys
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
-
-
-# Support direct execution without installing the example as a package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "camera_receiver"))
-from slot_guard import read_slot  # noqa: E402
 
 
 @dataclass
@@ -31,8 +23,6 @@ class IpcSlot:
     slot: int
     array: object
     owner: "IpcMemory"
-    guard_path: str
-    gpu_id: int
 
 
 class IpcMemory:
@@ -52,7 +42,6 @@ class IpcMemory:
         try:
             self.close()
         except Exception:
-            # CUDA/Python modules may already be torn down during finalization.
             pass
 
 
@@ -68,66 +57,34 @@ class CudaIpcClient:
 
     def connect(self) -> dict:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(self.socket_path)
         self.sock = sock
-        try:
-            sock.connect(self.socket_path)
-            hello = self._read_json_blocking()
-            if hello is None or hello.get("type") != "hello":
-                raise RuntimeError(f"expected hello message, got {hello!r}")
-            if hello.get("version") != 3:
-                raise RuntimeError(
-                    "CUDA IPC requires protocol 3 slot read locks; update the receiver"
-                )
-            self._send_json(
-                {"type": "subscribe", "version": 3, "streams": self.requested_streams}
-            )
-            subscribed = self._read_json_blocking()
-            if subscribed is None:
-                raise RuntimeError("publisher disconnected before subscription")
-            if subscribed.get("type") == "error":
-                raise RuntimeError(str(subscribed.get("error", "subscription failed")))
-            if subscribed.get("type") != "subscribed":
-                raise RuntimeError(f"expected subscribed message, got {subscribed!r}")
-            self._open_streams(subscribed)
-            sock.setblocking(False)
-            return {"hello": hello, "subscribed": subscribed}
-        except Exception:
-            self.close()
-            raise
+        hello = self._read_json_blocking()
+        if hello is None or hello.get("type") != "hello":
+            raise RuntimeError(f"expected hello message, got {hello!r}")
+        self._send_json({"type": "subscribe", "streams": self.requested_streams})
+        subscribed = self._read_json_blocking()
+        if subscribed is None:
+            raise RuntimeError("publisher disconnected before subscription")
+        if subscribed.get("type") == "error":
+            raise RuntimeError(str(subscribed.get("error", "subscription failed")))
+        if subscribed.get("type") != "subscribed":
+            raise RuntimeError(f"expected subscribed message, got {subscribed!r}")
+        self._open_streams(subscribed)
+        sock.setblocking(False)
+        return {"hello": hello, "subscribed": subscribed}
 
     def close(self) -> None:
         if self.sock is not None:
             try:
                 self.sock.close()
-            except OSError:
-                # A socket close failure must not prevent releasing CUDA mappings.
+            except Exception:
                 pass
             self.sock = None
         for slot in self.slots.values():
             slot.owner.close()
         self.slots.clear()
         self.recv_buf.clear()
-        self.stream_order.clear()
-        self.stream_info.clear()
-
-    @contextmanager
-    def read_frame(self, msg):
-        """Hold ownership until all GPU reads finish; yield None for stale frames."""
-        import cupy as cp
-
-        slot = self.slots.get((str(msg["stream"]), int(msg["slot"])))
-        if slot is None:
-            yield None
-            return
-        with read_slot(slot.guard_path, int(msg["slot_generation"])) as valid:
-            if not valid:
-                yield None
-                return
-            with cp.cuda.Device(slot.gpu_id):
-                try:
-                    yield slot.array
-                finally:
-                    cp.cuda.get_current_stream().synchronize()
 
     def read_messages(self, timeout_s: float = 0.05) -> Optional[list[dict]]:
         """Return all currently available messages, or None on socket EOF."""
@@ -197,27 +154,17 @@ class CudaIpcClient:
                         handle, cp.cuda.runtime.cudaIpcMemLazyEnablePeerAccess
                     )
                     owner = IpcMemory(ptr)
-                    try:
-                        mem = cp.cuda.UnownedMemory(ptr, int(slot["nbytes"]), owner)
-                        memptr = cp.cuda.MemoryPointer(mem, 0)
-                        arr = cp.ndarray(
-                            tuple(slot["shape"]),
-                            dtype=cp.uint8,
-                            memptr=memptr,
-                            strides=tuple(slot["strides"]),
-                        )
-                        self.slots[(name, int(slot["slot"]))] = IpcSlot(
-                            stream=name,
-                            slot=int(slot["slot"]),
-                            array=arr,
-                            owner=owner,
-                            guard_path=str(slot["guard_path"]),
-                            gpu_id=gpu_id,
-                        )
-                    except Exception:
-                        # A mapping is owned before its array can be registered in slots.
-                        owner.close()
-                        raise
+                    mem = cp.cuda.UnownedMemory(ptr, int(slot["nbytes"]), owner)
+                    memptr = cp.cuda.MemoryPointer(mem, 0)
+                    arr = cp.ndarray(
+                        tuple(slot["shape"]),
+                        dtype=cp.uint8,
+                        memptr=memptr,
+                        strides=tuple(slot["strides"]),
+                    )
+                    self.slots[(name, int(slot["slot"]))] = IpcSlot(
+                        stream=name, slot=int(slot["slot"]), array=arr, owner=owner
+                    )
 
 
 def _to_bgr_cpu(array, stream_info: dict):
@@ -563,25 +510,7 @@ def run(args: argparse.Namespace) -> int:
         csv_writer.writeheader()
 
     try:
-        if cv2 is not None:
-            cv2.namedWindow(args.window_name, cv2.WINDOW_NORMAL)
-            print(
-                "Close a preview window, press 'q' or Esc in the preview, or Ctrl+C in this terminal to quit.",
-                flush=True,
-            )
         while not stop:
-            if cv2 is not None:
-                # Process window-close events before displaying another frame.
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                    break
-                try:
-                    if (
-                        cv2.getWindowProperty(args.window_name, cv2.WND_PROP_VISIBLE)
-                        < 1
-                    ):
-                        break
-                except cv2.error:
-                    break
             messages = client.read_messages()
             if messages is None:
                 print("publisher disconnected", flush=True)
@@ -621,15 +550,11 @@ def run(args: argparse.Namespace) -> int:
                 if slot is None:
                     print(f"unknown frame slot: {stream}[{slot_id}]", flush=True)
                     continue
+                updated_display = True
                 if cv2 is not None:
-                    with client.read_frame(msg) as array:
-                        if array is None:
-                            overwritten += 1
-                            continue
-                        latest_cpu[stream] = _to_bgr_cpu(
-                            array, client.stream_info.get(stream, {})
-                        )
-                    updated_display = True
+                    latest_cpu[stream] = _to_bgr_cpu(
+                        slot.array, client.stream_info.get(stream, {})
+                    )
 
             if cv2 is None:
                 for msg in sampled_messages:
@@ -642,11 +567,7 @@ def run(args: argparse.Namespace) -> int:
                     metadata_text = _format_stream_metadata(msg.get("metadata"))
                     mean_text = ""
                     if args.sample_mean:
-                        with client.read_frame(msg) as array:
-                            if array is None:
-                                overwritten += 1
-                                continue
-                            mean = float(cp.mean(array).get())
+                        mean = float(cp.mean(slot.array).get())
                         mean_text = f" mean={mean:.2f}"
                     print(
                         f"{stream}[{slot_id}] gen={msg.get('slot_generation')} "
@@ -665,6 +586,9 @@ def run(args: argparse.Namespace) -> int:
                         canvas = _compose_canvas(images)
                         if canvas is not None:
                             cv2.imshow(args.window_name, canvas)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
 
             now = time.monotonic()
             if now - last_report >= 1.0:
@@ -706,12 +630,7 @@ def main() -> int:
         "--streams",
         help="comma-separated IPC stream names to subscribe to; default subscribes to all",
     )
-    ap.add_argument(
-        "--scale",
-        type=float,
-        default=1.0,
-        help="OpenCV display scale (default: 1.0, full resolution)",
-    )
+    ap.add_argument("--scale", type=float, default=0.35, help="OpenCV display scale")
     ap.add_argument("--window-name", default="camera_receiver CUDA IPC")
     ap.add_argument("--no-display", action="store_true", help="print stats only")
     ap.add_argument(
