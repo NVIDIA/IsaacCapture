@@ -28,7 +28,7 @@ Usage:
   src/plugins/orbbec_ego/orbbec_ego.sh build --sdk-root PATH [--preview] [--preset py3.11] [--jobs N] [--clean] [--install-prefix PATH]
   src/plugins/orbbec_ego/orbbec_ego.sh capabilities [--preset py3.11] [--plugin PATH] [--device-uid UID]
   src/plugins/orbbec_ego/orbbec_ego.sh record [--config FILE.toml] [options] [-- PLUGIN_OPTIONS...]
-  src/plugins/orbbec_ego/orbbec_ego.sh verify RUN_DIRECTORY [--require-calibration]
+  src/plugins/orbbec_ego/orbbec_ego.sh verify RUN_DIRECTORY [--expect-imu] [--require-calibration]
 
 Common record options:
   --config FILE.toml              Load reusable record settings; later CLI options override them.

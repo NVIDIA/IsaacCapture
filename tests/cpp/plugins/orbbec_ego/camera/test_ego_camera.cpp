@@ -1018,8 +1018,7 @@ TEST_CASE("EGO diagnostics off omits schema channel and messages but preserves s
         if (metadata.name == "orbbec_ego.recording")
         {
             ++policies;
-            CHECK(metadata.metadata.at("record_device_diagnostics") == "off");
-            CHECK(metadata.metadata.at("diagnostic_version") == "2");
+            CHECK(metadata.metadata == mcap::KeyValueMap{ { "record_device_diagnostics", "off" } });
         }
     };
     while (records.next())

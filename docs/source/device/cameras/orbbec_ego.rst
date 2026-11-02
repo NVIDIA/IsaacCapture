@@ -81,9 +81,8 @@ To repeat the integrity checks later:
 
    ./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN"
 
-A remaining ``.partial`` file indicates that capture or cleanup did not
-complete successfully; preserve it and the log for diagnosis. Integrity
-verification does not establish physical synchronization between sensors.
+Integrity verification does not establish physical synchronization between
+sensors.
 
 Data flow and published collections
 -----------------------------------
@@ -156,7 +155,7 @@ controller trackers. Configure ``orbbec_ego_camera`` through ``PluginConfig`` wi
 ``--collection-prefix=ego``. Its ``plugin.yaml`` gives the plugin 15 seconds to
 close its files when the session stops. Complete the full source build and install its Python wheel
 before using the EGO tracker bindings, then ``uv pip install -e ./examples/orbbec_ego`` for the
-recording helper; the wrapper's ``build`` command builds only the native plugin tools.
+recording helper; the wrapper's ``build`` command builds only the native plugin.
 
 Apply ``config = isaaccapture_examples.orbbec_ego.configure_recording(config)`` before opening
 the session to include the calibration tracker. The full configuration and

@@ -142,7 +142,6 @@ def test_recorded_policy_controls_diagnostic_tracker_registration(
             "orbbec_ego.recording",
             {
                 "record_device_diagnostics": "on" if enabled else "off",
-                "diagnostic_version": "2",
             },
         )
         channel = writer.register_channel(
@@ -162,7 +161,7 @@ def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
         writer.start()
         writer.add_metadata(
             "orbbec_ego.recording",
-            {"record_device_diagnostics": "off", "diagnostic_version": "2"},
+            {"record_device_diagnostics": "off"},
         )
         schema = writer.register_schema(
             "core.OrbbecEgoDeviceStateRecord", "flatbuffer", b"fixture"
@@ -173,15 +172,15 @@ def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
         replay.replay(path, 0)
 
 
-@pytest.mark.parametrize("version", ["0", "1", "99"])
-def test_unsupported_diagnostic_policy_is_rejected(tmp_path, version):
+@pytest.mark.parametrize("value", ["", "yes", "ON"])
+def test_unsupported_diagnostic_policy_is_rejected(tmp_path, value):
     path = tmp_path / "unsupported.mcap"
     with path.open("wb") as stream:
         writer = Writer(stream, compression=CompressionType.NONE)
         writer.start()
         writer.add_metadata(
             "orbbec_ego.recording",
-            {"record_device_diagnostics": "on", "diagnostic_version": version},
+            {"record_device_diagnostics": value},
         )
         writer.finish()
     with pytest.raises(ValueError, match="Unsupported EGO"):

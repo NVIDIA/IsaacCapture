@@ -60,10 +60,7 @@ def _diagnostic_policy(path: Path, expected: bool | None) -> bool:
             if metadata.name != "orbbec_ego.recording":
                 continue
             value = metadata.metadata.get("record_device_diagnostics")
-            if (
-                value not in ("on", "off")
-                or metadata.metadata.get("diagnostic_version") != "2"
-            ):
+            if value not in ("on", "off"):
                 raise ValueError("Unsupported EGO recording policy")
             enabled = value == "on"
             if policy is not None and policy != enabled:

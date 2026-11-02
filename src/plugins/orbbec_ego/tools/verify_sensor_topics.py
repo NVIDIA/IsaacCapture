@@ -296,10 +296,7 @@ with open(path, "rb") as stream:
         if metadata.name != "orbbec_ego.recording":
             continue
         value = metadata.metadata.get("record_device_diagnostics")
-        if (
-            value not in ("on", "off")
-            or metadata.metadata.get("diagnostic_version") != "2"
-        ):
+        if value not in ("on", "off"):
             raise SystemExit("Unsupported EGO recording policy")
         if policy is not None and policy != value:
             raise SystemExit("Conflicting EGO recording policies")

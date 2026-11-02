@@ -76,8 +76,7 @@ public:
                     writer_, "orbbec_ego_device", std::vector<std::string>{ "DeviceState" });
             mcap::Metadata policy;
             policy.name = "orbbec_ego.recording";
-            policy.metadata = { { "record_device_diagnostics", record_device_diagnostics ? "on" : "off" },
-                                { "diagnostic_version", "2" } };
+            policy.metadata = { { "record_device_diagnostics", record_device_diagnostics ? "on" : "off" } };
             const auto policy_status = writer_.write(policy);
             if (!policy_status.ok())
                 throw std::runtime_error("Unable to write EGO recording policy: " + policy_status.message);
@@ -145,30 +144,29 @@ public:
     void on_frame_metadata(const CapturedFrame& frame) override
     {
         if (const auto channels = video_.find(frame.metadata.stream); channels != video_.end())
-            write_record<core::OrbbecEgoFrameMetadataRecord>(*channels->second, 0, frame.metadata,
+            write_record<core::OrbbecEgoFrameMetadataRecord>(*channels->second, frame.metadata,
                                                              frame.sample_time_local_common_clock_ns,
                                                              frame.sample_time_raw_device_clock_ns);
     }
     void on_imu_batch(const core::OrbbecEgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
     {
         if (const auto channels = imu_.find(batch.sensor); channels != imu_.end())
-            write_record<core::OrbbecEgoImuBatchRecord>(*channels->second, 0, batch, local_ns, device_ns);
+            write_record<core::OrbbecEgoImuBatchRecord>(*channels->second, batch, local_ns, device_ns);
     }
     void on_calibration(const core::OrbbecEgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
     {
         if (calibration_)
-            write_record<core::OrbbecEgoCalibrationRecord>(*calibration_, 0, calibration, local_ns, device_ns);
+            write_record<core::OrbbecEgoCalibrationRecord>(*calibration_, calibration, local_ns, device_ns);
     }
     void on_device_state(const core::OrbbecEgoDeviceStateT& state, int64_t local_ns, int64_t device_ns) override
     {
         if (device_state_)
-            write_record<core::OrbbecEgoDeviceStateRecord>(*device_state_, 0, state, local_ns, device_ns);
+            write_record<core::OrbbecEgoDeviceStateRecord>(*device_state_, state, local_ns, device_ns);
     }
 
 private:
     template <typename RecordT>
     void write_record(core::McapTrackerChannels<RecordT>& channels,
-                      size_t index,
                       const core::record_payload_t<RecordT>& value,
                       int64_t local_ns,
                       int64_t device_ns)
@@ -178,7 +176,7 @@ private:
             if (closed_)
                 throw std::runtime_error("Attempted to write a closed Ego MCAP output");
             ego_mcap::write_checked(
-                writer_, channels, index, core::pack_record<RecordT>(&value, timestamp(local_ns, device_ns)));
+                writer_, channels, 0, core::pack_record<RecordT>(&value, timestamp(local_ns, device_ns)));
         }
         catch (...)
         {

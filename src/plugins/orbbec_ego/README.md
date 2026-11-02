@@ -34,7 +34,7 @@ Isaac Capture repository root:
 
 The installer installs native build/media dependencies, downloads the pinned
 EGO SDK below, verifies its SHA-256, installs the SDK's udev rules, and builds
-the native tools with `orbbec_ego.sh build`. Reconnect the camera after installation.
+the plugin with `orbbec_ego.sh build`. Reconnect the camera after installation.
 Repeated runs reuse the verified download. Add `--preview` for SDL preview.
 
 After reconnecting, inspect the camera with the native executable:
@@ -127,7 +127,7 @@ export ORBBEC_EGO_PLUGIN="$ORBBEC_EGO_BIN/orbbec_ego_camera_plugin"
 
 Add `-DORBBEC_EGO_ENABLE_PREVIEW=ON` to the configure command for SDL preview.
 Recording alone does not require SDL2 or FFmpeg development packages.
-The native tools install together under `plugins/orbbec_ego`; after installation,
+The plugin installs under `plugins/orbbec_ego`; after installation,
 set `ORBBEC_EGO_BIN` and `ORBBEC_EGO_PLUGIN` to that directory and executable instead.
 
 ## Usage
@@ -287,7 +287,7 @@ serve different purposes; retain these canonical names for the EGO replay exampl
 
 Query current availability through
 `session.get_device_status("ego_camera/camera/ego")` after `session.step()`;
-`OrbbecEgoDeviceStateTracker` carries historical diagnostic events in version-2 payloads.
+`OrbbecEgoDeviceStateTracker` carries historical diagnostic events.
 
 ## Configuration
 
