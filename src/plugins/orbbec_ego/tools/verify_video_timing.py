@@ -50,7 +50,7 @@ def video_record(data):
     height = scalar_field(data, data_table, 3, "<I", 0)
     fps = scalar_field(data, data_table, 4, "<I", 0)
     pixel_format = scalar_field(data, data_table, 5, "<B", 0)
-    capture_epoch = scalar_field(data, data_table, 8, "<I", 0)
+    capture_epoch = scalar_field(data, data_table, 7, "<I", 0)
     return timestamp, sequence, (pixel_format, width, height, fps), capture_epoch
 
 

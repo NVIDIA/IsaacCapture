@@ -44,6 +44,7 @@ target_link_libraries(ego_camera_core
         yaml-cpp::yaml-cpp
         ob::OrbbecSDK
         ego::mcap_support
+        deviceio::deviceio_trackers
         log_bridge::log_bridge_core
         oxr::oxr_core
         pusherio::pusherio

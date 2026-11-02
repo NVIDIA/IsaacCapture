@@ -66,21 +66,17 @@ def vector_field(data, table, field_id, element_size, label):
 
 def diagnostic_record(data, label):
     table, _ = record_data(data, label)
-    version = scalar_field(data, table, 3, "<I")
-    kind = scalar_field(data, table, 4, "<B")
+    kind = scalar_field(data, table, 3, "<B")
     observed = scalar_field(data, table, 2, "<q")
-    payload_position = field_position(data, table, 5)
+    payload_position = field_position(data, table, 4)
     uid_length, _ = vector_field(data, table, 0, 1, f"{label} device UID")
     if (
-        version != 2
-        or kind not in (1, 2, 3, 4)
+        kind not in (1, 2, 3, 4)
         or observed <= 0
         or not uid_length
         or payload_position is None
     ):
-        raise SystemExit(
-            f"{label} requires diagnostic version 2, a known event, UID, and observation time"
-        )
+        raise SystemExit(f"{label} requires a known event, UID, and observation time")
     offset = unpack_from("<I", data, payload_position, "diagnostic event offset")[0]
     if not offset:
         raise SystemExit(f"{label} has an empty diagnostic event")
@@ -114,6 +110,10 @@ def diagnostic_record(data, label):
     return kind
 
 
+# OrbbecEgoImuSample: x, y, z (double), local and raw-device clock (int64).
+IMU_SAMPLE_SIZE = 40
+IMU_SAMPLE_RAW_DEVICE_OFFSET = 32
+
 CALIBRATION_FIELDS = (
     "color_left",
     "color_right",
@@ -142,14 +142,14 @@ def string_field(data, table, field_id, label):
 
 def calibration_record(data):
     table, _ = record_data(data, "calibration")
-    result = {"capture_epoch": scalar_field(data, table, 10, "<I")}
+    result = {"capture_epoch": scalar_field(data, table, 8, "<I")}
     for name, field_id in (
         ("device_uid", 0),
-        ("raw_alignment_yaml", 8),
-        ("raw_imu_yaml", 9),
+        ("raw_alignment_yaml", 6),
+        ("raw_imu_yaml", 7),
     ):
         result[name] = string_field(data, table, field_id, name)
-    for name, field_id in zip(CALIBRATION_FIELDS, (1, 2, 3, 6, 7)):
+    for name, field_id in zip(CALIBRATION_FIELDS, (1, 2, 3, 4, 5)):
         nested = table_field(data, table, field_id)
         result[name] = None
         if nested is None:
@@ -345,7 +345,7 @@ with open(path, "rb") as stream:
 
         if topic in VIDEO_METADATA_STREAMS:
             table, timestamp = record_data(message.data, topic)
-            capture_epoch = scalar_field(message.data, table, 8, "<I")
+            capture_epoch = scalar_field(message.data, table, 7, "<I")
             profiles = video_profiles.setdefault(capture_epoch, {})
             profiles.setdefault(VIDEO_METADATA_STREAMS[topic], set()).add(
                 (
@@ -377,7 +377,7 @@ with open(path, "rb") as stream:
                 },
             )
             sample_count, samples = vector_field(
-                message.data, table, 4, 48, f"{topic} samples"
+                message.data, table, 4, IMU_SAMPLE_SIZE, f"{topic} samples"
             )
             if sensor != state["sensor"]:
                 raise SystemExit(f"{topic} contains sensor id {sensor}")
@@ -401,7 +401,7 @@ with open(path, "rb") as stream:
                 unpack_from(
                     "<q",
                     message.data,
-                    samples + index * 48 + 40,
+                    samples + index * IMU_SAMPLE_SIZE + IMU_SAMPLE_RAW_DEVICE_OFFSET,
                     f"{topic} sample timestamp",
                 )[0]
                 for index in range(sample_count)

@@ -1695,12 +1695,6 @@ public:
             captured.metadata.pixel_format = stream.pixel_format;
             captured.metadata.encoded_bytes = frame->getDataSize();
             captured.metadata.capture_epoch = capture_epoch_;
-            for (int type = 0; type < OB_FRAME_METADATA_TYPE_COUNT; ++type)
-            {
-                const auto metadata_type = static_cast<OBFrameMetadataType>(type);
-                if (frame->hasMetadata(metadata_type))
-                    captured.metadata.sdk_metadata.emplace_back(type, frame->getMetadataValue(metadata_type));
-            }
             captured.encoded_data.assign(frame->getData(), frame->getData() + frame->getDataSize());
             captured.sample_time_raw_device_clock_ns = sdk_timestamp_ns(frame->getTimeStampUs());
             captured.sample_time_local_common_clock_ns = arrival_time_local_common_clock_ns;
@@ -1868,6 +1862,7 @@ public:
         std::vector<core::OrbbecEgoImuSample> samples;
         uint64_t sequence = 0;
         int64_t first_local_ns = 0;
+        float latest_temperature_c = 0.0f;
     };
 
     void add_imu_sample(core::OrbbecEgoImuSensor sensor, const OBFloat3D& value, float temperature, uint64_t timestamp_us)
@@ -1877,7 +1872,8 @@ public:
         const int64_t device_ns = sdk_timestamp_ns(timestamp_us);
         if (pending.samples.empty())
             pending.first_local_ns = arrival_ns;
-        pending.samples.emplace_back(value.x, value.y, value.z, temperature, arrival_ns, device_ns);
+        pending.samples.emplace_back(value.x, value.y, value.z, arrival_ns, device_ns);
+        pending.latest_temperature_c = temperature;
         if (pending.samples.size() < 32 && arrival_ns - pending.first_local_ns < 20'000'000)
             return;
         flush_imu(sensor);
@@ -1897,6 +1893,7 @@ public:
         batch.full_scale =
             sensor == core::OrbbecEgoImuSensor_Accel ? config_.accel_full_scale_g : config_.gyro_full_scale_dps;
         batch.capture_epoch = capture_epoch_;
+        batch.temperature_c = pending.latest_temperature_c;
         batch.samples.swap(pending.samples);
         enqueue(ImuEvent{ std::move(batch), local_ns, device_ns });
     }

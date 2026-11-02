@@ -890,7 +890,6 @@ TEST_CASE("EGO local MCAP preserves structured records through the final drain",
     state.capture_epoch = 3;
     state.device_uid = "fixture";
     state.observed_at_ns = 123;
-    state.diagnostic_version = 2;
     core::OrbbecEgoCaptureSummaryT summary;
     summary.is_final = true;
     summary.queue_capacity = 4096;
@@ -995,7 +994,6 @@ TEST_CASE("EGO diagnostics off omits schema channel and messages but preserves s
     core::OrbbecEgoDeviceStateT diagnostic;
     diagnostic.device_uid = "fixture";
     diagnostic.observed_at_ns = 100;
-    diagnostic.diagnostic_version = 2;
     diagnostic.event.Set(core::OrbbecEgoSdkReportT{});
     sink->metadata_sink()->on_device_state(diagnostic, 100, 0);
     core::OrbbecEgoCalibrationT calibration;

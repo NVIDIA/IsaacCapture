@@ -11,7 +11,6 @@ struct OrbbecEgoImuSample {
   x_si: double;
   y_si: double;
   z_si: double;
-  temperature_c: double;
   sample_time_local_common_clock_ns: int64;
   sample_time_raw_device_clock_ns: int64;
 }
@@ -23,9 +22,9 @@ table OrbbecEgoImuBatch {
   full_scale: float (id: 3);
   samples: [OrbbecEgoImuSample] (id: 4);
   capture_epoch: uint32 (id: 5);
+  // IMU temperature reported with the batch's latest sample.
+  temperature_c: float (id: 6);
 }
-
-table OrbbecEgoImuBatchTracked { data: OrbbecEgoImuBatch (id: 0); }
 
 table OrbbecEgoImuBatchRecord {
   data: OrbbecEgoImuBatch (id: 0);

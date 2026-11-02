@@ -360,38 +360,39 @@ def _record(field_offsets, object_size, timestamp):
 
 
 def _video(sequence, timestamp, capture_epoch=0, fps=30):
-    data, table = _record([4, 8, 16, 20, 24, 28, 0, 32, 36], 40, timestamp)
+    data, table = _record([4, 8, 16, 20, 24, 28, 0, 32], 36, timestamp)
     struct.pack_into("<Q", data, table + 8, sequence)
     struct.pack_into("<III", data, table + 16, 1600, 1300, fps)
     struct.pack_into("<B", data, table + 28, 1)
-    struct.pack_into("<II", data, table + 32, capture_epoch, capture_epoch)
+    struct.pack_into("<I", data, table + 32, capture_epoch)
     return bytes(data)
 
 
 def _imu(sensor, sequence, sample_rate, timestamps, capture_epoch=0):
     record_timestamp = timestamps[-1] if timestamps else 1_000_000_000
-    data, table = _record([4, 8, 16, 20, 24, 28], 32, record_timestamp)
+    data, table = _record([4, 8, 16, 20, 24, 28, 32], 36, record_timestamp)
     struct.pack_into("<B", data, table + 4, sensor)
     struct.pack_into("<Q", data, table + 8, sequence)
     struct.pack_into("<I", data, table + 16, sample_rate)
     struct.pack_into("<f", data, table + 20, 24.0 if sensor == 0 else 2000.0)
     struct.pack_into("<I", data, table + 28, capture_epoch)
+    struct.pack_into("<f", data, table + 32, 25.0)
     vector = len(data)
     struct.pack_into("<I", data, table + 24, vector - (table + 24))
     data.extend(struct.pack("<I", len(timestamps)))
     for timestamp in timestamps:
-        data.extend(struct.pack("<ddddqq", 0.0, 0.0, 0.0, 25.0, timestamp, timestamp))
+        data.extend(struct.pack("<dddqq", 0.0, 0.0, 0.0, timestamp, timestamp))
     return bytes(data)
 
 
 def _diagnostic(timestamp):
-    data, table = _record([4, 0, 8, 16, 20, 24], 28, timestamp)
-    struct.pack_into("<qIB", data, table + 8, timestamp, 2, 4)
+    data, table = _record([4, 0, 8, 16, 20], 24, timestamp)
+    struct.pack_into("<qB", data, table + 8, timestamp, 4)
     uid = len(data)
     data.extend(struct.pack("<I", 3) + b"ego\0")
     struct.pack_into("<I", data, table + 4, uid - (table + 4))
     data.extend(struct.pack("<HHi", 4, 4, 4))
-    struct.pack_into("<I", data, table + 24, len(data) - 4 - (table + 24))
+    struct.pack_into("<I", data, table + 20, len(data) - 4 - (table + 20))
     return bytes(data)
 
 
@@ -447,7 +448,7 @@ def _append_vector(data, position, values, fmt):
 
 def _calibration(scenario, epoch=0):
     value = calibration_value(scenario)
-    data, table = _record([4, 8, 12, 16, 0, 0, 20, 24, 28, 32, 36], 40, 1_000_000_000)
+    data, table = _record([4, 8, 12, 16, 20, 24, 28, 32, 36], 40, 1_000_000_000)
     struct.pack_into("<I", data, table + 36, epoch)
     for key, field in (("device_uid", 4), ("raw_alignment_yaml", 28), ("raw_imu_yaml", 32)):
         _append_vector(data, table + field, value[key].encode(), "B")
@@ -456,7 +457,7 @@ def _calibration(scenario, epoch=0):
         item = value[key]
         if item is None:
             struct.pack_into("<H", data, table - struct.unpack_from("<i", data, table)[0] +
-                             4 + 2 * {8: 1, 12: 2, 16: 3, 20: 6, 24: 7}[offset], 0)
+                             4 + 2 * {8: 1, 12: 2, 16: 3, 20: 4, 24: 5}[offset], 0)
             continue
         nested = _append_table(data, 8 if key.startswith("color_") else 2)
         struct.pack_into("<I", data, table + offset, nested - table - offset)
@@ -476,7 +477,7 @@ class _Reader:
         self.fixture = json.load(stream)
 
     def iter_metadata(self):
-        # Record commands enable diagnostics, requiring both the policy and a v2 event.
+        # Record commands enable diagnostics, requiring both the policy and an event.
         if not self.fixture.get("diagnostics"):
             return iter(())
         return iter(

@@ -9,8 +9,6 @@ from isaaccapture.schema import (
     DeviceDataTimestamp,
     OrbbecEgoFrameMetadata,
     OrbbecEgoFrameMetadataRecord,
-    OrbbecEgoAudioChunk,
-    OrbbecEgoAudioChunkRecord,
     OrbbecEgoCalibration,
     OrbbecEgoCalibrationRecord,
     OrbbecEgoCameraIntrinsics,
@@ -25,16 +23,11 @@ from isaaccapture.schema import (
     OrbbecEgoDeviceSnapshot,
     OrbbecEgoDeviceState,
     OrbbecEgoDeviceStateRecord,
-    OrbbecEgoEncodedVideoFrame,
-    OrbbecEgoEncodedVideoFrameRecord,
     OrbbecEgoExtrinsics,
-    OrbbecEgoFrameMetadataEntry,
     OrbbecEgoImuBatch,
     OrbbecEgoImuBatchRecord,
     OrbbecEgoImuSample,
     OrbbecEgoImuSensor,
-    OrbbecEgoPcmAudioChunk,
-    OrbbecEgoPcmAudioChunkRecord,
     OrbbecEgoPixelFormat,
 )
 
@@ -48,12 +41,10 @@ def test_camera_payload_and_retained_record_views():
         fps=30,
         pixel_format=OrbbecEgoPixelFormat.H265,
         encoded_bytes=123,
-        sdk_metadata=[OrbbecEgoFrameMetadataEntry(1, 99)],
         capture_epoch=3,
     )
     assert metadata.stream == OrbbecEgoCameraStream.ColorRight
     assert metadata.sequence_number == 2**64 - 1
-    assert metadata.sdk_metadata[0].value == 99
     assert "ColorRight" in repr(metadata)
     with pytest.raises(AttributeError):
         metadata.capture_epoch = 4
@@ -72,15 +63,14 @@ def test_auxiliary_payloads_and_nested_calibration():
     imu = OrbbecEgoImuBatch(
         sensor=OrbbecEgoImuSensor.Gyro,
         sample_rate_hz=1000,
-        samples=[OrbbecEgoImuSample(1, 2, 3, 24, 100, 200)],
+        samples=[OrbbecEgoImuSample(1, 2, 3, 100, 200)],
         capture_epoch=2,
+        temperature_c=24.5,
     )
     assert imu.samples[0].z_si == 3
     assert imu.samples[0].sample_time_raw_device_clock_ns == 200
-    audio = OrbbecEgoAudioChunk(
-        sample_rate_hz=48000, wav_data_offset=44, capture_epoch=2
-    )
-    assert audio.wav_data_offset == 44
+    assert imu.temperature_c == 24.5
+    assert not hasattr(imu.samples[0], "temperature_c")
     intrinsics = OrbbecEgoCameraIntrinsics(width=1600, fx=800, distortion=[1, 2])
     calibration = OrbbecEgoCalibration(
         device_uid="ego",
@@ -110,28 +100,11 @@ def test_auxiliary_payloads_and_nested_calibration():
     assert not hasattr(state.event, "stage")
 
 
-def test_embedded_video_and_pcm_record_views():
-    video = OrbbecEgoEncodedVideoFrame(
-        stream=OrbbecEgoCameraStream.ColorRight,
-        encoded_data=[0, 0, 0, 1, 0x65],
-        capture_epoch=2,
-    )
-    audio = OrbbecEgoPcmAudioChunk(
-        sample_rate_hz=48000, pcm_data=[1, 0, 2, 0], capture_epoch=2
-    )
-    timestamp = DeviceDataTimestamp(100, 90, 3)
-    video_record = OrbbecEgoEncodedVideoFrameRecord(video, timestamp)
-    audio_record = OrbbecEgoPcmAudioChunkRecord(audio, timestamp)
-    assert video_record.data.encoded_data == [0, 0, 0, 1, 0x65]
-    assert audio_record.data.pcm_data == [1, 0, 2, 0]
-    assert audio_record.timestamp.sample_time_local_common_clock == 90
-
-
 def test_no_tracked_wrapper_compatibility_layer():
     import isaaccapture.schema as schema
 
+    assert not hasattr(schema, "OrbbecEgoFrameMetadataTracked")
     assert not hasattr(schema, "OrbbecEgoFrameMetadataTrackedT")
-    assert not hasattr(schema, "OrbbecEgoAudioChunkTrackedT")
     assert not hasattr(schema, "EgoFrameMetadata")
     assert not hasattr(schema, "EgoFrameMetadataRecord")
 
@@ -141,11 +114,8 @@ def test_no_tracked_wrapper_compatibility_layer():
     [
         (OrbbecEgoFrameMetadata, OrbbecEgoFrameMetadataRecord),
         (OrbbecEgoImuBatch, OrbbecEgoImuBatchRecord),
-        (OrbbecEgoAudioChunk, OrbbecEgoAudioChunkRecord),
         (OrbbecEgoCalibration, OrbbecEgoCalibrationRecord),
         (OrbbecEgoDeviceState, OrbbecEgoDeviceStateRecord),
-        (OrbbecEgoEncodedVideoFrame, OrbbecEgoEncodedVideoFrameRecord),
-        (OrbbecEgoPcmAudioChunk, OrbbecEgoPcmAudioChunkRecord),
     ],
 )
 def test_every_record_maps_absence_and_retains_immutable_payload(
@@ -207,7 +177,7 @@ def test_every_record_maps_absence_and_retains_immutable_payload(
 )
 def test_typed_events_own_only_their_fields(payload, tag, field, value, absent):
     state = OrbbecEgoDeviceState("ego", 3, 100, payload)
-    assert state.diagnostic_version == 2
+    assert not hasattr(state, "diagnostic_version")
     assert state.event_type == tag
     assert state.observed_at_ns == 100
     assert getattr(state.event, field) == value

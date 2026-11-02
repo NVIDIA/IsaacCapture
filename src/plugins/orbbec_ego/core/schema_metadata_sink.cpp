@@ -4,11 +4,14 @@
 #include "diagnostics.hpp"
 #include "metadata_sink.hpp"
 
+#include <deviceio_trackers/orbbec_ego_calibration_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_device_state_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_frame_metadata_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_imu_tracker.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <pusherio/schema_pusher.hpp>
-#include <schema/orbbec_ego_limits.hpp>
 #include <schema/serialized.hpp>
 
 #include <condition_variable>
@@ -25,7 +28,6 @@ namespace plugins::ego
 
 namespace
 {
-constexpr size_t kMaxFlatbufferSize = core::ORBBEC_EGO_MAX_FLATBUFFER_SIZE;
 constexpr size_t kMaxQueuedEvents = 4096;
 class SchemaMetadataSink final : public IMetadataSink
 {
@@ -41,25 +43,23 @@ public:
     {
         if (!collection_prefix.empty())
         {
+            // Sizes come from the generated trackers; a reader with a different size gets no data.
             for (const auto& stream : streams)
             {
                 const std::string name = core::EnumNameOrbbecEgoCameraStream(stream.camera);
-                const std::string collection_id = collection_prefix + "/" + name;
-                pushers_.emplace(stream.camera, std::make_unique<core::SchemaPusher>(
-                                                    session_->get_handles(),
-                                                    core::SchemaPusherConfig{ .collection_id = collection_id,
-                                                                              .max_flatbuffer_size = kMaxFlatbufferSize,
-                                                                              .tensor_identifier = "frame_metadata",
-                                                                              .localized_name = "Ego frame metadata",
-                                                                              .app_name = "OrbbecEgoCameraPlugin" }));
-                detail::log_info() << "  Metadata: " << collection_id << std::endl;
+                pushers_.emplace(
+                    stream.camera, make_pusher(collection_prefix + "/" + name, "frame_metadata", "Ego frame metadata",
+                                               core::OrbbecEgoFrameMetadataTracker::DEFAULT_MAX_FLATBUFFER_SIZE));
             }
+            constexpr size_t imu_size = core::OrbbecEgoImuTracker::DEFAULT_MAX_FLATBUFFER_SIZE;
             imu_pushers_.emplace(core::OrbbecEgoImuSensor_Accel,
-                                 make_pusher(collection_prefix + "/Accel", "imu_batch", "Ego accelerometer"));
-            imu_pushers_.emplace(
-                core::OrbbecEgoImuSensor_Gyro, make_pusher(collection_prefix + "/Gyro", "imu_batch", "Ego gyroscope"));
-            calibration_pusher_ = make_pusher(collection_prefix + "/Calibration", "calibration", "Ego calibration");
-            device_state_pusher_ = make_pusher(collection_prefix + "/DeviceState", "device_state", "Ego device state");
+                                 make_pusher(collection_prefix + "/Accel", "imu_batch", "Ego accelerometer", imu_size));
+            imu_pushers_.emplace(core::OrbbecEgoImuSensor_Gyro,
+                                 make_pusher(collection_prefix + "/Gyro", "imu_batch", "Ego gyroscope", imu_size));
+            calibration_pusher_ = make_pusher(collection_prefix + "/Calibration", "calibration", "Ego calibration",
+                                              core::OrbbecEgoCalibrationTracker::DEFAULT_MAX_FLATBUFFER_SIZE);
+            device_state_pusher_ = make_pusher(collection_prefix + "/DeviceState", "device_state", "Ego device state",
+                                               core::OrbbecEgoDeviceStateTracker::DEFAULT_MAX_FLATBUFFER_SIZE);
         }
         latest_status_.observed_at_ns = core::os_monotonic_now_ns();
         publisher_ = std::thread([this] { publish_loop(); });
@@ -152,12 +152,13 @@ public:
 private:
     std::unique_ptr<core::SchemaPusher> make_pusher(const std::string& collection,
                                                     const std::string& tensor,
-                                                    const std::string& name)
+                                                    const std::string& name,
+                                                    size_t max_flatbuffer_size)
     {
         detail::log_info() << "  Metadata: " << collection << std::endl;
         return std::make_unique<core::SchemaPusher>(
             session_->get_handles(), core::SchemaPusherConfig{ .collection_id = collection,
-                                                               .max_flatbuffer_size = kMaxFlatbufferSize,
+                                                               .max_flatbuffer_size = max_flatbuffer_size,
                                                                .tensor_identifier = tensor,
                                                                .localized_name = name,
                                                                .app_name = "OrbbecEgoCameraPlugin" });

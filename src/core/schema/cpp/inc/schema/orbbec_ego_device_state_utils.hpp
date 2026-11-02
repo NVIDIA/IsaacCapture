@@ -10,13 +10,10 @@
 
 namespace core
 {
-inline constexpr uint32_t ORBBEC_EGO_DIAGNOSTIC_VERSION = 2;
-
 inline void validate_orbbec_ego_diagnostic(const OrbbecEgoDeviceState& value)
 {
-    if (value.diagnostic_version() != ORBBEC_EGO_DIAGNOSTIC_VERSION || value.observed_at_ns() <= 0 ||
-        !value.device_uid() || value.device_uid()->size() == 0 || !value.event())
-        throw std::invalid_argument("EGO diagnostics require version 2, a device UID, observation time, and an event");
+    if (value.observed_at_ns() <= 0 || !value.device_uid() || value.device_uid()->size() == 0 || !value.event())
+        throw std::invalid_argument("EGO diagnostics require a device UID, observation time, and an event");
     switch (value.event_type())
     {
     case OrbbecEgoDiagnosticEvent_OrbbecEgoSdkReport:

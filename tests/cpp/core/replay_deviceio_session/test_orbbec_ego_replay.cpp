@@ -3,14 +3,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <deviceio_session/replay_session.hpp>
-#include <deviceio_trackers/orbbec_ego_audio_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_calibration_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_device_state_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_frame_metadata_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_imu_tracker.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/tracker_channels.hpp>
-#include <schema/orbbec_ego_audio_bfbs_generated.h>
 #include <schema/orbbec_ego_calibration_bfbs_generated.h>
 #include <schema/orbbec_ego_camera_bfbs_generated.h>
 #include <schema/orbbec_ego_device_state_bfbs_generated.h>
@@ -52,7 +50,7 @@ std::vector<std::string> channels(auto values)
 
 } // namespace
 
-TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit][replay][ego]")
+TEST_CASE("EGO replay reads every raw stream and retains snapshots", "[unit][replay][ego]")
 {
     bool include_tracked = false;
     SECTION("legacy recording has only raw topics")
@@ -80,10 +78,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
                                                     std::vector<std::string>{ "Imu" };
         core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord> accel(writer, "orbbec_ego_imu_accel", imu_channels);
         core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord> gyro(writer, "orbbec_ego_imu_gyro", imu_channels);
-        core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord> audio(
-            writer, "orbbec_ego_audio",
-            include_tracked ? channels(core::OrbbecEgoAudioRecordingTraits::recording_channels) :
-                              std::vector<std::string>{ "Audio" });
         core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord> calibration(
             writer, "orbbec_ego_calibration",
             include_tracked ? channels(core::OrbbecEgoCalibrationRecordingTraits::recording_channels) :
@@ -110,7 +104,7 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             core::OrbbecEgoImuBatchT batch;
             batch.sequence_number = sequence;
             batch.sensor = core::OrbbecEgoImuSensor_Accel;
-            batch.samples.emplace_back(1, 2, 3, 24, 90, 80);
+            batch.samples.emplace_back(1, 2, 3, 90, 80);
             const auto accel_record =
                 core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp);
             accel.write(0, accel_record);
@@ -118,12 +112,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             const auto gyro_record =
                 core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp);
             gyro.write(0, gyro_record);
-            core::OrbbecEgoAudioChunkT chunk;
-            chunk.sequence_number = sequence;
-            chunk.wav_data_offset = 44;
-            const auto audio_record =
-                core::pack_record<core::OrbbecEgoAudioChunkRecord>(inactive ? nullptr : &chunk, timestamp);
-            audio.write(0, audio_record);
             core::OrbbecEgoCalibrationT calib;
             calib.device_uid = "ego_" + std::to_string(sequence);
             const auto calibration_record =
@@ -133,7 +121,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             device.device_uid = "ego";
             device.capture_epoch = 3;
             device.observed_at_ns = sequence * 90;
-            device.diagnostic_version = 2;
             core::OrbbecEgoSdkReportT report;
             report.sequence_number = sequence;
             device.event.Set(report);
@@ -146,7 +133,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
                 right.write(1, right_record);
                 accel.write(1, accel_record);
                 gyro.write(1, gyro_record);
-                audio.write(1, audio_record);
                 calibration.write(1, calibration_record);
                 state.write(1, state_record);
             }
@@ -158,7 +144,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
     core::OrbbecEgoFrameMetadataTracker right("ego/ColorRight");
     core::OrbbecEgoImuTracker accel("ego/Accel");
     core::OrbbecEgoImuTracker gyro("ego/Gyro");
-    core::OrbbecEgoAudioTracker audio("ego_audio/Audio");
     core::OrbbecEgoCalibrationTracker calibration("ego_calibration/Calibration");
     core::OrbbecEgoDeviceStateTracker state("ego_device/DeviceState");
     auto session = core::ReplaySession::run({ recording.path,
@@ -167,12 +152,10 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
                                                   { &right, "orbbec_ego_metadata_colorright" },
                                                   { &accel, "orbbec_ego_imu_accel" },
                                                   { &gyro, "orbbec_ego_imu_gyro" },
-                                                  { &audio, "orbbec_ego_audio" },
                                                   { &calibration, "orbbec_ego_calibration" },
                                                   { &state, "orbbec_ego_device" },
                                               } });
     CHECK_FALSE(left.get_data(*session));
-    CHECK_FALSE(audio.get_data(*session));
     session->update();
     const auto snapshot = left.get_data(*session);
     REQUIRE(snapshot);
@@ -186,7 +169,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             CHECK_FALSE(right.get_data(*session));
             CHECK_FALSE(accel.get_data(*session));
             CHECK_FALSE(gyro.get_data(*session));
-            CHECK_FALSE(audio.get_data(*session));
             CHECK_FALSE(calibration.get_data(*session));
             CHECK_FALSE(state.get_data(*session));
             continue;
@@ -198,8 +180,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
         REQUIRE(gyro.get_data(*session));
         CHECK(accel.get_data(*session)->sensor() == core::OrbbecEgoImuSensor_Accel);
         CHECK(gyro.get_data(*session)->sensor() == core::OrbbecEgoImuSensor_Gyro);
-        REQUIRE(audio.get_data(*session));
-        CHECK(audio.get_data(*session)->sequence_number() == sequence);
         REQUIRE(calibration.get_data(*session));
         CHECK(calibration.get_data(*session)->device_uid()->str() == "ego_" + std::to_string(sequence));
         REQUIRE(state.get_data(*session));
@@ -210,7 +190,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
     CHECK_FALSE(right.get_data(*session));
     CHECK_FALSE(accel.get_data(*session));
     CHECK_FALSE(gyro.get_data(*session));
-    CHECK_FALSE(audio.get_data(*session));
     CHECK_FALSE(calibration.get_data(*session));
     CHECK_FALSE(state.get_data(*session));
     session.reset();

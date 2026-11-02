@@ -51,11 +51,8 @@ table OrbbecEgoDeviceState {
   device_uid: string (id: 0);
   capture_epoch: uint32 (id: 1);
   observed_at_ns: int64 (id: 2);
-  diagnostic_version: uint32 (id: 3);
-  event: OrbbecEgoDiagnosticEvent (id: 5);
+  event: OrbbecEgoDiagnosticEvent (id: 4);
 }
-
-table OrbbecEgoDeviceStateTracked { data: OrbbecEgoDeviceState (id: 0); }
 
 table OrbbecEgoDeviceStateRecord {
   data: OrbbecEgoDeviceState (id: 0);

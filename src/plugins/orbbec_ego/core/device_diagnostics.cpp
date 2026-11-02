@@ -3,8 +3,7 @@
 
 #include "device_diagnostics.hpp"
 
-#include <schema/orbbec_ego_device_state_utils.hpp>
-
+#include <cmath>
 #include <utility>
 
 namespace plugins::ego
@@ -15,7 +14,6 @@ template <typename Payload>
 core::OrbbecEgoDeviceStateT event(const DiagnosticOrigin& origin, Payload payload)
 {
     core::OrbbecEgoDeviceStateT value;
-    value.diagnostic_version = core::ORBBEC_EGO_DIAGNOSTIC_VERSION;
     value.observed_at_ns = origin.observed_at_ns;
     value.device_uid = origin.uid;
     value.capture_epoch = origin.epoch;

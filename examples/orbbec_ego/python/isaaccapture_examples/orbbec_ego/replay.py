@@ -191,7 +191,7 @@ def replay(
                 else:
                     raise ValueError("Unsupported EGO diagnostic event")
                 print(
-                    f"DeviceState: event={state.event_type} version={state.diagnostic_version} epoch={state.capture_epoch} device_uid={state.device_uid} observed_at_ns={state.observed_at_ns} {detail}"
+                    f"DeviceState: event={state.event_type} epoch={state.capture_epoch} device_uid={state.device_uid} observed_at_ns={state.observed_at_ns} {detail}"
                 )
 
     return counts

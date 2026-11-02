@@ -77,7 +77,6 @@ class Tracker:
             samples=[1],
             device_uid="ego",
             event_type=OrbbecEgoDiagnosticEvent.RecoveryEvent,
-            diagnostic_version=2,
             observed_at_ns=100,
             event=OrbbecEgoRecoveryEvent(
                 OrbbecEgoRecoveryStage.Recovered, "recovered", 1
