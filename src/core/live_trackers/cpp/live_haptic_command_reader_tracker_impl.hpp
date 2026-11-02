@@ -10,9 +10,11 @@
 #include <oxr_utils/oxr_session_handles.hpp>
 #include <schema/haptic_command_generated.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,15 +46,22 @@ public:
     const Serialized<HapticCommand>& get_data(std::string_view endpoint) const override;
 
 private:
+    struct TrackedCommand
+    {
+        Serialized<HapticCommand> command;
+        DeviceDataTimestamp timestamp;
+    };
+
     HapticCommandSchemaTracker schema_reader_;
     // Latest command per endpoint. One push-tensor collection carries every
     // endpoint's command (each tagged by HapticCommand.endpoint); bucketing by
     // that tag keeps concurrent endpoints (e.g. left/right) from overwriting one
     // another the way a single latest-sample slot would.
-    std::map<std::string, Serialized<HapticCommand>, std::less<>> tracked_by_endpoint_;
+    std::map<std::string, TrackedCommand, std::less<>> tracked_by_endpoint_;
     // Endpoint of the most recently drained sample, backing the no-arg get_data().
     std::string latest_endpoint_;
     std::vector<SchemaTrackerBase::SampleResult> samples_;
+    std::optional<std::chrono::nanoseconds> max_sample_age_;
 };
 
 } // namespace core

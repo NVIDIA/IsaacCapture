@@ -28,7 +28,7 @@ cmake -B build \
 cmake --build build --parallel
 cmake --install build
 uv pip install -e ./examples/sharpa_avatar
-python -m isaaccapture_examples.sharpa_avatar
+python -m isaaccapture_examples.sharpa_avatar --print-health
 ```
 
 Open the URL it prints (default <http://127.0.0.1:8080>). The left hand is cyan
@@ -45,6 +45,7 @@ above first. `uv pip install -e` pulls `viser`; CloudXR comes from the
 ```text
 --no-haptic                   disable pinch feedback
 --no-viz                      terminal + haptic only (no browser view)
+--print-health                print Sharpa device health initially and on changes
 --host / --port               viser bind (default 127.0.0.1:8080)
 --no-launch-plugin            connect to an already running plugin
 --no-launch-cloudxr-runtime   connect to an already running CloudXR runtime
