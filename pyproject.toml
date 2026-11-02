@@ -49,6 +49,13 @@ dev = [
 ]
 ui = [
     "imgui[glfw]>=2.0.0",
+    "numpy>=1.23.0",
+    # Dockable panels and Trimesh 5 compatibility require Viser >=1.1.1.
+    # https://github.com/viser-project/viser/pull/769
+    "viser>=1.1.1",
+    "yourdfpy",
+    "trimesh",
+    "rtree",
 ]
 ovxr = [
     "ovxr==0.1.0.5842",
@@ -118,6 +125,8 @@ result = "{major}.{minor}+local"
 # [build-system], not [tool.uv]).
 [tool.uv]
 package = false
+# Ignore Viser's websockets requirement while preserving CloudXR's requirement.
+exclude-dependencies = [{ package = { name = "viser" }, dependencies = ["websockets"] }]
 
 [tool.uv.sources]
 isaacteleop = { path = "src/compat" }
