@@ -16,6 +16,7 @@ using plugins::avatar::DatasetHealthInput;
 using plugins::avatar::GloveIngressSignal;
 using plugins::avatar::GloveState;
 using plugins::avatar::HapticCommandDeliveryState;
+using plugins::avatar::HapticRetryState;
 using plugins::avatar::PhysicalGloveHealthInput;
 using plugins::avatar::UsbDevicePresence;
 
@@ -264,6 +265,12 @@ TEST_CASE("Haptic delivery retains the newest command during retry backoff", "[s
     CHECK(delivery.pending(observed_at + 250ms, 200ms) == nullptr);
     delivery.observe(second, observed_at + 250ms);
     CHECK(delivery.pending(observed_at + 250ms, 200ms) == nullptr);
+
+    core::HapticCommandT third_native;
+    third_native.values = { 0.0f, 0.0f, 0.5f, 0.0f, 0.0f };
+    const auto third = core::pack<core::HapticCommand>(third_native);
+    delivery.observe(third, observed_at + 251ms);
+    CHECK(delivery.pending(observed_at + 251ms, 200ms) == third.get());
 }
 
 TEST_CASE("Haptic delivery expires commands that are no longer observed", "[sharpa_avatar][haptic]")
@@ -282,6 +289,40 @@ TEST_CASE("Haptic delivery expires commands that are no longer observed", "[shar
 
     delivery.observe(command, observed_at + 201ms);
     CHECK(delivery.pending(observed_at + 201ms, 200ms) == nullptr);
+}
+
+TEST_CASE("Haptic stop attempts are independent from command retry backoff", "[sharpa_avatar][haptic]")
+{
+    using namespace std::chrono_literals;
+
+    const auto now = HapticRetryState::Clock::time_point{};
+    HapticRetryState retries;
+
+    retries.command_failed(now, 1s);
+    CHECK_FALSE(retries.command_ready(now + 200ms));
+    CHECK(retries.stop_ready(now + 200ms));
+
+    retries.stop_failed(now + 200ms, 1s);
+    CHECK(retries.command_ready(now + 1000ms));
+    CHECK_FALSE(retries.stop_ready(now + 1199ms));
+    CHECK(retries.stop_ready(now + 1200ms));
+}
+
+TEST_CASE("A successful safety stop preserves command retry backoff", "[sharpa_avatar][haptic]")
+{
+    using namespace std::chrono_literals;
+
+    const auto now = HapticRetryState::Clock::time_point{};
+    HapticRetryState retries;
+    retries.command_failed(now, 1s);
+    retries.stop_failed(now, 1s);
+    retries.stop_succeeded();
+
+    CHECK_FALSE(retries.command_ready(now + 200ms));
+    CHECK(retries.stop_ready(now + 200ms));
+
+    retries.command_succeeded();
+    CHECK(retries.command_ready(now + 200ms));
 }
 
 TEST_CASE("Dongle detection handles complete and incomplete USB enumeration", "[sharpa_avatar][health]")
