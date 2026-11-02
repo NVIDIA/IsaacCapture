@@ -191,16 +191,7 @@ Add these flags to a recording command as needed:
 | `--calibration-output="$RUN/calibration.json"` | Export calibration and the original SDK YAML. |
 
 The SDL preview decodes on the CPU and may drop stale display frames without
-changing the recording. For GPU preview, use the independent viewer:
-
-```bash
-examples/camera_viz/camera_viz.sh setup --with-orbbec-ego --sdk-root "$ORBBEC_SDK"
-examples/camera_viz/camera_viz.sh run \
-  examples/camera_viz/configs/orbbec_ego.yaml --mode window --stereo-debug sbs
-```
-
-H.264/H.265 GPU preview requires CUDA/NVDEC; MJPEG uses SDK conversion and GPU
-upload. The viewer and recording plugin each open the camera; run one at a time.
+changing the recording.
 
 ### Optional audio and synchronization limits
 
@@ -648,7 +639,7 @@ overwrite outputs and return nonzero for unverified or incomplete results.
 | No camera or permission denied | Install the selected SDK's udev rules, reconnect, and run `--list-capabilities`. |
 | Requested profile rejected | Choose advertised profiles for each eye; the simultaneous combination must also start successfully. H.264/H.265 are limited to 30 FPS. |
 | `--preview` rejected | Reconfigure with `-DORBBEC_EGO_ENABLE_PREVIEW=ON`, install SDL/FFmpeg development packages, and use a desktop session. |
-| Camera busy or preview cannot open | Stop other processes using that EGO, including `camera_viz`. |
+| Camera busy or preview cannot open | Stop other processes using that EGO. |
 | Recording waits after disconnect | Reconnect the same physical camera within `--reconnect-timeout`; UID may change after USB re-enumeration. |
 | Nonzero exit or `.partial` remains | Preserve capture and logs; check queue loss, output failures, reconnect timeout, and control restoration. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |

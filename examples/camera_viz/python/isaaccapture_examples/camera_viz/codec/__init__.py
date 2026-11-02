@@ -11,12 +11,10 @@ from __future__ import annotations
 try:
     from ._camera_viz_codec import (  # type: ignore[import-not-found]
         DecoderConfig,
-        DecoderCodec,
         EncoderConfig,
         H264Decoder,
         H264Encoder,
         PixelFormat,
-        VideoDecoder,
     )
 except ImportError as e:
     raise ImportError(
@@ -26,10 +24,8 @@ except ImportError as e:
 
 __all__ = [
     "DecoderConfig",
-    "DecoderCodec",
     "EncoderConfig",
     "H264Decoder",
     "H264Encoder",
     "PixelFormat",
-    "VideoDecoder",
 ]

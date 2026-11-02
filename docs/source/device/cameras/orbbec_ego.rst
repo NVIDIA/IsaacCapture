@@ -231,22 +231,9 @@ structured records without decoding video or playing audio. To play video,
 use the sidecars or run ``export-media`` for an embedded recording, then open
 the resulting elementary streams with FFmpeg.
 
-For a live GPU preview, build the standalone camera_viz binding, specifying
-the path to the extracted EGO SDK:
-
-.. code-block:: bash
-
-   examples/camera_viz/camera_viz.sh setup --with-orbbec-ego \
-     --sdk-root /path/to/OrbbecSDK
-   examples/camera_viz/camera_viz.sh run \
-     examples/camera_viz/configs/orbbec_ego.yaml --mode window --stereo-debug sbs
-
-The viewer uses GPU upload for MJPEG and NVDEC for H.264/H.265. The command
-above displays the two eyes side by side in a desktop window; XR mode uses
-separate eye textures. The viewer and recording plugin each open the camera;
-run them one at a time. See
-:code-file:`examples/camera_viz/python/isaaccapture_examples/camera_viz/orbbec_ego_preview/README.md`
-for decoder requirements and XR configuration.
+To check framing and exposure while recording, configure the plugin with
+``-DORBBEC_EGO_ENABLE_PREVIEW=ON`` and pass ``--preview``: the plugin shows the two
+eyes side by side in a desktop window without changing the recording.
 
 Sample-time association
 -----------------------
@@ -302,5 +289,3 @@ Troubleshooting
   status publication and keeps recording, as the warning after it says.
 - **No embedded final output:** check normal context exit, committed fragment,
   matching spool path, and the merge tool beside the selected plugin.
-- **Native decoder unavailable:** build camera_viz's codec with CUDA, or choose
-  an advertised MJPEG profile for that preview.

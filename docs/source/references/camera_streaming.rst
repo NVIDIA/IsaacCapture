@@ -112,10 +112,6 @@ needs. Flags trim or extend that:
    * - ``--with-zed``
      - Also build + install the ZED SDK's Python API (``pyzed``). Requires the ZED SDK on the
        machine (default ``/usr/local/zed``; override with ``--zed-sdk PATH``).
-   * - ``--with-orbbec-ego``
-     - Also build the Orbbec EGO capture binding against the EGO OrbbecSDK package; pass its
-       root with ``--sdk-root PATH``. See
-       :code-file:`examples/camera_viz/python/isaaccapture_examples/camera_viz/orbbec_ego_preview/README.md`.
    * - ``--sender-only``
      - Split mode only — robot-side install of just the sender's dependencies.
    * - ``--jetson``
@@ -350,9 +346,6 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        bandwidth and is broadcast to RGBA on the GPU; ``stereo_rgb`` keeps color.
    * - ``zed``
      - ZED 2 / Mini / X One; mono or ``stereo: true`` (per-eye SDK retrieve, zero-copy on the GPU).
-   * - ``orbbec_ego``
-     - Orbbec EGO ColorLeft / ColorRight pair; ``stereo: true`` required. Install with
-       ``--with-orbbec-ego`` and start from ``configs/orbbec_ego.yaml``; see :doc:`/device/cameras/orbbec_ego`.
    * - ``video``
      - Recorded camera data — video-file replay (anything OpenCV's FFmpeg backend reads). Loops
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
@@ -395,10 +388,7 @@ Display modes
 XR is the default: each camera renders as its own plane in the headset via the active OpenXR
 runtime, and stereo sources (``stereo: true``) render true side-by-side stereo. Pass
 ``--mode window`` (or set ``display.mode: window`` in the YAML) to render to a desktop window
-instead — no headset or runtime needed; stereo shows the left eye. To show both eyes side by
-side in the window, pass ``--stereo-debug sbs`` or set ``display.window.stereo_debug: "sbs"``
-(quote ``"off"`` in YAML). It applies only to window mode: XR submits separate eye images, and
-an XR run with ``sbs`` set stops with an error.
+instead — no headset or runtime needed; stereo shows the left eye.
 
 In XR, how a plane follows the operator's head is the per-camera ``lock_mode`` under
 ``display.placements.<name>``:
@@ -746,7 +736,7 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
    cameras:
      - name: cam
        enabled: true
-       type: v4l2                # v4l2 | oakd | orbbec_ego | zed | video | synthetic
+       type: v4l2                # v4l2 | oakd | zed | video | synthetic
        width: 2560               # video: optional — defaults to the file's size
        height: 720               # (required when source: rtp)
        fps: 30
