@@ -167,6 +167,7 @@ class PageServer:
                     writer, exc.status, {"ok": False, "error": str(exc)}
                 )
             except (asyncio.TimeoutError, ConnectionError):
+                # The client gave up or went away mid-request: nobody is left to answer.
                 pass
         except Exception:
             # Detail stays in the log; the browser gets no stack trace.
@@ -337,6 +338,7 @@ class PageServer:
                     writer.write(b": keepalive\n\n")
                     await writer.drain()
         except ConnectionError:
+            # The tab closed mid-write; the cleanup below treats it as a normal disconnect.
             pass
         finally:
             closed.cancel()

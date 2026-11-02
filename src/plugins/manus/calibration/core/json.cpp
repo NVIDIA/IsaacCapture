@@ -174,8 +174,8 @@ private:
         const size_t digit_count = m_pos - digits_start;
         // No fraction, exponent or leading zero; at most 18 digits keeps the value inside int64_t.
         const bool leading_zero = digit_count > 1 && m_text[digits_start] == '0';
-        const bool float_like = m_pos < m_text.size() && (m_text[m_pos] == '.' || m_text[m_pos] == 'e' ||
-                                                          m_text[m_pos] == 'E');
+        const bool float_like =
+            m_pos < m_text.size() && (m_text[m_pos] == '.' || m_text[m_pos] == 'e' || m_text[m_pos] == 'E');
         if (digit_count == 0 || digit_count > 18 || leading_zero || float_like)
         {
             m_error = "numbers must be plain integers";

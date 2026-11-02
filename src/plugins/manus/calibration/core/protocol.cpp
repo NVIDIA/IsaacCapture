@@ -30,8 +30,7 @@ bool valid_attempt(std::string_view attempt)
 {
     return !attempt.empty() && attempt.size() <= kMaxAttemptChars &&
            std::all_of(attempt.begin(), attempt.end(),
-                       [](unsigned char c)
-                       { return std::isalnum(c) != 0 || c == '_' || c == '-'; });
+                       [](unsigned char c) { return std::isalnum(c) != 0 || c == '_' || c == '-'; });
 }
 
 bool valid_token(std::string_view token)

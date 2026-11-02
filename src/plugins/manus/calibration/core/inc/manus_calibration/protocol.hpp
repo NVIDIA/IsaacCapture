@@ -185,14 +185,8 @@ struct ResultEvent
     std::optional<ErrorInfo> error;
 };
 
-using Event = std::variant<ReadyEvent,
-                           StatusEvent,
-                           PromptEvent,
-                           StepAcceptedEvent,
-                           StepProgressEvent,
-                           RejectedEvent,
-                           ExportedEvent,
-                           ResultEvent>;
+using Event =
+    std::variant<ReadyEvent, StatusEvent, PromptEvent, StepAcceptedEvent, StepProgressEvent, RejectedEvent, ExportedEvent, ResultEvent>;
 
 // Exactly one of the two members is set.
 struct ParsedCommand

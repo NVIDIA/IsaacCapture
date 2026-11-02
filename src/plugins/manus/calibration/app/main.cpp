@@ -7,6 +7,8 @@
 #include <manus_calibration/engine.hpp>
 #include <manus_calibration/export_writer.hpp>
 #include <manus_calibration/protocol.hpp>
+#include <sys/prctl.h>
+#include <sys/socket.h>
 
 #include <atomic>
 #include <cerrno>
@@ -16,12 +18,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <optional>
+#include <poll.h>
 #include <string>
 #include <string_view>
-
-#include <poll.h>
-#include <sys/prctl.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 using namespace plugins::manus::calibration;
@@ -230,7 +229,8 @@ int main(int argc, char** argv)
     Ipc ipc(options->ipc_fd);
     EngineConfig config;
     config.discovery_timeout_s = options->discovery_timeout_s;
-    CalibrationEngine engine(sdk, writer, clock, [&ipc](const Event& event) { ipc.send(event); }, config);
+    CalibrationEngine engine(
+        sdk, writer, clock, [&ipc](const Event& event) { ipc.send(event); }, config);
 
     ipc.send(ReadyEvent{ kWorkerVersion, sdk.version() });
     logger->info("Calibration worker ready");

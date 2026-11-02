@@ -155,7 +155,7 @@ def test_a_motion_step_reports_progress_to_the_page(make_worker):
                     states.append(state)
                     if state["stage"] == "finished":
                         break
-            await task
+            _ = await task
             elapsed = [s["elapsed_s"] for s in states if s["elapsed_s"] is not None]
             assert elapsed
             assert max(elapsed) <= 0.4 + 1e-6
@@ -183,7 +183,7 @@ def test_another_browser_sees_the_attempt_read_only_and_never_the_token(make_wor
                     seen.append(state)
                     if state["stage"] == "finished":
                         break
-            await flow
+            _ = await flow
             active = [s for s in seen if s["active"]]
             assert active
             assert all(s["owner"] is False for s in seen)

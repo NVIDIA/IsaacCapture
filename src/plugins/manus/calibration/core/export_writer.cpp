@@ -3,11 +3,11 @@
 
 #include "inc/manus_calibration/export_writer.hpp"
 
+#include <sys/stat.h>
+
 #include <cerrno>
 #include <cstring>
-
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace plugins::manus::calibration
@@ -25,13 +25,15 @@ std::string errno_text(const std::string& what)
 
 bool PosixExportWriter::directory_usable(const std::string& dir)
 {
-    struct stat info{};
+    struct stat info
+    {
+    };
     return ::stat(dir.c_str(), &info) == 0 && S_ISDIR(info.st_mode) && ::access(dir.c_str(), W_OK | X_OK) == 0;
 }
 
 std::optional<std::string> PosixExportWriter::write(const std::string& dir,
-                                                     const std::string& basename,
-                                                     const std::vector<uint8_t>& bytes)
+                                                    const std::string& basename,
+                                                    const std::vector<uint8_t>& bytes)
 {
     // The basename is built by the engine, but a separator here would escape the staging directory.
     if (basename.empty() || basename.find('/') != std::string::npos)

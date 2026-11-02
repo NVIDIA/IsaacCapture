@@ -171,9 +171,9 @@ def test_a_worker_that_goes_silent_is_stopped_without_any_cancel(
         # A confirmation the worker never answered is released, not left waiting forever.
         if flag == "hang_on_confirm":
             with pytest.raises(AttemptEnded):
-                await confirm
+                _ = await confirm
         elif confirm is not None:
-            await confirm
+            _ = await confirm
         await assert_no_tasks_left()
 
     run(body())
@@ -192,6 +192,7 @@ def test_a_hang_after_the_last_step_is_not_mistaken_for_completion(make_worker):
                     try:
                         await r.attempt.confirm(prompt.token)
                     except AttemptEnded:
+                        # The hang ends the attempt while this confirm waits; the outcome is asserted below.
                         pass
                 await asyncio.sleep(0.01)
         outcome = await r.attempt.outcome()
@@ -336,7 +337,7 @@ def test_a_user_cancel_during_a_pending_confirm_is_not_blamed_on_the_watchdog(
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert "did not respond" not in outcome.message
         with pytest.raises(AttemptEnded):
-            await confirm
+            _ = await confirm
         assert_nothing_published(r.store)
 
     run(body())

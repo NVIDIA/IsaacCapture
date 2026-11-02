@@ -77,6 +77,8 @@ async def drive(
                 try:
                     await attempt.confirm(prompt.token)
                 except Exception:
+                    # A refused or abandoned confirm is part of what these drivers exercise; the loop
+                    # ends on the attempt reaching DONE, and the caller inspects the outcome.
                     pass
             await asyncio.sleep(0.01)
     return await attempt.outcome()

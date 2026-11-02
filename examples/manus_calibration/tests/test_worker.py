@@ -64,6 +64,7 @@ def confirming(attempt) -> asyncio.Task:
                 try:
                     await attempt.confirm(prompt.token)
                 except AttemptError:
+                    # The attempt may end or refuse mid-confirm; the driver only keeps answering prompts.
                     pass
             await asyncio.sleep(0.01)
 
