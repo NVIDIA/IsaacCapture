@@ -1854,6 +1854,27 @@ class TestStep:
                 session.step()
                 assert mock_dio.update_count == 2
 
+    def test_step_pumps_openxr_before_deviceio_update(self):
+        head = MockHeadSource()
+        mock_dio = MockDeviceIOSession()
+        config = make_config(MockPipeline(leaf_nodes=[head]))
+        events = []
+        with mock_session_dependencies(mock_dio=mock_dio):
+            with TeleopSession(config) as session:
+                original_poll = session._oxr_session.get_provider_snapshot
+
+                def poll():
+                    events.append("openxr")
+                    return original_poll()
+
+                def update():
+                    events.append("input")
+
+                session._oxr_session.get_provider_snapshot = poll
+                mock_dio.update = update
+                session.step()
+                assert events[:2] == ["openxr", "input"]
+
     def test_step_calls_pipeline(self):
         """step() should call the pipeline with collected inputs."""
         head = MockHeadSource()

@@ -5,6 +5,9 @@
 
 #include <openxr/openxr.h>
 
+#include <atomic>
+#include <memory>
+
 namespace core
 {
 
@@ -17,6 +20,14 @@ struct OpenXRSessionHandles
     XrSession session{};
     XrSpace space{};
     PFN_xrGetInstanceProcAddr xrGetInstanceProcAddr{};
+    // Owned sessions share lifecycle state; externally supplied handles retain their
+    // caller-managed lifecycle when this optional field is absent.
+    std::shared_ptr<const std::atomic_bool> session_running{};
+
+    bool is_running() const
+    {
+        return !session_running || session_running->load();
+    }
 };
 
 } // namespace core

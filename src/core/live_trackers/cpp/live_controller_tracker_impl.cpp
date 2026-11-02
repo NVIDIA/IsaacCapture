@@ -189,6 +189,7 @@ std::unique_ptr<ControllerMcapChannels> LiveControllerTrackerImpl::create_mcap_c
 LiveControllerTrackerImpl::LiveControllerTrackerImpl(const OpenXRSessionHandles& handles,
                                                      std::unique_ptr<ControllerMcapChannels> mcap_channels)
     : core_funcs_(OpenXRCoreFunctions::load(handles.instance, handles.xrGetInstanceProcAddr)),
+      handles_(handles),
       time_converter_(handles),
       session_(handles.session),
       base_space_(handles.space),
@@ -346,6 +347,11 @@ void LiveControllerTrackerImpl::update(int64_t monotonic_time_ns)
     left_tracked_.reset();
     right_tracked_.reset();
     last_update_time_ = monotonic_time_ns;
+    if (!handles_.is_running())
+    {
+        return;
+    }
+
     const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(monotonic_time_ns);
 
     // Sync actions via xrSyncActions2NV with our session action context
@@ -470,6 +476,11 @@ void LiveControllerTrackerImpl::apply_right_haptic_feedback(float amplitude, flo
 
 void LiveControllerTrackerImpl::apply_haptic_feedback(Side side, float amplitude, float frequency_hz, float duration_s) const
 {
+    if (!handles_.is_running())
+    {
+        return;
+    }
+
     const XrPath subaction_path = (side == Side::Left) ? left_hand_path_ : right_hand_path_;
     const size_t slot = (side == Side::Left) ? 0 : 1;
     const char* const side_name = (side == Side::Left) ? "left" : "right";

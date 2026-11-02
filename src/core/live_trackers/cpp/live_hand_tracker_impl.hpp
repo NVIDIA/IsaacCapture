@@ -54,6 +54,7 @@ private:
     void update_hand(const std::vector<XrHandTrackerEXT>& trackers, XrTime time, std::optional<HandPoseT>& tracked);
     bool try_update_hand(XrHandTrackerEXT tracker, XrTime time, std::optional<HandPoseT>& tracked);
 
+    OpenXRSessionHandles handles_;
     XrTimeConverter time_converter_;
     XrSpace base_space_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.LiveHandTrackerImpl");

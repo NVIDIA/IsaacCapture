@@ -74,7 +74,8 @@ std::unique_ptr<HandMcapChannels> LiveHandTrackerImpl::create_mcap_channels(mcap
 
 LiveHandTrackerImpl::LiveHandTrackerImpl(const OpenXRSessionHandles& handles,
                                          std::unique_ptr<HandMcapChannels> mcap_channels)
-    : time_converter_(handles),
+    : handles_(handles),
+      time_converter_(handles),
       base_space_(handles.space),
       xdev_list_(XR_NULL_HANDLE),
       pfn_create_hand_tracker_(nullptr),
@@ -179,6 +180,11 @@ void LiveHandTrackerImpl::update(int64_t monotonic_time_ns)
     left_tracked_.reset();
     right_tracked_.reset();
     last_update_time_ = monotonic_time_ns;
+    if (!handles_.is_running())
+    {
+        return;
+    }
+
     const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(monotonic_time_ns);
     std::optional<HandPoseT> left_native;
     std::optional<HandPoseT> right_native;

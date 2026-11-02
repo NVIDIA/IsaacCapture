@@ -49,6 +49,7 @@ public:
     const Serialized<FullBodyPose>& get_body_pose() const override;
 
 private:
+    OpenXRSessionHandles handles_;
     XrTimeConverter time_converter_;
     XrSpace base_space_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.LiveFullBodyTrackerPicoImpl");
