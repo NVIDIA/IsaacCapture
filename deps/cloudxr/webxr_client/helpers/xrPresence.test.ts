@@ -21,7 +21,7 @@ test('stationary real frames refresh head and left independently; unknown right 
     rightAgeMs: -1,
     rightConfigured: 0,
   });
-  frame.getViewerPose = () => null;
+  frame.getViewerPose = () => undefined;
   presence.observe(frame, space, 30);
   expect(presence.snapshot(40).metrics).toMatchObject({
     frameAgeMs: 10,
