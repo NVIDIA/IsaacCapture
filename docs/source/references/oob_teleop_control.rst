@@ -258,6 +258,7 @@ Headset → hub: ``clientMetrics``
      "type": "clientMetrics",
      "payload": {
        "t": 1712800000000,
+       "sampleAgeMs": 125,
        "cadence": "frame",
        "metrics": {
          "streaming.framerate": 72.0,
@@ -270,6 +271,11 @@ One message is sent per cadence per tick, carrying the last known value of every
 reported so far in that cadence. Metric names are the CloudXR.js ``MetricsName`` values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 ``{name: value}`` map per cadence, so metrics added by a future SDK need no hub change.
+``sampleAgeMs`` is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device's
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.
 
 Browser health exchange
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -331,8 +337,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; ``connectDispatched`` records a
 host CONNECT click; and ``streamConfirmed`` requires a streaming report with
 fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
-milestone and when it was entered. ``lastMetricsAt`` is the host-received
-metrics time in epoch milliseconds; the launcher accepts ``streamConfirmed``
+milestone and when it was entered. ``lastMetricsAt`` is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+``lastSeenAt`` remains the browser message receipt time. The launcher accepts ``streamConfirmed``
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.

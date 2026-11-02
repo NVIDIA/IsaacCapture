@@ -37,6 +37,8 @@ export interface StreamConfig {
 export interface MetricsSnapshot {
   cadence: string;
   metrics: Record<string, number>;
+  /** Monotonic time of the last SDK observation, in performance.now() milliseconds. */
+  observedAt?: number;
 }
 
 export type StreamPhase = 'idle' | 'connecting' | 'retrying' | 'streaming' | 'terminal';
@@ -274,14 +276,17 @@ export class HeadsetControlChannel {
       const snapshots = this.opts.getMetricsSnapshot?.();
       if (!snapshots || snapshots.length === 0) return;
       const t = Date.now();
-      for (const { cadence, metrics } of snapshots) {
+      for (const { cadence, metrics, observedAt } of snapshots) {
         if (Object.keys(metrics).length === 0) continue;
-        this.lastMetricsAt = t;
+        const sampleAgeMs =
+          observedAt === undefined ? undefined : Math.max(0, performance.now() - observedAt);
+        const metricsAt = t - (sampleAgeMs ?? 0);
+        this.lastMetricsAt = Math.max(this.lastMetricsAt ?? metricsAt, metricsAt);
         if (!this.metricCadences.includes(cadence)) this.metricCadences.push(cadence);
         this.ws.send(
           JSON.stringify({
             type: 'clientMetrics',
-            payload: { t, cadence, metrics },
+            payload: { t, cadence, metrics, ...(sampleAgeMs === undefined ? {} : { sampleAgeMs }) },
           })
         );
       }

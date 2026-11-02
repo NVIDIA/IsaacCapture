@@ -16,6 +16,7 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -420,7 +421,23 @@ class OOBControlHub:
             if state is None:
                 return
             state.last_seen_at = time.time()
-            state.last_metrics_at = state.last_seen_at
+            # Legacy senders have no observation age and retain receipt-time semantics.
+            sample_age_ms = payload.get("sampleAgeMs", 0)
+            if (
+                isinstance(sample_age_ms, (int, float))
+                and not isinstance(sample_age_ms, bool)
+                and math.isfinite(sample_age_ms)
+                and sample_age_ms >= 0
+            ):
+                # Age uses the client's monotonic clock, so device wall-clock skew
+                # cannot make cached observations appear newer than their receipt.
+                observed_at = state.last_seen_at - sample_age_ms / 1000
+                state.last_metrics_at = max(
+                    state.last_metrics_at
+                    if state.last_metrics_at is not None
+                    else observed_at,
+                    observed_at,
+                )
             cadence = str(payload.get("cadence", "unknown"))
             raw_metrics = payload.get("metrics", {})
             if not isinstance(raw_metrics, dict):
