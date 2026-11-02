@@ -15,7 +15,6 @@ from pathlib import Path
 from isaaccapture.deviceio_session import McapReplayConfig, ReplaySession
 from isaaccapture.deviceio_trackers import (
     OrbbecEgoFrameMetadataTracker,
-    OrbbecEgoAudioTracker,
     OrbbecEgoCalibrationTracker,
     OrbbecEgoDeviceStateTracker,
     OrbbecEgoImuTracker,
@@ -108,7 +107,6 @@ def replay(
     imu_trackers = {
         name: OrbbecEgoImuTracker(f"ego/{name}") for name in ("Accel", "Gyro")
     }
-    audio_tracker = OrbbecEgoAudioTracker("ego_audio/Audio")
     calibration_tracker = OrbbecEgoCalibrationTracker("ego_calibration/Calibration")
     state_tracker = OrbbecEgoDeviceStateTracker("ego_device/DeviceState")
     trackers = [
@@ -120,7 +118,6 @@ def replay(
             (tracker, f"orbbec_ego_imu_{name.lower()}")
             for name, tracker in imu_trackers.items()
         ),
-        (audio_tracker, "orbbec_ego_audio"),
         (calibration_tracker, "orbbec_ego_calibration"),
     ]
     counts = {
@@ -128,7 +125,6 @@ def replay(
         "ColorRight": 0,
         "Accel": 0,
         "Gyro": 0,
-        "Audio": 0,
         "Calibration": 0,
         "DeviceState": 0,
     }
@@ -137,7 +133,6 @@ def replay(
         "orbbec_ego_metadata_colorright/FrameMetadata",
         "orbbec_ego_imu_accel/Imu",
         "orbbec_ego_imu_gyro/Imu",
-        "orbbec_ego_audio/Audio",
         "orbbec_ego_calibration/Calibration",
         "orbbec_ego_device/DeviceState",
     }
@@ -173,15 +168,6 @@ def replay(
                         f"{name}: epoch={data.capture_epoch} seq={data.sequence_number} "
                         f"rate_hz={data.sample_rate_hz} samples={len(data.samples)}"
                     )
-
-            audio = audio_tracker.get_data(session)
-            if audio is not None:
-                counts["Audio"] += 1
-                print(
-                    f"Audio: epoch={audio.capture_epoch} seq={audio.sequence_number} "
-                    f"rate_hz={audio.sample_rate_hz} samples={audio.sample_count} "
-                    f"bytes={audio.byte_count}"
-                )
 
             calibration = calibration_tracker.get_data(session)
             if calibration is not None:

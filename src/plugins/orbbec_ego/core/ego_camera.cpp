@@ -11,13 +11,10 @@
 #include "diagnostics.hpp"
 #include "inc/ego_camera/cancellation.hpp"
 #include "inc/ego_camera/ego_camera.hpp"
-#include "inc/ego_camera/time_alignment.hpp"
-#include "wav_writer.hpp"
+#include "inc/ego_camera/sdk_timestamp.hpp"
 
 #include <libobsensor/ObSensor.hpp>
 #include <oxr_utils/os_time.hpp>
-#include <schema/orbbec_ego_limits.hpp>
-#include <schema/serialized.hpp>
 
 #include <algorithm>
 #include <array>
@@ -315,7 +312,6 @@ class EgoCamera::Impl
 public:
     Impl(const CaptureConfig& config, const std::vector<StreamConfig>& streams, std::unique_ptr<FrameSink> sink)
         : config_(config),
-          time_alignment_(config.time_alignment),
           context_(std::make_unique<ob::Context>(prepare_sdk_logging())),
           streams_(streams),
           sink_(std::move(sink))
@@ -373,7 +369,6 @@ public:
             active_profiles_.emplace(stream.camera, profile);
         }
         initial_profile_description_ = describe_profiles(active_profiles_);
-        configure_time_alignment();
         try
         {
             for (const auto& stream : streams_)
@@ -504,8 +499,6 @@ public:
             start_device_state();
             if (config_.enable_imu)
                 start_imu();
-            if (config_.enable_audio || !config_.audio_output.empty())
-                start_audio();
             wait_for_auxiliary_readiness();
             try
             {
@@ -785,13 +778,10 @@ public:
     {
         accel_ready_.store(false, std::memory_order_release);
         gyro_ready_.store(false, std::memory_order_release);
-        audio_ready_.store(false, std::memory_order_release);
         active_accel_ready_.store(false, std::memory_order_release);
         active_gyro_ready_.store(false, std::memory_order_release);
-        active_audio_ready_.store(false, std::memory_order_release);
         last_accel_arrival_ns_.store(0, std::memory_order_release);
         last_gyro_arrival_ns_.store(0, std::memory_order_release);
-        last_audio_arrival_ns_.store(0, std::memory_order_release);
         last_video_arrival_ns_.clear();
     }
 
@@ -838,42 +828,6 @@ public:
             }
         };
         report_stop_error(stop_pipeline_noexcept(pipeline_, video_pipeline_started_, "video", device_removal_confirmed));
-        if (audio_sensor_)
-        {
-            if (audio_started_)
-            {
-                try
-                {
-                    const auto audio_stop_started = std::chrono::steady_clock::now();
-                    audio_sensor_->stop();
-                    detail::log_info() << "Ego audio stop completed in "
-                                       << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                                    audio_stop_started)
-                                              .count()
-                                       << " ms";
-                }
-                catch (const ob::Error& error)
-                {
-                    if (is_removed_device_cleanup_error(error, device_removal_confirmed))
-                    {
-                        detail::log_info()
-                            << "Ego audio sensor already inactive after confirmed removal: " << error.what();
-                    }
-                    else
-                    {
-                        cleanup_error_ += std::string("Ego audio stop during reconnect failed: ") + error.what() + "; ";
-                        detail::log_warning() << cleanup_error_;
-                    }
-                }
-                catch (const std::exception& error)
-                {
-                    cleanup_error_ += std::string("Ego audio stop during reconnect failed: ") + error.what() + "; ";
-                    detail::log_warning() << cleanup_error_;
-                }
-            }
-            audio_started_ = false;
-            audio_sensor_.reset();
-        }
         report_stop_error(stop_pipeline_noexcept(imu_pipeline_, imu_pipeline_started_, "IMU", device_removal_confirmed));
         drain_video_frames(false);
         flush_imu(core::OrbbecEgoImuSensor_Accel);
@@ -1003,7 +957,6 @@ public:
 
     void wait_for_recovery_stability() const
     {
-        const bool expect_audio = config_.enable_audio || !config_.audio_output.empty();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (std::chrono::steady_clock::now() < deadline)
         {
@@ -1019,8 +972,6 @@ public:
             stalled += " Accel";
         if (config_.enable_imu && !is_recent(last_gyro_arrival_ns_))
             stalled += " Gyro";
-        if (expect_audio && !is_recent(last_audio_arrival_ns_))
-            stalled += " Audio";
         if (!stalled.empty())
         {
             throw std::runtime_error("Ego uid=" + selected_device_uid_ +
@@ -1095,8 +1046,6 @@ public:
             start_device_state();
             if (config_.enable_imu)
                 start_imu();
-            if (config_.enable_audio || !config_.audio_output.empty())
-                start_audio();
             wait_for_auxiliary_readiness();
             start_recovered_video(pipeline_config);
             wait_for_recovery_stability();
@@ -1473,36 +1422,6 @@ public:
         // Freeze callbacks before stopping producers so SDK stop latency cannot
         // turn post-stop frames into queue overflow or a longer recording tail.
         remember_error(stop_pipeline_noexcept(pipeline_, video_pipeline_started_, "video"));
-        if (audio_sensor_)
-        {
-            if (audio_started_)
-            {
-                try
-                {
-                    const auto audio_stop_started = std::chrono::steady_clock::now();
-                    audio_sensor_->stop();
-                    detail::log_info() << "Ego audio stop completed in "
-                                       << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                                    audio_stop_started)
-                                              .count()
-                                       << " ms";
-                }
-                catch (const ob::Error& error)
-                {
-                    remember_error(std::string("Ego audio stop failed: ") + error.what());
-                }
-                catch (const std::exception& error)
-                {
-                    remember_error(std::string("Ego audio stop failed: ") + error.what());
-                }
-                catch (...)
-                {
-                    remember_error("Ego audio stop failed: unknown error");
-                }
-            }
-            audio_started_ = false;
-            audio_sensor_.reset();
-        }
         remember_error(stop_pipeline_noexcept(imu_pipeline_, imu_pipeline_started_, "IMU"));
         const auto finalize = [&remember_error](const char* operation, auto&& function)
         {
@@ -1557,7 +1476,6 @@ public:
         }
         if (const auto failure = sink_->metadata_error(); !failure.empty())
             remember_error("Ego metadata publication failed: " + failure);
-        finalize("WAV close", [this] { wav_writer_.close(); });
         try
         {
             restore_properties();
@@ -1729,7 +1647,6 @@ public:
         };
         validate(config_.enable_imu, last_accel_arrival_ns_, "Accel");
         validate(config_.enable_imu, last_gyro_arrival_ns_, "Gyro");
-        validate(config_.enable_audio || !config_.audio_output.empty(), last_audio_arrival_ns_, "Audio");
     }
 
     void drain_video_frames(bool wait_for_frame = true)
@@ -1786,9 +1703,7 @@ public:
             }
             captured.encoded_data.assign(frame->getData(), frame->getData() + frame->getDataSize());
             captured.sample_time_raw_device_clock_ns = sdk_timestamp_ns(frame->getTimeStampUs());
-            captured.sample_time_local_common_clock_ns = time_alignment_.sample_time(
-                stream.camera == core::OrbbecEgoCameraStream_ColorLeft ? "left_rgb" : "right_rgb",
-                captured.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
+            captured.sample_time_local_common_clock_ns = arrival_time_local_common_clock_ns;
             auto& stats = stats_[stream.camera];
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number <= stats.last_sequence)
             {
@@ -1804,17 +1719,12 @@ public:
                                          std::to_string(stats.last_device_timestamp_ns) +
                                          " current=" + std::to_string(captured.sample_time_raw_device_clock_ns));
             }
-            sink_->on_frame(captured,
-                            [this, arrival_time_local_common_clock_ns](const CapturedFrame& accepted)
-                            {
-                                if (accepted.metadata.stream == core::OrbbecEgoCameraStream_ColorLeft)
-                                    time_alignment_.observe_left(
-                                        accepted.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
+            std::function<void(const CapturedFrame&)> accepted_frame;
 #if defined(ORBBEC_EGO_ENABLE_PREVIEW)
-                                if (preview_)
-                                    preview_->submit(accepted);
+            if (preview_)
+                accepted_frame = [this](const CapturedFrame& accepted) { preview_->submit(accepted); };
 #endif
-                            });
+            sink_->on_frame(captured, accepted_frame);
 
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number > stats.last_sequence + 1)
                 stats.sequence_gaps += captured.metadata.sequence_number - stats.last_sequence - 1;
@@ -1833,7 +1743,6 @@ public:
         AuxiliaryStats auxiliary_stats;
         auxiliary_stats.accel_samples = auxiliary_stats_.accel_samples;
         auxiliary_stats.gyro_samples = auxiliary_stats_.gyro_samples;
-        auxiliary_stats.audio_samples = auxiliary_stats_.audio_samples;
         {
             std::lock_guard<std::mutex> lock(video_queue_mutex_);
             dropped_video_frame_sets = auxiliary_stats_.dropped_video_frame_sets;
@@ -1851,7 +1760,6 @@ public:
         }
         detail::log_info()
             << "  IMU: accel=" << auxiliary_stats.accel_samples << " gyro=" << auxiliary_stats.gyro_samples
-            << " samples; audio=" << auxiliary_stats.audio_samples
             << " samples; queue_peak=" << auxiliary_stats.publish_queue_peak
             << " dropped=" << auxiliary_stats.dropped_events << " video_frame_sets_dropped=" << dropped_video_frame_sets
             << "; capture_epoch=" << auxiliary_stats_.capture_epoch
@@ -1883,12 +1791,6 @@ public:
         int64_t local_ns = 0;
         int64_t device_ns = 0;
     };
-    struct AudioEvent
-    {
-        std::vector<uint8_t> bytes;
-        int64_t local_ns = 0;
-        int64_t device_ns = 0;
-    };
     struct CalibrationEvent
     {
         core::OrbbecEgoCalibrationT calibration;
@@ -1899,7 +1801,7 @@ public:
         core::OrbbecEgoDeviceStateT state;
         int64_t local_ns = 0;
     };
-    using PublishEvent = std::variant<ImuEvent, AudioEvent, CalibrationEvent, DeviceStateEvent>;
+    using PublishEvent = std::variant<ImuEvent, CalibrationEvent, DeviceStateEvent>;
 
     template <typename Event>
     void enqueue(Event&& event)
@@ -1925,12 +1827,6 @@ public:
 
     void drain_events()
     {
-        if (last_calibration_ && time_alignment_.has_update())
-        {
-            auto value = *last_calibration_;
-            attach_time_alignment(value);
-            enqueue(CalibrationEvent{ std::move(value), core::os_monotonic_now_ns() });
-        }
         std::deque<PublishEvent> pending;
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -1951,41 +1847,6 @@ public:
                             auxiliary_stats_.gyro_samples += value.batch.samples.size();
                         if (metadata)
                             metadata->on_imu_batch(value.batch, value.local_ns, value.device_ns);
-                    }
-                    else if constexpr (std::is_same_v<Event, AudioEvent>)
-                    {
-                        core::OrbbecEgoAudioChunkT chunk;
-                        chunk.sequence_number = audio_sequence_++;
-                        chunk.sample_rate_hz = audio_rate_;
-                        chunk.channel_count = audio_channels_;
-                        chunk.bits_per_sample = audio_bits_;
-                        chunk.sample_format = core::OrbbecEgoAudioSampleFormat_S16LE;
-                        chunk.byte_count = static_cast<uint32_t>(value.bytes.size());
-                        chunk.capture_epoch = capture_epoch_;
-                        const uint32_t bytes_per_sample = audio_channels_ * audio_bits_ / 8;
-                        chunk.sample_count = bytes_per_sample == 0 ? 0 : chunk.byte_count / bytes_per_sample;
-                        if (bytes_per_sample == 0 || chunk.byte_count % bytes_per_sample != 0)
-                            throw std::runtime_error("EGO audio payload is not a whole number of PCM samples");
-                        chunk.timing = std::make_shared<core::OrbbecEgoAudioTimingT>(
-                            time_alignment_.audio_timing(value.device_ns, chunk.sample_count, chunk.sample_rate_hz));
-                        if (!config_.audio_output.empty())
-                            chunk.wav_data_offset = wav_writer_.write(value.bytes);
-                        auxiliary_stats_.audio_samples += chunk.sample_count;
-                        if (metadata)
-                        {
-                            metadata->on_audio_chunk(chunk, value.local_ns, value.device_ns);
-                            core::OrbbecEgoPcmAudioChunkT pcm;
-                            pcm.sequence_number = chunk.sequence_number;
-                            pcm.sample_rate_hz = chunk.sample_rate_hz;
-                            pcm.channel_count = chunk.channel_count;
-                            pcm.bits_per_sample = chunk.bits_per_sample;
-                            pcm.sample_format = chunk.sample_format;
-                            pcm.sample_count = chunk.sample_count;
-                            pcm.pcm_data = std::move(value.bytes);
-                            pcm.capture_epoch = capture_epoch_;
-                            pcm.timing = chunk.timing;
-                            metadata->on_pcm_audio_chunk(pcm, value.local_ns, value.device_ns);
-                        }
                     }
                     else if constexpr (std::is_same_v<Event, CalibrationEvent>)
                     {
@@ -2014,11 +1875,9 @@ public:
         auto& pending = sensor == core::OrbbecEgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
         const int64_t arrival_ns = core::os_monotonic_now_ns();
         const int64_t device_ns = sdk_timestamp_ns(timestamp_us);
-        const int64_t local_ns = time_alignment_.sample_time(
-            sensor == core::OrbbecEgoImuSensor_Accel ? "accel" : "gyro", device_ns, arrival_ns);
         if (pending.samples.empty())
             pending.first_local_ns = arrival_ns;
-        pending.samples.emplace_back(value.x, value.y, value.z, temperature, local_ns, device_ns);
+        pending.samples.emplace_back(value.x, value.y, value.z, temperature, arrival_ns, device_ns);
         if (pending.samples.size() < 32 && arrival_ns - pending.first_local_ns < 20'000'000)
             return;
         flush_imu(sensor);
@@ -2095,63 +1954,12 @@ public:
         detail::log_info() << "Ego IMU started at " << config_.imu_rate << " Hz" << std::endl;
     }
 
-    void start_audio()
-    {
-        check_cancelled();
-        audio_sensor_ = device_->getSensor(OB_SENSOR_AUDIO);
-        const auto profiles = audio_sensor_->getStreamProfileList();
-        if (profiles->getCount() == 0)
-            throw std::runtime_error("EGO audio sensor has no profiles");
-        const auto profile = profiles->getProfile(0)->as<ob::AudioStreamProfile>();
-        audio_rate_ = profile->getSampleRate();
-        audio_channels_ = static_cast<uint16_t>(profile->getChannelCount());
-        audio_bits_ = static_cast<uint16_t>(profile->getBitsPerSample());
-        if (audio_rate_ != 48000 || audio_channels_ != 1 || audio_bits_ != 16)
-            throw std::runtime_error("Unsupported Ego audio profile; expected PCM 48000 Hz mono S16_LE");
-        if (!config_.audio_output.empty() && !wav_writer_.is_open())
-            wav_writer_.open(config_.audio_output, audio_rate_, audio_channels_, audio_bits_);
-        audio_sensor_->start(profile,
-                             [this](std::shared_ptr<ob::Frame> frame)
-                             {
-                                 try
-                                 {
-                                     if (!frame || !accepting_callbacks_.load(std::memory_order_acquire))
-                                         return;
-                                     if (!audio_ready_.exchange(true, std::memory_order_acq_rel))
-                                         auxiliary_readiness_wake_.notify_all();
-                                     const int64_t arrival_ns = core::os_monotonic_now_ns();
-                                     last_audio_arrival_ns_.store(arrival_ns, std::memory_order_release);
-                                     if (!capture_active_.load(std::memory_order_acquire))
-                                         return;
-                                     AudioEvent event;
-                                     event.bytes.assign(frame->getData(), frame->getData() + frame->getDataSize());
-                                     event.local_ns = arrival_ns;
-                                     event.device_ns = sdk_timestamp_ns(frame->getTimeStampUs());
-                                     enqueue(std::move(event));
-                                     if (!active_audio_ready_.exchange(true, std::memory_order_acq_rel))
-                                         auxiliary_readiness_wake_.notify_all();
-                                 }
-                                 catch (const std::exception& error)
-                                 {
-                                     set_async_error(std::string("Audio callback failed: ") + error.what());
-                                 }
-                             });
-        audio_started_ = true;
-        std::ostringstream audio_message;
-        audio_message << "Audio capture started";
-        if (!config_.audio_output.empty())
-            audio_message << "; sidecar WAV: " << config_.audio_output;
-        detail::log_info() << audio_message.str();
-    }
-
     void wait_for_auxiliary_readiness()
     {
-        const bool expect_audio = config_.enable_audio || !config_.audio_output.empty();
-        const auto ready = [this, expect_audio]
+        const auto ready = [this]
         {
-            return (!config_.enable_imu ||
-                    (accel_ready_.load(std::memory_order_acquire) && gyro_ready_.load(std::memory_order_acquire))) &&
-                   (!expect_audio || audio_ready_.load(std::memory_order_acquire));
+            return !config_.enable_imu ||
+                   (accel_ready_.load(std::memory_order_acquire) && gyro_ready_.load(std::memory_order_acquire));
         };
         std::unique_lock<std::mutex> lock(auxiliary_readiness_mutex_);
         if (wait_capture_ready(auxiliary_readiness_wake_, lock, std::chrono::seconds(10), ready, config_.stop_requested))
@@ -2161,8 +1969,6 @@ public:
             missing += " Accel";
         if (config_.enable_imu && !gyro_ready_.load(std::memory_order_relaxed))
             missing += " Gyro";
-        if (expect_audio && !audio_ready_.load(std::memory_order_relaxed))
-            missing += " Audio";
         throw std::runtime_error("Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
                                  " active profiles [" + describe_profiles(active_profiles_) +
                                  "] timed out waiting for auxiliary streams:" + missing);
@@ -2170,12 +1976,10 @@ public:
 
     void wait_for_active_auxiliary_readiness()
     {
-        const bool expect_audio = config_.enable_audio || !config_.audio_output.empty();
-        const auto ready = [this, expect_audio]
+        const auto ready = [this]
         {
-            return (!config_.enable_imu || (active_accel_ready_.load(std::memory_order_acquire) &&
-                                            active_gyro_ready_.load(std::memory_order_acquire))) &&
-                   (!expect_audio || active_audio_ready_.load(std::memory_order_acquire));
+            return !config_.enable_imu || (active_accel_ready_.load(std::memory_order_acquire) &&
+                                           active_gyro_ready_.load(std::memory_order_acquire));
         };
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (!ready() && std::chrono::steady_clock::now() < deadline)
@@ -2200,8 +2004,6 @@ public:
             missing += " Accel";
         if (config_.enable_imu && !active_gyro_ready_.load(std::memory_order_relaxed))
             missing += " Gyro";
-        if (expect_audio && !active_audio_ready_.load(std::memory_order_relaxed))
-            missing += " Audio";
         throw std::runtime_error("Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
                                  " active profiles [" + describe_profiles(active_profiles_) +
                                  "] timed out waiting for auxiliary streams after video became active:" + missing);
@@ -2236,47 +2038,11 @@ public:
         return result;
     }
 
-    void configure_time_alignment()
-    {
-        if (active_profiles_.empty())
-            return;
-        const auto first = active_profiles_.begin()->second;
-        if (!config_.time_alignment.empty())
-        {
-            if (!active_profiles_.count(core::OrbbecEgoCameraStream_ColorLeft))
-                throw std::invalid_argument("EGO capture timing profile requires the left reference camera");
-            for (const auto& [_, profile] : active_profiles_)
-                if (profile->getWidth() != first->getWidth() || profile->getHeight() != first->getHeight() ||
-                    profile->getFps() != first->getFps() || profile->getFormat() != first->getFormat())
-                    throw std::invalid_argument("EGO capture timing profile requires matching stereo profiles");
-        }
-        const std::string format = first->getFormat() == OB_FORMAT_H264 ? "h264" :
-                                   first->getFormat() == OB_FORMAT_H265 ? "h265" :
-                                                                          "mjpg";
-        const bool audio = config_.enable_audio || !config_.audio_output.empty();
-        time_alignment_.configure(
-            { selected_device_serial_, selected_firmware_,
-              std::to_string(ob::Version::getMajor()) + "." + std::to_string(ob::Version::getMinor()) + "." +
-                  std::to_string(ob::Version::getPatch()),
-              format, first->getWidth(), first->getHeight(), first->getFps(), config_.enable_imu ? config_.imu_rate : 0U,
-              audio ? 48000U : 0U, static_cast<uint16_t>(audio ? 1 : 0), static_cast<uint16_t>(audio ? 16 : 0),
-              active_profiles_.count(core::OrbbecEgoCameraStream_ColorRight) != 0, loaded_sdk_binary_sha256() });
-    }
-
-    void attach_time_alignment(core::OrbbecEgoCalibrationT& value)
-    {
-        value.time_alignment = std::make_shared<core::OrbbecEgoTimeAlignmentT>();
-        value.time_alignment->json = time_alignment_.snapshot();
-        if (core::pack<core::OrbbecEgoCalibration>(value).buffer().size() > core::ORBBEC_EGO_MAX_FLATBUFFER_SIZE)
-            throw std::runtime_error("EGO calibration with timing provenance exceeds the 32 KiB transport limit");
-    }
-
     void publish_calibration(const std::shared_ptr<ob::Config>& pipeline_config)
     {
         core::OrbbecEgoCalibrationT value;
         value.device_uid = device_->getDeviceInfo()->getUid();
         value.capture_epoch = capture_epoch_ + (recovering_ ? 1U : 0U);
-        time_alignment_.begin_epoch(value.capture_epoch);
         std::string sdk_calibration_error;
         try
         {
@@ -2360,8 +2126,6 @@ public:
                 detail::log_error() << "Structured calibration unavailable: " << sdk_calibration_error << std::endl;
         }
         const auto now = core::os_monotonic_now_ns();
-        attach_time_alignment(value);
-        last_calibration_ = value;
         if (!config_.calibration_output.empty())
         {
             const std::filesystem::path output(config_.calibration_output);
@@ -2415,8 +2179,7 @@ public:
             json << ",\n";
             write_extrinsics("gyro_to_left", value.gyro_to_left);
             json << ",\n  \"raw_alignment_yaml\": \"" << json_escape(value.raw_alignment_yaml)
-                 << "\",\n  \"raw_imu_yaml\": \"" << json_escape(value.raw_imu_yaml)
-                 << "\",\n  \"time_alignment\": " << value.time_alignment->json << "\n}\n";
+                 << "\",\n  \"raw_imu_yaml\": \"" << json_escape(value.raw_imu_yaml) << "\"\n}\n";
             if (!json)
                 throw std::runtime_error("Unable to write calibration output: " + config_.calibration_output);
         }
@@ -2496,13 +2259,10 @@ public:
 
 private:
     CaptureConfig config_;
-    TimeAlignment time_alignment_;
-    std::optional<core::OrbbecEgoCalibrationT> last_calibration_;
     std::unique_ptr<ob::Context> context_;
     std::shared_ptr<EgoSdkDevice> device_;
     std::unique_ptr<ob::Pipeline> pipeline_;
     std::unique_ptr<ob::Pipeline> imu_pipeline_;
-    std::shared_ptr<ob::Sensor> audio_sensor_;
     std::vector<StreamConfig> streams_;
     ActiveProfiles active_profiles_;
     std::unique_ptr<FrameSink> sink_;
@@ -2514,11 +2274,6 @@ private:
     std::vector<PropertySetting> original_properties_;
     std::vector<PropertySetting> requested_controls_;
     AuxiliaryStats auxiliary_stats_;
-    WavWriter wav_writer_;
-    uint32_t audio_rate_ = 0;
-    uint16_t audio_channels_ = 0;
-    uint16_t audio_bits_ = 0;
-    uint64_t audio_sequence_ = 0;
     PendingImu accel_pending_;
     PendingImu gyro_pending_;
     mutable std::mutex queue_mutex_;
@@ -2546,18 +2301,14 @@ private:
     std::atomic<bool> device_removed_{ false };
     std::atomic<bool> accel_ready_{ false };
     std::atomic<bool> gyro_ready_{ false };
-    std::atomic<bool> audio_ready_{ false };
     std::atomic<bool> active_accel_ready_{ false };
     std::atomic<bool> active_gyro_ready_{ false };
-    std::atomic<bool> active_audio_ready_{ false };
     std::atomic<int64_t> last_accel_arrival_ns_{ 0 };
     std::atomic<int64_t> last_gyro_arrival_ns_{ 0 };
-    std::atomic<int64_t> last_audio_arrival_ns_{ 0 };
     std::mutex auxiliary_readiness_mutex_;
     std::condition_variable auxiliary_readiness_wake_;
     bool video_pipeline_started_ = false;
     bool imu_pipeline_started_ = false;
-    bool audio_started_ = false;
     bool controls_applied_ = false;
     bool device_changed_callback_registered_ = false;
     bool recovering_ = false;

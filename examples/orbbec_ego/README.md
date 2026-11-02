@@ -12,9 +12,6 @@ Python helpers for recordings made with the
   `TeleopSessionConfig`; `embedded_recording` produces one MCAP that holds the session's
   records and the plugin's embedded media.
 - `replay`: replays every structured EGO tracker from a recording.
-- `sync`, `analyze_sync`: associate video, IMU and audio samples offline and audit a
-  recording's coverage.
-- `calibration`, `calibrate_sync`: fit a time model from annotated events.
 
 Install the example into an environment that has the built `isaaccapture` package:
 
@@ -22,13 +19,11 @@ Install the example into an environment that has the built `isaaccapture` packag
 uv pip install -e ./examples/orbbec_ego
 ```
 
-Then run, for example:
+Then replay a recording:
 
 ```bash
 python -m isaaccapture_examples.orbbec_ego.replay "$RUN/metadata.mcap"
-python -m isaaccapture_examples.orbbec_ego.analyze_sync "$RUN" \
-    --required-streams left_rgb right_rgb accel gyro --output "$RUN/sync_audit.json"
 ```
 
-The [EGO device page](../../docs/source/device/cameras/orbbec_ego.rst) covers recording layouts,
-time models and stream selection.
+The [EGO device page](../../docs/source/device/cameras/orbbec_ego.rst) covers recording layouts
+and stream selection.

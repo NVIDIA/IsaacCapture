@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Orbbec EGO Camera Plugin
 
 C++ plugin that records EGO ColorLeft and ColorRight video and optionally captures
-IMU, audio, calibration, and device diagnostics in Isaac Capture.
+IMU, calibration, and device diagnostics in Isaac Capture.
 
 The examples below use the native `orbbec_ego_camera_plugin` executable. The optional
 `orbbec_ego.sh` helper provides a quick way to build, record, and verify a dataset.
@@ -14,9 +14,9 @@ The examples below use the native `orbbec_ego_camera_plugin` executable. The opt
 ## Features
 
 - Record MJPEG, H.264, or H.265 video as elementary streams.
-- Capture accelerometer and gyroscope data, plus optional 48 kHz mono S16_LE audio.
+- Capture accelerometer and gyroscope data.
 - Write structured data to a local MCAP or publish it to a multi-device TeleopSession.
-- Embed encoded video and PCM audio in a private MCAP and export without transcoding.
+- Embed encoded video in a private MCAP and export it without transcoding.
 - Inspect device profiles, configure controls, and preview stereo video.
 - Recover the same physical camera after a disconnect.
 
@@ -83,7 +83,7 @@ build dependencies. These packages cover the common native build and media tools
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake ccache clang-format-14 patchelf \
-  pkg-config libudev-dev nlohmann-json3-dev libssl-dev ffmpeg jq usbutils
+  pkg-config libudev-dev ffmpeg jq usbutils
 ```
 
 EGO uses USB VID `0x2bc5`, PID `0x1201`. The SDK's
@@ -164,7 +164,7 @@ the plugin can drain queues, close outputs, and restore changed controls.
 Use fresh output paths: recording refuses to overwrite existing files.
 
 This command records raw video only. Native defaults are MJPEG, SDK-selected
-resolution/FPS, IMU off, audio off, and no MCAP. H.264 `1600x1300@30` above is
+resolution/FPS, IMU off, and no MCAP. H.264 `1600x1300@30` above is
 an explicit example; use a profile advertised by your camera.
 
 ### Select a Profile or Device
@@ -193,22 +193,13 @@ Add these flags to a recording command as needed:
 The SDL preview decodes on the CPU and may drop stale display frames without
 changing the recording.
 
-### Optional audio and synchronization limits
-
-For a WAV sidecar, add `--audio-output="$RUN/Audio.wav"` to the recording command.
-For audio embedded in MCAP without a WAV sidecar, use `--enable-audio` instead.
-Audio is disabled by default; enabling IMU does not enable audio.
-
-Audio capture, storage, and export are supported; synchronization with the
-camera and IMU requires separate validation.
-
 ### Record Data in MCAP
 
 Choose where structured data is recorded:
 
 | Workflow | How to select it | Result |
 |---|---|---|
-| Raw media only | Omit both metadata destination options. | Video files and optional WAV/calibration sidecars. |
+| Raw media only | Omit both metadata destination options. | Video files and an optional calibration sidecar. |
 | Local MCAP | `--mcap-filename=PATH` | Plugin-owned metadata, enabled sensors, calibration, and diagnostics. |
 | TeleopSession | `--collection-prefix=PREFIX` | Structured data published through OpenXR and recorded with other trackers. |
 
@@ -228,7 +219,7 @@ mkdir -p "$RUN/raw"
   --calibration-output="$RUN/calibration.json"
 ```
 
-No OpenXR runtime or host tracker is needed here. By default, video and WAV are
+No OpenXR runtime or host tracker is needed here. By default, video files are
 sidecars; MCAP holds structured records and media indices.
 
 #### TeleopSession: one MCAP with other trackers
@@ -293,12 +284,9 @@ with TeleopSession(config) as session:
 Plugin search paths point to the parent containing plugin folders; for an
 installation, use `install-orbbec-ego-py3.11/plugins`. Keep absolute output paths; the
 plugin's `plugin.yaml` sets its 15-second shutdown timeout. Collection prefixes and MCAP source names
-serve different purposes; retain these canonical names for the EGO offline reader.
+serve different purposes; retain these canonical names for the EGO replay example.
 
-For audio, add `(dt.OrbbecEgoAudioTracker("ego/Audio"), "orbbec_ego_audio")` to `ego_entries`
-before extending `config.trackers` and creating `McapRecordingConfig`, and add
-`f"--audio-output={run / 'Audio.wav'}"` to `plugin_args`. The offline reader
-requires this filename beside the session MCAP. Query current availability through
+Query current availability through
 `session.get_device_status("ego_camera/camera/ego")` after `session.step()`;
 `OrbbecEgoDeviceStateTracker` carries historical diagnostic events in version-2 payloads.
 
@@ -308,11 +296,11 @@ Media layout is separate from the recording workflow:
 
 | Layout | Option | Media location |
 |---|---|---|
-| Sidecar (default) | `--mcap-media=sidecar` | Video/WAV files beside structured MCAP data. |
-| Embedded | `--mcap-media=embedded` | Encoded video and enabled PCM audio inside MCAP, without transcoding. |
+| Sidecar (default) | `--mcap-media=sidecar` | Video files beside structured MCAP data. |
+| Embedded | `--mcap-media=embedded` | Encoded video inside MCAP, without transcoding. |
 
-Both layouts record the selected video streams and optional audio; the option
-controls where media is stored. Only `sidecar` and `embedded` are accepted.
+Both layouts record the selected video streams; the option controls where media
+is stored. Only `sidecar` and `embedded` are accepted.
 
 For a self-contained local recording, omit video output paths:
 
@@ -325,15 +313,11 @@ mkdir -p "$RUN"
   --enable-imu --mcap-filename="$RUN/metadata.mcap" --mcap-media=embedded
 ```
 
-Add `--enable-audio` to embed PCM. To retain sidecars too, add
-`--keep-media-sidecars`, supply each stream's `output=...`, and use
-`--audio-output=PATH.wav` if a WAV sidecar is wanted.
+To retain sidecars too, add `--keep-media-sidecars` and supply each stream's
+`output=...`.
 
 For embedded multi-device recording, replace the execution block in the
 TeleopSession example with the following, before opening the session:
-
-If that configuration includes audio, replace `--audio-output=...` with
-`--enable-audio` for embedded-only PCM, or explicitly retain media sidecars.
 
 ```python
 from isaaccapture_examples.orbbec_ego import embedded_recording
@@ -371,7 +355,6 @@ These entries describe the native executable, not wrapper presets:
 | `--device-uid=UID` | Automatic selection | Select a device reported by `--list-capabilities`. |
 | `--enable-imu --imu-rate=400\|1000` | Off; rate `400` | Enable available IMU. Setting rate alone does not enable it. |
 | `--accel-full-scale=N --gyro-full-scale=N` | `24` g / `2000` dps | Requested IMU ranges, subject to advertised support. |
-| `--enable-audio` / `--audio-output=PATH.wav` | Off | Enable PCM; the output option also writes WAV. |
 | `--preview` | Off | Open SDL preview. |
 | `--mcap-filename=PATH` / `--collection-prefix=PREFIX` | Neither | Choose local MCAP or live publication. |
 | `--mcap-media=sidecar\|embedded` | `sidecar` | Choose media layout; embedded requires an MCAP/publication destination. |
@@ -379,7 +362,6 @@ These entries describe the native executable, not wrapper presets:
 | `--mcap-media-spool=PATH` | None | Required fragment for embedded TeleopSession. |
 | `--record-device-diagnostics=on\|off` | `on` | Include diagnostic events in MCAP. |
 | `--calibration-output=PATH.json` | None | Export calibration as a sidecar. |
-| `--time-alignment=PATH` | None | Load a validated reusable RGB/IMU capture profile. |
 | `--bitrate=N --dynamic-bitrate=on\|off` | Leave device values unchanged | Set SDK bitrate properties; inspect the advertised range. |
 | `--reconnect-timeout=N` | `30` seconds | Wait for the same physical camera; `0` disables recovery. |
 | `--reconnect-interval-ms=N` | `1000` | Re-enumeration interval; must be positive. |
@@ -415,7 +397,7 @@ merger also rejects diagnostic channels in either input under this policy.
 
 ```text
 EGO camera -> OrbbecSDK -> orbbec_ego_camera_plugin
-                          |-> video/WAV/calibration sidecars
+                          |-> video/calibration sidecars
                           |-> local MCAP: structured data + optional media
                           `-> OpenXR publication -> DeviceIO trackers -> session MCAP
 ```
@@ -433,13 +415,12 @@ The local MCAP example produces:
 recordings/ego_mcap_<timestamp>/
 ├── raw/ColorLeft.h264
 ├── raw/ColorRight.h264
-├── Audio.wav              # When audio output is enabled.
 ├── calibration.json
 └── metadata.mcap
 ```
 
-Audio adds `Audio.wav` only when requested with an output path. Embedded mode
-stores media in MCAP and omits video/WAV sidecars unless explicitly retained.
+Embedded mode stores media in MCAP and omits video sidecars unless explicitly
+retained.
 
 Schema and tracker types use `OrbbecEgo*`; the logical plugin name is
 `orbbec_ego_camera`.
@@ -447,10 +428,10 @@ Schema and tracker types use `OrbbecEgo*`; the logical plugin name is
 Canonical structured topics are `orbbec_ego_metadata_colorleft/FrameMetadata`,
 `orbbec_ego_metadata_colorright/FrameMetadata`, `orbbec_ego_imu_accel/Imu`,
 `orbbec_ego_imu_gyro/Imu`, `orbbec_ego_calibration/Calibration`, and
-`orbbec_ego_device/DeviceState`; audio adds `orbbec_ego_audio/Audio`. Host recordings
-also carry a `_tracked` channel beside each one. IMU/audio topics depend
-on enabled and available sensors, and diagnostics can be omitted. Embedded
-media uses `orbbec_ego_media/ColorLeft`, `orbbec_ego_media/ColorRight`, and optional `orbbec_ego_media/Audio`.
+`orbbec_ego_device/DeviceState`. Host recordings also carry a `_tracked` channel
+beside each one. IMU topics depend on enabled and available sensors, and
+diagnostics can be omitted. Embedded media uses `orbbec_ego_media/ColorLeft` and
+`orbbec_ego_media/ColorRight`.
 
 ### Calibration Data
 
@@ -514,9 +495,9 @@ must supply `--calibration-output="$RUN/calibration.json"` for that sidecar chec
 Without `--require-calibration`, verification reports calibration completeness while
 retaining compatibility with recordings that lack calibration fields.
 
-Omit `--expect-imu` if IMU was not requested; add `--expect-audio` when audio was
-requested. This verifier expects `metadata.mcap` and two video streams; it is
-not a verifier for raw-only or single-eye capture. Native recording does not
+Omit `--expect-imu` if IMU was not requested. This verifier expects
+`metadata.mcap` and two video streams; it is not a verifier for raw-only or
+single-eye capture. Native recording does not
 create `requested_profile.json` or `logs/capture.log`: without those files,
 request matching or log-based loss checks are skipped with a warning.
 Success prints `Verification passed` and writes `verification_report.txt`;
@@ -532,8 +513,8 @@ directory because the exporter overwrites same-name media files:
 "$ORBBEC_EGO_BIN/orbbec_ego_mcap_export_media" "$RUN/metadata.mcap" "$RUN/exported_media"
 ```
 
-It writes `ColorLeft.<format>`, `ColorRight.<format>`, and `Audio.wav` when PCM
-was recorded. Do not export a `.partial` capture as a completed dataset.
+It writes `ColorLeft.<format>` and `ColorRight.<format>`. Do not export a
+`.partial` capture as a completed dataset.
 
 Elementary streams are not MP4 files. To play or remux H.264 sidecars:
 
@@ -544,93 +525,21 @@ ffmpeg -f h264 -framerate 30 -i "$RUN/raw/ColorLeft.h264" -c:v copy "$RUN/ColorL
 
 For H.265, use `-f hevc` and the `.h265` file. For MJPEG, use `-f mjpeg` and
 transcode with `-c:v libx264 -pix_fmt yuv420p`. For embedded captures, use the
-exported paths. Opening video and WAV separately does not demonstrate synchronized playback.
+exported paths.
 
-### Structured Replay and Offline Reading
+### Structured Replay
 
-With the installed Python package, inspect an audio-enabled recording using:
+With the installed Python package, inspect a recording using:
 
 ```bash
 uv pip install -e ./examples/orbbec_ego
 python -m isaaccapture_examples.orbbec_ego.replay \
-  /absolute/path/to/audio_enabled_recording/metadata.mcap
+  /absolute/path/to/recording/metadata.mcap
 ```
 
-This example requires RGB, IMU, Audio, calibration, and enabled diagnostic
-channels. A missing Audio channel is expected for audio-disabled recordings;
-it does not make them invalid. Replay reads structured records, not decoded
-video or synchronized sound, and one update is not a synchronized bundle.
-
-For sample-time association, use the same example package and select only the
-streams needed, supplying a validated model when none was recorded:
-
-```bash
-python -m isaaccapture_examples.orbbec_ego.analyze_sync \
-  "$RUN" --required-streams left_rgb right_rgb accel gyro \
-  --alignment /absolute/path/to/alignment.json --output "$RUN/sync_audit.json"
-```
-
-In sidecar mode, the reader requires `raw/ColorLeft.<ext>`,
-`raw/ColorRight.<ext>`, and, when audio is recorded, `Audio.wav`, all relative
-to the MCAP's directory. The extension is `mjpg`, `h264`, or `h265`, matching
-the recorded format. Other output paths are valid for native capture, but
-sidecars must follow this layout for offline reading. Passing a directory
-selects `metadata.mcap`; pass the MCAP file explicitly if it has another name.
-A completed embedded MCAP carries its own media and does not need sidecars.
-
-Unindexed video bytes after the metadata-indexed prefix are reported as
-`sidecar_trailing_bytes` for each video stream and excluded from associations.
-Missing bytes referenced by metadata remain an error.
-Missing required streams/models fail; missing samples remain incomplete.
-Add audio only with a validated audio model and continuity evidence. The audit
-does not establish synchronization with other devices or absolute host sampling accuracy.
-
-<details>
-<summary>Advanced: capture profiles and recording-bound time models</summary>
-
-A reusable profile supplied through `--time-alignment=PATH` has version 1,
-`scope="capture_profile"`, `status="validated"`, `model_id`, and
-`reference_stream="left_rgb"`. Its identity binds serial, firmware, SDK version,
-and the loaded SDK library SHA-256; its profile binds video format/dimensions/FPS,
-IMU rate, and audio format. Enabled RGB/IMU mappings provide `offset_ns` and
-`scale=1`, with left RGB as the identity mapping. Audio remains an arrival-time
-fallback during capture. The file is limited to 8 KiB.
-
-Recording-bound models use `scope="recording"` and bind identity/profile,
-MCAP/media fingerprints, and epoch validity intervals. RGB/IMU mappings include
-`source_anchor_ns`, `reference_anchor_ns`, positive `scale`, `validation_start_ns`,
-and `validation_end_ns`. Audio segments include `segment_id`, `first_sample_index`,
-`sample_count`, `reference_anchor_ns`, `period_ns`, `continuity_verified`, and
-the same validation bounds. Supply these models explicitly to offline reads;
-they do not rewrite MCAP or automatically become reusable capture profiles.
-
-To fit such a model from independently annotated events:
-
-```bash
-python -m isaaccapture_examples.orbbec_ego.calibrate_sync \
-  "$RUN/events.json" --output "$RUN/alignment.json"
-```
-
-The version-1 event manifest contains `model_id`, `recording`, optional
-`media_paths`, `identity`, `profile`, and `epochs`. Each epoch defines `epoch`,
-`valid_from_ns`, `valid_to_ns`, and `streams`. Each fitted stream supplies
-`calibration_events`, separate `validation_events`, and validation start/end
-nanoseconds. Events contain `event_id`, `source_value` (raw nanoseconds or audio
-sample index), `reference_time_ns`, `uncertainty_ns`, and an `evidence` path.
-Audio uses `streams.audio.segments` with `segment_id`, `first_sample_index`,
-`sample_count`, and `continuity_verified` (default false). Paths resolve relative
-to the manifest; evidence files are hashed.
-
-Validation requires at least three calibration events and three separate
-validation events spanning the beginning, middle, and end of at least 15 minutes.
-Maximum error plus uncertainty must be within half a configured video frame.
-Reusable profiles declare `validation` evidence and `max_capture_duration_ns`
-within the validated duration; expiry returns capture to an unverified
-arrival-time fallback. Reconnects and clock discontinuities form new epochs;
-models do not interpolate across them. Calibration/audit tools refuse to
-overwrite outputs and return nonzero for unverified or incomplete results.
-
-</details>
+This example requires RGB, IMU, calibration, and enabled diagnostic channels.
+Replay reads structured records, not decoded video, and one update is not a
+synchronized bundle.
 
 ## Troubleshooting
 
@@ -648,7 +557,6 @@ overwrite outputs and return nonzero for unverified or incomplete results.
 | TeleopSession cannot publish EGO data | Check the CloudXR environment, installed Python bindings, plugin search path, and collection prefix. |
 | Local recording logs an `NV_CXR_RUNTIME_DIR` error | Expected under PluginManager without the CloudXR environment: device status publication is skipped and recording continues. |
 | Embedded session has no final file | Check clean context exit, matching spool/fragment paths, fresh output paths, and `orbbec_ego_mcap_merge` beside the plugin. |
-| Audio cadence or sync audit fails | Preserve data and logs; audio requires a validated time model and continuity evidence. |
 
 For SDK API background, consult the [Orbbec SDK v2 API guide](https://orbbec.github.io/docs/OrbbecSDKv2_API_User_Guide/)
 and [timestamp guide](https://orbbec.github.io/OrbbecSDK_v2/docs/tutorial/timestamp.html).
@@ -659,7 +567,7 @@ These describe SDK behavior; EGO profiles and control ranges must be checked on 
 After `install.sh` or the manual build above, the helper automates dependency
 checks, native rebuilds, run-directory creation, and post-recording verification.
 Unlike the native executable, `record` requests both eyes at H.264
-`1600x1300@30`, available IMU, calibration, and local MCAP by default; audio is off.
+`1600x1300@30`, available IMU, calibration, and local MCAP by default.
 
 ```bash
 ./src/plugins/orbbec_ego/orbbec_ego.sh capabilities
@@ -673,7 +581,7 @@ override TOML values; arguments after `--` pass through to the native plugin:
 
 ```bash
 ./src/plugins/orbbec_ego/orbbec_ego.sh record --config /path/to/run.toml \
-  --duration 60 --no-audio -- --bitrate=8 --dynamic-bitrate=on
+  --duration 60 -- --bitrate=8 --dynamic-bitrate=on
 ```
 
 Helper runs additionally save capabilities/provenance, `requested_profile.json`,

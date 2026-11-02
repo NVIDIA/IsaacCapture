@@ -22,8 +22,7 @@ namespace
 {
 constexpr std::string_view observed_prefix = "session_observed/";
 constexpr std::array structured_names = { "core.OrbbecEgoFrameMetadataRecord", "core.OrbbecEgoImuBatchRecord",
-                                          "core.OrbbecEgoAudioChunkRecord", "core.OrbbecEgoCalibrationRecord",
-                                          "core.OrbbecEgoDeviceStateRecord" };
+                                          "core.OrbbecEgoCalibrationRecord", "core.OrbbecEgoDeviceStateRecord" };
 
 void check(const mcap::Status& status)
 {

@@ -41,12 +41,10 @@ Common record options:
   --reconnect-timeout SECONDS     Wait for the same physical device after disconnect (default: 30; 0 disables).
   --reconnect-interval-ms MS      Device re-enumeration interval (default: 1000).
   --no-imu                       Disable IMU (requested by default when available).
-  --audio                        Request optional audio (default: off; synchronization remains unverified).
-  --no-audio                     Disable audio, overriding an audio-enabled configuration.
   --preview                       Enable the plugin's SDL preview (requires a --preview build).
   --mcap-media MODE               sidecar (default) or embedded.
   --record-device-diagnostics=on|off  Save detailed diagnostics in MCAP (default on).
-  --keep-media-sidecars           Retain H.264/H.265/MJPEG and WAV beside embedded MCAP.
+  --keep-media-sidecars           Retain H.264/H.265/MJPEG beside embedded MCAP.
   --require-calibration           Require complete structured calibration during verification.
   --preset NAME --plugin PATH     Select a build tree or override the executable.
 
@@ -467,8 +465,6 @@ command_record() {
     local reconnect_interval_ms=1000
     local request_imu=1
     local require_calibration=0
-    # Optional audio must be requested explicitly, not enabled by sensor discovery.
-    local request_audio=0
     local preview=0
     local media_mode="sidecar"
     local keep_sidecars=0
@@ -519,8 +515,6 @@ command_record() {
             --imu) request_imu=1; shift ;;
             --no-imu) request_imu=0; shift ;;
             --require-calibration) require_calibration=1; shift ;;
-            --audio) request_audio=1; shift ;;
-            --no-audio) request_audio=0; shift ;;
             --preview) preview=1; shift ;;
             --no-preview) preview=0; shift ;;
             --record-device-diagnostics=*) record_diagnostics="${1#*=}"; shift ;;
@@ -586,19 +580,11 @@ command_record() {
     grep -q '^Sensor RightColor$' "$capabilities_file" || die "Connected device has no ColorRight sensor."
 
     local enable_imu=0
-    local enable_audio=0
     if (( request_imu )); then
         if grep -q '^Sensor Accel$' "$capabilities_file" && grep -q '^Sensor Gyro$' "$capabilities_file"; then
             enable_imu=1
         else
             warn "Accel/Gyro are unavailable; continuing without IMU. Use --no-imu to silence this warning."
-        fi
-    fi
-    if (( request_audio )); then
-        if grep -q '^Sensor Audio$' "$capabilities_file"; then
-            enable_audio=1
-        else
-            warn "Audio is unavailable; continuing without audio. Use --no-audio to silence this warning."
         fi
     fi
 
@@ -626,13 +612,6 @@ command_record() {
     [[ -n "$device_uid" ]] && plugin_args+=("--device-uid=$device_uid")
     (( preview )) && plugin_args+=(--preview)
     (( enable_imu )) && plugin_args+=(--enable-imu --imu-rate=1000)
-    if (( enable_audio )); then
-        if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
-            plugin_args+=("--audio-output=$run_dir/Audio.wav")
-        else
-            plugin_args+=(--enable-audio)
-        fi
-    fi
     (( keep_sidecars )) && plugin_args+=(--keep-media-sidecars)
     plugin_args+=("${passthrough[@]}")
 
@@ -664,7 +643,6 @@ command_record() {
     fi
     local -a verify_args=("$run_dir" --preset "$preset" --plugin "$plugin" --media-mode "$media_mode")
     (( enable_imu )) && verify_args+=(--expect-imu)
-    (( enable_audio )) && verify_args+=(--expect-audio)
     (( require_calibration )) && verify_args+=(--require-calibration)
     command_verify "${verify_args[@]}"
 }
@@ -783,7 +761,6 @@ command_verify_impl() {
     local plugin_path=""
     local expected_mode=""
     local expect_imu=0
-    local expect_audio=0
     local require_calibration=0
     while (( $# )); do
         case "$1" in
@@ -795,7 +772,6 @@ command_verify_impl() {
                 shift 2
                 ;;
             --expect-imu) expect_imu=1; shift ;;
-            --expect-audio) expect_audio=1; shift ;;
             --require-calibration) require_calibration=1; shift ;;
             --help|-h) usage; return 0 ;;
             *) die "Unknown verify option: $1" ;;
@@ -821,7 +797,6 @@ command_verify_impl() {
 
     local -a topic_check_args=("$mcap" "$mode" "--requested-profile=$run_dir/requested_profile.json")
     (( expect_imu )) && topic_check_args+=(--expect-imu)
-    (( expect_audio )) && topic_check_args+=(--expect-audio)
     if (( require_calibration )); then
         topic_check_args+=(--require-calibration "--calibration-json=$run_dir/calibration.json")
     fi
@@ -887,45 +862,12 @@ command_verify_impl() {
     fi
     verify_mcap_video_timing \
         "$mcap" "$mode" "$left_frames" "$right_frames" "$requested_profile_manifest"
-    local wav=""
-    if [[ "$mode" == "embedded" ]]; then
-        wav="$media_dir/Audio.wav"
-        if [[ -s "$run_dir/Audio.wav" ]]; then
-            [[ -s "$wav" ]] || die "Embedded MCAP is missing audio retained as $run_dir/Audio.wav"
-            cmp -s "$wav" "$run_dir/Audio.wav" || die "Embedded and retained PCM audio differ"
-            echo "Embedded audio matches retained WAV sidecar: OK"
-        fi
-    else
-        wav="$run_dir/Audio.wav"
-    fi
-    if [[ -s "$wav" ]]; then
-        local wav_signature
-        wav_signature="$(checked_media_command ffprobe -v error \
-            -show_entries stream=codec_name,sample_rate,channels,bits_per_sample \
-            -of default=noprint_wrappers=1 "$wav")"
-        echo "$wav_signature"
-        if (( expect_audio )); then
-            grep -Fx 'codec_name=pcm_s16le' <<< "$wav_signature" >/dev/null \
-                || die "Expected PCM S16_LE audio in $wav"
-            grep -Fx 'sample_rate=48000' <<< "$wav_signature" >/dev/null \
-                || die "Expected 48000 Hz audio in $wav"
-            grep -Fx 'channels=1' <<< "$wav_signature" >/dev/null \
-                || die "Expected mono audio in $wav"
-            grep -Fx 'bits_per_sample=16' <<< "$wav_signature" >/dev/null \
-                || die "Expected 16-bit audio in $wav"
-        fi
-    elif (( expect_audio )); then
-        die "Audio was requested but no WAV sidecar or exported embedded audio exists."
-    else
-        warn "No WAV sidecar exists. This is expected only when audio was unavailable, disabled, or embedded without sidecars."
-    fi
     echo "Delivery file: $mcap"
     if command -v sha256sum >/dev/null 2>&1; then
         # Hash while exported media still exists, and reject read failures.
         print_fingerprint Delivery "$mcap"
         print_fingerprint ColorLeft "$left"
         print_fingerprint ColorRight "$right"
-        [[ ! -s "$wav" ]] || print_fingerprint Audio "$wav"
     else
         warn "sha256sum is unavailable; media fingerprints were not added to the report."
     fi

@@ -13,7 +13,6 @@ fps = 30
 
 # Optional sensor streams and local MCAP media layout.
 imu = true
-audio = false # Set true to capture optional audio; cross-stream synchronization is unverified.
 preview = false
 mcap_media = "sidecar" # Or "embedded".
 record_device_diagnostics = true # Live monitoring remains enabled when false.

@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <schema/orbbec_ego_audio_generated.h>
 #include <schema/orbbec_ego_calibration_generated.h>
 #include <schema/orbbec_ego_camera_generated.h>
 #include <schema/orbbec_ego_device_state_generated.h>
@@ -67,8 +66,6 @@ struct CaptureConfig
     // the profiles enumerated from the selected device.
     float accel_full_scale_g = 24.0f;
     float gyro_full_scale_dps = 2000.0f;
-    bool enable_audio = false;
-    std::string audio_output;
     std::string collection_prefix;
     std::string plugin_root_id;
     bool record_device_diagnostics = true;
@@ -77,7 +74,6 @@ struct CaptureConfig
     McapMediaMode mcap_media_mode = McapMediaMode::Sidecar;
     bool keep_media_sidecars = false;
     std::string calibration_output;
-    std::string time_alignment;
     std::vector<PropertySetting> properties;
     bool persist_controls = false;
     uint32_t reconnect_timeout_seconds = 30;
@@ -126,13 +122,7 @@ public:
     virtual void on_imu_batch(const core::OrbbecEgoImuBatchT&, int64_t, int64_t)
     {
     }
-    virtual void on_audio_chunk(const core::OrbbecEgoAudioChunkT&, int64_t, int64_t)
-    {
-    }
     virtual void on_encoded_video_frame(const CapturedFrame&)
-    {
-    }
-    virtual void on_pcm_audio_chunk(const core::OrbbecEgoPcmAudioChunkT&, int64_t, int64_t)
     {
     }
     virtual void on_calibration(const core::OrbbecEgoCalibrationT&, int64_t, int64_t)
@@ -207,7 +197,6 @@ struct AuxiliaryStats
 {
     uint64_t accel_samples = 0;
     uint64_t gyro_samples = 0;
-    uint64_t audio_samples = 0;
     uint64_t publish_queue_peak = 0;
     uint64_t dropped_events = 0;
     uint64_t dropped_video_frame_sets = 0;

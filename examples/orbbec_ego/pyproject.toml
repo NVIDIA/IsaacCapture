@@ -8,12 +8,11 @@ build-backend = "hatchling.build"
 [project]
 name = "isaaccapture-examples-orbbec-ego"
 version = "0.0.0"
-description = "Orbbec EGO recording helpers, structured replay, and offline sync analysis"
+description = "Orbbec EGO recording helpers and structured replay"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "isaaccapture[cloudxr]",
     "mcap>=1.2,<2",
-    "numpy>=1.23.0",
 ]
 
 [tool.hatch.build]

@@ -49,7 +49,6 @@ Sensor Accel
 Sensor Gyro
 Sensor LeftColor
 Sensor RightColor
-Sensor Audio
 CAPABILITIES
     exit 0
 fi
@@ -68,10 +67,6 @@ grep -Fx -- "--device-uid=ego-test" "$MOCK_ARGS" >/dev/null
 RUN="$TMPDIR_TEST/recording"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN" -- --bitrate=8
 grep -Fx -- "--enable-imu" "$MOCK_ARGS" >/dev/null
-if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
-    echo "Default capture must not request audio" >&2
-    exit 1
-fi
 grep -Fx -- "--mcap-filename=$RUN/metadata.mcap" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--mcap-media=sidecar" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-timeout=30" "$MOCK_ARGS" >/dev/null
@@ -95,10 +90,6 @@ assert manifest == {
     },
 }
 PY
-
-AUDIO_RUN="$TMPDIR_TEST/audio_recording"
-expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$AUDIO_RUN" --audio
-grep -Fx -- "--audio-output=$AUDIO_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
 
 SIDECAR_RUN="$TMPDIR_TEST/sidecar_recording"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
@@ -135,19 +126,14 @@ device_uid = "ego-config"
 reconnect_timeout = 45
 reconnect_interval_ms = 250
 imu = false
-audio = true
 preview = true
 mcap_media = "embedded"
 keep_media_sidecars = true
 plugin = "$MOCK_PLUGIN"
 plugin_options = ["--bitrate=8", "--dynamic-bitrate=on"]
 EOF
-CONFIG_AUDIO_RUN="$TMPDIR_TEST/config_audio_recording"
-expect_failure "$SCRIPT" record --config "$CONFIG_FILE" --duration 1 --output "$CONFIG_AUDIO_RUN"
-grep -Fx -- "--audio-output=$CONFIG_AUDIO_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
-
 expect_failure "$SCRIPT" record --config "$CONFIG_FILE" --duration 1 \
-    --output "$CONFIG_RUN" --format h264 --no-audio
+    --output "$CONFIG_RUN" --format h264
 grep -Fx -- "--device-uid=ego-config" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-timeout=45" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-interval-ms=250" "$MOCK_ARGS" >/dev/null
@@ -155,26 +141,10 @@ grep -Fx -- "--preview" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--bitrate=8" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--dynamic-bitrate=on" "$MOCK_ARGS" >/dev/null
 grep -F "format=h264,width=1600,height=1200,fps=30" "$MOCK_ARGS" >/dev/null
-if grep -Eq '^--enable-(imu|audio)$|^--audio-output=' "$MOCK_ARGS"; then
+if grep -Fxq -- "--enable-imu" "$MOCK_ARGS"; then
     echo "Config/CLI stream overrides were not applied" >&2
     exit 1
 fi
-
-CONFIG_NO_AUDIO_FILE="$TMPDIR_TEST/record_no_audio.toml"
-CONFIG_NO_AUDIO_RUN="$TMPDIR_TEST/config_no_audio_recording"
-sed 's/^audio = true$/audio = false/' "$CONFIG_FILE" > "$CONFIG_NO_AUDIO_FILE"
-expect_failure "$SCRIPT" record --config "$CONFIG_NO_AUDIO_FILE" --duration 1 \
-    --output "$CONFIG_NO_AUDIO_RUN"
-grep -Fx -- "--mcap-filename=$CONFIG_NO_AUDIO_RUN/metadata.mcap" "$MOCK_ARGS" >/dev/null
-if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
-    echo "Config with audio=false must not request audio" >&2
-    exit 1
-fi
-
-CONFIG_AUDIO_OVERRIDE_RUN="$TMPDIR_TEST/config_audio_override_recording"
-expect_failure "$SCRIPT" record --config "$CONFIG_NO_AUDIO_FILE" --duration 1 \
-    --output "$CONFIG_AUDIO_OVERRIDE_RUN" --audio
-grep -Fx -- "--audio-output=$CONFIG_AUDIO_OVERRIDE_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
 
 INVALID_CONFIG="$TMPDIR_TEST/invalid.toml"
 cat > "$INVALID_CONFIG" <<'EOF'
@@ -188,9 +158,9 @@ SIDECAR_CONFIG="$TMPDIR_TEST/sidecar.toml"
 SIDECAR_CONFIG_RUN="$TMPDIR_TEST/sidecar_config_recording"
 printf '[record]\nmcap_media = "sidecar"\n' > "$SIDECAR_CONFIG"
 expect_failure "$SCRIPT" record --config "$SIDECAR_CONFIG" --plugin "$MOCK_PLUGIN" \
-    --duration 1 --output "$SIDECAR_CONFIG_RUN" --audio
+    --duration 1 --output "$SIDECAR_CONFIG_RUN"
 grep -Fx -- "--mcap-media=sidecar" "$MOCK_ARGS" >/dev/null
-grep -Fx -- "--audio-output=$SIDECAR_CONFIG_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
+grep -F -- "output=$SIDECAR_CONFIG_RUN/raw/ColorLeft.h264" "$MOCK_ARGS" >/dev/null
 
 for invalid_mode in metadata-only invalid; do
     invalid_config="$TMPDIR_TEST/invalid_config_$invalid_mode.toml"
@@ -223,7 +193,7 @@ EOF
 chmod +x "$SIGNAL_PLUGIN"
 set +e
 SIGNAL_OUTPUT="$($SCRIPT record --plugin "$SIGNAL_PLUGIN" --duration 1 \
-    --output "$TMPDIR_TEST/signal_recording" --no-imu --no-audio 2>&1)"
+    --output "$TMPDIR_TEST/signal_recording" --no-imu 2>&1)"
 SIGNAL_STATUS=$?
 set -e
 [[ "$SIGNAL_STATUS" -ne 0 ]]
@@ -233,19 +203,6 @@ RUN_EMBEDDED="$TMPDIR_TEST/embedded"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN_EMBEDDED" \
     --mcap-media sidecar --mcap-media embedded
 grep -Fx -- "--mcap-media=embedded" "$MOCK_ARGS" >/dev/null
-if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
-    echo "Default embedded capture must not request audio" >&2
-    exit 1
-fi
-
-RUN_EMBEDDED_AUDIO="$TMPDIR_TEST/embedded_audio"
-expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
-    --output "$RUN_EMBEDDED_AUDIO" --mcap-media embedded --audio
-grep -Fx -- "--enable-audio" "$MOCK_ARGS" >/dev/null
-if grep -q '^--audio-output=' "$MOCK_ARGS"; then
-    echo "Embedded capture must not request a WAV sidecar by default" >&2
-    exit 1
-fi
 
 PACKAGE_DIR="$TMPDIR_TEST/package/plugins/orbbec_ego_camera"
 MOCK_BIN="$TMPDIR_TEST/bin"
@@ -294,7 +251,6 @@ enum OBDataTranState { transfer_state };
 struct OBDataChunk {};
 struct OBEgoStateReport {};
 namespace ob {
-class AudioStreamProfile { public: unsigned getSampleRate() const; };
 class Device {
 public:
     void getRawData(OBPropertyID, std::function<void(OBDataTranState, OBDataChunk*)>) const;
@@ -418,7 +374,7 @@ printf '\0' > "$VERIFY_RUN/raw/ColorRight.h264"
 printf '%s\n' \
     '  ColorLeft: 1 frames, 1 bytes, 0 sequence gaps' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
-    '  IMU: accel=0 gyro=0 samples; audio=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
+    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
     > "$VERIFY_RUN/logs/capture.log"
 PATH="$VERIFY_BIN:$PATH" MOCK_EXPORTER_USED="$VERIFY_EXPORTER_USED" \
     VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" \
@@ -456,7 +412,7 @@ printf '\0' > "$VERIFY_FAIL_RUN/metadata.mcap"
 printf '%s\n' \
     '  ColorLeft: 1 frames, 1 bytes, 0 sequence gaps' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
-    '  IMU: accel=0 gyro=0 samples; audio=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
+    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
     > "$VERIFY_FAIL_RUN/logs/capture.log"
 expect_failure env PATH="$VERIFY_FAIL_BIN:$PATH" \
     "$SCRIPT" verify "$VERIFY_FAIL_RUN" --media-mode embedded \
@@ -536,35 +492,6 @@ def _imu(sensor, sequence, sample_rate, timestamps, capture_epoch=0):
     data.extend(struct.pack("<I", len(timestamps)))
     for timestamp in timestamps:
         data.extend(struct.pack("<ddddqq", 0.0, 0.0, 0.0, 25.0, timestamp, timestamp))
-    return bytes(data)
-
-
-def _audio(sequence, timestamp, sample_count, sample_format=0, capture_epoch=0):
-    data, table = _record([8, 16, 20, 22, 24, 28, 32, 40, 44], 48, timestamp)
-    struct.pack_into("<Q", data, table + 8, sequence)
-    struct.pack_into("<I", data, table + 16, 48_000)
-    struct.pack_into("<HH", data, table + 20, 1, 16)
-    struct.pack_into("<b", data, table + 24, sample_format)
-    struct.pack_into("<I", data, table + 28, sample_count)
-    struct.pack_into("<I", data, table + 40, sample_count * 2)
-    struct.pack_into("<I", data, table + 44, capture_epoch)
-    return bytes(data)
-
-
-def _pcm_audio(sequence, timestamp, sample_count, pcm_bytes=None, sample_format=0, capture_epoch=0):
-    if pcm_bytes is None:
-        pcm_bytes = sample_count * 2
-    data, table = _record([8, 16, 20, 22, 24, 28, 32, 36], 40, timestamp)
-    struct.pack_into("<Q", data, table + 8, sequence)
-    struct.pack_into("<I", data, table + 16, 48_000)
-    struct.pack_into("<HH", data, table + 20, 1, 16)
-    struct.pack_into("<b", data, table + 24, sample_format)
-    struct.pack_into("<I", data, table + 28, sample_count)
-    vector = len(data)
-    struct.pack_into("<I", data, table + 32, vector - (table + 32))
-    struct.pack_into("<I", data, table + 36, capture_epoch)
-    data.extend(struct.pack("<I", pcm_bytes))
-    data.extend(b"\0" * pcm_bytes)
     return bytes(data)
 
 
@@ -727,37 +654,6 @@ class _Reader:
                 )
                 yield from self._message("orbbec_ego_imu_gyro/Imu", _imu(1, sequence, 1000, timestamps), timestamps[-1])
 
-        if scenario in (
-            "valid",
-            "sparse_audio",
-            "sparse_pcm",
-            "empty_pcm",
-            "bad_audio_cadence",
-            "bad_audio_format",
-        ):
-            chunks = 2 if scenario == "sparse_audio" else 32
-            sample_count = 1 if scenario == "sparse_audio" else 1500
-            cadence_scale = 2 if scenario == "bad_audio_cadence" else 1
-            sample_format = 1 if scenario == "bad_audio_format" else 0
-            for sequence in range(chunks):
-                timestamp = base + cadence_scale * sequence * sample_count * 1_000_000_000 // 48_000
-                yield from self._message(
-                    "orbbec_ego_audio/Audio", _audio(sequence, timestamp, sample_count, sample_format), timestamp
-                )
-                if mode == "embedded" and scenario != "sparse_pcm":
-                    pcm_bytes = 0 if scenario == "empty_pcm" and sequence == 0 else None
-                    yield from self._message(
-                        "orbbec_ego_media/Audio",
-                        _pcm_audio(sequence, timestamp, sample_count, pcm_bytes, sample_format),
-                        timestamp,
-                    )
-            if mode == "embedded" and scenario == "sparse_pcm":
-                for sequence in range(2):
-                    timestamp = base + sequence * 1_000_000_000 // 48_000
-                    yield from self._message(
-                        "orbbec_ego_media/Audio", _pcm_audio(sequence, timestamp, 1), timestamp
-                    )
-
     @staticmethod
     def _message(topic, data, timestamp):
         yield (
@@ -783,10 +679,6 @@ for argument in "$@"; do
         echo 31
         exit 0
     fi
-    if [[ "$argument" == *.wav ]]; then
-        printf '%s\n' 'codec_name=pcm_s16le' 'sample_rate=48000' 'channels=1' 'bits_per_sample=16'
-        exit 0
-    fi
 done
 echo 'h264,1600,1300,60/1'
 EOF
@@ -800,7 +692,6 @@ make_aux_verify_run() {
     printf '{"scenario":"%s","mode":"%s"}\n' "$scenario" "$mode" > "$run_dir/metadata.mcap"
     printf '\0' > "$run_dir/raw/ColorLeft.h264"
     printf '\0' > "$run_dir/raw/ColorRight.h264"
-    printf '\0' > "$run_dir/Audio.wav"
     PYTHONPATH="$AUX_MCAP_MODULES" python3 - "$run_dir/calibration.json" "$scenario" <<'PY'
 import json
 import sys
@@ -815,7 +706,7 @@ EOF
     printf '%s\n' \
         '  ColorLeft: 31 frames, 1 bytes, 0 sequence gaps' \
         '  ColorRight: 31 frames, 1 bytes, 0 sequence gaps' \
-        '  IMU: accel=1000 gyro=1000 samples; audio=48000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=0' \
+        '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=0' \
         > "$run_dir/logs/capture.log"
 }
 
@@ -851,7 +742,7 @@ for invalid_mode in metadata-only invalid; do
 done
 
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode sidecar --expect-imu --expect-audio \
+    "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode sidecar --expect-imu \
     >/dev/null 2>&1
 grep -F 'raw_device_fps=30.000' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
 grep -F 'ffprobe_rate): h264,1600,1300,60/1' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
@@ -976,7 +867,6 @@ for name, duration, interrupt, exit_status, tee_failure in (
         "--output",
         str(run),
         "--no-imu",
-        "--no-audio",
     ]
     if duration:
         command.extend(["--duration", duration])
@@ -1095,56 +985,6 @@ AUX_BAD_IMU_CADENCE_STATUS=$?
 set -e
 [[ "$AUX_BAD_IMU_CADENCE_STATUS" -ne 0 ]]
 grep -F "raw-device cadence is 500.000 Hz" <<< "$AUX_BAD_IMU_CADENCE_OUTPUT" >/dev/null
-
-AUX_SPARSE_AUDIO_RUN="$TMPDIR_TEST/aux_sparse_audio"
-make_aux_verify_run "$AUX_SPARSE_AUDIO_RUN" sparse_audio sidecar
-set +e
-AUX_SPARSE_AUDIO_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_SPARSE_AUDIO_RUN" --media-mode sidecar --expect-audio 2>&1)"
-AUX_SPARSE_AUDIO_STATUS=$?
-set -e
-[[ "$AUX_SPARSE_AUDIO_STATUS" -ne 0 ]]
-grep -F "contains only" <<< "$AUX_SPARSE_AUDIO_OUTPUT" >/dev/null
-
-AUX_BAD_AUDIO_CADENCE_RUN="$TMPDIR_TEST/aux_bad_audio_cadence"
-make_aux_verify_run "$AUX_BAD_AUDIO_CADENCE_RUN" bad_audio_cadence sidecar
-set +e
-AUX_BAD_AUDIO_CADENCE_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_BAD_AUDIO_CADENCE_RUN" --media-mode sidecar --expect-audio 2>&1)"
-AUX_BAD_AUDIO_CADENCE_STATUS=$?
-set -e
-[[ "$AUX_BAD_AUDIO_CADENCE_STATUS" -ne 0 ]]
-grep -F "raw-device cadence is 24000.000 Hz" <<< "$AUX_BAD_AUDIO_CADENCE_OUTPUT" >/dev/null
-
-AUX_BAD_AUDIO_FORMAT_RUN="$TMPDIR_TEST/aux_bad_audio_format"
-make_aux_verify_run "$AUX_BAD_AUDIO_FORMAT_RUN" bad_audio_format sidecar
-set +e
-AUX_BAD_AUDIO_FORMAT_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_BAD_AUDIO_FORMAT_RUN" --media-mode sidecar --expect-audio 2>&1)"
-AUX_BAD_AUDIO_FORMAT_STATUS=$?
-set -e
-[[ "$AUX_BAD_AUDIO_FORMAT_STATUS" -ne 0 ]]
-grep -F "expected (48000, 1, 16, S16LE)" <<< "$AUX_BAD_AUDIO_FORMAT_OUTPUT" >/dev/null
-
-AUX_SPARSE_PCM_RUN="$TMPDIR_TEST/aux_sparse_pcm"
-make_aux_verify_run "$AUX_SPARSE_PCM_RUN" sparse_pcm embedded
-set +e
-AUX_SPARSE_PCM_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_SPARSE_PCM_RUN" --media-mode embedded --expect-audio 2>&1)"
-AUX_SPARSE_PCM_STATUS=$?
-set -e
-[[ "$AUX_SPARSE_PCM_STATUS" -ne 0 ]]
-grep -F "orbbec_ego_media/Audio epoch 0 contains only" <<< "$AUX_SPARSE_PCM_OUTPUT" >/dev/null
-
-AUX_EMPTY_PCM_RUN="$TMPDIR_TEST/aux_empty_pcm"
-make_aux_verify_run "$AUX_EMPTY_PCM_RUN" empty_pcm embedded
-set +e
-AUX_EMPTY_PCM_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_EMPTY_PCM_RUN" --media-mode embedded --expect-audio 2>&1)"
-AUX_EMPTY_PCM_STATUS=$?
-set -e
-[[ "$AUX_EMPTY_PCM_STATUS" -ne 0 ]]
-grep -F "PCM byte count 0 does not match sample_count/profile" <<< "$AUX_EMPTY_PCM_OUTPUT" >/dev/null
 
 rm "$PACKAGE_DIR/orbbec_ego_mcap_export_media"
 expect_failure env PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/orbbec_ego.sh" doctor

@@ -35,7 +35,6 @@ boolean_options = {
         "--record-device-diagnostics=off",
     ),
     "imu": ("--imu", "--no-imu"),
-    "audio": ("--audio", "--no-audio"),
     "preview": ("--preview", "--no-preview"),
     "keep_media_sidecars": ("--keep-media-sidecars", "--no-keep-media-sidecars"),
 }

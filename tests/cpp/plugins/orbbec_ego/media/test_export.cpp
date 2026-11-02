@@ -3,8 +3,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <mcap/tracker_channels.hpp>
-#include <schema/orbbec_ego_audio_bfbs_generated.h>
-#include <schema/orbbec_ego_audio_generated.h>
 #include <schema/orbbec_ego_camera_bfbs_generated.h>
 #include <schema/orbbec_ego_camera_generated.h>
 #include <sys/wait.h>
@@ -59,7 +57,7 @@ int run_export(const fs::path& source, const fs::path& output)
     return WEXITSTATUS(status);
 }
 
-void write_fixture(const fs::path& path, bool wrong_video_stream = false, bool wrong_pcm_size = false)
+void write_fixture(const fs::path& path, bool wrong_video_stream = false)
 {
     mcap::McapWriter writer;
     mcap::McapWriterOptions options("ego");
@@ -67,7 +65,6 @@ void write_fixture(const fs::path& path, bool wrong_video_stream = false, bool w
     REQUIRE(writer.open(path.string(), options).ok());
     core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord> video(
         writer, "orbbec_ego_media", { "ColorLeft", "ColorRight" });
-    core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord> audio(writer, "orbbec_ego_media", { "Audio" });
     for (size_t index = 0; index < 2; ++index)
     {
         for (uint64_t sequence = 0; sequence < 2; ++sequence)
@@ -83,18 +80,11 @@ void write_fixture(const fs::path& path, bool wrong_video_stream = false, bool w
                                    &frame, core::DeviceDataTimestamp(100 + sequence, 90 + sequence, 80 + sequence)));
         }
     }
-    core::OrbbecEgoPcmAudioChunkT pcm;
-    pcm.sample_rate_hz = 48000;
-    pcm.channel_count = 1;
-    pcm.bits_per_sample = 16;
-    pcm.sample_count = wrong_pcm_size ? 3 : 2;
-    pcm.pcm_data = { 1, 2, 3, 4 };
-    audio.write(0, core::pack_record<core::OrbbecEgoPcmAudioChunkRecord>(&pcm, core::DeviceDataTimestamp(101, 91, 81)));
     writer.close();
 }
 } // namespace
 
-TEST_CASE("ego_media_export preserves encoded bytes and PCM WAV", "[ego][unit]")
+TEST_CASE("ego_media_export preserves encoded bytes", "[ego][unit]")
 {
     TemporaryDirectory directory;
     const auto source = directory.path / "source.mcap";
@@ -105,16 +95,6 @@ TEST_CASE("ego_media_export preserves encoded bytes and PCM WAV", "[ego][unit]")
           std::vector<uint8_t>{ 0xff, 0xd8, 0, 0xff, 0xd9, 0xff, 0xd8, 0, 0xff, 0xd9 });
     CHECK(read_bytes(output / "ColorRight.mjpg") ==
           std::vector<uint8_t>{ 0xff, 0xd8, 1, 0xff, 0xd9, 0xff, 0xd8, 1, 0xff, 0xd9 });
-    const auto wav = read_bytes(output / "Audio.wav");
-    REQUIRE(wav.size() == 48);
-    CHECK(std::string(wav.begin(), wav.begin() + 4) == "RIFF");
-    CHECK(wav[4] == 40);
-    CHECK(wav[22] == 1);
-    CHECK(wav[24] == 0x80);
-    CHECK(wav[25] == 0xbb);
-    CHECK(wav[34] == 16);
-    CHECK(wav[40] == 4);
-    CHECK(std::vector<uint8_t>(wav.begin() + 44, wav.end()) == std::vector<uint8_t>{ 1, 2, 3, 4 });
 }
 
 TEST_CASE("ego_media_export rejects mismatched media and incomplete input", "[ego][unit]")
@@ -125,10 +105,6 @@ TEST_CASE("ego_media_export rejects mismatched media and incomplete input", "[eg
     SECTION("video topic does not match payload")
     {
         write_fixture(source, true);
-    }
-    SECTION("PCM size does not match sample count")
-    {
-        write_fixture(source, false, true);
     }
     SECTION("footer is truncated")
     {

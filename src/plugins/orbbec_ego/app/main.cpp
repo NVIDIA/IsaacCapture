@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <ego_camera/ego_camera.hpp>
-#include <ego_camera/time_alignment.hpp>
 #include <log_bridge/logger.hpp>
 
 #include <atomic>
@@ -119,13 +118,11 @@ void print_usage(const char* program)
               << "  --preview                      SDL side-by-side latest-frame preview\n"
               << "  --enable-imu --imu-rate=400|1000\n"
               << "  --accel-full-scale=<g> --gyro-full-scale=<dps>\n"
-              << "  --enable-audio                 Capture PCM audio (embedded MCAP needs no WAV path)\n"
-              << "  --audio-output=PATH.wav        Capture audio and write a WAV sidecar\n"
               << "Metadata (mutually exclusive):\n"
               << "  --mcap-filename=PATH            Write a local MCAP\n"
               << "  --collection-prefix=PREFIX      Publish metadata via OpenXR tensors\n"
               << "  --mcap-media=sidecar|embedded (default sidecar)\n"
-              << "  --keep-media-sidecars           Keep raw video/WAV with embedded MCAP\n"
+              << "  --keep-media-sidecars           Keep raw video with embedded MCAP\n"
               << "  --mcap-media-spool=PATH         Embedded-media fragment for TeleopSession merger\n"
               << "  --record-device-diagnostics=on|off  Save detailed diagnostics in local MCAP (default on)\n"
               << "Device controls:\n"
@@ -133,7 +130,6 @@ void print_usage(const char* program)
               << "  --sharpness=N --saturation=N --contrast=N --power-frequency=N\n"
               << "  --set-property=SDK_PROPERTY_NAME=VALUE [--persist-controls]\n"
               << "  --calibration-output=PATH.json --list-capabilities\n"
-              << "  --time-alignment=PATH          Validated EGO capture timing profile\n"
               << "Ego has no quality property; use bitrate/dynamic-bitrate. Ego exposes no Depth/IR/point cloud.\n"
               << "Advertised profiles are per sensor; capture validates the exact simultaneous combination without "
                  "fallback.\n"
@@ -186,19 +182,12 @@ try
             capture_config.preview = true;
         else if (argument == "--enable-imu")
             capture_config.enable_imu = true;
-        else if (argument == "--enable-audio")
-            capture_config.enable_audio = true;
         else if (argument.rfind("--imu-rate=", 0) == 0)
             capture_config.imu_rate = std::stoul(argument.substr(11));
         else if (argument.rfind("--accel-full-scale=", 0) == 0)
             capture_config.accel_full_scale_g = std::stof(argument.substr(19));
         else if (argument.rfind("--gyro-full-scale=", 0) == 0)
             capture_config.gyro_full_scale_dps = std::stof(argument.substr(18));
-        else if (argument.rfind("--audio-output=", 0) == 0)
-        {
-            capture_config.audio_output = argument.substr(15);
-            capture_config.enable_audio = true;
-        }
         else if (argument.rfind("--collection-prefix=", 0) == 0)
             capture_config.collection_prefix = argument.substr(20);
         else if (argument.rfind("--mcap-filename=", 0) == 0)
@@ -211,12 +200,6 @@ try
             capture_config.mcap_media_spool = argument.substr(19);
         else if (argument.rfind("--calibration-output=", 0) == 0)
             capture_config.calibration_output = argument.substr(21);
-        else if (argument.rfind("--time-alignment=", 0) == 0)
-        {
-            capture_config.time_alignment = argument.substr(17);
-            if (capture_config.time_alignment.empty())
-                throw std::invalid_argument("--time-alignment requires a JSON profile path");
-        }
         else if (argument == "--persist-controls")
             capture_config.persist_controls = true;
         else if (argument == "--list-capabilities")
@@ -277,9 +260,6 @@ try
         throw std::runtime_error("--mcap-media=embedded with --collection-prefix requires --mcap-media-spool=PATH");
     if (!embedded_media && capture_config.keep_media_sidecars)
         throw std::runtime_error("--keep-media-sidecars is only valid with --mcap-media=embedded");
-    if (embedded_media && !capture_config.keep_media_sidecars && !capture_config.audio_output.empty())
-        throw std::runtime_error(
-            "--audio-output requires --keep-media-sidecars with --mcap-media=embedded; use --enable-audio");
     if (list_capabilities)
     {
         plugins::ego::EgoCamera::list_capabilities(capture_config);
@@ -302,7 +282,6 @@ try
         streams.push_back(std::move(stream));
     }
 
-    plugins::ego::validate_time_alignment_profile(capture_config.time_alignment);
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     capture_config.stop_requested = [] { return stop_requested.load(std::memory_order_relaxed); };

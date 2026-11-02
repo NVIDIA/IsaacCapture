@@ -10,11 +10,10 @@ using EgoSdkDevice = ob::Device;
 #endif
 
 // Compile and link the required extensions without opening a camera.
-void check_ego_sdk(ob::Device& device, EgoSdkDevice& ego, const ob::AudioStreamProfile& audio)
+void check_ego_sdk(ob::Device& device, EgoSdkDevice& ego)
 {
     device.getRawData(static_cast<OBPropertyID>(0), [](OBDataTranState, OBDataChunk*) {});
     ego.setEgoStateCallback([](const OBEgoStateReport&) {});
-    (void)audio.getSampleRate();
 }
 
 int main()

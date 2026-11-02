@@ -5,6 +5,7 @@
 #include <ego_camera/calibration.hpp>
 #include <ego_camera/cancellation.hpp>
 #include <ego_camera/ego_camera.hpp>
+#include <ego_camera/sdk_timestamp.hpp>
 #include <ego_mcap/checked_write.hpp>
 #include <schema/orbbec_ego_camera_bfbs_generated.h>
 
@@ -15,8 +16,10 @@
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -101,6 +104,29 @@ std::vector<uint8_t> read_bytes(const std::filesystem::path& path)
 }
 
 } // namespace
+
+TEST_CASE("EGO SDK timestamps reject conversion overflow without losing the raw value", "[ego][timing]")
+{
+    constexpr auto maximum_us = static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / 1000);
+    CHECK(plugins::ego::sdk_timestamp_ns(0) == 0);
+    CHECK(plugins::ego::sdk_timestamp_ns(123456789) == 123456789000);
+    CHECK(plugins::ego::sdk_timestamp_ns(maximum_us) == static_cast<int64_t>(maximum_us) * 1000);
+    for (const auto invalid_us : { maximum_us + 1, std::numeric_limits<uint64_t>::max() })
+    {
+        bool rejected = false;
+        try
+        {
+            plugins::ego::sdk_timestamp_ns(invalid_us);
+        }
+        catch (const std::overflow_error& error)
+        {
+            rejected = true;
+            CHECK(std::string(error.what()) ==
+                  "EGO SDK timestamp_us=" + std::to_string(invalid_us) + " exceeds int64 nanosecond range");
+        }
+        CHECK(rejected);
+    }
+}
 
 TEST_CASE("EGO IMU YAML preserves the SDK transform direction and millimeters", "[ego][calibration]")
 {
@@ -285,10 +311,6 @@ TEST_CASE("EGO capture refuses existing sidecars before creating sibling outputs
     {
         streams.push_back({ core::OrbbecEgoCameraStream_ColorRight, existing.string() });
     }
-    SECTION("audio")
-    {
-        config.audio_output = existing.string();
-    }
     SECTION("calibration")
     {
         config.calibration_output = existing.string();
@@ -308,13 +330,13 @@ TEST_CASE("EGO capture rejects aliased outputs before creating files", "[ego][wr
     {
         streams.push_back({ core::OrbbecEgoCameraStream_ColorRight, output.string() });
     }
-    SECTION("audio")
-    {
-        config.audio_output = (output.parent_path() / "." / output.filename()).string();
-    }
     SECTION("calibration")
     {
         config.calibration_output = output.string();
+    }
+    SECTION("normalized path")
+    {
+        config.calibration_output = (output.parent_path() / "." / output.filename()).string();
     }
     SECTION("archive")
     {
@@ -883,17 +905,6 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
     metadata->on_imu_batch(imu, 123, 456);
     imu.sensor = core::OrbbecEgoImuSensor_Gyro;
     metadata->on_imu_batch(imu, 123, 456);
-    core::OrbbecEgoAudioChunkT audio;
-    audio.capture_epoch = 3;
-    metadata->on_audio_chunk(audio, 123, 456);
-    core::OrbbecEgoPcmAudioChunkT pcm;
-    pcm.capture_epoch = 3;
-    pcm.sample_rate_hz = 48'000;
-    pcm.channel_count = 1;
-    pcm.bits_per_sample = 16;
-    pcm.sample_count = 1;
-    pcm.pcm_data = { 1, 2 };
-    metadata->on_pcm_audio_chunk(pcm, 123, 456);
     core::OrbbecEgoCalibrationT calibration;
     calibration.capture_epoch = 3;
     metadata->on_calibration(calibration, 123, 456);
@@ -948,8 +959,6 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
                                                    { "orbbec_ego_media/ColorRight", 2 },
                                                    { "orbbec_ego_imu_accel/Imu", 1 },
                                                    { "orbbec_ego_imu_gyro/Imu", 1 },
-                                                   { "orbbec_ego_audio/Audio", 1 },
-                                                   { "orbbec_ego_media/Audio", 1 },
                                                    { "orbbec_ego_calibration/Calibration", 1 },
                                                    { "orbbec_ego_device/DeviceState", 1 } });
     reader.close();

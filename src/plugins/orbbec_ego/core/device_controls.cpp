@@ -173,12 +173,6 @@ void print_capabilities(const std::shared_ptr<ob::Device>& device)
                           << "Hz full_scale="
                           << ob::TypeHelper::convertOBGyroFullScaleRangeTypeToString(imu->getFullScaleRange());
             }
-            else if (profile->is<ob::AudioStreamProfile>())
-            {
-                const auto audio = profile->as<ob::AudioStreamProfile>();
-                std::cout << " " << audio->getSampleRate() << "Hz " << audio->getChannelCount() << "ch "
-                          << audio->getBitsPerSample() << "bit";
-            }
             std::cout << std::endl;
         }
     }

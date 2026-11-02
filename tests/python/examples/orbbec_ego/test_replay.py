@@ -18,7 +18,6 @@ TOPICS = {
     "orbbec_ego_metadata_colorright/FrameMetadata",
     "orbbec_ego_imu_accel/Imu",
     "orbbec_ego_imu_gyro/Imu",
-    "orbbec_ego_audio/Audio",
     "orbbec_ego_calibration/Calibration",
     "orbbec_ego_device/DeviceState",
 }
@@ -37,7 +36,7 @@ def write_recording(path, summary, topics=TOPICS):
             use_summary_offsets=summary,
         )
         writer.start()
-        for topic in topics | {"orbbec_ego_audio/Audio_tracked"}:
+        for topic in topics | {"orbbec_ego_calibration/Calibration_tracked"}:
             channel = writer.register_channel(topic, "test", 0)
             for sequence in range(1, 4 if topic in topics else 10):
                 writer.add_message(channel, sequence, b"sample", sequence)
@@ -76,8 +75,6 @@ class Tracker:
             encoded_bytes=100,
             sample_rate_hz=48000,
             samples=[1],
-            sample_count=480,
-            byte_count=960,
             device_uid="ego",
             event_type=OrbbecEgoDiagnosticEvent.RecoveryEvent,
             diagnostic_version=2,
@@ -92,7 +89,6 @@ def mock_trackers(monkeypatch):
     for name in (
         "OrbbecEgoFrameMetadataTracker",
         "OrbbecEgoImuTracker",
-        "OrbbecEgoAudioTracker",
         "OrbbecEgoCalibrationTracker",
         "OrbbecEgoDeviceStateTracker",
     ):

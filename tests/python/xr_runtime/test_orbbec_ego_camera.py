@@ -59,10 +59,9 @@ def main() -> int:
         name: deviceio_trackers.OrbbecEgoImuTracker(f"{prefix}/{name}")
         for name in ("Accel", "Gyro")
     }
-    audio = deviceio_trackers.OrbbecEgoAudioTracker(prefix + "/Audio")
     calibration = deviceio_trackers.OrbbecEgoCalibrationTracker(prefix + "/Calibration")
     state = deviceio_trackers.OrbbecEgoDeviceStateTracker(prefix + "/DeviceState")
-    trackers = [*frames.values(), *imus.values(), audio, calibration, state]
+    trackers = [*frames.values(), *imus.values(), calibration, state]
 
     suffix = {"mjpg": "mjpg", "h264": "h264", "h265": "h265"}[args.format]
     plugin_args = [
@@ -70,7 +69,6 @@ def main() -> int:
         f"--add-stream=camera=ColorRight,output={out}/right.{suffix},format={args.format},width=1600,height=1300,fps=30",
         "--enable-imu",
         "--imu-rate=1000",
-        f"--audio-output={out}/audio.wav",
         f"--calibration-output={out}/calibration.json",
     ]
     if args.preview:
@@ -104,7 +102,6 @@ def main() -> int:
                     (tracker, f"orbbec_ego_imu_{name.lower()}")
                     for name, tracker in imus.items()
                 ),
-                (audio, "orbbec_ego_audio"),
                 (calibration, "orbbec_ego_calibration"),
                 (state, "orbbec_ego_device"),
             ],
@@ -120,7 +117,6 @@ def main() -> int:
                             tracker.get_data(session) is not None
                             for tracker in (*frames.values(), *imus.values())
                         )
-                        and audio.get_data(session) is not None
                         and calibration.get_data(session) is not None
                         and state.get_data(session) is not None
                     )

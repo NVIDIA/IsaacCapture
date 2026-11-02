@@ -7,7 +7,6 @@
 #include <ego_mcap/checked_write.hpp>
 #include <mcap/writer.hpp>
 #include <oxr_utils/os_time.hpp>
-#include <schema/orbbec_ego_audio_bfbs_generated.h>
 #include <schema/orbbec_ego_calibration_bfbs_generated.h>
 #include <schema/orbbec_ego_camera_bfbs_generated.h>
 #include <schema/orbbec_ego_device_state_bfbs_generated.h>
@@ -84,8 +83,6 @@ public:
                         std::make_unique<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>(
                             writer_, stream_recording_name("orbbec_ego_imu", core::EnumNameOrbbecEgoImuSensor(sensor)),
                             std::vector<std::string>{ "Imu" }));
-                audio_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>>(
-                    writer_, "orbbec_ego_audio", std::vector<std::string>{ "Audio" });
                 calibration_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>>(
                     writer_, "orbbec_ego_calibration", std::vector<std::string>{ "Calibration" });
                 if (record_device_diagnostics)
@@ -103,8 +100,6 @@ public:
             {
                 media_video_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord>>(
                     writer_, "orbbec_ego_media", video_names);
-                media_audio_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord>>(
-                    writer_, "orbbec_ego_media", std::vector<std::string>{ "Audio" });
             }
         }
         catch (...)
@@ -179,11 +174,6 @@ public:
         if (const auto channels = imu_.find(batch.sensor); channels != imu_.end())
             write_record<core::OrbbecEgoImuBatchRecord>(*channels->second, 0, batch, local_ns, device_ns);
     }
-    void on_audio_chunk(const core::OrbbecEgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
-    {
-        if (audio_)
-            write_record<core::OrbbecEgoAudioChunkRecord>(*audio_, 0, chunk, local_ns, device_ns);
-    }
     void on_calibration(const core::OrbbecEgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
     {
         if (calibration_)
@@ -210,11 +200,6 @@ public:
         write_record<core::OrbbecEgoEncodedVideoFrameRecord>(*media_video_, video_indices_.at(data.stream), data,
                                                              frame.sample_time_local_common_clock_ns,
                                                              frame.sample_time_raw_device_clock_ns);
-    }
-    void on_pcm_audio_chunk(const core::OrbbecEgoPcmAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
-    {
-        if (media_audio_)
-            write_record<core::OrbbecEgoPcmAudioChunkRecord>(*media_audio_, 0, chunk, local_ns, device_ns);
     }
 
 private:
@@ -306,11 +291,9 @@ private:
     std::string temporary_filename_;
     std::map<core::OrbbecEgoCameraStream, std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>>> video_;
     std::map<core::OrbbecEgoImuSensor, std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>> imu_;
-    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>> audio_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>> calibration_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoDeviceStateRecord>> device_state_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord>> media_video_;
-    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord>> media_audio_;
     std::map<core::OrbbecEgoCameraStream, size_t> video_indices_;
     bool closed_ = false;
     bool closed_successfully_ = false;

@@ -58,7 +58,6 @@ public:
                                  make_pusher(collection_prefix + "/Accel", "imu_batch", "Ego accelerometer"));
             imu_pushers_.emplace(
                 core::OrbbecEgoImuSensor_Gyro, make_pusher(collection_prefix + "/Gyro", "imu_batch", "Ego gyroscope"));
-            audio_pusher_ = make_pusher(collection_prefix + "/Audio", "audio_chunk", "Ego audio index");
             calibration_pusher_ = make_pusher(collection_prefix + "/Calibration", "calibration", "Ego calibration");
             device_state_pusher_ = make_pusher(collection_prefix + "/DeviceState", "device_state", "Ego device state");
         }
@@ -98,12 +97,6 @@ public:
             enqueue(*found->second, batch, local_ns, device_ns);
     }
 
-    void on_audio_chunk(const core::OrbbecEgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
-    {
-        if (audio_pusher_)
-            enqueue(*audio_pusher_, chunk, local_ns, device_ns);
-    }
-
     void on_calibration(const core::OrbbecEgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
     {
         if (calibration_pusher_)
@@ -141,7 +134,6 @@ public:
             publisher_.join();
         pushers_.clear();
         imu_pushers_.clear();
-        audio_pusher_.reset();
         calibration_pusher_.reset();
         device_state_pusher_.reset();
         status_publisher_.reset();
@@ -189,10 +181,6 @@ private:
     void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoImuBatchT& value, int64_t local_ns, int64_t device_ns)
     {
         enqueue<core::OrbbecEgoImuBatch>(pusher, value, local_ns, device_ns);
-    }
-    void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoAudioChunkT& value, int64_t local_ns, int64_t device_ns)
-    {
-        enqueue<core::OrbbecEgoAudioChunk>(pusher, value, local_ns, device_ns);
     }
     void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoCalibrationT& value, int64_t local_ns, int64_t device_ns)
     {
@@ -321,7 +309,6 @@ private:
     std::shared_ptr<core::OpenXRSession> session_;
     std::map<core::OrbbecEgoCameraStream, std::unique_ptr<core::SchemaPusher>> pushers_;
     std::map<core::OrbbecEgoImuSensor, std::unique_ptr<core::SchemaPusher>> imu_pushers_;
-    std::unique_ptr<core::SchemaPusher> audio_pusher_;
     std::unique_ptr<core::SchemaPusher> calibration_pusher_;
     std::unique_ptr<core::SchemaPusher> device_state_pusher_;
     std::string plugin_root_id_;

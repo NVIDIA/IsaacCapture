@@ -99,8 +99,8 @@ if (( !skip_deps )); then
         || die "Automatic dependency installation requires apt-get; install the documented dependencies and use --skip-deps."
     packages=(
         build-essential ca-certificates cmake ccache clang-format-14 curl git
-        patchelf pkg-config libudev-dev libusb-1.0-0-dev nlohmann-json3-dev
-        libssl-dev ffmpeg jq usbutils glslang-tools libegl-dev libvulkan-dev
+        patchelf pkg-config libudev-dev libusb-1.0-0-dev ffmpeg jq usbutils
+        glslang-tools libegl-dev libvulkan-dev
         libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev
         libxinerama-dev libxkbcommon-dev libxrandr-dev wayland-protocols
     )

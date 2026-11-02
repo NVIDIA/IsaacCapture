@@ -259,7 +259,6 @@ path, mode = sys.argv[1:3]
 if mode not in ("sidecar", "embedded"):
     raise SystemExit(f"MCAP media mode must be sidecar or embedded: {mode!r}")
 expect_imu = "--expect-imu" in sys.argv
-expect_audio = "--expect-audio" in sys.argv
 require_calibration = "--require-calibration" in sys.argv
 calibrations = []
 video_profiles = {}
@@ -275,13 +274,6 @@ VIDEO_METADATA_STREAMS = {
 imu = {
     "orbbec_ego_imu_accel/Imu": {"sensor": 0, "batches": 0, "samples": 0, "epochs": {}},
     "orbbec_ego_imu_gyro/Imu": {"sensor": 1, "batches": 0, "samples": 0, "epochs": {}},
-}
-audio_topics = ["orbbec_ego_audio/Audio"]
-if mode == "embedded":
-    audio_topics.append("orbbec_ego_media/Audio")
-audio = {
-    topic: {"chunks": 0, "samples": 0, "timeline": [], "epochs": {}}
-    for topic in audio_topics
 }
 
 policy = None
@@ -439,86 +431,7 @@ with open(path, "rb") as stream:
             state["batches"] += 1
             state["samples"] += sample_count
 
-        if topic in audio:
-            table, timestamp = record_data(message.data, topic)
-            state = audio[topic]
-            sequence = scalar_field(message.data, table, 0, "<Q")
-            sample_rate = scalar_field(message.data, table, 1, "<I")
-            channels = scalar_field(message.data, table, 2, "<H")
-            bits = scalar_field(message.data, table, 3, "<H")
-            sample_format = scalar_field(message.data, table, 4, "<b")
-            sample_count = scalar_field(message.data, table, 5, "<I")
-            capture_epoch = scalar_field(
-                message.data, table, 7 if topic == "orbbec_ego_media/Audio" else 8, "<I"
-            )
-            epoch = state["epochs"].setdefault(
-                capture_epoch,
-                {
-                    "chunks": 0,
-                    "samples": 0,
-                    "first": None,
-                    "last": None,
-                    "last_sequence": None,
-                    "first_sample_count": None,
-                    "last_sample_count": None,
-                },
-            )
-            profile = (sample_rate, channels, bits, sample_format)
-            if profile != (48_000, 1, 16, 0):
-                raise SystemExit(
-                    f"{topic} has unsupported audio profile {profile}; expected (48000, 1, 16, S16LE)"
-                )
-            if sample_count == 0:
-                raise SystemExit(f"{topic} contains an empty audio chunk")
-            expected_bytes = sample_count * channels * (bits // 8)
-            if topic == "orbbec_ego_media/Audio":
-                pcm_bytes, _pcm = vector_field(
-                    message.data, table, 6, 1, f"{topic} PCM data"
-                )
-                if pcm_bytes != expected_bytes:
-                    raise SystemExit(
-                        f"{topic} PCM byte count {pcm_bytes} does not match sample_count/profile {expected_bytes}"
-                    )
-            else:
-                byte_count = scalar_field(message.data, table, 7, "<I")
-                if byte_count != expected_bytes:
-                    raise SystemExit(
-                        f"{topic} byte_count {byte_count} does not match sample_count/profile {expected_bytes}"
-                    )
-            if state.get("profile") not in (None, profile):
-                raise SystemExit(
-                    f"{topic} audio profile changed from {state['profile']} to {profile}"
-                )
-            if (
-                epoch["last_sequence"] is not None
-                and sequence != epoch["last_sequence"] + 1
-            ):
-                raise SystemExit(
-                    f"{topic} epoch {capture_epoch} chunk sequence is not contiguous: "
-                    f"previous={epoch['last_sequence']} current={sequence}"
-                )
-            if epoch["last"] is not None and timestamp <= epoch["last"]:
-                raise SystemExit(
-                    f"{topic} epoch {capture_epoch} raw device chunk timestamp is not increasing: "
-                    f"previous={epoch['last']} current={timestamp}"
-                )
-            if epoch["first"] is None:
-                epoch["first"] = timestamp
-                epoch["first_sample_count"] = sample_count
-            epoch["last"] = timestamp
-            epoch["last_sample_count"] = sample_count
-            epoch["last_sequence"] = sequence
-            epoch["chunks"] += 1
-            epoch["samples"] += sample_count
-            state["profile"] = profile
-            state["chunks"] += 1
-            state["samples"] += sample_count
-            state["timeline"].append(
-                (capture_epoch, sequence, timestamp, sample_count, profile)
-            )
-
 expect_imu = expect_imu or any(counts[topic] for topic in imu)
-expect_audio = expect_audio or any(counts[topic] for topic in audio)
 
 required = [*VIDEO_METADATA_STREAMS, "orbbec_ego_calibration/Calibration"]
 if policy == "on" and diagnostic_count == 0:
@@ -527,10 +440,6 @@ if mode == "embedded":
     required += ["orbbec_ego_media/ColorLeft", "orbbec_ego_media/ColorRight"]
 if expect_imu:
     required += ["orbbec_ego_imu_accel/Imu", "orbbec_ego_imu_gyro/Imu"]
-if expect_audio:
-    required += ["orbbec_ego_audio/Audio"]
-    if mode == "embedded":
-        required += ["orbbec_ego_media/Audio"]
 missing = [topic for topic in required if counts[topic] == 0]
 for topic in sorted(counts):
     print(f"  {topic}: {counts[topic]}")
@@ -567,14 +476,12 @@ if require_calibration:
         print("  Calibration JSON matches the final MCAP calibration epoch: OK")
     print("  Required structured calibration: OK")
 
-if expect_imu or expect_audio:
+if expect_imu:
     for capture_epoch, epoch in video_epochs.items():
         if epoch["last"] <= epoch["first"]:
             raise SystemExit(
                 f"ColorLeft epoch {capture_epoch} has too few timestamps for auxiliary coverage"
             )
-
-if expect_imu:
     for topic, state in imu.items():
         if set(state["epochs"]) != set(video_epochs):
             raise SystemExit(
@@ -611,50 +518,4 @@ if expect_imu:
     ):
         raise SystemExit("Accel and Gyro declare different sample rates")
 
-if expect_audio:
-    for topic, state in audio.items():
-        sample_rate = state["profile"][0]
-        if set(state["epochs"]) != set(video_epochs):
-            raise SystemExit(
-                f"{topic} capture epochs differ from video: {sorted(state['epochs'])}"
-            )
-        for capture_epoch, epoch in sorted(state["epochs"].items()):
-            if epoch["chunks"] < 2 or epoch["last"] <= epoch["first"]:
-                raise SystemExit(f"{topic} epoch {capture_epoch} has too few chunks")
-            video_span = (
-                video_epochs[capture_epoch]["last"]
-                - video_epochs[capture_epoch]["first"]
-            )
-            timestamp_span = epoch["last"] - epoch["first"]
-            timestamped_counts = (
-                epoch["samples"] - epoch["first_sample_count"],
-                epoch["samples"] - epoch["last_sample_count"],
-            )
-            observed_rates = [
-                count * 1_000_000_000 / timestamp_span for count in timestamped_counts
-            ]
-            observed_rate = min(
-                observed_rates, key=lambda rate: abs(rate - sample_rate)
-            )
-            tolerance = max(5.0, sample_rate * 0.05)
-            if abs(observed_rate - sample_rate) > tolerance:
-                raise SystemExit(
-                    f"{topic} epoch {capture_epoch} raw-device cadence is {observed_rate:.3f} Hz; "
-                    f"chunks declare {sample_rate} Hz"
-                )
-            duration = epoch["samples"] * 1_000_000_000 / sample_rate
-            if duration < video_span * 0.90:
-                raise SystemExit(
-                    f"{topic} epoch {capture_epoch} contains only {duration / 1_000_000_000:.3f}s "
-                    f"of PCM for the {video_span / 1_000_000_000:.3f}s video timeline"
-                )
-            print(
-                f"  {topic}: epoch={capture_epoch} chunks={epoch['chunks']} samples={epoch['samples']} "
-                f"duration_s={duration / 1_000_000_000:.3f} raw_device_hz={observed_rate:.3f}"
-            )
-    if mode == "embedded":
-        metadata = audio["orbbec_ego_audio/Audio"]
-        media = audio["orbbec_ego_media/Audio"]
-        if metadata["timeline"] != media["timeline"]:
-            raise SystemExit("Embedded PCM and audio-metadata timelines differ")
 print("MCAP Footer, required topics, and per-topic log-time monotonicity: OK")

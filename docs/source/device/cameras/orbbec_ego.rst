@@ -6,8 +6,8 @@ Orbbec EGO Camera Plugin
 
 Orbbec EGO is a stereo camera module for egocentric data collection. The
 ``orbbec_ego_camera`` C++ plugin records its ``ColorLeft`` and ``ColorRight`` video
-streams, with optional accelerometer, gyroscope, and microphone data. It also
-records calibration and device diagnostics.
+streams, with optional accelerometer and gyroscope data. It also records
+calibration and device diagnostics.
 
 The plugin supports standalone recording and live data publication to an
 Isaac Capture session. Source code and detailed configuration are in
@@ -21,9 +21,9 @@ Supported data
 --------------
 
 Video is recorded as MJPEG, H.264, or H.265 elementary streams. The ``orbbec_ego.sh``
-recording wrapper defaults to stereo H.264 at ``1600×1300@30``, enables available
-accelerometer and gyroscope streams, and leaves audio disabled. These are
-wrapper defaults; the native executable requires explicit stream configuration.
+recording wrapper defaults to stereo H.264 at ``1600×1300@30`` and enables available
+accelerometer and gyroscope streams. These are wrapper defaults; the native
+executable requires explicit stream configuration.
 
 Inspect the connected camera's capabilities before selecting a profile. The
 requested left/right combination must be supported simultaneously; the plugin
@@ -81,21 +81,7 @@ To repeat the integrity checks later:
 
    ./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN"
 
-Enable optional audio with ``--audio`` or ``audio = true`` in a TOML config;
-``--no-audio`` overrides a config that enables it. Audio is saved as 48 kHz mono
-S16_LE WAV, with audio offsets recorded in MCAP:
-
-.. code-block:: bash
-
-   ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30 --audio \
-     --output recordings/ego_with_audio
-
-Audio capture and export are supported. Synchronizing audio with video and IMU
-requires an independently validated time model and evidence of sample
-continuity; SDK audio timestamps alone do not establish a shared sampling clock.
-
-Use ``embedded`` mode for one self-contained MCAP with encoded video and any
-enabled audio PCM:
+Use ``embedded`` mode for one self-contained MCAP with encoded video:
 
 .. code-block:: bash
 
@@ -105,10 +91,10 @@ enabled audio PCM:
    ./src/plugins/orbbec_ego/orbbec_ego.sh export-media "$EMBEDDED_RUN"
 
 Embedded recording stores media without transcoding. Export produces
-elementary video streams and, when audio was enabled, WAV. A remaining
-``.partial`` file indicates that capture or cleanup did not complete
-successfully; preserve it and the log for diagnosis. Integrity verification
-does not establish physical synchronization between sensors.
+elementary video streams. A remaining ``.partial`` file indicates that capture
+or cleanup did not complete successfully; preserve it and the log for
+diagnosis. Integrity verification does not establish physical synchronization
+between sensors.
 
 Data flow and published collections
 -----------------------------------
@@ -138,9 +124,6 @@ With ``--collection-prefix=ego``, the collections and Python read APIs are:
    * - ``ego/Accel``, ``ego/Gyro``
      - ``OrbbecEgoImuTracker``
      - ``get_data``
-   * - ``ego/Audio``
-     - ``OrbbecEgoAudioTracker``
-     - ``get_data``
    * - ``ego/Calibration``
      - ``OrbbecEgoCalibrationTracker``
      - ``get_data``
@@ -149,11 +132,10 @@ With ``--collection-prefix=ego``, the collections and Python read APIs are:
      - ``get_data``
 
 All reads return the schema payload directly or ``None`` when unavailable.
-Audio records are available only when audio capture is enabled.
 Create one tracker per collection, for example
 ``OrbbecEgoImuTracker("ego/Accel")``. To record a tracker, name it
 ``orbbec_ego_metadata_<stream>`` or ``orbbec_ego_imu_<stream>`` in lowercase, such as
-``orbbec_ego_metadata_colorleft``; the offline reader expects these names. See the
+``orbbec_ego_metadata_colorleft``; the replay example expects these names. See the
 :code-file:`plugin README <src/plugins/orbbec_ego/README.md>` for the full tracker
 configuration example.
 
@@ -188,7 +170,7 @@ before using the EGO tracker bindings, then ``uv pip install -e ./examples/orbbe
 recording helper; the wrapper's ``build`` command builds only the native plugin tools.
 
 Apply ``config = isaaccapture_examples.orbbec_ego.configure_recording(config)`` before opening
-the session to include the calibration tracker and any EGO time-model snapshots.
+the session to include the calibration tracker.
 
 For one self-contained multi-device MCAP, use
 ``isaaccapture_examples.orbbec_ego.embedded_recording`` with exactly one EGO plugin configured
@@ -216,58 +198,21 @@ Replay and visualization
 ------------------------
 
 With the built Python package installed, inspect structured EGO records using
-the replay example. It requires stereo camera metadata, IMU, audio, calibration,
-and any enabled diagnostic channels, so use an audio-enabled recording:
+the replay example. It requires stereo camera metadata, IMU, calibration, and
+any enabled diagnostic channels:
 
 .. code-block:: bash
 
    uv pip install -e ./examples/orbbec_ego
-   python -m isaaccapture_examples.orbbec_ego.replay \
-     recordings/ego_with_audio/metadata.mcap
+   python -m isaaccapture_examples.orbbec_ego.replay "$RUN/metadata.mcap"
 
-A recording without audio is valid; this example reports a missing Audio
-channel because of its fixed tracker configuration. The example reads
-structured records without decoding video or playing audio. To play video,
+The example reads structured records without decoding video. To play video,
 use the sidecars or run ``export-media`` for an embedded recording, then open
 the resulting elementary streams with FFmpeg.
 
 To check framing and exposure while recording, configure the plugin with
 ``-DORBBEC_EGO_ENABLE_PREVIEW=ON`` and pass ``--preview``: the plugin shows the two
 eyes side by side in a desktop window without changing the recording.
-
-Sample-time association
------------------------
-
-Capture preserves device timestamps and host arrival times separately. A
-session update or MCAP log time does not establish a common sampling instant
-for video, IMU, and audio. For sample-time association, use the EGO offline
-reader with a validated time model for the recording's device, profile, and
-capture intervals.
-
-Install the EGO example into an environment containing the built package.
-If no validated model was recorded during capture, supply one explicitly:
-
-.. code-block:: bash
-
-   uv pip install -e ./examples/orbbec_ego
-   python -m isaaccapture_examples.orbbec_ego.analyze_sync \
-     "$RUN" --required-streams left_rgb right_rgb accel gyro \
-     --alignment /absolute/path/to/alignment.json \
-     --output "$RUN/sync_audit.json"
-
-The audit supports standard sidecar directories and embedded MCAP. It reports
-coverage, gaps, and incomplete associations without decoding or playing media.
-Python consumers can use ``isaaccapture_examples.orbbec_ego.sync.iter_sync_windows`` to obtain
-frame references and sensor samples grouped into reference-frame intervals.
-Missing required streams or a validated model cause an error.
-
-Include ``audio`` only when its media is accessible and its sample-time model
-and continuity have been independently validated. Associations remain limited
-to validated intervals and do not bridge reconnects or clock discontinuities.
-They do not establish synchronization with other devices or absolute host
-sampling accuracy. Model preparation, validation requirements, and offline API
-details are documented in the
-:code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
 
 Troubleshooting
 ---------------
