@@ -16,7 +16,6 @@ The examples below use the native `orbbec_ego_camera_plugin` executable. The opt
 - Record MJPEG, H.264, or H.265 video as elementary streams.
 - Capture accelerometer and gyroscope data.
 - Write structured data to a local MCAP or publish it to a multi-device TeleopSession.
-- Embed encoded video in a private MCAP and export it without transcoding.
 - Inspect device profiles, configure controls, and preview stereo video.
 - Recover the same physical camera after a disconnect.
 
@@ -119,7 +118,7 @@ cmake -S . -B build-orbbec-ego-py3.11 \
   -DBUILD_VIZ=OFF -DBUILD_PLUGIN_ORBBEC_EGO_CAMERA=ON \
   -DORBBEC_SDK_ROOT="$ORBBEC_SDK"
 cmake --build build-orbbec-ego-py3.11 \
-  --target orbbec_ego_camera_plugin orbbec_ego_mcap_export_media orbbec_ego_mcap_merge --parallel
+  --target orbbec_ego_camera_plugin --parallel
 
 export ORBBEC_EGO_BIN="$PWD/build-orbbec-ego-py3.11/src/plugins/orbbec_ego_camera"
 export ORBBEC_EGO_PLUGIN="$ORBBEC_EGO_BIN/orbbec_ego_camera_plugin"
@@ -219,8 +218,8 @@ mkdir -p "$RUN/raw"
   --calibration-output="$RUN/calibration.json"
 ```
 
-No OpenXR runtime or host tracker is needed here. By default, video files are
-sidecars; MCAP holds structured records and media indices.
+No OpenXR runtime or host tracker is needed here. Video files are sidecars;
+MCAP holds structured records and media indices.
 
 #### TeleopSession: one MCAP with other trackers
 
@@ -290,58 +289,6 @@ Query current availability through
 `session.get_device_status("ego_camera/camera/ego")` after `session.step()`;
 `OrbbecEgoDeviceStateTracker` carries historical diagnostic events in version-2 payloads.
 
-### Store Media Inside MCAP
-
-Media layout is separate from the recording workflow:
-
-| Layout | Option | Media location |
-|---|---|---|
-| Sidecar (default) | `--mcap-media=sidecar` | Video files beside structured MCAP data. |
-| Embedded | `--mcap-media=embedded` | Encoded video inside MCAP, without transcoding. |
-
-Both layouts record the selected video streams; the option controls where media
-is stored. Only `sidecar` and `embedded` are accepted.
-
-For a self-contained local recording, omit video output paths:
-
-```bash
-RUN="recordings/ego_embedded_$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$RUN"
-"$ORBBEC_EGO_PLUGIN" --width=1600 --height=1300 --fps=30 \
-  --add-stream=camera=ColorLeft,format=h264 \
-  --add-stream=camera=ColorRight,format=h264 \
-  --enable-imu --mcap-filename="$RUN/metadata.mcap" --mcap-media=embedded
-```
-
-To retain sidecars too, add `--keep-media-sidecars` and supply each stream's
-`output=...`.
-
-For embedded multi-device recording, replace the execution block in the
-TeleopSession example with the following, before opening the session:
-
-```python
-from isaaccapture_examples.orbbec_ego import embedded_recording
-
-fragment = run / "ego_fragment.mcap"
-config.mcap_config.filename = str(run / "final.mcap")
-config.plugins[-1].plugin_args.extend([
-    "--mcap-media=embedded", f"--mcap-media-spool={fragment}",
-])
-with embedded_recording(config, media_fragment=fragment) as session:
-    try:
-        while True:
-            session.step()
-    except KeyboardInterrupt:
-        pass
-```
-
-The helper accepts exactly one enabled EGO plugin and merges its fragment with
-the other devices' session MCAP after clean shutdown. The fragment must match
-`--mcap-media-spool`; `final.mcap`, `final.session.mcap`, the fragment, and their
-`.partial` paths must be unused. `orbbec_ego_mcap_merge` must be beside the plugin.
-Cleanup/merge failures propagate and preserve inputs for diagnosis. Catch
-`Ctrl+C` inside the context to request normal finalization.
-
 ## Configuration
 
 ### Native CLI Options
@@ -350,16 +297,13 @@ These entries describe the native executable, not wrapper presets:
 
 | Option | Native default | Purpose |
 |---|---|---|
-| `--add-stream=camera=...,output=...[,format=...,width=...,height=...,fps=...]` | None; at least one required | Select `ColorLeft` or `ColorRight`. Format defaults to `mjpg`; output is required unless embedded media has no sidecars. |
+| `--add-stream=camera=...,output=...[,format=...,width=...,height=...,fps=...]` | None; at least one required | Select `ColorLeft` or `ColorRight`. Format defaults to `mjpg`; output is required. |
 | `--width=N --height=N --fps=N` | `0` | Global profile fields; zero selects an SDK default. Nonzero stream fields take precedence. |
 | `--device-uid=UID` | Automatic selection | Select a device reported by `--list-capabilities`. |
 | `--enable-imu --imu-rate=400\|1000` | Off; rate `400` | Enable available IMU. Setting rate alone does not enable it. |
 | `--accel-full-scale=N --gyro-full-scale=N` | `24` g / `2000` dps | Requested IMU ranges, subject to advertised support. |
 | `--preview` | Off | Open SDL preview. |
 | `--mcap-filename=PATH` / `--collection-prefix=PREFIX` | Neither | Choose local MCAP or live publication. |
-| `--mcap-media=sidecar\|embedded` | `sidecar` | Choose media layout; embedded requires an MCAP/publication destination. |
-| `--keep-media-sidecars` | Off | Retain sidecars in embedded mode. |
-| `--mcap-media-spool=PATH` | None | Required fragment for embedded TeleopSession. |
 | `--record-device-diagnostics=on\|off` | `on` | Include diagnostic events in MCAP. |
 | `--calibration-output=PATH.json` | None | Export calibration as a sidecar. |
 | `--bitrate=N --dynamic-bitrate=on\|off` | Leave device values unchanged | Set SDK bitrate properties; inspect the advertised range. |
@@ -388,22 +332,18 @@ To omit stored diagnostic events, use `--record-device-diagnostics=off`.
 Capture checks, recovery, logs, live diagnostics, and Isaac Capture device
 monitoring remain active.
 For TeleopSession, use `config = configure_recording(config,
-record_device_diagnostics=False)` or the same keyword on `embedded_recording`.
+record_device_diagnostics=False)`.
 Remove diagnostic trackers from explicit recording lists and automatically
-recorded pipeline/control/sink sources; conflicts fail before capture. The
-merger also rejects diagnostic channels in either input under this policy.
+recorded pipeline/control/sink sources; conflicts fail before capture.
 
 ## Architecture
 
 ```text
 EGO camera -> OrbbecSDK -> orbbec_ego_camera_plugin
                           |-> video/calibration sidecars
-                          |-> local MCAP: structured data + optional media
+                          |-> local MCAP: structured data
                           `-> OpenXR publication -> DeviceIO trackers -> session MCAP
 ```
-
-Embedded TeleopSession additionally writes an EGO capture fragment, then merges
-it with the session MCAP into one final file after both producers stop.
 
 ## Output and Verification
 
@@ -419,9 +359,6 @@ recordings/ego_mcap_<timestamp>/
 └── metadata.mcap
 ```
 
-Embedded mode stores media in MCAP and omits video sidecars unless explicitly
-retained.
-
 Schema and tracker types use `OrbbecEgo*`; the logical plugin name is
 `orbbec_ego_camera`.
 
@@ -430,8 +367,7 @@ Canonical structured topics are `orbbec_ego_metadata_colorleft/FrameMetadata`,
 `orbbec_ego_imu_gyro/Imu`, `orbbec_ego_calibration/Calibration`, and
 `orbbec_ego_device/DeviceState`. Host recordings also carry a `_tracked` channel
 beside each one. IMU topics depend on enabled and available sensors, and
-diagnostics can be omitted. Embedded media uses `orbbec_ego_media/ColorLeft` and
-`orbbec_ego_media/ColorRight`.
+diagnostics can be omitted.
 
 ### Calibration Data
 
@@ -477,7 +413,7 @@ video counts/cadence, enabled sensors, and capture health:
 When the active Python has no MCAP reader, `verify` runs these checks through uv.
 
 ```bash
-./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --plugin "$ORBBEC_EGO_PLUGIN" --expect-imu
+./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --expect-imu
 ```
 
 To require complete calibration as well, add `--require-calibration` to `record`
@@ -485,7 +421,7 @@ or `verify`:
 
 ```bash
 ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30 --require-calibration
-./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --plugin "$ORBBEC_EGO_PLUGIN" --expect-imu --require-calibration
+./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --expect-imu --require-calibration
 ```
 
 This checks camera calibration for each video epoch and IMU extrinsics when IMU
@@ -504,17 +440,7 @@ Success prints `Verification passed` and writes `verification_report.txt`;
 failure writes `verification_report.failed.txt` and invalidates an old success report.
 These checks establish recording integrity, not physical cross-stream synchronization.
 
-### Export and Play Media
-
-Export a completed embedded MCAP with the native tool. Choose a fresh output
-directory because the exporter overwrites same-name media files:
-
-```bash
-"$ORBBEC_EGO_BIN/orbbec_ego_mcap_export_media" "$RUN/metadata.mcap" "$RUN/exported_media"
-```
-
-It writes `ColorLeft.<format>` and `ColorRight.<format>`. Do not export a
-`.partial` capture as a completed dataset.
+### Play Media
 
 Elementary streams are not MP4 files. To play or remux H.264 sidecars:
 
@@ -524,8 +450,7 @@ ffmpeg -f h264 -framerate 30 -i "$RUN/raw/ColorLeft.h264" -c:v copy "$RUN/ColorL
 ```
 
 For H.265, use `-f hevc` and the `.h265` file. For MJPEG, use `-f mjpeg` and
-transcode with `-c:v libx264 -pix_fmt yuv420p`. For embedded captures, use the
-exported paths.
+transcode with `-c:v libx264 -pix_fmt yuv420p`.
 
 ### Structured Replay
 
@@ -556,7 +481,6 @@ synchronized bundle.
 | Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |
 | TeleopSession cannot publish EGO data | Check the CloudXR environment, installed Python bindings, plugin search path, and collection prefix. |
 | Local recording logs an `NV_CXR_RUNTIME_DIR` error | Expected under PluginManager without the CloudXR environment: device status publication is skipped and recording continues. |
-| Embedded session has no final file | Check clean context exit, matching spool/fragment paths, fresh output paths, and `orbbec_ego_mcap_merge` beside the plugin. |
 
 For SDK API background, consult the [Orbbec SDK v2 API guide](https://orbbec.github.io/docs/OrbbecSDKv2_API_User_Guide/)
 and [timestamp guide](https://orbbec.github.io/OrbbecSDK_v2/docs/tutorial/timestamp.html).

@@ -3,6 +3,6 @@
 
 """EGO recording and structured replay helpers."""
 
-from .recording import configure_recording, embedded_recording
+from .recording import configure_recording
 
-__all__ = ["configure_recording", "embedded_recording"]
+__all__ = ["configure_recording"]

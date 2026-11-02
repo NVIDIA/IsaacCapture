@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(TARGET ego::mcap_merge)
-    add_subdirectory(mcap)
-endif()
-
-if(TARGET orbbec_ego_mcap_export_media AND UNIX)
-    add_subdirectory(media)
-endif()
-
-if(TARGET ego::camera_core)
-    add_subdirectory(camera)
-endif()
+add_subdirectory(camera)
 
 add_test(
     NAME ego_script_tests

@@ -93,21 +93,12 @@ plugins::ego::StreamConfig parse_stream_arg(const std::string& arg)
     return config;
 }
 
-plugins::ego::McapMediaMode parse_mcap_media_mode(const std::string& value)
-{
-    if (value == "sidecar")
-        return plugins::ego::McapMediaMode::Sidecar;
-    if (value == "embedded")
-        return plugins::ego::McapMediaMode::Embedded;
-    throw std::runtime_error("--mcap-media must be sidecar or embedded");
-}
-
 void print_usage(const char* program)
 {
-    std::cout << "Usage: " << program << " [options] --add-stream=camera=<name>[,output=<path>]\n\n"
+    std::cout << "Usage: " << program << " [options] --add-stream=camera=<name>,output=<path>\n\n"
               << "Streams (repeatable):\n"
-              << "  --add-stream=camera=ColorLeft[,output=<path>][,format=mjpg|h264|h265,width=N,height=N,fps=N]\n"
-              << "  --add-stream=camera=ColorRight[,output=<path>][,format=mjpg|h264|h265,width=N,height=N,fps=N]\n\n"
+              << "  --add-stream=camera=ColorLeft,output=<path>[,format=mjpg|h264|h265,width=N,height=N,fps=N]\n"
+              << "  --add-stream=camera=ColorRight,output=<path>[,format=mjpg|h264|h265,width=N,height=N,fps=N]\n\n"
               << "Capture:\n"
               << "  --width=N --height=N --fps=N  0 selects the SDK default profile\n"
               << "  --bitrate=N --dynamic-bitrate=on|off\n"
@@ -121,9 +112,6 @@ void print_usage(const char* program)
               << "Metadata (mutually exclusive):\n"
               << "  --mcap-filename=PATH            Write a local MCAP\n"
               << "  --collection-prefix=PREFIX      Publish metadata via OpenXR tensors\n"
-              << "  --mcap-media=sidecar|embedded (default sidecar)\n"
-              << "  --keep-media-sidecars           Keep raw video with embedded MCAP\n"
-              << "  --mcap-media-spool=PATH         Embedded-media fragment for TeleopSession merger\n"
               << "  --record-device-diagnostics=on|off  Save detailed diagnostics in local MCAP (default on)\n"
               << "Device controls:\n"
               << "  --exposure=N --gain=N --white-balance=N --brightness=N\n"
@@ -192,12 +180,6 @@ try
             capture_config.collection_prefix = argument.substr(20);
         else if (argument.rfind("--mcap-filename=", 0) == 0)
             capture_config.mcap_filename = argument.substr(16);
-        else if (argument.rfind("--mcap-media=", 0) == 0)
-            capture_config.mcap_media_mode = parse_mcap_media_mode(argument.substr(13));
-        else if (argument == "--keep-media-sidecars")
-            capture_config.keep_media_sidecars = true;
-        else if (argument.rfind("--mcap-media-spool=", 0) == 0)
-            capture_config.mcap_media_spool = argument.substr(19);
         else if (argument.rfind("--calibration-output=", 0) == 0)
             capture_config.calibration_output = argument.substr(21);
         else if (argument == "--persist-controls")
@@ -253,13 +235,6 @@ try
         throw std::runtime_error("--imu-rate must be 400 or 1000");
     if (capture_config.reconnect_interval_milliseconds == 0)
         throw std::runtime_error("--reconnect-interval-ms must be greater than zero");
-    const bool embedded_media = capture_config.mcap_media_mode == plugins::ego::McapMediaMode::Embedded;
-    if (embedded_media && capture_config.collection_prefix.empty() && capture_config.mcap_filename.empty())
-        throw std::runtime_error("--mcap-media=embedded requires --mcap-filename or --collection-prefix");
-    if (embedded_media && !capture_config.collection_prefix.empty() && capture_config.mcap_media_spool.empty())
-        throw std::runtime_error("--mcap-media=embedded with --collection-prefix requires --mcap-media-spool=PATH");
-    if (!embedded_media && capture_config.keep_media_sidecars)
-        throw std::runtime_error("--keep-media-sidecars is only valid with --mcap-media=embedded");
     if (list_capabilities)
     {
         plugins::ego::EgoCamera::list_capabilities(capture_config);
@@ -272,12 +247,8 @@ try
     streams.reserve(stream_map.size());
     for (auto& [_, stream] : stream_map)
     {
-        if ((embedded_media && capture_config.keep_media_sidecars) || !embedded_media)
-        {
-            if (stream.output_path.empty())
-                throw std::runtime_error(
-                    "--add-stream requires output=<path> unless --mcap-media=embedded is used without --keep-media-sidecars");
-        }
+        if (stream.output_path.empty())
+            throw std::runtime_error("--add-stream requires output=<path>");
         plugins::ego::validate_stream_config(stream, capture_config);
         streams.push_back(std::move(stream));
     }

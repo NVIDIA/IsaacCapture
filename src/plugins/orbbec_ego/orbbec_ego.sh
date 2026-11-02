@@ -28,8 +28,7 @@ Usage:
   src/plugins/orbbec_ego/orbbec_ego.sh build --sdk-root PATH [--preview] [--preset py3.11] [--jobs N] [--clean] [--install-prefix PATH]
   src/plugins/orbbec_ego/orbbec_ego.sh capabilities [--preset py3.11] [--plugin PATH] [--device-uid UID]
   src/plugins/orbbec_ego/orbbec_ego.sh record [--config FILE.toml] [options] [-- PLUGIN_OPTIONS...]
-  src/plugins/orbbec_ego/orbbec_ego.sh verify RUN_DIRECTORY [--require-calibration] [--preset py3.11] [--plugin PATH]
-  src/plugins/orbbec_ego/orbbec_ego.sh export-media RUN_DIRECTORY [--output DIRECTORY] [--preset py3.11]
+  src/plugins/orbbec_ego/orbbec_ego.sh verify RUN_DIRECTORY [--require-calibration]
 
 Common record options:
   --config FILE.toml              Load reusable record settings; later CLI options override them.
@@ -42,9 +41,7 @@ Common record options:
   --reconnect-interval-ms MS      Device re-enumeration interval (default: 1000).
   --no-imu                       Disable IMU (requested by default when available).
   --preview                       Enable the plugin's SDL preview (requires a --preview build).
-  --mcap-media MODE               sidecar (default) or embedded.
   --record-device-diagnostics=on|off  Save detailed diagnostics in MCAP (default on).
-  --keep-media-sidecars           Retain H.264/H.265/MJPEG beside embedded MCAP.
   --require-calibration           Require complete structured calibration during verification.
   --preset NAME --plugin PATH     Select a build tree or override the executable.
 
@@ -56,7 +53,6 @@ Examples:
   ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30
   # Capabilities also reports advertised profiles that remain uncertified.
   ./src/plugins/orbbec_ego/orbbec_ego.sh verify recordings/ego_20260810_120000
-  ./src/plugins/orbbec_ego/orbbec_ego.sh export-media recordings/embedded_demo
 
 All options after -- are passed unchanged to orbbec_ego_camera_plugin.  For example:
   ... record --duration 30 -- --bitrate=8 --dynamic-bitrate=on
@@ -110,35 +106,6 @@ resolve_plugin() {
         candidate="$(build_dir_for_preset "$preset")/src/plugins/orbbec_ego_camera/orbbec_ego_camera_plugin"
     fi
     [[ -x "$candidate" ]] || die "Plugin is not executable: $candidate. Run 'build' first or pass --plugin PATH."
-    echo "$candidate"
-}
-
-resolve_exporter() {
-    local preset="$1"
-    local requested_plugin="${2:-}"
-    local candidate
-    # A verify run must never mix a camera plugin and exporter from different build trees.
-    if [[ -n "$requested_plugin" ]]; then
-        [[ -x "$requested_plugin" ]] || die "Plugin is not executable: $requested_plugin"
-        local plugin_dir
-        plugin_dir="$(cd "$(dirname "$requested_plugin")" && pwd -P)" \
-            || die "Cannot resolve plugin directory: $requested_plugin"
-        for candidate in \
-                "$plugin_dir/orbbec_ego_mcap_export_media" \
-                "$plugin_dir/../mcap/export_media_tool/orbbec_ego_mcap_export_media"; do
-            if [[ -x "$candidate" ]]; then
-                echo "$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"
-                return 0
-            fi
-        done
-        die "No embedded-media exporter exists beside plugin or in its build tree: $requested_plugin"
-    fi
-    if [[ -x "$SCRIPT_DIR/orbbec_ego_mcap_export_media" ]]; then
-        candidate="$SCRIPT_DIR/orbbec_ego_mcap_export_media"
-    else
-        candidate="$(build_dir_for_preset "$preset")/src/plugins/orbbec_ego_camera/orbbec_ego_mcap_export_media"
-    fi
-    [[ -x "$candidate" ]] || die "Embedded-media exporter is not executable: $candidate. Run 'build' first."
     echo "$candidate"
 }
 
@@ -245,8 +212,8 @@ command_doctor() {
 
     if (( !source_checkout )); then
         local package_file
-        for package_file in "$SCRIPT_DIR/orbbec_ego_mcap_export_media" "$SCRIPT_DIR/libOrbbecSDK.so.2" \
-                "$SCRIPT_DIR/OrbbecSDKConfig.xml" "$SCRIPT_DIR/extensions"; do
+        for package_file in "$SCRIPT_DIR/libOrbbecSDK.so.2" "$SCRIPT_DIR/OrbbecSDKConfig.xml" \
+                "$SCRIPT_DIR/extensions"; do
             if [[ ! -e "$package_file" ]]; then
                 warn "Prebuilt package is incomplete: missing $package_file"
                 failed=1
@@ -329,7 +296,7 @@ command_build() {
             -DBUILD_PLUGIN_ORBBEC_EGO_CAMERA=ON \
             -DORBBEC_SDK_ROOT="$sdk_root" \
             -DORBBEC_EGO_ENABLE_PREVIEW="$preview_option"
-        local build_args=(--build "$build_dir" --target orbbec_ego_camera_plugin orbbec_ego_mcap_export_media orbbec_ego_mcap_merge)
+        local build_args=(--build "$build_dir" --target orbbec_ego_camera_plugin)
         if [[ -n "$jobs" ]]; then
             [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be a positive integer."
             build_args+=(--parallel "$jobs")
@@ -466,8 +433,6 @@ command_record() {
     local request_imu=1
     local require_calibration=0
     local preview=0
-    local media_mode="sidecar"
-    local keep_sidecars=0
     local record_diagnostics=on
     local -a passthrough=()
     local -a original_args=("$@")
@@ -496,7 +461,7 @@ command_record() {
     set -- "${config_args[@]}" "${original_args[@]}"
     while (( $# )); do
         case "$1" in
-            --config|--duration|--output|--format|--width|--height|--fps|--device-uid|--reconnect-timeout|--reconnect-interval-ms|--record-device-diagnostics|--mcap-media|--preset|--plugin|--plugin-option)
+            --config|--duration|--output|--format|--width|--height|--fps|--device-uid|--reconnect-timeout|--reconnect-interval-ms|--record-device-diagnostics|--preset|--plugin|--plugin-option)
                 (( $# >= 2 )) && [[ -n "$2" ]] || record_usage_error "$1 requires a value"
                 ;;
         esac
@@ -519,13 +484,6 @@ command_record() {
             --no-preview) preview=0; shift ;;
             --record-device-diagnostics=*) record_diagnostics="${1#*=}"; shift ;;
             --record-device-diagnostics) record_diagnostics="${2:-}"; shift 2 ;;
-            --mcap-media)
-                media_mode="${2:-}"
-                [[ "$media_mode" == "sidecar" || "$media_mode" == "embedded" ]] || record_usage_error "--mcap-media must be sidecar or embedded"
-                shift 2
-                ;;
-            --keep-media-sidecars) keep_sidecars=1; shift ;;
-            --no-keep-media-sidecars) keep_sidecars=0; shift ;;
             --preset) preset="${2:-}"; shift 2 ;;
             --plugin) plugin_path="${2:-}"; shift 2 ;;
             --plugin-option) passthrough+=("${2:-}"); shift 2 ;;
@@ -535,15 +493,11 @@ command_record() {
     done
     preset_python_version "$preset" >/dev/null
     [[ "$format" == "mjpg" || "$format" == "h264" || "$format" == "h265" ]] || record_usage_error "--format must be mjpg, h264, or h265"
-    [[ "$media_mode" == "sidecar" || "$media_mode" == "embedded" ]] || record_usage_error "--mcap-media must be sidecar or embedded"
     [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ && "$fps" =~ ^[1-9][0-9]*$ ]] || record_usage_error "width, height, and fps must be positive integers"
     [[ "$reconnect_timeout" =~ ^[0-9]+$ ]] || record_usage_error "--reconnect-timeout must be a non-negative integer"
     [[ "$reconnect_interval_ms" =~ ^[1-9][0-9]*$ ]] || record_usage_error "--reconnect-interval-ms must be a positive integer"
     if [[ -n "$duration" ]]; then
         [[ "$duration" =~ ^[1-9][0-9]*$ ]] || record_usage_error "--duration must be a positive integer"
-    fi
-    if (( keep_sidecars )) && [[ "$media_mode" == "sidecar" ]]; then
-        record_usage_error "--keep-media-sidecars is only valid with embedded media"
     fi
 
     # Native passthrough arguments win; record the effective policy, not the wrapper default.
@@ -567,10 +521,7 @@ command_record() {
         run_dir="$PWD/$run_dir"
     fi
     [[ ! -e "$run_dir" ]] || die "Output directory already exists: $run_dir"
-    mkdir -p "$run_dir/logs"
-    if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
-        mkdir -p "$run_dir/raw"
-    fi
+    mkdir -p "$run_dir/logs" "$run_dir/raw"
     write_requested_profile_manifest "$run_dir/requested_profile.json" "$format" "$width" "$height" "$fps" "$record_diagnostics"
 
     local capabilities_file="$run_dir/capabilities.txt"
@@ -592,27 +543,16 @@ command_record() {
     extension="$(stream_extension "$format")"
     local -a plugin_args=(
         "--mcap-filename=$run_dir/metadata.mcap"
-        "--mcap-media=$media_mode"
         "--record-device-diagnostics=$record_diagnostics"
         "--calibration-output=$run_dir/calibration.json"
         "--reconnect-timeout=$reconnect_timeout"
         "--reconnect-interval-ms=$reconnect_interval_ms"
+        "--add-stream=camera=ColorLeft,output=$run_dir/raw/ColorLeft.$extension,format=$format,width=$width,height=$height,fps=$fps"
+        "--add-stream=camera=ColorRight,output=$run_dir/raw/ColorRight.$extension,format=$format,width=$width,height=$height,fps=$fps"
     )
-    if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
-        plugin_args+=(
-            "--add-stream=camera=ColorLeft,output=$run_dir/raw/ColorLeft.$extension,format=$format,width=$width,height=$height,fps=$fps"
-            "--add-stream=camera=ColorRight,output=$run_dir/raw/ColorRight.$extension,format=$format,width=$width,height=$height,fps=$fps"
-        )
-    else
-        plugin_args+=(
-            "--add-stream=camera=ColorLeft,format=$format,width=$width,height=$height,fps=$fps"
-            "--add-stream=camera=ColorRight,format=$format,width=$width,height=$height,fps=$fps"
-        )
-    fi
     [[ -n "$device_uid" ]] && plugin_args+=("--device-uid=$device_uid")
     (( preview )) && plugin_args+=(--preview)
     (( enable_imu )) && plugin_args+=(--enable-imu --imu-rate=1000)
-    (( keep_sidecars )) && plugin_args+=(--keep-media-sidecars)
     plugin_args+=("${passthrough[@]}")
 
     echo "Recording directory: $run_dir"
@@ -641,7 +581,7 @@ command_record() {
     if [[ -n "$duration" ]]; then
         echo "Timed capture command completed; SIGINT was scheduled after $duration seconds."
     fi
-    local -a verify_args=("$run_dir" --preset "$preset" --plugin "$plugin" --media-mode "$media_mode")
+    local -a verify_args=("$run_dir")
     (( enable_imu )) && verify_args+=(--expect-imu)
     (( require_calibration )) && verify_args+=(--require-calibration)
     command_verify "${verify_args[@]}"
@@ -737,11 +677,10 @@ verify_requested_profile_manifest() {
 
 verify_mcap_video_timing() {
     local mcap="$1"
-    local mode="$2"
-    local left_frames="$3"
-    local right_frames="$4"
-    local manifest="$5"
-    run_mcap_tool "$SCRIPT_DIR/tools/verify_video_timing.py" "$mcap" "$mode" "$left_frames" "$right_frames" "$manifest"
+    local left_frames="$2"
+    local right_frames="$3"
+    local manifest="$4"
+    run_mcap_tool "$SCRIPT_DIR/tools/verify_video_timing.py" "$mcap" "$left_frames" "$right_frames" "$manifest"
 }
 
 print_fingerprint() {
@@ -757,27 +696,16 @@ command_verify_impl() {
     shift || true
     [[ -n "$run_dir" ]] || die "verify requires a RUN_DIRECTORY"
     [[ -d "$run_dir" ]] || die "Run directory does not exist: $run_dir"
-    local preset="$DEFAULT_PRESET"
-    local plugin_path=""
-    local expected_mode=""
     local expect_imu=0
     local require_calibration=0
     while (( $# )); do
         case "$1" in
-            --preset) preset="${2:-}"; shift 2 ;;
-            --plugin) plugin_path="${2:-}"; shift 2 ;;
-            --media-mode)
-                expected_mode="${2:-}"
-                [[ "$expected_mode" == "sidecar" || "$expected_mode" == "embedded" ]] || die "Unknown MCAP media mode '$expected_mode'"
-                shift 2
-                ;;
             --expect-imu) expect_imu=1; shift ;;
             --require-calibration) require_calibration=1; shift ;;
             --help|-h) usage; return 0 ;;
             *) die "Unknown verify option: $1" ;;
         esac
     done
-    preset_python_version "$preset" >/dev/null
     run_dir="$(cd "$run_dir" && pwd)"
     local mcap="$run_dir/metadata.mcap"
     [[ -s "$mcap" ]] || die "Missing or empty MCAP: $mcap"
@@ -789,13 +717,7 @@ command_verify_impl() {
     require_command python3 "Install it with: sudo apt update && sudo apt install -y python3" || exit 1
     python_has_mcap || command -v uv >/dev/null 2>&1 || die "verify needs the Python MCAP reader. Install uv, or install mcap into the active Python environment."
 
-    local mode="$expected_mode"
-    if [[ -z "$mode" ]]; then
-        mode="$(run_mcap_tool "$SCRIPT_DIR/tools/detect_media_mode.py" "$mcap")"
-    fi
-    [[ "$mode" == "sidecar" || "$mode" == "embedded" ]] || die "Unknown MCAP media mode '$mode'"
-
-    local -a topic_check_args=("$mcap" "$mode" "--requested-profile=$run_dir/requested_profile.json")
+    local -a topic_check_args=("$mcap" "--requested-profile=$run_dir/requested_profile.json")
     (( expect_imu )) && topic_check_args+=(--expect-imu)
     if (( require_calibration )); then
         topic_check_args+=(--require-calibration "--calibration-json=$run_dir/calibration.json")
@@ -805,34 +727,9 @@ command_verify_impl() {
     check_capture_health_log "$run_dir/logs/capture.log"
 
     local media_dir="$run_dir/raw"
-    local retained_media_dir=""
-    local temporary_export=""
-    if [[ "$mode" == "embedded" ]]; then
-        [[ -d "$media_dir" ]] && retained_media_dir="$media_dir"
-        temporary_export="$(mktemp -d "$run_dir/.verify_export.XXXXXX")"
-        # Verification failures exit from deep helper calls; EXIT cleanup prevents a
-        # multi-gigabyte embedded export from being stranded beside the recording.
-        local cleanup_command
-        printf -v cleanup_command 'rm -rf -- %q' "$temporary_export"
-        trap "$cleanup_command" EXIT
-        local exporter
-        exporter="$(resolve_exporter "$preset" "$plugin_path")" || return 1
-        "$exporter" "$mcap" "$temporary_export"
-        media_dir="$temporary_export"
-    fi
     local left right
-    left="$(find_media_file "$media_dir" ColorLeft)" || die "Could not find exported ColorLeft media in $media_dir"
-    right="$(find_media_file "$media_dir" ColorRight)" || die "Could not find exported ColorRight media in $media_dir"
-    if [[ -n "$retained_media_dir" ]]; then
-        local retained_left retained_right
-        retained_left="$(find_media_file "$retained_media_dir" ColorLeft)" \
-            || die "Could not find retained ColorLeft media in $retained_media_dir"
-        retained_right="$(find_media_file "$retained_media_dir" ColorRight)" \
-            || die "Could not find retained ColorRight media in $retained_media_dir"
-        cmp -s "$left" "$retained_left" || die "Embedded and retained ColorLeft media differ"
-        cmp -s "$right" "$retained_right" || die "Embedded and retained ColorRight media differ"
-        echo "Embedded video matches retained media sidecars: OK"
-    fi
+    left="$(find_media_file "$media_dir" ColorLeft)" || die "Could not find ColorLeft media in $media_dir"
+    right="$(find_media_file "$media_dir" ColorRight)" || die "Could not find ColorRight media in $media_dir"
     local decoded_video_frame_count left_frames right_frames
     decode_video ColorLeft "$left"
     left_frames="$decoded_video_frame_count"
@@ -861,20 +758,14 @@ command_verify_impl() {
         warn "Stereo decoded counts differ at their initial IDR boundaries; per-stream MCAP counts and cadence must still pass."
     fi
     verify_mcap_video_timing \
-        "$mcap" "$mode" "$left_frames" "$right_frames" "$requested_profile_manifest"
+        "$mcap" "$left_frames" "$right_frames" "$requested_profile_manifest"
     echo "Delivery file: $mcap"
     if command -v sha256sum >/dev/null 2>&1; then
-        # Hash while exported media still exists, and reject read failures.
         print_fingerprint Delivery "$mcap"
         print_fingerprint ColorLeft "$left"
         print_fingerprint ColorRight "$right"
     else
         warn "sha256sum is unavailable; media fingerprints were not added to the report."
-    fi
-    if [[ -n "$temporary_export" ]]; then
-        rm -rf -- "$temporary_export"
-        temporary_export=""
-        trap - EXIT
     fi
     echo "Verification passed: $run_dir"
 }
@@ -918,35 +809,6 @@ command_verify() {
     echo "Consistency report: $report"
 }
 
-command_export_media() {
-    local run_dir="${1:-}"
-    shift || true
-    [[ -n "$run_dir" ]] || die "export-media requires a RUN_DIRECTORY"
-    [[ -d "$run_dir" ]] || die "Run directory does not exist: $run_dir"
-    run_dir="$(cd "$run_dir" && pwd)"
-    local preset="$DEFAULT_PRESET"
-    local output_dir="$run_dir/exported"
-    while (( $# )); do
-        case "$1" in
-            --output) output_dir="${2:-}"; shift 2 ;;
-            --preset) preset="${2:-}"; shift 2 ;;
-            --help|-h) usage; return 0 ;;
-            *) die "Unknown export-media option: $1" ;;
-        esac
-    done
-    preset_python_version "$preset" >/dev/null
-    [[ -n "$output_dir" ]] || die "--output requires a DIRECTORY"
-    [[ "$output_dir" = /* ]] || output_dir="$PWD/$output_dir"
-    local mcap="$run_dir/metadata.mcap"
-    [[ -s "$mcap" ]] || die "Missing or empty MCAP: $mcap"
-    [[ ! -e "$mcap.partial" ]] || die "Incomplete capture: found $mcap.partial"
-    [[ ! -e "$output_dir" ]] || die "Export output already exists: $output_dir"
-    local exporter
-    exporter="$(resolve_exporter "$preset")" || return 1
-    "$exporter" "$mcap" "$output_dir"
-    echo "Export completed: $output_dir"
-}
-
 main() {
     local command="${1:-}"
     [[ -n "$command" ]] || { usage; return 1; }
@@ -957,7 +819,6 @@ main() {
         capabilities) command_capabilities "$@" ;;
         record) command_record "$@" ;;
         verify) command_verify "$@" ;;
-        export-media) command_export_media "$@" ;;
         --help|-h|help) usage ;;
         *) die "Unknown command '$command'." ;;
     esac

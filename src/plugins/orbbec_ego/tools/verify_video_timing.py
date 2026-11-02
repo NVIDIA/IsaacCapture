@@ -36,9 +36,7 @@ def scalar_field(data, table, field_id, fmt, default):
     )
 
 
-def video_record(data, embedded_media):
-    # Metadata and embedded-video roots share field ids for data and timestamp;
-    # their data tables share sequence/width/height/fps/format ids 1 through 5.
+def video_record(data):
     (record_table,) = unpack_from("<I", data, 0, "root table")
     data_position = field_position(data, record_table, 0)
     timestamp_position = field_position(data, record_table, 1)
@@ -52,18 +50,16 @@ def video_record(data, embedded_media):
     height = scalar_field(data, data_table, 3, "<I", 0)
     fps = scalar_field(data, data_table, 4, "<I", 0)
     pixel_format = scalar_field(data, data_table, 5, "<B", 0)
-    capture_epoch = scalar_field(data, data_table, 7 if embedded_media else 8, "<I", 0)
+    capture_epoch = scalar_field(data, data_table, 8, "<I", 0)
     return timestamp, sequence, (pixel_format, width, height, fps), capture_epoch
 
 
-path, mode = sys.argv[1:3]
-if mode not in ("sidecar", "embedded"):
-    raise SystemExit(f"MCAP media mode must be sidecar or embedded: {mode!r}")
+path = sys.argv[1]
 expected_counts = {
-    "ColorLeft": int(sys.argv[3]),
-    "ColorRight": int(sys.argv[4]),
+    "ColorLeft": int(sys.argv[2]),
+    "ColorRight": int(sys.argv[3]),
 }
-manifest_path = Path(sys.argv[5])
+manifest_path = Path(sys.argv[4])
 requested_profiles = {}
 if manifest_path.exists():
     try:
@@ -87,15 +83,8 @@ def metadata_topic(stream):
     return f"orbbec_ego_metadata_{stream.lower()}/FrameMetadata"
 
 
-def media_topic(stream):
-    return f"orbbec_ego_media/{stream}"
-
-
-topic_names = [metadata_topic]
-if mode == "embedded":
-    topic_names.append(media_topic)
 topics = {
-    topic_name(stream): {
+    metadata_topic(stream): {
         "stream": stream,
         "count": 0,
         "first": None,
@@ -104,9 +93,7 @@ topics = {
         "last_sequence": None,
         "profile": None,
         "epochs": {},
-        "timeline": [],
     }
-    for topic_name in topic_names
     for stream in expected_counts
 }
 with open(path, "rb") as stream:
@@ -116,9 +103,7 @@ with open(path, "rb") as stream:
         state = topics.get(channel.topic)
         if state is None:
             continue
-        timestamp, sequence, profile, capture_epoch = video_record(
-            message.data, channel.topic.startswith("orbbec_ego_media/")
-        )
+        timestamp, sequence, profile, capture_epoch = video_record(message.data)
         epoch = state["epochs"].setdefault(
             capture_epoch,
             {
@@ -156,7 +141,6 @@ with open(path, "rb") as stream:
         state["last_sequence"] = sequence
         state["profile"] = profile
         state["count"] += 1
-        state["timeline"].append((capture_epoch, sequence, timestamp, profile))
         epoch["last"] = timestamp
         epoch["last_sequence"] = sequence
         epoch["count"] += 1
@@ -192,11 +176,4 @@ for topic, state in topics.items():
             f"  {topic}: epoch={capture_epoch} count={epoch['count']} profile={state['profile']} "
             f"raw_device_fps={observed_fps:.3f} span_ns={epoch['last'] - epoch['first']}"
         )
-if mode == "embedded":
-    for stream in expected_counts:
-        metadata = topics[metadata_topic(stream)]
-        media = topics[media_topic(stream)]
-        comparable = ("count", "profile", "timeline")
-        if any(metadata[field] != media[field] for field in comparable):
-            raise SystemExit(f"Embedded and metadata timelines differ for {stream}")
 print("MCAP video counts and raw device timestamp cadence: OK")

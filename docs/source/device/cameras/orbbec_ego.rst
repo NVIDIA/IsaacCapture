@@ -72,7 +72,7 @@ Use a fresh output directory for each recording:
    RUN="recordings/ego_$(date +%Y%m%d_%H%M%S)"
    ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30 --output "$RUN"
 
-The default ``sidecar`` mode writes video under ``raw/``, structured data to
+The wrapper writes video under ``raw/``, structured data to
 ``metadata.mcap``, and calibration to ``calibration.json``. It preserves the requested profile,
 device/software identity, and capture log, then verifies the recording.
 To repeat the integrity checks later:
@@ -81,20 +81,9 @@ To repeat the integrity checks later:
 
    ./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN"
 
-Use ``embedded`` mode for one self-contained MCAP with encoded video:
-
-.. code-block:: bash
-
-   EMBEDDED_RUN="recordings/ego_embedded_$(date +%Y%m%d_%H%M%S)"
-   ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30 \
-     --output "$EMBEDDED_RUN" --mcap-media embedded
-   ./src/plugins/orbbec_ego/orbbec_ego.sh export-media "$EMBEDDED_RUN"
-
-Embedded recording stores media without transcoding. Export produces
-elementary video streams. A remaining ``.partial`` file indicates that capture
-or cleanup did not complete successfully; preserve it and the log for
-diagnosis. Integrity verification does not establish physical synchronization
-between sensors.
+A remaining ``.partial`` file indicates that capture or cleanup did not
+complete successfully; preserve it and the log for diagnosis. Integrity
+verification does not establish physical synchronization between sensors.
 
 Data flow and published collections
 -----------------------------------
@@ -153,7 +142,7 @@ recovery events, and device snapshots for diagnosis.
 Diagnostic recording is enabled by default. To omit these events from MCAP,
 pass ``--record-device-diagnostics=off`` to the recording wrapper. For
 ``TeleopSession``, pass ``record_device_diagnostics=False`` to
-``isaaccapture_examples.orbbec_ego.configure_recording`` or ``embedded_recording`` and exclude
+``isaaccapture_examples.orbbec_ego.configure_recording`` and exclude
 diagnostic trackers from the recording configuration. This option leaves
 availability monitoring, recovery, and logging enabled.
 
@@ -170,11 +159,7 @@ before using the EGO tracker bindings, then ``uv pip install -e ./examples/orbbe
 recording helper; the wrapper's ``build`` command builds only the native plugin tools.
 
 Apply ``config = isaaccapture_examples.orbbec_ego.configure_recording(config)`` before opening
-the session to include the calibration tracker.
-
-For one self-contained multi-device MCAP, use
-``isaaccapture_examples.orbbec_ego.embedded_recording`` with exactly one EGO plugin configured
-for embedded media. The full configuration, matching media-spool path, and
+the session to include the calibration tracker. The full configuration and
 clean-stop procedure are documented under "TeleopSession: one MCAP with other
 trackers" in the :code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
 
@@ -207,8 +192,7 @@ any enabled diagnostic channels:
    python -m isaaccapture_examples.orbbec_ego.replay "$RUN/metadata.mcap"
 
 The example reads structured records without decoding video. To play video,
-use the sidecars or run ``export-media`` for an embedded recording, then open
-the resulting elementary streams with FFmpeg.
+open the elementary streams under ``raw/`` with FFmpeg.
 
 To check framing and exposure while recording, configure the plugin with
 ``-DORBBEC_EGO_ENABLE_PREVIEW=ON`` and pass ``--preview``: the plugin shows the two
@@ -232,5 +216,3 @@ Troubleshooting
 - **Local recording logs an** ``NV_CXR_RUNTIME_DIR`` **error:** under
   ``PluginManager`` without the CloudXR environment, the plugin skips device
   status publication and keeps recording, as the warning after it says.
-- **No embedded final output:** check normal context exit, committed fragment,
-  matching spool path, and the merge tool beside the selected plugin.

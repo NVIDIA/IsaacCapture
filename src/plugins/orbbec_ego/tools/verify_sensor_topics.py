@@ -255,9 +255,7 @@ def compare_calibration_json(expected, actual, label="calibration JSON"):
         raise SystemExit(f"{label} differs from MCAP")
 
 
-path, mode = sys.argv[1:3]
-if mode not in ("sidecar", "embedded"):
-    raise SystemExit(f"MCAP media mode must be sidecar or embedded: {mode!r}")
+path = sys.argv[1]
 expect_imu = "--expect-imu" in sys.argv
 require_calibration = "--require-calibration" in sys.argv
 calibrations = []
@@ -278,7 +276,7 @@ imu = {
 
 policy = None
 expected_policy = None
-for argument in sys.argv[3:]:
+for argument in sys.argv[2:]:
     if argument.startswith("--requested-profile="):
         manifest = Path(argument.split("=", 1)[1])
         if manifest.is_file():
@@ -436,8 +434,6 @@ expect_imu = expect_imu or any(counts[topic] for topic in imu)
 required = [*VIDEO_METADATA_STREAMS, "orbbec_ego_calibration/Calibration"]
 if policy == "on" and diagnostic_count == 0:
     raise SystemExit("Diagnostics enabled but no OrbbecEgoDeviceState records exist")
-if mode == "embedded":
-    required += ["orbbec_ego_media/ColorLeft", "orbbec_ego_media/ColorRight"]
 if expect_imu:
     required += ["orbbec_ego_imu_accel/Imu", "orbbec_ego_imu_gyro/Imu"]
 missing = [topic for topic in required if counts[topic] == 0]

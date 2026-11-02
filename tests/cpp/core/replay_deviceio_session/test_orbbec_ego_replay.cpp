@@ -45,13 +45,6 @@ struct Recording
     }
 };
 
-std::unique_ptr<mcap::McapReader> open_reader(const std::string& path)
-{
-    auto reader = std::make_unique<mcap::McapReader>();
-    REQUIRE(reader->open(path).ok());
-    return reader;
-}
-
 std::vector<std::string> channels(auto values)
 {
     return { values.begin(), values.end() };
@@ -99,8 +92,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             writer, "orbbec_ego_device",
             include_tracked ? channels(core::OrbbecEgoDeviceStateRecordingTraits::recording_channels) :
                               std::vector<std::string>{ "DeviceState" });
-        core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord> media(
-            writer, "orbbec_ego_media", { "ColorLeft" });
         for (uint64_t sequence = 1; sequence <= 3; ++sequence)
         {
             const core::DeviceDataTimestamp timestamp(sequence * 100, sequence * 90, sequence * 80);
@@ -159,9 +150,6 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
                 calibration.write(1, calibration_record);
                 state.write(1, state_record);
             }
-            core::OrbbecEgoEncodedVideoFrameT video;
-            video.encoded_data = { 0, 0, 0, 1, 0x65 };
-            media.write(0, core::pack_record<core::OrbbecEgoEncodedVideoFrameRecord>(&video, timestamp));
         }
         writer.close();
     }
@@ -228,42 +216,4 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
     session.reset();
     CHECK(snapshot->sequence_number() == 1);
     CHECK(snapshot->capture_epoch() == 3);
-}
-
-TEST_CASE("EGO secondary media records reuse the unchanged file schemas", "[unit][replay][ego][mcap]")
-{
-    Recording recording;
-    {
-        mcap::McapWriter writer;
-        mcap::McapWriterOptions options("ego-test");
-        options.compression = mcap::Compression::None;
-        REQUIRE(writer.open(recording.path, options).ok());
-        core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord> video(
-            writer, "orbbec_ego_media", { "ColorLeft" });
-        core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord> audio(writer, "orbbec_ego_media", { "Audio" });
-        core::OrbbecEgoEncodedVideoFrameT frame;
-        frame.encoded_data = { 0, 0, 0, 1, 0x65 };
-        video.write(0, core::pack_record<core::OrbbecEgoEncodedVideoFrameRecord>(
-                           &frame, core::DeviceDataTimestamp(100, 90, 80)));
-        core::OrbbecEgoPcmAudioChunkT chunk;
-        chunk.pcm_data = { 1, 0, 2, 0 };
-        audio.write(
-            0, core::pack_record<core::OrbbecEgoPcmAudioChunkRecord>(&chunk, core::DeviceDataTimestamp(100, 90, 80)));
-        writer.close();
-    }
-    auto inventory_reader = open_reader(recording.path);
-    const core::RecordedSchemas recorded(*inventory_reader);
-    core::McapTrackerViewers<core::OrbbecEgoEncodedVideoFrameRecord> video(
-        open_reader(recording.path), "orbbec_ego_media", { "ColorLeft" }, recorded);
-    core::McapTrackerViewers<core::OrbbecEgoPcmAudioChunkRecord> audio(
-        open_reader(recording.path), "orbbec_ego_media", { "Audio" }, recorded);
-    const auto frame = video.read(0);
-    REQUIRE(frame);
-    CHECK(frame->data()->encoded_data()->Get(4) == 0x65);
-    CHECK(frame->timestamp()->sample_time_raw_device_clock() == 80);
-    const auto chunk = audio.read(0);
-    REQUIRE(chunk);
-    CHECK(chunk->data()->pcm_data()->Get(2) == 2);
-    CHECK_FALSE(video.read(0));
-    CHECK_FALSE(audio.read(0));
 }

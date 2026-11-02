@@ -38,10 +38,6 @@ public:
     {
         for_each([&](auto& sink) { sink.on_device_state(value, local, device); });
     }
-    void on_encoded_video_frame(const CapturedFrame& frame) override
-    {
-        for_each([&](auto& sink) { sink.on_encoded_video_frame(frame); });
-    }
     void on_capture_status(const CaptureStatus& status) override
     {
         for_each([&](auto& sink) { sink.on_capture_status(status); });
@@ -130,16 +126,6 @@ std::unique_ptr<FrameSink> create_frame_sink(const std::vector<StreamConfig>& st
 {
     if (!config.collection_prefix.empty() && !config.mcap_filename.empty())
         throw std::invalid_argument("--collection-prefix and --mcap-filename are mutually exclusive");
-    if (config.mcap_media_mode == McapMediaMode::Embedded && config.collection_prefix.empty() &&
-        config.mcap_filename.empty())
-        throw std::invalid_argument("--mcap-media=embedded requires --mcap-filename or --collection-prefix");
-    if (config.mcap_media_mode == McapMediaMode::Embedded && !config.collection_prefix.empty() &&
-        config.mcap_media_spool.empty())
-    {
-        throw std::invalid_argument(
-            "--mcap-media=embedded with --collection-prefix requires --mcap-media-spool=PATH; "
-            "the TeleopSession merger consumes this media fragment after the session closes");
-    }
     std::set<std::filesystem::path> outputs;
     const auto require_new_output = [&outputs](const std::string& path)
     {
@@ -150,15 +136,10 @@ std::unique_ptr<FrameSink> create_frame_sink(const std::vector<StreamConfig>& st
         if (!outputs.insert(std::filesystem::weakly_canonical(std::filesystem::absolute(path))).second)
             throw std::invalid_argument("Ego outputs refer to the same path: " + path);
     };
-    if (config.mcap_media_mode == McapMediaMode::Sidecar || config.keep_media_sidecars)
-    {
-        for (const auto& stream : streams)
-            require_new_output(stream.output_path);
-    }
+    for (const auto& stream : streams)
+        require_new_output(stream.output_path);
     require_new_output(config.calibration_output);
     require_new_output(config.mcap_filename);
-    if (config.mcap_media_mode == McapMediaMode::Embedded)
-        require_new_output(config.mcap_media_spool);
     std::vector<std::unique_ptr<IMetadataSink>> sinks;
     if (!config.collection_prefix.empty())
         sinks.push_back(make_schema_metadata_sink(streams, config.collection_prefix, config.plugin_root_id));
@@ -175,15 +156,9 @@ std::unique_ptr<FrameSink> create_frame_sink(const std::vector<StreamConfig>& st
         }
     }
     if (!config.mcap_filename.empty())
-        sinks.push_back(make_mcap_metadata_sink(streams, config.mcap_filename,
-                                                config.mcap_media_mode == McapMediaMode::Embedded, true,
-                                                config.record_device_diagnostics));
-    if (!config.collection_prefix.empty() && config.mcap_media_mode == McapMediaMode::Embedded)
-        sinks.push_back(
-            make_mcap_metadata_sink(streams, config.mcap_media_spool, true, true, config.record_device_diagnostics));
+        sinks.push_back(make_mcap_metadata_sink(streams, config.mcap_filename, config.record_device_diagnostics));
     auto metadata_sink = sinks.empty() ? nullptr : compose_metadata_sinks(std::move(sinks));
-    return std::make_unique<FrameSink>(streams, std::move(metadata_sink),
-                                       config.mcap_media_mode == McapMediaMode::Sidecar || config.keep_media_sidecars);
+    return std::make_unique<FrameSink>(streams, std::move(metadata_sink));
 }
 
 } // namespace plugins::ego

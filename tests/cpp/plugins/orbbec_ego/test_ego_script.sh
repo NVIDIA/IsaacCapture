@@ -68,7 +68,8 @@ RUN="$TMPDIR_TEST/recording"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN" -- --bitrate=8
 grep -Fx -- "--enable-imu" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--mcap-filename=$RUN/metadata.mcap" "$MOCK_ARGS" >/dev/null
-grep -Fx -- "--mcap-media=sidecar" "$MOCK_ARGS" >/dev/null
+grep -F -- "output=$RUN/raw/ColorLeft.h264" "$MOCK_ARGS" >/dev/null
+grep -F -- "output=$RUN/raw/ColorRight.h264" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-timeout=30" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-interval-ms=1000" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--bitrate=8" "$MOCK_ARGS" >/dev/null
@@ -91,27 +92,6 @@ assert manifest == {
 }
 PY
 
-SIDECAR_RUN="$TMPDIR_TEST/sidecar_recording"
-expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
-    --output "$SIDECAR_RUN" --mcap-media sidecar
-grep -Fx -- "--mcap-media=sidecar" "$MOCK_ARGS" >/dev/null
-grep -F -- "output=$SIDECAR_RUN/raw/ColorLeft.h264" "$MOCK_ARGS" >/dev/null
-grep -F -- "output=$SIDECAR_RUN/raw/ColorRight.h264" "$MOCK_ARGS" >/dev/null
-
-for invalid_mode in metadata-only invalid; do
-    invalid_run="$TMPDIR_TEST/invalid_cli_$invalid_mode"
-    expect_failure_message "--mcap-media must be sidecar or embedded" \
-        "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
-        --output "$invalid_run" --mcap-media "$invalid_mode"
-    [[ ! -e "$invalid_run" ]]
-    for override_mode in sidecar embedded; do
-        expect_failure_message "--mcap-media must be sidecar or embedded" \
-            "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
-            --output "$invalid_run" --mcap-media "$invalid_mode" --mcap-media "$override_mode"
-        [[ ! -e "$invalid_run" ]]
-    done
-done
-
 CONFIG_RUN="$TMPDIR_TEST/config_recording"
 CONFIG_FILE="$TMPDIR_TEST/record.toml"
 cat > "$CONFIG_FILE" <<EOF
@@ -127,8 +107,6 @@ reconnect_timeout = 45
 reconnect_interval_ms = 250
 imu = false
 preview = true
-mcap_media = "embedded"
-keep_media_sidecars = true
 plugin = "$MOCK_PLUGIN"
 plugin_options = ["--bitrate=8", "--dynamic-bitrate=on"]
 EOF
@@ -154,30 +132,6 @@ EOF
 expect_failure "$SCRIPT" record --config "$INVALID_CONFIG"
 expect_failure "$SCRIPT" record --config "$TMPDIR_TEST/missing.toml"
 
-SIDECAR_CONFIG="$TMPDIR_TEST/sidecar.toml"
-SIDECAR_CONFIG_RUN="$TMPDIR_TEST/sidecar_config_recording"
-printf '[record]\nmcap_media = "sidecar"\n' > "$SIDECAR_CONFIG"
-expect_failure "$SCRIPT" record --config "$SIDECAR_CONFIG" --plugin "$MOCK_PLUGIN" \
-    --duration 1 --output "$SIDECAR_CONFIG_RUN"
-grep -Fx -- "--mcap-media=sidecar" "$MOCK_ARGS" >/dev/null
-grep -F -- "output=$SIDECAR_CONFIG_RUN/raw/ColorLeft.h264" "$MOCK_ARGS" >/dev/null
-
-for invalid_mode in metadata-only invalid; do
-    invalid_config="$TMPDIR_TEST/invalid_config_$invalid_mode.toml"
-    printf '[record]\nmcap_media = "%s"\n' "$invalid_mode" > "$invalid_config"
-    for override_mode in none sidecar embedded; do
-        invalid_run="$TMPDIR_TEST/invalid_config_${invalid_mode}_$override_mode"
-        override_args=()
-        if [[ "$override_mode" != none ]]; then
-            override_args=(--mcap-media "$override_mode")
-        fi
-        expect_failure_message "mcap_media must be sidecar or embedded" \
-            "$SCRIPT" record --config "$invalid_config" --plugin "$MOCK_PLUGIN" \
-            --duration 1 --output "$invalid_run" "${override_args[@]}"
-        [[ ! -e "$invalid_run" ]]
-    done
-done
-
 SIGNAL_PLUGIN="$TMPDIR_TEST/signal_plugin"
 cat > "$SIGNAL_PLUGIN" <<'EOF'
 #!/usr/bin/env bash
@@ -199,11 +153,6 @@ set -e
 [[ "$SIGNAL_STATUS" -ne 0 ]]
 grep -F "Capture failed with status 7" <<< "$SIGNAL_OUTPUT" >/dev/null
 
-RUN_EMBEDDED="$TMPDIR_TEST/embedded"
-expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN_EMBEDDED" \
-    --mcap-media sidecar --mcap-media embedded
-grep -Fx -- "--mcap-media=embedded" "$MOCK_ARGS" >/dev/null
-
 PACKAGE_DIR="$TMPDIR_TEST/package/plugins/orbbec_ego_camera"
 MOCK_BIN="$TMPDIR_TEST/bin"
 mkdir -p "$PACKAGE_DIR/extensions" "$MOCK_BIN"
@@ -219,16 +168,7 @@ if [[ "$1" == "--help" ]]; then
 fi
 exit 1
 EOF
-cat > "$PACKAGE_DIR/orbbec_ego_mcap_export_media" <<'EOF'
-#!/usr/bin/env bash
-mkdir -p "$2"
-printf '\0' > "$2/ColorLeft.h264"
-printf '\0' > "$2/ColorRight.h264"
-if [[ -n "${MOCK_EXPORTER_USED:-}" ]]; then
-    printf '%s\n' "$0" > "$MOCK_EXPORTER_USED"
-fi
-EOF
-chmod +x "$PACKAGE_DIR/orbbec_ego_camera_plugin" "$PACKAGE_DIR/orbbec_ego_mcap_export_media"
+chmod +x "$PACKAGE_DIR/orbbec_ego_camera_plugin"
 
 for command_name in python3 ffmpeg ffprobe; do
     cat > "$MOCK_BIN/$command_name" <<'EOF'
@@ -292,59 +232,16 @@ EOF
     fi
 done
 
-PACKAGE_RUN="$TMPDIR_TEST/package_run"
-mkdir -p "$PACKAGE_RUN"
-printf '\0' > "$PACKAGE_RUN/metadata.mcap"
 PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/orbbec_ego.sh" doctor >/dev/null
-PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/orbbec_ego.sh" export-media "$PACKAGE_RUN" >/dev/null
-test -f "$PACKAGE_RUN/exported/ColorLeft.h264"
-expect_failure env PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/orbbec_ego.sh" export-media "$PACKAGE_RUN"
-
-INSTALLED_VERIFY_RUN="$TMPDIR_TEST/installed_verify"
-INSTALLED_EXPORTER_USED="$TMPDIR_TEST/installed_exporter_used"
-mkdir -p "$INSTALLED_VERIFY_RUN"
-printf '\0' > "$INSTALLED_VERIFY_RUN/metadata.mcap"
-expect_failure env PATH="$MOCK_BIN:$PATH" MOCK_EXPORTER_USED="$INSTALLED_EXPORTER_USED" \
-    "$SCRIPT" verify "$INSTALLED_VERIFY_RUN" --media-mode embedded \
-    --plugin "$PACKAGE_DIR/orbbec_ego_camera_plugin"
-grep -Fx "$PACKAGE_DIR/orbbec_ego_mcap_export_media" "$INSTALLED_EXPORTER_USED" >/dev/null
-
-BUILD_PLUGIN_DIR="$TMPDIR_TEST/build/src/plugins/orbbec_ego/app"
-BUILD_EXPORTER_DIR="$TMPDIR_TEST/build/src/plugins/orbbec_ego/mcap/export_media_tool"
-BUILD_VERIFY_RUN="$TMPDIR_TEST/build_verify"
-BUILD_EXPORTER_USED="$TMPDIR_TEST/build_exporter_used"
-mkdir -p "$BUILD_PLUGIN_DIR" "$BUILD_EXPORTER_DIR" "$BUILD_VERIFY_RUN"
-cp "$PACKAGE_DIR/orbbec_ego_camera_plugin" "$BUILD_PLUGIN_DIR/orbbec_ego_camera_plugin"
-cp "$PACKAGE_DIR/orbbec_ego_mcap_export_media" "$BUILD_EXPORTER_DIR/orbbec_ego_mcap_export_media"
-printf '\0' > "$BUILD_VERIFY_RUN/metadata.mcap"
-expect_failure env PATH="$MOCK_BIN:$PATH" MOCK_EXPORTER_USED="$BUILD_EXPORTER_USED" \
-    "$SCRIPT" verify "$BUILD_VERIFY_RUN" --media-mode embedded \
-    --plugin "$BUILD_PLUGIN_DIR/orbbec_ego_camera_plugin"
-grep -Fx "$BUILD_EXPORTER_DIR/orbbec_ego_mcap_export_media" "$BUILD_EXPORTER_USED" >/dev/null
-
-MISSING_PLUGIN_DIR="$TMPDIR_TEST/missing_build/src/plugins/orbbec_ego/app"
-MISSING_VERIFY_RUN="$TMPDIR_TEST/missing_build_verify"
-mkdir -p "$MISSING_PLUGIN_DIR" "$MISSING_VERIFY_RUN"
-cp "$PACKAGE_DIR/orbbec_ego_camera_plugin" "$MISSING_PLUGIN_DIR/orbbec_ego_camera_plugin"
-printf '\0' > "$MISSING_VERIFY_RUN/metadata.mcap"
-set +e
-MISSING_EXPORTER_OUTPUT="$(PATH="$MOCK_BIN:$PATH" "$SCRIPT" verify "$MISSING_VERIFY_RUN" \
-    --media-mode embedded --plugin "$MISSING_PLUGIN_DIR/orbbec_ego_camera_plugin" 2>&1)"
-MISSING_EXPORTER_STATUS=$?
-set -e
-[[ "$MISSING_EXPORTER_STATUS" -ne 0 && "$MISSING_EXPORTER_STATUS" -ne 127 ]]
-grep -F "No embedded-media exporter exists beside plugin or in its build tree" \
-    <<< "$MISSING_EXPORTER_OUTPUT" >/dev/null
 
 PARTIAL_RUN="$TMPDIR_TEST/partial_run"
 mkdir -p "$PARTIAL_RUN"
 printf '\0' > "$PARTIAL_RUN/metadata.mcap"
-touch "$PARTIAL_RUN/ego_media_fragment.mcap.partial"
+touch "$PARTIAL_RUN/metadata.mcap.partial"
 expect_failure "$SCRIPT" verify "$PARTIAL_RUN"
 
 VERIFY_BIN="$TMPDIR_TEST/verify_bin"
 VERIFY_RUN="$TMPDIR_TEST/verify_with_sidecars"
-VERIFY_EXPORTER_USED="$TMPDIR_TEST/verify_sidecar_exporter_used"
 VERIFY_FFMPEG_ARGS="$TMPDIR_TEST/verify_ffmpeg_args"
 mkdir -p "$VERIFY_BIN" "$VERIFY_RUN/raw" "$VERIFY_RUN/logs"
 cp "$MOCK_BIN/python3" "$VERIFY_BIN/"
@@ -376,21 +273,15 @@ printf '%s\n' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
     '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
     > "$VERIFY_RUN/logs/capture.log"
-PATH="$VERIFY_BIN:$PATH" MOCK_EXPORTER_USED="$VERIFY_EXPORTER_USED" \
-    VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" \
-    "$SCRIPT" verify "$VERIFY_RUN" --media-mode embedded \
-    --plugin "$PACKAGE_DIR/orbbec_ego_camera_plugin" >/dev/null 2>&1
-grep -Fx "$PACKAGE_DIR/orbbec_ego_mcap_export_media" "$VERIFY_EXPORTER_USED" >/dev/null
-test -z "$(find "$VERIFY_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)"
+PATH="$VERIFY_BIN:$PATH" VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" \
+    "$SCRIPT" verify "$VERIFY_RUN" >/dev/null 2>&1
 VERIFY_ZERO_ERROR_RUN="$TMPDIR_TEST/verify_zero_exit_error"
 cp -r "$VERIFY_RUN" "$VERIFY_ZERO_ERROR_RUN"
-expect_failure env PATH="$VERIFY_BIN:$PATH" MOCK_EXPORTER_USED="$VERIFY_EXPORTER_USED" \
+expect_failure env PATH="$VERIFY_BIN:$PATH" \
     VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" VERIFY_ZERO_EXIT_ERROR=1 \
-    "$SCRIPT" verify "$VERIFY_ZERO_ERROR_RUN" --media-mode embedded \
-    --plugin "$PACKAGE_DIR/orbbec_ego_camera_plugin"
+    "$SCRIPT" verify "$VERIFY_ZERO_ERROR_RUN"
 [[ ! -e "$VERIFY_ZERO_ERROR_RUN/verification_report.txt" ]]
 grep -F 'decoder error with a zero exit status' "$VERIFY_ZERO_ERROR_RUN/verification_report.failed.txt" >/dev/null
-[[ -z "$(find "$VERIFY_ZERO_ERROR_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)" ]]
 test -s "$VERIFY_RUN/verification_report.txt"
 grep -F "Verification passed:" "$VERIFY_RUN/verification_report.txt" >/dev/null
 grep -E '^ColorLeft SHA-256: [0-9a-f]{64}$' "$VERIFY_RUN/verification_report.txt" >/dev/null
@@ -400,8 +291,8 @@ grep -Fx -- "-err_detect" "$VERIFY_FFMPEG_ARGS" >/dev/null
 grep -Fx -- "explode" "$VERIFY_FFMPEG_ARGS" >/dev/null
 
 VERIFY_FAIL_BIN="$TMPDIR_TEST/verify_fail_bin"
-VERIFY_FAIL_RUN="$TMPDIR_TEST/verify_export_cleanup"
-mkdir -p "$VERIFY_FAIL_BIN" "$VERIFY_FAIL_RUN/logs"
+VERIFY_FAIL_RUN="$TMPDIR_TEST/verify_decode_failure"
+mkdir -p "$VERIFY_FAIL_BIN" "$VERIFY_FAIL_RUN/raw" "$VERIFY_FAIL_RUN/logs"
 cp "$MOCK_BIN/python3" "$VERIFY_BIN/ffprobe" "$VERIFY_FAIL_BIN/"
 cat > "$VERIFY_FAIL_BIN/ffmpeg" <<'EOF'
 #!/usr/bin/env bash
@@ -409,15 +300,15 @@ exit 9
 EOF
 chmod +x "$VERIFY_FAIL_BIN/ffmpeg"
 printf '\0' > "$VERIFY_FAIL_RUN/metadata.mcap"
+printf '\0' > "$VERIFY_FAIL_RUN/raw/ColorLeft.h264"
+printf '\0' > "$VERIFY_FAIL_RUN/raw/ColorRight.h264"
 printf '%s\n' \
     '  ColorLeft: 1 frames, 1 bytes, 0 sequence gaps' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
     '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
     > "$VERIFY_FAIL_RUN/logs/capture.log"
 expect_failure env PATH="$VERIFY_FAIL_BIN:$PATH" \
-    "$SCRIPT" verify "$VERIFY_FAIL_RUN" --media-mode embedded \
-    --plugin "$PACKAGE_DIR/orbbec_ego_camera_plugin"
-test -z "$(find "$VERIFY_FAIL_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)"
+    "$SCRIPT" verify "$VERIFY_FAIL_RUN"
 test -s "$VERIFY_FAIL_RUN/verification_report.failed.txt"
 
 VERIFY_HASH_FAIL_BIN="$TMPDIR_TEST/verify_hash_fail_bin"
@@ -432,11 +323,9 @@ exit 7
 EOF
 chmod +x "$VERIFY_HASH_FAIL_BIN/sha256sum"
 expect_failure env PATH="$VERIFY_HASH_FAIL_BIN:$PATH" VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" \
-    "$SCRIPT" verify "$VERIFY_HASH_FAIL_RUN" --media-mode embedded \
-    --plugin "$PACKAGE_DIR/orbbec_ego_camera_plugin"
+    "$SCRIPT" verify "$VERIFY_HASH_FAIL_RUN"
 grep -F "Could not hash" "$VERIFY_HASH_FAIL_RUN/verification_report.failed.txt" >/dev/null
 [[ ! -e "$VERIFY_HASH_FAIL_RUN/verification_report.txt" ]]
-[[ -z "$(find "$VERIFY_HASH_FAIL_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)" ]]
 
 AUX_MCAP_MODULES="$TMPDIR_TEST/aux_mcap_modules"
 AUX_VERIFY_BIN="$TMPDIR_TEST/aux_verify_bin"
@@ -608,7 +497,6 @@ class _Reader:
     def iter_messages(self, log_time_order=False):
         del log_time_order
         scenario = self.fixture["scenario"]
-        mode = self.fixture["mode"]
         base = 1_000_000_000
         video_period = 16_666_667 if scenario == "bad_video_cadence" else 33_333_333
         video_fps = 60 if scenario == "bad_video_profile" else 30
@@ -623,13 +511,6 @@ class _Reader:
             yield from self._message(
                 "orbbec_ego_metadata_colorright/FrameMetadata", _video(sequence, timestamp, capture_epoch, video_fps), log_time
             )
-            if mode == "embedded":
-                yield from self._message(
-                    "orbbec_ego_media/ColorLeft", _video(sequence, timestamp, capture_epoch, video_fps), log_time
-                )
-                yield from self._message(
-                    "orbbec_ego_media/ColorRight", _video(sequence, timestamp, capture_epoch, video_fps), log_time
-                )
         yield from self._message("orbbec_ego_calibration/Calibration", _calibration(scenario), base)
         if scenario == "reconnect":
             yield from self._message("orbbec_ego_calibration/Calibration", _calibration(scenario, 1), base + 1)
@@ -687,9 +568,8 @@ chmod +x "$AUX_VERIFY_BIN/ffmpeg" "$AUX_VERIFY_BIN/ffprobe"
 make_aux_verify_run() {
     local run_dir="$1"
     local scenario="$2"
-    local mode="$3"
     mkdir -p "$run_dir/raw" "$run_dir/logs"
-    printf '{"scenario":"%s","mode":"%s"}\n' "$scenario" "$mode" > "$run_dir/metadata.mcap"
+    printf '{"scenario":"%s"}\n' "$scenario" > "$run_dir/metadata.mcap"
     printf '\0' > "$run_dir/raw/ColorLeft.h264"
     printf '\0' > "$run_dir/raw/ColorRight.h264"
     PYTHONPATH="$AUX_MCAP_MODULES" python3 - "$run_dir/calibration.json" "$scenario" <<'PY'
@@ -711,44 +591,16 @@ EOF
 }
 
 AUX_VALID_RUN="$TMPDIR_TEST/aux_valid"
-make_aux_verify_run "$AUX_VALID_RUN" valid sidecar
-DETECTED_MODE="$(PYTHONPATH="$AUX_MCAP_MODULES" python3 \
-    "$(dirname "$SCRIPT")/tools/detect_media_mode.py" "$AUX_VALID_RUN/metadata.mcap")"
-[[ "$DETECTED_MODE" == sidecar ]]
-AUX_EMBEDDED_RUN="$TMPDIR_TEST/aux_embedded"
-make_aux_verify_run "$AUX_EMBEDDED_RUN" valid embedded
-DETECTED_MODE="$(PYTHONPATH="$AUX_MCAP_MODULES" python3 \
-    "$(dirname "$SCRIPT")/tools/detect_media_mode.py" "$AUX_EMBEDDED_RUN/metadata.mcap")"
-[[ "$DETECTED_MODE" == embedded ]]
-
-for invalid_mode in metadata-only invalid; do
-    expect_failure_message "Unknown MCAP media mode '$invalid_mode'" \
-        env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-        "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode "$invalid_mode"
-    for override_mode in sidecar embedded; do
-        expect_failure_message "Unknown MCAP media mode '$invalid_mode'" \
-            env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-            "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode "$invalid_mode" --media-mode "$override_mode"
-    done
-    expect_failure_message "MCAP media mode must be sidecar or embedded" \
-        env PYTHONPATH="$AUX_MCAP_MODULES" python3 \
-        "$(dirname "$SCRIPT")/tools/verify_sensor_topics.py" \
-        "$TMPDIR_TEST/missing.mcap" "$invalid_mode"
-    expect_failure_message "MCAP media mode must be sidecar or embedded" \
-        env PYTHONPATH="$AUX_MCAP_MODULES" python3 \
-        "$(dirname "$SCRIPT")/tools/verify_video_timing.py" \
-        "$TMPDIR_TEST/missing.mcap" "$invalid_mode" 31 31 \
-        "$TMPDIR_TEST/missing_profile.json"
-done
+make_aux_verify_run "$AUX_VALID_RUN" valid
 
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode sidecar --expect-imu \
+    "$SCRIPT" verify "$AUX_VALID_RUN" --expect-imu \
     >/dev/null 2>&1
 grep -F 'raw_device_fps=30.000' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
 grep -F 'ffprobe_rate): h264,1600,1300,60/1' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
 
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_VALID_RUN" --media-mode sidecar --require-calibration --expect-imu \
+    "$SCRIPT" verify "$AUX_VALID_RUN" --require-calibration --expect-imu \
     >/dev/null 2>&1
 grep -F 'Required structured calibration: OK' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
 grep -F 'Calibration JSON matches' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
@@ -756,20 +608,20 @@ for scenario in calibration_missing calibration_bad_rotation calibration_reflect
         calibration_bad_translation calibration_nonfinite calibration_bad_dimensions \
         calibration_bad_focal calibration_missing_epoch; do
     run="$TMPDIR_TEST/$scenario"
-    make_aux_verify_run "$run" "$scenario" sidecar
+    make_aux_verify_run "$run" "$scenario"
     expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-        "$SCRIPT" verify "$run" --media-mode sidecar --require-calibration
+        "$SCRIPT" verify "$run" --require-calibration
     grep -F 'Calibration' "$run/verification_report.failed.txt" >/dev/null
 done
 CALIBRATION_OPTIONAL_RUN="$TMPDIR_TEST/calibration_missing"
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$CALIBRATION_OPTIONAL_RUN" --media-mode sidecar >/dev/null 2>&1
+    "$SCRIPT" verify "$CALIBRATION_OPTIONAL_RUN" >/dev/null 2>&1
 grep -F 'missing=gyro_to_left' "$CALIBRATION_OPTIONAL_RUN/verification_report.txt" >/dev/null
 CALIBRATION_JSON_RUN="$TMPDIR_TEST/calibration_json_mismatch"
-make_aux_verify_run "$CALIBRATION_JSON_RUN" valid sidecar
+make_aux_verify_run "$CALIBRATION_JSON_RUN" valid
 sed -i 's/500.25/999.25/' "$CALIBRATION_JSON_RUN/calibration.json"
 expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$CALIBRATION_JSON_RUN" --media-mode sidecar --require-calibration
+    "$SCRIPT" verify "$CALIBRATION_JSON_RUN" --require-calibration
 grep -F 'calibration JSON.color_left.fx differs' "$CALIBRATION_JSON_RUN/verification_report.failed.txt" >/dev/null
 
 FINALIZE_PLUGIN="$TMPDIR_TEST/finalize_plugin"
@@ -945,9 +797,9 @@ PY
 
 for scenario in bad_video_profile bad_video_cadence; do
     run="$TMPDIR_TEST/$scenario"
-    make_aux_verify_run "$run" "$scenario" sidecar
+    make_aux_verify_run "$run" "$scenario"
     expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-        "$SCRIPT" verify "$run" --media-mode sidecar
+        "$SCRIPT" verify "$run"
     if [[ "$scenario" == bad_video_profile ]]; then
         grep -F 'differs from requested' "$run/verification_report.failed.txt" >/dev/null
     else
@@ -962,31 +814,31 @@ expect_failure python3 "$(dirname "$SCRIPT")/tools/verify_profile.py" \
     "$AUX_VALID_RUN/requested_profile.json" hevc,1600,1300,60/1 h264,1600,1300,60/1
 
 AUX_RECONNECT_RUN="$TMPDIR_TEST/aux_reconnect"
-make_aux_verify_run "$AUX_RECONNECT_RUN" reconnect sidecar
+make_aux_verify_run "$AUX_RECONNECT_RUN" reconnect
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_RECONNECT_RUN" --media-mode sidecar >/dev/null 2>&1
+    "$SCRIPT" verify "$AUX_RECONNECT_RUN" >/dev/null 2>&1
 
 AUX_EMPTY_IMU_RUN="$TMPDIR_TEST/aux_empty_imu"
-make_aux_verify_run "$AUX_EMPTY_IMU_RUN" empty_imu sidecar
+make_aux_verify_run "$AUX_EMPTY_IMU_RUN" empty_imu
 set +e
 AUX_EMPTY_IMU_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_EMPTY_IMU_RUN" --media-mode sidecar --expect-imu 2>&1)"
+    "$SCRIPT" verify "$AUX_EMPTY_IMU_RUN" --expect-imu 2>&1)"
 AUX_EMPTY_IMU_STATUS=$?
 set -e
 [[ "$AUX_EMPTY_IMU_STATUS" -ne 0 ]]
 grep -F "contains an empty IMU batch" <<< "$AUX_EMPTY_IMU_OUTPUT" >/dev/null
 
 AUX_BAD_IMU_CADENCE_RUN="$TMPDIR_TEST/aux_bad_imu_cadence"
-make_aux_verify_run "$AUX_BAD_IMU_CADENCE_RUN" bad_imu_cadence sidecar
+make_aux_verify_run "$AUX_BAD_IMU_CADENCE_RUN" bad_imu_cadence
 set +e
 AUX_BAD_IMU_CADENCE_OUTPUT="$(PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$AUX_BAD_IMU_CADENCE_RUN" --media-mode sidecar --expect-imu 2>&1)"
+    "$SCRIPT" verify "$AUX_BAD_IMU_CADENCE_RUN" --expect-imu 2>&1)"
 AUX_BAD_IMU_CADENCE_STATUS=$?
 set -e
 [[ "$AUX_BAD_IMU_CADENCE_STATUS" -ne 0 ]]
 grep -F "raw-device cadence is 500.000 Hz" <<< "$AUX_BAD_IMU_CADENCE_OUTPUT" >/dev/null
 
-rm "$PACKAGE_DIR/orbbec_ego_mcap_export_media"
+rm "$PACKAGE_DIR/OrbbecSDKConfig.xml"
 expect_failure env PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/orbbec_ego.sh" doctor
 
 DIAGNOSTIC_RUN="$TMPDIR_TEST/diagnostic_off"

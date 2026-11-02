@@ -13,6 +13,6 @@ if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
 
-if(BUILD_PLUGIN_ORBBEC_EGO_CAMERA OR BUILD_ORBBEC_EGO_MEDIA_TOOLS)
+if(BUILD_PLUGIN_ORBBEC_EGO_CAMERA)
     add_subdirectory(orbbec_ego)
 endif()

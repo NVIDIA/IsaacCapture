@@ -25,7 +25,6 @@ scalar_options = {
     "device_uid": (str, "--device-uid"),
     "reconnect_timeout": (int, "--reconnect-timeout"),
     "reconnect_interval_ms": (int, "--reconnect-interval-ms"),
-    "mcap_media": (str, "--mcap-media"),
     "preset": (str, "--preset"),
     "plugin": (str, "--plugin"),
 }
@@ -36,7 +35,6 @@ boolean_options = {
     ),
     "imu": ("--imu", "--no-imu"),
     "preview": ("--preview", "--no-preview"),
-    "keep_media_sidecars": ("--keep-media-sidecars", "--no-keep-media-sidecars"),
 }
 allowed = set(scalar_options) | set(boolean_options) | {"plugin_options"}
 unknown = sorted(set(record) - allowed)
@@ -54,8 +52,6 @@ for name, (expected_type, option) in scalar_options.items():
         raise SystemExit(
             f"{path}: record.{name} must be a non-empty single-line string"
         )
-    if name == "mcap_media" and value not in ("sidecar", "embedded"):
-        raise SystemExit(f"{path}: record.mcap_media must be sidecar or embedded")
     arguments.extend((option, str(value)))
 
 for name, (enabled, disabled) in boolean_options.items():

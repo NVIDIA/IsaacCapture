@@ -3,8 +3,7 @@
 
 """Replay all structured EGO trackers from a recorded MCAP file.
 
-Pass the ``metadata.mcap`` produced by ``orbbec_ego.sh record``, or the
-final archive produced by ``isaaccapture_examples.orbbec_ego.embedded_recording``.
+Pass the ``metadata.mcap`` produced by ``orbbec_ego.sh record``.
 """
 
 import argparse

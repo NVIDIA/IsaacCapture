@@ -45,23 +45,19 @@ void validate_resolved_stream_config(const StreamConfig& stream, uint32_t resolv
 class FrameSink::Impl
 {
 public:
-    Impl(const std::vector<StreamConfig>& streams, std::unique_ptr<IMetadataSink> metadata_sink, bool write_media_sidecars)
+    Impl(const std::vector<StreamConfig>& streams, std::unique_ptr<IMetadataSink> metadata_sink)
         : metadata_sink_(std::move(metadata_sink))
     {
         for (const auto& stream : streams)
         {
-            std::unique_ptr<std::ofstream> file;
-            if (write_media_sidecars)
-            {
-                const std::filesystem::path output(stream.output_path);
-                if (!output.parent_path().empty())
-                    std::filesystem::create_directories(output.parent_path());
-                file = std::make_unique<std::ofstream>(stream.output_path, std::ios::binary | std::ios::trunc);
-                if (!*file)
-                    throw std::runtime_error("Unable to open encoded output: " + stream.output_path);
-                detail::log_info() << "Add stream: " << core::EnumNameOrbbecEgoCameraStream(stream.camera) << " -> "
-                                   << stream.output_path << std::endl;
-            }
+            const std::filesystem::path output(stream.output_path);
+            if (!output.parent_path().empty())
+                std::filesystem::create_directories(output.parent_path());
+            auto file = std::make_unique<std::ofstream>(stream.output_path, std::ios::binary | std::ios::trunc);
+            if (!*file)
+                throw std::runtime_error("Unable to open encoded output: " + stream.output_path);
+            detail::log_info() << "Add stream: " << core::EnumNameOrbbecEgoCameraStream(stream.camera) << " -> "
+                               << stream.output_path << std::endl;
             writers_.emplace(stream.camera, Writer{ std::move(file), stream.pixel_format });
         }
     }
@@ -80,13 +76,10 @@ public:
         if (encoded_data.empty() || !it->second.accept(encoded_data, sequence_gap))
             return;
 
-        if (it->second.file)
-        {
-            it->second.file->write(
-                reinterpret_cast<const char*>(encoded_data.data()), static_cast<std::streamsize>(encoded_data.size()));
-            if (!*it->second.file)
-                throw std::runtime_error("Failed while writing Ego encoded data");
-        }
+        it->second.file->write(
+            reinterpret_cast<const char*>(encoded_data.data()), static_cast<std::streamsize>(encoded_data.size()));
+        if (!*it->second.file)
+            throw std::runtime_error("Failed while writing Ego encoded data");
 
         if (!metadata_sink_ && !accepted_frame)
             return;
@@ -94,10 +87,7 @@ public:
                                 frame.sample_time_raw_device_clock_ns };
         recorded.metadata.encoded_bytes = recorded.encoded_data.size();
         if (metadata_sink_)
-        {
             metadata_sink_->on_frame_metadata(recorded);
-            metadata_sink_->on_encoded_video_frame(recorded);
-        }
         if (accepted_frame)
             accepted_frame(recorded);
     }
@@ -120,7 +110,7 @@ public:
         std::string failures;
         for (auto& [stream, writer] : writers_)
         {
-            if (!writer.file || !writer.file->is_open())
+            if (!writer.file->is_open())
                 continue;
             writer.file->flush();
             bool failed = !*writer.file;
@@ -332,10 +322,8 @@ private:
     bool media_failed_ = false;
 };
 
-FrameSink::FrameSink(const std::vector<StreamConfig>& streams,
-                     std::unique_ptr<IMetadataSink> metadata_sink,
-                     bool write_media_sidecars)
-    : impl_(std::make_unique<Impl>(streams, std::move(metadata_sink), write_media_sidecars))
+FrameSink::FrameSink(const std::vector<StreamConfig>& streams, std::unique_ptr<IMetadataSink> metadata_sink)
+    : impl_(std::make_unique<Impl>(streams, std::move(metadata_sink)))
 {
 }
 

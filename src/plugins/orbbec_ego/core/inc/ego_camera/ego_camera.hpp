@@ -29,12 +29,6 @@ struct StreamConfig
     uint32_t fps = 0;
 };
 
-enum class McapMediaMode
-{
-    Sidecar,
-    Embedded,
-};
-
 struct PropertySetting
 {
     std::string name;
@@ -70,9 +64,6 @@ struct CaptureConfig
     std::string plugin_root_id;
     bool record_device_diagnostics = true;
     std::string mcap_filename;
-    std::string mcap_media_spool;
-    McapMediaMode mcap_media_mode = McapMediaMode::Sidecar;
-    bool keep_media_sidecars = false;
     std::string calibration_output;
     std::vector<PropertySetting> properties;
     bool persist_controls = false;
@@ -122,9 +113,6 @@ public:
     virtual void on_imu_batch(const core::OrbbecEgoImuBatchT&, int64_t, int64_t)
     {
     }
-    virtual void on_encoded_video_frame(const CapturedFrame&)
-    {
-    }
     virtual void on_calibration(const core::OrbbecEgoCalibrationT&, int64_t, int64_t)
     {
     }
@@ -156,9 +144,7 @@ std::unique_ptr<IMetadataSink> compose_metadata_sinks(std::vector<std::unique_pt
 class FrameSink
 {
 public:
-    FrameSink(const std::vector<StreamConfig>& streams,
-              std::unique_ptr<IMetadataSink> metadata_sink = nullptr,
-              bool write_media_sidecars = true);
+    FrameSink(const std::vector<StreamConfig>& streams, std::unique_ptr<IMetadataSink> metadata_sink = nullptr);
     ~FrameSink();
 
     FrameSink(const FrameSink&) = delete;

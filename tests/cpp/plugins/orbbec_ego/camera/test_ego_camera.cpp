@@ -43,19 +43,6 @@ public:
     std::vector<plugins::ego::CapturedFrame> frames;
 };
 
-class RecordingMediaSink final : public plugins::ego::IMetadataSink
-{
-public:
-    void on_frame_metadata(const plugins::ego::CapturedFrame&) override
-    {
-    }
-    void on_encoded_video_frame(const plugins::ego::CapturedFrame& frame) override
-    {
-        frames.push_back(frame);
-    }
-    std::vector<plugins::ego::CapturedFrame> frames;
-};
-
 void append_nal(std::vector<uint8_t>& bytes, std::initializer_list<uint8_t> header, const std::string& payload = {})
 {
     bytes.insert(bytes.end(), { 0, 0, 0, 1 });
@@ -376,23 +363,6 @@ TEST_CASE("EGO FrameSink preserves H264 and H265 elementary stream bytes", "[ego
     }
 }
 
-TEST_CASE("EGO embedded FrameSink does not require sidecar paths", "[ego][writer][mcap]")
-{
-    auto media_sink = std::make_unique<RecordingMediaSink>();
-    auto* media_sink_ptr = media_sink.get();
-    plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, "" };
-    stream.pixel_format = core::OrbbecEgoPixelFormat_H264;
-    plugins::ego::FrameSink sink({ stream }, std::move(media_sink), false);
-    plugins::ego::CapturedFrame frame;
-    frame.metadata.stream = stream.camera;
-    frame.metadata.pixel_format = stream.pixel_format;
-    frame.metadata.sequence_number = 1;
-    frame.encoded_data = { 0, 0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 1, 0, 0, 0, 1, 0x65, 1 };
-    sink.on_frame(frame);
-    REQUIRE(media_sink_ptr->frames.size() == 1);
-    CHECK(media_sink_ptr->frames.front().metadata.encoded_bytes == frame.encoded_data.size());
-}
-
 TEST_CASE("EGO stream validation delegates encoded FPS support to SDK profile selection", "[ego][profile]")
 {
     plugins::ego::CaptureConfig capture;
@@ -525,20 +495,20 @@ TEST_CASE("EGO FrameSink removes legacy and firmware 1.1.1 timestamp SEI", "[ego
                 append_sei(encoded, format, timestamp_payloads[index], true);
 
             {
-                auto media_sink = std::make_unique<RecordingMediaSink>();
-                auto* media_sink_ptr = media_sink.get();
+                auto metadata_sink = std::make_unique<RecordingMetadataSink>();
+                auto* metadata_sink_ptr = metadata_sink.get();
                 plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, output.string() };
                 stream.pixel_format = format;
-                plugins::ego::FrameSink sink({ stream }, std::move(media_sink));
+                plugins::ego::FrameSink sink({ stream }, std::move(metadata_sink));
                 plugins::ego::CapturedFrame frame;
                 frame.metadata.stream = stream.camera;
                 frame.metadata.pixel_format = stream.pixel_format;
                 frame.metadata.sequence_number = 1;
                 frame.encoded_data = std::move(encoded);
                 sink.on_frame(frame);
-                REQUIRE(media_sink_ptr->frames.size() == 1);
-                CHECK(media_sink_ptr->frames.front().encoded_data == expected);
-                CHECK(media_sink_ptr->frames.front().metadata.encoded_bytes == expected.size());
+                REQUIRE(metadata_sink_ptr->frames.size() == 1);
+                CHECK(metadata_sink_ptr->frames.front().encoded_data == expected);
+                CHECK(metadata_sink_ptr->frames.front().metadata.encoded_bytes == expected.size());
             }
 
             REQUIRE(read_bytes(output) == expected);
@@ -570,19 +540,19 @@ TEST_CASE("EGO FrameSink preserves non-timestamp H264 and H265 SEI", "[ego][writ
             append_sei(encoded, format, ordinary_payloads.front(), true);
 
         {
-            auto media_sink = std::make_unique<RecordingMediaSink>();
-            auto* media_sink_ptr = media_sink.get();
+            auto metadata_sink = std::make_unique<RecordingMetadataSink>();
+            auto* metadata_sink_ptr = metadata_sink.get();
             plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, output.string() };
             stream.pixel_format = format;
-            plugins::ego::FrameSink sink({ stream }, std::move(media_sink));
+            plugins::ego::FrameSink sink({ stream }, std::move(metadata_sink));
             plugins::ego::CapturedFrame frame;
             frame.metadata.stream = stream.camera;
             frame.metadata.pixel_format = stream.pixel_format;
             frame.metadata.sequence_number = 1;
             frame.encoded_data = encoded;
             sink.on_frame(frame);
-            REQUIRE(media_sink_ptr->frames.size() == 1);
-            CHECK(media_sink_ptr->frames.front().encoded_data == encoded);
+            REQUIRE(metadata_sink_ptr->frames.size() == 1);
+            CHECK(metadata_sink_ptr->frames.front().encoded_data == encoded);
         }
 
         REQUIRE(read_bytes(output) == encoded);
@@ -594,16 +564,20 @@ TEST_CASE("EGO FrameSink observers share the canonical recording gate", "[ego][w
 {
     for (const auto format : { core::OrbbecEgoPixelFormat_H264, core::OrbbecEgoPixelFormat_H265 })
     {
-        plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, "" };
+        const auto output = std::filesystem::temp_directory_path() /
+                            (std::string("isaacteleop_ego_observer_") + std::to_string(static_cast<int>(format)));
+        std::filesystem::remove(output);
+        plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, output.string() };
         stream.pixel_format = format;
-        auto media = std::make_unique<RecordingMediaSink>();
-        auto* media_ptr = media.get();
-        plugins::ego::FrameSink sink({ stream }, std::move(media), false);
+        auto metadata = std::make_unique<RecordingMetadataSink>();
+        auto* metadata_ptr = metadata.get();
+        auto sink = std::make_unique<plugins::ego::FrameSink>(
+            std::vector<plugins::ego::StreamConfig>{ stream }, std::move(metadata));
         std::vector<plugins::ego::CapturedFrame> observed;
         const auto observe = [&](const plugins::ego::CapturedFrame& accepted)
         {
-            REQUIRE(!media_ptr->frames.empty());
-            CHECK(accepted.encoded_data == media_ptr->frames.back().encoded_data);
+            REQUIRE(!metadata_ptr->frames.empty());
+            CHECK(accepted.encoded_data == metadata_ptr->frames.back().encoded_data);
             CHECK(accepted.metadata.encoded_bytes == accepted.encoded_data.size());
             CHECK(accepted.sample_time_local_common_clock_ns == 100);
             CHECK(accepted.sample_time_raw_device_clock_ns == 200);
@@ -627,70 +601,77 @@ TEST_CASE("EGO FrameSink observers share the canonical recording gate", "[ego][w
         frame.sample_time_local_common_clock_ns = 100;
         frame.sample_time_raw_device_clock_ns = 200;
         frame.encoded_data = predicted;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         CHECK(observed.empty());
 
         frame.metadata.sequence_number = 1;
         frame.encoded_data = raw_idr;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         REQUIRE(observed.size() == 1);
         CHECK(observed.back().encoded_data == canonical_idr);
         CHECK(frame.encoded_data == raw_idr);
 
         frame.metadata.sequence_number = 2;
         frame.encoded_data = timestamp_only;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         CHECK(observed.size() == 1);
         frame.metadata.sequence_number = 3;
         frame.encoded_data = predicted;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         REQUIRE(observed.size() == 2);
         CHECK(observed.back().encoded_data == predicted);
 
         frame.metadata.sequence_number = 5;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         frame.metadata.sequence_number = 6;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         CHECK(observed.size() == 2);
         frame.metadata.sequence_number = 7;
         frame.encoded_data = raw_idr;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         REQUIRE(observed.size() == 3);
         CHECK(observed.back().metadata.sequence_number == 7);
 
-        sink.begin_capture_epoch();
+        sink->begin_capture_epoch();
         frame.metadata.capture_epoch = 8;
         frame.metadata.sequence_number = 0;
         frame.encoded_data = predicted;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         CHECK(observed.size() == 3);
         frame.metadata.sequence_number = 1;
         frame.encoded_data = raw_idr;
-        sink.on_frame(frame, observe);
+        sink->on_frame(frame, observe);
         REQUIRE(observed.size() == 4);
         CHECK(observed.back().metadata.capture_epoch == 8);
         CHECK(observed.back().encoded_data == canonical_idr);
-        CHECK(media_ptr->frames.size() == observed.size());
+        CHECK(metadata_ptr->frames.size() == observed.size());
+        sink.reset();
+        std::filesystem::remove(output);
     }
 }
 
 TEST_CASE("EGO FrameSink observers work without a metadata sink", "[ego][writer][preview]")
 {
-    plugins::ego::FrameSink sink({ { core::OrbbecEgoCameraStream_ColorLeft, "" } }, nullptr, false);
-    plugins::ego::CapturedFrame frame;
-    frame.metadata.stream = core::OrbbecEgoCameraStream_ColorLeft;
-    frame.metadata.sequence_number = 42;
-    frame.encoded_data = { 0xff, 0xd8, 0xff, 0xd9 };
+    const auto output = std::filesystem::temp_directory_path() / "isaacteleop_ego_observer_no_metadata.mjpg";
+    std::filesystem::remove(output);
     size_t observations = 0;
-    sink.on_frame(frame,
-                  [&](const plugins::ego::CapturedFrame& accepted)
-                  {
-                      ++observations;
-                      CHECK(accepted.metadata.sequence_number == 42);
-                      CHECK(accepted.metadata.encoded_bytes == 4);
-                      CHECK(accepted.encoded_data == frame.encoded_data);
-                  });
+    {
+        plugins::ego::FrameSink sink({ { core::OrbbecEgoCameraStream_ColorLeft, output.string() } });
+        plugins::ego::CapturedFrame frame;
+        frame.metadata.stream = core::OrbbecEgoCameraStream_ColorLeft;
+        frame.metadata.sequence_number = 42;
+        frame.encoded_data = { 0xff, 0xd8, 0xff, 0xd9 };
+        sink.on_frame(frame,
+                      [&](const plugins::ego::CapturedFrame& accepted)
+                      {
+                          ++observations;
+                          CHECK(accepted.metadata.sequence_number == 42);
+                          CHECK(accepted.metadata.encoded_bytes == 4);
+                          CHECK(accepted.encoded_data == frame.encoded_data);
+                      });
+    }
     CHECK(observations == 1);
+    std::filesystem::remove(output);
 }
 
 TEST_CASE("EGO local MCAP and SchemaPusher modes are mutually exclusive", "[ego][cli][mcap]")
@@ -706,15 +687,12 @@ TEST_CASE("EGO local MCAP is promoted only by an explicit successful close", "[e
     const auto base = std::filesystem::temp_directory_path() / "isaacteleop_ego_shutdown_test.mcap";
     const auto partial = std::filesystem::path(base.string() + ".partial");
     plugins::ego::CaptureConfig config;
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
-    plugins::ego::StreamConfig stream{ core::OrbbecEgoCameraStream_ColorLeft, "" };
-    stream.pixel_format = core::OrbbecEgoPixelFormat_H264;
 
     std::filesystem::remove(base);
     std::filesystem::remove(partial);
     config.mcap_filename = base.string();
     {
-        auto sink = plugins::ego::create_frame_sink({ stream }, config);
+        auto sink = plugins::ego::create_frame_sink({}, config);
         sink->abort_metadata();
     }
     CHECK_FALSE(std::filesystem::exists(base));
@@ -722,7 +700,7 @@ TEST_CASE("EGO local MCAP is promoted only by an explicit successful close", "[e
     std::filesystem::remove(partial);
 
     {
-        auto sink = plugins::ego::create_frame_sink({ stream }, config);
+        auto sink = plugins::ego::create_frame_sink({}, config);
         CHECK_THROWS(sink->commit_metadata());
         sink->close_media();
         sink->close_metadata();
@@ -813,8 +791,7 @@ TEST_CASE("EGO abort after sealing cannot promote a readable partial MCAP", "[eg
     std::filesystem::remove(path);
     plugins::ego::CaptureConfig config;
     config.mcap_filename = path.string();
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
-    auto sink = plugins::ego::create_frame_sink({ { core::OrbbecEgoCameraStream_ColorLeft, "" } }, config);
+    auto sink = plugins::ego::create_frame_sink({}, config);
     sink->close_media();
     sink->close_metadata();
     sink->abort_metadata();
@@ -832,7 +809,6 @@ TEST_CASE("EGO capture preserves existing final and partial archives", "[ego][mc
     std::filesystem::remove(partial);
     plugins::ego::CaptureConfig config;
     config.mcap_filename = path.string();
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
     const std::vector<uint8_t> expected{ 'k', 'e', 'e', 'p' };
     SECTION("existing final")
     {
@@ -871,16 +847,18 @@ TEST_CASE("EGO capture preserves existing final and partial archives", "[ego][mc
     std::filesystem::remove(partial);
 }
 
-TEST_CASE("EGO embedded MCAP preserves structured and media records through the final drain", "[ego][mcap]")
+TEST_CASE("EGO local MCAP preserves structured records through the final drain", "[ego][mcap]")
 {
-    const auto path = std::filesystem::temp_directory_path() / "ego_complete_fragment_test.mcap";
-    std::filesystem::remove(path);
-    std::filesystem::remove(path.string() + ".partial");
+    const auto path = std::filesystem::temp_directory_path() / "ego_complete_archive_test.mcap";
+    const auto left = std::filesystem::temp_directory_path() / "ego_complete_archive_left.mjpg";
+    const auto right = std::filesystem::temp_directory_path() / "ego_complete_archive_right.mjpg";
+    for (const auto& output : { path, std::filesystem::path(path.string() + ".partial"), left, right })
+        std::filesystem::remove(output);
     plugins::ego::CaptureConfig config;
     config.mcap_filename = path.string();
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
-    auto sink = plugins::ego::create_frame_sink(
-        { { core::OrbbecEgoCameraStream_ColorLeft, "" }, { core::OrbbecEgoCameraStream_ColorRight, "" } }, config);
+    auto sink = plugins::ego::create_frame_sink({ { core::OrbbecEgoCameraStream_ColorLeft, left.string() },
+                                                  { core::OrbbecEgoCameraStream_ColorRight, right.string() } },
+                                                config);
     for (const auto camera : { core::OrbbecEgoCameraStream_ColorLeft, core::OrbbecEgoCameraStream_ColorRight })
     {
         for (uint64_t sequence = 0; sequence < 2; ++sequence)
@@ -955,14 +933,14 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
     }
     CHECK(counts == std::map<std::string, size_t>{ { "orbbec_ego_metadata_colorleft/FrameMetadata", 2 },
                                                    { "orbbec_ego_metadata_colorright/FrameMetadata", 2 },
-                                                   { "orbbec_ego_media/ColorLeft", 2 },
-                                                   { "orbbec_ego_media/ColorRight", 2 },
                                                    { "orbbec_ego_imu_accel/Imu", 1 },
                                                    { "orbbec_ego_imu_gyro/Imu", 1 },
                                                    { "orbbec_ego_calibration/Calibration", 1 },
                                                    { "orbbec_ego_device/DeviceState", 1 } });
     reader.close();
-    std::filesystem::remove(path);
+    sink.reset();
+    for (const auto& output : { path, left, right })
+        std::filesystem::remove(output);
 }
 
 #if defined(__linux__)
@@ -974,8 +952,7 @@ TEST_CASE("EGO MCAP flush failures prevent final archive promotion", "[ego][mcap
     std::filesystem::remove(partial);
     plugins::ego::CaptureConfig config;
     config.mcap_filename = path.string();
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
-    auto sink = plugins::ego::create_frame_sink({ { core::OrbbecEgoCameraStream_ColorLeft, "" } }, config);
+    auto sink = plugins::ego::create_frame_sink({}, config);
     sink->close_media();
     struct FileLimit
     {
@@ -1013,9 +990,8 @@ TEST_CASE("EGO diagnostics off omits schema channel and messages but preserves s
     std::filesystem::remove(path.string() + ".partial");
     plugins::ego::CaptureConfig config;
     config.mcap_filename = path.string();
-    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
     config.record_device_diagnostics = false;
-    auto sink = plugins::ego::create_frame_sink({ { core::OrbbecEgoCameraStream_ColorLeft, "" } }, config);
+    auto sink = plugins::ego::create_frame_sink({}, config);
     core::OrbbecEgoDeviceStateT diagnostic;
     diagnostic.device_uid = "fixture";
     diagnostic.observed_at_ns = 100;
