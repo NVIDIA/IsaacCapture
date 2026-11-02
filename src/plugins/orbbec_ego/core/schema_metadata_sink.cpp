@@ -20,6 +20,8 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -187,9 +189,40 @@ private:
     {
         enqueue<core::OrbbecEgoCalibration>(pusher, value, local_ns, device_ns);
     }
+    // Diagnostics are best effort: an over-size push would fail every later push and stop
+    // capture, so a long reason is shortened to fit, and an event that still does not fit is dropped.
     void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoDeviceStateT& value, int64_t local_ns, int64_t device_ns)
     {
-        enqueue<core::OrbbecEgoDeviceState>(pusher, value, local_ns, device_ns);
+        constexpr size_t limit = core::OrbbecEgoDeviceStateTracker::DEFAULT_MAX_FLATBUFFER_SIZE;
+        const size_t size = core::pack<core::OrbbecEgoDeviceState>(value).buffer().size();
+        if (size <= limit)
+        {
+            enqueue<core::OrbbecEgoDeviceState>(pusher, value, local_ns, device_ns);
+            return;
+        }
+        core::OrbbecEgoDeviceStateT shortened = value;
+        std::string* reason = nullptr;
+        if (auto* summary = shortened.event.AsOrbbecEgoCaptureSummary())
+            reason = &summary->reason;
+        else if (auto* recovery = shortened.event.AsOrbbecEgoRecoveryEvent())
+            reason = &recovery->reason;
+        constexpr std::string_view marker = "...";
+        const size_t excess = size - limit + marker.size() + 16;
+        if (reason && reason->size() > excess)
+        {
+            size_t keep = reason->size() - excess;
+            while (keep > 0 && (static_cast<unsigned char>((*reason)[keep]) & 0xC0) == 0x80)
+                --keep;
+            reason->resize(keep);
+            reason->append(marker);
+            if (core::pack<core::OrbbecEgoDeviceState>(shortened).buffer().size() <= limit)
+            {
+                enqueue<core::OrbbecEgoDeviceState>(pusher, shortened, local_ns, device_ns);
+                return;
+            }
+        }
+        detail::log_warning() << "Ego device state event of " << size << " bytes exceeds the " << limit
+                              << "-byte live limit; dropped from live publication" << std::endl;
     }
 
     void enqueue_task(std::function<void()> task)
