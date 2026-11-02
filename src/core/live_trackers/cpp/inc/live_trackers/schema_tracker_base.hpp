@@ -9,6 +9,7 @@
 #include <schema/timestamp_generated.h>
 
 #include <XR_NVX1_tensor_data.h>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -88,6 +89,15 @@ public:
         std::vector<uint8_t> buffer;
         DeviceDataTimestamp timestamp;
     };
+
+    //! Prefer producer time for age checks, falling back to runtime arrival time.
+    static bool timestamp_is_fresh(const DeviceDataTimestamp& timestamp,
+                                   int64_t monotonic_time_ns,
+                                   std::optional<std::chrono::nanoseconds> max_sample_age) noexcept;
+
+    static bool sample_is_fresh(const SampleResult& sample,
+                                int64_t monotonic_time_ns,
+                                std::optional<std::chrono::nanoseconds> max_sample_age) noexcept;
 
     /*!
      * @brief Read ALL pending samples from the tensor collection.
