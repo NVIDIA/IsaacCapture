@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+import pytest
+from isaaccapture_examples.manus_calibration import protocol as proto
+from isaaccapture_examples.manus_calibration.store import McalStore
+from isaaccapture_examples.manus_calibration.worker import (
+    AttemptState,
+    CalibrationAttempt,
+    CalibrationOutcome,
+    CalibrationWorker,
+)
+
+FAKE_WORKER = Path(__file__).with_name("fake_worker.py")
+BOTH = (proto.Side.LEFT, proto.Side.RIGHT)
+
+
+@pytest.fixture
+def commands_log(tmp_path: Path) -> Path:
+    return tmp_path / "commands.log"
+
+
+@pytest.fixture
+def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands_log: Path):
+    """Build a CalibrationWorker around the scripted fake, with short supervision timeouts."""
+
+    def factory(
+        scenario: dict | None = None, **settings
+    ) -> tuple[CalibrationWorker, McalStore]:
+        wrapper = tmp_path / "fake-calibrator"
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport runpy\nrunpy.run_path({str(FAKE_WORKER)!r}, run_name='__main__')\n"
+        )
+        wrapper.chmod(0o755)
+        monkeypatch.setenv("FAKE_WORKER_SCENARIO", json.dumps(scenario or {}))
+        monkeypatch.setenv("FAKE_WORKER_LOG", str(commands_log))
+        store = McalStore(tmp_path / "calibrations")
+        timeouts = {
+            "ready_timeout_s": 5,
+            "cancel_grace_s": 2,
+            "exit_grace_s": 2,
+            "term_grace_s": 1,
+            "kill_wait_s": 2,
+        }
+        return CalibrationWorker(wrapper, store, **{**timeouts, **settings}), store
+
+    return factory
+
+
+def commands(path: Path) -> list[str]:
+    """Command types the fake worker received, in order."""
+    return path.read_text().split() if path.exists() else []
+
+
+async def drive(
+    attempt: CalibrationAttempt,
+    sides=BOTH,
+    *,
+    until: type | None = None,
+    timeout: float = 20.0,
+) -> CalibrationOutcome:
+    """Start ``attempt`` and confirm every prompt until it settles."""
+    await attempt.start(sides)
+    confirmed: set[str] = set()
+    async with asyncio.timeout(timeout):
+        while attempt.state is not AttemptState.DONE:
+            prompt = attempt.prompt
+            if prompt is not None and prompt.token not in confirmed:
+                confirmed.add(prompt.token)
+                try:
+                    await attempt.confirm(prompt.token)
+                except Exception:
+                    pass
+            await asyncio.sleep(0.01)
+    return await attempt.outcome()
+
+
+async def wait_for(predicate, timeout: float = 10.0) -> None:
+    async with asyncio.timeout(timeout):
+        # The predicate reads plain attributes, so there is no event to await.
+        while not predicate():  # noqa: ASYNC110
+            await asyncio.sleep(0.01)

@@ -78,6 +78,7 @@ if(NOT MANUS_SHOULD_BUILD)
   add_custom_target(manus_plugin_core COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_plugin_core: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_hand_plugin COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_hand_plugin: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_hand_tracker_printer COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_hand_tracker_printer: ${MANUS_SKIP_REASON}")
+  add_custom_target(manus_glove_calibrator COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_glove_calibrator: ${MANUS_SKIP_REASON}")
   return()
 endif()
 
@@ -105,6 +106,7 @@ add_subdirectory(core)
 add_library(isaac::manus_plugin ALIAS manus_plugin_core)
 add_subdirectory(app)
 add_subdirectory(tools)
+add_subdirectory(calibration)
 
 # Install Manus SDK shared library
 install(FILES "${_MANUS_LIB}"
