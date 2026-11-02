@@ -628,7 +628,7 @@ def test_cancel_while_waiting_for_ready_is_cancelled_and_the_worker_reaped(
             )
         )
         await r.attempt.cancel()
-        await starting
+        _ = await starting
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.CANCELLED
         assert commands(commands_log) == []
