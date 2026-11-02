@@ -21,3 +21,7 @@ endif()
 if(TARGET manus_calibration_core)
     add_subdirectory(manus_calibration)
 endif()
+
+if(BUILD_PLUGIN_POSE_PROVIDER)
+    add_subdirectory(pose_provider)
+endif()
