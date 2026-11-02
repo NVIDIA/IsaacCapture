@@ -81,6 +81,37 @@ You should see output confirming the hub is running:
    Streaming and web page access use WiFi, not USB tethering.
    ``adb forward`` is used only temporarily for CDP automation.
 
+.. Keep quick-start labels bold so they do not introduce a new RST title level.
+
+**Automatic presence recovery**
+
+While ``--setup-oob`` owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.
+
+On supported PICO hardware, the live ``stk_stk3x1x`` wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, sensor privacy, or an unsupported device leave wake
+to the operator. Quest presence probing is currently unsupported. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.
+
+Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub's ``xrPresence`` reports these independently of cached SDK metrics.
+The ``xr`` cadence contains ``sessionActive``, ``generation``, ``visibility``
+(2 visible, 1 blurred, 0 hidden, -1 unknown), ``frameAgeMs``, ``headAgeMs``,
+``leftAgeMs``, ``rightAgeMs``, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.
+
 **Step 2 — (Manual fallback) Open the web client on the headset**
 
 If the adb automation fails (e.g. headset not paired), you can manually open

@@ -81,6 +81,7 @@ export interface ControlChannelOptions {
   onConfig: (config: StreamConfig, configVersion: number) => void;
   /** Called when the WebSocket connection state changes. */
   onConnectionChange?: (connected: boolean) => void;
+  onPresenceRecovery?: (state: string) => void;
   /**
    * Optional: called periodically to get the latest metrics to report.
    * Return an empty array or null/undefined to skip a tick.
@@ -243,6 +244,8 @@ export class HeadsetControlChannel {
       if (payload.config != null && typeof payload.configVersion === 'number') {
         this.opts.onConfig(payload.config as StreamConfig, payload.configVersion as number);
       }
+    } else if (type === 'presenceRecovery') {
+      if (typeof payload.state === 'string') this.opts.onPresenceRecovery?.(payload.state);
     } else if (type === 'healthProbe') {
       // Echo the generation and probe nonce with the browser's latest stream evidence.
       if (typeof payload.probeId !== 'string' || typeof payload.lifecycleGeneration !== 'number')
@@ -280,9 +283,12 @@ export class HeadsetControlChannel {
         if (Object.keys(metrics).length === 0) continue;
         const sampleAgeMs =
           observedAt === undefined ? undefined : Math.max(0, performance.now() - observedAt);
-        const metricsAt = t - (sampleAgeMs ?? 0);
-        this.lastMetricsAt = Math.max(this.lastMetricsAt ?? metricsAt, metricsAt);
-        if (!this.metricCadences.includes(cadence)) this.metricCadences.push(cadence);
+        // A live JS timer says nothing about streaming or pose production.
+        if (cadence !== 'xr') {
+          const metricsAt = t - (sampleAgeMs ?? 0);
+          this.lastMetricsAt = Math.max(this.lastMetricsAt ?? metricsAt, metricsAt);
+          if (!this.metricCadences.includes(cadence)) this.metricCadences.push(cadence);
+        }
         this.ws.send(
           JSON.stringify({
             type: 'clientMetrics',

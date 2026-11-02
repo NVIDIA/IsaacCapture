@@ -45,6 +45,7 @@ class _HeadsetState:
     streaming_since: float | None = None
     last_seen_at: float | None = None
     last_metrics_at: float | None = None
+    xr_received_at: float | None = None
     stream_phase: str = "idle"
     stream_detail: str | None = None
     terminal_event_id: str | None = None
@@ -157,6 +158,7 @@ class OOBControlHub:
                     "terminalEventId": s.terminal_event_id,
                     "terminalDetail": s.terminal_detail,
                     "metricsByCadence": s.metrics_by_cadence,
+                    "xrPresence": self._xr_presence(s),
                 }
                 for s in self._headsets.values()
             ]
@@ -168,10 +170,34 @@ class OOBControlHub:
                 "lifecycle": dict(self._lifecycle) if self._lifecycle else None,
             }
 
+    @staticmethod
+    def _xr_presence(state: _HeadsetState) -> dict | None:
+        if state.xr_received_at is None:
+            return None
+        metrics = state.metrics_by_cadence.get("xr", {}).get("metrics", {})
+        elapsed = max(0.0, (time.monotonic() - state.xr_received_at) * 1000)
+        result = dict(metrics)
+        result["heartbeatAgeMs"] = elapsed
+        for source in ("frame", "head", "left", "right"):
+            age = metrics.get(f"{source}AgeMs", -1)
+            result[f"{source}AgeMs"] = age + elapsed if age >= 0 else None
+        return result
+
     async def set_lifecycle_snapshot(self, snapshot: dict) -> None:
         """Publish the lifecycle's already redacted status in the HTTP state."""
         async with self._lock:
             self._lifecycle = dict(snapshot)
+            targets = list(self._headsets)
+        presence = snapshot.get("presenceRecovery")
+        if isinstance(presence, dict):
+            # Send only operator state, never host/ADB diagnostics or identifiers.
+            payload = {
+                key: presence[key]
+                for key in ("state", "presence", "wakefulness", "attempts")
+                if key in presence
+            }
+            for ws in targets:
+                await self._send(ws, "presenceRecovery", payload)
 
     async def probe_browser(
         self,
@@ -422,9 +448,11 @@ class OOBControlHub:
                 return
             state.last_seen_at = time.time()
             # Legacy senders have no observation age and retain receipt-time semantics.
+            cadence = str(payload.get("cadence", "unknown"))
             sample_age_ms = payload.get("sampleAgeMs", 0)
             if (
-                isinstance(sample_age_ms, (int, float))
+                cadence != "xr"
+                and isinstance(sample_age_ms, (int, float))
                 and not isinstance(sample_age_ms, bool)
                 and math.isfinite(sample_age_ms)
                 and sample_age_ms >= 0
@@ -438,7 +466,9 @@ class OOBControlHub:
                     else observed_at,
                     observed_at,
                 )
-            cadence = str(payload.get("cadence", "unknown"))
+            # XR heartbeat must not refresh streaming metric readiness.
+            if cadence == "xr":
+                state.xr_received_at = time.monotonic()
             raw_metrics = payload.get("metrics", {})
             if not isinstance(raw_metrics, dict):
                 raw_metrics = {}

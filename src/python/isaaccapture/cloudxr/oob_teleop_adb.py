@@ -69,6 +69,11 @@ SELECTED_ADB_SERIAL: ContextVar[str | None] = ContextVar(
 )
 
 
+PRESENCE_RECOVERY_OWNS_WAKE: ContextVar[bool] = ContextVar(
+    "presence_recovery_owns_wake", default=False
+)
+
+
 def _adb_run(args: list[str], **kwargs):
     """Apply the lifecycle's pinned serial to commands, including ``to_thread`` calls."""
     serial = SELECTED_ADB_SERIAL.get()
@@ -349,7 +354,9 @@ def headset_wakefulness() -> str:
     return m.group(1) if m else ""
 
 
-def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) -> None:
+def assert_headset_awake(
+    *, timeout: float = 15.0, require_awake: bool = False, send_wake: bool = True
+) -> None:
     """Check wakefulness before OOB automation, sending one wake key if asleep.
 
     A sleeping Quest/PICO may accept ``am start`` yet sleep before CONNECT,
@@ -358,21 +365,23 @@ def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) 
     Args:
         timeout: Seconds to poll after ``KEYCODE_WAKEUP``; zero skips retry polling.
         require_awake: Raise ``OobAdbError`` if still not Awake; otherwise warn and return.
+        send_wake: Disable when the session presence worker owns automatic wake.
     """
     wake = headset_wakefulness()
     if wake == "Awake":
         return
 
-    try:
-        _adb_run(
-            ["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    if send_wake and not PRESENCE_RECOVERY_OWNS_WAKE.get():
+        try:
+            _adb_run(
+                ["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
     log.debug(
         "Headset appears asleep (wakefulness=%s). Put it on or cover the "

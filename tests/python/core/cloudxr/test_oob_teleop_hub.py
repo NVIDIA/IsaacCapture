@@ -642,3 +642,51 @@ async def test_multibyte_frame_over_byte_limit_is_rejected() -> None:
     await task
 
     assert ws.close_calls == [(1009, "Frame too large")]
+
+
+@pytest.mark.asyncio
+async def test_xr_heartbeat_ages_without_refreshing_stream_readiness(monkeypatch):
+    from oob_teleop_hub import _HeadsetState
+
+    clock = [100.0]
+    monkeypatch.setattr("oob_teleop_hub.time.monotonic", lambda: clock[0])
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = object()
+    hub._headsets[ws] = _HeadsetState("test", ws, 0, last_metrics_at=10)
+    await hub._handle_client_metrics(
+        ws,
+        {
+            "cadence": "xr",
+            "t": -99999999,
+            "metrics": {
+                "generation": 2,
+                "visibility": 0,
+                "headAgeMs": 10,
+                "rightAgeMs": -1,
+            },
+        },
+    )
+    clock[0] += 3
+    headset = (await hub.get_snapshot())["headsets"][0]
+    assert headset["lastMetricsAt"] == 10000
+    assert headset["xrPresence"]["heartbeatAgeMs"] == 3000
+    assert headset["xrPresence"]["headAgeMs"] == 3010
+    assert headset["xrPresence"]["rightAgeMs"] is None
+
+
+@pytest.mark.asyncio
+async def test_presence_status_push_is_narrow_and_preserves_http_snapshot():
+    from oob_teleop_hub import _HeadsetState
+
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = QueueWS()
+    hub._headsets[ws] = _HeadsetState("test", ws, 0)
+    snapshot = {
+        "presenceRecovery": {"state": "waking", "attempts": 1, "serial": "private"}
+    }
+    await hub.set_lifecycle_snapshot(snapshot)
+    assert json.loads(ws.sent[-1]) == {
+        "type": "presenceRecovery",
+        "payload": {"state": "waking", "attempts": 1},
+    }
+    assert (await hub.get_snapshot())["lifecycle"] == snapshot
