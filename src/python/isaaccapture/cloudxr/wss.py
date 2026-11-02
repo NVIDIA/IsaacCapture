@@ -9,6 +9,7 @@ import json
 import logging
 import mimetypes
 import os
+from html import escape
 from http import HTTPStatus
 from urllib.parse import unquote, urlparse
 import ssl
@@ -23,9 +24,11 @@ from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
     control_token_is_generated,
+    default_web_client_origin,
     default_initial_stream_config,
     redact_control_token,
     resolve_control_token,
+    web_client_base_override_from_env,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -179,11 +182,49 @@ def _cert_html() -> bytes:
         b"align-items:center;justify-content:center;height:100vh;margin:0;"
         b"background:#f5f5f5;color:#222}div{text-align:center}"
         b"h1{font-weight:600;font-size:1.5rem;margin-bottom:.5rem}"
-        b"p{color:#555;font-size:1rem}</style></head>"
+        b"p{color:#555;font-size:1rem}.connect-button{display:inline-block;padding:1rem;"
+        b"background:#176b27;color:white;border-radius:.5rem}</style></head>"
         b"<body><div><h1>Certificate Accepted</h1>"
         b"<p>You can close this tab and return to the web client.</p>"
+        b'<p><a class="connect-button" href="/connect/">'
+        b"Using VR without ADB? Open connection helper</a></p>"
         b"</div></body></html>"
     )
+
+
+def _connect_html() -> bytes:
+    """Offer the configured manual client link using the browser's own address."""
+    client_origin = web_client_base_override_from_env() or default_web_client_origin()
+    client_origin_html = escape(client_origin, quote=True)
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual VR connection</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:36rem;margin:3rem auto;
+padding:1rem;color:#222;background:#f5f5f5}}a{{display:inline-block;padding:1rem;
+background:#176b27;color:white;border-radius:.5rem}}p{{line-height:1.5}}</style>
+</head><body><h1>Manual VR connection</h1>
+<p>Using VR without ADB? Open the configured web client with this server's
+host and port filled in, then review the client settings and click Connect.</p>
+<p>If you already have a client tab open, return to that tab instead.
+For ADB or USB connections, use the launcher-provided client link.</p>
+<p id="target"></p>
+<p>Client origin: <code>{client_origin_html}</code></p>
+<p><a id="client-link" href="{client_origin_html}">
+Open configured web client</a></p>
+<noscript><p>JavaScript is disabled. Enter the server host and port manually
+in the configured web client.</p></noscript>
+<script>
+// Reuse the browser-visible address that successfully reached this certificate endpoint.
+const host = window.location.hostname;
+const port = window.location.port || '443';
+const link = document.getElementById('client-link');
+const client = new URL(link.href);
+client.searchParams.set('serverIP', host);
+client.searchParams.set('port', port);
+client.searchParams.set('serverType', 'manual');
+link.href = client.href;
+document.getElementById('target').textContent = 'Server: ' + host + ':' + port;
+</script></body></html>""".encode()
 
 
 def _normalize_request_path(raw_path: str) -> str:
@@ -277,10 +318,10 @@ def _json_response(status: int, phrase: str, body: dict) -> Response:
 
 
 def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
-    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page)."""
+    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, ``/connect/`` helper, cert page)."""
 
     async def handle_http_request(connection, request):
-        """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, or cert HTML."""
+        """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, ``/connect/`` helper, or cert HTML."""
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None
 
@@ -398,11 +439,12 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 body,
             )
 
+        # Normalization makes /connect, /connect/, and /connect/?query equivalent.
         return Response(
             200,
             "OK",
             Headers({"Content-Type": "text/html; charset=utf-8", **CORS_HEADERS}),
-            _cert_html(),
+            _connect_html() if path == "/connect" else _cert_html(),
         )
 
     return handle_http_request
