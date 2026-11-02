@@ -18,11 +18,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
+import { captureOobControlToken } from '@helpers/oobControlToken';
+
 import App from './App';
 import { mountBuildInfoOverlayIfRequested } from './BuildInfoOverlay';
 
 // Start the React app immediately in the 3d-ui container
 function startApp() {
+  // Before React: App canonicalizes the URL fragment on mount.
+  captureOobControlToken();
+
   const reactContainer = document.getElementById('3d-ui');
 
   if (reactContainer) {
