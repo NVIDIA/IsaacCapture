@@ -179,6 +179,53 @@ private:
     std::optional<Clock::time_point> m_pending_since;
 };
 
+class HapticRetryState
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    bool command_ready(Clock::time_point now) const noexcept
+    {
+        return !m_command_retry_after || now >= *m_command_retry_after;
+    }
+
+    bool stop_ready(Clock::time_point now) const noexcept
+    {
+        return !m_stop_retry_after || now >= *m_stop_retry_after;
+    }
+
+    void command_failed(Clock::time_point now, Clock::duration retry_interval) noexcept
+    {
+        m_command_retry_after = now + retry_interval;
+    }
+
+    void stop_failed(Clock::time_point now, Clock::duration retry_interval) noexcept
+    {
+        m_stop_retry_after = now + retry_interval;
+    }
+
+    void command_succeeded() noexcept
+    {
+        m_command_retry_after.reset();
+        m_stop_retry_after.reset();
+    }
+
+    void stop_succeeded() noexcept
+    {
+        m_stop_retry_after.reset();
+    }
+
+    void reset() noexcept
+    {
+        m_command_retry_after.reset();
+        m_stop_retry_after.reset();
+    }
+
+private:
+    std::optional<Clock::time_point> m_command_retry_after;
+    std::optional<Clock::time_point> m_stop_retry_after;
+};
+
 class __attribute__((visibility("default"))) AvatarTracker
 {
 public:
@@ -236,7 +283,8 @@ private:
 
     std::array<HapticCommandDeliveryState, 2> m_haptic_commands;
     std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_haptic_sample_times;
-    std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_haptic_retry_after;
+    std::array<HapticRetryState, 2> m_haptic_retries;
+    std::array<bool, 2> m_discard_haptic_after_ready{};
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;

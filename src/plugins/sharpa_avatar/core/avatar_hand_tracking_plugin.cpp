@@ -424,7 +424,9 @@ void AvatarTracker::initialize_openxr()
     std::vector<std::shared_ptr<core::ITracker>> trackers = wrist_requirements.trackers;
     if (m_config.haptic)
     {
-        m_haptic_reader = std::make_shared<core::HapticCommandReaderTracker>(AVATAR_GLOVE_HAPTIC_COLLECTION_ID);
+        m_haptic_reader = std::make_shared<core::HapticCommandReaderTracker>(
+            AVATAR_GLOVE_HAPTIC_COLLECTION_ID, core::HapticCommandReaderTracker::DEFAULT_MAX_PAYLOAD_SIZE,
+            kHapticCommandTimeout);
         trackers.push_back(m_haptic_reader);
     }
 
@@ -604,7 +606,8 @@ void AvatarTracker::reset_glove(::avatar::DeviceSide side) noexcept
     m_haptic_commands[index].discard();
     m_haptic_stopped[index] = true;
     m_last_haptic_sample_times[index].reset();
-    m_haptic_retry_after[index].reset();
+    m_haptic_retries[index].reset();
+    m_discard_haptic_after_ready[index] = false;
     m_haptic_error_logged[index] = false;
 }
 
@@ -678,6 +681,7 @@ void AvatarTracker::refresh_glove_activity()
             if (m_config.haptic)
             {
                 stop_haptics(side);
+                m_discard_haptic_after_ready[side_index(side)] = true;
             }
             logger()->info("{} glove connected and streaming.", to_string(side));
         }
@@ -954,15 +958,15 @@ void AvatarTracker::process_haptics()
         const auto& tracked = m_haptic_reader->get_data(*m_deviceio_session, to_string(side));
         HapticCommandDeliveryState& delivery = m_haptic_commands[index];
         delivery.observe(tracked, now);
-        if (!glove(side).ready)
+        if (!glove(side).ready || m_discard_haptic_after_ready[index])
         {
             delivery.discard();
+            m_discard_haptic_after_ready[index] = false;
         }
         const core::HapticCommand* command = delivery.pending(now, kHapticCommandTimeout);
         if (command != nullptr)
         {
-            const bool retry_ready = !m_haptic_retry_after[index] || now >= *m_haptic_retry_after[index];
-            if (retry_ready)
+            if (m_haptic_retries[index].command_ready(now))
             {
                 if (command->values() == nullptr || command->values()->size() != kAvatarFingerCount)
                 {
@@ -978,17 +982,26 @@ void AvatarTracker::process_haptics()
                     if (apply_haptic_command(side, powers))
                     {
                         delivery.acknowledge();
+                        m_haptic_retries[index].command_succeeded();
                         m_last_haptic_sample_times[index] = now;
                         m_haptic_stopped[index] =
                             std::all_of(powers.begin(), powers.end(),
                                         [](float power) { return !std::isfinite(power) || power <= 0.0f; });
                     }
+                    else if (std::any_of(powers.begin(), powers.end(),
+                                         [](float power) { return std::isfinite(power) && power > 0.0f; }))
+                    {
+                        m_haptic_stopped[index] = false;
+                        if (!m_last_haptic_sample_times[index])
+                        {
+                            m_last_haptic_sample_times[index] = now;
+                        }
+                    }
                 }
             }
         }
         if (!m_haptic_stopped[index] && m_last_haptic_sample_times[index] &&
-            now - *m_last_haptic_sample_times[index] >= kHapticCommandTimeout &&
-            (!m_haptic_retry_after[index] || now >= *m_haptic_retry_after[index]))
+            now - *m_last_haptic_sample_times[index] >= kHapticCommandTimeout && m_haptic_retries[index].stop_ready(now))
         {
             stop_haptics(side);
         }
@@ -1102,7 +1115,7 @@ bool AvatarTracker::send_haptic_command(::avatar::DeviceSide side, const std::ar
             state.haptic_error = "set_vibration failed: " + std::string(error_name(error)) + " (" +
                                  std::to_string(static_cast<int>(error)) + ")";
             const size_t index = side_index(side);
-            m_haptic_retry_after[index] = std::chrono::steady_clock::now() + kHapticFailureRetryInterval;
+            m_haptic_retries[index].command_failed(std::chrono::steady_clock::now(), kHapticFailureRetryInterval);
             if (!m_haptic_error_logged[index])
             {
                 m_haptic_error_logged[index] = true;
@@ -1114,7 +1127,6 @@ bool AvatarTracker::send_haptic_command(::avatar::DeviceSide side, const std::ar
         }
         state.haptic_error.reset();
         const size_t index = side_index(side);
-        m_haptic_retry_after[index].reset();
         m_haptic_error_logged[index] = false;
         return true;
     }
@@ -1122,7 +1134,7 @@ bool AvatarTracker::send_haptic_command(::avatar::DeviceSide side, const std::ar
     {
         state.haptic_error = "set_vibration threw: " + std::string(error.what());
         const size_t index = side_index(side);
-        m_haptic_retry_after[index] = std::chrono::steady_clock::now() + kHapticFailureRetryInterval;
+        m_haptic_retries[index].command_failed(std::chrono::steady_clock::now(), kHapticFailureRetryInterval);
         if (!m_haptic_error_logged[index])
         {
             m_haptic_error_logged[index] = true;
@@ -1134,7 +1146,7 @@ bool AvatarTracker::send_haptic_command(::avatar::DeviceSide side, const std::ar
     {
         state.haptic_error = "set_vibration threw an unknown error";
         const size_t index = side_index(side);
-        m_haptic_retry_after[index] = std::chrono::steady_clock::now() + kHapticFailureRetryInterval;
+        m_haptic_retries[index].command_failed(std::chrono::steady_clock::now(), kHapticFailureRetryInterval);
         if (!m_haptic_error_logged[index])
         {
             m_haptic_error_logged[index] = true;
@@ -1152,7 +1164,7 @@ void AvatarTracker::stop_haptics(::avatar::DeviceSide side) noexcept
     {
         m_haptic_stopped[index] = true;
         m_last_haptic_sample_times[index].reset();
-        m_haptic_retry_after[index].reset();
+        m_haptic_retries[index].reset();
         return;
     }
 
@@ -1163,15 +1175,18 @@ void AvatarTracker::stop_haptics(::avatar::DeviceSide side) noexcept
     catch (...)
     {
         m_haptic_stopped[index] = false;
-        m_haptic_retry_after[index] = std::chrono::steady_clock::now() + kHapticFailureRetryInterval;
+        m_haptic_retries[index].command_failed(std::chrono::steady_clock::now(), kHapticFailureRetryInterval);
     }
     if (m_haptic_stopped[index])
     {
         m_last_haptic_sample_times[index].reset();
+        m_haptic_retries[index].stop_succeeded();
     }
     else
     {
-        m_last_haptic_sample_times[index] = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        m_last_haptic_sample_times[index] = now;
+        m_haptic_retries[index].stop_failed(now, kHapticFailureRetryInterval);
     }
 }
 

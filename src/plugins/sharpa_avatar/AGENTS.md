@@ -48,6 +48,9 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
+- In manual haptic freshness tests that suspend the Python producer, record its
+  process group, resume it before cleanup, and terminate the producer/plugin
+  group together; do not rely on repeated terminal interrupts for cleanup.
 - In pinned SDK 1.7.3, `get_device()` returns an initialized handle; do not call
   `init()` again. Use its lightweight ingress callback for liveness and keep SDK
   work off the callback thread. Scope callback signals to one device generation;
