@@ -29,3 +29,7 @@ endif()
 if(TARGET jmex_plugin_core)
     add_subdirectory(jmex)
 endif()
+
+if(BUILD_PLUGIN_POSE_PROVIDER)
+    add_subdirectory(pose_provider)
+endif()
