@@ -38,7 +38,7 @@ needs GitHub access, inference does not.
 
 The image entrypoint is `inference/scripts/run_egohand_inference_pipeline.py`:
 RT-DETR hand-bbox detection (on the fly, or read from precomputed JSONs via
-`--bbox-dir`) followed by `inference/pipeline/pipeline.py:
+`--bbox_dir`) followed by `inference/pipeline/pipeline.py:
 EgoHandInferencePipeline`, run directly on decoded video frames.
 
 ### Build
@@ -61,18 +61,18 @@ Weights can be baked into the image so `run` needs fewer flags:
 
 ```bash
 inference/docker/egohand_inference.sh build <image> \
-    --egohand-ckpt             /path/to/egohand.ckpt \
-    --hand-detector-weight /path/to/rtdetr.onnx
+    --egohand_ckpt         /path/to/egohand.ckpt \
+    --hand_detector_weight /path/to/rtdetr.onnx
 ```
 
 | Flag | Effect |
 | ---- | ------ |
-| `--egohand-ckpt <path>` | Bundle EgoHand checkpoint (see "HuggingFace fallback" below for what happens when omitted) |
-| `--hand-detector <rtdetr\|saved_bboxes>` | Which detector the weight is for (default: `rtdetr`, the only option that takes a weight). `saved_bboxes` needs no weight -- bbox detection is precomputed and supplied at run time via `--bbox-dir`; `--hand-detector-weight` is rejected with this value |
-| `--hand-detector-weight <path>` | Bundle detector weight (not needed if every run will use `--bbox-dir`) |
+| `--egohand_ckpt <path>` | Bundle EgoHand checkpoint (see "HuggingFace fallback" below for what happens when omitted) |
+| `--hand_detector <rtdetr\|saved_bboxes>` | Which detector the weight is for (default: `rtdetr`, the only option that takes a weight). `saved_bboxes` needs no weight -- bbox detection is precomputed and supplied at run time via `--bbox_dir`; `--hand_detector_weight` is rejected with this value |
+| `--hand_detector_weight <path>` | Bundle detector weight (not needed if every run will use `--bbox_dir`) |
 
 Camera intrinsics are never bundled at build time -- always pass
-`--intrinsics-json` at `run` time (for both the on-the-fly and `--bbox-dir`
+`--intrinsics_json` at `run` time (for both the on-the-fly and `--bbox_dir`
 paths). This model needs the real calibration to produce correct depth/mesh
 scale.
 
@@ -82,16 +82,16 @@ scale.
 inference/docker/egohand_inference.sh run \
     --image                <image> \
     --ckpt                 /path/to/egohand.ckpt \
-    --hand-detector-weight /path/to/rtdetr.onnx \
+    --hand_detector_weight /path/to/rtdetr.onnx \
     --input                /path/to/clip.mp4 \
-    --intrinsics-json      /path/to/intrinsics.json \
+    --intrinsics_json      /path/to/intrinsics.json \
     --out                  outputs/inference
 ```
 
-`--image`, `--input`, and `--intrinsics-json` are required by this wrapper
+`--image`, `--input`, and `--intrinsics_json` are required by this wrapper
 (fails immediately, before touching Docker, if any is missing).
-`--intrinsics-json` is never bundleable at build time (see above) -- always
-pass it here. `--ckpt` and `--hand-detector-weight` are optional; see
+`--intrinsics_json` is never bundleable at build time (see above) -- always
+pass it here. `--ckpt` and `--hand_detector_weight` are optional; see
 "HuggingFace fallback" below.
 
 `--input` accepts a single `.mp4` file or a folder of `.mp4` files; per-video
@@ -105,44 +105,44 @@ run `docker run` yourself with `python inference/scripts/run_egohand_inference_p
 and the mounts in "Mount layout inside the container"; see
 `inference/scripts/README.md` for the full argument list.
 
-#### Two steps: detect, then reconstruct from saved boxes (`--bbox-dir`)
+#### Two steps: detect, then reconstruct from saved boxes (`--bbox_dir`)
 
 ```bash
 # 1. Detect hand bboxes only
 inference/docker/detector.sh run \
     --image           <detector-image> \
     --input           /path/to/clip.mp4 \
-    --intrinsics-json /path/to/intrinsics.json \
+    --intrinsics_json /path/to/intrinsics.json \
     --out             /path/to/bboxes
 
 # 2. Reconstruct from the saved boxes
 inference/docker/egohand_inference.sh run \
-    --image           <image> \
-    --ckpt            /path/to/egohand.ckpt \
-    --input           /path/to/clip.mp4 \
-    --bbox-dir        /path/to/bboxes \
-    --intrinsics-json /path/to/intrinsics.json \
-    --perspective-cropping \
-    --out             outputs/inference
+    --image                <image> \
+    --ckpt                 /path/to/egohand.ckpt \
+    --input                /path/to/clip.mp4 \
+    --bbox_dir             /path/to/bboxes \
+    --intrinsics_json      /path/to/intrinsics.json \
+    --perspective_cropping \
+    --out                  outputs/inference
 ```
 
-`--bbox-dir` skips on-the-fly detection and reads the per-hand bbox JSONs that
+`--bbox_dir` skips on-the-fly detection and reads the per-hand bbox JSONs that
 `detector.sh run` writes. It is mutually exclusive with
-`--hand-detector-weight`; no detector weight is loaded. See
+`--hand_detector_weight`; no detector weight is loaded. See
 `inference/hand_detector_2d/scripts/README.md` for the JSON layout.
 
 These wrappers run the same pipeline as the host commands, so check the
 [main README](../../README.md#reconstruct-with-your-own-2d-bboxes) for the
-running rules, such as when `--perspective-cropping` is required for saved
+running rules, such as when `--perspective_cropping` is required for saved
 boxes and how camera calibration is used
 ([camera formats](../../README.md#camera-input-formats)).
 
 #### HuggingFace fallback
 
-Checkpoints and detector weights (`--ckpt`, `--hand-detector-weight`,
+Checkpoints and detector weights (`--ckpt`, `--hand_detector_weight`,
 `--weight`) resolve in this order: mounted at run time, bundled at build time,
 downloaded from Hugging Face. Passing none is not an error; the run only fails
-if the download fails. Optionally, pass `--hf-token "$HF_TOKEN"` (either
+if the download fails. Optionally, pass `--hf_token "$HF_TOKEN"` (either
 wrapper) to forward a token as `HF_TOKEN` in the container, e.g. if you hit
 anonymous rate limits.
 
@@ -150,7 +150,7 @@ anonymous rate limits.
 
 The image entrypoint is `inference/hand_detector_2d/scripts/run_hand_detector.py`:
 RT-DETRv2 hand-bbox detection only -- no EgoHand model, no SOMA, no torch
-even loaded. Pairs with `egohand_inference.sh run --bbox-dir` to feed the JSONs
+even loaded. Pairs with `egohand_inference.sh run --bbox_dir` to feed the JSONs
 this produces into a full EgoHand inference run without re-detecting, so
 detection can be run, reviewed, and cached as its own preprocessing stage.
 
@@ -170,17 +170,17 @@ inference/docker/detector.sh run \
     --image           <image> \
     --input           /path/to/clip.mp4 \
     --out             /path/to/bboxes \
-    --intrinsics-json /path/to/intrinsics.json
+    --intrinsics_json /path/to/intrinsics.json
 ```
 
-`--image`, `--input`, `--out`, `--intrinsics-json` are required. `--weight`
+`--image`, `--input`, `--out`, `--intrinsics_json` are required. `--weight`
 is optional (see "HuggingFace fallback" above). Writes
 `<out>/<video_stem>/<video_stem>_{left,right}_bbox.json` -- pass that same
-`<out>` path as `--bbox-dir` to a `egohand_inference.sh run`.
+`<out>` path as `--bbox_dir` to a `egohand_inference.sh run`.
 
 `--tracking` and `--no-tracking` override the shared tracking setting only when
 passed explicitly; `--no-tracking` also disables bbox smoothing. Use the same
-input video and `--intrinsics-json` for both stages; see
+input video and intrinsics JSON for both stages; see
 `inference/hand_detector_2d/scripts/README.md` for camera preprocessing details.
 
 ## Mount layout inside the container
@@ -188,9 +188,9 @@ input video and `--intrinsics-json` for both stages; see
 | Flag | Container path | Mode |
 | ---- | -------------- | ---- |
 | `--ckpt` | `/workspace/inputs/<filename>` | ro |
-| `--weight` (`detector.sh`) / `--hand-detector-weight` (`egohand_inference.sh`) | `/workspace/inputs/<filename>` | ro |
-| `--intrinsics-json` (either wrapper) | `/workspace/inputs/<filename>` | ro |
-| `--bbox-dir` (`egohand_inference.sh`) | `/workspace/inputs/bbox` | ro |
+| `--weight` (`detector.sh`) / `--hand_detector_weight` (`egohand_inference.sh`) | `/workspace/inputs/<filename>` | ro |
+| `--intrinsics_json` (either wrapper) | `/workspace/inputs/<filename>` | ro |
+| `--bbox_dir` (`egohand_inference.sh`) | `/workspace/inputs/bbox` | ro |
 | `--input` (file) | `/workspace/inputs/video/<filename>` | ro |
 | `--input` (folder) | `/workspace/inputs/video` | ro |
 | `--out` | `/workspace/outputs/bbox` (`detector.sh`) or `/workspace/outputs/inference` (`egohand_inference.sh`) | rw |

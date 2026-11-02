@@ -28,14 +28,31 @@ import { useRef } from 'react';
 import { useRecorder } from './RecorderContext';
 
 interface RecorderComponentProps {
-  /** True when the CloudXR session is in the Connected state — gates replay frame advancement. */
+  /** True when the CloudXR session is in the Connected state - gates replay frame advancement. */
   isConnected: boolean;
   /** Capture live input while idle so the trace can render it. */
   showTrace: boolean;
+  /**
+   * The space CloudXR streams poses in, as reported by CloudXRComponent's onReferenceSpace.
+   *
+   * three.js pins WebXRManager to 'local-floor' (origin on the floor) while CloudXR requests
+   * `config.referenceSpaceType` ('local' by default, origin at the headset). Recording in one
+   * frame and streaming in the other makes hand poses absolute above the floor while the scene
+   * stays anchored to the headset, so entering at a different height moves the table but not
+   * the trajectory. Taken from CloudXRComponent rather than resolved again here so the two
+   * cannot disagree, and so `config.xrOffset*` is included.
+   *
+   * Null before a session exists; the WebXRManager space is used until then.
+   */
+  streamingSpace: XRReferenceSpace | null;
 }
 
-export function RecorderComponent({ isConnected, showTrace }: RecorderComponentProps) {
-  const { recorder, onFrameRecord } = useRecorder();
+export function RecorderComponent({
+  isConnected,
+  showTrace,
+  streamingSpace,
+}: RecorderComponentProps) {
+  const { recorder, onFrameRecord, onFrameState } = useRecorder();
   const tickRef = useRef(0);
 
   useFrame(state => {
@@ -50,10 +67,12 @@ export function RecorderComponent({ isConnected, showTrace }: RecorderComponentP
 
     recorder.beginFrame(
       xrFrame,
-      state.gl.xr.getReferenceSpace(),
+      streamingSpace ?? state.gl.xr.getReferenceSpace(),
       isConnected && isVisible,
       showTrace && isVisible
     );
+
+    onFrameState();
 
     if (recorder.mode === 'recording') {
       tickRef.current++;

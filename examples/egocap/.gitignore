@@ -1,0 +1,7 @@
+
+docs/agentplans/
+tmp/
+
+# Real per-lab station identity (serials, operators, IPs); only the *.example.* templates ship.
+recording/egocap/egocap_stations.json
+recording/egocap/stations/ego_stations.yaml

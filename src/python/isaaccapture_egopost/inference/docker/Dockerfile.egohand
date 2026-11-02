@@ -58,8 +58,8 @@ RUN python -c "from soma import get_assets_dir; get_assets_dir()" \
 COPY egohand /workspace/egohand
 COPY inference /workspace/inference
 
-# Optional bundled weights. Populated by egohand_inference.sh build --egohand-ckpt /...
-# and --hand-detector-weight /... If the files are absent the directory is still
+# Optional bundled weights. Populated by egohand_inference.sh build --egohand_ckpt /...
+# and --hand_detector_weight /... If the files are absent the directory is still
 # created (empty), so the COPY is always valid. At run time the volume-mount
 # paths take precedence; bundled paths are the fallback.
 COPY weights/ /workspace/weights/

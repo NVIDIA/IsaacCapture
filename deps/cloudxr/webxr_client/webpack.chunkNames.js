@@ -10,7 +10,8 @@
  *
  * Routing (no per-package allowlists):
  *   lazy ``import()`` under ``@pmndrs/xr/dist`` → ``bundle.emulator.js``
- *   all other dynamic imports (UIKit → msdf, zustand, fonts, …) → eager → ``bundle.js``
+ *   LoadIWER's explicit lazy imports → ``bundle.emulator.js``
+ *   other dynamic imports (UIKit → msdf, zustand, fonts, …) → eager → ``bundle.js``
  *
  * The MSDF web worker is inlined via ``asset/inline`` (no separate worker file).
  * OOB/--host-client sync downloads ``index.html``, ``bundle.js``, and

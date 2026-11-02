@@ -82,7 +82,7 @@ class VideoFileSource(PolledSource):
         except ImportError as e:
             raise RuntimeError(
                 "VideoFileSource requires opencv-python. Install via "
-                "`uv pip install opencv-python`."
+                '`uv pip install "opencv-python>=4.5,<5"`.'
             ) from e
         self._cv2 = cv2
         self._path = Path(path)
