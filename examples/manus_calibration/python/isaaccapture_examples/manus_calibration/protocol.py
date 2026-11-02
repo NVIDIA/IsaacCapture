@@ -303,7 +303,8 @@ def _error(value: Any, context: str) -> WorkerError:
         raise _fail(context, "error must be an object")
     _keys(value, {"code", "message"}, {"side", "step"}, f"{context}.error")
     code = value["code"]
-    if code not in _ERROR_CODES:
+    # isinstance first: an unhashable JSON value (a list or object) would raise TypeError in the lookup.
+    if not isinstance(code, str) or code not in _ERROR_CODES:
         raise _fail(context, f"unknown error code {code!r}")
     side = value.get("side")
     step = value.get("step")
@@ -484,9 +485,11 @@ def parse_event(line: bytes | str) -> WorkerEvent:
         raise ProtocolError("line must be a JSON object")
     if type(data.get("v")) is not int or data["v"] != PROTOCOL_VERSION:
         raise ProtocolError(f"expected protocol version {PROTOCOL_VERSION}")
-    parser = _PARSERS.get(data.get("type"))
+    message_type = data.get("type")
+    # Checked before the lookup: an unhashable JSON value would raise TypeError instead of ProtocolError.
+    parser = _PARSERS.get(message_type) if isinstance(message_type, str) else None
     if parser is None:
-        raise ProtocolError(f"unknown message type {data.get('type')!r}")
+        raise ProtocolError(f"unknown message type {message_type!r}")
     return parser(data)
 
 

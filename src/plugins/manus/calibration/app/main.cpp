@@ -252,6 +252,12 @@ int main(int argc, char** argv)
                 stream_open = ipc.read_lines(
                     [&](std::string_view line)
                     {
+                        // Nothing follows `result`: a cancel and a malformed line in one read must not
+                        // produce a rejection after the terminal event.
+                        if (engine.finished())
+                        {
+                            return;
+                        }
                         ParsedCommand parsed = parse_command(line);
                         if (parsed.rejection)
                         {

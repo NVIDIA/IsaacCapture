@@ -15,4 +15,8 @@ target_link_libraries(manus_calibration_tests
         manus_calibration::core
 )
 
-catch_discover_tests(manus_calibration_tests)
+# A stable prefix and Catch2 tags as labels, so `ctest -R manus_calibration_` and `ctest -L unit` select the suite.
+catch_discover_tests(manus_calibration_tests
+    TEST_PREFIX "manus_calibration_"
+    ADD_TAGS_AS_LABELS
+)

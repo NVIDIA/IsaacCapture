@@ -58,7 +58,7 @@ std::string confirm_line(const std::string& token = "att1-1")
 
 } // namespace
 
-TEST_CASE("valid commands parse into typed commands", "[protocol][parse]")
+TEST_CASE("valid commands parse into typed commands", "[unit][protocol][parse]")
 {
     const ParsedCommand start = parse_command(start_line());
     REQUIRE(as_start(start));
@@ -78,7 +78,7 @@ TEST_CASE("valid commands parse into typed commands", "[protocol][parse]")
     CHECK(as_cancel(cancel)->attempt == "att1");
 }
 
-TEST_CASE("start sides are normalized to left then right", "[protocol][parse]")
+TEST_CASE("start sides are normalized to left then right", "[unit][protocol][parse]")
 {
     CHECK(as_start(parse_command(start_line("a", "[\"right\",\"left\"]")))->sides ==
           std::vector<Side>{ Side::Left, Side::Right });
@@ -86,13 +86,13 @@ TEST_CASE("start sides are normalized to left then right", "[protocol][parse]")
     CHECK(as_start(parse_command(start_line("a", "[\"left\"]")))->sides == std::vector<Side>{ Side::Left });
 }
 
-TEST_CASE("whitespace and a trailing carriage return around the object are tolerated", "[protocol][parse]")
+TEST_CASE("whitespace and a trailing carriage return around the object are tolerated", "[unit][protocol][parse]")
 {
     CHECK(as_cancel(parse_command("  \t{ \"v\" : 1 , \"type\" : \"cancel\" , \"attempt\" : \"a\" }\r\n")));
     CHECK(as_cancel(parse_command("{\"attempt\":\"a\",\"type\":\"cancel\",\"v\":1}")));
 }
 
-TEST_CASE("start rejects bad sides", "[protocol][parse]")
+TEST_CASE("start rejects bad sides", "[unit][protocol][parse]")
 {
     require_rejected(start_line("a", "[]"), "start");
     require_rejected(start_line("a", "[\"left\",\"left\"]"), "start");
@@ -106,7 +106,7 @@ TEST_CASE("start rejects bad sides", "[protocol][parse]")
     require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"staging_dir\":\"/s\"}", "start");
 }
 
-TEST_CASE("start rejects a bad staging_dir", "[protocol][parse]")
+TEST_CASE("start rejects a bad staging_dir", "[unit][protocol][parse]")
 {
     require_rejected(start_line("a", "[\"left\"]", ""), "start");
     require_rejected(start_line("a", "[\"left\"]", "relative/dir"), "start");
@@ -120,7 +120,7 @@ TEST_CASE("start rejects a bad staging_dir", "[protocol][parse]")
     CHECK(as_start(parse_command(start_line("a", "[\"left\"]", "/" + std::string(4095, 'x')))));
 }
 
-TEST_CASE("attempt ids are 1-64 characters of letters, digits, underscore and dash", "[protocol][parse]")
+TEST_CASE("attempt ids are 1-64 characters of letters, digits, underscore and dash", "[unit][protocol][parse]")
 {
     CHECK(as_cancel(parse_command("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"Aa09_-\"}")));
     CHECK(as_cancel(parse_command("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"" + std::string(64, 'a') + "\"}")));
@@ -137,7 +137,7 @@ TEST_CASE("attempt ids are 1-64 characters of letters, digits, underscore and da
     require_rejected("{\"v\":1,\"type\":\"cancel\"}", "cancel");
 }
 
-TEST_CASE("confirm tokens are 1-128 printable ASCII characters", "[protocol][parse]")
+TEST_CASE("confirm tokens are 1-128 printable ASCII characters", "[unit][protocol][parse]")
 {
     CHECK(as_confirm(parse_command(confirm_line("a"))));
     CHECK(as_confirm(parse_command(confirm_line(std::string(128, 'z')))));
@@ -154,7 +154,7 @@ TEST_CASE("confirm tokens are 1-128 printable ASCII characters", "[protocol][par
     require_rejected("{\"v\":1,\"type\":\"confirm\",\"attempt\":\"a\",\"token\":3}", "confirm");
 }
 
-TEST_CASE("a rejection for a known command echoes the attempt once it is valid", "[protocol][parse]")
+TEST_CASE("a rejection for a known command echoes the attempt once it is valid", "[unit][protocol][parse]")
 {
     const ParsedCommand bad_sides = parse_command(start_line("att9", "[]"));
     REQUIRE(bad_sides.rejection);
@@ -169,7 +169,7 @@ TEST_CASE("a rejection for a known command echoes the attempt once it is valid",
     CHECK_FALSE(bad_attempt.rejection->attempt.has_value());
 }
 
-TEST_CASE("unknown keys are rejected for every command", "[protocol][parse]")
+TEST_CASE("unknown keys are rejected for every command", "[unit][protocol][parse]")
 {
     require_rejected(
         "{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"],\"staging_dir\":\"/s\","
@@ -179,7 +179,7 @@ TEST_CASE("unknown keys are rejected for every command", "[protocol][parse]")
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"a\",\"token\":\"t\"}", "cancel");
 }
 
-TEST_CASE("the protocol version is required and must be the integer 1", "[protocol][parse]")
+TEST_CASE("the protocol version is required and must be the integer 1", "[unit][protocol][parse]")
 {
     require_rejected("{\"type\":\"cancel\",\"attempt\":\"a\"}", "cancel");
     require_rejected("{\"v\":2,\"type\":\"cancel\",\"attempt\":\"a\"}", "cancel");
@@ -192,7 +192,7 @@ TEST_CASE("the protocol version is required and must be the integer 1", "[protoc
     require_rejected("{\"v\":[1],\"type\":\"cancel\",\"attempt\":\"a\"}");
 }
 
-TEST_CASE("the command type must be one of the three known strings", "[protocol][parse]")
+TEST_CASE("the command type must be one of the three known strings", "[unit][protocol][parse]")
 {
     require_rejected("{\"v\":1,\"attempt\":\"a\"}");
     require_rejected("{\"v\":1,\"type\":1,\"attempt\":\"a\"}");
@@ -203,7 +203,7 @@ TEST_CASE("the command type must be one of the three known strings", "[protocol]
     require_rejected("{\"v\":1,\"type\":\"\",\"attempt\":\"a\"}");
 }
 
-TEST_CASE("malformed JSON is rejected, never crashes", "[protocol][json]")
+TEST_CASE("malformed JSON is rejected, never crashes", "[unit][protocol][json]")
 {
     const std::vector<std::string> lines = {
         "",
@@ -237,7 +237,7 @@ TEST_CASE("malformed JSON is rejected, never crashes", "[protocol][json]")
     }
 }
 
-TEST_CASE("duplicate keys are rejected even when the values agree", "[protocol][json]")
+TEST_CASE("duplicate keys are rejected even when the values agree", "[unit][protocol][json]")
 {
     require_rejected("{\"v\":1,\"v\":1,\"type\":\"cancel\",\"attempt\":\"a\"}");
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"a\",\"attempt\":\"b\"}");
@@ -245,7 +245,7 @@ TEST_CASE("duplicate keys are rejected even when the values agree", "[protocol][
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"a\",\"att\\u0065mpt\":\"b\"}");
 }
 
-TEST_CASE("only strings, plain integers and string arrays are accepted as values", "[protocol][json]")
+TEST_CASE("only strings, plain integers and string arrays are accepted as values", "[unit][protocol][json]")
 {
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":{\"x\":1}}");
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":[1,2]}");
@@ -260,7 +260,7 @@ TEST_CASE("only strings, plain integers and string arrays are accepted as values
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":-Infinity}");
 }
 
-TEST_CASE("numbers must be plain integers", "[protocol][json]")
+TEST_CASE("numbers must be plain integers", "[unit][protocol][json]")
 {
     require_rejected("{\"v\":1e400,\"type\":\"cancel\",\"attempt\":\"a\"}", "unknown");
     require_rejected("{\"v\":1E0,\"type\":\"cancel\",\"attempt\":\"a\"}", "unknown");
@@ -279,7 +279,7 @@ TEST_CASE("numbers must be plain integers", "[protocol][json]")
     require_rejected("{\"v\":999999999999999999,\"type\":\"cancel\",\"attempt\":\"a\"}", "cancel");
 }
 
-TEST_CASE("string escapes decode and invalid ones are rejected", "[protocol][json]")
+TEST_CASE("string escapes decode and invalid ones are rejected", "[unit][protocol][json]")
 {
     // All the standard escapes decode inside a path.
     const ParsedCommand escaped = parse_command(start_line("a", "[\"left\"]", "/a\\/b\\\\c\\\"d\\be\\ff\\ng\\rh\\ti"));
@@ -293,7 +293,7 @@ TEST_CASE("string escapes decode and invalid ones are rejected", "[protocol][jso
     require_rejected(start_line("a", "[\"left\"]", "/bad\\U0041"));
 }
 
-TEST_CASE("unicode escapes decode to UTF-8 including surrogate pairs", "[protocol][json]")
+TEST_CASE("unicode escapes decode to UTF-8 including surrogate pairs", "[unit][protocol][json]")
 {
     const ParsedCommand two_byte = parse_command(start_line("a", "[\"left\"]", "/\\u00e9"));
     REQUIRE(as_start(two_byte));
@@ -317,7 +317,7 @@ TEST_CASE("unicode escapes decode to UTF-8 including surrogate pairs", "[protoco
     CHECK(as_start(raw)->staging_dir == "/caf\xC3\xA9");
 }
 
-TEST_CASE("unpaired surrogates are rejected", "[protocol][json]")
+TEST_CASE("unpaired surrogates are rejected", "[unit][protocol][json]")
 {
     require_rejected(start_line("a", "[\"left\"]", "/\\ud83d"));
     require_rejected(start_line("a", "[\"left\"]", "/\\ud83dx"));
@@ -327,7 +327,7 @@ TEST_CASE("unpaired surrogates are rejected", "[protocol][json]")
     require_rejected(start_line("a", "[\"left\"]", "/\\ude00\\ud83d"));
 }
 
-TEST_CASE("raw control characters inside a string are rejected", "[protocol][json]")
+TEST_CASE("raw control characters inside a string are rejected", "[unit][protocol][json]")
 {
     require_rejected(start_line("a", "[\"left\"]", std::string("/bad") + '\x01' + "x"));
     require_rejected(start_line("a", "[\"left\"]", std::string("/bad") + '\n' + "x"));
@@ -335,7 +335,7 @@ TEST_CASE("raw control characters inside a string are rejected", "[protocol][jso
     require_rejected(start_line("a", "[\"left\"]", std::string("/bad") + '\0' + "x"));
 }
 
-TEST_CASE("deeply nested input is rejected without recursion problems", "[protocol][json]")
+TEST_CASE("deeply nested input is rejected without recursion problems", "[unit][protocol][json]")
 {
     const std::string prefix = "{\"v\":1,\"type\":\"cancel\",\"attempt\":";
     std::string nested_objects;
@@ -351,7 +351,7 @@ TEST_CASE("deeply nested input is rejected without recursion problems", "[protoc
     require_rejected(prefix + std::string(200000, '[') + std::string(200000, ']') + "}");
 }
 
-TEST_CASE("the size limit applies to the whole line", "[protocol][limits]")
+TEST_CASE("the size limit applies to the whole line", "[unit][protocol][limits]")
 {
     const std::string base = "{\"v\":1,\"type\":\"cancel\",\"attempt\":\"a\"}";
 
@@ -370,7 +370,7 @@ TEST_CASE("the size limit applies to the whole line", "[protocol][limits]")
     require_rejected(std::string(10 * kMaxMessageBytes, 'x'));
 }
 
-TEST_CASE("a very long string value is rejected by the field limits, not accepted", "[protocol][limits]")
+TEST_CASE("a very long string value is rejected by the field limits, not accepted", "[unit][protocol][limits]")
 {
     require_rejected("{\"v\":1,\"type\":\"cancel\",\"attempt\":\"" + std::string(60000, 'a') + "\"}", "cancel");
     require_rejected(confirm_line(std::string(60000, 't')), "confirm");
@@ -378,7 +378,7 @@ TEST_CASE("a very long string value is rejected by the field limits, not accepte
 
 // --- serialization -------------------------------------------------------------------------------------------
 
-TEST_CASE("ready serializes with and without an SDK version", "[protocol][serialize]")
+TEST_CASE("ready serializes with and without an SDK version", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(ReadyEvent{ "1.0", std::nullopt }) ==
           "{\"v\":1,\"type\":\"ready\",\"worker_version\":\"1.0\",\"sdk_version\":null}");
@@ -386,7 +386,7 @@ TEST_CASE("ready serializes with and without an SDK version", "[protocol][serial
           "{\"v\":1,\"type\":\"ready\",\"worker_version\":\"1.0\",\"sdk_version\":\"5.0.1\"}");
 }
 
-TEST_CASE("status serializes phases and the discovered gloves", "[protocol][serialize]")
+TEST_CASE("status serializes phases and the discovered gloves", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(StatusEvent{ "a1", Phase::AwaitingStep, { { Side::Left, 10 }, { Side::Right, 20 } } }) ==
           "{\"v\":1,\"type\":\"status\",\"attempt\":\"a1\",\"phase\":\"awaiting_step\",\"gloves\":"
@@ -407,7 +407,7 @@ TEST_CASE("status serializes phases and the discovered gloves", "[protocol][seri
     }
 }
 
-TEST_CASE("prompt serializes every field", "[protocol][serialize]")
+TEST_CASE("prompt serializes every field", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(PromptEvent{ "a1", "a1-2", Side::Right, 20, 1, 3, "Pose", "Hold flat", StepMode::Motion, 2.5 }) ==
           "{\"v\":1,\"type\":\"prompt\",\"attempt\":\"a1\",\"token\":\"a1-2\",\"side\":\"right\",\"glove_id\":20,"
@@ -419,7 +419,7 @@ TEST_CASE("prompt serializes every field", "[protocol][serialize]")
           "\"duration_s\":0.000,\"continuous\":false,\"estimated_s\":0.000}");
 }
 
-TEST_CASE("a continuous prompt serializes the flag and the estimate", "[protocol][serialize]")
+TEST_CASE("a continuous prompt serializes the flag and the estimate", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(PromptEvent{ "a1", "a1-3", Side::Left, 7, 2, 8, "Open and close", "Repeat", StepMode::Hold,
                                        0.0, true, 10.0 }) ==
@@ -431,7 +431,7 @@ TEST_CASE("a continuous prompt serializes the flag and the estimate", "[protocol
                ContainsSubstring("\"continuous\":true,\"estimated_s\":0.250}"));
 }
 
-TEST_CASE("step_accepted and step_progress serialize", "[protocol][serialize]")
+TEST_CASE("step_accepted and step_progress serialize", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(StepAcceptedEvent{ "a1", "a1-1" }) ==
           "{\"v\":1,\"type\":\"step_accepted\",\"attempt\":\"a1\",\"token\":\"a1-1\"}");
@@ -441,7 +441,7 @@ TEST_CASE("step_accepted and step_progress serialize", "[protocol][serialize]")
     CHECK_THAT(serialize_event(StepProgressEvent{ "a1", "t", 2.0 }), ContainsSubstring("\"elapsed_s\":2.000"));
 }
 
-TEST_CASE("rejected serializes a null attempt and an optional token", "[protocol][serialize]")
+TEST_CASE("rejected serializes a null attempt and an optional token", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(RejectedEvent{ std::nullopt, "unknown", RejectReason::Invalid, "bad", std::nullopt }) ==
           "{\"v\":1,\"type\":\"rejected\",\"attempt\":null,\"command\":\"unknown\",\"reason\":\"invalid\","
@@ -465,7 +465,7 @@ TEST_CASE("rejected serializes a null attempt and an optional token", "[protocol
     }
 }
 
-TEST_CASE("exported serializes the file facts", "[protocol][serialize]")
+TEST_CASE("exported serializes the file facts", "[unit][protocol][serialize]")
 {
     CHECK(serialize_event(ExportedEvent{ "a1", Side::Left, 10, "a1_left.mcal", 5, std::string(64, 'a') }) ==
           "{\"v\":1,\"type\":\"exported\",\"attempt\":\"a1\",\"side\":\"left\",\"glove_id\":10,"
@@ -475,7 +475,7 @@ TEST_CASE("exported serializes the file facts", "[protocol][serialize]")
                ContainsSubstring("\"bytes\":18446744073709551615"));
 }
 
-TEST_CASE("result lists files only for a completed outcome", "[protocol][serialize]")
+TEST_CASE("result lists files only for a completed outcome", "[unit][protocol][serialize]")
 {
     const std::vector<ResultFile> files = { { Side::Left, "a1_left.mcal", 5, "h1" },
                                             { Side::Right, "a1_right.mcal", 7, "h2" } };
@@ -508,7 +508,7 @@ TEST_CASE("result lists files only for a completed outcome", "[protocol][seriali
     CHECK_THAT(failed_line, !ContainsSubstring("files"));
 }
 
-TEST_CASE("result serializes a missing attempt and error without side or step", "[protocol][serialize]")
+TEST_CASE("result serializes a missing attempt and error without side or step", "[unit][protocol][serialize]")
 {
     ResultEvent result;
     result.attempt = std::nullopt;
@@ -536,7 +536,7 @@ TEST_CASE("result serializes a missing attempt and error without side or step", 
     }
 }
 
-TEST_CASE("serialized strings escape quotes, backslashes and control characters", "[protocol][serialize]")
+TEST_CASE("serialized strings escape quotes, backslashes and control characters", "[unit][protocol][serialize]")
 {
     const auto line_for = [](const std::string& text) {
         return serialize_event(RejectedEvent{ std::nullopt, "start", RejectReason::Invalid, text, std::nullopt });
@@ -557,7 +557,7 @@ TEST_CASE("serialized strings escape quotes, backslashes and control characters"
         line_for(std::string("a") + '\x7f' + "b"), ContainsSubstring(std::string("\"message\":\"a") + '\x7f' + "b\""));
 }
 
-TEST_CASE("a serialized event is always one line", "[protocol][serialize]")
+TEST_CASE("a serialized event is always one line", "[unit][protocol][serialize]")
 {
     const std::string nasty = std::string("line1\nline2\r\n") + '\0' + "\x01\x02 \"q\" \\ \xE2\x80\xA8 end";
     const std::vector<Event> events = {
@@ -576,7 +576,7 @@ TEST_CASE("a serialized event is always one line", "[protocol][serialize]")
     }
 }
 
-TEST_CASE("valid multi-byte UTF-8 is preserved when serialized", "[protocol][serialize]")
+TEST_CASE("valid multi-byte UTF-8 is preserved when serialized", "[unit][protocol][serialize]")
 {
     const auto message_of = [](const std::string& text) {
         return serialize_event(RejectedEvent{ std::nullopt, "start", RejectReason::Invalid, text, std::nullopt });
@@ -594,7 +594,7 @@ TEST_CASE("valid multi-byte UTF-8 is preserved when serialized", "[protocol][ser
     CHECK_THAT(message_of("\xF4\x8F\xBF\xBF"), ContainsSubstring("\"message\":\"\xF4\x8F\xBF\xBF\""));
 }
 
-TEST_CASE("invalid UTF-8 becomes the replacement character when serialized", "[protocol][serialize]")
+TEST_CASE("invalid UTF-8 becomes the replacement character when serialized", "[unit][protocol][serialize]")
 {
     const auto message_of = [](const std::string& text) {
         return serialize_event(RejectedEvent{ std::nullopt, "start", RejectReason::Invalid, text, std::nullopt });
@@ -618,7 +618,7 @@ TEST_CASE("invalid UTF-8 becomes the replacement character when serialized", "[p
     CHECK_THAT(message_of("\xFF\xFE"), ContainsSubstring("\"message\":\"" + replacement + replacement + "\""));
 }
 
-TEST_CASE("non-finite seconds never serialize as bare nan or inf", "[protocol][serialize]")
+TEST_CASE("non-finite seconds never serialize as bare nan or inf", "[unit][protocol][serialize]")
 {
     const double inf = std::numeric_limits<double>::infinity();
     const std::vector<std::string> lines = {

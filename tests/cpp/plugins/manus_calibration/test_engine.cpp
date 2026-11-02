@@ -97,7 +97,7 @@ bool has_call(const Rig& rig, const std::string& call)
 
 // --- happy paths -------------------------------------------------------------------------------------------
 
-TEST_CASE("a left-only calibration completes with one exported file", "[engine][flow]")
+TEST_CASE("a left-only calibration completes with one exported file", "[unit][engine][flow]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -126,7 +126,7 @@ TEST_CASE("a left-only calibration completes with one exported file", "[engine][
     CHECK(rig.engine->outcome() == Outcome::Completed);
 }
 
-TEST_CASE("a right-only calibration uses the right glove id", "[engine][flow]")
+TEST_CASE("a right-only calibration uses the right glove id", "[unit][engine][flow]")
 {
     Rig rig;
     rig.start({ Side::Right });
@@ -147,7 +147,7 @@ TEST_CASE("a right-only calibration uses the right glove id", "[engine][flow]")
     CHECK_FALSE(has_call(rig, "sdk:start:10"));
 }
 
-TEST_CASE("both gloves are calibrated left then right with one file each", "[engine][flow]")
+TEST_CASE("both gloves are calibrated left then right with one file each", "[unit][engine][flow]")
 {
     Rig rig;
     rig.start({ Side::Left, Side::Right });
@@ -179,7 +179,7 @@ TEST_CASE("both gloves are calibrated left then right with one file each", "[eng
     CHECK(rig.index_of("sdk:start:10") < rig.index_of("sdk:start:20"));
 }
 
-TEST_CASE("prompts carry the SDK step data and distinguish hold from motion", "[engine][flow]")
+TEST_CASE("prompts carry the SDK step data and distinguish hold from motion", "[unit][engine][flow]")
 {
     Rig rig;
     rig.sdk.step_times = { 0.0f, 2.0f, 0.0f };
@@ -209,7 +209,7 @@ TEST_CASE("prompts carry the SDK step data and distinguish hold from motion", "[
     CHECK(third->duration_s == 0.0);
 }
 
-TEST_CASE("a zero step time is a hold and a positive one is a motion with that duration", "[engine][flow]")
+TEST_CASE("a zero step time is a hold and a positive one is a motion with that duration", "[unit][engine][flow]")
 {
     Rig rig;
     rig.sdk.steps = 4;
@@ -235,7 +235,7 @@ TEST_CASE("a zero step time is a hold and a positive one is a motion with that d
     }
 }
 
-TEST_CASE("a negative step time is a continuous hold carrying the SDK estimate", "[engine][flow][continuous]")
+TEST_CASE("a negative step time is a continuous hold carrying the SDK estimate", "[unit][engine][flow][continuous]")
 {
     Rig rig;
     rig.sdk.step_times = { -1.0f, -0.001f, 0.0f };
@@ -271,7 +271,7 @@ TEST_CASE("a negative step time is a continuous hold carrying the SDK estimate",
 }
 
 TEST_CASE("a routine of all continuous steps, like the real gloves report, completes with both files",
-          "[engine][flow][continuous]")
+          "[unit][engine][flow][continuous]")
 {
     const std::vector<float> real_times = { -2.0f, -2.0f, -10.0f, -5.0f, -3.0f, -3.0f, -3.0f, -3.0f };
     Rig rig;
@@ -335,7 +335,7 @@ void require_step_failed(const Rig& rig, Side side, uint32_t step)
 
 } // namespace
 
-TEST_CASE("an unusable step time at index 0 fails before any prompt", "[engine][flow][step_time]")
+TEST_CASE("an unusable step time at index 0 fails before any prompt", "[unit][engine][flow][step_time]")
 {
     for (const BadTime& bad : kBadTimes)
     {
@@ -355,7 +355,7 @@ TEST_CASE("an unusable step time at index 0 fails before any prompt", "[engine][
     }
 }
 
-TEST_CASE("an unusable step time at a later index fails before the first prompt", "[engine][flow][step_time]")
+TEST_CASE("an unusable step time at a later index fails before the first prompt", "[unit][engine][flow][step_time]")
 {
     for (const BadTime& bad : kBadTimes)
     {
@@ -377,7 +377,7 @@ TEST_CASE("an unusable step time at a later index fails before the first prompt"
 }
 
 TEST_CASE("an unusable step time on the second glove fails only once the first glove has finished",
-          "[engine][flow][step_time]")
+          "[unit][engine][flow][step_time]")
 {
     for (const BadTime& bad : kBadTimes)
     {
@@ -413,7 +413,7 @@ TEST_CASE("an unusable step time on the second glove fails only once the first g
     }
 }
 
-TEST_CASE("every prompt has a unique token", "[engine][flow]")
+TEST_CASE("every prompt has a unique token", "[unit][engine][flow]")
 {
     Rig rig;
     rig.start();
@@ -427,7 +427,7 @@ TEST_CASE("every prompt has a unique token", "[engine][flow]")
     CHECK(tokens.size() == rig.all<PromptEvent>().size());
 }
 
-TEST_CASE("each prompt needs its own confirmation, including the second glove's first", "[engine][confirm]")
+TEST_CASE("each prompt needs its own confirmation, including the second glove's first", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start();
@@ -458,7 +458,7 @@ TEST_CASE("each prompt needs its own confirmation, including the second glove's 
 
 // --- confirmation handling ---------------------------------------------------------------------------------
 
-TEST_CASE("a repeated confirmation is acknowledged again without a second SDK step", "[engine][confirm]")
+TEST_CASE("a repeated confirmation is acknowledged again without a second SDK step", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -484,7 +484,7 @@ TEST_CASE("a repeated confirmation is acknowledged again without a second SDK st
     CHECK(rig.rejections().empty());
 }
 
-TEST_CASE("a repeated confirmation during sampling does not restart the step", "[engine][confirm]")
+TEST_CASE("a repeated confirmation during sampling does not restart the step", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -503,7 +503,7 @@ TEST_CASE("a repeated confirmation during sampling does not restart the step", "
     CHECK(rig.rejections().empty());
 }
 
-TEST_CASE("a token that was never offered is rejected as stale and changes nothing", "[engine][confirm]")
+TEST_CASE("a token that was never offered is rejected as stale and changes nothing", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -536,7 +536,7 @@ TEST_CASE("a token that was never offered is rejected as stale and changes nothi
     CHECK(rig.sdk.count("start_step") == 1);
 }
 
-TEST_CASE("a confirmation for another attempt is rejected as an unknown attempt", "[engine][confirm]")
+TEST_CASE("a confirmation for another attempt is rejected as an unknown attempt", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -551,7 +551,7 @@ TEST_CASE("a confirmation for another attempt is rejected as an unknown attempt"
     CHECK(rig.sdk.count("start_step") == 0);
 }
 
-TEST_CASE("confirmations before any prompt are rejected", "[engine][confirm]")
+TEST_CASE("confirmations before any prompt are rejected", "[unit][engine][confirm]")
 {
     SECTION("before start")
     {
@@ -577,7 +577,7 @@ TEST_CASE("confirmations before any prompt are rejected", "[engine][confirm]")
     }
 }
 
-TEST_CASE("a different token while a step is sampling is rejected and sampling continues", "[engine][confirm]")
+TEST_CASE("a different token while a step is sampling is rejected and sampling continues", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -598,7 +598,7 @@ TEST_CASE("a different token while a step is sampling is rejected and sampling c
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("a confirmation while the calibration is being saved is rejected", "[engine][confirm]")
+TEST_CASE("a confirmation while the calibration is being saved is rejected", "[unit][engine][confirm]")
 {
     Rig rig;
     rig.sdk.on_export = [&rig]() { rig.send(confirm("late-token")); };
@@ -613,7 +613,7 @@ TEST_CASE("a confirmation while the calibration is being saved is rejected", "[e
     CHECK(rejections[0]->token == std::optional<std::string>("late-token"));
 }
 
-TEST_CASE("commands after the terminal result are ignored", "[engine][terminal]")
+TEST_CASE("commands after the terminal result are ignored", "[unit][engine][terminal]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -635,7 +635,7 @@ TEST_CASE("commands after the terminal result are ignored", "[engine][terminal]"
 
 // --- start handling ----------------------------------------------------------------------------------------
 
-TEST_CASE("a second start while an attempt is active is rejected as busy", "[engine][start]")
+TEST_CASE("a second start while an attempt is active is rejected as busy", "[unit][engine][start]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -657,7 +657,7 @@ TEST_CASE("a second start while an attempt is active is rejected as busy", "[eng
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("a start with an unusable staging directory is rejected before any SDK call", "[engine][start]")
+TEST_CASE("a start with an unusable staging directory is rejected before any SDK call", "[unit][engine][start]")
 {
     Rig rig;
     rig.writer.usable = false;
@@ -679,7 +679,7 @@ TEST_CASE("a start with an unusable staging directory is rejected before any SDK
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("ticking and cancelling before a start does nothing harmful", "[engine][start]")
+TEST_CASE("ticking and cancelling before a start does nothing harmful", "[unit][engine][start]")
 {
     Rig rig;
     rig.engine->tick();
@@ -693,7 +693,7 @@ TEST_CASE("ticking and cancelling before a start does nothing harmful", "[engine
     CHECK_FALSE(rig.engine->finished());
 }
 
-TEST_CASE("a cancel requested before the start ends as cancelled without touching the SDK", "[engine][start]")
+TEST_CASE("a cancel requested before the start ends as cancelled without touching the SDK", "[unit][engine][start]")
 {
     Rig rig;
     rig.engine->request_cancel();
@@ -710,7 +710,7 @@ TEST_CASE("a cancel requested before the start ends as cancelled without touchin
 
 // --- discovery ---------------------------------------------------------------------------------------------
 
-TEST_CASE("discovery waits through connecting attempts", "[engine][discovery]")
+TEST_CASE("discovery waits through connecting attempts", "[unit][engine][discovery]")
 {
     Rig rig;
     rig.sdk.connecting_attempts = 2;
@@ -724,7 +724,7 @@ TEST_CASE("discovery waits through connecting attempts", "[engine][discovery]")
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("gloves that appear late are picked up and reported", "[engine][discovery]")
+TEST_CASE("gloves that appear late are picked up and reported", "[unit][engine][discovery]")
 {
     Rig rig;
     rig.sdk.landscape.clear();
@@ -759,7 +759,7 @@ TEST_CASE("gloves that appear late are picked up and reported", "[engine][discov
     CHECK(glove_counts.back() == 2);
 }
 
-TEST_CASE("discovery times out with no_gloves and shuts the SDK down", "[engine][discovery]")
+TEST_CASE("discovery times out with no_gloves and shuts the SDK down", "[unit][engine][discovery]")
 {
     Rig rig;
     rig.sdk.landscape.clear();
@@ -778,7 +778,7 @@ TEST_CASE("discovery times out with no_gloves and shuts the SDK down", "[engine]
     CHECK(rig.sdk.count("stop") == 0);
 }
 
-TEST_CASE("the timeout names only the gloves that were not found", "[engine][discovery]")
+TEST_CASE("the timeout names only the gloves that were not found", "[unit][engine][discovery]")
 {
     Rig rig;
     rig.sdk.landscape = { { Side::Left, 10 } };
@@ -795,7 +795,7 @@ TEST_CASE("the timeout names only the gloves that were not found", "[engine][dis
     CHECK(rig.sdk.count("start:") == 0);
 }
 
-TEST_CASE("a failed connection ends the attempt with the host's message", "[engine][discovery]")
+TEST_CASE("a failed connection ends the attempt with the host's message", "[unit][engine][discovery]")
 {
     Rig rig;
     rig.sdk.fail_call = "connect";
@@ -812,7 +812,7 @@ TEST_CASE("a failed connection ends the attempt with the host's message", "[engi
 
 // --- progress ----------------------------------------------------------------------------------------------
 
-TEST_CASE("sampling progress is monotonic and never exceeds the step duration", "[engine][progress]")
+TEST_CASE("sampling progress is monotonic and never exceeds the step duration", "[unit][engine][progress]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -857,7 +857,7 @@ TEST_CASE("sampling progress is monotonic and never exceeds the step duration", 
     CHECK(rig.last_prompt()->index == 2);
 }
 
-TEST_CASE("a long gap between ticks still reports progress capped at the duration", "[engine][progress]")
+TEST_CASE("a long gap between ticks still reports progress capped at the duration", "[unit][engine][progress]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -876,7 +876,7 @@ TEST_CASE("a long gap between ticks still reports progress capped at the duratio
     CHECK(rig.last_prompt()->index == 2);
 }
 
-TEST_CASE("progress events appear only for motion steps", "[engine][progress]")
+TEST_CASE("progress events appear only for motion steps", "[unit][engine][progress]")
 {
     Rig rig;
     rig.sdk.step_times = { 0.0f, 0.0f, 0.0f };
@@ -889,7 +889,7 @@ TEST_CASE("progress events appear only for motion steps", "[engine][progress]")
 
 // --- glove presence ----------------------------------------------------------------------------------------
 
-TEST_CASE("the other glove disappearing while a prompt is waiting fails the attempt", "[engine][gloves]")
+TEST_CASE("the other glove disappearing while a prompt is waiting fails the attempt", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start();
@@ -911,7 +911,7 @@ TEST_CASE("the other glove disappearing while a prompt is waiting fails the atte
     CHECK(rig.index_of("sdk:stop:10") < rig.index_of("sdk:shutdown"));
 }
 
-TEST_CASE("the calibrated glove disappearing during sampling fails with the step index", "[engine][gloves]")
+TEST_CASE("the calibrated glove disappearing during sampling fails with the step index", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -931,7 +931,7 @@ TEST_CASE("the calibrated glove disappearing during sampling fails with the step
     CHECK(has_call(rig, "sdk:stop:10"));
 }
 
-TEST_CASE("a changed glove id is reported as a replaced glove", "[engine][gloves]")
+TEST_CASE("a changed glove id is reported as a replaced glove", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -950,7 +950,7 @@ TEST_CASE("a changed glove id is reported as a replaced glove", "[engine][gloves
     CHECK_THAT(result.error->message, ContainsSubstring("11"));
 }
 
-TEST_CASE("a glove replaced during sampling fails the attempt", "[engine][gloves]")
+TEST_CASE("a glove replaced during sampling fails the attempt", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -967,7 +967,7 @@ TEST_CASE("a glove replaced during sampling fails the attempt", "[engine][gloves
     CHECK(the_result(rig).error->step == std::optional<uint32_t>(1));
 }
 
-TEST_CASE("a glove that vanishes before its confirmation is processed never starts the step", "[engine][gloves]")
+TEST_CASE("a glove that vanishes before its confirmation is processed never starts the step", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -983,7 +983,7 @@ TEST_CASE("a glove that vanishes before its confirmation is processed never star
     CHECK(the_result(rig).error->code == ErrorCode::GloveMissing);
 }
 
-TEST_CASE("the second glove vanishing mid-attempt keeps the first export out of the result", "[engine][gloves]")
+TEST_CASE("the second glove vanishing mid-attempt keeps the first export out of the result", "[unit][engine][gloves]")
 {
     Rig rig;
     rig.start();
@@ -1019,7 +1019,7 @@ struct Injection
 
 } // namespace
 
-TEST_CASE("an SDK failure at each call ends the attempt as failed", "[engine][failure]")
+TEST_CASE("an SDK failure at each call ends the attempt as failed", "[unit][engine][failure]")
 {
     // The engine receives the SDK return code and operation result already folded into one status, so a
     // failing return code and a false result boolean look identical here.
@@ -1060,7 +1060,7 @@ TEST_CASE("an SDK failure at each call ends the attempt as failed", "[engine][fa
     }
 }
 
-TEST_CASE("a failure on the second step names that step", "[engine][failure]")
+TEST_CASE("a failure on the second step names that step", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.fail_call = "step_data";
@@ -1075,7 +1075,7 @@ TEST_CASE("a failure on the second step names that step", "[engine][failure]")
     CHECK(rig.sdk.count("stop") == 1);
 }
 
-TEST_CASE("a start_step failure never reports the step as accepted", "[engine][failure]")
+TEST_CASE("a start_step failure never reports the step as accepted", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.fail_call = "start_step";
@@ -1094,7 +1094,7 @@ TEST_CASE("a start_step failure never reports the step as accepted", "[engine][f
     CHECK(rig.events.size() == events);
 }
 
-TEST_CASE("a failed export of the second glove fails the whole attempt", "[engine][failure]")
+TEST_CASE("a failed export of the second glove fails the whole attempt", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.fail_call = "export";
@@ -1114,7 +1114,7 @@ TEST_CASE("a failed export of the second glove fails the whole attempt", "[engin
     CHECK(rig.sdk.count("stop") == 0);
 }
 
-TEST_CASE("a calibration with no steps fails before starting the SDK routine", "[engine][failure]")
+TEST_CASE("a calibration with no steps fails before starting the SDK routine", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.steps = 0;
@@ -1133,7 +1133,7 @@ TEST_CASE("a calibration with no steps fails before starting the SDK routine", "
     CHECK(rig.all<PromptEvent>().empty());
 }
 
-TEST_CASE("an empty export is rejected and nothing is written", "[engine][failure]")
+TEST_CASE("an empty export is rejected and nothing is written", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.export_bytes.clear();
@@ -1151,7 +1151,7 @@ TEST_CASE("an empty export is rejected and nothing is written", "[engine][failur
     CHECK(result.files.empty());
 }
 
-TEST_CASE("an export whose size and bytes disagree is rejected and nothing is written", "[engine][failure]")
+TEST_CASE("an export whose size and bytes disagree is rejected and nothing is written", "[unit][engine][failure]")
 {
     // The size/bytes comparison happens in the SDK binding, which reports a mismatch as a failed export even
     // though the byte buffer was partly filled. The engine must not write that buffer.
@@ -1167,7 +1167,7 @@ TEST_CASE("an export whose size and bytes disagree is rejected and nothing is wr
     CHECK(rig.all<ExportedEvent>().empty());
 }
 
-TEST_CASE("a write failure fails the attempt and nothing is announced", "[engine][failure]")
+TEST_CASE("a write failure fails the attempt and nothing is announced", "[unit][engine][failure]")
 {
     Rig rig;
     rig.writer.fail_with = "disk full";
@@ -1187,7 +1187,7 @@ TEST_CASE("a write failure fails the attempt and nothing is announced", "[engine
     CHECK(rig.sdk.count("stop") == 0);
 }
 
-TEST_CASE("a write failure on the second glove leaves no files in the result", "[engine][failure]")
+TEST_CASE("a write failure on the second glove leaves no files in the result", "[unit][engine][failure]")
 {
     Rig rig;
     rig.sdk.on_export = [&rig]()
@@ -1211,7 +1211,7 @@ TEST_CASE("a write failure on the second glove leaves no files in the result", "
 
 // --- cancellation ------------------------------------------------------------------------------------------
 
-TEST_CASE("cancelling during discovery ends cancelled with the SDK shut down", "[engine][cancel]")
+TEST_CASE("cancelling during discovery ends cancelled with the SDK shut down", "[unit][engine][cancel]")
 {
     SECTION("through the thread-safe request")
     {
@@ -1244,7 +1244,7 @@ TEST_CASE("cancelling during discovery ends cancelled with the SDK shut down", "
     }
 }
 
-TEST_CASE("cancelling while a prompt awaits confirmation stops the glove calibration", "[engine][cancel]")
+TEST_CASE("cancelling while a prompt awaits confirmation stops the glove calibration", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start();
@@ -1270,7 +1270,7 @@ TEST_CASE("cancelling while a prompt awaits confirmation stops the glove calibra
     CHECK(rig.events.size() == events);
 }
 
-TEST_CASE("cancelling during sampling stops the step and offers nothing more", "[engine][cancel]")
+TEST_CASE("cancelling during sampling stops the step and offers nothing more", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -1296,7 +1296,7 @@ TEST_CASE("cancelling during sampling stops the step and offers nothing more", "
     CHECK(rig.all<StepProgressEvent>().size() == progress);
 }
 
-TEST_CASE("cancelling while saving writes nothing and reports cancelled", "[engine][cancel]")
+TEST_CASE("cancelling while saving writes nothing and reports cancelled", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.sdk.on_export = [&rig]() { rig.engine->request_cancel(); };
@@ -1314,7 +1314,7 @@ TEST_CASE("cancelling while saving writes nothing and reports cancelled", "[engi
     CHECK(rig.sdk.count("export") == 1);
 }
 
-TEST_CASE("cancelling after the first glove was exported leaves no files in the result", "[engine][cancel]")
+TEST_CASE("cancelling after the first glove was exported leaves no files in the result", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start();
@@ -1337,7 +1337,7 @@ TEST_CASE("cancelling after the first glove was exported leaves no files in the 
     CHECK(serialize_event(result).find("files") == std::string::npos);
 }
 
-TEST_CASE("a cancel for another attempt is rejected and the attempt continues", "[engine][cancel]")
+TEST_CASE("a cancel for another attempt is rejected and the attempt continues", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -1356,7 +1356,7 @@ TEST_CASE("a cancel for another attempt is rejected and the attempt continues", 
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("cancelling twice yields one terminal result", "[engine][cancel]")
+TEST_CASE("cancelling twice yields one terminal result", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start();
@@ -1372,7 +1372,7 @@ TEST_CASE("cancelling twice yields one terminal result", "[engine][cancel]")
     CHECK(rig.sdk.count("shutdown") == 1);
 }
 
-TEST_CASE("a cancel after completion does not change the outcome", "[engine][cancel]")
+TEST_CASE("a cancel after completion does not change the outcome", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -1388,7 +1388,7 @@ TEST_CASE("a cancel after completion does not change the outcome", "[engine][can
     CHECK(rig.all<ResultEvent>().size() == 1);
 }
 
-TEST_CASE("a calibration that cannot be stopped is not reported as cleanly cancelled", "[engine][cancel]")
+TEST_CASE("a calibration that cannot be stopped is not reported as cleanly cancelled", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.sdk.fail_call = "stop";
@@ -1408,7 +1408,7 @@ TEST_CASE("a calibration that cannot be stopped is not reported as cleanly cance
     CHECK(rig.sdk.count("shutdown") == 1);
 }
 
-TEST_CASE("a failed stop during a failure keeps the original error", "[engine][cancel]")
+TEST_CASE("a failed stop during a failure keeps the original error", "[unit][engine][cancel]")
 {
     Rig rig;
     rig.sdk.fail_call = "stop";
@@ -1426,7 +1426,7 @@ TEST_CASE("a failed stop during a failure keeps the original error", "[engine][c
 
 // --- terminal ordering -------------------------------------------------------------------------------------
 
-TEST_CASE("every terminal path announces stopping, shuts down, then sends the result", "[engine][terminal]")
+TEST_CASE("every terminal path announces stopping, shuts down, then sends the result", "[unit][engine][terminal]")
 {
     SECTION("completed")
     {
@@ -1454,7 +1454,7 @@ TEST_CASE("every terminal path announces stopping, shuts down, then sends the re
     }
 }
 
-TEST_CASE("the last status before the result is stopping", "[engine][terminal]")
+TEST_CASE("the last status before the result is stopping", "[unit][engine][terminal]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -1468,7 +1468,7 @@ TEST_CASE("the last status before the result is stopping", "[engine][terminal]")
     CHECK(statuses.back()->attempt == "att1");
 }
 
-TEST_CASE("status reports each phase of a completed attempt in order", "[engine][terminal]")
+TEST_CASE("status reports each phase of a completed attempt in order", "[unit][engine][terminal]")
 {
     Rig rig;
     rig.start({ Side::Left });
@@ -1490,7 +1490,7 @@ TEST_CASE("status reports each phase of a completed attempt in order", "[engine]
     CHECK(std::find(phases.begin(), phases.end(), Phase::Saving) != phases.end());
 }
 
-TEST_CASE("a completed result lists exactly the exported files with matching hashes", "[engine][terminal]")
+TEST_CASE("a completed result lists exactly the exported files with matching hashes", "[unit][engine][terminal]")
 {
     Rig rig;
     rig.start();

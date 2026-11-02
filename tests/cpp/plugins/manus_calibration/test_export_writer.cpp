@@ -77,7 +77,7 @@ std::vector<std::string> names_in(const fs::path& dir)
 
 } // namespace
 
-TEST_CASE("directory_usable accepts only an existing writable directory", "[export_writer]")
+TEST_CASE("directory_usable accepts only an existing writable directory", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;
@@ -89,7 +89,7 @@ TEST_CASE("directory_usable accepts only an existing writable directory", "[expo
     CHECK_FALSE(writer.directory_usable((dir / "plain_file").string()));
 }
 
-TEST_CASE("directory_usable rejects a directory the worker cannot write to", "[export_writer]")
+TEST_CASE("directory_usable rejects a directory the worker cannot write to", "[unit][export_writer]")
 {
     if (::geteuid() == 0)
     {
@@ -102,7 +102,7 @@ TEST_CASE("directory_usable rejects a directory the worker cannot write to", "[e
     CHECK_FALSE(PosixExportWriter{}.directory_usable((dir / "locked").string()));
 }
 
-TEST_CASE("write publishes the exact bytes under the final name and leaves no .part file", "[export_writer]")
+TEST_CASE("write publishes the exact bytes under the final name and leaves no .part file", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;
@@ -121,7 +121,7 @@ TEST_CASE("write publishes the exact bytes under the final name and leaves no .p
     CHECK((info.st_mode & 0777) == 0600);
 }
 
-TEST_CASE("write handles an empty payload and a large payload", "[export_writer]")
+TEST_CASE("write handles an empty payload and a large payload", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;
@@ -138,7 +138,7 @@ TEST_CASE("write handles an empty payload and a large payload", "[export_writer]
     CHECK(read_file(dir / "large.mcal") == large);
 }
 
-TEST_CASE("write refuses a basename that could leave the staging directory", "[export_writer]")
+TEST_CASE("write refuses a basename that could leave the staging directory", "[unit][export_writer]")
 {
     TempDir dir;
     fs::create_directory(dir / "inner");
@@ -153,7 +153,7 @@ TEST_CASE("write refuses a basename that could leave the staging directory", "[e
     CHECK(names_in(dir / "inner").empty());
 }
 
-TEST_CASE("write fails cleanly when the directory does not exist", "[export_writer]")
+TEST_CASE("write fails cleanly when the directory does not exist", "[unit][export_writer]")
 {
     TempDir dir;
     const auto error = PosixExportWriter{}.write((dir / "missing").string(), "a.mcal", { 1 });
@@ -162,7 +162,7 @@ TEST_CASE("write fails cleanly when the directory does not exist", "[export_writ
     CHECK_THAT(*error, ContainsSubstring("a.mcal.part"));
 }
 
-TEST_CASE("write does not touch a stale .part file or write through a planted symlink", "[export_writer]")
+TEST_CASE("write does not touch a stale .part file or write through a planted symlink", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;
@@ -178,7 +178,7 @@ TEST_CASE("write does not touch a stale .part file or write through a planted sy
     CHECK(read_file(dir / "target") == std::vector<uint8_t>{ 'v', 'i', 'c', 't', 'i', 'm' });
 }
 
-TEST_CASE("write never overwrites an existing final file", "[export_writer]")
+TEST_CASE("write never overwrites an existing final file", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;
@@ -192,7 +192,7 @@ TEST_CASE("write never overwrites an existing final file", "[export_writer]")
     CHECK(names_in(dir.str()) == std::vector<std::string>{ "keep.mcal" });
 }
 
-TEST_CASE("write reports a publish failure and removes the .part file", "[export_writer]")
+TEST_CASE("write reports a publish failure and removes the .part file", "[unit][export_writer]")
 {
     TempDir dir;
     // Anything already on the final name makes the publish step fail.
@@ -207,7 +207,7 @@ TEST_CASE("write reports a publish failure and removes the .part file", "[export
     CHECK(fs::is_directory(dir / "taken.mcal"));
 }
 
-TEST_CASE("write reports a write failure and removes the .part file", "[export_writer]")
+TEST_CASE("write reports a write failure and removes the .part file", "[unit][export_writer]")
 {
     TempDir dir;
     PosixExportWriter writer;

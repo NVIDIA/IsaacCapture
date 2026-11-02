@@ -201,6 +201,13 @@ void CalibrationEngine::poll_discovery()
 namespace
 {
 
+// The wire carries milliseconds. A nonzero SDK time that would round to zero is reported as one millisecond,
+// so the mode, the duration and the estimate a prompt carries always agree.
+double wire_seconds(double seconds)
+{
+    return std::max(0.001, std::round(seconds * 1000.0) / 1000.0);
+}
+
 // Empty when the SDK's step time can be acted on; otherwise why it cannot.
 std::string unusable_step_time(float time_s)
 {
@@ -278,8 +285,8 @@ void CalibrationEngine::offer_prompt()
     // the next prompt follows. The estimate is guidance only.
     const bool continuous = step.time_s < 0.0f;
     m_current_mode = step.time_s > 0.0f ? StepMode::Motion : StepMode::Hold;
-    m_current_duration_s = m_current_mode == StepMode::Motion ? static_cast<double>(step.time_s) : 0.0;
-    const double estimated_s = continuous ? -static_cast<double>(step.time_s) : 0.0;
+    m_current_duration_s = m_current_mode == StepMode::Motion ? wire_seconds(static_cast<double>(step.time_s)) : 0.0;
+    const double estimated_s = continuous ? wire_seconds(-static_cast<double>(step.time_s)) : 0.0;
     m_state = State::AwaitingStep;
     emit_status(Phase::AwaitingStep);
     m_sink(PromptEvent{ m_attempt, m_current_token, glove.side, glove.glove_id, m_step_index, m_step_count, step.title,

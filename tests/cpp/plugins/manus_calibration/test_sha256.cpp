@@ -25,7 +25,7 @@ std::vector<uint8_t> repeated(uint8_t value, size_t count)
 
 } // namespace
 
-TEST_CASE("sha256 matches the standard test vectors", "[sha256]")
+TEST_CASE("sha256 matches the standard test vectors", "[unit][sha256]")
 {
     CHECK(sha256_hex({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     CHECK(sha256_hex(bytes_of("abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
@@ -36,7 +36,7 @@ TEST_CASE("sha256 matches the standard test vectors", "[sha256]")
           "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
 }
 
-TEST_CASE("sha256 is correct on either side of every padding boundary", "[sha256]")
+TEST_CASE("sha256 is correct on either side of every padding boundary", "[unit][sha256]")
 {
     // Lengths around the 55/56 byte point where padding spills into a second block, and around full blocks.
     CHECK(sha256_hex(repeated('a', 54)) == "a3f01b6939256127582ac8ae9fb47a382a244680806a3f613a118851c1ca1d47");
@@ -53,7 +53,7 @@ TEST_CASE("sha256 is correct on either side of every padding boundary", "[sha256
     CHECK(sha256_hex(repeated('a', 129)) == "c12cb024a2e5551cca0e08fce8f1c5e314555cc3fef6329ee994a3db752166ae");
 }
 
-TEST_CASE("sha256 handles binary data and large inputs", "[sha256]")
+TEST_CASE("sha256 handles binary data and large inputs", "[unit][sha256]")
 {
     std::vector<uint8_t> pattern(1000);
     for (size_t i = 0; i < pattern.size(); ++i)
@@ -64,7 +64,7 @@ TEST_CASE("sha256 handles binary data and large inputs", "[sha256]")
     CHECK(sha256_hex(repeated('a', 1000000)) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
 
-TEST_CASE("sha256 output is 64 lowercase hex characters", "[sha256]")
+TEST_CASE("sha256 output is 64 lowercase hex characters", "[unit][sha256]")
 {
     const std::string digest = sha256_hex(bytes_of("any input"));
     REQUIRE(digest.size() == 64);
