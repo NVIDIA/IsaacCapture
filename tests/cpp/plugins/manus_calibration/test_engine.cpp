@@ -1509,3 +1509,155 @@ TEST_CASE("a completed result lists exactly the exported files with matching has
         CHECK(rig.writer.files.count(std::string("/stage/") + result.files[i].file) == 1);
     }
 }
+
+// --- cleanup evidence --------------------------------------------------------------------------------------
+
+TEST_CASE("clean runs report the gloves released", "[unit][engine][released]")
+{
+    SECTION("a completed calibration")
+    {
+        Rig rig;
+        rig.start({ Side::Left });
+        rig.run_to_end();
+        require_clean_terminal(rig);
+        CHECK(the_result(rig).outcome == Outcome::Completed);
+        CHECK(the_result(rig).released);
+    }
+    SECTION("a cancel at the first prompt")
+    {
+        Rig rig;
+        rig.start({ Side::Left });
+        rig.run_to_prompt();
+        rig.send(CancelCommand{ "att1" });
+        require_clean_terminal(rig);
+        CHECK(the_result(rig).outcome == Outcome::Cancelled);
+        CHECK(the_result(rig).released);
+    }
+    SECTION("a failure whose cleanup succeeded")
+    {
+        Rig rig;
+        rig.start({ Side::Left });
+        rig.run_to_prompt();
+        rig.sdk.landscape.clear();
+        tick_for(rig, 1);
+        require_clean_terminal(rig);
+        CHECK(the_result(rig).outcome == Outcome::Failed);
+        CHECK(the_result(rig).released);
+    }
+    SECTION("a discovery timeout")
+    {
+        Rig rig;
+        rig.sdk.landscape.clear();
+        rig.start({ Side::Left });
+        tick_until_finished(rig);
+        require_clean_terminal(rig);
+        CHECK(the_result(rig).outcome == Outcome::Failed);
+        CHECK(the_result(rig).released);
+    }
+}
+
+TEST_CASE("a cancel before the start never touched the SDK and so reports it released", "[unit][engine][released]")
+{
+    Rig rig;
+    rig.engine->request_cancel();
+    rig.start();
+
+    REQUIRE(rig.engine->finished());
+    CHECK(sdk_calls(rig).empty());
+    CHECK(the_result(rig).released);
+}
+
+TEST_CASE("a failed SDK shutdown after a would-be completed run fails the attempt and reports not released",
+          "[unit][engine][released]")
+{
+    Rig rig;
+    rig.sdk.shutdown_result = SdkStatus::failure("injected shutdown");
+    rig.start({ Side::Left });
+    rig.run_to_end();
+
+    require_clean_terminal(rig);
+    const ResultEvent& result = the_result(rig);
+    CHECK(result.outcome == Outcome::Failed);
+    CHECK(result.files.empty());
+    CHECK_FALSE(result.released);
+    REQUIRE(result.error.has_value());
+    CHECK(result.error->code == ErrorCode::SdkError);
+    CHECK_THAT(result.error->message, ContainsSubstring("cannot shut down the SDK"));
+    CHECK_THAT(result.error->message, ContainsSubstring("injected shutdown"));
+    CHECK_THAT(serialize_event(result), ContainsSubstring("\"released\":false"));
+    CHECK(rig.engine->outcome() == Outcome::Failed);
+}
+
+TEST_CASE("a failed SDK shutdown after a cancel downgrades it to failed and reports not released",
+          "[unit][engine][released]")
+{
+    Rig rig;
+    rig.sdk.shutdown_result = SdkStatus::failure("injected shutdown");
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+
+    rig.send(CancelCommand{ "att1" });
+
+    require_clean_terminal(rig);
+    const ResultEvent& result = the_result(rig);
+    CHECK(result.outcome == Outcome::Failed);
+    CHECK_FALSE(result.released);
+    REQUIRE(result.error.has_value());
+    CHECK_THAT(result.error->message, ContainsSubstring("cannot shut down the SDK"));
+}
+
+TEST_CASE("a failed SDK shutdown during an earlier failure keeps the original error and reports not released",
+          "[unit][engine][released]")
+{
+    Rig rig;
+    rig.sdk.shutdown_result = SdkStatus::failure("injected shutdown");
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+
+    rig.sdk.landscape.clear();
+    tick_for(rig, 1);
+
+    require_clean_terminal(rig);
+    const ResultEvent& result = the_result(rig);
+    CHECK(result.outcome == Outcome::Failed);
+    CHECK_FALSE(result.released);
+    REQUIRE(result.error.has_value());
+    // The attempt's own failure stays the reported cause; the release failure is carried by the flag.
+    CHECK(result.error->code == ErrorCode::GloveMissing);
+}
+
+TEST_CASE("a failed calibration stop during a cancel reports not released", "[unit][engine][released]")
+{
+    Rig rig;
+    rig.sdk.fail_call = "stop";
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+
+    rig.send(CancelCommand{ "att1" });
+
+    require_clean_terminal(rig);
+    const ResultEvent& result = the_result(rig);
+    CHECK(result.outcome == Outcome::Failed);
+    CHECK_FALSE(result.released);
+    REQUIRE(result.error.has_value());
+    CHECK_THAT(result.error->message, ContainsSubstring("cannot stop"));
+}
+
+TEST_CASE("a failed calibration stop during an earlier failure keeps the original error and reports not released",
+          "[unit][engine][released]")
+{
+    Rig rig;
+    rig.sdk.fail_call = "stop";
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+
+    rig.sdk.landscape.clear();
+    tick_for(rig, 1);
+
+    require_clean_terminal(rig);
+    const ResultEvent& result = the_result(rig);
+    CHECK(result.outcome == Outcome::Failed);
+    CHECK_FALSE(result.released);
+    REQUIRE(result.error.has_value());
+    CHECK(result.error->code == ErrorCode::GloveMissing);
+}

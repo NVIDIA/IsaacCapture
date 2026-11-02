@@ -68,6 +68,7 @@ VALID = {
         "attempt": ATTEMPT,
         "outcome": "completed",
         "files": [{"side": "left", "file": "a.mcal", "bytes": 1, "sha256": SHA}],
+        "released": True,
     },
 }
 
@@ -91,12 +92,20 @@ def test_failed_result_carries_an_error_and_cancelled_carries_neither():
                     "side": "left",
                     "step": 1,
                 },
+                "released": True,
             }
         )
     )
     assert failed.error == proto.WorkerError("no_gloves", "none", proto.Side.LEFT, 1)
     cancelled = proto.parse_event(
-        line({"type": "result", "attempt": ATTEMPT, "outcome": "cancelled"})
+        line(
+            {
+                "type": "result",
+                "attempt": ATTEMPT,
+                "outcome": "cancelled",
+                "released": True,
+            }
+        )
     )
     assert cancelled.files == () and cancelled.error is None
 
@@ -225,13 +234,26 @@ def test_more_malformed_events_are_protocol_errors(name, changes):
 def test_a_completed_result_may_list_no_files_but_never_omit_the_field():
     event = proto.parse_event(
         line(
-            {"type": "result", "attempt": ATTEMPT, "outcome": "completed", "files": []}
+            {
+                "type": "result",
+                "attempt": ATTEMPT,
+                "outcome": "completed",
+                "files": [],
+                "released": True,
+            }
         )
     )
     assert event.files == ()
     with pytest.raises(proto.ProtocolError):
         proto.parse_event(
-            line({"type": "result", "attempt": ATTEMPT, "outcome": "completed"})
+            line(
+                {
+                    "type": "result",
+                    "attempt": ATTEMPT,
+                    "outcome": "completed",
+                    "released": True,
+                }
+            )
         )
 
 
@@ -244,10 +266,50 @@ def test_every_documented_error_code_parses():
                     "attempt": ATTEMPT,
                     "outcome": "failed",
                     "error": {"code": code, "message": "m"},
+                    "released": True,
                 }
             )
         )
         assert event.error.code == code
+
+
+@pytest.mark.parametrize("released", [True, False])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"outcome": "completed", "files": []},
+        {"outcome": "cancelled"},
+        {"outcome": "failed", "error": {"code": "internal", "message": "m"}},
+    ],
+)
+def test_released_parses_for_every_outcome(extra, released):
+    event = proto.parse_event(
+        line(
+            {
+                "type": "result",
+                "attempt": ATTEMPT,
+                "released": released,
+                **extra,
+            }
+        )
+    )
+    assert event.released is released
+
+
+def test_a_result_without_released_is_a_protocol_error():
+    with pytest.raises(proto.ProtocolError):
+        proto.parse_event(mutate("result", released=KeyError))
+
+
+@pytest.mark.parametrize("value", ["true", "false", 1, 0, None, [], {}, 1.0])
+def test_a_result_whose_released_is_not_a_boolean_is_a_protocol_error(value):
+    with pytest.raises(proto.ProtocolError):
+        proto.parse_event(mutate("result", released=value))
+
+
+def test_result_released_defaults_to_true_on_the_dataclass():
+    result = proto.Result(attempt=None, outcome=proto.Outcome.CANCELLED)
+    assert result.released is True
 
 
 @pytest.mark.parametrize(

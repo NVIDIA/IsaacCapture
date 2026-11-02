@@ -183,6 +183,9 @@ struct ResultEvent
     Outcome outcome;
     std::vector<ResultFile> files;
     std::optional<ErrorInfo> error;
+    // False when the SDK calibration could not be stopped or the SDK could not be shut down: the gloves may
+    // still be in use whatever the outcome says, so a supervisor must not treat them as free.
+    bool released = true;
 };
 
 using Event =

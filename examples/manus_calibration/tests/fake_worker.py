@@ -10,6 +10,8 @@ continuous step, which is a hold-paced prompt that carries an estimated duration
 Hang scenarios keep the process alive and silent (``ignore_term`` makes it survive SIGTERM too):
 ``hang_after_start``, ``hang_after_discovering``, ``hang_on_confirm`` and ``hang_after_last_accept``.
 ``chatty_discovery`` and ``chatty_finish`` (seconds) keep emitting status events while the worker is busy.
+Every ``result`` carries ``released``: true unless the scenario sets ``not_released``, which models a worker
+whose SDK calibration could not be stopped or whose SDK could not be shut down.
 Run as ``python fake_worker.py --ipc-fd=N``.
 """
 
@@ -38,6 +40,11 @@ GLOVE_IDS = {"left": 11, "right": 22}
 
 class Cancelled(Exception):
     pass
+
+
+def released() -> bool:
+    """The `released` flag every result carries."""
+    return not SCENARIO.get("not_released")
 
 
 def hang() -> None:
@@ -218,7 +225,13 @@ def run_attempt(channel: "Channel", attempt: str, start: dict) -> int:
     if SCENARIO.get("partial_result"):
         files = files[:1]
     channel.send(
-        {"type": "result", "attempt": attempt, "outcome": "completed", "files": files}
+        {
+            "type": "result",
+            "attempt": attempt,
+            "outcome": "completed",
+            "files": files,
+            "released": released(),
+        }
     )
     if SCENARIO.get("extra_after_result"):
         channel.status("saving", gloves)
@@ -331,7 +344,13 @@ def fail(channel: "Channel", attempt: str, code: str, message: str, side, step) 
     if side is not None:
         error.update(side=side, step=step)
     channel.send(
-        {"type": "result", "attempt": attempt, "outcome": "failed", "error": error}
+        {
+            "type": "result",
+            "attempt": attempt,
+            "outcome": "failed",
+            "error": error,
+            "released": released(),
+        }
     )
     return 1
 
@@ -340,7 +359,14 @@ def cancelled(channel: "Channel", attempt: str) -> int:
     # A worker that needs time to stop its SDK after a cancel.
     time.sleep(float(SCENARIO.get("slow_cancel", 0)))
     channel.status("stopping", [])
-    channel.send({"type": "result", "attempt": attempt, "outcome": "cancelled"})
+    channel.send(
+        {
+            "type": "result",
+            "attempt": attempt,
+            "outcome": "cancelled",
+            "released": released(),
+        }
+    )
     return 0
 
 

@@ -536,3 +536,21 @@ def test_a_bound_disconnect_for_a_finished_attempt_is_ignored(make_worker):
         assert len(store.list_published()) == 1
 
     asyncio.run(scenario())
+
+
+def test_the_station_stays_unavailable_after_a_result_that_reports_the_sdk_unreleased(
+    make_worker,
+):
+    async def scenario():
+        controller, _store, _views = build(make_worker, {"not_released": True})
+        await controller.start(OWNER, LEFT)
+        view = await finish(controller)
+        assert view.outcome.kind is OutcomeKind.UNCERTAIN
+        assert "could not release the SDK" in view.outcome.message
+        assert view.outcome.published is None
+        assert not controller.active
+        # No new attempt may start while the gloves may still be in use.
+        with pytest.raises(AttemptError, match="could not release the SDK"):
+            await controller.start(OWNER, LEFT)
+
+    asyncio.run(scenario())

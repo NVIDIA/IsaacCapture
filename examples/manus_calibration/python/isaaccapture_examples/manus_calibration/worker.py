@@ -645,6 +645,21 @@ class CalibrationAttempt:
                 error=proto.WorkerError("worker_unreaped", message),
             )
         result = self._result
+        if result is not None and not result.released:
+            # The process exited, but it reported that the SDK was not released: the gloves may still be in use.
+            detail = f": {result.error.message}" if result.error is not None else ""
+            message = (
+                f"the worker could not release the SDK{detail}; restart this program once the gloves are known "
+                "to be free"
+            )
+            self._owner.unreleased = message
+            return self._outcome_of(
+                OutcomeKind.UNCERTAIN,
+                message,
+                code,
+                forced,
+                error=proto.WorkerError("worker_unreleased", message),
+            )
         if self._violation is not None:
             # Before `start` the worker has not opened the SDK, so only a started worker leaves it unknown.
             kind = OutcomeKind.UNCERTAIN if self._start_sent else OutcomeKind.FAILED

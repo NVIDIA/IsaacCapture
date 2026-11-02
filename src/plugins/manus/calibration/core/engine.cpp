@@ -491,6 +491,9 @@ void CalibrationEngine::terminate(Outcome outcome, std::optional<ErrorInfo> erro
     {
         emit_status(Phase::Stopping);
     }
+    // Whether the gloves are known to be free, kept apart from the outcome: a failed attempt can still have
+    // released everything, and a failed release can follow any outcome.
+    bool released = true;
     // An SDK calibration left running would keep the glove in calibration mode, so stop it first. If it
     // cannot be stopped the cleanup is uncertain, which must not be reported as a clean cancellation.
     if (m_calibrating)
@@ -498,6 +501,10 @@ void CalibrationEngine::terminate(Outcome outcome, std::optional<ErrorInfo> erro
         const GloveRef glove = m_pinned[m_glove_index];
         const SdkStatus stopped = m_sdk.stop(glove.glove_id);
         m_calibrating = false;
+        if (!stopped.ok)
+        {
+            released = false;
+        }
         if (!stopped.ok && outcome == Outcome::Cancelled)
         {
             outcome = Outcome::Failed;
@@ -507,13 +514,17 @@ void CalibrationEngine::terminate(Outcome outcome, std::optional<ErrorInfo> erro
     }
     if (m_sdk_initialized)
     {
-        const SdkStatus released = m_sdk.shutdown();
+        const SdkStatus down = m_sdk.shutdown();
         m_sdk_initialized = false;
+        if (!down.ok)
+        {
+            released = false;
+        }
         // A completed or cancelled outcome promises the gloves are free, so a failed release downgrades it.
-        if (!released.ok && outcome != Outcome::Failed)
+        if (!down.ok && outcome != Outcome::Failed)
         {
             outcome = Outcome::Failed;
-            error = ErrorInfo{ ErrorCode::SdkError, "cannot shut down the SDK: " + released.message, std::nullopt,
+            error = ErrorInfo{ ErrorCode::SdkError, "cannot shut down the SDK: " + down.message, std::nullopt,
                                std::nullopt };
         }
     }
@@ -522,8 +533,9 @@ void CalibrationEngine::terminate(Outcome outcome, std::optional<ErrorInfo> erro
     m_finished = true;
     m_outcome = outcome;
 
-    // Sent last, after the SDK is down: a supervisor that sees `result` can rely on the gloves being free.
+    // Sent last, after the SDK is down. `released` says whether that cleanup succeeded; the outcome alone does not.
     ResultEvent result;
+    result.released = released;
     if (!m_attempt.empty())
     {
         result.attempt = m_attempt;

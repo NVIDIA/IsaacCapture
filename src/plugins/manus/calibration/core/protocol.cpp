@@ -516,6 +516,7 @@ std::string serialize_event(const Event& event)
             {
                 writer.raw("error", error_json(*e.error));
             }
+            writer.raw("released", e.released ? "true" : "false");
             return writer.finish();
         }
     };

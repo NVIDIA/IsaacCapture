@@ -27,7 +27,9 @@ manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS]
 - `SIGTERM`, EOF on the IPC socket, and loss of the parent each request cancellation. The worker
   stops the SDK calibration, shuts the SDK down, sends `result` (`cancelled`) if it still can, and
   exits. The supervisor escalates to `SIGKILL` after its own bounded grace period.
-- `result` is sent only after SDK shutdown has finished. A supervisor that never receives `result`
+- `result` is sent only after SDK shutdown has been attempted. `released` is false when the SDK calibration
+  could not be stopped or the SDK could not be shut down, whatever the outcome: the process then exits but
+  the gloves may still be in use, and a supervisor must keep them unavailable. A supervisor that never receives `result`
   must treat the outcome as uncertain, never as success.
 
 ## Wire format
@@ -56,7 +58,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 | `step_progress` | `attempt`, `token`, `elapsed_s` | About every 0.25 s while a `motion` step samples; `elapsed_s` never exceeds `duration_s`. Elapsed sampling time, not a quality measure. |
 | `rejected` | `attempt` (string or null), `command`, `reason` (`invalid`, `unknown_attempt`, `stale_token`, `unexpected`, `busy`), `message`, `token` (when relevant) | A command was refused. No state changes. |
 | `exported` | `attempt`, `side`, `glove_id`, `file` (basename inside `staging_dir`), `bytes`, `sha256` (lowercase hex) | One MCAL file written and flushed. |
-| `result` | `attempt` (or null), `outcome` (`completed`/`cancelled`/`failed`), `files` (array of `{side, file, bytes, sha256}`, present only for `completed`), `error` (`{code, message, side?, step?}`, present only for `failed`) | Terminal. Sent exactly once, after SDK shutdown. |
+| `result` | `attempt` (or null), `outcome` (`completed`/`cancelled`/`failed`), `files` (array of `{side, file, bytes, sha256}`, present only for `completed`), `error` (`{code, message, side?, step?}`, present only for `failed`), `released` (boolean, always present) | Terminal. Sent exactly once, after SDK shutdown. |
 
 Error `code` values: `sdk_init_failed`, `no_gloves`, `glove_missing`, `glove_replaced`,
 `sdk_error`, `step_failed`, `export_failed`, `protocol_error`, `internal`. The message names the

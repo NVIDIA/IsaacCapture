@@ -903,3 +903,81 @@ def test_new_attempts_never_overwrite_earlier_sets_or_foreign_files(make_worker)
         assert listed == {first.published.set_id, second.published.set_id}
 
     run(scenario())
+
+
+# --- Release evidence -------------------------------------------------------------------------
+
+
+def assert_unreleased(outcome, r) -> None:
+    """The shared contract of a result that reports the SDK not released."""
+    assert outcome.kind is OutcomeKind.UNCERTAIN
+    assert outcome.error is not None and outcome.error.code == "worker_unreleased"
+    assert "could not release the SDK" in outcome.message
+    assert outcome.published is None
+    assert r.worker.unreleased == outcome.message
+    assert_nothing_published(r.store)
+    assert_reaped(r.attempt)
+    # The process exited and was reaped, so its staging is discarded like any reaped attempt's.
+    assert_staging_gone(r.store, outcome.attempt)
+    with pytest.raises(AttemptError, match="could not release the SDK"):
+        r.worker.new_attempt()
+
+
+def test_a_completed_result_that_reports_the_sdk_unreleased_is_uncertain_and_publishes_nothing(
+    make_worker,
+):
+    async def scenario():
+        r = Run(make_worker, {"not_released": True})
+        outcome = await drive(r.attempt, BOTH)
+        # The files the worker reported would verify, so only the release flag stops publication.
+        assert r.seen(proto.Result) and r.seen(proto.Exported)
+        assert_unreleased(outcome, r)
+
+    run(scenario())
+
+
+def test_a_cancelled_result_that_reports_the_sdk_unreleased_is_uncertain(make_worker):
+    async def scenario():
+        r = Run(make_worker, {"not_released": True})
+        await r.attempt.start(LEFT)
+        await wait_for(lambda: r.attempt.prompt is not None)
+        await r.attempt.cancel()
+        outcome = await r.settle()
+        assert_unreleased(outcome, r)
+
+    run(scenario())
+
+
+def test_a_failed_result_that_reports_the_sdk_unreleased_is_uncertain_and_names_the_failure(
+    make_worker,
+):
+    async def scenario():
+        r = Run(make_worker, {"not_released": True, "fail_at_step": ["left", 1]})
+        outcome = await drive(r.attempt, LEFT)
+        assert_unreleased(outcome, r)
+        # The worker's own failure text is kept in the message for the operator.
+        assert "the SDK refused the step" in outcome.message
+
+    run(scenario())
+
+
+def test_a_released_result_leaves_the_worker_free_for_the_next_attempt(make_worker):
+    async def scenario():
+        r = Run(make_worker)
+        outcome = await drive(r.attempt, LEFT)
+        assert outcome.kind is OutcomeKind.COMPLETED
+        assert r.worker.unreleased is None
+        assert r.worker.new_attempt().state is AttemptState.NEW
+
+    run(scenario())
+
+
+def test_a_failure_that_released_the_sdk_does_not_latch_the_worker(make_worker):
+    async def scenario():
+        r = Run(make_worker, {"fail_at_step": ["left", 1]})
+        outcome = await drive(r.attempt, LEFT)
+        assert outcome.kind is OutcomeKind.FAILED
+        assert r.worker.unreleased is None
+        assert r.worker.new_attempt().state is AttemptState.NEW
+
+    run(scenario())

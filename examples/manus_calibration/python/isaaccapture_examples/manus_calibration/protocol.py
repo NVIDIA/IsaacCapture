@@ -168,6 +168,9 @@ class Result:
     outcome: Outcome
     files: tuple[ExportedFile, ...] = ()
     error: WorkerError | None = None
+    # False when the worker could not stop the SDK calibration or shut the SDK down, so the gloves may still
+    # be in use whatever the outcome says.
+    released: bool = True
 
 
 WorkerEvent = (
@@ -439,8 +442,12 @@ def _parse_exported(d: dict[str, Any]) -> Exported:
 
 
 def _parse_result(d: dict[str, Any]) -> Result:
-    _keys(d, {"v", "type", "attempt", "outcome"}, {"files", "error"}, "result")
+    _keys(
+        d, {"v", "type", "attempt", "outcome", "released"}, {"files", "error"}, "result"
+    )
     outcome = _enum(Outcome, d["outcome"], "result.outcome")
+    if type(d["released"]) is not bool:
+        raise _fail("result", "released must be a boolean")
     has_files = "files" in d
     has_error = "error" in d
     # `files` belongs to completed results only and `error` to failed ones.
@@ -453,6 +460,7 @@ def _parse_result(d: dict[str, Any]) -> Result:
         outcome=outcome,
         files=_exported_files(d["files"], "result") if has_files else (),
         error=_error(d["error"], "result") if has_error else None,
+        released=d["released"],
     )
 
 

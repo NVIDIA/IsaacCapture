@@ -487,7 +487,7 @@ TEST_CASE("result lists files only for a completed outcome", "[unit][protocol][s
     CHECK(serialize_event(completed) ==
           "{\"v\":1,\"type\":\"result\",\"attempt\":\"a1\",\"outcome\":\"completed\",\"files\":"
           "[{\"side\":\"left\",\"file\":\"a1_left.mcal\",\"bytes\":5,\"sha256\":\"h1\"},"
-          "{\"side\":\"right\",\"file\":\"a1_right.mcal\",\"bytes\":7,\"sha256\":\"h2\"}]}");
+          "{\"side\":\"right\",\"file\":\"a1_right.mcal\",\"bytes\":7,\"sha256\":\"h2\"}],\"released\":true}");
 
     ResultEvent empty_completed = completed;
     empty_completed.files.clear();
@@ -496,7 +496,8 @@ TEST_CASE("result lists files only for a completed outcome", "[unit][protocol][s
     // A cancelled or failed result never advertises files, even if the struct still holds some.
     ResultEvent cancelled = completed;
     cancelled.outcome = Outcome::Cancelled;
-    CHECK(serialize_event(cancelled) == "{\"v\":1,\"type\":\"result\",\"attempt\":\"a1\",\"outcome\":\"cancelled\"}");
+    CHECK(serialize_event(cancelled) ==
+          "{\"v\":1,\"type\":\"result\",\"attempt\":\"a1\",\"outcome\":\"cancelled\",\"released\":true}");
 
     ResultEvent failed = completed;
     failed.outcome = Outcome::Failed;
@@ -504,8 +505,37 @@ TEST_CASE("result lists files only for a completed outcome", "[unit][protocol][s
     const std::string failed_line = serialize_event(failed);
     CHECK(failed_line ==
           "{\"v\":1,\"type\":\"result\",\"attempt\":\"a1\",\"outcome\":\"failed\",\"error\":{\"code\":"
-          "\"export_failed\",\"message\":\"disk full\",\"side\":\"right\",\"step\":2}}");
+          "\"export_failed\",\"message\":\"disk full\",\"side\":\"right\",\"step\":2},\"released\":true}");
     CHECK_THAT(failed_line, !ContainsSubstring("files"));
+}
+
+TEST_CASE("result always states whether the gloves were released, last in the object", "[unit][protocol][serialize]")
+{
+    ResultEvent fresh;
+    CHECK(fresh.released);
+
+    ResultEvent failed;
+    failed.attempt = "a1";
+    failed.outcome = Outcome::Failed;
+    failed.error = ErrorInfo{ ErrorCode::SdkError, "cannot shut down the SDK: x", std::nullopt, std::nullopt };
+    failed.released = false;
+    CHECK(serialize_event(failed) ==
+          "{\"v\":1,\"type\":\"result\",\"attempt\":\"a1\",\"outcome\":\"failed\",\"error\":{\"code\":"
+          "\"sdk_error\",\"message\":\"cannot shut down the SDK: x\"},\"released\":false}");
+
+    // The flag is independent of the outcome: a cancelled result can also report an unreleased SDK.
+    ResultEvent cancelled;
+    cancelled.attempt = std::nullopt;
+    cancelled.outcome = Outcome::Cancelled;
+    cancelled.released = false;
+    CHECK(serialize_event(cancelled) ==
+          "{\"v\":1,\"type\":\"result\",\"attempt\":null,\"outcome\":\"cancelled\",\"released\":false}");
+
+    ResultEvent completed;
+    completed.attempt = "a1";
+    completed.outcome = Outcome::Completed;
+    completed.released = false;
+    CHECK_THAT(serialize_event(completed), ContainsSubstring("\"released\":false}"));
 }
 
 TEST_CASE("result serializes a missing attempt and error without side or step", "[unit][protocol][serialize]")
@@ -516,7 +546,7 @@ TEST_CASE("result serializes a missing attempt and error without side or step", 
     result.error = ErrorInfo{ ErrorCode::SdkInitFailed, "no sdk", std::nullopt, std::nullopt };
     CHECK(serialize_event(result) ==
           "{\"v\":1,\"type\":\"result\",\"attempt\":null,\"outcome\":\"failed\",\"error\":{\"code\":"
-          "\"sdk_init_failed\",\"message\":\"no sdk\"}}");
+          "\"sdk_init_failed\",\"message\":\"no sdk\"},\"released\":true}");
 
     const std::vector<std::pair<ErrorCode, std::string>> codes = {
         { ErrorCode::SdkInitFailed, "sdk_init_failed" },

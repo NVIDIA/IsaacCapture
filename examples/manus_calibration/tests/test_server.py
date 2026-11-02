@@ -1391,3 +1391,38 @@ def test_a_prompt_left_longer_than_every_deadline_can_still_be_answered_over_htt
             sse.close()
 
     asyncio.run(scenario())
+
+
+def test_a_result_that_reports_the_sdk_unreleased_blocks_a_new_start_over_http(
+    make_worker,
+):
+    async def scenario():
+        flags = {**WAITING, "not_released": True}
+        async with serving(make_worker, flags) as (server, store):
+            port = server.port
+            sse = await Sse.open(port, CLIENT_A)
+            await sse.event()
+            started = await api(port, "/api/start", CLIENT_A, {"sides": ["left"]})
+            assert started.status == 200, started.body
+            await sse.until(
+                lambda s: (
+                    s["stage"] == "awaiting_confirmation"
+                    and s["prompt"]
+                    and s["prompt"]["token"]
+                )
+            )
+            cancelled = await api(port, "/api/cancel", CLIENT_A, {})
+            assert cancelled.status == 200, cancelled.body
+            final = await sse.until(lambda s: s["stage"] == "finished", timeout=20)
+            outcome = final["outcome"]
+            assert outcome["kind"] == "uncertain"
+            assert "could not release the SDK" in outcome["message"]
+            assert outcome["files"] == []
+            assert store.list_published() == []
+            # The worker process is gone, but the gloves may not be free: a new start is refused.
+            again = await api(port, "/api/start", CLIENT_A, {"sides": ["left"]})
+            assert again.status == 409
+            assert "could not release the SDK" in again.json()["error"]
+            sse.close()
+
+    asyncio.run(scenario())
