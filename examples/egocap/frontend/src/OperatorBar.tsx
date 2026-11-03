@@ -79,6 +79,11 @@ export function deriveRecIndicator(
       }
       return { label: "READY", variant: "ready", hint: null };
     }
+    default: {
+      // A phase added to the backend must be handled above; the compiler flags it here, and at runtime stay honest.
+      const unhandled: never = snapshot.episodePhase;
+      return { label: "UNKNOWN", variant: "warning", hint: `Unrecognised recording phase: ${String(unhandled)}` };
+    }
   }
 }
 
@@ -104,6 +109,7 @@ interface OperatorBarProps {
   pendingPhase: RecordingPhase;
 }
 
+/** One device or camera chip: its name, a tone dot, and the reason only when something is wrong. */
 function HealthChipView({ chip }: { chip: HealthChip }) {
   const unhealthy = chip.tone === "warning" || chip.tone === "critical";
   return (
@@ -116,6 +122,7 @@ function HealthChipView({ chip }: { chip: HealthChip }) {
   );
 }
 
+/** The read-only status bar above the cameras: recording state, task, counts, last take and device health. */
 export function OperatorBar({
   response,
   live,
@@ -182,7 +189,14 @@ export function OperatorBar({
 
       <div className="op-health">
         <span className="op-kicker">
-          {chips.length === 0 ? "Devices" : problems.length === 0 ? "All devices OK" : `${problems.length} need attention`}
+          {chips.length === 0
+            ? "Devices"
+            : problems.length > 0
+              ? `${problems.length} need attention`
+              : // A retained feed cannot vouch for the devices now, so it never claims they are fine.
+                live
+                ? "All devices OK"
+                : "Last known: no faults"}
         </span>
         {chips.length === 0 ? (
           <span className="op-health-empty">none reported yet</span>

@@ -65,6 +65,7 @@ export function deviceChipLabel(device: Pick<DeviceStatus, "id" | "description">
   return device.description || device.id;
 }
 
+/** The reason shown on a chip: nothing for a healthy device, otherwise its error text or its status reason. */
 function detailOf(tone: Tone, error: string, reason: DeviceStatus["reason"]): string | null {
   if (tone === "positive") return null;
   if (error !== "") return error;

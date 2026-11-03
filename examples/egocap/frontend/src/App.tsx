@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";
 import {
@@ -448,16 +448,21 @@ export default function App() {
   // dragging the divider; the cameras, status bar and controls take whatever it leaves. The choice is remembered.
   const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(loadSidebarWidth(), window.innerWidth));
   const [resizing, setResizing] = useState(false);
+  // The latest clamped width, readable from event handlers without a stale closure (a drag end must save the final value).
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const applyWidth = (requested: number, persist: boolean) => {
+    const next = clampSidebarWidth(requested, window.innerWidth);
+    sidebarWidthRef.current = next;
+    setSidebarWidth(next);
+    // Only a choice the operator made is remembered; a window refit must not overwrite their preference.
+    if (persist) saveSidebarWidth(next);
+  };
   useEffect(() => {
     // A smaller window can no longer fit the remembered width, and the main column must keep its minimum.
-    const refit = () => setSidebarWidth((width) => clampSidebarWidth(width, window.innerWidth));
+    const refit = () => applyWidth(sidebarWidthRef.current, false);
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
   }, []);
-  useEffect(() => {
-    // Remembered once a drag ends (or after a key press), not on every pointer move.
-    if (!resizing) saveSidebarWidth(sidebarWidth);
-  }, [sidebarWidth, resizing]);
   const unavailable = response === null && feedHealth === "unavailable";
 
   return (
@@ -515,9 +520,13 @@ export default function App() {
               width={sidebarWidth}
               min={SIDEBAR_MIN_PX}
               max={maxSidebarWidth(window.innerWidth)}
-              onResize={(width) => setSidebarWidth(clampSidebarWidth(width, window.innerWidth))}
-              onReset={() => setSidebarWidth(clampSidebarWidth(SIDEBAR_DEFAULT_PX, window.innerWidth))}
-              onDragChange={setResizing}
+              // Pointer moves during a drag are saved once, at drag end; a key press outside a drag is saved at once.
+              onResize={(width) => applyWidth(width, !resizing)}
+              onReset={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+              onDragChange={(dragging) => {
+                setResizing(dragging);
+                if (!dragging) saveSidebarWidth(sidebarWidthRef.current);
+              }}
             />
             <aside className="op-sidebar" aria-label="3D view and details">
               <section className="op-panel op-panel--3d" aria-label="3D view">

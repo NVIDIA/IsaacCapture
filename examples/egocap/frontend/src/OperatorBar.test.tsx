@@ -148,6 +148,12 @@ describe("OperatorBar", () => {
     expect(last.closest(".op-last")?.getAttribute("title")).toBe("dropped frames; short clip");
   });
 
+  it("never says all devices are fine from a stale feed", () => {
+    bar({ live: false });
+    expect(screen.queryByText("All devices OK")).toBeNull();
+    expect(screen.getByText("Last known: no faults")).not.toBeNull();
+  });
+
   it("says every device is fine, or counts the ones that are not and lists them first", () => {
     const { unmount } = bar();
     expect(screen.getByText("All devices OK")).not.toBeNull();

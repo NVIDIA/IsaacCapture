@@ -240,6 +240,15 @@ describe("resizing the side panel", () => {
     expect(window.localStorage.getItem("egocap.sidebarWidth")).toBe("700");
   });
 
+  it("does not overwrite the remembered width when the window refits", () => {
+    windowWidth(1600);
+    window.localStorage.setItem("egocap.sidebarWidth", "900");
+    mount();
+    windowWidth(1000);
+    fireEvent(window, new Event("resize"));
+    expect(window.localStorage.getItem("egocap.sidebarWidth")).toBe("900");
+  });
+
   it("refits to a smaller window so the main column keeps its room", () => {
     windowWidth(1600);
     const { container } = mount();

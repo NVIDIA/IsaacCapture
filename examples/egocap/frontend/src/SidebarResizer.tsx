@@ -20,6 +20,7 @@ interface SidebarResizerProps {
   onDragChange: (dragging: boolean) => void;
 }
 
+/** The divider itself: pointer drag, keyboard and double-click all report a requested width to the caller. */
 export function SidebarResizer({ width, min, max, onResize, onReset, onDragChange }: SidebarResizerProps) {
   const [dragging, setDragging] = useState(false);
 

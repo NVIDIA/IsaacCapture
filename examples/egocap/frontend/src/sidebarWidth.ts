@@ -41,6 +41,7 @@ export function loadSidebarWidth(): number {
   return SIDEBAR_DEFAULT_PX;
 }
 
+/** Remember the width in this browser. Callers save only operator choices, never an automatic window refit. */
 export function saveSidebarWidth(width: number): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, String(width));
