@@ -32,7 +32,7 @@ Shared infrastructure
 Device plugins
 ~~~~~~~~~~~~~~
 
-The :doc:`/device/trackers/index` interfaces provide typed access to device data.
+The :doc:`/device/trackers` interfaces provide typed access to device data.
 Plugins connect hardware such as gloves, body trackers, and cameras through a
 common transport. XR headsets provide poses and input through OpenXR.
 See :doc:`/device/add_device` for plugin development and :doc:`ecosystem` for

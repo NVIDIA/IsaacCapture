@@ -157,16 +157,14 @@ Then follow the steps for your teleop device:
       Isaac Teleop's ``so101_leader`` plugin, which the script launches for you.
 
       #. **Build the so101_leader plugin.** It is part of Isaac Capture's C++ source, not the
-         ``isaaccapture`` pip package. Install the
-         :doc:`source-build prerequisites </development/build_from_source/index>` first, then
-         build it from an Isaac Capture checkout:
+         ``isaaccapture`` pip package, so build it from an Isaac Capture checkout:
 
          .. code-block:: bash
 
             cmake -B build && cmake --build build --parallel && cmake --install build
 
          The binary lands at ``install/plugins/so101_leader/so101_leader_plugin``. For details see
-         :ref:`so101-leader-plugin`.
+         :ref:`so101-leader-plugin` and :doc:`/development/build_from_source/index`.
 
       #. **Calibrate the leader** so the leader and follower agree on each joint's zero and range.
          This reuses the serial SO-101 leader's calibration (stored under ``so_leader/<id>.json``
