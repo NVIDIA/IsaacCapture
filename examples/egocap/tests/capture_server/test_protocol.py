@@ -942,7 +942,7 @@ def test_request_rejected_rejects_empty_error_message():
 
 
 def test_message_type_wire_values():
-    assert [int(m) for m in p.MessageType] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert [int(m) for m in p.MessageType] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
 
 def test_status_reason_wire_values_are_0_through_23():

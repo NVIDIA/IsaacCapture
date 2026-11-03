@@ -352,6 +352,7 @@ The client validates the wire SessionInit notification and converts it to Captur
 | `enabled` | `bool` | Whether the station launches it; true for a plugin selected through start. |
 | `required` | `bool` | Whether failure to discover the plugin fails startup; false for start selections. It does not require connected gloves. |
 | `datasets` | `tuple[ManusDataset, ...]`: `HUMAN=1`. | Requested live human-skeleton dataset. start selects HUMAN. |
+| `left_calibration`, `right_calibration` | `str` or omitted: an `.mcal` basename. | MCAL file for that glove, chosen from the server's MCAL folder (see Device query). Omitted when none was selected. |
 
 #### CaptureClock
 
@@ -686,18 +687,28 @@ One JSON object is one text message. One complete header and payload is one bina
 | Server → client | 5 | SessionStatus |
 | Server → client | 6 | SessionStopped |
 | Server → client | 10 | RequestRejected |
+| Client → server, on `/query` | 11 | QueryDevices |
+| Server → client, on `/query` | 12 | Devices |
 | Server → client | BinaryKind 1 | CaptureFrame |
 | Server → client | BinaryKind 2 | CaptureImage |
 
-There are ten message families. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
+There are ten session message families, plus the device query described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
 
 Every JSON message has these envelope fields. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
 
 | Field | Allowed contents | What it does |
 |---|---|---|
-| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
+| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`, `QUERY_DEVICES=11`, `DEVICES=12`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
 | `version` | Not an enum: exactly integer 1; not boolean true. | Identifies the protocol contract used to interpret all remaining fields. A receiver must reject another version rather than guess its meaning. |
 | `session_id` | Nonempty string, at most 128 characters; a new UUID string is recommended for each new session. | Associates configuration, status, samples and terminal replies with one session. A reply for another ID must not reset the active session. This is a client-chosen correlation ID, not a hardware identifier. |
+
+#### Device query
+
+`QueryDevices` is a read-only request on the server's `/query` path: its own short-lived connection, one request and one reply, no ownership and no session, so it works before capture and while a capture is running. Any other message on `/query`, including every capture command, closes the connection with 1002. `await client.query_devices()` returns the `DeviceEntry` tuple and raises `DeviceQueryError` when no answer is obtained; a failure is never reported as an empty list.
+
+Request: `{"type": 11, "version": 1, "request_id": "<1..128 chars>"}`. Reply: `{"type": 12, "version": 1, "request_id": ..., "devices": [...]}` with one entry per device kind. The Manus entry is `{"device": 1, "mcal_status": ..., "mcal_files": [...], "error_message": ...}`. `mcal_status` is `READY=1` (the list may be empty), `DISABLED=2` (the server has no MCAL folder) or `UNAVAILABLE=3` (the folder could not be read; `error_message` says why). A listing over the 2000-file limit is `UNAVAILABLE`, never truncated.
+
+The MCAL folder is set with `--manus-calibration-dir DIR`. It is a plain folder: any nonempty, readable `.mcal` regular file directly in it is offered, whether placed by hand or written by a calibration tool. Symbolic links are never offered; copy files in. Select files by name with `ManusPluginConfig(left_calibration=..., right_calibration=...)` in `start(plugins=...)`. Begin is refused as `INVALID_CONFIG` when a name is not in the folder at that moment. A name only selects a file; whether the glove accepted it is the Manus plugin's per-hand status.
 
 #### Begin: configure sources, plugins and cameras
 

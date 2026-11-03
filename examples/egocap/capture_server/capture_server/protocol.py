@@ -28,6 +28,7 @@ of this module's dataclasses -- e.g. building a ``BeginRequest`` or a
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -70,6 +71,9 @@ class MessageType(IntEnum):
     CAPTURE_IMAGE = 8
     SESSION_INIT = 9
     REQUEST_REJECTED = 10
+    # Station queries on the read-only /query route: one request, one reply, no session and no ownership.
+    QUERY_DEVICES = 11
+    DEVICES = 12
 
 
 class SourceType(IntEnum):
@@ -84,6 +88,18 @@ class PluginType(IntEnum):
 
 class ManusDataset(IntEnum):
     HUMAN = 1
+
+
+class HandSide(IntEnum):
+    LEFT = 1
+    RIGHT = 2
+
+
+class ManusCalibrationCatalogStatus(IntEnum):
+    # Whether the Manus MCAL folder listing is usable.
+    READY = 1
+    DISABLED = 2
+    UNAVAILABLE = 3
 
 
 class CaptureMode(IntEnum):
@@ -925,6 +941,27 @@ def _require_session_id(data: dict) -> str:
     return session_id
 
 
+# A bare filename: no separators, no leading dot, bounded length.
+_MCAL_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.mcal")
+_MAX_TOKEN_LEN = 128
+
+
+def _require_mcal_name(value: Any, context: str) -> str | None:
+    """An optional ``.mcal`` basename, or ``ProtocolError`` when present but not one."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _MCAL_NAME_RE.fullmatch(value):
+        raise ProtocolError(f"{context} must be an .mcal basename or null")
+    return value
+
+
+def _require_token(value: Any, context: str) -> str:
+    """A nonempty, bounded string identifier."""
+    if not isinstance(value, str) or not value or len(value) > _MAX_TOKEN_LEN:
+        raise ProtocolError(f"{context} must be a nonempty string of at most {_MAX_TOKEN_LEN} characters")
+    return value
+
+
 def require_envelope(data: dict, expected_type: MessageType) -> str:
     """Envelope-level validation shared by every message kind that needs
     it: message type, protocol version, and the canonical session_id rule
@@ -985,10 +1022,18 @@ class PluginRequest:
     enabled: bool = dataclass_field(default=True, kw_only=True)
     required: bool = dataclass_field(default=False, kw_only=True)
     datasets: tuple[ManusDataset, ...] = dataclass_field(default=(ManusDataset.HUMAN,), kw_only=True)
+    # MCAL basenames in the server's managed directory for the Manus plugin; resolved by the server, never paths.
+    left_calibration: str | None = dataclass_field(default=None, kw_only=True)
+    right_calibration: str | None = dataclass_field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if type(self.plugin) is not PluginType:
             raise ValueError(f"PluginRequest.plugin must be a PluginType, got {self.plugin!r}")
+        for name in (self.left_calibration, self.right_calibration):
+            if name is not None and (type(name) is not str or not _MCAL_NAME_RE.fullmatch(name)):
+                raise ValueError(f"PluginRequest calibration must be an .mcal basename, got {name!r}")
+        if self.left_calibration is not None and self.left_calibration == self.right_calibration:
+            raise ValueError("left_calibration and right_calibration must name different files")
         if type(self.enabled) is not bool:
             raise ValueError("PluginRequest.enabled must be a boolean")
         if type(self.required) is not bool:
@@ -1125,18 +1170,30 @@ class PluginConfiguration:
     enabled: bool
     required: bool
     datasets: tuple[ManusDataset, ...]
+    left_calibration: str | None = None
+    right_calibration: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "plugin": int(self.plugin),
             "enabled": self.enabled,
             "required": self.required,
             "datasets": [int(d) for d in self.datasets],
         }
+        # Omitted, not null, so a selection without files keeps its exact earlier wire form.
+        if self.left_calibration is not None:
+            data["left_calibration"] = self.left_calibration
+        if self.right_calibration is not None:
+            data["right_calibration"] = self.right_calibration
+        return data
 
     @classmethod
     def from_json(cls, data: Any) -> PluginConfiguration:
-        _require_keys(data, {"plugin", "enabled", "required", "datasets"}, "plugin configuration")
+        _require_keys(
+            data,
+            {"plugin", "enabled", "required", "datasets", "left_calibration", "right_calibration"},
+            "plugin configuration",
+        )
         datasets_raw = data.get("datasets")
         if not isinstance(datasets_raw, list) or not datasets_raw:
             raise ProtocolError("plugin configuration datasets must be a nonempty list")
@@ -1147,6 +1204,8 @@ class PluginConfiguration:
             datasets=tuple(
                 _require_int_enum(d, ManusDataset, "plugin configuration datasets[]") for d in datasets_raw
             ),
+            left_calibration=_require_mcal_name(data.get("left_calibration"), "plugin configuration left"),
+            right_calibration=_require_mcal_name(data.get("right_calibration"), "plugin configuration right"),
         )
 
 
@@ -1192,7 +1251,14 @@ def effective_config(begin: BeginRequest) -> CaptureConfiguration:
             headset=HeadsetConfiguration(device_index=begin.tracking.headset.device_index),
         ),
         plugins=tuple(
-            PluginConfiguration(plugin=p.plugin, enabled=p.enabled, required=p.required, datasets=p.datasets)
+            PluginConfiguration(
+                plugin=p.plugin,
+                enabled=p.enabled,
+                required=p.required,
+                datasets=p.datasets,
+                left_calibration=p.left_calibration,
+                right_calibration=p.right_calibration,
+            )
             for p in begin.plugins
         ),
         cameras=tuple(CameraSelection(name=c.name, type=c.type) for c in begin.cameras),
@@ -1292,7 +1358,11 @@ def _parse_plugin_requests(data: Any) -> tuple[PluginRequest, ...]:
 
 
 def _parse_plugin_request(data: Any) -> PluginRequest:
-    _require_keys(data, {"plugin", "enabled", "required", "datasets"}, "a plugin request")
+    _require_keys(
+        data,
+        {"plugin", "enabled", "required", "datasets", "left_calibration", "right_calibration"},
+        "a plugin request",
+    )
     plugin = _require_int_enum(data.get("plugin"), PluginType, "plugin.plugin")
     enabled = _require_strict_bool(data.get("enabled", True), "plugin.enabled")
     required = _require_strict_bool(data.get("required", False), "plugin.required")
@@ -1304,7 +1374,18 @@ def _parse_plugin_request(data: Any) -> PluginRequest:
     if len(datasets) != len(set(datasets)):
         raise ProtocolError(f"plugin.datasets has duplicate entries: {[int(d) for d in datasets]}")
 
-    return PluginRequest(plugin=plugin, enabled=enabled, required=required, datasets=datasets)
+    left = _require_mcal_name(data.get("left_calibration"), "plugin.left_calibration")
+    right = _require_mcal_name(data.get("right_calibration"), "plugin.right_calibration")
+    if left is not None and left == right:
+        raise ProtocolError("plugin.left_calibration and plugin.right_calibration must name different files")
+    return PluginRequest(
+        plugin=plugin,
+        enabled=enabled,
+        required=required,
+        datasets=datasets,
+        left_calibration=left,
+        right_calibration=right,
+    )
 
 
 def _parse_camera_requests(data: Any) -> tuple[CameraRequest, ...]:
@@ -1848,8 +1929,141 @@ class RequestRejected:
         )
 
 
+# ---------------------------------------------------------------------------
+# Station queries. A query is one request and one reply on the read-only /query route; it carries a
+# ``request_id`` (never a session) and neither takes the control connection's ownership nor touches a session.
+# ---------------------------------------------------------------------------
+
+# A larger MCAL listing is an error, never a silently truncated list.
+MAX_MCAL_FILES = 2000
+# The serialized reply must fit well inside the transport's message ceiling whatever the file count.
+MAX_QUERY_REPLY_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class QueryDevicesRequest:
+    """Ask which devices this server offers and what each can be configured with."""
+
+    request_id: str
+
+    def to_json(self) -> dict[str, Any]:
+        """The request as a wire object."""
+        return {"type": int(MessageType.QUERY_DEVICES), "version": PROTOCOL_VERSION, "request_id": self.request_id}
+
+
+def parse_query_devices(data: dict) -> QueryDevicesRequest:
+    """Strict parse of a device query; the reply is addressed by its ``request_id``."""
+    _require_keys(data, {"type", "version", "request_id"}, "QueryDevices")
+    _require_message_type(data, MessageType.QUERY_DEVICES)
+    _require_version(data)
+    return QueryDevicesRequest(request_id=_require_token(data.get("request_id"), "request_id"))
+
+
+@dataclass(frozen=True)
+class DeviceEntry:
+    """One device and its configuration choices.
+
+    For the Manus device, ``mcal_files`` are the basenames in the server's managed MCAL folder that a Begin
+    can select. ``mcal_status`` says whether that listing is usable: READY (possibly empty), DISABLED (the
+    server has no MCAL folder) or UNAVAILABLE (the folder could not be read, with ``error_message``).
+    """
+
+    device: PluginType
+    mcal_status: ManusCalibrationCatalogStatus
+    mcal_files: tuple[str, ...] = ()
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        unavailable = self.mcal_status is ManusCalibrationCatalogStatus.UNAVAILABLE
+        if unavailable != (self.error_message is not None):
+            raise ValueError("error_message is present exactly when the MCAL listing is UNAVAILABLE")
+        if self.error_message is not None and not self.error_message:
+            raise ValueError("error_message must be nonempty or null")
+        if self.mcal_status is not ManusCalibrationCatalogStatus.READY and self.mcal_files:
+            raise ValueError("mcal_files are present only for a READY listing")
+        if len(self.mcal_files) > MAX_MCAL_FILES:
+            raise ValueError(f"at most {MAX_MCAL_FILES} MCAL files fit in one reply")
+        if not all(_MCAL_NAME_RE.fullmatch(name) for name in self.mcal_files):
+            raise ValueError("mcal_files must be .mcal basenames")
+        if len(set(self.mcal_files)) != len(self.mcal_files):
+            raise ValueError("an MCAL file appears twice in the listing")
+
+    def to_json(self) -> dict[str, Any]:
+        """The entry as a wire object."""
+        return {
+            "device": int(self.device),
+            "mcal_status": int(self.mcal_status),
+            "mcal_files": list(self.mcal_files),
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> DeviceEntry:
+        """Strict parse of one device entry."""
+        _require_keys(data, {"device", "mcal_status", "mcal_files", "error_message"}, "device entry")
+        files, error_message = data.get("mcal_files"), data.get("error_message")
+        if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+            raise ProtocolError("device entry mcal_files must be a list of strings")
+        if error_message is not None and not isinstance(error_message, str):
+            raise ProtocolError("device entry error_message must be a string or null")
+        try:
+            return cls(
+                device=_require_int_enum(data.get("device"), PluginType, "device entry device"),
+                mcal_status=_require_int_enum(
+                    data.get("mcal_status"), ManusCalibrationCatalogStatus, "device entry mcal_status"
+                ),
+                mcal_files=tuple(files),
+                error_message=error_message,
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
+@dataclass(frozen=True)
+class DevicesReply:
+    """The reply to a device query: one entry per device kind the server knows."""
+
+    request_id: str
+    devices: tuple[DeviceEntry, ...]
+    type: MessageType = dataclass_field(default=MessageType.DEVICES, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def __post_init__(self) -> None:
+        kinds = [d.device for d in self.devices]
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("a device appears twice in the reply")
+
+    def to_json(self) -> dict[str, Any]:
+        """The reply as a wire object."""
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "request_id": self.request_id,
+            "devices": [d.to_json() for d in self.devices],
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> DevicesReply:
+        """Strict parse of a device reply."""
+        _require_keys(data, {"type", "version", "request_id", "devices"}, "Devices")
+        _require_message_type(data, MessageType.DEVICES)
+        _require_version(data)
+        devices = data.get("devices")
+        if not isinstance(devices, list):
+            raise ProtocolError("Devices.devices must be a list")
+        try:
+            return cls(
+                request_id=_require_token(data.get("request_id"), "request_id"),
+                devices=tuple(DeviceEntry.from_json(d) for d in devices),
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
 # A server-to-client JSON message, dispatched by its envelope's "type".
-ServerJsonMessage = SessionInit | SessionStarting | SessionBegun | SessionStatus | SessionStopped | RequestRejected
+ServerJsonMessage = (
+    SessionInit | SessionStarting | SessionBegun | SessionStatus | SessionStopped | RequestRejected | DevicesReply
+)
 
 _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {
     MessageType.SESSION_INIT: SessionInit.from_json,
@@ -1858,6 +2072,7 @@ _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {
     MessageType.SESSION_STATUS: SessionStatus.from_json,
     MessageType.SESSION_STOPPED: SessionStopped.from_json,
     MessageType.REQUEST_REJECTED: RequestRejected.from_json,
+    MessageType.DEVICES: DevicesReply.from_json,
 }
 
 
