@@ -917,7 +917,7 @@ def test_request_rejected_for_stop():
 
 
 def test_request_rejected_rejects_non_begin_stop_request_type():
-    with pytest.raises(ValueError, match="BEGIN or STOP"):
+    with pytest.raises(ValueError, match="client request type"):
         p.RequestRejected(
             session_id="session-1",
             request_type=p.MessageType.SESSION_INIT,
@@ -942,7 +942,7 @@ def test_request_rejected_rejects_empty_error_message():
 
 
 def test_message_type_wire_values():
-    assert [int(m) for m in p.MessageType] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    assert [int(m) for m in p.MessageType] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
 
 
 def test_status_reason_wire_values_are_0_through_23():
@@ -1256,7 +1256,7 @@ def test_request_rejected_from_json_rejects_bad_values():
         error_message="bad config",
     ).to_json()
     mutated = dict(golden, request_type=int(p.MessageType.SESSION_INIT))
-    with pytest.raises(p.ProtocolError, match="BEGIN or STOP"):
+    with pytest.raises(p.ProtocolError, match="client request type"):
         p.RequestRejected.from_json(mutated)
     _assert_rejects(p.RequestRejected.from_json, golden, {"error_message": ""})
 

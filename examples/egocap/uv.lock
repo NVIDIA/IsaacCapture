@@ -202,6 +202,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "isaaccapture-manus-calibration" },
     { name = "loguru" },
     { name = "numpy" },
     { name = "opencv-python" },
@@ -236,6 +237,7 @@ requires-dist = [
     { name = "depthai", marker = "extra == 'oak'", specifier = "==3.6.1" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'" },
+    { name = "isaaccapture-manus-calibration", directory = "../../src/plugins/manus/calibration/python" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "opencv-python", specifier = "==4.12.0.88" },
@@ -408,6 +410,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/01/e1/2069291243c926a2f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/43/4ca9e49d27a1fcf6bece6f6aec0ea46bb9112489b93d4b688fb415457bdb/iniconfig-2.3.1-py3-none-any.whl", hash = "sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7", size = 7552, upload-time = "2026-10-06T22:48:36.959Z" },
 ]
+
+[[package]]
+name = "isaaccapture-manus-calibration"
+version = "0.0.0"
+source = { directory = "../../src/plugins/manus/calibration/python" }
 
 [[package]]
 name = "jsonschema"

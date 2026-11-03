@@ -32,6 +32,8 @@ dependencies = [
                                  # decode/encode MP4 files on disk.
     # --- capture_server ---
     "websockets>=17.2",
+    "isaaccapture-manus-calibration",  # Manus calibration worker supervisor + MCAL storage (standard library
+                                       # only); a path dependency on the library beside the native worker.
     # --- backend (egocap_web) ---
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -139,3 +141,8 @@ include = [
 # Marks this pyproject.toml as its own workspace root, so `uv sync`/`uv lock` run from inside this
 # tree do not discover an ancestor pyproject.toml and pull it into the lockfile's manifest metadata.
 members = []
+
+[tool.uv.sources]
+# Installed (not editable) from the checkout, so a deployed CaptureServer never needs the checkout's
+# examples/ or src/ trees at run time.
+isaaccapture-manus-calibration = { path = "../../src/plugins/manus/calibration/python" }
