@@ -227,9 +227,9 @@ devices:
 
   - id: realhand-ffg-glove
     name: RealHand FFG Glove
-    url: https://github.com/RealHand-Robotics/FFG_realhand_pure_python
+    url: https://www.realhand.com/
     group: peripheral
-    modes: Finger joint sensing over USB
+    modes: 26-joint human hand tracking from USB glove sensors
     since: main
     details:
       setup:

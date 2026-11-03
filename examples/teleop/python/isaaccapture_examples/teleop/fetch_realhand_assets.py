@@ -49,14 +49,12 @@ class RemoteFile:
     path: str
     size: int
     sha256: str | None
-
-
-def _example_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    blob_id: str | None = None
 
 
 def _default_output_dir() -> Path:
-    return _example_root() / "assets" / "realhand"
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache_root / "isaaccapture" / "realhand"
 
 
 def _request_json(url: str) -> dict[str, Any]:
@@ -107,11 +105,24 @@ def _selected_files(metadata: dict[str, Any], models: set[str]) -> list[RemoteFi
             raise RuntimeError(f"Missing file size in Hugging Face metadata for {path}")
         lfs = sibling.get("lfs")
         sha256 = lfs.get("sha256") if isinstance(lfs, dict) else None
-        if sha256 is not None and (not isinstance(sha256, str) or len(sha256) != 64):
+        if sha256 is not None and (
+            not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in sha256)
+        ):
             raise RuntimeError(
                 f"Invalid LFS SHA-256 in Hugging Face metadata for {path}"
             )
-        selected.append(RemoteFile(path=path, size=size, sha256=sha256))
+        blob_id = sibling.get("blobId") if sha256 is None else None
+        if sha256 is None and (
+            not isinstance(blob_id, str)
+            or len(blob_id) != 40
+            or any(ch not in "0123456789abcdef" for ch in blob_id)
+        ):
+            raise RuntimeError(f"Missing or invalid Git blob hash for {path}")
+        selected.append(
+            RemoteFile(path=path, size=size, sha256=sha256, blob_id=blob_id)
+        )
 
     required_prefixes = {
         prefix
@@ -150,7 +161,16 @@ def _sha256(path: Path) -> str:
 def _is_complete(path: Path, remote: RemoteFile) -> bool:
     if not path.is_file() or path.stat().st_size != remote.size:
         return False
-    return remote.sha256 is None or _sha256(path) == remote.sha256
+    if remote.sha256 is not None:
+        return _sha256(path) == remote.sha256
+    if remote.blob_id is None:
+        return False
+    # Git hashes the blob header and contents, not just the file bytes.
+    digest = hashlib.sha1(f"blob {remote.size}\0".encode(), usedforsecurity=False)
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == remote.blob_id
 
 
 def _download(remote: RemoteFile, output_dir: Path, force: bool) -> tuple[Path, bool]:
@@ -187,6 +207,10 @@ def _download(remote: RemoteFile, output_dir: Path, force: bool) -> tuple[Path, 
         if remote.sha256 is not None and digest.hexdigest() != remote.sha256:
             raise RuntimeError(
                 f"Downloaded {remote.path} has SHA-256 {digest.hexdigest()}, expected {remote.sha256}"
+            )
+        if not _is_complete(temporary, remote):
+            raise RuntimeError(
+                f"Downloaded {remote.path} failed pinned content hash verification"
             )
         temporary.replace(destination)
     except (OSError, urllib.error.URLError) as exc:

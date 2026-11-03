@@ -9,9 +9,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <vector>
 
 using namespace plugins::realhand_ffg_glove;
+
+void run_reader_tests();
+void run_skeleton_tests();
+void write_skeleton_fixtures(const char* path);
+void write_calibrated_skeleton_fixtures(const char* calibration_path, const char* output_path);
 
 namespace
 {
@@ -114,12 +120,32 @@ void test_a6_positions()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 4 && std::strcmp(argv[1], "--write-calibrated-skeleton-fixtures") == 0)
+    {
+        try
+        {
+            write_calibrated_skeleton_fixtures(argv[2], argv[3]);
+            return 0;
+        }
+        catch (const std::exception& error)
+        {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
+    }
+    if (argc == 3 && std::strcmp(argv[1], "--write-skeleton-fixtures") == 0)
+    {
+        write_skeleton_fixtures(argv[2]);
+        return 0;
+    }
     test_pack_and_parse();
     test_bad_checksum_and_resync();
     test_float_positions();
     test_a6_positions();
+    run_reader_tests();
+    run_skeleton_tests();
     std::printf("OK: all %d checks passed\n", g_checks);
     return 0;
 }

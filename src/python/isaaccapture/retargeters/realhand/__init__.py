@@ -3,40 +3,54 @@
 
 """RealHand P7 arm and L6/O6/L20 hand retargeters."""
 
-from .arm import (
-    P7ControllerPoseRetargeter,
-    P7HandPoseRetargeter,
-    P7WorkspacePoseConfig,
-)
-from .hand import (
-    ControllerTriggerRealHandRetargeter,
-    ControllerTriggerRealHandRetargeterConfig,
-    RealHandHandTrackingRetargeter,
-    RealHandHandTrackingRetargeterConfig,
-    realhand_handtracking_thumb_defaults,
-)
-from .realhand_ffg_glove import (
-    RealHandFFGGloveRetargeter,
-    RealHandFFGGloveRetargeterConfig,
-    REALHAND_FFG_GLOVE_SENSOR_NAMES,
-    load_realhand_ffg_glove_calibration,
-)
-from .profiles import (
-    L6_PROFILE,
-    L20_PROFILE,
-    O6_PROFILE,
-    REALHAND_PROFILES,
-    RealHandJointSpec,
-    RealHandProfile,
-    get_realhand_profile,
-)
+import importlib
+
+_EXPORT_MODULES = {
+    "arm": (
+        "P7ControllerPoseRetargeter",
+        "P7HandPoseRetargeter",
+        "P7WorkspacePoseConfig",
+    ),
+    "hand": (
+        "ControllerTriggerRealHandRetargeter",
+        "ControllerTriggerRealHandRetargeterConfig",
+    ),
+    "profiles": (
+        "L6_PROFILE",
+        "L20_PROFILE",
+        "O6_PROFILE",
+        "REALHAND_PROFILES",
+        "RealHandJointSpec",
+        "RealHandProfile",
+        "get_realhand_profile",
+    ),
+}
+
+
+def __getattr__(name: str):
+    for module_name, exports in _EXPORT_MODULES.items():
+        if name in exports:
+            try:
+                module = importlib.import_module(f".{module_name}", __name__)
+            except ModuleNotFoundError as error:
+                if (
+                    module_name == "arm"
+                    and error.name
+                    and error.name.startswith("scipy")
+                ):
+                    raise ModuleNotFoundError(
+                        f"{name} requires scipy. Install it with: pip install 'isaaccapture[retargeters-lite]'"
+                    ) from error
+                raise
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ControllerTriggerRealHandRetargeter",
     "ControllerTriggerRealHandRetargeterConfig",
-    "RealHandFFGGloveRetargeter",
-    "RealHandFFGGloveRetargeterConfig",
-    "REALHAND_FFG_GLOVE_SENSOR_NAMES",
     "L6_PROFILE",
     "L20_PROFILE",
     "O6_PROFILE",
@@ -44,11 +58,7 @@ __all__ = [
     "P7HandPoseRetargeter",
     "P7WorkspacePoseConfig",
     "REALHAND_PROFILES",
-    "RealHandHandTrackingRetargeter",
-    "RealHandHandTrackingRetargeterConfig",
     "RealHandJointSpec",
     "RealHandProfile",
     "get_realhand_profile",
-    "load_realhand_ffg_glove_calibration",
-    "realhand_handtracking_thumb_defaults",
 ]

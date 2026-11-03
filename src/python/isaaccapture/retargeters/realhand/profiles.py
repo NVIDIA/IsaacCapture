@@ -11,16 +11,13 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class RealHandJointSpec:
-    """Description of one actively controlled hand joint."""
+    """Robot joint data; glove sensor mappings belong to the device, not this profile."""
 
     short_name: str
     lower: float
     upper: float
     trigger_closed: float
     semantic: str
-    ffg_motor_index: int
-    ffg_command_at_lower: float = 255.0
-    ffg_command_at_upper: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -61,27 +58,18 @@ class RealHandProfile:
         if not path.is_file():
             raise FileNotFoundError(
                 f"{self.display_name} URDF not found at {path}. Run "
-                "examples/teleop/python/scripts/fetch_realhand_assets.py first."
+                "python -m isaaccapture_examples.teleop.fetch_realhand_assets first."
             )
         return path.resolve()
-
-    @property
-    def motor_count(self) -> int:
-        return 1 + max(
-            joint.ffg_motor_index for joint in self.left_joints + self.right_joints
-        )
 
 
 def _joint(
     name: str,
     upper: float,
     semantic: str,
-    motor: int,
     *,
     lower: float = 0.0,
     closed: float | None = None,
-    command_lower: float = 255.0,
-    command_upper: float = 0.0,
 ) -> RealHandJointSpec:
     return RealHandJointSpec(
         short_name=name,
@@ -89,38 +77,35 @@ def _joint(
         upper=upper,
         trigger_closed=upper if closed is None else closed,
         semantic=semantic,
-        ffg_motor_index=motor,
-        ffg_command_at_lower=command_lower,
-        ffg_command_at_upper=command_upper,
     )
 
 
 _L6_LEFT = (
-    _joint("index_mcp_pitch", 1.26, "index_curl", 2),
-    _joint("index_dip", 1.14, "index_curl", 2),
-    _joint("middle_mcp_pitch", 1.26, "middle_curl", 3),
-    _joint("middle_dip", 1.14, "middle_curl", 3),
-    _joint("pinky_mcp_pitch", 1.26, "pinky_curl", 5),
-    _joint("pinky_dip", 1.14, "pinky_curl", 5),
-    _joint("ring_mcp_pitch", 1.26, "ring_curl", 4),
-    _joint("ring_dip", 1.14, "ring_curl", 4),
-    _joint("thunb_cmc_roll", 1.39, "thumb_opposition", 1),
-    _joint("thumb_cmc_pitch", 0.99, "thumb_flex", 0),
-    _joint("thumb_dip", 1.22, "thumb_flex", 0),
+    _joint("index_mcp_pitch", 1.26, "index_curl"),
+    _joint("index_dip", 1.14, "index_curl"),
+    _joint("middle_mcp_pitch", 1.26, "middle_curl"),
+    _joint("middle_dip", 1.14, "middle_curl"),
+    _joint("pinky_mcp_pitch", 1.26, "pinky_curl"),
+    _joint("pinky_dip", 1.14, "pinky_curl"),
+    _joint("ring_mcp_pitch", 1.26, "ring_curl"),
+    _joint("ring_dip", 1.14, "ring_curl"),
+    _joint("thunb_cmc_roll", 1.39, "thumb_opposition"),
+    _joint("thumb_cmc_pitch", 0.99, "thumb_flex"),
+    _joint("thumb_dip", 1.22, "thumb_flex"),
 )
 
 _L6_RIGHT = (
-    _joint("index_mcp_pitch", 1.26, "index_curl", 2),
-    _joint("index_dip", 1.14, "index_curl", 2),
-    _joint("middle_mcp_pitch", 1.26, "middle_curl", 3),
-    _joint("middle_dip", 1.14, "middle_curl", 3),
-    _joint("pinky_mcp_pitch", 1.26, "pinky_curl", 5),
-    _joint("pinky_dip", 1.14, "pinky_curl", 5),
-    _joint("ring_mcp_pitch", 1.26, "ring_curl", 4),
-    _joint("ring_dip", 1.14, "ring_curl", 4),
-    _joint("thunb_cmc_roll", 1.39, "thumb_opposition", 1),
-    _joint("thumb_cmc_pitch", 0.99, "thumb_flex", 0),
-    _joint("thumb_ip", 1.22, "thumb_flex", 0),
+    _joint("index_mcp_pitch", 1.26, "index_curl"),
+    _joint("index_dip", 1.14, "index_curl"),
+    _joint("middle_mcp_pitch", 1.26, "middle_curl"),
+    _joint("middle_dip", 1.14, "middle_curl"),
+    _joint("pinky_mcp_pitch", 1.26, "pinky_curl"),
+    _joint("pinky_dip", 1.14, "pinky_curl"),
+    _joint("ring_mcp_pitch", 1.26, "ring_curl"),
+    _joint("ring_dip", 1.14, "ring_curl"),
+    _joint("thunb_cmc_roll", 1.39, "thumb_opposition"),
+    _joint("thumb_cmc_pitch", 0.99, "thumb_flex"),
+    _joint("thumb_ip", 1.22, "thumb_flex"),
 )
 
 _L6_ACTION_JOINTS = (
@@ -152,12 +137,12 @@ _L6_ACTION_JOINTS = (
 def _o6_joints(side: str) -> tuple[RealHandJointSpec, ...]:
     thumb_yaw_upper = 1.30 if side == "left" else 1.36
     return (
-        _joint("thumb_cmc_yaw", thumb_yaw_upper, "thumb_opposition", 1),
-        _joint("thumb_cmc_pitch", 0.58, "thumb_flex", 0),
-        _joint("index_mcp_pitch", 1.60, "index_curl", 2),
-        _joint("middle_mcp_pitch", 1.60, "middle_curl", 3),
-        _joint("ring_mcp_pitch", 1.60, "ring_curl", 4),
-        _joint("pinky_mcp_pitch", 1.60, "pinky_curl", 5),
+        _joint("thumb_cmc_yaw", thumb_yaw_upper, "thumb_opposition"),
+        _joint("thumb_cmc_pitch", 0.58, "thumb_flex"),
+        _joint("index_mcp_pitch", 1.60, "index_curl"),
+        _joint("middle_mcp_pitch", 1.60, "middle_curl"),
+        _joint("ring_mcp_pitch", 1.60, "ring_curl"),
+        _joint("pinky_mcp_pitch", 1.60, "pinky_curl"),
     )
 
 
@@ -167,41 +152,31 @@ def _l20_joints(side: str) -> tuple[RealHandJointSpec, ...]:
     thumb_mcp_upper = 1.26 if side == "left" else 1.25
     pip_upper = 1.74 if side == "left" else 1.75
     joints = [
-        _joint("thumb_cmc_roll", thumb_roll_upper, "thumb_rotation", 5, closed=0.50),
-        _joint("thumb_cmc_yaw", 1.57, "thumb_opposition", 10, closed=1.50),
-        _joint("thumb_cmc_pitch", thumb_pitch_upper, "thumb_base_flex", 0, closed=0.60),
-        _joint("thumb_mcp", thumb_mcp_upper, "thumb_distal_flex", 15, closed=1.20),
+        _joint("thumb_cmc_roll", thumb_roll_upper, "thumb_rotation", closed=0.50),
+        _joint("thumb_cmc_yaw", 1.57, "thumb_opposition", closed=1.50),
+        _joint("thumb_cmc_pitch", thumb_pitch_upper, "thumb_base_flex", closed=0.60),
+        _joint("thumb_mcp", thumb_mcp_upper, "thumb_distal_flex", closed=1.20),
     ]
-    for finger, root_motor, spread_motor, tip_motor in (
-        ("index", 1, 6, 16),
-        ("middle", 2, 7, 17),
-        ("ring", 3, 8, 18),
-        ("pinky", 4, 9, 19),
-    ):
+    for finger in ("index", "middle", "ring", "pinky"):
         joints.extend(
             (
                 _joint(
                     f"{finger}_mcp_roll",
                     0.23,
                     f"{finger}_spread",
-                    spread_motor,
                     lower=-0.23,
                     closed=0.0,
-                    command_lower=0.0,
-                    command_upper=255.0,
                 ),
                 _joint(
                     f"{finger}_mcp_pitch",
                     1.22,
                     f"{finger}_base_flex",
-                    root_motor,
                     closed=1.20,
                 ),
                 _joint(
                     f"{finger}_pip",
                     pip_upper,
                     f"{finger}_distal_flex",
-                    tip_motor,
                     closed=1.70,
                 ),
             )

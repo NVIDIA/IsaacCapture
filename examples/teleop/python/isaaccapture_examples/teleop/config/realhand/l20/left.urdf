@@ -1,0 +1,212 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="realhand_l20_left">
+  <!--
+SPDX-FileCopyrightText: Copyright (c) 2026 RealHand. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+  -->
+  <!-- Hand-only kinematics from RealHand Teleop e20d1f7dfe27d84784270012f291ae16f4762b0c. -->
+  <link name="left_hand_hand_base_link" />
+  <link name="left_hand_thumb_metacarpals_base1" />
+  <link name="left_hand_thumb_metacarpals_base2" />
+  <link name="left_hand_thumb_metacarpals" />
+  <link name="left_hand_thumb_proximal" />
+  <link name="left_hand_thumb_distal" />
+  <link name="left_hand_index_metacarpals" />
+  <link name="left_hand_index_proximal" />
+  <link name="left_hand_index_middle" />
+  <link name="left_hand_index_distal" />
+  <link name="left_hand_middle_metacarpals" />
+  <link name="left_hand_middle_proximal" />
+  <link name="left_hand_middle_middle" />
+  <link name="left_hand_middle_distal" />
+  <link name="left_hand_ring_metacarpals" />
+  <link name="left_hand_ring_proximal" />
+  <link name="left_hand_ring_middle" />
+  <link name="left_hand_ring_distal" />
+  <link name="left_hand_pinky_metacarpals" />
+  <link name="left_hand_pinky_proximal" />
+  <link name="left_hand_pinky_middle" />
+  <link name="left_hand_pinky_distal" />
+  <joint name="left_hand_thumb_cmc_roll" type="revolute">
+    <origin xyz="0.01916 -0.01 0.0436" rpy="0 0 0" />
+    <parent link="left_hand_hand_base_link" />
+    <child link="left_hand_thumb_metacarpals_base1" />
+    <axis xyz="-1 0 0" />
+    <limit lower="0" upper="1.4" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_index_mcp_roll" type="revolute">
+    <origin xyz="0.0038 -0.03525 0.1481" rpy="0 0 0" />
+    <parent link="left_hand_hand_base_link" />
+    <child link="left_hand_index_metacarpals" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.23" upper="0.23" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_middle_mcp_roll" type="revolute">
+    <origin xyz="0.00379999999265848 -0.0117500000029305 0.1526" rpy="0 0 0" />
+    <parent link="left_hand_hand_base_link" />
+    <child link="left_hand_middle_metacarpals" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.23" upper="0.23" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_ring_mcp_roll" type="revolute">
+    <origin xyz="0.00379999999632174 0.0117499999970695 0.1481" rpy="0 0 0" />
+    <parent link="left_hand_hand_base_link" />
+    <child link="left_hand_ring_metacarpals" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.23" upper="0.23" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_pinky_mcp_roll" type="revolute">
+    <origin xyz="0.00379999999998499 0.0352499999970695 0.1436" rpy="0 0 0" />
+    <parent link="left_hand_hand_base_link" />
+    <child link="left_hand_pinky_metacarpals" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.23" upper="0.23" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_thumb_cmc_yaw" type="revolute">
+    <origin xyz="0.019845 0 0" rpy="0.77165 0 0" />
+    <parent link="left_hand_thumb_metacarpals_base1" />
+    <child link="left_hand_thumb_metacarpals_base2" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="1.57" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_index_mcp_pitch" type="revolute">
+    <origin xyz="-0.0021302 0 0" rpy="0 0 0" />
+    <parent link="left_hand_index_metacarpals" />
+    <child link="left_hand_index_proximal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.22" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_middle_mcp_pitch" type="revolute">
+    <origin xyz="-0.0021302 0 0" rpy="0 0 0" />
+    <parent link="left_hand_middle_metacarpals" />
+    <child link="left_hand_middle_proximal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.22" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_ring_mcp_pitch" type="revolute">
+    <origin xyz="-0.0021302 0 0" rpy="0 0 0" />
+    <parent link="left_hand_ring_metacarpals" />
+    <child link="left_hand_ring_proximal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.22" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_pinky_mcp_pitch" type="revolute">
+    <origin xyz="-0.0021302 0 0" rpy="0 0 0" />
+    <parent link="left_hand_pinky_metacarpals" />
+    <child link="left_hand_pinky_proximal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.22" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_thumb_cmc_pitch" type="revolute">
+    <origin xyz="0.0088218 -0.024245 0.0005" rpy="0 -1.0647 1.9199" />
+    <parent link="left_hand_thumb_metacarpals_base2" />
+    <child link="left_hand_thumb_metacarpals" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="0.84" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_index_pip" type="revolute">
+    <origin xyz="-0.0041946 0 0.044819" rpy="0 0 0" />
+    <parent link="left_hand_index_proximal" />
+    <child link="left_hand_index_middle" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.74" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_middle_pip" type="revolute">
+    <origin xyz="-0.00419457745591796 0 0.0448194332262389" rpy="0 0 0" />
+    <parent link="left_hand_middle_proximal" />
+    <child link="left_hand_middle_middle" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.74" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_ring_pip" type="revolute">
+    <origin xyz="-0.00419457745591796 0 0.0448194332262389" rpy="0 0 0" />
+    <parent link="left_hand_ring_proximal" />
+    <child link="left_hand_ring_middle" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.74" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_pinky_pip" type="revolute">
+    <origin xyz="-0.0041946 0 0.044819" rpy="0 0 0" />
+    <parent link="left_hand_pinky_proximal" />
+    <child link="left_hand_pinky_middle" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.74" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_thumb_mcp" type="revolute">
+    <origin xyz="0.0127018248047608 0 0.0627256157349894" rpy="0 0 0" />
+    <parent link="left_hand_thumb_metacarpals" />
+    <child link="left_hand_thumb_proximal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.26" effort="100" velocity="1" />
+  </joint>
+  <joint name="left_hand_index_dip" type="revolute">
+    <origin xyz="0.0028245 0 0.031696" rpy="0 0 0" />
+    <parent link="left_hand_index_middle" />
+    <child link="left_hand_index_distal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.55" effort="100" velocity="1" />
+    <mimic joint="left_hand_index_pip" multiplier="0.89" offset="0" />
+  </joint>
+  <joint name="left_hand_middle_dip" type="revolute">
+    <origin xyz="0.0028245 0 0.031696" rpy="0 0 0" />
+    <parent link="left_hand_middle_middle" />
+    <child link="left_hand_middle_distal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.55" effort="100" velocity="1" />
+    <mimic joint="left_hand_middle_pip" multiplier="0.89" offset="0" />
+  </joint>
+  <joint name="left_hand_ring_dip" type="revolute">
+    <origin xyz="0.0028245 0 0.031696" rpy="0 0 0" />
+    <parent link="left_hand_ring_middle" />
+    <child link="left_hand_ring_distal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.55" effort="100" velocity="1" />
+    <mimic joint="left_hand_ring_pip" multiplier="0.89" offset="0" />
+  </joint>
+  <joint name="left_hand_pinky_dip" type="revolute">
+    <origin xyz="0.0028245 0 0.031696" rpy="0 0 0" />
+    <parent link="left_hand_pinky_middle" />
+    <child link="left_hand_pinky_distal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.55" effort="100" velocity="1" />
+    <mimic joint="left_hand_pinky_pip" multiplier="0.89" offset="0" />
+  </joint>
+  <joint name="left_hand_thumb_ip" type="revolute">
+    <origin xyz="-0.00483652209209624 0 0.0342226492098615" rpy="0 0 0" />
+    <parent link="left_hand_thumb_proximal" />
+    <child link="left_hand_thumb_distal" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="1.29" effort="100" velocity="1" />
+    <mimic joint="left_hand_thumb_mcp" multiplier="1.02" offset="0" />
+  </joint>
+  <link name="left_hand_thumb_tip" />
+  <joint name="left_hand_thumb_tip_fixed" type="fixed">
+    <parent link="left_hand_thumb_distal" />
+    <child link="left_hand_thumb_tip" />
+    <origin xyz="-0.0090533092 -6.0561666e-05 0.0304649543" rpy="0 0 0" />
+  </joint>
+  <link name="left_hand_index_tip" />
+  <joint name="left_hand_index_tip_fixed" type="fixed">
+    <parent link="left_hand_index_distal" />
+    <child link="left_hand_index_tip" />
+    <origin xyz="-0.0156612251 6.40894547e-06 0.0226368353" rpy="0 0 0" />
+  </joint>
+  <link name="left_hand_middle_tip" />
+  <joint name="left_hand_middle_tip_fixed" type="fixed">
+    <parent link="left_hand_middle_distal" />
+    <child link="left_hand_middle_tip" />
+    <origin xyz="-0.0156612251 6.40894547e-06 0.0226368353" rpy="0 0 0" />
+  </joint>
+  <link name="left_hand_ring_tip" />
+  <joint name="left_hand_ring_tip_fixed" type="fixed">
+    <parent link="left_hand_ring_distal" />
+    <child link="left_hand_ring_tip" />
+    <origin xyz="-0.0156612251 6.40894547e-06 0.0226368353" rpy="0 0 0" />
+  </joint>
+  <link name="left_hand_pinky_tip" />
+  <joint name="left_hand_pinky_tip_fixed" type="fixed">
+    <parent link="left_hand_pinky_distal" />
+    <child link="left_hand_pinky_tip" />
+    <origin xyz="-0.0156612251 6.40894547e-06 0.0226368353" rpy="0 0 0" />
+  </joint>
+</robot>

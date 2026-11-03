@@ -4,6 +4,8 @@
 add_executable(realhand_ffg_glove_plugin
     main.cpp
     realhand_ffg_glove_plugin.cpp
+    realhand_ffg_glove_reader.cpp
+    realhand_ffg_glove_skeleton.cpp
     realhand_ffg_glove_protocol.cpp
     realhand_ffg_glove_serial.cpp
 )
@@ -13,6 +15,8 @@ target_link_libraries(realhand_ffg_glove_plugin PRIVATE
     pusherio::pusherio
     oxr::oxr_core
     isaacteleop_schema
+    log_bridge::log_bridge_core
+    yaml-cpp::yaml-cpp
 )
 
 install(TARGETS realhand_ffg_glove_plugin

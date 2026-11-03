@@ -254,16 +254,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "P7WorkspacePoseConfig",
         "retargeters-lite",
     ),
-    "RealHandHandTrackingRetargeter": (
-        ".realhand.hand",
-        "RealHandHandTrackingRetargeter",
-        None,
-    ),
-    "RealHandHandTrackingRetargeterConfig": (
-        ".realhand.hand",
-        "RealHandHandTrackingRetargeterConfig",
-        None,
-    ),
     "ControllerTriggerRealHandRetargeter": (
         ".realhand.hand",
         "ControllerTriggerRealHandRetargeter",
@@ -272,16 +262,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
     "ControllerTriggerRealHandRetargeterConfig": (
         ".realhand.hand",
         "ControllerTriggerRealHandRetargeterConfig",
-        None,
-    ),
-    "RealHandFFGGloveRetargeter": (
-        ".realhand.realhand_ffg_glove",
-        "RealHandFFGGloveRetargeter",
-        None,
-    ),
-    "RealHandFFGGloveRetargeterConfig": (
-        ".realhand.realhand_ffg_glove",
-        "RealHandFFGGloveRetargeterConfig",
         None,
     ),
     # .joint_space (generic joint-space devices: leader arms, exoskeletons, ...)
@@ -460,12 +440,8 @@ __all__ = [
     "P7ControllerPoseRetargeter",
     "P7HandPoseRetargeter",
     "P7WorkspacePoseConfig",
-    "RealHandHandTrackingRetargeter",
-    "RealHandHandTrackingRetargeterConfig",
     "ControllerTriggerRealHandRetargeter",
     "ControllerTriggerRealHandRetargeterConfig",
-    "RealHandFFGGloveRetargeter",
-    "RealHandFFGGloveRetargeterConfig",
     # Generic joint-space device retargeters (leader arms, exoskeletons, ...)
     "JointStateRetargeter",
     "JointStateRetargeterConfig",

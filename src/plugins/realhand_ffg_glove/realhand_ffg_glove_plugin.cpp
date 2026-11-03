@@ -3,8 +3,6 @@
 
 #include "realhand_ffg_glove_plugin.hpp"
 
-#include "realhand_ffg_glove_serial.hpp"
-
 #include <flatbuffers/flatbuffers.h>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -13,10 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
-#include <iostream>
 #include <memory>
-#include <set>
-#include <thread>
 #include <utility>
 
 namespace plugins::realhand_ffg_glove
@@ -26,27 +21,35 @@ namespace
 {
 
 constexpr std::size_t kMaxFlatbufferSize = 4096;
-constexpr std::size_t kForceChannelCount = 5;
-constexpr auto kQueryPeriod = std::chrono::milliseconds(16);
-constexpr auto kStaleTimeout = std::chrono::seconds(1);
-constexpr auto kDiscoveryPeriod = std::chrono::seconds(2);
 constexpr std::array<const char*, 2> kCollectionIds = { "realhand_ffg_glove_left", "realhand_ffg_glove_right" };
-constexpr std::array<const char*, 2> kDevicePaths = { "/glove/realhand_ffg_glove_left",
+constexpr std::array<const char*, 2> kDevicePaths = { "/hand/left", "/hand/right" };
+constexpr std::array<const char*, 2> kSensorPaths = { "/glove/realhand_ffg_glove_left",
                                                       "/glove/realhand_ffg_glove_right" };
-
-std::size_t side_index(HandSide side)
-{
-    return side == HandSide::Left ? 0 : 1;
-}
+constexpr auto kSkeletonStaleThreshold = std::chrono::milliseconds(200);
 
 const char* side_name(std::size_t side)
 {
     return side == 0 ? "left" : "right";
 }
 
-std::vector<std::string> required_extensions()
+std::vector<std::string> required_extensions(const plugin_utils::WristPoseSource::Requirements& wrist)
 {
-    auto extensions = core::SchemaPusher::get_required_extensions();
+    auto extensions = core::DeviceIOSession::get_required_extensions(wrist.trackers);
+    extensions.push_back(XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME);
+    for (const auto* extension : wrist.extensions)
+    {
+        if (std::find(extensions.begin(), extensions.end(), extension) == extensions.end())
+        {
+            extensions.push_back(extension);
+        }
+    }
+    for (const auto& extension : core::SchemaPusher::get_required_extensions())
+    {
+        if (std::find(extensions.begin(), extensions.end(), extension) == extensions.end())
+        {
+            extensions.push_back(extension);
+        }
+    }
     for (const auto& extension : plugin_utils::PluginDeviceStatusPublisher::get_required_extensions())
     {
         if (std::find(extensions.begin(), extensions.end(), extension) == extensions.end())
@@ -61,14 +64,22 @@ std::vector<std::string> required_extensions()
 
 RealHandFFGGlovePlugin::RealHandFFGGlovePlugin(std::vector<std::string> configured_ports,
                                                std::vector<int> baudrates,
-                                               std::string plugin_root_id)
-    : configured_ports_(std::move(configured_ports)),
-      baudrates_(std::move(baudrates)),
-      session_(std::make_shared<core::OpenXRSession>("RealHandFFGGlovePlugin", required_extensions()))
+                                               std::string plugin_root_id,
+                                               RealHandFFGGloveConfig config)
+    : reader_(std::move(configured_ports), std::move(baudrates)), skeleton_(config.calibration_path, config.hand_scale)
 {
-    if (baudrates_.empty())
+    require_controller_wrist_ = config.wrist.mode == plugin_utils::WristSourceMode::Controller;
+    const auto wrist = plugin_utils::WristPoseSource::collect_requirements(config.wrist.mode);
+    session_ = std::make_shared<core::OpenXRSession>("RealHandFFGGlovePlugin", required_extensions(wrist));
+    const auto handles = session_->get_handles();
+    deviceio_session_ = core::DeviceIOSession::run(wrist.trackers, handles);
+    time_converter_.emplace(handles);
+    wrist_source_ = std::make_unique<plugin_utils::WristPoseSource>(
+        config.wrist, handles, deviceio_session_.get(), wrist.controller_tracker);
+    if (config.calibration_path.empty())
     {
-        baudrates_.assign(kDefaultBaudrates.begin(), kDefaultBaudrates.end());
+        isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.main")
+            ->warn("No human calibration: raw sensors are available for calibration, but hands remain inactive");
     }
     for (std::size_t side = 0; side < pushers_.size(); ++side)
     {
@@ -82,132 +93,9 @@ RealHandFFGGlovePlugin::RealHandFFGGlovePlugin(std::vector<std::string> configur
     }
     status_publisher_ =
         std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(session_->get_handles(), plugin_root_id);
-    last_discovery_ = std::chrono::steady_clock::time_point::min();
 }
 
 RealHandFFGGlovePlugin::~RealHandFFGGlovePlugin() = default;
-
-void RealHandFFGGlovePlugin::discover()
-{
-    const auto now = std::chrono::steady_clock::now();
-    if (now - last_discovery_ < kDiscoveryPeriod)
-    {
-        return;
-    }
-    last_discovery_ = now;
-
-    std::vector<std::string> ports = configured_ports_.empty() ? discover_serial_ports() : configured_ports_;
-    std::set<std::string> occupied;
-    for (const auto& endpoint : endpoints_)
-    {
-        if (endpoint)
-        {
-            occupied.insert(endpoint->serial->port());
-        }
-    }
-
-    for (const auto& port : ports)
-    {
-        if (occupied.contains(port))
-        {
-            continue;
-        }
-        for (int baudrate : baudrates_)
-        {
-            try
-            {
-                auto serial = std::make_unique<SerialGlove>(port, baudrate);
-                auto version = probe_glove(*serial);
-                if (!version)
-                {
-                    continue;
-                }
-                const std::size_t side = side_index(version->side);
-                if (endpoints_[side])
-                {
-                    std::cerr << "RealHandFFGGlovePlugin: ignoring duplicate " << side_name(side) << " glove on "
-                              << port << std::endl;
-                    break;
-                }
-                auto endpoint = std::make_unique<Endpoint>();
-                endpoint->serial = std::move(serial);
-                endpoint->side = version->side;
-                endpoint->version = version->version;
-                endpoint->last_receive = now;
-                endpoint->last_query = std::chrono::steady_clock::time_point::min();
-                endpoints_[side] = std::move(endpoint);
-                errors_[side].clear();
-                occupied.insert(port);
-                std::cout << "RealHandFFGGlovePlugin: connected " << side_name(side) << " glove " << version->version
-                          << " on " << port << " at " << baudrate << " baud" << std::endl;
-                break;
-            }
-            catch (const std::exception& error)
-            {
-                for (std::size_t side = 0; side < errors_.size(); ++side)
-                {
-                    if (!endpoints_[side])
-                    {
-                        errors_[side] = error.what();
-                    }
-                }
-            }
-        }
-    }
-}
-
-void RealHandFFGGlovePlugin::drop_endpoint(std::size_t side, const std::string& error)
-{
-    std::cerr << "RealHandFFGGlovePlugin: disconnected " << side_name(side) << " glove: " << error << std::endl;
-    endpoints_[side].reset();
-    errors_[side] = error;
-    last_discovery_ = std::chrono::steady_clock::time_point::min();
-}
-
-void RealHandFFGGlovePlugin::poll_endpoint(std::size_t side)
-{
-    auto& endpoint = endpoints_[side];
-    if (!endpoint)
-    {
-        return;
-    }
-    try
-    {
-        const auto now = std::chrono::steady_clock::now();
-        if (now - endpoint->last_query >= kQueryPeriod)
-        {
-            endpoint->serial->send(Command::Position);
-            endpoint->last_query = now;
-        }
-        for (const auto& frame : endpoint->serial->read_available(0))
-        {
-            endpoint->last_receive = now;
-            if (auto positions = decode_positions(frame))
-            {
-                endpoint->positions = *positions;
-                endpoint->has_positions = true;
-                if (frame.command == Command::A6Position)
-                {
-                    // A6 firmware expects an A7 response before publishing the next sample.
-                    endpoint->serial->send(Command::A7Force, std::vector<uint8_t>(kForceChannelCount * sizeof(float), 0));
-                }
-            }
-        }
-        if (now - endpoint->last_receive > kStaleTimeout)
-        {
-            drop_endpoint(side, "no serial response for one second");
-            return;
-        }
-        if (endpoint->has_positions)
-        {
-            push_state(side);
-        }
-    }
-    catch (const std::exception& error)
-    {
-        drop_endpoint(side, error.what());
-    }
-}
 
 void RealHandFFGGlovePlugin::push_state(std::size_t side)
 {
@@ -221,7 +109,7 @@ void RealHandFFGGlovePlugin::push_state(std::size_t side)
     {
         auto joint = std::make_shared<core::JointStateT>();
         joint->name = "sensor_" + std::to_string(sensor);
-        joint->position = endpoints_[side]->positions[sensor];
+        joint->position = reader_.endpoints()[side]->positions[sensor];
         joint->valid = true;
         output.joints.push_back(std::move(joint));
     }
@@ -235,17 +123,17 @@ void RealHandFFGGlovePlugin::push_state(std::size_t side)
 void RealHandFFGGlovePlugin::publish_status()
 {
     std::vector<plugin_utils::PluginDeviceStatusEntry> entries;
-    entries.reserve(2);
-    for (std::size_t side = 0; side < endpoints_.size(); ++side)
+    entries.reserve(4);
+    for (std::size_t side = 0; side < reader_.endpoints().size(); ++side)
     {
         plugin_utils::PluginDeviceStatusEntry entry{ .path = kDevicePaths[side] };
-        if (!endpoints_[side])
+        if (!reader_.endpoints()[side])
         {
             entry.state = core::PluginDeviceState_DISCONNECTED;
             entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
-            entry.error = errors_[side];
+            entry.error = reader_.errors()[side];
         }
-        else if (!endpoints_[side]->has_positions)
+        else if (!reader_.endpoints()[side]->has_positions)
         {
             entry.state = core::PluginDeviceState_DEGRADED;
             entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
@@ -256,6 +144,19 @@ void RealHandFFGGlovePlugin::publish_status()
             entry.state = core::PluginDeviceState_CONNECTED;
             entry.reason = core::PluginDeviceReason_NONE;
         }
+        auto sensor = entry;
+        sensor.path = kSensorPaths[side];
+        entries.push_back(std::move(sensor));
+        if (entry.state == core::PluginDeviceState_CONNECTED && !injectors_[side])
+        {
+            entry.state = core::PluginDeviceState_DEGRADED;
+            entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+            entry.error = wrist_rejected_[side] ?
+                              "controller wrist unavailable or discontinuous; awaiting stable tracking" :
+                          !skeleton_.calibrated(side == 0 ? HandSide::Left : HandSide::Right) ?
+                              "missing human calibration for this hand" :
+                              "no fresh usable skeleton";
+        }
         entries.push_back(std::move(entry));
     }
     status_publisher_->publish_if_changed(entries, core::os_monotonic_now_ns());
@@ -263,9 +164,58 @@ void RealHandFFGGlovePlugin::publish_status()
 
 void RealHandFFGGlovePlugin::update()
 {
-    discover();
-    poll_endpoint(0);
-    poll_endpoint(1);
+    deviceio_session_->update();
+    reader_.update();
+    const auto now = GloveReader::Clock::now();
+    const auto time = time_converter_->os_monotonic_now();
+    for (std::size_t side = 0; side < reader_.endpoints().size(); ++side)
+    {
+        const auto& endpoint = reader_.endpoints()[side];
+        if (endpoint && endpoint->has_positions && now - endpoint->last_receive < kSkeletonStaleThreshold)
+        {
+            push_state(side);
+            if (auto joints = skeleton_.reconstruct(endpoint->positions, endpoint->version.side))
+            {
+                const auto wrist = wrist_source_->query(side == 0, time);
+                if (require_controller_wrist_)
+                {
+                    const bool rejected =
+                        !wrist_continuity_[side].accept(wrist.pose, core::os_monotonic_now_ns(), wrist.valid);
+                    if (rejected != wrist_rejected_[side])
+                    {
+                        auto logger = isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.wrist");
+                        if (rejected)
+                        {
+                            logger->warn("{} controller wrist tracking interrupted; hand inactive, raw sensors retained",
+                                         side_name(side));
+                        }
+                        else
+                        {
+                            logger->info("{} controller wrist tracking reacquired", side_name(side));
+                        }
+                    }
+                    wrist_rejected_[side] = rejected;
+                    if (rejected)
+                    {
+                        injectors_[side].reset();
+                        continue;
+                    }
+                }
+                *joints = place_hand(*joints, wrist.pose, wrist.valid, wrist.tracked);
+                if (!injectors_[side])
+                {
+                    const auto handles = session_->get_handles();
+                    injectors_[side] = std::make_unique<plugin_utils::HandInjector>(
+                        handles.instance, handles.session, side == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT,
+                        handles.space);
+                }
+                injectors_[side]->push(joints->data(), time);
+                continue;
+            }
+        }
+        // Destroying the injector makes isActive false; never leave a frozen hand behind.
+        injectors_[side].reset();
+    }
     publish_status();
 }
 

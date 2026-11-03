@@ -42,6 +42,5 @@ private:
 };
 
 std::vector<std::string> discover_serial_ports();
-std::optional<VersionInfo> probe_glove(SerialGlove& glove, int timeout_ms = 250);
 
 } // namespace plugins::realhand_ffg_glove

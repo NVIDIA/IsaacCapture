@@ -21,23 +21,15 @@ from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeters import (
     ControllerTriggerRealHandRetargeter,
     ControllerTriggerRealHandRetargeterConfig,
-    RealHandFFGGloveRetargeter,
-    RealHandFFGGloveRetargeterConfig,
     P7ControllerPoseRetargeter,
     P7HandPoseRetargeter,
     P7WorkspacePoseConfig,
-    RealHandHandTrackingRetargeter,
-    RealHandHandTrackingRetargeterConfig,
     TensorReorderer,
 )
-from isaaccapture.retargeters.realhand import (
-    REALHAND_FFG_GLOVE_SENSOR_NAMES,
-    get_realhand_profile,
-)
+from isaaccapture.retargeters.realhand import get_realhand_profile
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     ControllersSource,
     HandsSource,
-    JointStateSource,
 )
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 from isaaccapture.teleop_session_manager import (
@@ -166,8 +158,33 @@ def _pose_config(model: str, side: str, mode: str) -> P7WorkspacePoseConfig:
     )
 
 
-def build_pipeline(mode: str, model: str, calibration: Path | None):
+def dex_hand_config(model: str, side: str):
+    """Configure the official solver with a mesh-free, hand-only robot model."""
+    from isaaccapture.retargeters import DexHandRetargeterConfig
+
+    profile = get_realhand_profile(model)
+    profile.joints(side)
+    directory = Path(__file__).parent / "config" / "realhand" / profile.model
+    return DexHandRetargeterConfig(
+        hand_retargeting_config=str(directory / f"{side}.yml"),
+        hand_urdf=str(directory / f"{side}.urdf"),
+        hand_joint_names=profile.joint_names(side),
+        hand_side=side,
+        # Row-vector convention: OpenXR dorsal +Y -> robot -X, tips -Z -> +Z.
+        handtracking_to_baselink_frame_transform=(0, -1, 0, -1, 0, 0, 0, 0, -1),
+    )
+
+
+def _dex_hand(model: str, side: str):
+    from isaaccapture.retargeters import DexHandRetargeter
+
+    return DexHandRetargeter(dex_hand_config(model, side), name=f"{model}_{side}_hand")
+
+
+def build_pipeline(mode: str, model: str):
     """Build the official DeviceIO -> retargeters -> flat P7 action graph."""
+    if mode not in ("controller", "handtracking", "ffg"):
+        raise ValueError(f"Unknown input mode: {mode}")
     profile = get_realhand_profile(model)
     left_joint_names = profile.joint_names("left")
     right_joint_names = profile.joint_names("right")
@@ -180,24 +197,8 @@ def build_pipeline(mode: str, model: str, calibration: Path | None):
         right_arm = P7HandPoseRetargeter(
             _pose_config(model, "right", mode), name="p7_right_arm"
         )
-        left_hand = RealHandHandTrackingRetargeter(
-            RealHandHandTrackingRetargeterConfig(
-                input_device=HandsSource.LEFT,
-                joint_names=left_joint_names,
-                side="left",
-                hand_model=model,
-            ),
-            name=f"{model}_left_hand",
-        )
-        right_hand = RealHandHandTrackingRetargeter(
-            RealHandHandTrackingRetargeterConfig(
-                input_device=HandsSource.RIGHT,
-                joint_names=right_joint_names,
-                side="right",
-                hand_model=model,
-            ),
-            name=f"{model}_right_hand",
-        )
+        left_hand = _dex_hand(model, "left")
+        right_hand = _dex_hand(model, "right")
         left_input = source.output(HandsSource.LEFT)
         right_input = source.output(HandsSource.RIGHT)
         left_arm_input_name = HandsSource.LEFT
@@ -239,42 +240,15 @@ def build_pipeline(mode: str, model: str, calibration: Path | None):
             left_hand_input_name = ControllersSource.LEFT
             right_hand_input_name = ControllersSource.RIGHT
         else:
-            if calibration is None:
-                raise ValueError("RealHand FFG Glove mode requires a calibration YAML")
-            left_glove = JointStateSource(
-                name="realhand_ffg_glove_left",
-                collection_id="realhand_ffg_glove_left",
-                joint_names=list(REALHAND_FFG_GLOVE_SENSOR_NAMES),
-            )
-            right_glove = JointStateSource(
-                name="realhand_ffg_glove_right",
-                collection_id="realhand_ffg_glove_right",
-                joint_names=list(REALHAND_FFG_GLOVE_SENSOR_NAMES),
-            )
-            left_hand = RealHandFFGGloveRetargeter(
-                RealHandFFGGloveRetargeterConfig(
-                    input_device=JointStateSource.JOINTS,
-                    joint_names=left_joint_names,
-                    side="left",
-                    hand_model=model,
-                    calibration_path=str(calibration),
-                ),
-                name=f"{model}_left_hand",
-            )
-            right_hand = RealHandFFGGloveRetargeter(
-                RealHandFFGGloveRetargeterConfig(
-                    input_device=JointStateSource.JOINTS,
-                    joint_names=right_joint_names,
-                    side="right",
-                    hand_model=model,
-                    calibration_path=str(calibration),
-                ),
-                name=f"{model}_right_hand",
-            )
-            left_input = left_glove.output(JointStateSource.JOINTS)
-            right_input = right_glove.output(JointStateSource.JOINTS)
-            left_hand_input_name = JointStateSource.JOINTS
-            right_hand_input_name = JointStateSource.JOINTS
+            # Both glove and optical HandInput use the official DexHandRetargeter;
+            # model configuration must not introduce an alternate sensor mapping.
+            hands = HandsSource(name="ffg_hands")
+            left_hand = _dex_hand(model, "left")
+            right_hand = _dex_hand(model, "right")
+            left_input = hands.output(HandsSource.LEFT)
+            right_input = hands.output(HandsSource.RIGHT)
+            left_hand_input_name = HandsSource.LEFT
+            right_hand_input_name = HandsSource.RIGHT
         hand_output = "hand_joints"
 
     connected_left_arm = left_arm.connect(
@@ -323,12 +297,16 @@ def main() -> None:
     parser.add_argument(
         "--realhand-ffg-glove-calibration",
         type=Path,
-        help="User-specific calibration YAML generated by realhand_ffg_glove_calibration.py",
+        help="Robot-independent human skeleton calibration passed to the FFG device plugin",
     )
     parser.add_argument(
         "--plugin-path",
         type=Path,
         help="Directory containing realhand_ffg_glove/plugin.yaml",
+    )
+    parser.add_argument(
+        "--realhand-ffg-glove-ports",
+        help="Comma-separated verified glove ports; requires --mode ffg and --plugin-path",
     )
     parser.add_argument("--duration", type=float, default=360.0)
     parser.add_argument(
@@ -339,10 +317,21 @@ def main() -> None:
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args()
 
+    if args.realhand_ffg_glove_ports and (
+        args.mode != "ffg" or args.plugin_path is None
+    ):
+        parser.error("--realhand-ffg-glove-ports requires --mode ffg and --plugin-path")
+
     calibration = args.realhand_ffg_glove_calibration
-    if args.mode == "ffg" and calibration is None:
-        parser.error("--realhand-ffg-glove-calibration is required when --mode ffg")
-    pipeline, action_order = build_pipeline(args.mode, args.hand_model, calibration)
+    if calibration is not None and (args.mode != "ffg" or args.plugin_path is None):
+        parser.error(
+            "--realhand-ffg-glove-calibration requires --mode ffg and --plugin-path"
+        )
+    if args.mode == "ffg" and args.plugin_path is not None and calibration is None:
+        parser.error(
+            "--realhand-ffg-glove-calibration is required when starting the FFG plugin"
+        )
+    pipeline, action_order = build_pipeline(args.mode, args.hand_model)
     print(
         f"P7 + {args.hand_model.upper()} mode={args.mode}; action_dim={len(action_order)}"
     )
@@ -357,6 +346,19 @@ def main() -> None:
                 plugin_name="realhand_ffg_glove_plugin",
                 plugin_root_id="realhand_ffg_glove",
                 search_paths=[args.plugin_path],
+                plugin_args=[
+                    "--wrist-source=controller",
+                ]
+                + (
+                    [f"--calibration={calibration.resolve()}"]
+                    if calibration is not None
+                    else []
+                )
+                + (
+                    [f"--ports={args.realhand_ffg_glove_ports}"]
+                    if args.realhand_ffg_glove_ports
+                    else []
+                ),
                 required=True,
             )
         )

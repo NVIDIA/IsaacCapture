@@ -26,7 +26,7 @@ if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(viz)
 endif()
 
-if(BUILD_EXAMPLES AND BUILD_VIZ)
+if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
