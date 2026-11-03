@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 from .server import PageServer
-from .store import McalStore
 from .worker import CalibrationWorker
 
 logger = logging.getLogger("isaaccapture.examples.manus_calibration")
@@ -70,17 +69,17 @@ def _validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None
 
 async def _serve(args: argparse.Namespace) -> int:
     """Serve until interrupted, then cancel any active attempt and wait for the worker to settle."""
-    store = McalStore(args.out_dir)
+    out_dir = args.out_dir.resolve()
     worker = CalibrationWorker(
-        args.worker, store, discovery_timeout_s=args.discovery_timeout
+        args.worker, out_dir, discovery_timeout_s=args.discovery_timeout
     )
-    server = PageServer(worker, store.directory, args.host, args.port, args.sides)
+    server = PageServer(worker, out_dir, args.host, args.port, args.sides)
     await server.start()
     logger.info(
         "serving on http://%s:%d, calibration files go to %s",
         args.host,
         server.port,
-        store.directory,
+        out_dir,
     )
 
     stop = asyncio.Event()

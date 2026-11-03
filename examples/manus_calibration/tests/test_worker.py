@@ -12,9 +12,8 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import BOTH, commands, drive, wait_for
+from conftest import BOTH, Folder, commands, drive, wait_for
 from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.store import McalStore, StoreError
 from isaaccapture_examples.manus_calibration.worker import (
     AttemptEnded,
     AttemptError,
@@ -71,24 +70,10 @@ def confirming(attempt) -> asyncio.Task:
     return asyncio.create_task(loop())
 
 
-def published_files(store: McalStore) -> list[Path]:
-    """Every MCAL file or manifest visible in the calibration directory, staging excluded."""
-    found = list(store.directory.glob("*.mcal"))
-    manifests = store.directory / "manifests"
-    if manifests.is_dir():
-        found += list(manifests.iterdir())
-    return found
-
-
-def assert_nothing_published(store: McalStore) -> None:
-    assert store.list_published() == []
-    assert published_files(store) == []
-
-
-def assert_staging_gone(store: McalStore, attempt_id: str) -> None:
-    staging = store.directory / ".staging"
-    assert not (staging / attempt_id).exists()
-    assert not staging.exists() or list(staging.iterdir()) == []
+def assert_nothing_saved(store) -> None:
+    """The folder holds no finished file and no half-written one."""
+    assert store.saved_attempts() == []
+    assert store.leftovers() == []
 
 
 def assert_reaped(attempt) -> None:
@@ -106,22 +91,18 @@ def run(coro):
 # --- Happy paths -----------------------------------------------------------------------------
 
 
-def test_both_sides_complete_in_order_and_publish(make_worker):
+def test_both_sides_complete_in_order_and_save_into_the_folder(make_worker):
     async def scenario():
         r = Run(make_worker)
         outcome = await drive(r.attempt, BOTH)
         assert outcome.kind is OutcomeKind.COMPLETED
         assert outcome.exit_code == 0 and not outcome.forced_termination
-        assert outcome.published is not None
-        assert [f.side for f in outcome.published.files] == [
-            proto.Side.LEFT,
-            proto.Side.RIGHT,
-        ]
-        assert r.store.list_published() == [outcome.published]
-        for f in outcome.published.files:
-            data = outcome.published.path_of(f.side).read_bytes()
+        assert [f.side for f in outcome.files] == [proto.Side.LEFT, proto.Side.RIGHT]
+        assert r.store.saved_attempts() == [outcome.attempt]
+        for f in outcome.files:
+            data = (r.store.directory / f.file).read_bytes()
             assert data == (b"MCAL-" + f.side.value.encode()) * 64
-        assert_staging_gone(r.store, outcome.attempt)
+        assert r.store.leftovers() == []
         assert_reaped(r.attempt)
 
     run(scenario())
@@ -133,8 +114,8 @@ def test_a_single_side_completes_with_only_that_file(make_worker, sides):
         r = Run(make_worker)
         outcome = await drive(r.attempt, sides)
         assert outcome.kind is OutcomeKind.COMPLETED
-        assert [f.side for f in outcome.published.files] == list(sides)
-        assert len(published_files(r.store)) == 2  # the file and its manifest
+        assert [f.side for f in outcome.files] == list(sides)
+        assert len(list(r.store.directory.glob("*.mcal"))) == 1
 
     run(scenario())
 
@@ -322,7 +303,7 @@ def test_an_unusable_calibration_directory_raises_and_ends_the_attempt_failed(
     async def scenario():
         r = Run(make_worker)
         (tmp_path / "calibrations").write_text("a file where the directory should be")
-        with pytest.raises(StoreError):
+        with pytest.raises(AttemptError):
             await r.attempt.start(LEFT)
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.FAILED
@@ -343,7 +324,6 @@ def test_invalid_sides_are_rejected_before_anything_is_launched(
                 await r.attempt.start(sides)
         assert r.attempt.state is AttemptState.NEW
         assert commands(commands_log) == []
-        assert not (r.store.directory / ".staging").exists()
 
     run(scenario())
 
@@ -370,9 +350,8 @@ def test_a_bad_worker_line_is_a_protocol_failure_never_a_completion(
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.error is not None and outcome.error.code == "protocol_error"
-        assert outcome.published is None
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert outcome.files == ()
+        assert_nothing_saved(r.store)
         assert_reaped(r.attempt)
 
     run(scenario())
@@ -398,8 +377,8 @@ def test_a_message_after_the_result_voids_the_completion(make_worker):
         r = Run(make_worker, {"extra_after_result": True})
         outcome = await drive(r.attempt, BOTH)
         assert outcome.kind is OutcomeKind.UNCERTAIN
-        assert outcome.published is None
-        assert_nothing_published(r.store)
+        assert outcome.files == ()
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -423,7 +402,7 @@ def test_events_the_supervisor_cannot_justify_are_protocol_failures(make_worker)
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.UNCERTAIN, keys
         assert outcome.error.code == "protocol_error", keys
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     for keys in cases.values():
         run(scenario(keys))
@@ -439,7 +418,7 @@ def test_sides_are_processed_left_then_right_whatever_order_they_are_requested(
         assert (
             next(e.token for e in r.events if isinstance(e, proto.Prompt)) == "left-0"
         )
-        assert [f.side for f in outcome.published.files] == [
+        assert [f.side for f in outcome.files] == [
             proto.Side.LEFT,
             proto.Side.RIGHT,
         ]
@@ -457,10 +436,9 @@ def test_a_worker_crash_mid_step_is_uncertain(make_worker):
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.exit_code == 9
-        assert outcome.published is None
+        assert outcome.files == ()
         assert r.attempt.prompt is None
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -471,8 +449,7 @@ def test_exiting_without_a_result_is_never_a_completion(make_worker):
         outcome = await drive(r.attempt, BOTH)
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.exit_code == 0
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -483,7 +460,7 @@ def test_a_completed_result_with_a_nonzero_exit_is_not_trusted(make_worker):
         outcome = await drive(r.attempt, BOTH)
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.exit_code == 3
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -501,8 +478,7 @@ def test_a_result_that_disagrees_with_the_exports_publishes_nothing(
         outcome = await drive(r.attempt, BOTH)
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.error.code == "protocol_error"
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -524,8 +500,7 @@ def test_a_failed_result_never_publishes_a_partial_pair(
         assert outcome.kind is OutcomeKind.FAILED
         assert outcome.error.code == code
         assert outcome.exit_code == 1 and not outcome.forced_termination
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -578,8 +553,7 @@ def test_cancel_in_every_phase_ends_cancelled_and_publishes_nothing(
         assert outcome.exit_code == 0 and not outcome.forced_termination
         assert "cancel" in commands(commands_log)
         assert sum(isinstance(e, proto.Result) for e in r.events) == 1
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
         assert_reaped(r.attempt)
 
     run(scenario())
@@ -610,7 +584,7 @@ def test_a_late_cancel_does_not_undo_a_completed_attempt(make_worker):
         await r.attempt.cancel()
         assert await r.attempt.outcome() is outcome
         assert (
-            outcome.kind is OutcomeKind.COMPLETED and len(r.store.list_published()) == 1
+            outcome.kind is OutcomeKind.COMPLETED and len(r.store.saved_attempts()) == 1
         )
 
     run(scenario())
@@ -633,7 +607,6 @@ def test_cancel_while_waiting_for_ready_is_cancelled_and_the_worker_reaped(
         assert outcome.kind is OutcomeKind.CANCELLED
         assert commands(commands_log) == []
         assert_reaped(r.attempt)
-        assert_staging_gone(r.store, outcome.attempt)
 
     run(scenario())
 
@@ -680,8 +653,7 @@ def test_a_worker_that_will_not_stop_is_terminated_reaped_and_not_trusted(
         assert outcome.forced_termination
         assert outcome.exit_code == -int(expected_signal)
         assert_reaped(r.attempt)
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -695,7 +667,7 @@ def test_a_worker_that_hangs_after_its_result_is_forced_and_not_trusted(make_wor
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.forced_termination
         assert_reaped(r.attempt)
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -707,7 +679,7 @@ def test_a_forced_exit_code_of_zero_does_not_make_a_completion_trustworthy(make_
         outcome = await drive(r.attempt, BOTH)
         assert outcome.exit_code == 0 and outcome.forced_termination
         assert outcome.kind is OutcomeKind.UNCERTAIN
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(scenario())
 
@@ -737,7 +709,6 @@ def test_a_worker_that_exits_before_ready_fails_with_its_exit_code(make_worker):
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.FAILED
         assert outcome.exit_code == 3 and "3" in outcome.message
-        assert_staging_gone(r.store, outcome.attempt)
 
     run(scenario())
 
@@ -748,15 +719,14 @@ def test_a_missing_or_non_executable_worker_fails_cleanly(tmp_path):
     plain.chmod(0o644)
 
     async def scenario(executable: Path):
-        store = McalStore(tmp_path / "calibrations")
-        attempt = CalibrationWorker(executable, store).new_attempt()
+        store = Folder(tmp_path / "calibrations")
+        attempt = CalibrationWorker(executable, store.directory).new_attempt()
         await attempt.start(LEFT)
         outcome = await attempt.outcome()
         assert outcome.kind is OutcomeKind.FAILED
         assert outcome.error.code == "spawn_failed"
         assert attempt.state is AttemptState.DONE
-        assert_nothing_published(store)
-        assert_staging_gone(store, outcome.attempt)
+        assert_nothing_saved(store)
 
     run(scenario(tmp_path / "does-not-exist"))
     run(scenario(plain))
@@ -789,65 +759,7 @@ def test_the_log_tail_keeps_stdout_and_stderr_lines(make_worker):
     run(scenario())
 
 
-# --- Store integration ----------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "scenario_keys",
-    [
-        {"bad_sha": True},
-        {"bad_sha_side": "right"},
-        {"empty_export": True},
-        {"empty_side": "right"},
-        {"missing_file": True},
-    ],
-    ids=[
-        "bad-digest",
-        "one-side-bad-digest",
-        "empty",
-        "one-side-empty",
-        "file-missing",
-    ],
-)
-def test_an_unverifiable_export_publishes_neither_side(make_worker, scenario_keys):
-    async def scenario():
-        r = Run(make_worker, scenario_keys)
-        outcome = await drive(r.attempt, BOTH)
-        assert outcome.kind is OutcomeKind.FAILED
-        assert outcome.error.code == "store_error"
-        assert outcome.published is None
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
-
-    run(scenario())
-
-
-def test_a_directory_in_place_of_an_export_is_a_store_failure(make_worker):
-    async def scenario():
-        r = Run(make_worker, {"directory_side": "left"})
-        outcome = await drive(r.attempt, LEFT)
-        assert outcome.kind is OutcomeKind.FAILED
-        assert outcome.error.code == "store_error"
-        assert_nothing_published(r.store)
-
-    run(scenario())
-
-
-def test_a_symlinked_export_cannot_reach_outside_the_staging_directory(
-    make_worker, tmp_path
-):
-    outside = tmp_path / "outside.mcal"
-    outside.write_bytes((b"MCAL-" + b"left") * 64)
-
-    async def scenario():
-        r = Run(make_worker, {"symlink_side": "left", "symlink_target": str(outside)})
-        outcome = await drive(r.attempt, LEFT)
-        assert outcome.kind is OutcomeKind.FAILED
-        assert outcome.error.code == "store_error"
-        assert_nothing_published(r.store)
-
-    run(scenario())
-    assert outside.read_bytes() == (b"MCAL-" + b"left") * 64
+# --- Files in the folder ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -860,47 +772,42 @@ def test_a_traversing_export_name_is_a_protocol_violation(make_worker, tmp_path,
         outcome = await drive(r.attempt, LEFT)
         assert outcome.kind is OutcomeKind.UNCERTAIN
         assert outcome.error.code == "protocol_error"
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(scenario())
     assert not (tmp_path / "escape.mcal").exists()
     assert not (tmp_path / "calibrations" / "escape.mcal").exists()
 
 
-def test_new_attempts_never_overwrite_earlier_sets_or_foreign_files(make_worker):
+def test_new_attempts_leave_earlier_files_alone_and_a_failed_one_leaves_none(
+    make_worker,
+):
     async def scenario():
         r = Run(make_worker)
-        store = r.store
-        store.directory.mkdir(parents=True, exist_ok=True)
-        (store.directory / "manifests").mkdir(exist_ok=True)
-        foreign = [
-            store.directory / "legacy.mcal",
-            store.directory / "manifests" / "legacy.json",
-        ]
-        for path in foreign:
-            path.write_bytes(b"keep me")
+        folder = r.store.directory
+        folder.mkdir(parents=True, exist_ok=True)
+        foreign = folder / "legacy.mcal"
+        foreign.write_bytes(b"keep me")
         first = await drive(r.attempt, BOTH)
         assert first.kind is OutcomeKind.COMPLETED
         snapshot = {
             p: (p.read_bytes(), p.stat().st_ino)
-            for p in [*foreign, first.published.manifest]
-        }
-        snapshot |= {
-            p: (p.read_bytes(), p.stat().st_ino)
-            for p in (first.published.path_of(s) for s in BOTH)
+            for p in [foreign, *(folder / f.file for f in first.files)]
         }
 
-        again = Run(make_worker)
-        second = await drive(again.attempt, BOTH)
+        second = await drive(Run(make_worker).attempt, BOTH)
         assert second.kind is OutcomeKind.COMPLETED
-        assert second.published.set_id != first.published.set_id
+        assert second.attempt != first.attempt
         failed = Run(make_worker, {"fail_after_first_export": True})
         assert (await drive(failed.attempt, BOTH)).kind is OutcomeKind.FAILED
 
+        # The failed attempt's own first file is gone; every earlier file is exactly as it was.
         for path, (data, inode) in snapshot.items():
             assert path.read_bytes() == data and path.stat().st_ino == inode
-        listed = {s.set_id for s in store.list_published()}
-        assert listed == {first.published.set_id, second.published.set_id}
+        assert sorted(r.store.saved_attempts()) == sorted(
+            ["legacy.mcal".split("_")[0], first.attempt, second.attempt]
+        )
+        assert r.store.leftovers() == []
 
     run(scenario())
 
@@ -913,12 +820,10 @@ def assert_unreleased(outcome, r) -> None:
     assert outcome.kind is OutcomeKind.UNCERTAIN
     assert outcome.error is not None and outcome.error.code == "worker_unreleased"
     assert "could not release the SDK" in outcome.message
-    assert outcome.published is None
+    assert outcome.files == ()
     assert r.worker.unreleased == outcome.message
-    assert_nothing_published(r.store)
+    assert_nothing_saved(r.store)
     assert_reaped(r.attempt)
-    # The process exited and was reaped, so its staging is discarded like any reaped attempt's.
-    assert_staging_gone(r.store, outcome.attempt)
     with pytest.raises(AttemptError, match="could not release the SDK"):
         r.worker.new_attempt()
 

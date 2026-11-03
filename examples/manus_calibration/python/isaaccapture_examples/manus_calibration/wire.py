@@ -54,23 +54,19 @@ def view_to_dict(
         "confirm_pending": view.confirm_pending,
         "elapsed_s": view.elapsed_s,
         "notice": view.notice,
-        "outcome": _outcome(view),
+        "outcome": _outcome(view, out_dir),
     }
 
 
-def _outcome(view: View) -> dict[str, Any] | None:
-    """Terminal result: where files landed, or why none were published."""
+def _outcome(view: View, out_dir: str) -> dict[str, Any] | None:
+    """Terminal result: where files landed, or why none were saved."""
     outcome = view.outcome
     if outcome is None:
         return None
-    files = []
-    directory = None
-    if outcome.published is not None:
-        directory = str(outcome.published.manifest.parent.parent)
-        files = [
-            {"side": f.side.value, "file": f.file, "bytes": f.bytes}
-            for f in outcome.published.files
-        ]
+    files = [
+        {"side": f.side.value, "file": f.file, "bytes": f.bytes} for f in outcome.files
+    ]
+    directory = out_dir if files else None
     return {
         "kind": outcome.kind.value,
         "message": outcome.message,

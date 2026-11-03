@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any
 
 from . import protocol as proto
-from .store import McalStore, PublishedSet, StoreError
 
 logger = logging.getLogger("isaaccapture.examples.manus_calibration.worker")
 
@@ -68,13 +67,13 @@ class OutcomeKind(str, Enum):
 
 @dataclass(frozen=True)
 class CalibrationOutcome:
-    """Terminal result of an attempt. ``published`` is set only for ``COMPLETED``."""
+    """Terminal result of an attempt. ``files`` lists the exported files, only for ``COMPLETED``."""
 
     kind: OutcomeKind
     attempt: str
     sides: tuple[proto.Side, ...]
     message: str
-    published: PublishedSet | None = None
+    files: tuple[proto.ExportedFile, ...] = ()
     error: proto.WorkerError | None = None
     exit_code: int | None = None
     forced_termination: bool = False
@@ -87,7 +86,7 @@ class CalibrationWorker:
     def __init__(
         self,
         executable: str | Path,
-        store: McalStore,
+        out_dir: str | Path,
         *,
         discovery_timeout_s: float = 15.0,
         ready_timeout_s: float = 10.0,
@@ -101,7 +100,8 @@ class CalibrationWorker:
         finish_timeout_s: float = 60.0,
     ) -> None:
         self.executable = Path(executable)
-        self.store = store
+        # The plain folder the worker writes its .mcal files into.
+        self.out_dir = Path(out_dir)
         self.discovery_timeout_s = discovery_timeout_s
         self.ready_timeout_s = ready_timeout_s
         self.cancel_grace_s = cancel_grace_s
@@ -202,14 +202,16 @@ class CalibrationAttempt:
         self._sides = tuple(s for s in proto.Side if s in sides)
         self._state = AttemptState.STARTING
         try:
-            staging = self._owner.store.create_staging(self.attempt_id)
-        except StoreError as exc:
+            self._owner.out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = self._owner.out_dir.resolve(strict=True)
+        except OSError as exc:
+            message = f"cannot use {self._owner.out_dir}: {exc.strerror or exc}"
             self._finish(
                 CalibrationOutcome(
-                    OutcomeKind.FAILED, self.attempt_id, self._sides, str(exc)
+                    OutcomeKind.FAILED, self.attempt_id, self._sides, message
                 )
             )
-            raise
+            raise AttemptError(message) from None
         try:
             await self._launch()
         except OSError as exc:
@@ -228,7 +230,7 @@ class CalibrationAttempt:
             or self._cancel_requested.is_set()
         ):
             return
-        await self._send(proto.encode_start(self.attempt_id, self._sides, str(staging)))
+        await self._send(proto.encode_start(self.attempt_id, self._sides, str(out_dir)))
         self._start_sent = True
         self._state = AttemptState.RUNNING
         self._expect(
@@ -726,12 +728,12 @@ class CalibrationAttempt:
             )
         if result.outcome is proto.Outcome.CANCELLED:
             return self._outcome_of(OutcomeKind.CANCELLED, "cancelled", code, forced)
-        return await self._publish(result, code, forced)
+        return self._completed(result, code, forced)
 
-    async def _publish(
+    def _completed(
         self, result: proto.Result, code: int | None, forced: bool
     ) -> CalibrationOutcome:
-        """Verify and publish a completed result's files."""
+        """A completed result, once its files match what the worker reported exporting."""
         reported = {f.side: f for f in result.files}
         exported = {
             side: proto.ExportedFile(side, e.file, e.bytes, e.sha256)
@@ -747,24 +749,12 @@ class CalibrationAttempt:
                     "protocol_error", "result files differ from exported files"
                 ),
             )
-        try:
-            published = await asyncio.to_thread(
-                self._owner.store.publish, self.attempt_id, self._sides, exported
-            )
-        except StoreError as exc:
-            return self._outcome_of(
-                OutcomeKind.FAILED,
-                f"calibration files were not saved: {exc}",
-                code,
-                forced,
-                error=proto.WorkerError("store_error", str(exc)),
-            )
         return self._outcome_of(
             OutcomeKind.COMPLETED,
             "calibration saved",
             code,
             forced,
-            published=published,
+            files=tuple(exported[side] for side in self._sides),
         )
 
     def _outcome_of(
@@ -775,19 +765,28 @@ class CalibrationAttempt:
         forced: bool,
         *,
         error: proto.WorkerError | None = None,
-        published: PublishedSet | None = None,
+        files: tuple[proto.ExportedFile, ...] = (),
     ) -> CalibrationOutcome:
         return CalibrationOutcome(
             kind=kind,
             attempt=self.attempt_id,
             sides=self._sides,
             message=message,
-            published=published,
+            files=files,
             error=error,
             exit_code=code,
             forced_termination=forced,
             log_tail=tuple(self._tail),
         )
+
+    def _remove_exports(self) -> None:
+        """Delete everything this attempt wrote into the folder, including a half-written file.
+
+        The attempt id is random and prefixes every name the worker writes, so this matches no other file.
+        """
+        for path in self._owner.out_dir.glob(f"{self.attempt_id}_*"):
+            with contextlib.suppress(OSError):
+                path.unlink()
 
     def _finish_failed(self, code: str, message: str) -> None:
         self._finish(
@@ -801,12 +800,13 @@ class CalibrationAttempt:
         )
 
     def _finish(self, outcome: CalibrationOutcome) -> None:
-        """Settle the attempt exactly once: release staging, fail waiters, publish the outcome."""
+        """Settle the attempt exactly once: drop partial files, fail waiters, record the outcome."""
         if self._outcome.done():
             return
-        # A worker that may still be running can still write here, so its staging is left in place.
-        if not self._unreaped:
-            self._owner.store.discard_staging(self.attempt_id)
+        # Only a completed attempt keeps files. A worker that may still be running can still write, so
+        # nothing is removed while it is unreaped.
+        if outcome.kind is not OutcomeKind.COMPLETED and not self._unreaped:
+            self._remove_exports()
         self._state = AttemptState.DONE
         self._prompt = None
         if self._pending_confirm is not None:

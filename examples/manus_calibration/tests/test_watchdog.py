@@ -9,12 +9,10 @@ import asyncio
 import os
 import signal
 import time
-from pathlib import Path
 
 import pytest
 from conftest import BOTH, commands, wait_for
 from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.store import McalStore
 from isaaccapture_examples.manus_calibration.worker import (
     AttemptEnded,
     AttemptState,
@@ -61,24 +59,10 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def published_files(store: McalStore) -> list[Path]:
-    """Every MCAL file or manifest visible in the calibration directory, staging excluded."""
-    found = list(store.directory.glob("*.mcal"))
-    manifests = store.directory / "manifests"
-    if manifests.is_dir():
-        found += list(manifests.iterdir())
-    return found
-
-
-def assert_nothing_published(store: McalStore) -> None:
-    assert store.list_published() == []
-    assert published_files(store) == []
-
-
-def assert_staging_gone(store: McalStore, attempt_id: str) -> None:
-    staging = store.directory / ".staging"
-    assert not (staging / attempt_id).exists()
-    assert not staging.exists() or list(staging.iterdir()) == []
+def assert_nothing_saved(store) -> None:
+    """The folder holds no finished file and no half-written one."""
+    assert store.saved_attempts() == []
+    assert store.leftovers() == []
 
 
 def assert_reaped(attempt) -> None:
@@ -157,7 +141,7 @@ def test_a_worker_that_goes_silent_is_stopped_without_any_cancel(
         assert "SDK state is unknown" in outcome.message
         assert outcome.forced_termination
         assert outcome.exit_code == -int(expected_signal)
-        assert outcome.published is None
+        assert outcome.files == ()
         assert r.attempt.state is AttemptState.DONE and r.attempt.prompt is None
 
         # No browser cancel and no cancel command: the supervisor acted alone.
@@ -165,8 +149,7 @@ def test_a_worker_that_goes_silent_is_stopped_without_any_cancel(
         assert not r.seen(proto.Result)
 
         assert_reaped(r.attempt)
-        assert_nothing_published(r.store)
-        assert_staging_gone(r.store, outcome.attempt)
+        assert_nothing_saved(r.store)
 
         # A confirmation the worker never answered is released, not left waiting forever.
         if flag == "hang_on_confirm":
@@ -196,11 +179,11 @@ def test_a_hang_after_the_last_step_is_not_mistaken_for_completion(make_worker):
                         pass
                 await asyncio.sleep(0.01)
         outcome = await r.attempt.outcome()
-        # Both prompts were answered and the first glove may have exported, yet nothing is published.
+        # Both prompts were answered and the first glove may have exported, yet nothing is saved.
         assert len(confirmed) == 2
         assert outcome.kind is OutcomeKind.UNCERTAIN
-        assert outcome.published is None
-        assert_nothing_published(r.store)
+        assert outcome.files == ()
+        assert_nothing_saved(r.store)
 
     run(body())
 
@@ -230,7 +213,7 @@ def test_operator_think_time_is_never_bounded(make_worker):
             )
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.COMPLETED
-        assert {f.side for f in outcome.published.files} == set(BOTH)
+        assert {f.side for f in outcome.files} == set(BOTH)
 
     run(body())
 
@@ -286,7 +269,7 @@ def test_a_worker_that_keeps_reporting_outlives_a_deadline_and_completes(
         assert time.monotonic() - began > DEADLINE_S * 1.5
         assert outcome.kind is OutcomeKind.COMPLETED, outcome.message
         assert r.attempt._abort_reason is None
-        assert len(r.store.list_published()) == 1
+        assert len(r.store.saved_attempts()) == 1
 
     run(body())
 
@@ -312,7 +295,7 @@ def test_a_user_cancel_of_a_silent_worker_is_not_blamed_on_the_watchdog(make_wor
         assert "did not respond" not in outcome.message
         assert r.attempt._abort_reason is None
         assert_reaped(r.attempt)
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
         await assert_no_tasks_left()
 
     run(body())
@@ -338,7 +321,7 @@ def test_a_user_cancel_during_a_pending_confirm_is_not_blamed_on_the_watchdog(
         assert "did not respond" not in outcome.message
         with pytest.raises(AttemptEnded):
             _ = await confirm
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(body())
 
@@ -360,7 +343,7 @@ def test_cancel_disarms_the_deadline_while_the_worker_winds_down(make_worker):
         assert outcome.kind is OutcomeKind.CANCELLED, outcome.message
         assert outcome.exit_code == 0 and not outcome.forced_termination
         assert r.attempt._abort_reason is None
-        assert_nothing_published(r.store)
+        assert_nothing_saved(r.store)
 
     run(body())
 

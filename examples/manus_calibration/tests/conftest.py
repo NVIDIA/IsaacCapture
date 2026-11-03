@@ -10,13 +10,35 @@ from pathlib import Path
 
 import pytest
 from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.store import McalStore
 from isaaccapture_examples.manus_calibration.worker import (
     AttemptState,
     CalibrationAttempt,
     CalibrationOutcome,
     CalibrationWorker,
 )
+
+
+class Folder:
+    """The plain output folder under test: what calibrations left in it."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+
+    def saved_attempts(self) -> list[str]:
+        """One entry per attempt that left .mcal files, so a pair counts once."""
+        if not self.directory.is_dir():
+            return []
+        names = sorted(p.name for p in self.directory.glob("*.mcal"))
+        return sorted({name.split("_")[0] for name in names})
+
+    def leftovers(self) -> list[str]:
+        """Anything in the folder that is not a finished .mcal file, such as a half-written one."""
+        if not self.directory.is_dir():
+            return []
+        return sorted(
+            p.name for p in self.directory.iterdir() if not p.name.endswith(".mcal")
+        )
+
 
 FAKE_WORKER = Path(__file__).with_name("fake_worker.py")
 BOTH = (proto.Side.LEFT, proto.Side.RIGHT)
@@ -33,7 +55,7 @@ def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands_log: P
 
     def factory(
         scenario: dict | None = None, **settings
-    ) -> tuple[CalibrationWorker, McalStore]:
+    ) -> tuple[CalibrationWorker, Folder]:
         wrapper = tmp_path / "fake-calibrator"
         wrapper.write_text(
             f"#!{sys.executable}\nimport runpy\nrunpy.run_path({str(FAKE_WORKER)!r}, run_name='__main__')\n"
@@ -41,7 +63,7 @@ def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands_log: P
         wrapper.chmod(0o755)
         monkeypatch.setenv("FAKE_WORKER_SCENARIO", json.dumps(scenario or {}))
         monkeypatch.setenv("FAKE_WORKER_LOG", str(commands_log))
-        store = McalStore(tmp_path / "calibrations")
+        folder = Folder(tmp_path / "calibrations")
         timeouts = {
             "ready_timeout_s": 5,
             "cancel_grace_s": 2,
@@ -49,7 +71,9 @@ def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands_log: P
             "term_grace_s": 1,
             "kill_wait_s": 2,
         }
-        return CalibrationWorker(wrapper, store, **{**timeouts, **settings}), store
+        return CalibrationWorker(
+            wrapper, folder.directory, **{**timeouts, **settings}
+        ), folder
 
     return factory
 

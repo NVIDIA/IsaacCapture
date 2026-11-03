@@ -156,13 +156,18 @@ function renderResult() {
   list.replaceChildren(
     ...outcome.files.map((file) => {
       const item = document.createElement("li");
-      item.textContent = `${file.side}: ${file.file} (${file.bytes} bytes)`;
+      // Same-origin download of the file the worker just wrote on the server host.
+      const link = document.createElement("a");
+      link.href = `/download/${encodeURIComponent(file.file)}`;
+      link.download = file.file;
+      link.textContent = file.file;
+      item.append(`${file.side}: `, link, ` (${file.bytes} bytes)`);
       return item;
     }),
   );
   if (!outcome.directory) {
     const none = document.createElement("li");
-    none.textContent = "No calibration files were published.";
+    none.textContent = "No calibration files were saved.";
     list.replaceChildren(none);
   }
   $("result-log").hidden = outcome.log_tail.length === 0;

@@ -130,7 +130,7 @@ def test_a_full_calibration_runs_over_http_and_sse(make_worker, sides):
             assert outcome["directory"] == str(store.directory)
             assert final["active"] is False
             assert final["owner"] is False
-            published = store.list_published()
+            published = store.saved_attempts()
             assert len(published) == 1
             for entry in outcome["files"]:
                 assert (store.directory / entry["file"]).is_file()
@@ -780,7 +780,7 @@ def test_the_owner_leaving_cancels_the_attempt_after_the_grace_window(
             final = await watcher.until(lambda s: s["stage"] == "finished")
             assert final["outcome"]["kind"] == "cancelled"
             assert final["outcome"]["files"] == []
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             outcome = server.controller.view().outcome
             assert outcome.exit_code == 0
             assert outcome.forced_termination is False
@@ -874,7 +874,7 @@ def test_completed_files_survive_the_browser_leaving(make_worker, monkeypatch):
             await asyncio.sleep(0.8)
             assert len(files) == 2
             assert all(path.is_file() for path in files)
-            assert len(store.list_published()) == 1
+            assert len(store.saved_attempts()) == 1
             assert server.controller.view().outcome.kind is OutcomeKind.COMPLETED
 
     asyncio.run(scenario())
@@ -893,7 +893,7 @@ def test_a_new_attempt_can_follow_a_finished_one_from_another_browser(make_worke
             await second.until(lambda s: s["stage"] == "finished")
             final = await run_flow(port, second, CLIENT_B, ["right"])
             assert final["outcome"]["kind"] == "completed"
-            assert len(store.list_published()) == 2
+            assert len(store.saved_attempts()) == 2
             first.close()
             second.close()
 
@@ -913,7 +913,7 @@ def test_aclose_cancels_an_active_attempt_and_reaps_the_worker(make_worker):
             assert outcome.kind is OutcomeKind.CANCELLED
             assert outcome.exit_code == 0
             assert outcome.forced_termination is False
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             sse.close()
 
     asyncio.run(scenario())
@@ -960,7 +960,7 @@ def test_a_failed_or_uncertain_run_shows_the_log_tail_and_lists_no_files(
             assert outcome["directory"] is None
             assert outcome["log_tail"]
             assert any("fake worker log line" in line for line in outcome["log_tail"])
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             sse.close()
 
     asyncio.run(scenario())
@@ -979,7 +979,7 @@ def test_a_cancelled_run_has_no_log_tail_and_no_files(make_worker):
             assert final["outcome"]["kind"] == "cancelled"
             assert final["outcome"]["files"] == []
             assert final["outcome"]["log_tail"] == []
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             sse.close()
 
     asyncio.run(scenario())
@@ -1053,7 +1053,7 @@ def test_continuous_steps_reach_the_owner_with_their_estimate_and_hide_the_token
             final = await flow
             assert final["outcome"]["kind"] == "completed"
             assert {f["side"] for f in final["outcome"]["files"]} == {"left", "right"}
-            assert len(store.list_published()) == 1
+            assert len(store.saved_attempts()) == 1
 
             def prompts(states):
                 return [s["prompt"] for s in states if s["prompt"]]
@@ -1326,7 +1326,7 @@ def test_a_confirm_the_sdk_never_answers_ends_uncertain_without_a_browser_cancel
             reply = await asyncio.wait_for(confirm, 10)
             assert reply.status == 200, reply.body
             assert "cancel" not in commands(commands_log)
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             sse.close()
 
     asyncio.run(scenario())
@@ -1352,7 +1352,7 @@ def test_a_worker_silent_after_start_ends_uncertain_over_http(
             )
             assert outcome["files"] == []
             assert commands(commands_log) == ["start"]
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             # The station is free again: a new attempt is not refused as busy.
             again = await api(port, "/api/start", CLIENT_A, {"sides": ["left"]})
             assert again.status == 200, again.body
@@ -1387,7 +1387,7 @@ def test_a_prompt_left_longer_than_every_deadline_can_still_be_answered_over_htt
             assert reply.status == 200, reply.body
             final = await sse.until(lambda s: s["stage"] == "finished", timeout=20)
             assert final["outcome"]["kind"] == "completed"
-            assert len(store.list_published()) == 1
+            assert len(store.saved_attempts()) == 1
             sse.close()
 
     asyncio.run(scenario())
@@ -1418,11 +1418,90 @@ def test_a_result_that_reports_the_sdk_unreleased_blocks_a_new_start_over_http(
             assert outcome["kind"] == "uncertain"
             assert "could not release the SDK" in outcome["message"]
             assert outcome["files"] == []
-            assert store.list_published() == []
+            assert store.saved_attempts() == []
             # The worker process is gone, but the gloves may not be free: a new start is refused.
             again = await api(port, "/api/start", CLIENT_A, {"sides": ["left"]})
             assert again.status == 409
             assert "could not release the SDK" in again.json()["error"]
             sse.close()
+
+    asyncio.run(scenario())
+
+
+# --- Downloading the generated files -----------------------------------------------------------------
+
+
+def test_a_completed_calibration_can_be_downloaded_from_the_browser(make_worker):
+    async def scenario():
+        async with serving(make_worker, HOLD) as (server, store):
+            sse = await Sse.open(server.port, CLIENT_A)
+            await sse.event()
+            final = await run_flow(server.port, sse, CLIENT_A, ["left", "right"])
+            for entry in final["outcome"]["files"]:
+                reply = await request(server.port, "GET", f"/download/{entry['file']}")
+                assert reply.status == 200
+                assert reply.body == (store.directory / entry["file"]).read_bytes()
+                assert reply.headers["content-type"] == "application/octet-stream"
+                assert reply.headers["content-disposition"] == (
+                    f'attachment; filename="{entry["file"]}"'
+                )
+            sse.close()
+
+    asyncio.run(scenario())
+
+
+def test_nothing_can_be_downloaded_before_a_calibration_completes(make_worker):
+    async def scenario():
+        async with serving(make_worker, WAITING) as (server, store):
+            store.directory.mkdir(parents=True, exist_ok=True)
+            (store.directory / "legacy.mcal").write_bytes(b"not offered")
+            for name in ("legacy.mcal", "cal-aaaaaaaaaaaa_left.mcal"):
+                reply = await request(server.port, "GET", f"/download/{name}")
+                assert reply.status == 404
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["legacy.mcal", "..%2f..%2fetc%2fpasswd", "../secret", "", "cal-x_left.mcal.part"],
+)
+def test_only_files_the_last_calibration_reported_can_be_downloaded(make_worker, name):
+    async def scenario():
+        async with serving(make_worker, HOLD) as (server, store):
+            sse = await Sse.open(server.port, CLIENT_A)
+            await sse.event()
+            await run_flow(server.port, sse, CLIENT_A, ["left"])
+            (store.directory / "legacy.mcal").write_bytes(b"not offered")
+            reply = await request(server.port, "GET", f"/download/{name}")
+            assert reply.status == 404
+            sse.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_download_whose_file_was_removed_is_not_found(make_worker):
+    async def scenario():
+        async with serving(make_worker, HOLD) as (server, store):
+            sse = await Sse.open(server.port, CLIENT_A)
+            await sse.event()
+            final = await run_flow(server.port, sse, CLIENT_A, ["left"])
+            name = final["outcome"]["files"][0]["file"]
+            (store.directory / name).unlink()
+            assert (
+                await request(server.port, "GET", f"/download/{name}")
+            ).status == 404
+            sse.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_download_with_a_foreign_host_is_refused(make_worker):
+    async def scenario():
+        async with serving(make_worker, HOLD) as (server, _store):
+            reply = await request(
+                server.port, "GET", "/download/x.mcal", host="evil.example"
+            )
+            assert reply.status == 403
 
     asyncio.run(scenario())

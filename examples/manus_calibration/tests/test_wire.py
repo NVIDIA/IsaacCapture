@@ -6,12 +6,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from isaaccapture_examples.manus_calibration import protocol as proto
 from isaaccapture_examples.manus_calibration.controller import Stage, View
-from isaaccapture_examples.manus_calibration.store import PublishedFile, PublishedSet
 from isaaccapture_examples.manus_calibration.wire import view_to_dict
 from isaaccapture_examples.manus_calibration.worker import (
     CalibrationOutcome,
@@ -35,17 +33,9 @@ PROMPT = proto.Prompt(
     duration_s=0.0,
 )
 GLOVES = (proto.Glove(proto.Side.LEFT, 11), proto.Glove(proto.Side.RIGHT, 22))
-PUBLISHED = PublishedSet(
-    set_id="20261102T000000Z-aaaaaaaa",
-    attempt="cal-1",
-    created="2026-11-02T00:00:00Z",
-    files=(
-        PublishedFile(proto.Side.LEFT, "20261102T000000Z-aaaaaaaa_left.mcal", 640, "a"),
-        PublishedFile(
-            proto.Side.RIGHT, "20261102T000000Z-aaaaaaaa_right.mcal", 640, "b"
-        ),
-    ),
-    manifest=Path(OUT) / "manifests" / "20261102T000000Z-aaaaaaaa.json",
+FILES = (
+    proto.ExportedFile(proto.Side.LEFT, "cal-1_left.mcal", 640, "a" * 64),
+    proto.ExportedFile(proto.Side.RIGHT, "cal-1_right.mcal", 640, "b" * 64),
 )
 
 
@@ -183,20 +173,20 @@ def test_default_sides_default_to_both_and_can_be_set():
     assert view_to_dict(View(), OWNER, OUT, "left")["default_sides"] == "left"
 
 
-def test_a_completed_outcome_lists_the_published_files_and_directory():
-    view = finished_view(OutcomeKind.COMPLETED, published=PUBLISHED)
+def test_a_completed_outcome_lists_the_saved_files_and_directory():
+    view = finished_view(OutcomeKind.COMPLETED, files=FILES)
     outcome = view_to_dict(view, OWNER, OUT)["outcome"]
     assert outcome["kind"] == "completed"
     assert outcome["directory"] == OUT
     assert outcome["files"] == [
         {
             "side": "left",
-            "file": "20261102T000000Z-aaaaaaaa_left.mcal",
+            "file": "cal-1_left.mcal",
             "bytes": 640,
         },
         {
             "side": "right",
-            "file": "20261102T000000Z-aaaaaaaa_right.mcal",
+            "file": "cal-1_right.mcal",
             "bytes": 640,
         },
     ]
@@ -229,7 +219,7 @@ def test_the_snapshot_is_json_serialisable_for_every_shape():
         View(),
         active_view(),
         active_view(stage=Stage.SAMPLING, elapsed_s=0.1),
-        finished_view(OutcomeKind.COMPLETED, published=PUBLISHED),
+        finished_view(OutcomeKind.COMPLETED, files=FILES),
         finished_view(OutcomeKind.UNCERTAIN, log_tail=("x",)),
     ]
     for view in views:

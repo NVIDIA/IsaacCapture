@@ -210,8 +210,8 @@ def test_a_full_run_completes_publishes_and_releases_ownership(make_worker, side
         assert view.owner is None
         assert view.prompt is None
         assert view.outcome.kind is OutcomeKind.COMPLETED
-        assert {f.side for f in view.outcome.published.files} == set(sides)
-        assert len(store.list_published()) == 1
+        assert {f.side for f in view.outcome.files} == set(sides)
+        assert len(store.saved_attempts()) == 1
         assert controller.active is False
         assert "completed" in view.notice
 
@@ -226,7 +226,7 @@ def test_a_new_attempt_can_start_after_a_finished_one(make_worker):
         await controller.start(OTHER, LEFT)
         assert controller.view().owner == OTHER
         await finish(controller, OTHER)
-        assert len(store.list_published()) == 2
+        assert len(store.saved_attempts()) == 2
 
     asyncio.run(scenario())
 
@@ -318,8 +318,8 @@ def test_cancel_by_the_owner_ends_cancelled_and_publishes_nothing(make_worker):
         await wait_for(lambda: controller.view().stage is Stage.FINISHED)
         view = controller.view()
         assert view.outcome.kind is OutcomeKind.CANCELLED
-        assert view.outcome.published is None
-        assert store.list_published() == []
+        assert view.outcome.files == ()
+        assert store.saved_attempts() == []
         assert controller.active is False
 
     asyncio.run(scenario())
@@ -337,7 +337,7 @@ def test_only_the_owner_disconnecting_cancels_the_attempt(make_worker):
         await controller.client_disconnected(OWNER)
         await wait_for(lambda: controller.view().stage is Stage.FINISHED)
         assert controller.view().outcome.kind is OutcomeKind.CANCELLED
-        assert store.list_published() == []
+        assert store.saved_attempts() == []
 
     asyncio.run(scenario())
 
@@ -359,7 +359,7 @@ def test_a_completed_attempts_files_survive_the_owner_disconnecting_later(
         await controller.start(OWNER, LEFT)
         await finish(controller)
         await controller.client_disconnected(OWNER)
-        assert len(store.list_published()) == 1
+        assert len(store.saved_attempts()) == 1
         assert controller.view().outcome.kind is OutcomeKind.COMPLETED
 
     asyncio.run(scenario())
@@ -375,7 +375,7 @@ def test_aclose_cancels_an_active_attempt_and_waits_for_the_worker(make_worker):
         assert outcome.kind is OutcomeKind.CANCELLED
         assert outcome.exit_code == 0
         assert outcome.forced_termination is False
-        assert store.list_published() == []
+        assert store.saved_attempts() == []
 
     asyncio.run(scenario())
 
@@ -398,8 +398,8 @@ def test_a_failed_run_reports_the_failure_and_publishes_nothing(make_worker):
         assert view.outcome.kind is OutcomeKind.FAILED
         assert view.outcome.error.code == "step_failed"
         assert "failed" in view.notice
-        assert view.outcome.published is None
-        assert store.list_published() == []
+        assert view.outcome.files == ()
+        assert store.saved_attempts() == []
 
     asyncio.run(scenario())
 
@@ -414,7 +414,7 @@ def test_a_worker_that_never_reports_a_result_is_uncertain_not_complete(
         assert view.outcome.kind is OutcomeKind.UNCERTAIN
         assert "uncertain" in view.notice
         assert "completed" not in view.notice
-        assert store.list_published() == []
+        assert store.saved_attempts() == []
 
     asyncio.run(scenario())
 
@@ -485,7 +485,7 @@ def test_a_late_disconnect_bound_to_an_earlier_attempt_cannot_cancel_a_later_one
         await controller.client_disconnected(second_owner, attempt=later)
         await wait_for(lambda: controller.view().stage is Stage.FINISHED)
         assert controller.view().outcome.kind is OutcomeKind.CANCELLED
-        assert store.list_published() == []
+        assert store.saved_attempts() == []
 
     asyncio.run(scenario())
 
@@ -533,7 +533,7 @@ def test_a_bound_disconnect_for_a_finished_attempt_is_ignored(make_worker):
         await finish(controller)
         await controller.client_disconnected(OWNER, attempt=earlier)
         assert controller.view().outcome.kind is OutcomeKind.COMPLETED
-        assert len(store.list_published()) == 1
+        assert len(store.saved_attempts()) == 1
 
     asyncio.run(scenario())
 
@@ -547,7 +547,7 @@ def test_the_station_stays_unavailable_after_a_result_that_reports_the_sdk_unrel
         view = await finish(controller)
         assert view.outcome.kind is OutcomeKind.UNCERTAIN
         assert "could not release the SDK" in view.outcome.message
-        assert view.outcome.published is None
+        assert view.outcome.files == ()
         assert not controller.active
         # No new attempt may start while the gloves may still be in use.
         with pytest.raises(AttemptError, match="could not release the SDK"):

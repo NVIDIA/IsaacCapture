@@ -229,7 +229,7 @@ def _summary(outcome: CalibrationOutcome) -> str:
     if outcome.kind is OutcomeKind.COMPLETED:
         return "calibration completed"
     if outcome.kind is OutcomeKind.CANCELLED:
-        return "calibration cancelled; no files were published"
+        return "calibration cancelled; no files were saved"
     if outcome.kind is OutcomeKind.UNCERTAIN:
-        return f"outcome uncertain, no files were published: {outcome.message}"
+        return f"outcome uncertain, no files were saved: {outcome.message}"
     return f"calibration failed: {outcome.message}"

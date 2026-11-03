@@ -43,7 +43,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `start` | `attempt` (string, 1-64 chars of `[A-Za-z0-9_-]`), `sides` (non-empty, unique, subset of `left`,`right`; processed in the order left then right), `staging_dir` (absolute path of an existing directory the worker may write into) | Begin the attempt. Accepted once per process. |
+| `start` | `attempt` (string, 1-64 chars of `[A-Za-z0-9_-]`), `sides` (non-empty, unique, subset of `left`,`right`; processed in the order left then right), `staging_dir` (absolute path of an existing directory the worker writes its `.mcal` files into; the field name is historical, it is the output folder) | Begin the attempt. Accepted once per process. |
 | `confirm` | `attempt`, `token` | Start the SDK step offered by the `prompt` with this token. |
 | `cancel` | `attempt` | Cancel the attempt. Idempotent. |
 
@@ -57,7 +57,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 | `step_accepted` | `attempt`, `token` | The SDK accepted starting the step. Re-sent unchanged for a repeated `confirm` of the same token, without starting another step. |
 | `step_progress` | `attempt`, `token`, `elapsed_s` | About every 0.25 s while a `motion` step samples; `elapsed_s` never exceeds `duration_s`. Elapsed sampling time, not a quality measure. |
 | `rejected` | `attempt` (string or null), `command`, `reason` (`invalid`, `unknown_attempt`, `stale_token`, `unexpected`, `busy`), `message`, `token` (when relevant) | A command was refused. No state changes. |
-| `exported` | `attempt`, `side`, `glove_id`, `file` (basename inside `staging_dir`), `bytes`, `sha256` (lowercase hex) | One MCAL file written and flushed. |
+| `exported` | `attempt`, `side`, `glove_id`, `file` (basename inside that directory), `bytes`, `sha256` (lowercase hex) | One MCAL file written and flushed. |
 | `result` | `attempt` (or null), `outcome` (`completed`/`cancelled`/`failed`), `files` (array of `{side, file, bytes, sha256}`, present only for `completed`), `error` (`{code, message, side?, step?}`, present only for `failed`), `released` (boolean, always present) | Terminal. Sent exactly once, after SDK shutdown. |
 
 Error `code` values: `sdk_init_failed`, `no_gloves`, `glove_missing`, `glove_replaced`,
@@ -92,9 +92,9 @@ glove side and step index where known.
 - A worker blocked inside an SDK call cannot enforce its own limits. The supervisor therefore bounds every
   answer only the worker can give (startup through the first prompt, a confirmed step's acceptance, the time
   from the last step to the result) and terminates a silent worker; the outcome is then uncertain and
-  nothing is published. The time the operator takes to confirm a prompt is never bounded.
-- The worker never publishes anything. Making a set of exported files visible to a consumer is the
-  supervisor's job (see the Python adapter).
+  nothing is saved. The time the operator takes to confirm a prompt is never bounded.
+- The worker writes each export straight into the directory it was given and never overwrites an existing
+  file. Removing a cancelled or failed attempt's files is the supervisor's job (see the Python adapter).
 
 ## Build
 

@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import protocol as proto
 from .controller import CalibrationController, NotOwner, View
 from .wire import view_to_dict
-from .worker import AttemptError, CalibrationWorker
+from .worker import AttemptError, CalibrationWorker, OutcomeKind
 
 logger = logging.getLogger("isaaccapture.examples.manus_calibration.server")
 
@@ -33,6 +33,7 @@ _STATIC_TYPES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
+_DOWNLOAD_PREFIX = "/download/"
 _CLIENT_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
 _MAX_HEADER_BYTES = 16 * 1024
 _MAX_BODY_BYTES = 4 * 1024
@@ -234,6 +235,8 @@ class PageServer:
             await self._reply(writer, 200, ctype, body)
         elif request.method == "GET" and request.path == "/events":
             await self._stream(request, reader, writer)
+        elif request.method == "GET" and request.path.startswith(_DOWNLOAD_PREFIX):
+            await self._download(request.path[len(_DOWNLOAD_PREFIX) :], writer)
         elif request.method == "POST" and request.path in (
             "/api/start",
             "/api/confirm",
@@ -249,6 +252,32 @@ class PageServer:
             raise _BadRequest(405, "method not allowed")
         else:
             raise _BadRequest(404, "not found")
+
+    async def _download(self, name: str, writer: asyncio.StreamWriter) -> None:
+        """Send one file of the last completed calibration to the browser as a download.
+
+        Only names the last completed attempt reported are served, so the route can never read anything else
+        in the folder.
+        """
+        outcome = self._controller.view().outcome
+        offered = (
+            {f.file for f in outcome.files}
+            if outcome is not None and outcome.kind is OutcomeKind.COMPLETED
+            else set()
+        )
+        if name not in offered:
+            raise _BadRequest(404, "not found")
+        try:
+            data = await asyncio.to_thread((Path(self._out_dir) / name).read_bytes)
+        except OSError:
+            raise _BadRequest(404, "the file is no longer available") from None
+        await self._reply(
+            writer,
+            200,
+            "application/octet-stream",
+            data,
+            {"Content-Disposition": f'attachment; filename="{name}"'},
+        )
 
     async def _action(self, request: _Request, writer: asyncio.StreamWriter) -> None:
         """An operator action; the custom header and JSON type make a cross-site form post impossible."""
@@ -368,7 +397,12 @@ class PageServer:
         tab.grace = loop.call_later(_DISCONNECT_GRACE_S, _gone)
 
     async def _reply(
-        self, writer: asyncio.StreamWriter, status: int, ctype: str, body: bytes
+        self,
+        writer: asyncio.StreamWriter,
+        status: int,
+        ctype: str,
+        body: bytes,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         """A complete response with the security headers."""
         headers = {
@@ -376,6 +410,7 @@ class PageServer:
             "Content-Length": str(len(body)),
             "Connection": "close",
             **_SECURITY_HEADERS,
+            **(extra_headers or {}),
         }
         writer.write(_head(status, headers) + body)
         await writer.drain()

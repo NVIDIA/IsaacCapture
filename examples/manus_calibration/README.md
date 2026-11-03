@@ -70,7 +70,7 @@ ownership.
 
 The supervisor bounds the answers only the worker can give: startup through the first prompt, the
 acknowledgement of a confirmed step, and the time from the last step to the result. When the worker
-stays silent past a bound the attempt ends with an uncertain outcome, nothing is published, and the
+stays silent past a bound the attempt ends with an uncertain outcome, nothing is saved, and the
 worker is terminated. This contains an unresponsive SDK call; it does not show that a license is
 missing. A silent worker restarts the bound on any event it sends, so these are inactivity bounds, not
 absolute limits. The time the operator takes to confirm a step is never limited. If a worker cannot be
@@ -87,12 +87,12 @@ exported file, its calibration quality, and loading it through the tracking plug
 
 ## Saved files
 
-A set is published only after every requested glove exported a non-empty file, the worker reported
-success and exited cleanly, and each file matched the size and SHA-256 the worker reported. Files
-land in `--out-dir` as `<set id>_<side>.mcal`, and an atomically written manifest under
-`--out-dir/manifests/` makes the set visible. A cancelled, failed, or uncertain attempt publishes
-nothing, and an existing calibration is never overwritten. Selecting a saved file for tracking is
-done with `manus_hand_plugin --left-calibration=FILE --right-calibration=FILE`.
+`--out-dir` is a plain folder. The worker writes each file straight into it as `<attempt>_<side>.mcal`
+(a half-written file carries a `.part` suffix and is never left behind), and a name that exists is never
+overwritten. A cancelled, failed, or uncertain attempt removes whatever it wrote, so only a completed
+calibration leaves files. When a calibration completes the page lists the files with a download link each,
+so the operator can save them to the machine the browser runs on. Loading a file for tracking is done with
+`manus_hand_plugin --left-calibration=FILE --right-calibration=FILE`.
 
 ## Tests
 
