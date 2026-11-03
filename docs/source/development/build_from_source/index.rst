@@ -332,6 +332,8 @@ When ``BUILD_TESTING`` is ``ON``, CTest is enabled at the top level. Run all tes
 
 The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build-ubuntu.yml>`).
 
+.. _build-from-source-install-package:
+
 4. Install the ``isaaccapture`` pip package
 -------------------------------------------
 
@@ -347,6 +349,9 @@ From the repository root:
    # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
    uv venv --python 3.11 --seed .venv
    source .venv/bin/activate
+
+If ``.venv`` already exists on the build's Python, activate it and skip ``uv venv``. To switch it
+to another Python, rerun ``uv venv`` with ``--clear``, which deletes everything installed in it.
 
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
@@ -364,6 +369,13 @@ differently:
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
+
+.. _build-from-source-editable-examples:
+
+An example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout replaces this
+wheel with an editable build of the checkout when you install it. Its first install compiles the
+extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
+``uv pip install -e ./examples/<name> --reinstall-package isaaccapture``.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so

@@ -142,12 +142,17 @@ says so once.
 
 ## Recording a body pose
 
-Install the example once, then start the runtime in its own terminal and leave it running:
+Set up a venv as in [Running an example](../README.md#running-an-example) and activate it in each
+terminal below. Install the example once, then start the runtime in its own terminal and leave it
+running:
 
 ```bash
 uv pip install -e ./examples/jmex
 python -m isaaccapture.cloudxr.service run
 ```
+
+The install replaces the venv's `isaaccapture` with an editable build of this checkout. After a C++
+change to `isaaccapture`, rerun it with `--reinstall-package isaaccapture`.
 
 Then, in the terminal you record from, load the environment it wrote and let the script attach to
 what is already up:
@@ -182,7 +187,8 @@ Each progress line reports how many of the 24 slots the frame carried:
 ## Replaying
 
 There is no j-mex replay script. The recording uses the standard `core.FullBodyPoseRecord` schema on
-the standard `full_body` channel, so the shared script plays it back:
+the standard `full_body` channel, so the shared script plays it back. In a venv set up as in
+[Running an example](../README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/mcap_record_replay

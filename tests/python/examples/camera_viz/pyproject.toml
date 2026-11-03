@@ -18,7 +18,7 @@ dev = [
     "numpy",
     "pyyaml>=6.0",
     # Encodes + decodes the synthetic clips in test_video_file_source.py.
-    "opencv-python>=4.5",
+    "opencv-python>=4.5,<5",
     # placements/_math.py (pulled in by test_controls.py) uses Rotation.
     "scipy>=1.15",
     # hud.py draws the controls panel with PIL.

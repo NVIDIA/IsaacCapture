@@ -38,6 +38,17 @@ This will:
 4. Accept the self-signed certificate and click CONNECT automatically
    via Chrome DevTools Protocol (CDP)
 
+When the OpenXR application starts after the service, add
+``--defer-oob-connect``: steps 2-4 wait for ``GET /api/oob/v1/connect``, so
+the headset connects once there is a stream instead of retrying until one
+appears.
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service run --accept-eula --setup-oob --defer-oob-connect
+   # once the application has its OpenXR session:
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/connect
+
 Ordinary headset absence, an ``offline`` or ``unauthorized`` transport, and
 browser recovery failures leave the host running with a degraded OOB status.
 The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
@@ -498,6 +509,14 @@ Supported query keys: ``serverIP``, ``port``, ``panelHiddenAtStart``, ``codec``.
 Optional ``targetClientId`` restricts the push to a single headset (returns 404
 if not connected).
 
+``GET /api/oob/v1/connect``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Releases headset setup on a service started with ``--defer-oob-connect``.
+Returns ``{"connectRequested": true, "alreadyRequested": false}``; repeating
+it is harmless (``"alreadyRequested": true``). A service that was not started
+deferred answers 409.
+
 Authentication
 --------------
 
@@ -574,6 +593,16 @@ Environment variables
      - Default video codec for headset bookmarks
    * - ``TELEOP_CLIENT_PANEL_HIDDEN_AT_START``
      - Hide control panel on load (``true`` / ``false``)
+   * - ``TELEOP_CLIENT_IMMERSIVE_MODE``
+     - WebXR session mode: ``vr`` or ``ar``. PICO 4 Ultra needs ``vr``.
+   * - ``TELEOP_CLIENT_REFERENCE_SPACE``
+     - XR reference space: ``auto``, ``local-floor``, ``local``, ``viewer`` or
+       ``unbounded``. Pin it to compare replays across runs.
+   * - ``TELEOP_CLIENT_REPLAY_PACING``
+     - Replay pacing: ``frame`` (one recorded frame per XR frame, independent
+       of server speed) or ``time``.
+   * - ``TELEOP_CLIENT_SHOW_RECORDING_CONTROLS``
+     - Enable the recording and replay controls (``true`` / ``false``).
    * - ``TELEOP_CLIENT_ROUTE``
      - HashRouter fragment appended to the bookmark URL. Default empty
        (no fragment — the web client picks its own landing route). Set
@@ -608,6 +637,16 @@ Environment variables
        Before each new browser launch, ADB must confirm
        ``mWakefulness=Awake``; wear or unlock the headset (or cover its
        proximity sensor) when the service reports that it is asleep.
+   * - ``TELEOP_OOB_RECORDING``
+     - Recording to select in the client before CONNECT: a host path, pushed to
+       the headset, or ``latest``, the newest
+       ``isaacteleop-input-recording*.json`` (the client's Save name) in its
+       Download folder.
+       Starting the replay is left to the operator. Unset by default.
+   * - ``TELEOP_HEADSET_BROWSER_PACKAGE``
+     - Headset browser package. Unset, the vendor's browser is used. On PICO,
+       set ``com.pico.browser``: in hand-tracking mode the OS holds VR from
+       non-system browsers behind a "requires controllers" dialog.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host. If this is

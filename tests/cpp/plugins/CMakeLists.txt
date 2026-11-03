@@ -3,13 +3,20 @@
 
 add_subdirectory(plugin_utils)
 
-# The SpaceMouse, gamepad and jmex plugins (and their core libraries) are Linux only.
+if(TARGET avatar_plugin_core)
+    add_subdirectory(sharpa_avatar)
+endif()
+
+# The SpaceMouse and gamepad plugins (and their core libraries) are Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(spacemouse)
     add_subdirectory(gamepad)
-    add_subdirectory(jmex)
 endif()
 
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
+endif()
+
+if(TARGET jmex_plugin_core)
+    add_subdirectory(jmex)
 endif()

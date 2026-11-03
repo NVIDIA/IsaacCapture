@@ -53,11 +53,12 @@ builds. The project's own build prerequisites still apply; see
 
 ## Running
 
-1. **Start the CloudXR runtime** in a terminal of its own and leave it running. Start it from a
-   Python that has this repository's `isaaccapture` — `uv pip install -e ./examples/jmex` puts it
-   there:
+1. **Start the CloudXR runtime** in a terminal of its own and leave it running. In a venv set up as
+   in [Running an example](../../../examples/README.md#running-an-example), install the example
+   once, then start the runtime:
 
    ```bash
+   uv pip install -e ./examples/jmex
    python -m isaaccapture.cloudxr.service run
    ```
 
