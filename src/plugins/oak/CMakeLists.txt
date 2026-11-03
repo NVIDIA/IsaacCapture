@@ -183,11 +183,45 @@ if(NOT depthai_POPULATED)
     function(export)
     endfunction()
 
+    # DepthAI writes string(TIMESTAMP) into build/version.hpp, which many of its sources
+    # include. Pin that clock to DepthAI's own commit so the header is identical from
+    # one configure to the next; otherwise those sources recompile and miss ccache.
+    find_package(Git QUIET)
+    set(_depthai_commit_epoch "")
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${depthai_SOURCE_DIR}" log -1 --format=%ct
+            OUTPUT_VARIABLE _depthai_commit_epoch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+    set(_depthai_had_source_date_epoch FALSE)
+    if(DEFINED ENV{SOURCE_DATE_EPOCH})
+        set(_depthai_had_source_date_epoch TRUE)
+        set(_depthai_saved_source_date_epoch "$ENV{SOURCE_DATE_EPOCH}")
+    endif()
+    if(_depthai_commit_epoch MATCHES "^[0-9]+$")
+        set(ENV{SOURCE_DATE_EPOCH} "${_depthai_commit_epoch}")
+    endif()
+
     # DepthAI and its own FetchContent'd deps (XLink, ...) are third-party: keep the
     # project warning set out of them, or -Werror builds fail in code we do not own.
     isaac_teleop_third_party_scope_begin()
     add_subdirectory(${depthai_SOURCE_DIR} ${depthai_BINARY_DIR} EXCLUDE_FROM_ALL)
     isaac_teleop_third_party_scope_end()
+
+    if(_depthai_had_source_date_epoch)
+        set(ENV{SOURCE_DATE_EPOCH} "${_depthai_saved_source_date_epoch}")
+    else()
+        unset(ENV{SOURCE_DATE_EPOCH})
+    endif()
+
+    # DepthAI sets the GLOBAL RULE_LAUNCH_COMPILE/RULE_LAUNCH_LINK to any ccache on
+    # PATH, which wraps every compile, link and archive step in the whole build. A
+    # compiler launcher is the caller's choice, via CMAKE_<LANG>_COMPILER_LAUNCHER.
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK)
 
     # ...and our own sources include DepthAI's headers, so those need -isystem too.
     isaac_teleop_mark_include_dirs_system(depthai::core)
