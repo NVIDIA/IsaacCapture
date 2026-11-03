@@ -25,7 +25,7 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
         # These LFS SVGs are assets; rewriting their final byte creates new LFS objects.
-        exclude: ^(docs/source/_static/camera-viz-controls|examples/vehicle_teleop/assets/vehicle_teleop_flow)\.svg$
+        exclude: ^(docs/source/_static/camera-viz-controls|integrations/vehicle_teleop/assets/vehicle_teleop_flow)\.svg$
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
       - id: debug-statements

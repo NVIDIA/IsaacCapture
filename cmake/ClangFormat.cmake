@@ -23,6 +23,7 @@ find_program(CLANG_FORMAT_EXE NAMES clang-format-14)
 set(_cf_glob_dirs
   ${CMAKE_SOURCE_DIR}/src
   ${CMAKE_SOURCE_DIR}/examples
+  ${CMAKE_SOURCE_DIR}/integrations
 )
 set(_cf_patterns
   *.h

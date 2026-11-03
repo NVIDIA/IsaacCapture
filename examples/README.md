@@ -8,6 +8,11 @@ SPDX-License-Identifier: Apache-2.0
 Each subdirectory is a self-contained example. Read one, run it, or copy it into
 your own project — the last of those is the reason for the layout below.
 
+Code that wires Isaac Capture to a specific third-party device, robot or
+framework (ROS 2, a vendor glove or suit, a vehicle, an arm) is an integration,
+not an example, and lives in [`../integrations/`](../integrations/README.md).
+Integrations follow the same layout and packaging rules as this directory.
+
 ## Running an example
 
 Build Isaac Capture from source, then set up a venv from the repository root
@@ -23,9 +28,8 @@ uv pip install -e ./examples/<name>
 python -m isaaccapture_examples.<name>
 ```
 
-Every example runs this way except camera_viz and vehicle_teleop, whose
-wrapper scripts call `.venv/bin/python` inside the example directory; their
-READMEs set up that venv. An example whose `pyproject.toml` points
+Every example runs this way except camera_viz, whose wrapper scripts call
+`.venv/bin/python` inside the example directory; its README sets up that venv. An example whose `pyproject.toml` points
 `[tool.uv.sources]` at this checkout installs an editable build instead of the
 wheel; [step 4][editable-examples] says how to rebuild it.
 
@@ -81,11 +85,11 @@ should simply not be used.
 
 ## What this does not cover
 
-An example with no importable Python is left alone. `rebot` is the case: its
-only `.py` is a root-run `/dev/mem` helper that a systemd unit installs to
-`/opt/` and executes with the system interpreter, and its `pyproject.toml`
-exists to resolve a CLI dependency. Packaging that would break the thing that
-runs it. The rule below is about examples you `import`.
+An example with no importable Python is left alone. The `rebot` integration is
+the case: its only `.py` is a root-run `/dev/mem` helper that a systemd unit
+installs to `/opt/` and executes with the system interpreter, and its
+`pyproject.toml` exists to resolve a CLI dependency. Packaging that would break
+the thing that runs it. The rule below is about examples you `import`.
 
 ## Adding an example
 

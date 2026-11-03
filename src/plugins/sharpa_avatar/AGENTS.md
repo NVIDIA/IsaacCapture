@@ -81,7 +81,7 @@ SPDX-License-Identifier: Apache-2.0
 - When reconciling the maintained feature branch, use it as the baseline and
   retain local divergence only for an explicit API or correctness requirement.
 - Keep this plugin tree C++-only (`core/` + `app/`). The TeleopSession sample
-  lives at `examples/sharpa_avatar/` (`live_view.py`) and runs as
+  lives at `integrations/sharpa_avatar/` (`live_view.py`) and runs as
   `python -m isaaccapture_examples.sharpa_avatar`. Do not put Python samples
   under `src/plugins/sharpa_avatar/`, and do not add SDK-only diagnostic
   printers that bypass Isaac Capture.

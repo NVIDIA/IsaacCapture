@@ -18,7 +18,7 @@ interfaces. The plugin talks to the gloves directly, so do not run
 
 Plugin sources and the operator README live under
 :code-dir:`src/plugins/sharpa_avatar`. A TeleopSession visualization example
-is :code-dir:`examples/sharpa_avatar`.
+is :code-dir:`integrations/sharpa_avatar`.
 
 .. contents:: On this page
    :local:
@@ -121,7 +121,7 @@ you opt out). Run it from the repository root, in a venv set up as in
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/sharpa_avatar
+   uv pip install -e ./integrations/sharpa_avatar
    python -m isaaccapture_examples.sharpa_avatar
 
 Gloves reconnect from ``update()`` if they drop offline. Only one process

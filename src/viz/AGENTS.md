@@ -97,7 +97,7 @@ configures. Override with `-DBUILD_VIZ=ON/OFF`. Note this is *not* the
 `BUILD_PLUGIN_OAK_CAMERA` convention, which is a hard `OFF`.
 Build paths that ship viz (the wheel CI on Linux + Windows) pass
 `-DBUILD_VIZ=ON` explicitly. Lean Dockerfiles
-(`examples/teleop_ros2/Dockerfile`) get viz-free builds for free.
+(`integrations/teleop_ros2/Dockerfile`) get viz-free builds for free.
 
 When `BUILD_VIZ=ON` the build machine must have:
 - **Vulkan headers + loader**: `libvulkan-dev` on Linux, LunarG SDK on

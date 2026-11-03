@@ -61,7 +61,7 @@ Record through the Noitom example wrapper and replay with the shared MCAP
 script, in a venv set up as in [Running an example](../../../examples/README.md#running-an-example):
 
 ```bash
-uv pip install -e ./examples/noitom
+uv pip install -e ./integrations/noitom
 python -m isaaccapture_examples.noitom.record_noitom_full_body \
   10 recordings/noitom_full_body.mcap
 

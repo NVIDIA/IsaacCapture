@@ -70,7 +70,7 @@ and the `.inc` fragments.
 - **One-line aggregators** (includes, dispatch rows, factory decls, cmake source lists, Python
   `__all__`) remain `yield` loops in `generate_trackers.py` joined with `"\n"`.
 - Generated C++ is **not** covered by the format gate (`cmake/ClangFormat.cmake` globs only
-  `src/` and `examples/` and excludes `build/`), so it does not need to be clang-format clean — but
+  `src/`, `examples/` and `integrations/` and excludes `build/`), so it does not need to be clang-format clean — but
   it must compile. Read the emitted file under `${CMAKE_BINARY_DIR}/generated/trackers/` when a
   template change fails to build; the compiler error points at generated text, not at the f-string.
 - Generated `#include`s must be written as the **consumer** sees them (`<deviceio_base/...>`,

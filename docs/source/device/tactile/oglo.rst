@@ -117,7 +117,7 @@ recording shows ``oglo_left/oglo`` (+ ``_tracked``) and ``oglo_right/oglo``
 
 A complete data-collection demo (MetaQuest hand/head + both gloves + a live
 in-headset tactile heatmap) lives at
-:code-dir:`examples/oglo_tactile`; see its ``README.md``.
+:code-dir:`integrations/oglo_tactile`; see its ``README.md``.
 
 IMU frame
 ---------

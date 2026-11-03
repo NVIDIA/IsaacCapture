@@ -6,8 +6,8 @@
 # ==============================================================================
 # isaac_teleop_enable_compiler_warnings() applies the project's warning set to the
 # CALLING directory scope, which CMake then inherits into every subdirectory added
-# after the call. It is called at the top of src/CMakeLists.txt and
-# examples/CMakeLists.txt -- the roots of the two first-party trees -- so the flags
+# after the call. It is called at the top of src/, examples/ and integrations/
+# CMakeLists.txt -- the roots of the first-party trees -- so the flags
 # follow the directory layout. Third-party trees (OpenXR SDK, yaml-cpp, pybind11,
 # mcap, flatbuffers, Catch2, ...) live under deps/, which never calls this, and so
 # keep building with their own flags whatever order the root adds things in.

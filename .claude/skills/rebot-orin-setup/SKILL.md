@@ -17,6 +17,6 @@ SPDX-License-Identifier: Apache-2.0
 # reBot B601-RS on Jetson AGX Orin
 
 The procedure, assets, and troubleshooting tree live with the example:
-**[`examples/rebot/SKILL.md`](../../../examples/rebot/SKILL.md)**.
+**[`integrations/rebot/SKILL.md`](../../../integrations/rebot/SKILL.md)**.
 
-Read that file and work from `examples/rebot/`.
+Read that file and work from `integrations/rebot/`.

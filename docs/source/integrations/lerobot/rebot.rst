@@ -27,7 +27,7 @@ existence.
    rather than SocketCAN. For that model, start from the
    `B601-DM quick start <https://wiki.seeedstudio.com/rebot_b601_dm_getting_started>`_.
 
-The working example, including the assets referenced below, lives in :code-dir:`examples/rebot`:
+The working example, including the assets referenced below, lives in :code-dir:`integrations/rebot`:
 
 .. list-table::
    :header-rows: 1
@@ -35,14 +35,14 @@ The working example, including the assets referenced below, lives in :code-dir:`
 
    * - Path
      - What it is
-   * - :code-file:`SKILL.md <examples/rebot/SKILL.md>`
+   * - :code-file:`SKILL.md <integrations/rebot/SKILL.md>`
      - The full procedure and troubleshooting tree, written as an agent skill.
-   * - :code-file:`start-gateway.sh <examples/rebot/start-gateway.sh>`
+   * - :code-file:`start-gateway.sh <integrations/rebot/start-gateway.sh>`
      - Launches the motorbridge WebSocket gateway for Studio.
-   * - :code-file:`assets/set_can_pinmux.py <examples/rebot/assets/set_can_pinmux.py>`
+   * - :code-file:`assets/set_can_pinmux.py <integrations/rebot/assets/set_can_pinmux.py>`
      - Routes the header pins to the CAN controller, via ``/dev/mem``. Required on every boot;
        idempotent; needs sudo.
-   * - :code-file:`assets/can0-rebot.service <examples/rebot/assets/can0-rebot.service>`
+   * - :code-file:`assets/can0-rebot.service <integrations/rebot/assets/can0-rebot.service>`
      - systemd oneshot that redoes the pinmux and brings ``can0`` up at 1 Mbit on boot.
 
 What you need
@@ -167,7 +167,7 @@ Install the example's dependencies and check the CLI is reachable:
 
 .. code-block:: bash
 
-   cd examples/rebot
+   cd integrations/rebot
    uv sync
    uv run motorbridge-cli --help
 
@@ -266,7 +266,7 @@ for all seven joints.
 Let an agent do it
 ------------------
 
-:code-file:`examples/rebot/SKILL.md` is written as an agent skill: it carries the full procedure
+:code-file:`integrations/rebot/SKILL.md` is written as an agent skill: it carries the full procedure
 plus a troubleshooting tree covering the failure modes that actually bite (loopback passes but no
 motors answer, ``MUX UNCLAIMED`` pinmux red herrings, wedged TX FIFOs). Paste this into Claude Code,
 or any agent that can fetch a URL, from the Orin itself — the prompt is self-contained, so the agent
@@ -278,7 +278,7 @@ does not need a checkout of this repository to start:
    CAN (mttcan) and an SN65HVD230 transceiver — no USB-CAN adapter.
 
    Follow the procedure at
-   https://github.com/NVIDIA/IsaacCapture/blob/main/examples/rebot/SKILL.md
+   https://github.com/NVIDIA/IsaacCapture/blob/main/integrations/rebot/SKILL.md
    Read it first, then work through it in order: environment, CAN0 pinmux, can0
    bring-up at 1 Mbit, bus verification, reboot persistence, motor IDs 1-7, and
    zero calibration.
@@ -291,7 +291,7 @@ does not need a checkout of this repository to start:
 Troubleshooting
 ---------------
 
-The full tree is in :code-file:`examples/rebot/SKILL.md`. The rule that resolves most cases:
+The full tree is in :code-file:`integrations/rebot/SKILL.md`. The rule that resolves most cases:
 
 .. important::
 
@@ -338,11 +338,11 @@ routed.
 Three things to sort out, in order:
 
 #. **Pinmux.** Find the CAN1 register offsets and add them to ``REGS`` in
-   :code-file:`assets/set_can_pinmux.py <examples/rebot/assets/set_can_pinmux.py>`. Without this
+   :code-file:`assets/set_can_pinmux.py <integrations/rebot/assets/set_can_pinmux.py>`. Without this
    nothing below matters.
 #. **Bring-up and persistence.** ``ip link`` takes ``can1`` exactly as it takes ``can0``. For
    reboot persistence, derive a second unit from
-   :code-file:`assets/can0-rebot.service <examples/rebot/assets/can0-rebot.service>` with the
+   :code-file:`assets/can0-rebot.service <integrations/rebot/assets/can0-rebot.service>` with the
    interface name replaced and its ``ExecStartPre`` pointing at a CAN1-capable pinmux step. If you
    run both routinely, a systemd template unit (``can-rebot@.service``, enabled as
    ``can-rebot@can0`` and ``can-rebot@can1``) collapses the two files back into one.

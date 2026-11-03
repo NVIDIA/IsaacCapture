@@ -16,7 +16,7 @@ gloves -> avatar_hand_plugin -> OpenXR / DeviceIO
 ```
 
 The visualization example is separate:
-[`examples/sharpa_avatar`](../../../examples/sharpa_avatar/README.md).
+[`integrations/sharpa_avatar`](../../../integrations/sharpa_avatar/README.md).
 
 ## Prerequisites
 

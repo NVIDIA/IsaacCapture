@@ -145,8 +145,8 @@ endif()
 include(cmake/CheckBuildDeps.cmake)
 isaac_teleop_check_build_deps()
 
-# Project warning set. This only defines the helpers -- src/CMakeLists.txt and
-# examples/CMakeLists.txt each enable the set for their own tree, so the flags are
+# Project warning set. This only defines the helpers -- src/, examples/ and
+# integrations/ CMakeLists.txt each enable the set for their own tree, so the flags are
 # scoped by directory rather than by where this include sits. Nothing here applies
 # compile options, and deps/ below is unaffected.
 include(cmake/CompilerWarnings.cmake)
@@ -166,9 +166,13 @@ add_subdirectory(deps/cloudxr/openxr_extensions)
 # Build the first-party tree: core modules, the Python package, Televiz, plugins.
 add_subdirectory(src)
 
-# Build examples if requested (examples/CMakeLists.txt honours both options).
-if(BUILD_EXAMPLES OR BUILD_EXAMPLE_TELEOP_ROS2)
+if(BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+# integrations/CMakeLists.txt honours both options.
+if(BUILD_EXAMPLES OR BUILD_EXAMPLE_TELEOP_ROS2)
+    add_subdirectory(integrations)
 endif()
 
 # Tests (pytest + Catch2/CTest). After production libs so link targets exist.
@@ -218,6 +222,6 @@ if(SKBUILD)
     endfunction()
 
     # Walk from the project root (deps/ skipped) so every executable built from
-    # this repo -- across src/ and examples/ -- is installed.
+    # this repo -- across src/, examples/ and integrations/ -- is installed.
     isaac_teleop_install_executables("${CMAKE_SOURCE_DIR}")
 endif()

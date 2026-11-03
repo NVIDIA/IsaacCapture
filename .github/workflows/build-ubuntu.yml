@@ -981,7 +981,7 @@ jobs:
 
     - name: Build teleop_ros2 image
       run: |
-        docker build -f examples/teleop_ros2/Dockerfile \
+        docker build -f integrations/teleop_ros2/Dockerfile \
           --build-arg ROS_DISTRO=${{ env.ROS_DISTRO }} \
           --build-arg PYTHON_VERSION=${{ matrix.python_version }} \
           -t teleop_ros2_ref:${{ env.ROS_DISTRO }} .
@@ -992,7 +992,7 @@ jobs:
         TEST_IMAGE="teleop_ros2_ref-tests:${{ env.ROS_DISTRO }}"
         trap 'docker image rm -f "$TEST_IMAGE" >/dev/null 2>&1 || true' EXIT
 
-        docker build -f examples/teleop_ros2/Dockerfile \
+        docker build -f integrations/teleop_ros2/Dockerfile \
           --target test \
           --build-arg ROS_DISTRO=${{ env.ROS_DISTRO }} \
           --build-arg PYTHON_VERSION=${{ matrix.python_version }} \
@@ -1024,7 +1024,7 @@ jobs:
           --user "$(id -u):$(id -g)" \
           -v /tmp:/tmp \
           --entrypoint bash teleop_ros2_ref:${{ env.ROS_DISTRO }} -c \
-          "source /usr/local/bin/teleop-env-setup && exec /opt/isaaccapture/install/examples/teleop_ros2/cpp/integration_tests/teleop_ros2_mcap_generator '$REPLAY_MCAP'"
+          "source /usr/local/bin/teleop-env-setup && exec /opt/isaaccapture/install/integrations/teleop_ros2/cpp/integration_tests/teleop_ros2_mcap_generator '$REPLAY_MCAP'"
 
         scenarios=(
           "controller_teleop mode_default native"

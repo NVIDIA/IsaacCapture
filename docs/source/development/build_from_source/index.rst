@@ -257,9 +257,9 @@ The CMake options (defined in root :code-file:`CMakeLists.txt` and :code-file:`c
      - ``OFF``; when ``ON``, builds DepthAI v3.x and pulls its dependencies through
        vcpkg, so it also needs ``CMAKE_TOOLCHAIN_FILE`` on a fresh build directory.
        See :doc:`/device/cameras/oak`.
-   * - **Teleop ROS2 example only**
+   * - **Teleop ROS2 integration only**
      - ``BUILD_EXAMPLE_TELEOP_ROS2``
-     - ``OFF``; when ``ON``, only ``examples/teleop_ros2`` (e.g. Docker)
+     - ``OFF``; when ``ON``, only ``integrations/teleop_ros2`` (e.g. Docker)
 
 Examples
 ~~~~~~~~
@@ -416,8 +416,8 @@ What this path does and how it differs from the classic flow:
 - **clang-format is enforced.** Because the gate is left on, the build **fails** if
   ``clang-format-14`` is not installed or any C++ file is unformatted — a
   ``pip install`` therefore requires ``clang-format-14`` on Linux.
-- **All executables on PATH.** Every executable built from ``src/`` and
-  ``examples/`` — example programs, C++ test binaries, plugin tools
+- **All executables on PATH.** Every executable built from ``src/``,
+  ``examples/`` and ``integrations/`` — example programs, C++ test binaries, plugin tools
   (``oxr_simple_api_demo``, ``se3_printer``, ``schema_tests``, …) — is installed
   into the venv's ``bin/`` (the wheel's scripts scheme; see the executable-install
   loop in the root ``CMakeLists.txt``), so they are on ``PATH`` once the venv is

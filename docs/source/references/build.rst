@@ -135,11 +135,13 @@ After a successful build and install, relative to your build directory:
 
 - **C++ libraries:** ``src/core/`` (and under each module)
 - **Examples (binaries):** under ``examples/`` (e.g. ``examples/oxr/cpp/``)
+- **Integrations (binaries):** under ``integrations/`` (e.g. ``integrations/teleop_ros2/cpp/``)
 - **Installed files:** ``install/`` (or your ``CMAKE_INSTALL_PREFIX``)
   - Libraries: ``install/lib/``
   - Headers: ``install/include/``
   - Wheels: ``install/wheels/``
   - Examples: ``install/examples/``
+  - Integrations: ``install/integrations/``
 
 Troubleshooting
 ---------------

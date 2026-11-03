@@ -19,7 +19,7 @@
 # Usage:
 #   install_python_example(DESTINATION examples/<name>)          # converted
 #   install_python_example(DESTINATION examples/<name>/python)   # legacy
-#   install_python_example(DESTINATION examples/teleop_ros2/python
+#   install_python_example(DESTINATION integrations/teleop_ros2/python
 #       EXTRA_UV_EXTRA_BUILD_DEPS "nlopt = [\"numpy\"]")
 # ==============================================================================
 
@@ -39,8 +39,9 @@ macro(install_python_example)
 
     # Read the bare pyproject.toml and append uv configuration for the
     # installed environment. `find-links` is relative to the installed
-    # pyproject, so its depth follows the layout: <prefix>/examples/<name>/ for
-    # a converted example, one level deeper for a legacy one.
+    # pyproject, so its depth follows the layout: <prefix>/examples/<name>/ (or
+    # <prefix>/integrations/<name>/) for a converted example, one level deeper
+    # for a legacy one.
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml")
         set(_IPE_PYPROJECT "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml")
         set(_IPE_FIND_LINKS "../../wheels")

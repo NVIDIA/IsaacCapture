@@ -19,7 +19,7 @@ if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
 endif()
 
 if(BUILD_EXAMPLE_TELEOP_ROS2)
-    add_subdirectory(examples/teleop_ros2)
+    add_subdirectory(integrations/teleop_ros2)
 endif()
 
 if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)

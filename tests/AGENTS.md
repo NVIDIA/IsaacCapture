@@ -18,7 +18,7 @@ tests/
   python/    ← pytest suites (one pyproject.toml per leaf)
 ```
 
-Organize by **product area**, mirroring `src/` and `examples/`:
+Organize by **product area**, mirroring `src/`, `examples/` and `integrations/`:
 
 | Area | C++ path | Python path |
 |------|----------|-------------|
@@ -26,6 +26,7 @@ Organize by **product area**, mirroring `src/` and `examples/`:
 | viz | `tests/cpp/viz/<module>/` | `tests/python/viz/` |
 | plugins | `tests/cpp/plugins/<plugin>/` | — |
 | examples | — | `tests/python/examples/<example>/` |
+| integrations | — | `tests/python/integrations/<integration>/` |
 
 Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 (`viz::test_support`, `viz::layers_testing`).
@@ -52,9 +53,9 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   ordinary strings.
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
-- Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or
-  `examples/` from `conftest.py` — do not hard-code `parents[N]` against repo depth.
-- If CMake under `examples/` reads a file under `tests/`, guard it on the
+- Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/`,
+  `examples/` or `integrations/` from `conftest.py` — do not hard-code `parents[N]` against repo depth.
+- If CMake under `examples/` or `integrations/` reads a file under `tests/`, guard it on the
   in-tree configure: standalone wheel builds use the example as `CMAKE_SOURCE_DIR`,
   not the repo root.
 - A stand-in child process must stay alive on its own (`python -m <builtin>`
@@ -70,17 +71,17 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 2. Add sources + leaf `CMakeLists.txt` (copy an existing sibling).
 3. Wire the leaf from the parent `CMakeLists.txt` under the same `BUILD_*` gates
    as before (e.g. viz tests require `BUILD_VIZ`).
-4. Do **not** colocate new pytest/Catch2 trees under `src/` or `examples/`.
+4. Do **not** colocate new pytest/Catch2 trees under `src/`, `examples/` or `integrations/`.
 
 - FlatBuffers generated `VT_*` constants are vtable offsets, not schema field
   IDs. Compare them with `(field_id + 2) * 2`, as the existing schema tests do.
 
 ## Out of scope here
 
-- Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.
+- Vehicle teleop worker tests belong in `integrations/vehicle_teleop/tests/`, alongside the example they exercise.
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
 - `tests/python/xr_runtime/` — standalone scripts for CloudXR GPU CI, not pytest:
   no `pyproject.toml` or CTest wiring. `scripts/run_tests_with_cloudxr.sh` lists
   the ones CI runs.
-- ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.
+- ROS2 Docker integration helpers under `integrations/teleop_ros2/.../integration_tests/`.
 - `scripts/sbom/tests/` — the SBOM collector's tests, run from its own uv project.
