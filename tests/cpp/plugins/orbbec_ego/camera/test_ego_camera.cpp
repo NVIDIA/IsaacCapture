@@ -781,6 +781,16 @@ TEST_CASE("EGO startup waits respond to cancellation without waiting for readine
     CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
 }
 
+TEST_CASE("EGO startup wait reports cancellation even when the streams are ready", "[ego][shutdown]")
+{
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK_THROWS_AS(plugins::ego::wait_capture_ready(
+                        wake, lock, std::chrono::seconds(10), [] { return true; }, [] { return true; }),
+                    plugins::ego::CaptureCancelled);
+}
+
 TEST_CASE("EGO abort after sealing cannot promote a readable partial MCAP", "[ego][mcap][shutdown]")
 {
     const auto path = std::filesystem::temp_directory_path() / "ego_sealed_abort_test.mcap";

@@ -390,10 +390,8 @@ public:
             std::mutex mutex;
             std::condition_variable wake;
             std::vector<bool> seen;
-            std::vector<bool> active_seen;
             std::string error;
             std::atomic<bool> complete{ false };
-            std::atomic<bool> active_complete{ false };
         };
         struct ExpectedFrame
         {
@@ -413,7 +411,6 @@ public:
         }
         auto readiness = std::make_shared<CaptureReadiness>();
         readiness->seen.resize(expected_frames.size());
-        readiness->active_seen.resize(expected_frames.size());
         const auto wait_for_video_readiness = [this, &readiness, &expected_frames]
         {
             std::string readiness_error;
@@ -443,35 +440,6 @@ public:
                                          "] failed readiness: " + readiness_error);
             }
         };
-        const auto wait_for_active_video_readiness = [this, &readiness, &expected_frames]
-        {
-            std::string readiness_error;
-            {
-                std::unique_lock<std::mutex> lock(readiness->mutex);
-                const bool ready = wait_capture_ready(
-                    readiness->wake, lock, std::chrono::seconds(10),
-                    [&readiness]
-                    { return readiness->active_complete.load(std::memory_order_acquire) || !readiness->error.empty(); },
-                    config_.stop_requested);
-                if (!ready)
-                {
-                    readiness_error = "timed out waiting for post-boundary";
-                    for (size_t index = 0; index < expected_frames.size(); ++index)
-                    {
-                        if (!readiness->active_seen[index])
-                            readiness_error += " " + expected_frames[index].name;
-                    }
-                }
-                else
-                    readiness_error = readiness->error;
-            }
-            if (!readiness_error.empty())
-            {
-                throw std::runtime_error("Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
-                                         " active profiles [" + describe_profiles(active_profiles_) +
-                                         "] failed readiness: " + readiness_error);
-            }
-        };
         try
         {
             if (!settings.empty())
@@ -479,6 +447,10 @@ public:
                 try
                 {
                     prepare_controls(settings);
+                }
+                catch (const CaptureCancelled&)
+                {
+                    throw;
                 }
                 catch (const std::exception& error)
                 {
@@ -509,8 +481,7 @@ public:
                         const bool active_capture = capture_active_.load(std::memory_order_acquire);
                         std::vector<bool> observed(expected_frames.size());
                         std::string observation_error;
-                        if (!readiness->complete.load(std::memory_order_acquire) ||
-                            (active_capture && !readiness->active_complete.load(std::memory_order_acquire)))
+                        if (!readiness->complete.load(std::memory_order_acquire))
                         {
                             try
                             {
@@ -558,24 +529,19 @@ public:
                             readiness->wake.notify_one();
                             return;
                         }
-                        const auto report_observed = [&readiness, &observed](bool active)
+                        if (!active_capture)
                         {
-                            auto& complete = active ? readiness->active_complete : readiness->complete;
-                            auto& seen = active ? readiness->active_seen : readiness->seen;
-                            if (complete.load(std::memory_order_relaxed))
+                            if (readiness->complete.load(std::memory_order_relaxed))
                                 return;
                             std::lock_guard<std::mutex> lock(readiness->mutex);
+                            auto& seen = readiness->seen;
                             for (size_t index = 0; index < observed.size(); ++index)
                                 seen[index] = seen[index] || observed[index];
                             if (std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }))
                             {
-                                complete.store(true, std::memory_order_release);
+                                readiness->complete.store(true, std::memory_order_release);
                                 readiness->wake.notify_one();
                             }
-                        };
-                        if (!active_capture)
-                        {
-                            report_observed(false);
                             return;
                         }
                         const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
@@ -586,16 +552,10 @@ public:
                             if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
                             {
                                 ++auxiliary_stats_.dropped_video_frame_sets;
-                                {
-                                    std::lock_guard<std::mutex> readiness_lock(readiness->mutex);
-                                    readiness->error = "video callback queue filled before capture became ready";
-                                }
-                                readiness->wake.notify_one();
                                 return;
                             }
                             video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
                         }
-                        report_observed(true);
                         video_queue_cv_.notify_one();
                     });
                 video_pipeline_started_ = true;
@@ -613,7 +573,6 @@ public:
             capture_active_.store(true, std::memory_order_release);
             capture_epoch_started_ns_ = core::os_monotonic_now_ns();
             publish_periodic_device_state();
-            wait_for_active_video_readiness();
             wait_for_active_auxiliary_readiness();
             device_changed_callback_id_ = context_->registerDeviceChangedCallback(
                 [this](const std::shared_ptr<ob::DeviceList>& removed, const std::shared_ptr<ob::DeviceList>&)
@@ -1240,6 +1199,9 @@ public:
             }
             const auto stop_error = stop_pipeline_noexcept(preflight, preflight_started, "control preflight");
             original_properties_.clear();
+            // Ctrl-C during the preflight wait is a cancellation, not a rejected profile.
+            if (dynamic_cast<const CaptureCancelled*>(&error) != nullptr)
+                throw;
             std::string message = "Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
                                   " control preflight rejected simultaneous profiles [" +
                                   describe_profiles(active_profiles_) + "]: " + error.what();
