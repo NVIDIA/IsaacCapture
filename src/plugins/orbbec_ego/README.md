@@ -230,7 +230,6 @@ the camera. Complete the full build and install the wheel first:
 cmake --build build-orbbec-ego-py3.11 --parallel
 cmake --install build-orbbec-ego-py3.11 --prefix install-orbbec-ego-py3.11
 uv pip install --reinstall install-orbbec-ego-py3.11/wheels/isaaccapture-*.whl
-uv pip install -e ./examples/orbbec_ego
 ```
 
 This extends an existing live `TeleopSessionConfig` named `config`, with its
@@ -241,7 +240,6 @@ added yet. It requests stereo RGB and IMU and preserves existing manual recordin
 from pathlib import Path
 import isaaccapture.deviceio_trackers as dt
 from isaaccapture.deviceio_session import McapRecordingConfig
-from isaaccapture_examples.orbbec_ego import configure_recording
 from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession
 
 run = Path("recordings/teleop_ego").resolve()
@@ -269,7 +267,6 @@ config.plugins.append(PluginConfig(
         "--enable-imu",
     ],
 ))
-config = configure_recording(config)
 with TeleopSession(config) as session:
     try:
         while True:
@@ -327,11 +324,10 @@ EGO has no `--quality` option; bitrate values are SDK property values, not OAK's
 
 To omit stored diagnostic events, use `--record-device-diagnostics=off`.
 Capture checks, recovery, logs, live diagnostics, and Isaac Capture device
-monitoring remain active.
-For TeleopSession, use `config = configure_recording(config,
-record_device_diagnostics=False)`.
-Remove diagnostic trackers from explicit recording lists and automatically
-recorded pipeline/control/sink sources; conflicts fail before capture.
+monitoring remain active. The option applies only to the plugin's local MCAP.
+For TeleopSession, leave `orbbec_ego_device` out of the recording list and
+keep `OrbbecEgoDeviceStateTracker` out of pipeline sources, which the session
+records automatically.
 
 ## Architecture
 

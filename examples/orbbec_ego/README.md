@@ -5,18 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Orbbec EGO
 
-Python helpers for recordings made with the
+Structured replay for recordings made with the
 [Orbbec EGO camera plugin](../../src/plugins/orbbec_ego/README.md). Replay reads
-the structured records back from the MCAP file; the video stays in the
+every structured EGO record back from the MCAP file; the video stays in the
 elementary streams under `raw/`.
 
 ```text
 EGO camera -> orbbec_ego_camera plugin -> metadata.mcap -> replay
 ```
-
-- `recording`: `configure_recording` adds the EGO calibration tracker to a
-  `TeleopSessionConfig`.
-- `replay`: replays every structured EGO tracker from a recording.
 
 ## Prerequisites
 

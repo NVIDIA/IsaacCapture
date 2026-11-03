@@ -123,9 +123,10 @@ All reads return the schema payload directly or ``None`` when unavailable.
 Create one tracker per collection, for example
 ``OrbbecEgoImuTracker("ego/Accel")``. To record a tracker, name it
 ``orbbec_ego_metadata_<stream>`` or ``orbbec_ego_imu_<stream>`` in lowercase, such as
-``orbbec_ego_metadata_colorleft``; the replay example expects these names. See the
-:code-file:`plugin README <src/plugins/orbbec_ego/README.md>` for the full tracker
-configuration example.
+``orbbec_ego_metadata_colorleft``, and name the calibration and device-state trackers
+``orbbec_ego_calibration`` and ``orbbec_ego_device``; the replay example expects these
+names. See the :code-file:`plugin README <src/plugins/orbbec_ego/README.md>` for
+the full tracker configuration example.
 
 Availability and diagnostics
 ----------------------------
@@ -139,11 +140,11 @@ availability, using the root ID configured for the plugin.
 recovery events, and device snapshots for diagnosis.
 
 Diagnostic recording is enabled by default. To omit these events from MCAP,
-pass ``--record-device-diagnostics=off`` to the recording wrapper. For
-``TeleopSession``, pass ``record_device_diagnostics=False`` to
-``isaaccapture_examples.orbbec_ego.configure_recording`` and exclude
-diagnostic trackers from the recording configuration. This option leaves
-availability monitoring, recovery, and logging enabled.
+pass ``--record-device-diagnostics=off`` to the recording wrapper. This option
+leaves availability monitoring, recovery, and logging enabled, and applies only
+to the plugin's local MCAP. For ``TeleopSession``, leave ``orbbec_ego_device``
+out of the recording configuration and keep ``OrbbecEgoDeviceStateTracker``
+out of pipeline sources, which the session records automatically.
 
 Multi-device sessions
 ---------------------
@@ -151,16 +152,16 @@ Multi-device sessions
 Add the EGO trackers to a
 :doc:`TeleopSession <../../teleop/teleop_session>` configuration and its
 ``McapRecordingConfig``, alongside the hand, head, or
-controller trackers. Configure ``orbbec_ego_camera`` through ``PluginConfig`` with
+controller trackers; list ``OrbbecEgoCalibrationTracker`` there so the MCAP
+carries calibration. Configure ``orbbec_ego_camera`` through ``PluginConfig`` with
 ``--collection-prefix=ego``. Its ``plugin.yaml`` gives the plugin 15 seconds to
 close its files when the session stops. Complete the full source build and install its Python wheel
-before using the EGO tracker bindings, then ``uv pip install -e ./examples/orbbec_ego`` for the
-recording helper; the wrapper's ``build`` command builds only the native plugin.
+before using the EGO tracker bindings; the wrapper's ``build`` command builds only
+the native plugin.
 
-Apply ``config = isaaccapture_examples.orbbec_ego.configure_recording(config)`` before opening
-the session to include the calibration tracker. The full configuration and
-clean-stop procedure are documented under "TeleopSession: one MCAP with other
-trackers" in the :code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
+The full configuration and clean-stop procedure are documented under
+"TeleopSession: one MCAP with other trackers" in the
+:code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
 
 The test script :code-file:`tests/python/xr_runtime/test_orbbec_ego_camera.py` runs the
 live flow with ``PluginManager`` and ``DeviceIOSession`` directly and checks that
