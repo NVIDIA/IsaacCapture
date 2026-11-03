@@ -828,6 +828,32 @@ jobs:
         set -euo pipefail
         ctest --test-dir build-san -L unit --output-on-failure
 
+  # Each main push saves ccache under its own commit. Drop the generations it supersedes
+  # so they do not hold the repository's cache quota until LRU eviction reaches them.
+  prune-ccache:
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+    needs: [build-ubuntu, test-viz-sanitizers]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+    steps:
+    - name: Delete superseded ccache entries
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        gh api --paginate "repos/${GH_REPO}/actions/caches?ref=refs/heads/main&key=ccache-&per_page=100" \
+          --jq '.actions_caches[] | [.id, .key, .created_at] | @tsv' > caches.tsv
+        # Group by the key minus its trailing hash and keep each group's newest entry.
+        sort -t $'\t' -k3,3r caches.tsv \
+          | awk -F '\t' '{ p = $2; sub(/-[0-9a-f]+$/, "", p); if (seen[p]++) print $1 "\t" $2 }' \
+          | while IFS=$'\t' read -r id key; do
+              echo "Deleting ${key}"
+              gh api -X DELETE "repos/${GH_REPO}/actions/caches/${id}" > /dev/null
+            done
+
   test-cloudxr:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
     permissions:
