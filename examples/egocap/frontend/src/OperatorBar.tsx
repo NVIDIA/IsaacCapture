@@ -134,7 +134,7 @@ export function OperatorBar({
 }: OperatorBarProps) {
   // Re-render once a second while a take is running so the timer advances; released as soon as it is not.
   const [, tick] = useReducer((n: number) => n + 1, 0);
-  const running = recordingSnapshot?.currentEpisodeElapsedMs != null;
+  const running = live && recordingSnapshot?.currentEpisodeElapsedMs != null;
   useEffect(() => {
     if (!running) return undefined;
     const id = setInterval(tick, 1000);
@@ -142,7 +142,8 @@ export function OperatorBar({
   }, [running]);
 
   const rec = deriveRecIndicator(recordingSnapshot, live, { operatorSet: operatorName !== null, controlTokenSet: hasControlToken }, pendingPhase);
-  const elapsedMs = liveElapsedMs(recordingSnapshot, recordingSnapshotReceivedAtMonotonic);
+  // A retained snapshot cannot vouch that the take is still running, so a stale feed shows no clock.
+  const elapsedMs = live ? liveElapsedMs(recordingSnapshot, recordingSnapshotReceivedAtMonotonic) : null;
   const chips = deriveHealthChips(response, live);
   const problems = chipsNeedingAttention(chips);
   const task = recordingSnapshot?.taskText ?? "";

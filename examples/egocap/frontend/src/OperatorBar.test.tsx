@@ -137,6 +137,16 @@ describe("OperatorBar", () => {
     expect(screen.queryByText("0:42")).toBeNull();
   });
 
+  it("shows no running timer next to NO FEED", () => {
+    bar({
+      live: false,
+      recordingSnapshot: snap({ episodePhase: "RECORDING", currentEpisodeElapsedMs: 42_000 }),
+      recordingSnapshotReceivedAtMonotonic: performance.now(),
+    });
+    expect(screen.getByText("NO FEED")).not.toBeNull();
+    expect(screen.queryByText("0:42")).toBeNull();
+  });
+
   it("summarises the last take, with its issues on hover", () => {
     bar({
       recordingSnapshot: snap({
