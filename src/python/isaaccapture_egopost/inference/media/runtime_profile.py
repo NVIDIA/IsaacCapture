@@ -58,8 +58,8 @@ def validate_args(
     parser: argparse.ArgumentParser, args: argparse.Namespace, profile: RuntimeProfile
 ) -> None:
     if not profile.compilation and args.dino_compile:
-        parser.error(f"--dino_compile is unavailable in the {profile.name} runtime")
+        parser.error("--dino_compile is unsupported")
     if not profile.rendering:
         for option in ("save_images", "save_crop_overlays", "draw_skeleton"):
             if getattr(args, option):
-                parser.error(f"--{option} is unavailable in the {profile.name} runtime")
+                parser.error(f"--{option} is unsupported")
