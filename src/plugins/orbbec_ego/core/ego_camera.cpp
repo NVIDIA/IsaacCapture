@@ -1714,6 +1714,7 @@ public:
         }
     }
 
+    // orbbec_ego.sh verify and test_ego_script.sh parse these lines; change their patterns and fixtures together.
     void print_stats() const
     {
         uint64_t dropped_video_frame_sets = 0;
