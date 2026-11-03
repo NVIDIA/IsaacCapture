@@ -176,7 +176,7 @@ jobs:
         key: ${{ steps.depthai-resources.outputs.cache-primary-key }}
 
     - name: Build
-      run: cmake --build "${BUILD_DIR}" --parallel 4
+      run: cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
     - name: ccache stats
       run: ccache --show-stats
@@ -775,7 +775,7 @@ jobs:
 
     - name: Build viz tests
       run: |
-        cmake --build build-san --parallel 4 \
+        cmake --build build-san --parallel "$(nproc)" \
           --target viz_core_tests viz_layers_tests viz_session_tests
 
     - name: Run viz [unit] tests under sanitizers
