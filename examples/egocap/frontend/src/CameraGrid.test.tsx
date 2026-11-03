@@ -92,4 +92,3 @@ describe("CameraGrid primary camera", () => {
     expect(container.querySelector(".camera-grid-items")?.className).toContain("camera-grid-items--n4");
   });
 });
-

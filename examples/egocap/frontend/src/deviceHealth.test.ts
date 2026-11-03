@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /** The operator health chips: short names, tones, reasons only for problems, and a retained feed never looks healthy. */
 import { describe, expect, it } from "vitest";
 import { DeviceState } from "./captureStatus";

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The side panel's width: its limits, how a requested width is clamped to the window, and remembering the choice in
  * this browser. Pure and independent of React so the rules are testable on their own.

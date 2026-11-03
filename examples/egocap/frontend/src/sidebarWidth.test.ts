@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /** The side panel's width rules: clamped to the window so the cameras keep their room, and remembered safely. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {

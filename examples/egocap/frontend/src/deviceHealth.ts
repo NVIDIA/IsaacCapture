@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Operator-facing health of the tracking devices and cameras: one short chip per device, derived from the capture
  * status only. Shared by the page's status bar and its session details so both agree on what is healthy.
