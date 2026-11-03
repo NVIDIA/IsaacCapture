@@ -1201,7 +1201,11 @@ public:
             original_properties_.clear();
             // Ctrl-C during the preflight wait is a cancellation, not a rejected profile.
             if (dynamic_cast<const CaptureCancelled*>(&error) != nullptr)
+            {
+                if (!stop_error.empty())
+                    detail::log_warning() << stop_error;
                 throw;
+            }
             std::string message = "Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
                                   " control preflight rejected simultaneous profiles [" +
                                   describe_profiles(active_profiles_) + "]: " + error.what();
@@ -1397,7 +1401,7 @@ public:
         };
         finalize("video drain", [this] { drain_video_frames(false); });
         finalize("media sidecar close", [this] { sink_->close_media(); });
-        // Video loss is reported, not fatal; only unfinished or unwritable output leaves the MCAP partial.
+        // Video loss is reported, not fatal.
         for (const auto& [stream, stats] : stats_)
         {
             if (stats.sequence_gaps != 0)

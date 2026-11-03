@@ -614,7 +614,7 @@ check_capture_health_log() {
         warn "Capture log reports video sequence gaps; the recording was kept: $capture_log"
         loss_reported=1
     fi
-    if grep -Eq 'video_frame_sets_dropped=[1-9][0-9]*([[:space:]]|$)' "$capture_log"; then
+    if grep -Eq 'video_frame_sets_dropped=[1-9][0-9]*([^0-9]|$)' "$capture_log"; then
         warn "Capture log reports dropped video frame sets; the recording was kept: $capture_log"
         loss_reported=1
     fi

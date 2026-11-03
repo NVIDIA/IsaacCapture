@@ -275,7 +275,7 @@ printf '\0' > "$VERIFY_RUN/raw/ColorRight.h264"
 printf '%s\n' \
     '  ColorLeft: 1 frames, 1 bytes, 0 sequence gaps' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
-    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
+    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0; capture_epoch=0 reconnect_attempts=0 successful_reconnects=0' \
     > "$VERIFY_RUN/logs/capture.log"
 PATH="$VERIFY_BIN:$PATH" VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" \
     "$SCRIPT" verify "$VERIFY_RUN" >/dev/null 2>&1
@@ -309,7 +309,7 @@ printf '\0' > "$VERIFY_FAIL_RUN/raw/ColorRight.h264"
 printf '%s\n' \
     '  ColorLeft: 1 frames, 1 bytes, 0 sequence gaps' \
     '  ColorRight: 1 frames, 1 bytes, 0 sequence gaps' \
-    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0' \
+    '  IMU: accel=0 gyro=0 samples; queue_peak=0 dropped=0 video_frame_sets_dropped=0; capture_epoch=0 reconnect_attempts=0 successful_reconnects=0' \
     > "$VERIFY_FAIL_RUN/logs/capture.log"
 expect_failure env PATH="$VERIFY_FAIL_BIN:$PATH" \
     "$SCRIPT" verify "$VERIFY_FAIL_RUN"
@@ -601,7 +601,7 @@ EOF
     printf '%s\n' \
         '  ColorLeft: 31 frames, 1 bytes, 0 sequence gaps' \
         '  ColorRight: 31 frames, 1 bytes, 0 sequence gaps' \
-        '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=0' \
+        '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=0; capture_epoch=0 reconnect_attempts=0 successful_reconnects=0' \
         > "$run_dir/logs/capture.log"
 }
 
@@ -638,7 +638,7 @@ make_aux_verify_run "$GAP_RUN" video_gap
 printf '%s\n' \
     '  ColorLeft: 28 frames, 1 bytes, 3 sequence gaps' \
     '  ColorRight: 28 frames, 1 bytes, 3 sequence gaps' \
-    '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=2' \
+    '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=2; capture_epoch=0 reconnect_attempts=0 successful_reconnects=0' \
     > "$GAP_RUN/logs/capture.log"
 AUX_DECODED_FRAMES=28 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$GAP_RUN" --expect-imu >/dev/null 2>&1
@@ -646,6 +646,16 @@ grep -F 'raw_device_fps=30.000' "$GAP_RUN/verification_report.txt" >/dev/null
 grep -F '3 frames missing across 1 sequence gaps' "$GAP_RUN/verification_report.txt" >/dev/null
 grep -F 'video sequence gaps; the recording was kept' "$GAP_RUN/verification_report.txt" >/dev/null
 grep -F 'dropped video frame sets; the recording was kept' "$GAP_RUN/verification_report.txt" >/dev/null
+DROP_ONLY_RUN="$TMPDIR_TEST/video_drop_only"
+make_aux_verify_run "$DROP_ONLY_RUN" valid
+sed -i 's/video_frame_sets_dropped=0;/video_frame_sets_dropped=5;/' "$DROP_ONLY_RUN/logs/capture.log"
+PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$DROP_ONLY_RUN" --expect-imu >/dev/null 2>&1
+grep -F 'dropped video frame sets; the recording was kept' "$DROP_ONLY_RUN/verification_report.txt" >/dev/null
+if grep -Fq 'queue-drop counters: OK' "$DROP_ONLY_RUN/verification_report.txt"; then
+    echo "dropped video frame sets were reported as OK" >&2
+    exit 1
+fi
 METADATA_LOSS_RUN="$TMPDIR_TEST/metadata_loss"
 make_aux_verify_run "$METADATA_LOSS_RUN" valid
 sed -i 's/ dropped=0 / dropped=1 /' "$METADATA_LOSS_RUN/logs/capture.log"
