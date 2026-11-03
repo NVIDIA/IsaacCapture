@@ -114,18 +114,25 @@ jobs:
         fi
         echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
 
-    - name: Cache ccache
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    # Only pushes to main save ccache; PRs and release branches restore main's latest
+    # and leave the repository's cache quota to it. Keyed per commit so main's cache
+    # rolls forward instead of freezing at its first save.
+    - name: Restore ccache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-${{ hashFiles('**/CMakeLists.txt') }}
+        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-${{ github.sha }}
         restore-keys: |
           ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-
 
+    # The stats live in the cache directory, so zero them or they accumulate every
+    # earlier run's counts. CCACHE_SINCE dates the eviction before the save.
     - name: Verify ccache
       run: |
         ccache --version
         ccache --show-config
+        ccache --zero-stats
+        echo "CCACHE_SINCE=$(date +%s)" >> "$GITHUB_ENV"
 
     # depthai-core downloads the device/bootloader *.fwp blobs into its build
     # tree at configure time, once per matrix entry; artifacts.luxonis.com fails
@@ -179,7 +186,22 @@ jobs:
       run: cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 
     - name: ccache stats
-      run: ccache --show-stats
+      run: |
+        ccache --show-stats
+        ccache --print-stats | awk '$2 != 0'
+
+    # Hits refresh an entry's mtime, so evicting everything older than this job keeps
+    # exactly what this build used and stops the rolling cache from growing.
+    - name: Trim ccache
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_SINCE ))s"
+
+    - name: Save ccache
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-${{ github.sha }}
 
     - name: Run All Tests
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
@@ -749,13 +771,19 @@ jobs:
     - name: Install CUDA toolkit
       uses: ./.github/actions/setup-cuda
 
-    - name: Cache ccache
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    # Same main-only save policy as build-ubuntu.
+    - name: Restore ccache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('**/CMakeLists.txt') }}
+        key: ccache-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ github.sha }}
         restore-keys: |
           ccache-${{ runner.os }}-${{ runner.arch }}-sanitizers-
+
+    - name: Reset ccache stats
+      run: |
+        ccache --zero-stats
+        echo "CCACHE_SINCE=$(date +%s)" >> "$GITHUB_ENV"
 
     - name: Configure CMake (ASAN + UBSAN)
       run: |
@@ -777,6 +805,20 @@ jobs:
       run: |
         cmake --build build-san --parallel "$(nproc)" \
           --target viz_core_tests viz_layers_tests viz_session_tests
+
+    - name: ccache stats
+      run: ccache --show-stats
+
+    - name: Trim ccache
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_SINCE ))s"
+
+    - name: Save ccache
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ github.sha }}
 
     - name: Run viz [unit] tests under sanitizers
       env:
