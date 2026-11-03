@@ -69,7 +69,6 @@ def main() -> int:
         f"--add-stream=camera=ColorRight,output={out}/right.{suffix},format={args.format},width=1600,height=1300,fps=30",
         "--enable-imu",
         "--imu-rate=1000",
-        f"--calibration-output={out}/calibration.json",
     ]
     if args.preview:
         plugin_args.append("--preview")

@@ -26,8 +26,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -2123,63 +2121,6 @@ public:
                 detail::log_error() << "Structured calibration unavailable: " << sdk_calibration_error << std::endl;
         }
         const auto now = core::os_monotonic_now_ns();
-        if (!config_.calibration_output.empty())
-        {
-            const std::filesystem::path output(config_.calibration_output);
-            if (!output.parent_path().empty())
-                std::filesystem::create_directories(output.parent_path());
-            std::ofstream json(config_.calibration_output, std::ios::trunc);
-            if (!json)
-                throw std::runtime_error("Unable to open calibration output: " + config_.calibration_output);
-            const auto write_intrinsics =
-                [&json](const char* name, const std::shared_ptr<core::OrbbecEgoCameraIntrinsicsT>& intrinsics)
-            {
-                json << "  \"" << name << "\": ";
-                if (!intrinsics)
-                {
-                    json << "null";
-                    return;
-                }
-                json << "{\"width\":" << intrinsics->width << ",\"height\":" << intrinsics->height
-                     << ",\"fx\":" << intrinsics->fx << ",\"fy\":" << intrinsics->fy << ",\"cx\":" << intrinsics->cx
-                     << ",\"cy\":" << intrinsics->cy << ",\"distortion_model\":" << intrinsics->distortion_model
-                     << ",\"distortion\":[";
-                for (size_t index = 0; index < intrinsics->distortion.size(); ++index)
-                    json << (index == 0 ? "" : ",") << intrinsics->distortion[index];
-                json << "]}";
-            };
-            const auto write_extrinsics =
-                [&json](const char* name, const std::shared_ptr<core::OrbbecEgoExtrinsicsT>& extrinsics)
-            {
-                json << "  \"" << name << "\": ";
-                if (!extrinsics)
-                {
-                    json << "null";
-                    return;
-                }
-                json << "{\"rotation\":[";
-                for (size_t index = 0; index < extrinsics->rotation.size(); ++index)
-                    json << (index == 0 ? "" : ",") << extrinsics->rotation[index];
-                json << "],\"translation_mm\":[";
-                for (size_t index = 0; index < extrinsics->translation_mm.size(); ++index)
-                    json << (index == 0 ? "" : ",") << extrinsics->translation_mm[index];
-                json << "]}";
-            };
-            json << "{\n  \"device_uid\": \"" << json_escape(value.device_uid) << "\",\n";
-            write_intrinsics("color_left", value.color_left);
-            json << ",\n";
-            write_intrinsics("color_right", value.color_right);
-            json << ",\n";
-            write_extrinsics("left_to_right", value.left_to_right);
-            json << ",\n";
-            write_extrinsics("accel_to_left", value.accel_to_left);
-            json << ",\n";
-            write_extrinsics("gyro_to_left", value.gyro_to_left);
-            json << ",\n  \"raw_alignment_yaml\": \"" << json_escape(value.raw_alignment_yaml)
-                 << "\",\n  \"raw_imu_yaml\": \"" << json_escape(value.raw_imu_yaml) << "\"\n}\n";
-            if (!json)
-                throw std::runtime_error("Unable to write calibration output: " + config_.calibration_output);
-        }
         enqueue(CalibrationEvent{ std::move(value), now });
     }
 

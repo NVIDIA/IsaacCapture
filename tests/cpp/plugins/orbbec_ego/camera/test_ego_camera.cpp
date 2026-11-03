@@ -298,9 +298,9 @@ TEST_CASE("EGO capture refuses existing sidecars before creating sibling outputs
     {
         streams.push_back({ core::OrbbecEgoCameraStream_ColorRight, existing.string() });
     }
-    SECTION("calibration")
+    SECTION("archive")
     {
-        config.calibration_output = existing.string();
+        config.mcap_filename = existing.string();
     }
     REQUIRE_THROWS_AS(plugins::ego::create_frame_sink(streams, config), std::invalid_argument);
     CHECK(read_bytes(existing) == std::vector<uint8_t>{ 'p', 'r', 'e', 's', 'e', 'r', 'v', 'e' });
@@ -317,13 +317,9 @@ TEST_CASE("EGO capture rejects aliased outputs before creating files", "[ego][wr
     {
         streams.push_back({ core::OrbbecEgoCameraStream_ColorRight, output.string() });
     }
-    SECTION("calibration")
-    {
-        config.calibration_output = output.string();
-    }
     SECTION("normalized path")
     {
-        config.calibration_output = (output.parent_path() / "." / output.filename()).string();
+        config.mcap_filename = (output.parent_path() / "." / output.filename()).string();
     }
     SECTION("archive")
     {

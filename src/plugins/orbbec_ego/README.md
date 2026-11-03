@@ -187,7 +187,6 @@ Add these flags to a recording command as needed:
 |---|---|
 | `--enable-imu --imu-rate=400` | Request available accelerometer and gyroscope streams. Use MCAP or TeleopSession to retain their records. |
 | `--preview` | Show SDL side-by-side preview; requires a preview-enabled build and desktop session. |
-| `--calibration-output="$RUN/calibration.json"` | Export calibration and the original SDK YAML. |
 
 The SDL preview decodes on the CPU and may drop stale display frames without
 changing the recording.
@@ -198,7 +197,7 @@ Choose where structured data is recorded:
 
 | Workflow | How to select it | Result |
 |---|---|---|
-| Raw media only | Omit both metadata destination options. | Video files and an optional calibration sidecar. |
+| Raw media only | Omit both metadata destination options. | Video files only; calibration, IMU, and diagnostics need MCAP or TeleopSession. |
 | Local MCAP | `--mcap-filename=PATH` | Plugin-owned metadata, enabled sensors, calibration, and diagnostics. |
 | TeleopSession | `--collection-prefix=PREFIX` | Structured data published through OpenXR and recorded with other trackers. |
 
@@ -214,8 +213,7 @@ mkdir -p "$RUN/raw"
 "$ORBBEC_EGO_PLUGIN" --width=1600 --height=1300 --fps=30 \
   --add-stream=camera=ColorLeft,output="$RUN/raw/ColorLeft.h264",format=h264 \
   --add-stream=camera=ColorRight,output="$RUN/raw/ColorRight.h264",format=h264 \
-  --enable-imu --mcap-filename="$RUN/metadata.mcap" \
-  --calibration-output="$RUN/calibration.json"
+  --enable-imu --mcap-filename="$RUN/metadata.mcap"
 ```
 
 No OpenXR runtime or host tracker is needed here. Video files are sidecars;
@@ -305,7 +303,6 @@ These entries describe the native executable, not wrapper presets:
 | `--preview` | Off | Open SDL preview. |
 | `--mcap-filename=PATH` / `--collection-prefix=PREFIX` | Neither | Choose local MCAP or live publication. |
 | `--record-device-diagnostics=on\|off` | `on` | Include diagnostic events in MCAP. |
-| `--calibration-output=PATH.json` | None | Export calibration as a sidecar. |
 | `--bitrate=N --dynamic-bitrate=on\|off` | Leave device values unchanged | Set SDK bitrate properties; inspect the advertised range. |
 | `--reconnect-timeout=N` | `30` seconds | Wait for the same physical camera; `0` disables recovery. |
 | `--reconnect-interval-ms=N` | `1000` | Re-enumeration interval; must be positive. |
@@ -340,7 +337,7 @@ recorded pipeline/control/sink sources; conflicts fail before capture.
 
 ```text
 EGO camera -> OrbbecSDK -> orbbec_ego_camera_plugin
-                          |-> video/calibration sidecars
+                          |-> video sidecars
                           |-> local MCAP: structured data
                           `-> OpenXR publication -> DeviceIO trackers -> session MCAP
 ```
@@ -355,7 +352,6 @@ The local MCAP example produces:
 recordings/ego_mcap_<timestamp>/
 ├── raw/ColorLeft.h264
 ├── raw/ColorRight.h264
-├── calibration.json
 └── metadata.mcap
 ```
 
@@ -373,8 +369,6 @@ diagnostics can be omitted.
 
 `orbbec_ego_calibration/Calibration` stores the camera intrinsics, stereo extrinsics,
 IMU-to-left-camera extrinsics, and original alignment/IMU YAML in MCAP.
-`--calibration-output=PATH.json` exports the same calibration as a sidecar;
-`orbbec_ego.sh record` creates `calibration.json` automatically.
 
 SDK calibration takes priority. When it is unavailable, the plugin fills missing
 camera fields from the alignment YAML and missing `accel_to_left` / `gyro_to_left`
@@ -424,10 +418,8 @@ or `verify`:
 ./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --expect-imu --require-calibration
 ```
 
-This checks camera calibration for each video epoch and IMU extrinsics when IMU
-is enabled, including profile dimensions, finite values, proper rotations,
-and agreement between MCAP and the final `calibration.json`. Native recordings
-must supply `--calibration-output="$RUN/calibration.json"` for that sidecar check.
+This checks the MCAP calibration record for each video epoch, and IMU extrinsics
+when IMU is enabled, including profile dimensions, finite values, and proper rotations.
 Without `--require-calibration`, verification reports calibration completeness while
 retaining compatibility with recordings that lack calibration fields.
 

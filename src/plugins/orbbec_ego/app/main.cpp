@@ -117,7 +117,7 @@ void print_usage(const char* program)
               << "  --exposure=N --gain=N --white-balance=N --brightness=N\n"
               << "  --sharpness=N --saturation=N --contrast=N --power-frequency=N\n"
               << "  --set-property=SDK_PROPERTY_NAME=VALUE [--persist-controls]\n"
-              << "  --calibration-output=PATH.json --list-capabilities\n"
+              << "  --list-capabilities\n"
               << "Ego has no quality property; use bitrate/dynamic-bitrate. Ego exposes no Depth/IR/point cloud.\n"
               << "Advertised profiles are per sensor; capture validates the exact simultaneous combination without "
                  "fallback.\n"
@@ -180,8 +180,6 @@ try
             capture_config.collection_prefix = argument.substr(20);
         else if (argument.rfind("--mcap-filename=", 0) == 0)
             capture_config.mcap_filename = argument.substr(16);
-        else if (argument.rfind("--calibration-output=", 0) == 0)
-            capture_config.calibration_output = argument.substr(21);
         else if (argument == "--persist-controls")
             capture_config.persist_controls = true;
         else if (argument == "--list-capabilities")

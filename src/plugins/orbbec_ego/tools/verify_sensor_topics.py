@@ -229,38 +229,11 @@ def validate_calibration(value, profiles, need_imu):
                 raise SystemExit(f"{label} rotation determinant must be +1")
 
 
-def compare_calibration_json(expected, actual, label="calibration JSON"):
-    if isinstance(expected, dict):
-        if not isinstance(actual, dict):
-            raise SystemExit(f"{label} differs from MCAP")
-        for key, value in expected.items():
-            if key not in actual:
-                raise SystemExit(f"{label}.{key} is missing")
-            compare_calibration_json(value, actual[key], label + "." + key)
-    elif isinstance(expected, list):
-        if not isinstance(actual, list) or len(expected) != len(actual):
-            raise SystemExit(f"{label} length differs from MCAP")
-        for index, value in enumerate(expected):
-            compare_calibration_json(value, actual[index], f"{label}[{index}]")
-    elif isinstance(expected, float):
-        # Native JSON uses decimal text; tolerate its float32 representation.
-        if (
-            isinstance(actual, bool)
-            or not isinstance(actual, (float, int))
-            or not math.isfinite(actual)
-            or not math.isclose(expected, actual, rel_tol=1e-5, abs_tol=1e-5)
-        ):
-            raise SystemExit(f"{label} differs from MCAP")
-    elif expected != actual:
-        raise SystemExit(f"{label} differs from MCAP")
-
-
 path = sys.argv[1]
 expect_imu = "--expect-imu" in sys.argv
 require_calibration = "--require-calibration" in sys.argv
 calibrations = []
 video_profiles = {}
-calibration_json = None
 counts = Counter()
 last_log_time = {}
 non_monotonic = []
@@ -285,8 +258,6 @@ for argument in sys.argv[2:]:
             )
     elif argument.startswith("--record-device-diagnostics="):
         expected_policy = argument.split("=", 1)[1]
-    elif argument.startswith("--calibration-json="):
-        calibration_json = Path(argument.split("=", 1)[1])
 if expected_policy not in (None, "on", "off"):
     raise SystemExit("Expected diagnostic recording policy must be on or off")
 diagnostic_count = 0
@@ -457,16 +428,6 @@ if require_calibration:
         )
     for calibration in calibrations:
         validate_calibration(calibration, video_profiles, expect_imu)
-    if calibration_json is not None:
-        if not calibration_json.is_file():
-            raise SystemExit(f"Missing calibration JSON: {calibration_json}")
-        expected = {
-            key: value
-            for key, value in calibrations[-1].items()
-            if key != "capture_epoch"
-        }
-        compare_calibration_json(expected, json.loads(calibration_json.read_text()))
-        print("  Calibration JSON matches the final MCAP calibration epoch: OK")
     print("  Required structured calibration: OK")
 
 if expect_imu:

@@ -138,7 +138,6 @@ std::unique_ptr<FrameSink> create_frame_sink(const std::vector<StreamConfig>& st
     };
     for (const auto& stream : streams)
         require_new_output(stream.output_path);
-    require_new_output(config.calibration_output);
     require_new_output(config.mcap_filename);
     std::vector<std::unique_ptr<IMetadataSink>> sinks;
     if (!config.collection_prefix.empty())

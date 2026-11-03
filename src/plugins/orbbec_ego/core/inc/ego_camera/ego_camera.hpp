@@ -64,7 +64,6 @@ struct CaptureConfig
     std::string plugin_root_id;
     bool record_device_diagnostics = true;
     std::string mcap_filename;
-    std::string calibration_output;
     std::vector<PropertySetting> properties;
     bool persist_controls = false;
     uint32_t reconnect_timeout_seconds = 30;

@@ -73,6 +73,10 @@ grep -F -- "output=$RUN/raw/ColorRight.h264" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-timeout=30" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-interval-ms=1000" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--bitrate=8" "$MOCK_ARGS" >/dev/null
+if grep -Fq -- "--calibration-output" "$MOCK_ARGS"; then
+    echo "record must not request a calibration sidecar" >&2
+    exit 1
+fi
 test -f "$RUN/capabilities.txt"
 test -f "$RUN/logs/capture.log"
 grep -F "Plugin SHA-256:" "$RUN/capabilities.txt" >/dev/null
@@ -572,14 +576,6 @@ make_aux_verify_run() {
     printf '{"scenario":"%s"}\n' "$scenario" > "$run_dir/metadata.mcap"
     printf '\0' > "$run_dir/raw/ColorLeft.h264"
     printf '\0' > "$run_dir/raw/ColorRight.h264"
-    PYTHONPATH="$AUX_MCAP_MODULES" python3 - "$run_dir/calibration.json" "$scenario" <<'PY'
-import json
-import sys
-from pathlib import Path
-from mcap.reader import calibration_value
-
-Path(sys.argv[1]).write_text(json.dumps(calibration_value(sys.argv[2])))
-PY
     cat > "$run_dir/requested_profile.json" <<'EOF'
 {"version":1,"streams":{"ColorLeft":{"format":"h264","width":1600,"height":1300,"fps":30},"ColorRight":{"format":"h264","width":1600,"height":1300,"fps":30}}}
 EOF
@@ -603,7 +599,6 @@ PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$AUX_VALID_RUN" --require-calibration --expect-imu \
     >/dev/null 2>&1
 grep -F 'Required structured calibration: OK' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
-grep -F 'Calibration JSON matches' "$AUX_VALID_RUN/verification_report.txt" >/dev/null
 for scenario in calibration_missing calibration_bad_rotation calibration_reflection \
         calibration_bad_translation calibration_nonfinite calibration_bad_dimensions \
         calibration_bad_focal calibration_missing_epoch; do
@@ -617,12 +612,6 @@ CALIBRATION_OPTIONAL_RUN="$TMPDIR_TEST/calibration_missing"
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$CALIBRATION_OPTIONAL_RUN" >/dev/null 2>&1
 grep -F 'missing=gyro_to_left' "$CALIBRATION_OPTIONAL_RUN/verification_report.txt" >/dev/null
-CALIBRATION_JSON_RUN="$TMPDIR_TEST/calibration_json_mismatch"
-make_aux_verify_run "$CALIBRATION_JSON_RUN" valid
-sed -i 's/500.25/999.25/' "$CALIBRATION_JSON_RUN/calibration.json"
-expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
-    "$SCRIPT" verify "$CALIBRATION_JSON_RUN" --require-calibration
-grep -F 'calibration JSON.color_left.fx differs' "$CALIBRATION_JSON_RUN/verification_report.failed.txt" >/dev/null
 
 FINALIZE_PLUGIN="$TMPDIR_TEST/finalize_plugin"
 cat > "$FINALIZE_PLUGIN" <<'PY'
@@ -661,7 +650,6 @@ partial.write_text(
 )
 for sidecar in (fixture / "raw").iterdir():
     shutil.copyfile(sidecar, target.parent / "raw" / sidecar.name)
-shutil.copyfile(fixture / "calibration.json", target.parent / "calibration.json")
 (target.parent / "plugin.pid").write_text(str(os.getpid()))
 print("recording ready", flush=True)
 while not stopping:

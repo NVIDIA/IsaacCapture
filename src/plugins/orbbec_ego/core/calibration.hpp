@@ -14,5 +14,4 @@ namespace plugins::ego
 {
 bool populate_stereo_calibration_from_yaml(const std::string& yaml, core::OrbbecEgoCalibrationT& calibration);
 std::string raw_data(const std::shared_ptr<ob::Device>& device, OBPropertyID id);
-std::string json_escape(const std::string& input);
 } // namespace plugins::ego

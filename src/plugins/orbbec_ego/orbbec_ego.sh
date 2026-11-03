@@ -544,7 +544,6 @@ command_record() {
     local -a plugin_args=(
         "--mcap-filename=$run_dir/metadata.mcap"
         "--record-device-diagnostics=$record_diagnostics"
-        "--calibration-output=$run_dir/calibration.json"
         "--reconnect-timeout=$reconnect_timeout"
         "--reconnect-interval-ms=$reconnect_interval_ms"
         "--add-stream=camera=ColorLeft,output=$run_dir/raw/ColorLeft.$extension,format=$format,width=$width,height=$height,fps=$fps"
@@ -719,9 +718,7 @@ command_verify_impl() {
 
     local -a topic_check_args=("$mcap" "--requested-profile=$run_dir/requested_profile.json")
     (( expect_imu )) && topic_check_args+=(--expect-imu)
-    if (( require_calibration )); then
-        topic_check_args+=(--require-calibration "--calibration-json=$run_dir/calibration.json")
-    fi
+    (( require_calibration )) && topic_check_args+=(--require-calibration)
     run_mcap_tool "$SCRIPT_DIR/tools/verify_sensor_topics.py" "${topic_check_args[@]}"
 
     check_capture_health_log "$run_dir/logs/capture.log"

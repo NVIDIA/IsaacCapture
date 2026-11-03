@@ -72,8 +72,8 @@ Use a fresh output directory for each recording:
    RUN="recordings/ego_$(date +%Y%m%d_%H%M%S)"
    ./src/plugins/orbbec_ego/orbbec_ego.sh record --duration 30 --output "$RUN"
 
-The wrapper writes video under ``raw/``, structured data to
-``metadata.mcap``, and calibration to ``calibration.json``. It preserves the requested profile,
+The wrapper writes video under ``raw/`` and structured data, including
+calibration, to ``metadata.mcap``. It preserves the requested profile,
 device/software identity, and capture log, then verifies the recording.
 To repeat the integrity checks later:
 
@@ -174,8 +174,8 @@ loaded, run from the repository root:
 
    python tests/python/xr_runtime/test_orbbec_ego_camera.py --mode schema-pusher --duration 30
 
-Each run writes its media, calibration, and MCAP to a new
-``recordings/ego_<time>/`` directory. ``--mode plugin-mcap`` and
+Each run writes its media and MCAP to a new ``recordings/ego_<time>/``
+directory; ``--mode no-metadata`` writes media only. ``--mode plugin-mcap`` and
 ``--mode no-metadata`` record without the CloudXR runtime.
 
 Replay and visualization
