@@ -209,9 +209,10 @@ Verify the alignment before using the output for control.
 
 ## Tests
 
-With `BUILD_TESTING=ON`, the tests build together with the plugin, so without
-the C SDK they are skipped with it. Each library has its own suite under
-`tests/cpp/plugins/revohuman/`:
+With `BUILD_TESTING=ON`, the test targets are configured with the plugin, so
+without the C SDK they are skipped with it. `install.sh` builds only the
+plugin, so build the tests before running them. Each library has its own
+suite under `tests/cpp/plugins/revohuman/`:
 
 - `core/` (`revohuman_core_tests`): the sample pipeline, tactile serialization
   and skinning, device status, event log and pose math.
@@ -226,8 +227,13 @@ the C SDK they are skipped with it. Each library has its own suite under
   source variable and flag.
 
 The integration suite and the two plugin checks need the SDK library; with only
-its header, the core and live suites still build. Run them all with
-`ctest --test-dir build-revohuman/tests/cpp/plugins/revohuman --output-on-failure`.
+its header, the core and live suites still build. After the install above,
+build and run them all with:
+
+```bash
+cmake --build build-revohuman --target revohuman_core_tests revohuman_live_tests revohuman_integration_tests
+ctest --test-dir build-revohuman/tests/cpp/plugins/revohuman --output-on-failure
+```
 
 ## Tactile layout
 
