@@ -16,6 +16,7 @@ Pytest and Catch2/CTest suites generally live under this tree:
 tests/
   cpp/       ← Catch2 executables (one target per module leaf)
   python/    ← pytest suites (one pyproject.toml per leaf)
+  cmake/     ← configure-time tests: each runs cmake on a fixture project
 ```
 
 Organize by **product area**, mirroring `src/` and `examples/`:

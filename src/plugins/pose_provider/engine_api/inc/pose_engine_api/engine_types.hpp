@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Value types shared by the pose engine records and the resolved setup.
+// Value types shared by the engine records and the resolved setup.
 #pragma once
 
 #include <array>

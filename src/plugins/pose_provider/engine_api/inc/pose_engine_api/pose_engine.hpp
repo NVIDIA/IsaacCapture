@@ -102,7 +102,7 @@ public:
     virtual void stop() = 0;
 };
 
-/** @brief Creates an uninitialized engine. Each adapter defines this; an executable links exactly one adapter. */
+/** @brief Creates an uninitialized engine adapter. Each adapter defines this; an executable links exactly one. */
 std::unique_ptr<IPoseEngine> make_pose_engine();
 
 } // namespace pose_provider
