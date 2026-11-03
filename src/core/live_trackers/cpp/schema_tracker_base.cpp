@@ -67,6 +67,31 @@ std::vector<std::string> SchemaTrackerBase::get_required_extensions()
     return exts;
 }
 
+bool SchemaTrackerBase::timestamp_is_fresh(const DeviceDataTimestamp& timestamp,
+                                           int64_t monotonic_time_ns,
+                                           std::optional<std::chrono::nanoseconds> max_sample_age) noexcept
+{
+    if (!max_sample_age)
+    {
+        return true;
+    }
+
+    int64_t source_time_ns = timestamp.sample_time_local_common_clock();
+    if (source_time_ns <= 0)
+    {
+        source_time_ns = timestamp.available_time_local_common_clock();
+    }
+    return source_time_ns <= 0 || source_time_ns > monotonic_time_ns ||
+           monotonic_time_ns - source_time_ns < max_sample_age->count();
+}
+
+bool SchemaTrackerBase::sample_is_fresh(const SampleResult& sample,
+                                        int64_t monotonic_time_ns,
+                                        std::optional<std::chrono::nanoseconds> max_sample_age) noexcept
+{
+    return timestamp_is_fresh(sample.timestamp, monotonic_time_ns, max_sample_age);
+}
+
 bool SchemaTrackerBase::ensure_collection()
 {
     uint64_t latest_generation = 0;
@@ -75,7 +100,7 @@ bool SchemaTrackerBase::ensure_collection()
     {
         if (is_known_non_fatal_tensor_unavailable(result))
         {
-            m_target_collection_index.reset();
+            clear_collection();
             return false;
         }
         throw std::runtime_error("Failed to get latest generation, result=" + std::to_string(result));
@@ -93,7 +118,7 @@ bool SchemaTrackerBase::ensure_collection()
         {
             if (is_known_non_fatal_tensor_unavailable(result))
             {
-                m_target_collection_index.reset();
+                clear_collection();
                 return false;
             }
             throw std::runtime_error("Failed to update tensor list, result=" + std::to_string(result));
@@ -107,7 +132,7 @@ bool SchemaTrackerBase::ensure_collection()
     {
         if (is_known_non_fatal_tensor_unavailable(result))
         {
-            m_target_collection_index.reset();
+            clear_collection();
             return false;
         }
         throw std::runtime_error("Failed to get list properties, result=" + std::to_string(result));
@@ -121,7 +146,7 @@ bool SchemaTrackerBase::ensure_collection()
         {
             if (is_known_non_fatal_tensor_unavailable(result))
             {
-                m_target_collection_index.reset();
+                clear_collection();
                 return false;
             }
             throw std::runtime_error("Failed to get collection properties, result=" + std::to_string(result));
@@ -143,17 +168,24 @@ bool SchemaTrackerBase::ensure_collection()
         m_sample_batch_stride = coll_props.sampleBatchStride;
         m_sample_size = coll_props.data.totalSampleSize;
 
-        if (i != m_target_collection_index)
+        if (i != m_target_collection_index || coll_props.tensorCollectionId != m_target_collection_id)
         {
             m_last_sample_index.reset();
             m_logger->info("Found target collection at index {}", i);
         }
         m_target_collection_index = i;
+        m_target_collection_id = coll_props.tensorCollectionId;
         return true;
     }
 
-    m_target_collection_index.reset();
+    clear_collection();
     return false;
+}
+
+void SchemaTrackerBase::clear_collection() noexcept
+{
+    m_target_collection_index.reset();
+    m_target_collection_id.reset();
 }
 
 bool SchemaTrackerBase::read_all_samples(std::vector<SampleResult>& samples)
@@ -252,10 +284,10 @@ bool SchemaTrackerBase::read_next_sample(SampleResult& out)
         }
         else
         {
-            m_target_collection_index = std::nullopt;
+            clear_collection();
             throw std::runtime_error("[SchemaTracker] xrGetTensorDataNV failed, result=" + std::to_string(result));
         }
-        m_target_collection_index = std::nullopt;
+        clear_collection();
         return false;
     }
 

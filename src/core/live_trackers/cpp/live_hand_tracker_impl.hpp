@@ -43,24 +43,43 @@ public:
     const Serialized<HandPose>& get_right_hand() const override;
 
 private:
+    enum class XDevTrackerCreation
+    {
+        CREATED,
+        UNSUPPORTED,
+        RETRY,
+    };
+
     void initialize_xdev_hand_trackers(const OpenXRSessionHandles& handles);
-    bool try_create_xdev_hand_tracker(XrSession session,
-                                      XrXDevIdMNDX xdev_id,
-                                      XrHandEXT hand,
-                                      std::vector<XrHandTrackerEXT>& trackers);
+    bool enumerate_xdev_ids(XrXDevListMNDX xdev_list, std::vector<XrXDevIdMNDX>& xdev_ids);
+    bool refresh_xdev_hand_trackers();
+    XDevTrackerCreation try_create_xdev_hand_tracker(XrSession session,
+                                                     XrXDevListMNDX xdev_list,
+                                                     XrXDevIdMNDX xdev_id,
+                                                     XrHandEXT hand,
+                                                     std::vector<XrHandTrackerEXT>& trackers);
     bool try_create_default_hand_tracker(XrSession session, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers);
     void destroy_hand_trackers(std::vector<XrHandTrackerEXT>& trackers);
     void destroy_xdev_list();
-    void update_hand(const std::vector<XrHandTrackerEXT>& trackers, XrTime time, std::optional<HandPoseT>& tracked);
+    void update_hand(const std::vector<XrHandTrackerEXT>& xdev_trackers,
+                     const std::vector<XrHandTrackerEXT>& default_trackers,
+                     XrTime time,
+                     std::optional<HandPoseT>& tracked);
     bool try_update_hand(XrHandTrackerEXT tracker, XrTime time, std::optional<HandPoseT>& tracked);
 
     XrTimeConverter time_converter_;
+    XrSession session_;
     XrSpace base_space_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.LiveHandTrackerImpl");
 
-    std::vector<XrHandTrackerEXT> left_hand_trackers_;
-    std::vector<XrHandTrackerEXT> right_hand_trackers_;
+    std::vector<XrHandTrackerEXT> left_xdev_hand_trackers_;
+    std::vector<XrHandTrackerEXT> right_xdev_hand_trackers_;
+    std::vector<XrHandTrackerEXT> left_default_hand_trackers_;
+    std::vector<XrHandTrackerEXT> right_default_hand_trackers_;
+    std::vector<XrXDevIdMNDX> xdev_ids_;
     XrXDevListMNDX xdev_list_;
+    std::optional<uint64_t> xdev_generation_;
+    int64_t last_xdev_refresh_time_ = 0;
 
     // The snapshots published each frame, encoded from locals in update().
     Serialized<HandPose> left_tracked_;
@@ -72,6 +91,7 @@ private:
     PFN_xrLocateHandJointsEXT pfn_locate_hand_joints_;
     PFN_xrCreateXDevListMNDX pfn_create_xdev_list_;
     PFN_xrDestroyXDevListMNDX pfn_destroy_xdev_list_;
+    PFN_xrGetXDevListGenerationNumberMNDX pfn_get_xdev_list_generation_;
     PFN_xrEnumerateXDevsMNDX pfn_enumerate_xdevs_;
     PFN_xrGetXDevPropertiesMNDX pfn_get_xdev_properties_;
 

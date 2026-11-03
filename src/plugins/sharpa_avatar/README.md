@@ -22,7 +22,7 @@ The visualization example is separate:
 
 - Linux x86_64 (Ubuntu 22.04)
 - A built Isaac Capture checkout
-- Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
+- Sharpa AvatarExo Gloves connected wirelessly through the USB dongle
 
 `install_avatar_sdk.sh` retrieves a pinned production `avatar-sdk` version from Sharpa's
 signed production APT repository, without selecting the `avatar-sdk-dev` or
@@ -72,8 +72,10 @@ or dongle:
 udev does not run inside containers, so this command must run on the host.
 The plugin follows the Sharpa host application layout and uses the SDK,
 configuration, and runtime assets directly from the selected SDK root
-(`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). Transport selection, including
-wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`.
+(`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). The supported workflow uses the
+USB dongle for a wireless glove connection. This plugin does not accept a
+`--transport` option and must not run concurrently with `avatar-backend` or
+Avatar Desktop.
 
 ## Run
 
@@ -97,6 +99,24 @@ The gloves do not provide a world-space wrist pose. Downstream consumers that
 need a display frame (the example) place both skeletons locally; a headset
 wrist source is used when one is available.
 
+## Health reporting
+
+When launched by `TeleopSession`, the plugin reports three independent layers:
+
+- `/transport/dongle`: physical USB enumeration combined with the Avatar SDK
+  transport connection state.
+- `/glove/{left,right}`: SDK inventory, current ingress, firmware diagnostics,
+  and haptic command errors for each physical glove.
+- The HUMAN, RAW, and ROBOT manifest paths: per-dataset sample freshness and
+  `fetch_data()` errors.
+
+A failed SDK inventory refresh makes glove and dataset health unknown; cached
+rows are not republished as newly healthy. A successfully refreshed inventory
+row remains the same physical glove while `online=false`, allowing the SDK's
+short reconnect path to recover it. Outputs are withdrawn after three seconds
+without ingress and recreated on the next fresh sample. The timeout uses
+`std::chrono::steady_clock` and is unaffected by wall-clock adjustments.
+
 ## Troubleshooting
 
 | Symptom | Resolution |
@@ -104,7 +124,7 @@ wrist source is used when one is available.
 | Avatar SDK installation fails | Check access to Sharpa's production APT endpoint and rerun `install_avatar_sdk.sh` |
 | CMake skipped the Sharpa Avatar plugin | The SDK is missing; run `install_avatar_sdk.sh` and reconfigure with `-DBUILD_PLUGIN_SHARPA_AVATAR=ON` |
 | CMake rejected the Avatar SDK | Install the pinned production package with `install_avatar_sdk.sh`, or point `AVATAR_SDK_ROOT` at a complete SDK tree |
-| USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
+| USB dongle is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the dongle |
 | CMake 3.24 or newer is required | Install a newer CMake in the Isaac Capture environment and rerun the configure/build/install commands above |
 | Plugin binary is not found | Build and install the plugin through the top-level CMake workflow above |
 | Hand and joint streams stay offline | Power on the gloves and stop any other process using the Avatar SDK |

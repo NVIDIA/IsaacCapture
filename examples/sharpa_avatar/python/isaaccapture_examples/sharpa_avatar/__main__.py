@@ -6,4 +6,7 @@ import sys
 
 from .live_view import main
 
-sys.exit(main())
+try:
+    sys.exit(main())
+except KeyboardInterrupt:
+    pass

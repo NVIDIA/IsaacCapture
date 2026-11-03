@@ -17,6 +17,7 @@
 #include <schema/message_channel_generated.h>
 
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -245,8 +246,18 @@ PYBIND11_MODULE(_deviceio_trackers, m)
 
     py::class_<core::HapticCommandReaderTracker, core::ITracker, std::shared_ptr<core::HapticCommandReaderTracker>>(
         m, "HapticCommandReaderTracker")
-        .def(py::init<const std::string&, std::size_t>(), py::arg("collection_id"),
-             py::arg("max_payload_size") = core::HapticCommandReaderTracker::DEFAULT_MAX_PAYLOAD_SIZE)
+        .def(py::init(
+                 [](const std::string& collection_id, std::size_t max_payload_size, std::optional<int64_t> max_sample_age_ns)
+                 {
+                     const auto max_sample_age = max_sample_age_ns ?
+                                                     std::make_optional(std::chrono::nanoseconds(*max_sample_age_ns)) :
+                                                     std::nullopt;
+                     return std::make_shared<core::HapticCommandReaderTracker>(
+                         collection_id, max_payload_size, max_sample_age);
+                 }),
+             py::arg("collection_id"),
+             py::arg("max_payload_size") = core::HapticCommandReaderTracker::DEFAULT_MAX_PAYLOAD_SIZE,
+             py::arg("max_sample_age_ns") = py::none())
         .def(
             "get_data",
             [](const core::HapticCommandReaderTracker& self, const core::ITrackerSession& session)
