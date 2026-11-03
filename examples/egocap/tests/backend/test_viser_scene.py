@@ -273,6 +273,12 @@ class FakeScene:
     def add_line_segments(self, name, points, **kwargs):
         return self._add("lines", name, **kwargs)
 
+    def add_grid(self, name, **kwargs):
+        return self._add("grid", name, **kwargs)
+
+    def add_box(self, name, **kwargs):
+        return self._add("box", name, **kwargs)
+
 
 class FakeServer:
     def __init__(self, port=4321):
@@ -939,3 +945,39 @@ def test_reading_assets_loads_every_profile_and_notes_only_the_configured_ones_m
     assert "head" in (scene._model_note or "")
     # The other profiles' controller files were still read, ready for a runtime switch.
     assert scene._assets["pico-4-ultra"]["left"] is not None
+
+
+# --- how the scene looks ----------------------------------------------------------------------------------------
+
+
+def test_each_finger_shades_from_a_dark_knuckle_to_a_pale_tip_and_keeps_the_side_identity():
+    for side in ("left", "right"):
+        shades = vs._JOINT_COLORS[side].astype(int)
+        assert shades.shape == (26, 3)
+        for chain in vs._CHAINS:
+            assert shades[chain[-1]].sum() > shades[chain[0]].sum()  # the tip is lighter than the knuckle
+        # the blue side stays blue-dominant and the orange side red-dominant at the knuckles
+        knuckle = shades[vs._CHAINS[1][0]]
+        assert (knuckle[2] > knuckle[0]) == (side == "left")
+
+
+def test_a_glove_carries_one_shade_per_joint_and_per_bone_end():
+    glove = _frame(**_hand("left", _joints())).gloves["left"]
+    assert glove.point_colors.shape == (len(glove.points), 3) and glove.point_colors.dtype == np.uint8
+    assert glove.segment_colors.shape == glove.segments.shape and glove.segment_colors.dtype == np.uint8
+
+
+def test_an_invalid_joint_loses_its_shade_with_its_point_and_bones():
+    valid = np.ones(26, dtype=np.uint8)
+    valid[1] = 0
+    glove = _frame(**_hand("left", _joints(), valid=valid)).gloves["left"]
+    assert len(glove.point_colors) == len(glove.points) == 25
+    assert len(glove.segment_colors) == len(glove.segments)
+
+
+def test_the_scene_has_a_floor_slab_a_grid_and_origin_axes_that_tracking_never_hides():
+    scene, server = _scene(_monitor())
+    added = server.scene.added
+    assert ("box", "/floor_surface") in added and ("grid", "/floor") in added and ("frame", "/origin") in added
+    scene._hide_all()  # tracking loss hides the tracked nodes only
+    assert not {"/floor_surface", "/floor", "/origin"} & set(scene._handles)
