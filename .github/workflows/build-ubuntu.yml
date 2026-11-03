@@ -32,6 +32,9 @@ env:
   NO_GPU_TESTS: ${{ github.repository_id == '1092046207' && '0' || '1' }}
   NO_GPU_ARM: "1"
   NO_WHEEL_PUBLISH: ${{ github.repository_id == '1092046207' && '0' || '1' }}
+  # Only pushes to main save ccache; PRs and release branches restore main's latest
+  # and leave the repository's cache quota to it.
+  CCACHE_SAVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
   build-ubuntu:
@@ -114,10 +117,9 @@ jobs:
         fi
         echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
 
-    # Only pushes to main save ccache; PRs and release branches restore main's latest
-    # and leave the repository's cache quota to it. Keyed per commit so main's cache
-    # rolls forward instead of freezing at its first save.
+    # Keyed per commit so main's cache rolls forward instead of freezing at its first save.
     - name: Restore ccache
+      id: ccache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
@@ -125,12 +127,15 @@ jobs:
         restore-keys: |
           ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-
 
-    # The stats live in the cache directory, so zero them or they accumulate every
-    # earlier run's counts. CCACHE_SINCE dates the eviction before the save.
     - name: Verify ccache
       run: |
         ccache --version
         ccache --show-config
+
+    # The stats live in the cache directory, so zero them or they accumulate every
+    # earlier run's counts. CCACHE_SINCE dates the eviction before the save.
+    - name: Reset ccache stats
+      run: |
         ccache --zero-stats
         echo "CCACHE_SINCE=$(date +%s)" >> "$GITHUB_ENV"
 
@@ -193,15 +198,15 @@ jobs:
     # Hits refresh an entry's mtime, so evicting everything older than this job keeps
     # exactly what this build used and stops the rolling cache from growing.
     - name: Trim ccache
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: ${{ env.CCACHE_SAVE == 'true' }}
       run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_SINCE ))s"
 
     - name: Save ccache
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: ${{ env.CCACHE_SAVE == 'true' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.build_type }}-py${{ matrix.python_version }}-${{ github.sha }}
+        key: ${{ steps.ccache.outputs.cache-primary-key }}
 
     - name: Run All Tests
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
@@ -771,8 +776,8 @@ jobs:
     - name: Install CUDA toolkit
       uses: ./.github/actions/setup-cuda
 
-    # Same main-only save policy as build-ubuntu.
     - name: Restore ccache
+      id: ccache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
@@ -807,18 +812,20 @@ jobs:
           --target viz_core_tests viz_layers_tests viz_session_tests
 
     - name: ccache stats
-      run: ccache --show-stats
+      run: |
+        ccache --show-stats
+        ccache --print-stats | awk '$2 != 0'
 
     - name: Trim ccache
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: ${{ env.CCACHE_SAVE == 'true' }}
       run: ccache --evict-older-than "$(( $(date +%s) - CCACHE_SINCE ))s"
 
     - name: Save ccache
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      if: ${{ env.CCACHE_SAVE == 'true' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cache/ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ github.sha }}
+        key: ${{ steps.ccache.outputs.cache-primary-key }}
 
     - name: Run viz [unit] tests under sanitizers
       env:
@@ -828,8 +835,8 @@ jobs:
         set -euo pipefail
         ctest --test-dir build-san -L unit --output-on-failure
 
-  # Each main push saves ccache under its own commit. Drop the generations it supersedes
-  # so they do not hold the repository's cache quota until LRU eviction reaches them.
+  # Drop main's superseded ccache generations so they do not hold the repository's
+  # cache quota until LRU eviction reaches them. A job-level if cannot read env.
   prune-ccache:
     runs-on: ubuntu-22.04
     permissions:
@@ -844,10 +851,10 @@ jobs:
         GH_REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
-        gh api --paginate "repos/${GH_REPO}/actions/caches?ref=refs/heads/main&key=ccache-&per_page=100" \
-          --jq '.actions_caches[] | [.id, .key, .created_at] | @tsv' > caches.tsv
         # Group by the key minus its trailing hash and keep each group's newest entry.
-        sort -t $'\t' -k3,3r caches.tsv \
+        gh api --paginate "repos/${GH_REPO}/actions/caches?ref=refs/heads/main&key=ccache-&per_page=100" \
+            --jq '.actions_caches[] | [.id, .key, .created_at] | @tsv' \
+          | sort -t $'\t' -k3,3r \
           | awk -F '\t' '{ p = $2; sub(/-[0-9a-f]+$/, "", p); if (seen[p]++) print $1 "\t" $2 }' \
           | while IFS=$'\t' read -r id key; do
               echo "Deleting ${key}"
