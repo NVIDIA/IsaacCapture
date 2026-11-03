@@ -112,6 +112,8 @@ with open(path, "rb") as stream:
                 "last": None,
                 "first_sequence": None,
                 "last_sequence": None,
+                "gaps": 0,
+                "missing": 0,
             },
         )
         if epoch["last"] is not None and timestamp <= epoch["last"]:
@@ -129,10 +131,8 @@ with open(path, "rb") as stream:
                     f"previous={epoch['last_sequence']} current={sequence}"
                 )
             if sequence != epoch["last_sequence"] + 1:
-                raise SystemExit(
-                    f"Sequence gap on {channel.topic} epoch {capture_epoch}: "
-                    f"previous={epoch['last_sequence']} current={sequence}"
-                )
+                epoch["gaps"] += 1
+                epoch["missing"] += sequence - epoch["last_sequence"] - 1
         if state["profile"] is not None and profile != state["profile"]:
             raise SystemExit(
                 f"Profile changed on {channel.topic}: {state['profile']} -> {profile}"
@@ -163,8 +163,11 @@ for topic, state in topics.items():
         declared_fps = state["profile"][3]
         if declared_fps <= 0:
             raise SystemExit(f"{topic} has invalid declared FPS {declared_fps}")
+        # Measure over the sequence span so frames lost in a gap do not lower the device cadence.
         observed_fps = (
-            (epoch["count"] - 1) * 1_000_000_000 / (epoch["last"] - epoch["first"])
+            (epoch["last_sequence"] - epoch["first_sequence"])
+            * 1_000_000_000
+            / (epoch["last"] - epoch["first"])
         )
         tolerance = max(0.5, declared_fps * 0.05)
         if abs(observed_fps - declared_fps) > tolerance:
@@ -176,4 +179,9 @@ for topic, state in topics.items():
             f"  {topic}: epoch={capture_epoch} count={epoch['count']} profile={state['profile']} "
             f"raw_device_fps={observed_fps:.3f} span_ns={epoch['last'] - epoch['first']}"
         )
+        if epoch["gaps"]:
+            print(
+                f"  WARNING: {topic} epoch {capture_epoch}: {epoch['missing']} frames missing "
+                f"across {epoch['gaps']} sequence gaps"
+            )
 print("MCAP video counts and raw device timestamp cadence: OK")

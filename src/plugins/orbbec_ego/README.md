@@ -383,11 +383,14 @@ SDK warnings about unavailable profile calibration can remain when the fallback
 has supplied all fields. Check the recorded fields with the strict verification
 below. Unsupported or invalid calibration remains missing and is reported.
 
-MCAP is written as `PATH.partial` and promoted to `PATH` only after successful
-capture and cleanup. A remaining `.partial`, nonzero exit, or queue/sequence
-loss is a failed recording; preserve it with its logs for diagnosis.
-Recovery opens a new `capture_epoch`; continuity is checked within each epoch,
-and a different physical device is never substituted.
+MCAP is written as `PATH.partial` and promoted to `PATH` only after capture and
+cleanup finish. A remaining `.partial` or a nonzero exit is a failed recording,
+for example a write failure, metadata queue loss, or a reconnect timeout;
+preserve it with its logs for diagnosis. Dropped video frame sets and sequence
+gaps are logged as warnings and the recording is still finalized; H.264/H.265
+resume at the next IDR. Recovery opens a new `capture_epoch`; sequence and
+timestamp order are checked within each epoch, and a different physical device
+is never substituted.
 
 ### Verify a Recording
 
@@ -402,7 +405,8 @@ ffprobe -v error -select_streams v:0 \
 ```
 
 For the two-eye local MCAP layout above, the helper also checks MCAP topics,
-video counts/cadence, enabled sensors, and capture health:
+video counts/cadence, enabled sensors, and capture health; it reports video
+sequence gaps and dropped video frame sets without failing:
 
 When the active Python has no MCAP reader, `verify` runs these checks through uv.
 
@@ -427,7 +431,7 @@ Omit `--expect-imu` if IMU was not requested. This verifier expects
 `metadata.mcap` and two video streams; it is not a verifier for raw-only or
 single-eye capture. Native recording does not
 create `requested_profile.json` or `logs/capture.log`: without those files,
-request matching or log-based loss checks are skipped with a warning.
+request matching or log-based loss reporting is skipped with a warning.
 Success prints `Verification passed` and writes `verification_report.txt`;
 failure writes `verification_report.failed.txt` and invalidates an old success report.
 These checks establish recording integrity, not physical cross-stream synchronization.
@@ -467,7 +471,8 @@ synchronized bundle.
 | `--preview` rejected | Reconfigure with `-DORBBEC_EGO_ENABLE_PREVIEW=ON`, install SDL/FFmpeg development packages, and use a desktop session. |
 | Camera busy or preview cannot open | Stop other processes using that EGO. |
 | Recording waits after disconnect | Reconnect the same physical camera within `--reconnect-timeout`; UID may change after USB re-enumeration. |
-| Nonzero exit or `.partial` remains | Preserve capture and logs; check queue loss, output failures, reconnect timeout, and control restoration. |
+| Nonzero exit or `.partial` remains | Preserve capture and logs; check metadata queue loss, write/output failures, reconnect timeout, and control restoration. |
+| Warnings about dropped video frame sets or sequence gaps | The recording was kept; frames are missing between the logged sequence numbers. Reduce host CPU/disk load or bitrate if they recur. Gap counts are in `logs/capture.log` and the verification report; dropped frame sets are also in the capture summary. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
 | Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |

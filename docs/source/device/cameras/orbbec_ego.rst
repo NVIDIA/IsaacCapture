@@ -206,6 +206,9 @@ Troubleshooting
   the current plugin rejects H.264/H.265 profiles above 30 FPS.
 - **Partial MCAP:** the recording did not finish successfully. Preserve it and
   the log for diagnosis before starting a new recording.
+- **Dropped frames or sequence gaps:** logged as warnings; the recording is
+  still finalized and ``verify`` reports them without failing. Compressed video
+  resumes at the next IDR. Reduce host load if they recur.
 - **Live plugin stalls at** ``waiting for a system...``: the runtime has no
   OpenXR system yet; see :ref:`cloudxr-form-factor-unavailable`. Ctrl-C does
   not interrupt this wait; ``PluginManager`` stops the plugin after its

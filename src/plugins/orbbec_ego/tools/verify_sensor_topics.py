@@ -65,7 +65,9 @@ def vector_field(data, table, field_id, element_size, label):
 
 
 def diagnostic_record(data, label):
+    """Validate one DeviceState record and return its dropped video frame sets."""
     table, _ = record_data(data, label)
+    dropped_video_frame_sets = 0
     kind = scalar_field(data, table, 3, "<B")
     observed = scalar_field(data, table, 2, "<q")
     payload_position = field_position(data, table, 4)
@@ -97,8 +99,9 @@ def diagnostic_record(data, label):
             raise SystemExit(f"{label} has invalid capture health")
         if health == 2:
             raise SystemExit(f"{label} reports incomplete capture")
-        if scalar_field(data, payload, 4, "<Q") or scalar_field(data, payload, 5, "<Q"):
-            raise SystemExit(f"{label} reports dropped capture data")
+        if scalar_field(data, payload, 4, "<Q"):
+            raise SystemExit(f"{label} reports dropped metadata events")
+        dropped_video_frame_sets = scalar_field(data, payload, 5, "<Q")
     elif kind == 3:
         if scalar_field(data, payload, 0, "<b") not in (0, 1, 2):
             raise SystemExit(f"{label} has invalid recovery stage")
@@ -107,7 +110,7 @@ def diagnostic_record(data, label):
         if temperature is not None and not math.isfinite(temperature):
             raise SystemExit(f"{label} temperature must be finite or absent")
         vector_field(data, payload, 1, 16, f"{label} successful properties")
-    return kind
+    return dropped_video_frame_sets
 
 
 # OrbbecEgoImuSample: x, y, z (double), local and raw-device clock (int64).
@@ -261,6 +264,7 @@ for argument in sys.argv[2:]:
 if expected_policy not in (None, "on", "off"):
     raise SystemExit("Expected diagnostic recording policy must be on or off")
 diagnostic_count = 0
+dropped_video_frame_sets = 0
 with open(path, "rb") as stream:
     reader = make_reader(stream)
     for metadata in reader.iter_metadata():
@@ -306,7 +310,10 @@ with open(path, "rb") as stream:
             if policy == "off":
                 raise SystemExit(f"Diagnostics off but message exists: {topic}")
             diagnostic_count += 1
-            diagnostic_record(message.data, topic)
+            # Capture summaries are cumulative; the largest count is the total.
+            dropped_video_frame_sets = max(
+                dropped_video_frame_sets, diagnostic_record(message.data, topic)
+            )
 
         if topic == "orbbec_ego_calibration/Calibration":
             calibrations.append(calibration_record(message.data))
@@ -472,4 +479,9 @@ if expect_imu:
     ):
         raise SystemExit("Accel and Gyro declare different sample rates")
 
+if dropped_video_frame_sets:
+    print(
+        f"  WARNING: capture summary reports {dropped_video_frame_sets} dropped video frame sets; "
+        "the recording was finalized"
+    )
 print("MCAP Footer, required topics, and per-topic log-time monotonicity: OK")

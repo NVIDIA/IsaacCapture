@@ -602,22 +602,26 @@ find_media_file() {
 check_capture_health_log() {
     local capture_log="$1"
     if [[ ! -s "$capture_log" ]]; then
-        warn "No capture log is available; sequence-gap and queue-drop checks were skipped."
+        warn "No capture log is available; sequence-gap and queue-drop reporting was skipped."
         return 0
-    fi
-    if grep -Eq '[[:space:]][1-9][0-9]* sequence gaps' "$capture_log"; then
-        die "Capture log reports a video sequence gap: $capture_log"
     fi
     if grep -Eq '(^|[[:space:]])dropped=[1-9][0-9]*([[:space:]]|$)' "$capture_log"; then
         die "Capture log reports dropped metadata events: $capture_log"
     fi
-    if grep -Eq 'video_frame_sets_dropped=[1-9][0-9]*([[:space:]]|$)' "$capture_log"; then
-        die "Capture log reports dropped video frame sets: $capture_log"
+    # Video loss is reported, not fatal: the recording was finalized and resumes at the next IDR.
+    local loss_reported=0
+    if grep -Eq '[[:space:]][1-9][0-9]* sequence gaps' "$capture_log"; then
+        warn "Capture log reports video sequence gaps; the recording was kept: $capture_log"
+        loss_reported=1
     fi
-    if grep -Eq 'sequence gaps|video_frame_sets_dropped=' "$capture_log"; then
-        echo "Capture log sequence-gap and queue-drop counters: OK"
-    else
+    if grep -Eq 'video_frame_sets_dropped=[1-9][0-9]*([[:space:]]|$)' "$capture_log"; then
+        warn "Capture log reports dropped video frame sets; the recording was kept: $capture_log"
+        loss_reported=1
+    fi
+    if ! grep -Eq 'sequence gaps|video_frame_sets_dropped=' "$capture_log"; then
         warn "Capture log contains no statistics counters; inspect it before accepting the run."
+    elif (( ! loss_reported )); then
+        echo "Capture log sequence-gap and queue-drop counters: OK"
     fi
 }
 
@@ -752,7 +756,7 @@ command_verify_impl() {
     echo "Stereo elementary-stream profile (codec,width,height,ffprobe_rate): $left_signature"
     echo "Decoded frames: ColorLeft=$left_frames ColorRight=$right_frames"
     if [[ "$left_frames" != "$right_frames" ]]; then
-        warn "Stereo decoded counts differ at their initial IDR boundaries; per-stream MCAP counts and cadence must still pass."
+        warn "Stereo decoded counts differ at IDR boundaries (epoch start or after a video gap); per-stream MCAP counts and cadence must still pass."
     fi
     verify_mcap_video_timing \
         "$mcap" "$left_frames" "$right_frames" "$requested_profile_manifest"

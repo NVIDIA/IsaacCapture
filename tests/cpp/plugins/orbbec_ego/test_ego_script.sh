@@ -400,6 +400,20 @@ def _diagnostic(timestamp):
     return bytes(data)
 
 
+def _capture_summary(timestamp, health, dropped_events, dropped_video_frame_sets):
+    data, table = _record([4, 0, 8, 16, 20], 24, timestamp)
+    struct.pack_into("<qB", data, table + 8, timestamp, 2)
+    uid = len(data)
+    data.extend(struct.pack("<I", 3) + b"ego\0")
+    struct.pack_into("<I", data, table + 4, uid - (table + 4))
+    vtable = len(data)
+    data.extend(struct.pack("<8H", 16, 24, 4, 0, 0, 0, 8, 16))
+    payload = len(data)
+    data.extend(struct.pack("<iB3xQQ", payload - vtable, health, dropped_events, dropped_video_frame_sets))
+    struct.pack_into("<I", data, table + 20, payload - (table + 20))
+    return bytes(data)
+
+
 def calibration_value(scenario="valid"):
     camera = {
         "width": 1600, "height": 1300, "fx": 500.25, "fy": 501.5,
@@ -505,6 +519,8 @@ class _Reader:
         video_period = 16_666_667 if scenario == "bad_video_cadence" else 33_333_333
         video_fps = 60 if scenario == "bad_video_profile" else 30
         for frame_index in range(31):
+            if scenario == "video_gap" and 10 <= frame_index <= 12:
+                continue
             capture_epoch = 1 if scenario in ("reconnect", "calibration_missing_epoch") and frame_index >= 15 else 0
             sequence = frame_index - 15 if capture_epoch else frame_index
             timestamp = base + sequence * video_period
@@ -522,12 +538,15 @@ class _Reader:
             yield (
                 SimpleNamespace(name="core.OrbbecEgoDeviceStateRecord"),
                 SimpleNamespace(topic="orbbec_ego_device/DeviceState"),
-                SimpleNamespace(data=_diagnostic(base), log_time=base),
+                SimpleNamespace(
+                    data=_capture_summary(base, *self.fixture["summary"]) if "summary" in self.fixture else _diagnostic(base),
+                    log_time=base,
+                ),
             )
         else:
             yield from self._message("orbbec_ego_device/DeviceState", b"fixture", base)
 
-        if scenario in ("valid", "empty_imu", "bad_imu_cadence") or (scenario.startswith("calibration_") and scenario != "calibration_missing_epoch"):
+        if scenario in ("valid", "video_gap", "empty_imu", "bad_imu_cadence") or (scenario.startswith("calibration_") and scenario != "calibration_missing_epoch"):
             sample_index = 0
             sample_period = 2_000_000 if scenario == "bad_imu_cadence" else 1_000_000
             for sequence in range(40):
@@ -554,14 +573,14 @@ PY
 
 cat > "$AUX_VERIFY_BIN/ffmpeg" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' 'frame=31' 'progress=end'
+printf '%s\n' "frame=${AUX_DECODED_FRAMES:-31}" 'progress=end'
 exit 0
 EOF
 cat > "$AUX_VERIFY_BIN/ffprobe" <<'EOF'
 #!/usr/bin/env bash
 for argument in "$@"; do
     if [[ "$argument" == "-count_frames" ]]; then
-        echo 31
+        echo "${AUX_DECODED_FRAMES:-31}"
         exit 0
     fi
 done
@@ -612,6 +631,43 @@ CALIBRATION_OPTIONAL_RUN="$TMPDIR_TEST/calibration_missing"
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$CALIBRATION_OPTIONAL_RUN" >/dev/null 2>&1
 grep -F 'missing=gyro_to_left' "$CALIBRATION_OPTIONAL_RUN/verification_report.txt" >/dev/null
+
+# Video loss is reported and the run passes; metadata loss and incomplete capture still fail.
+GAP_RUN="$TMPDIR_TEST/video_gap"
+make_aux_verify_run "$GAP_RUN" video_gap
+printf '%s\n' \
+    '  ColorLeft: 28 frames, 1 bytes, 3 sequence gaps' \
+    '  ColorRight: 28 frames, 1 bytes, 3 sequence gaps' \
+    '  IMU: accel=1000 gyro=1000 samples; queue_peak=1 dropped=0 video_frame_sets_dropped=2' \
+    > "$GAP_RUN/logs/capture.log"
+AUX_DECODED_FRAMES=28 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$GAP_RUN" --expect-imu >/dev/null 2>&1
+grep -F 'raw_device_fps=30.000' "$GAP_RUN/verification_report.txt" >/dev/null
+grep -F '3 frames missing across 1 sequence gaps' "$GAP_RUN/verification_report.txt" >/dev/null
+grep -F 'video sequence gaps; the recording was kept' "$GAP_RUN/verification_report.txt" >/dev/null
+grep -F 'dropped video frame sets; the recording was kept' "$GAP_RUN/verification_report.txt" >/dev/null
+METADATA_LOSS_RUN="$TMPDIR_TEST/metadata_loss"
+make_aux_verify_run "$METADATA_LOSS_RUN" valid
+sed -i 's/ dropped=0 / dropped=1 /' "$METADATA_LOSS_RUN/logs/capture.log"
+expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$METADATA_LOSS_RUN" --expect-imu
+grep -F 'dropped metadata events' "$METADATA_LOSS_RUN/verification_report.failed.txt" >/dev/null
+SUMMARY_RUN="$TMPDIR_TEST/summary_video_loss"
+make_aux_verify_run "$SUMMARY_RUN" valid
+printf '{"scenario":"valid","diagnostics":true,"summary":[1,0,3]}\n' > "$SUMMARY_RUN/metadata.mcap"
+PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$SUMMARY_RUN" --expect-imu >/dev/null 2>&1
+grep -F 'capture summary reports 3 dropped video frame sets' "$SUMMARY_RUN/verification_report.txt" >/dev/null
+for summary_case in 'incomplete|[2,0,0]|reports incomplete capture' \
+        'metadata|[0,1,0]|reports dropped metadata events'; do
+    IFS='|' read -r name summary message <<< "$summary_case"
+    run="$TMPDIR_TEST/summary_$name"
+    make_aux_verify_run "$run" valid
+    printf '{"scenario":"valid","diagnostics":true,"summary":%s}\n' "$summary" > "$run/metadata.mcap"
+    expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+        "$SCRIPT" verify "$run" --expect-imu
+    grep -F "$message" "$run/verification_report.failed.txt" >/dev/null
+done
 
 FINALIZE_PLUGIN="$TMPDIR_TEST/finalize_plugin"
 cat > "$FINALIZE_PLUGIN" <<'PY'

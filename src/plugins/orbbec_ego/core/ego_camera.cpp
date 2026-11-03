@@ -591,7 +591,6 @@ public:
                                     readiness->error = "video callback queue filled before capture became ready";
                                 }
                                 readiness->wake.notify_one();
-                                set_async_error("Ego video callback queue is full; capture stopped to avoid silent loss");
                                 return;
                             }
                             video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
@@ -862,28 +861,26 @@ public:
     void start_recovered_video(const std::shared_ptr<ob::Config>& pipeline_config)
     {
         pipeline_ = std::make_unique<ob::Pipeline>(device_);
-        pipeline_->start(
-            pipeline_config,
-            [this](std::shared_ptr<ob::FrameSet> frame_set)
-            {
-                if (!frame_set || !accepting_callbacks_.load(std::memory_order_acquire) ||
-                    !capture_active_.load(std::memory_order_acquire))
-                {
-                    return;
-                }
-                const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
-                {
-                    std::lock_guard<std::mutex> lock(video_queue_mutex_);
-                    if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
-                    {
-                        ++auxiliary_stats_.dropped_video_frame_sets;
-                        set_async_error("Ego video callback queue is full; capture stopped to avoid silent loss");
-                        return;
-                    }
-                    video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
-                }
-                video_queue_cv_.notify_one();
-            });
+        pipeline_->start(pipeline_config,
+                         [this](std::shared_ptr<ob::FrameSet> frame_set)
+                         {
+                             if (!frame_set || !accepting_callbacks_.load(std::memory_order_acquire) ||
+                                 !capture_active_.load(std::memory_order_acquire))
+                             {
+                                 return;
+                             }
+                             const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
+                             {
+                                 std::lock_guard<std::mutex> lock(video_queue_mutex_);
+                                 if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
+                                 {
+                                     ++auxiliary_stats_.dropped_video_frame_sets;
+                                     return;
+                                 }
+                                 video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
+                             }
+                             video_queue_cv_.notify_one();
+                         });
         video_pipeline_started_ = true;
     }
 
@@ -1438,12 +1435,13 @@ public:
         };
         finalize("video drain", [this] { drain_video_frames(false); });
         finalize("media sidecar close", [this] { sink_->close_media(); });
+        // Video loss is reported, not fatal; only unfinished or unwritable output leaves the MCAP partial.
         for (const auto& [stream, stats] : stats_)
         {
             if (stats.sequence_gaps != 0)
             {
-                remember_error("Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream)) + " recorded " +
-                               std::to_string(stats.sequence_gaps) + " sequence gaps");
+                detail::log_warning() << "Ego " << core::EnumNameOrbbecEgoCameraStream(stream) << " recorded "
+                                      << stats.sequence_gaps << " sequence gaps";
             }
         }
         finalize("IMU flush",
@@ -1459,9 +1457,7 @@ public:
             dropped_video_frame_sets = auxiliary_stats_.dropped_video_frame_sets;
         }
         if (dropped_video_frame_sets != 0)
-        {
-            remember_error("Ego capture dropped " + std::to_string(dropped_video_frame_sets) + " video frame sets");
-        }
+            detail::log_warning() << "Ego capture dropped " << dropped_video_frame_sets << " video frame sets";
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             if (!async_error_.empty())
@@ -1650,14 +1646,31 @@ public:
     void drain_video_frames(bool wait_for_frame = true)
     {
         std::deque<std::pair<std::shared_ptr<ob::FrameSet>, int64_t>> pending;
+        uint64_t dropped = 0;
         {
             std::unique_lock<std::mutex> lock(video_queue_mutex_);
             if (wait_for_frame && video_frame_sets_.empty())
                 video_queue_cv_.wait_for(lock, std::chrono::milliseconds(20));
             pending.swap(video_frame_sets_);
+            dropped = auxiliary_stats_.dropped_video_frame_sets;
         }
+        report_dropped_video_frame_sets(dropped);
         for (const auto& [frame_set, arrival_time_local_common_clock_ns] : pending)
             process_frame_set(frame_set, arrival_time_local_common_clock_ns);
+    }
+
+    // Overflow drops whole frame sets for as long as the host lags, so warn at most every five seconds.
+    void report_dropped_video_frame_sets(uint64_t dropped)
+    {
+        if (dropped == reported_dropped_video_frame_sets_)
+            return;
+        const int64_t now = core::os_monotonic_now_ns();
+        if (reported_dropped_video_frame_sets_ != 0 && now - last_drop_warning_ns_ < 5'000'000'000)
+            return;
+        detail::log_warning() << "Ego video callback queue was full; " << dropped - reported_dropped_video_frame_sets_
+                              << " more video frame sets lost (" << dropped << " total); recording continues";
+        reported_dropped_video_frame_sets_ = dropped;
+        last_drop_warning_ns_ = now;
     }
 
     void process_frame_set(const std::shared_ptr<ob::FrameSet>& frame_set, int64_t arrival_time_local_common_clock_ns)
@@ -1719,7 +1732,13 @@ public:
             sink_->on_frame(captured, accepted_frame);
 
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number > stats.last_sequence + 1)
-                stats.sequence_gaps += captured.metadata.sequence_number - stats.last_sequence - 1;
+            {
+                const uint64_t missing = captured.metadata.sequence_number - stats.last_sequence - 1;
+                stats.sequence_gaps += missing;
+                detail::log_warning() << "Ego " << core::EnumNameOrbbecEgoCameraStream(stream.camera)
+                                      << " sequence gap: previous=" << stats.last_sequence
+                                      << " current=" << captured.metadata.sequence_number << " missing=" << missing;
+            }
             stats.frame_count++;
             stats.epoch_frame_count++;
             stats.byte_count += captured.encoded_data.size();
@@ -2157,15 +2176,15 @@ public:
             summary.queue_capacity = static_cast<uint32_t>(kMaxQueuedEvents);
             summary.queue_peak = static_cast<uint32_t>(auxiliary_stats_.publish_queue_peak);
             summary.dropped_events = auxiliary_stats_.dropped_events;
-            if (!async_error_.empty() || summary.dropped_events != 0 || dropped_video_frame_sets != 0)
+            if (!async_error_.empty() || summary.dropped_events != 0)
             {
                 summary.capture_health = core::OrbbecEgoCaptureHealth_Incomplete;
-                if (!async_error_.empty())
-                    summary.reason = async_error_;
-                else if (summary.dropped_events != 0)
-                    summary.reason = "dropped metadata event";
-                else
-                    summary.reason = "dropped video frame set";
+                summary.reason = !async_error_.empty() ? async_error_ : "dropped metadata event";
+            }
+            else if (dropped_video_frame_sets != 0)
+            {
+                summary.capture_health = core::OrbbecEgoCaptureHealth_Warning;
+                summary.reason = "dropped video frame set";
             }
             else if (events_.size() >= kMaxQueuedEvents * 85 / 100)
             {
@@ -2212,6 +2231,8 @@ private:
     std::vector<PropertySetting> original_properties_;
     std::vector<PropertySetting> requested_controls_;
     AuxiliaryStats auxiliary_stats_;
+    uint64_t reported_dropped_video_frame_sets_ = 0;
+    int64_t last_drop_warning_ns_ = 0;
     PendingImu accel_pending_;
     PendingImu gyro_pending_;
     mutable std::mutex queue_mutex_;

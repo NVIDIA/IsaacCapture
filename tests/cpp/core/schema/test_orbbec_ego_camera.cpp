@@ -131,7 +131,7 @@ TEST_CASE("EGO diagnostic events preserve typed payloads and optional zero", "[u
     SECTION("final summary keeps cumulative losses")
     {
         core::OrbbecEgoCaptureSummaryT summary;
-        summary.capture_health = core::OrbbecEgoCaptureHealth_Incomplete;
+        summary.capture_health = core::OrbbecEgoCaptureHealth_Warning;
         summary.reason = "dropped video";
         summary.queue_capacity = 4096;
         summary.queue_peak = 99;
