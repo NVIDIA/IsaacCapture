@@ -109,6 +109,6 @@ happens when the receiver restarts.
 ## What to record when you run it
 
 The rig's `--list-modes` output, the chosen device and mode for each stream, the identity, orientation and color check
-from step 4, the sustained frame rate the receiver logs, and whether `capture-server` delivers frames from both
-cameras to a client. HEVC dependency ordering and bounded backpressure are the sender's and receiver's own tests; a
+from step 4, the sustained frame rate the receiver logs, and whether `capture-server` delivers frames from every
+camera you kept to a client. HEVC dependency ordering and bounded backpressure are the sender's and receiver's own tests; a
 cable pull, a sender restart and a receiver restart are worth exercising once on the rig.
