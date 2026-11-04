@@ -81,14 +81,23 @@ In a second terminal, check each camera before involving the server:
 .venv/bin/python cuda_ipc_consumer/consumer.py --socket /tmp/isaac-camera-streamer.sock
 ```
 
-Confirm for `cam0` and `cam1`: which physical camera it is, the picture's orientation and colors, the dimensions, and
-a steady frame rate. Rename the streams to the cameras' roles in the profile once that is established.
+Confirm, for each stream left in the profile (`cam0`, and `cam1` if you kept it): which physical camera it is, the
+picture's orientation and colors, the dimensions, and a steady frame rate. Rename the streams to the cameras' roles in
+the profile once that is established.
 
 ## 5. PC: serve them to clients
+
+One camera, for the first run:
 
 ```bash
 cd ~/IsaacCapture/examples/egocap
 uv sync --extra gmsl
+uv run capture-server --gmsl-ipc /tmp/isaac-camera-streamer.sock --gmsl-camera 'head=cam0'
+```
+
+Both cameras, once the profile keeps `cam1` too:
+
+```bash
 uv run capture-server --gmsl-ipc /tmp/isaac-camera-streamer.sock \
     --gmsl-camera 'left=cam0' --gmsl-camera 'right=cam1'
 ```
