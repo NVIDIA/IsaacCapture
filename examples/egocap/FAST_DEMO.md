@@ -11,6 +11,9 @@ H.264 crosses SSH into a file on the **laptop**, where `capture-server` decodes 
 serves JPEG to clients. The full explanation and limits are in
 [`capture_server/sensing_sipl/README.md`](capture_server/sensing_sipl/README.md); this page is the run sequence.
 
+**This demo uses SIPL, not Argus.** The producer is `camera_plugin_sensing` (SIPL) on the Orin and the laptop decodes
+with NVDEC through `--sensing-config`. Nothing on this page uses Argus, the camera streamer or the `gmsl_ipc` feed.
+
 **Not yet run on the rig.** Expect to debug the first attempt. Start with one sensor.
 
 ## Before you start
@@ -22,6 +25,28 @@ serves JPEG to clients. The full explanation and limits are in
 | Both | `ssh -o BatchMode=yes ORIN true` works from the laptop with no prompt |
 
 `ORIN` is the Orin's SSH host. Replace `PLATFORM.json`, `CONFIG_NAME` and `MASKS` with the values you capture with.
+
+### SSH setup (laptop, once)
+
+The pump runs `ssh` non-interactively, so key login must work without a prompt.
+
+```sh
+# Skip if ~/.ssh/id_ed25519 exists.
+ssh-keygen -t ed25519
+# Prompts once for the Orin user's password.
+ssh-copy-id -i ~/.ssh/id_ed25519.pub USER@ORIN_IP
+```
+
+Add a short name to `~/.ssh/config` on the laptop, then use `orin` for `ORIN` everywhere below:
+
+```text
+Host orin
+    HostName ORIN_IP
+    User USER
+```
+
+Check: `ssh -o BatchMode=yes orin true` must return silently with exit status 0. A password prompt or
+`Permission denied` means the key is not installed yet.
 
 ## 1. Orin: list sensors (once)
 
