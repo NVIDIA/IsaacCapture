@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=0017f0b3" />
     <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -59,7 +59,7 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="OVXR installation" href="../getting_started/ovxr.html" />
+    <link rel="next" title="Synthetic XR Teleoperation" href="synthetic_xr.html" />
     <link rel="prev" title="Ecosystem" href="../overview/ecosystem.html" />
 
 
@@ -185,7 +185,6 @@
     <option value="../../release/1.6.x/teleop/quick_start.html" >release/1.6.x</option>
     <option value="../../release/1.7.x/teleop/quick_start.html" >release/1.7.x</option>
     <option value="../../v1.6.152/teleop/quick_start.html" >v1.6.152</option>
-    <option value="../../v1.6.150/teleop/quick_start.html" >v1.6.150</option>
     <option value="../../v1.5.175/index.html" >v1.5.175</option>
     <option value="../../v1.4.145/index.html" >v1.4.145</option>
     <option value="../../v1.4.142/index.html" >v1.4.142</option>
@@ -306,7 +305,6 @@
     <option value="../../release/1.6.x/teleop/quick_start.html" >release/1.6.x</option>
     <option value="../../release/1.7.x/teleop/quick_start.html" >release/1.7.x</option>
     <option value="../../v1.6.152/teleop/quick_start.html" >v1.6.152</option>
-    <option value="../../v1.6.150/teleop/quick_start.html" >v1.6.150</option>
     <option value="../../v1.5.175/index.html" >v1.5.175</option>
     <option value="../../v1.4.145/index.html" >v1.4.145</option>
     <option value="../../v1.4.142/index.html" >v1.4.142</option>
@@ -399,6 +397,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
@@ -504,6 +503,7 @@
 <p>This guide walks through running a teleoperation session with an XR headset using CloudXR. By the
 end you will have the retargeting pipeline processing live hand/controller data and printing gripper
 commands to the terminal.</p>
+<p>No headset? See <a class="reference internal" href="synthetic_xr.html"><span class="doc">Synthetic XR Teleoperation</span></a> for desktop controller inputs and examples.</p>
 <nav class="contents local" id="steps">
 <p class="topic-title">Steps</p>
 <ul class="simple">
@@ -562,7 +562,7 @@ and an opt-in to pre-release versions:</p>
 </div>
 <p>The two commands above track the newest 1.x release. To follow this version of the documentation
 (1.8.x) exactly, pin to the series it describes instead:</p>
-<pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.6.0' \
+<pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.8.0' \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
 <p>Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for more details.</p>
@@ -928,11 +928,11 @@ from source</p></li>
       </div>
     </a>
     <a class="right-next"
-       href="../getting_started/ovxr.html"
+       href="synthetic_xr.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">OVXR installation</p>
+        <p class="prev-next-title">Synthetic XR Teleoperation</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1047,7 +1047,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 03, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
       <br/>
     
   </p>

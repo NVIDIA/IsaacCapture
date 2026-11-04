@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=tactile/oglo.html
+
 OGLO Tactile Glove Plugin
 =========================
 

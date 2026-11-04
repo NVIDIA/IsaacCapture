@@ -114,8 +114,9 @@ Collect Teleop Data
          source. If ``./install/plugins/so101_leader/so101_leader_plugin`` does not exist, this
          step has not been completed.
 
-      Install the :ref:`source-build prerequisites <one-time-setup>` first, including
-      ``clang-format-14`` for the Linux format check. Then clone, configure, build, and install:
+      Install the :doc:`source-build prerequisites </development/build_from_source/index>`
+      first, including ``clang-format-14`` for the Linux format check. Then clone, configure,
+      build, and install:
 
       .. code-block:: bash
 

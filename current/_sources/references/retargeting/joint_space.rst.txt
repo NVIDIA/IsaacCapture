@@ -102,17 +102,19 @@ and flatten ``ee_pose`` + ``gripper_command`` into the env's task-space action l
 Run the example
 ---------------
 
-The repo ships ``examples/teleop/python/joint_space_device_example.py``:
+The repo ships ``examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py``:
 
 .. code-block:: console
 
+   $ uv pip install -e ./examples/teleop
+
    # Consumes the so101_leader plugin over OpenXR (source cloudxr.env first):
-   $ python joint_space_device_example.py --launch-plugin --mode joint --frames 8
-   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
+   $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode joint --frames 8
+   $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
 
 ``so101_new_calib.urdf`` is not shipped in this repo. It is ``Simulation/SO101/so101_new_calib.urdf``
 in `TheRobotStudio/SO-ARM100 <https://github.com/TheRobotStudio/SO-ARM100>`_; pass its path to
-``--urdf``. Run the commands from ``examples/teleop/python/``.
+``--urdf``. Run the commands from the repository root.
 
 Validate
 --------

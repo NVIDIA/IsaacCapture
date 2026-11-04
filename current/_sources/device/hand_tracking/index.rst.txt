@@ -5,7 +5,7 @@ Hand tracking
 =============
 
 Hand tracking includes native XR hand poses and vendor devices such as gloves
-and hand exoskeletons. See :doc:`/device/trackers` for the common tracking API.
+and hand exoskeletons. See :doc:`/device/trackers/index` for the common tracking API.
 
 .. toctree::
    :maxdepth: 1
