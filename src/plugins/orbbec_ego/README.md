@@ -223,15 +223,18 @@ MCAP holds structured records and media indices.
 #### TeleopSession: one MCAP with other trackers
 
 Live publication requires the CloudXR runtime (see the
-[CloudXR guide](../../../docs/source/references/cloudxr.rst)) and the built/installed
+[CloudXR guide](https://nvidia.github.io/IsaacCapture/main/references/cloudxr.html)) and the built/installed
 Python package. The plugin waits for the runtime's OpenXR system before it opens
-the camera. Complete the full build and install the wheel first:
+the camera. Complete the full build and install it to the default `install/` prefix:
 
 ```bash
 cmake --build build-orbbec-ego-py3.11 --parallel
-cmake --install build-orbbec-ego-py3.11 --prefix install-orbbec-ego-py3.11
-uv pip install --reinstall install-orbbec-ego-py3.11/wheels/isaaccapture-*.whl
+cmake --install build-orbbec-ego-py3.11
 ```
+
+Then install the `isaaccapture` wheel from `install/wheels/` into a Python 3.11
+environment
+([Build from source, step 4](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package)).
 
 This extends an existing live `TeleopSessionConfig` named `config`, with its
 pipeline and other devices already configured, but no EGO plugin or trackers
@@ -277,7 +280,7 @@ with TeleopSession(config) as session:
 ```
 
 Plugin search paths point to the parent containing plugin folders; for an
-installation, use `install-orbbec-ego-py3.11/plugins`. Keep absolute output paths; the
+installation, use `install/plugins`. Keep absolute output paths; the
 plugin's `plugin.yaml` sets its 15-second shutdown timeout. Collection prefixes and MCAP source names
 serve different purposes; retain these canonical names for the EGO replay example.
 
@@ -473,7 +476,7 @@ synchronized bundle.
 | Warnings about dropped video frame sets or sequence gaps | The recording was kept; frames are missing between the logged sequence numbers. Reduce host CPU/disk load or bitrate if they recur. Gap counts are in `logs/capture.log` and the verification report; dropped frame sets are also in the capture summary. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
-| Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |
+| Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](https://nvidia.github.io/IsaacCapture/main/references/cloudxr.html#cloudxr-form-factor-unavailable). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |
 | TeleopSession cannot publish EGO data | Check the CloudXR environment, installed Python bindings, plugin search path, and collection prefix. |
 | Local recording logs an `NV_CXR_RUNTIME_DIR` error | Expected under PluginManager without the CloudXR environment: device status publication is skipped and recording continues. |
 

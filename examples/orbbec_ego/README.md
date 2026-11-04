@@ -42,7 +42,7 @@ has no records.
 No sample recording ships with the repository, so there is no hardware-free
 run: make a recording on the camera first, then replay it on any machine.
 
-The [EGO device page](../../docs/source/device/cameras/orbbec_ego.rst) covers recording workflows
+The [EGO device page](https://nvidia.github.io/IsaacCapture/main/device/cameras/orbbec_ego.html) covers recording workflows
 and stream selection.
 
 ## Troubleshooting
