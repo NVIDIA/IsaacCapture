@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Two SHW5G cameras, one mono stream each, for the SENSING rig. The file is passed to the Orin sender and the PC
+# receiver with --config, so both sides read the same geometry and port; see README.md in this directory.
+# Unverified until run on the rig: each camera's device index, and both modes. Set every `mode` from the sender's
+# --list-modes output; the placeholder makes the sender refuse to start with a guessed mode. Stream ids are the
+# names the receiver publishes on the local CUDA IPC feed, and egocap's --gmsl-camera maps its camera names to them.
+version: 1
+network:
+  bind: 0.0.0.0
+  port: 5000
+  reconnect_ms: 1000
+runtime:
+  frames: 0
+  kpi: true
+  log_interval_s: 5
+alignment:
+  warmup_frames: 30
+  interval_frames: 30
+streams:
+- id: cam0
+  type: mono
+  cameras:
+  - device: 0
+    mode: SET_FROM_LIST_MODES
+  output:
+    width: 2560
+    height: 1984
+    fps: 30
+    codec: hevc
+    rotation: 0
+    resize_mode: strict
+    bitrate_mbps: 30
+    gop: 30
+  receiver:
+    output_format: nv12
+    ring_depth: 6
+    ipc:
+      mono: cam0
+- id: cam1
+  type: mono
+  cameras:
+  - device: 1
+    mode: SET_FROM_LIST_MODES
+  output:
+    width: 2560
+    height: 1984
+    fps: 30
+    codec: hevc
+    rotation: 0
+    resize_mode: strict
+    bitrate_mbps: 30
+    gop: 30
+  receiver:
+    output_format: nv12
+    ring_depth: 6
+    ipc:
+      mono: cam1
+receiver:
+  host: 127.0.0.1
+  gpu_id: 0
+  max_record_bytes: 268435456
+  stats_log_interval_s: 5
+  receive_fps_warning_threshold: 24.0
+  receive_fps_warning_interval_s: 10
+ipc:
+  socket_path: /tmp/isaac-camera-streamer.sock
+  owner_name: isaac_camera_streamer
+  queue_size: 64

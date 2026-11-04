@@ -119,6 +119,8 @@ notice is skipped, never served. A protocol 2 publisher still works, with the ol
 which is best-effort because it can only run after the copy.
 Frames are copied from the GPU, converted and JPEG-encoded on the PC, so the browser protocol is unchanged.
 The server does not start the sender or the receiver, and it reports a camera as failed when its feed stops.
+`capture_server/sensing_argus/README.md` has the Orin-side bring-up for the SENSING rig: a profile for two SHW5G cameras
+(device indices and modes left as placeholders until `--list-modes` has been read on the rig) and the exact commands.
 It does not reconnect inside a session: if the receiver restarts, that session's cameras fail (a required camera
 ends the session) and the next session connects with a fresh handshake and fresh GPU mappings.
 
