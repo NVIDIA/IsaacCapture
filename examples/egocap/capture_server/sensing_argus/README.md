@@ -39,7 +39,8 @@ this output. Optionally look at one sensor locally first (`argus_camera -d 0`, t
 In `shw5g-dual-mono-2560x1984-30.yaml`, set `cameras[].device` to the Argus device of each camera and replace each
 `mode: SET_FROM_LIST_MODES` with the mode index whose resolution and frame rate you want. Change `output` only if the
 chosen mode is not 2560x1984 at 30 fps; keep the native geometry for the first run. Copy the finished file to both
-computers and use its path as `PROFILE_FILE` below.
+computers and use its path as `PROFILE_FILE` below. For a first run with one camera, delete the other stream block:
+the sender opens every stream in the file, so a missing camera would stop it.
 
 ## 3. Orin: send
 
@@ -52,7 +53,21 @@ argus_sender/build/argus_sender --config "$PROFILE_FILE"
 
 `--check-config` validates the file; it does not open the cameras. The sender waits for the receiver before capturing.
 
-## 4. PC: receive, then look at the pictures
+## 4. PC: install once, receive, then look at the pictures
+
+The PC needs Linux, an NVDEC-capable NVIDIA GPU, CUDA development tools, CMake, a C++ compiler and `uv`. Install the
+receiver once, as the camera streamer's "Install the shared host receiver and viewer" section says:
+
+```bash
+cd ~/IsaacCapture/examples/camera_streamer
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python -e '.[receiver,test]'
+cmake -S camera_receiver/codec -B camera_receiver/codec/build \
+  -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+cmake --build camera_receiver/codec/build --parallel 2
+```
+
+Then start the receiver:
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
