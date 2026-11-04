@@ -60,6 +60,8 @@ QUEUE_DEPTH = 2
 _GRACE_FRACTION = 0.5
 #: How long the encoder thread sleeps per wait before re-checking for shutdown.
 _WORKER_WAIT_S = 0.25
+#: How long ``stop`` waits for the encoder worker before it reports the worker as stuck.
+_STOP_JOIN_S = 2.0
 
 
 def decode_to_bgr(pixels: np.ndarray, stream: StreamInfo) -> np.ndarray:
@@ -252,11 +254,18 @@ class Pipeline:
         self._running = False
         with self._cond:
             self._cond.notify_all()
-        worker, self._worker = self._worker, None
+        worker = self._worker
         if worker is not None and worker is not threading.current_thread():
-            # Bounded: the worker checks ``_running`` between waits and between frames; a join that still
-            # times out means a stuck slot copy, which the adapter's own close bound then reports.
-            worker.join(timeout=2.0)
+            # Bounded: the worker checks ``_running`` between waits and between frames.
+            worker.join(timeout=_STOP_JOIN_S)
+            if worker.is_alive():
+                # A worker still inside a slot copy keeps its reference, so it stays findable, and the failure
+                # reaches the adapter's cleanup report instead of looking like a clean stop. The feed defers
+                # unmapping the slots until that copy returns, so this does not leave a dangling mapping.
+                if self._queue is not None:
+                    self._queue.close()
+                raise RuntimeError(f"{self._stream}: encoder worker did not stop within {_STOP_JOIN_S:.1f}s")
+        self._worker = None
         if self._queue is not None:
             self._queue.close()
 

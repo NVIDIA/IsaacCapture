@@ -319,6 +319,10 @@ class FeedClient:
         self._readers: dict[str, SlotReader] = {}
         self._catalog: dict[str, StreamInfo] = {}
         self._locked_reads = False
+        # Slot reads currently inside a reader. ``close`` must not unmap memory a read is still copying from, so
+        # with reads in flight it parks the readers here and the last read to finish closes them.
+        self._reads_in_flight = 0
+        self._parked_readers: dict[str, SlotReader] = {}
         self._latest: dict[str, FrameNotice] = {}
         self._lock = threading.Lock()
         # Woken on every notice and on failure/close so a per-stream encoder can sleep between frames
@@ -440,12 +444,32 @@ class FeedClient:
             if self._failure is not None:
                 raise FeedError(self._failure)
             reader = self._readers.get(stream)
-        if reader is None or self._closed.is_set():
-            raise FeedError("the frame feed is closed")
-        return reader.read(slot, generation)
+            if reader is None or self._closed.is_set():
+                raise FeedError("the frame feed is closed")
+            # Counted under the same lock ``close`` takes, so a close either sees this read or prevents it.
+            self._reads_in_flight += 1
+        try:
+            return reader.read(slot, generation)
+        finally:
+            with self._lock:
+                self._reads_in_flight -= 1
+                parked = self._take_parked_readers()
+            for parked_reader in parked:
+                parked_reader.close()
+
+    def _take_parked_readers(self) -> list[SlotReader]:
+        """The readers ``close`` parked, once no read is in flight any more; the caller closes them (lock held)."""
+        if self._reads_in_flight or not self._parked_readers:
+            return []
+        parked, self._parked_readers = list(self._parked_readers.values()), {}
+        return parked
 
     def close(self) -> None:
-        """Stop the reader, unmap the slots and close the socket; idempotent."""
+        """Stop the reader, unmap the slots and close the socket; idempotent.
+
+        Unmapping waits for any slot read still in progress, which then closes the mappings as it finishes, so a
+        copy can never run against memory this call has already released.
+        """
         self._closed.set()
         # Release anyone blocked in wait_for_newer() so encoder threads can exit promptly.
         with self._changed:
@@ -453,9 +477,14 @@ class FeedClient:
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=2.0)
         self._thread = None
-        for reader in self._readers.values():
+        with self._lock:
+            readers, self._readers = self._readers, {}
+            if self._reads_in_flight:
+                # A copy is still running against these mappings: the last read to finish closes them.
+                self._parked_readers.update(readers)
+                readers = {}
+        for reader in readers.values():
             reader.close()
-        self._readers = {}
         if self._sock is not None:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)

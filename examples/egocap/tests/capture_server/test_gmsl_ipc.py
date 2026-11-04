@@ -986,8 +986,8 @@ def test_receiver_restart_fails_the_old_feed_and_a_new_one_serves_only_new_frame
             new = FeedClient(restarted.socket_path, ("cam0",), slot_mapper=FakeSlotMapper(restarted))
             new.connect()
             try:
-                # A notice from before the restart does not match the restarted publisher's guards.
-                assert new.read_slot("cam0", before.slot, before.slot_generation) is None
+                # Generation is not a restart epoch: a restarted receiver starts its generations over. What keeps
+                # old frames out is that the old client stays failed and every acquisition builds a new client.
                 seq = restarted.publish("cam0")
                 wait_until(lambda: new.latest("cam0") is not None)
                 notice = new.latest("cam0")
@@ -1002,3 +1002,62 @@ def test_receiver_restart_fails_the_old_feed_and_a_new_one_serves_only_new_frame
             restarted.close()
     finally:
         old.close()
+
+
+# -- shutdown while a slot copy is still running -----------------------------------------------------------------
+
+
+class BlockingSlotMapper(FakeSlotMapper):
+    """A mapper whose reads wait for the test, so a copy can be held in flight."""
+
+    def __init__(self, publisher: FakePublisher) -> None:
+        super().__init__(publisher)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def open(self, stream: StreamInfo):
+        inner = super().open(stream)
+        mapper = self
+
+        class Reader:
+            def read(self, slot: int, generation: int):
+                mapper.entered.set()
+                assert mapper.release.wait(5), "the test never released the blocked copy"
+                return inner.read(slot, generation)
+
+            def close(self) -> None:
+                inner.close()
+
+        return Reader()
+
+
+def test_shutdown_never_unmaps_a_slot_while_a_copy_is_still_running(publisher, monkeypatch):
+    monkeypatch.setattr(gmsl_source, "_STOP_JOIN_S", 0.2)
+    mapper = BlockingSlotMapper(publisher)
+    feed = FeedClient(publisher.socket_path, ("cam0",), slot_mapper=mapper)
+    feed.connect()
+    pipeline, _queue = _started_pipeline(feed, "cam0")
+    worker = pipeline._worker
+    try:
+        publisher.publish("cam0")
+        assert mapper.entered.wait(2), "the encoder never started a slot copy"
+
+        # The adapter's own release path: a worker still inside the copy is reported, not forgotten.
+        with pytest.raises(RuntimeError, match="did not stop"):
+            pipeline.__exit__(None, None, None)
+        assert pipeline._worker is worker
+
+        # The feed is closed while that copy is still running: nothing is unmapped, and no new read can start.
+        feed.close()
+        assert mapper.closed == []
+        with pytest.raises(FeedError, match="closed"):
+            feed.read_slot("cam0", 1, 1)
+
+        # Once the copy returns, the mappings are closed exactly once.
+        mapper.release.set()
+        worker.join(timeout=3.0)
+        assert not worker.is_alive()
+        wait_until(lambda: mapper.closed == ["cam0"])
+    finally:
+        mapper.release.set()
+        feed.close()
