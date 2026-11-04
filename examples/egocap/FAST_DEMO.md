@@ -16,6 +16,11 @@ with NVDEC through `--sensing-config`. Nothing on this page uses Argus, the came
 
 **Not yet run on the rig.** Expect to debug the first attempt. Start with one sensor.
 
+**One-command run:** after the SSH setup and the station config below,
+`capture_server/sensing_sipl/run_fast_demo.sh` performs steps 3 to 6 (FIFO, pump, producer, server) and stops them all
+on Ctrl+C. It reads `ORIN`, `FIFO`, `SPOOL`, `PRODUCER` and `STATION` from the environment. The manual steps below
+are the same sequence.
+
 ## Before you start
 
 | Where | Needs |
