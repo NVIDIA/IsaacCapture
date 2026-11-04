@@ -51,13 +51,6 @@ _RELEASE_HELP = {
         "SOMA_wrap_lod1.obj}. Default: the asset snapshot bundled in the image, so no "
         "download is needed. Pass this to use a local copy instead."
     ),
-    "intrinsics_json": (
-        "Shared camera JSON (model, image_width, image_height, "
-        "camera_matrix.matrix_3x3, distortion_coefficients); an example is at the "
-        "end of this help. Use the decoded video's resolution/orientation. "
-        "Default: None (estimate focal length from image dimensions)."
-    ),
-    "dtype": "Inference dtype (default: float32; the examples below use bfloat16)",
     "postprocessing_qc": (
         "Run 3D quality control once per complete video and write quality_control.json. "
         "Predictions are preserved even when QC reports drop=true. "
