@@ -158,6 +158,33 @@ def test_jpeg_rejects_wrong_shape():
         encode_rgb_jpeg(np.zeros((4, 4, 4), np.uint8), 80)
 
 
+def test_jpeg_keeps_rgb_channel_order():
+    rgb = np.zeros((16, 16, 3), np.uint8)
+    rgb[...] = RED
+    import cv2
+
+    decoded = cv2.cvtColor(
+        cv2.imdecode(np.frombuffer(encode_rgb_jpeg(rgb, 90), np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB
+    )
+    assert bool(np.abs(decoded[8, 8].astype(int) - np.array(RED)).max() <= 8)
+
+
+def test_jpeg_reports_an_encoder_failure(monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(cv2, "imencode", lambda *a, **k: (False, None))
+    with pytest.raises(SourceError, match=r"encoder failed for 4x4 at quality 80"):
+        encode_rgb_jpeg(np.zeros((4, 4, 3), np.uint8), 80)
+
+
+def test_jpeg_rejects_an_incomplete_stream(monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(cv2, "imencode", lambda *a, **k: (True, np.frombuffer(b"\xff\xd8 truncated", np.uint8)))
+    with pytest.raises(SourceError, match="incomplete JPEG"):
+        encode_rgb_jpeg(np.zeros((4, 4, 3), np.uint8), 80)
+
+
 def _failing_fallocate(code: int):
     """A stand-in for the C call that fails the way the real one does: returns -1 and sets errno."""
 

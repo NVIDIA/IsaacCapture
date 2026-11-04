@@ -38,6 +38,7 @@ RIG = dict(
     platform_config="/opt/x/p.json",
     config_name="CFG",
     link_masks=("0x0000", "0x1100"),
+    decoder="software",  # tiny fake streams: the CPU decoder keeps these tests machine-independent
 )
 DESCRIPTION = sn.SensingDescription((sn.SensingSensor("L", 1, W, H, 30.0), sn.SensingSensor("R", 0, W, H, 30.0)))
 

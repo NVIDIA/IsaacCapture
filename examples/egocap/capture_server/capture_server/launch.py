@@ -115,7 +115,11 @@ def _sensing_composition(
     rig = SensingRig(config.sensing_rig, tuple(sensors[name].pipeline_id for name in wanted))
     adapters = {
         c.stream_id: SensingAdapter(
-            rig=rig, sensor=sensors[c.name], camera=c, full_range=config.sensing_rig.full_range
+            rig=rig,
+            sensor=sensors[c.name],
+            camera=c,
+            full_range=config.sensing_rig.full_range,
+            decoder=config.sensing_rig.decoder,
         )
         for c in cameras
         if c.name in wanted

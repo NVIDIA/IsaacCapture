@@ -38,7 +38,7 @@ from capture_server import protocol as p
 from ._thread_runner import ThreadRunner
 from .clock import Clock, MonotonicClock
 from .errors import CameraSourceError, SourceError
-from .sensing_h264 import SensingStreamError, SensingStreamReader
+from .sensing_h264 import DECODERS, SensingStreamError, SensingStreamReader
 from .sensing_jpeg import encode_rgb_jpeg
 
 __all__ = [
@@ -97,11 +97,16 @@ class SensingRigConfig:
     # Where per-session stream files live; None prefers /dev/shm. tmpfs is memory, not extra capacity: the files
     # stay bounded only because consumed bytes are reclaimed as they are read (see sensing_h264.py).
     runtime_dir: str | None = None
+    # How the H.264 is decoded: "auto" uses the Jetson's NVDEC hardware decoder when it is reachable and the CPU
+    # otherwise (the choice is logged), "hardware" requires NVDEC, "software" forces the CPU. See sensing_h264.py.
+    decoder: str = "auto"
 
     def __post_init__(self) -> None:
-        """Reject an unknown backend, a missing executable/platform/name, or empty link masks."""
+        """Reject an unknown backend or decoder, a missing executable/platform/name, or empty link masks."""
         if self.expected_backend not in _BACKENDS:
             raise ValueError(f"SensingRigConfig.expected_backend must be one of {_BACKENDS}")
+        if self.decoder not in DECODERS:
+            raise ValueError(f"SensingRigConfig.decoder must be one of {DECODERS}, got {self.decoder!r}")
         if not (self.executable and self.platform_config and self.config_name and self.link_masks):
             raise ValueError("SensingRigConfig needs executable, platform_config, config_name and link_masks")
 
@@ -186,6 +191,7 @@ _RIG_KEYS = {
     "bitrate_bps",
     "full_range",
     "runtime_dir",
+    "decoder",
 }
 _CAMERA_KEYS = {"type", "module_name", "delivery_fps", "jpeg_quality", "required", "sensor_index"}
 
@@ -202,6 +208,7 @@ _RIG_TYPES: dict[str, type] = {
     "bitrate_bps": int,
     "full_range": bool,
     "runtime_dir": str,
+    "decoder": str,
 }
 _CAMERA_TYPES: dict[str, type | tuple[type, ...]] = {
     "type": str,
@@ -597,13 +604,17 @@ class SensingAdapter:
         sensor: SensingSensor,
         camera: p.CameraStreamConfig,
         full_range: bool = False,
+        decoder: str = "software",
         clock: Clock | None = None,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
     ) -> None:
         """Bind one sensor of the shared rig to one accepted camera stream.
 
+        ``decoder`` is the reader's decoder choice (see ``SensingStreamReader``); the server passes the rig's
+        setting, and direct construction defaults to the deterministic CPU decoder.
         The reader is created later, in :meth:`enter`.
         """
+        self._decoder = decoder
         self._rig = rig
         self._sensor = sensor
         self._camera = camera
@@ -658,6 +669,7 @@ class SensingAdapter:
             height=self._sensor.height,
             full_range=self._full_range,
             stop=self._stop,
+            decoder=self._decoder,
         )
         # The file existing is not readiness: attach, then wait for a complete, decodable frame.
         while True:

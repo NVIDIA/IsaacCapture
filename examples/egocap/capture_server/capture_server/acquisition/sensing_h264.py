@@ -10,6 +10,10 @@ decoder per sensor: every complete access unit is decoded IN ORDER (ordinary H.2
 frames, so units cannot be skipped before decoding), and only the newest DECODED frame is kept for delivery. The
 same code serves the real Jetson encoder and the native mock; neither is special-cased.
 
+Decoding runs on the CPU (PyAV) or, where the Jetson's NVDEC engine is reachable, on the hardware decoder in
+``sensing_nvdec`` (``decoder="auto"`` picks hardware when available and says which one it chose). Parsing, the
+overload policy, the newest-frame rule and the YUV->RGB conversion are the same for both.
+
 Everything is blocking and synchronous: run it on one dedicated worker (see ``ThreadRunner``). The parser and
 decoder are PyAV's, created lazily so ordinary OAK-only runs do not load them until a SENSING stream attaches.
 """
@@ -20,6 +24,7 @@ import collections
 import ctypes
 import errno
 import functools
+import logging
 import os
 import re
 import threading
@@ -28,7 +33,16 @@ from typing import Any, Callable
 
 import numpy as np
 
-__all__ = ["SensingStreamError", "SensingStreamReader"]
+from .sensing_nvdec import HardwareDecodeError, HardwareDecoder, hardware_decoder_unavailable_reason
+
+__all__ = ["DECODERS", "SensingStreamError", "SensingStreamReader"]
+
+_log = logging.getLogger("isaaccapture.capture_server.sensing_h264")
+
+DECODERS = ("auto", "hardware", "software")
+# Access-unit bytes the hardware decoder may have queued ahead of it. Beyond this the reader keeps units in its
+# own pending queue, where the overload policy (resume at the newest restart point) can act on them.
+_HW_MAX_INPUT_BYTES = 4 * 1024 * 1024
 
 # Bytes consumed from the file before the already-read prefix is handed back to the filesystem. The producer
 # writes at the encoder bitrate for the whole session, so without this the file grows without bound.
@@ -43,7 +57,9 @@ _MIN_WORK_S = 0.2
 _MAX_UNIT_BYTES = 32 * 1024 * 1024
 # Complete but not yet decoded stream bytes the reader may hold. A decoder that falls this far behind resumes at
 # the newest restart point (an IDR unit carrying its own SPS/PPS; nothing before it is needed), or ends the stream.
-_MAX_PENDING_BYTES = 64 * 1024 * 1024
+# Sized as latency, not memory: at the encoder's default bitrate this is under two seconds of video, so a stalled
+# decoder shows a picture that is at most that stale before it jumps to a restart point.
+_MAX_PENDING_BYTES = 8 * 1024 * 1024
 # A failed stream's file may stay unreclaimed (a failing fallocate) only this far before the producer stops.
 _MAX_UNRECLAIMED_BYTES = 64 * 1024 * 1024
 # Time allowed to read, decode and flush whatever the producer left behind when it ended.
@@ -99,13 +115,25 @@ class SensingStreamReader:
         full_range: bool = False,
         fallocate: Callable[[int, int, int, int], int] | None = None,
         stop: threading.Event | None = None,
+        decoder: str = "software",
+        hardware_command: list[str] | None = None,
     ) -> None:
         """Record the expected geometry and colour range; the file is opened later, in :meth:`connect`.
 
         ``stop`` is set (from any thread) when the stream is being shut down: every wait and loop here checks it
         at least every fraction of a second and ends with :class:`SensingStreamError`, so Stop never queues
         behind a long startup, read or final flush.
+
+        ``decoder`` is ``"software"`` (PyAV on the CPU), ``"hardware"`` (Jetson NVDEC; an error if it is not
+        available) or ``"auto"`` (hardware when available, otherwise software). ``hardware_command`` replaces the
+        hardware decoder's process for tests.
         """
+        if decoder not in DECODERS:
+            raise ValueError(f"decoder must be one of {DECODERS}, got {decoder!r}")
+        self._decoder_choice = decoder
+        self._hardware_command = hardware_command
+        self._hw: HardwareDecoder | None = None
+        self._use_hardware = False
         self._path = path
         self._width, self._height = width, height
         self._full_range = full_range
@@ -163,9 +191,30 @@ class SensingStreamReader:
         import av  # noqa: PLC0415 -- lazy: only a SENSING stream needs the decoder
 
         self._parser = av.CodecContext.create("h264", "r")
-        self._decoder = av.CodecContext.create("h264", "r")
-        # One thread: frame threading delays output by several frames, which a live preview should not pay.
-        self._decoder.thread_count = 1
+        self._use_hardware = self._choose_hardware()
+        if not self._use_hardware:
+            self._decoder = av.CodecContext.create("h264", "r")
+            # One thread: frame threading delays output by several frames, which a live preview should not pay.
+            self._decoder.thread_count = 1
+
+    def _choose_hardware(self) -> bool:
+        """Decide between hardware and software decoding for this stream, and log which one is in use.
+
+        ``"hardware"`` that cannot be honoured is an error, never a quiet downgrade; ``"auto"`` falls back and
+        says why, so a slow preview is traceable to the decoder in use.
+        """
+        if self._decoder_choice == "software":
+            _log.info("SENSING stream %s: decoding on the CPU (PyAV software), as configured", self._path)
+            return False
+        # An injected command stands in for the whole GStreamer stack, so the machine's own capability is moot.
+        reason = None if self._hardware_command is not None else hardware_decoder_unavailable_reason()
+        if reason is None:
+            _log.info("SENSING stream %s: decoding on the Jetson NVDEC hardware decoder", self._path)
+            return True
+        if self._decoder_choice == "hardware":
+            raise SensingStreamError(f"hardware decoding was requested but is unavailable: {reason}")
+        _log.warning("SENSING stream %s: falling back to CPU (PyAV software) decoding: %s", self._path, reason)
+        return False
 
     def _drain_file(self, deadline: float) -> None:
         """Read newly written bytes within this poll's work bounds and queue the complete access units."""
@@ -214,8 +263,12 @@ class SensingStreamReader:
         """Decode queued units in order until none are left or ``deadline`` passes (one unit of progress at least).
 
         A decode that returns nothing is the decoder buffering, not an error; every returned frame is checked
-        and the newest one is kept.
+        and the newest one is kept. With the hardware decoder, "decoding" means handing units to its process,
+        which holds back at most a few MiB before this leaves the rest queued for the overload policy.
         """
+        if self._use_hardware:
+            self._feed_hardware(deadline)
+            return
         while self._pending:
             self._check_stopped()
             packet = self._pending.popleft()
@@ -225,6 +278,46 @@ class SensingStreamReader:
             if time.monotonic() >= deadline:
                 break
 
+    def _start_hardware(self) -> HardwareDecoder:
+        """Start the hardware decoder once the parser knows the stream's size, and check it against the station's.
+
+        The geometry is read from the parsed stream, not from decoded frames, because the hardware decoder's raw
+        output carries no header: a mismatch would otherwise be read as garbage pixels.
+        """
+        if (self._parser.width, self._parser.height) != (self._width, self._height):
+            raise SensingStreamError(
+                f"decoded {self._parser.width}x{self._parser.height}, expected {self._width}x{self._height}"
+            )
+        hw = HardwareDecoder(self._width, self._height, command=self._hardware_command)
+        hw.start()
+        self._hw = hw
+        return hw
+
+    def _feed_hardware(self, deadline: float) -> None:
+        """Hand queued access units to the hardware decoder, in order, until it is saturated or ``deadline``.
+
+        Writes never block: when the decoder's input is full, units stay in ``_pending`` and are tried again on
+        the next poll. A failed or exited decoder surfaces here as :class:`SensingStreamError`.
+        """
+        if not self._pending and self._hw is None:
+            return
+        hw = self._hw or self._start_hardware()
+        try:
+            hw.pump()
+            while self._pending and hw.pending_input_bytes < _HW_MAX_INPUT_BYTES:
+                self._check_stopped()
+                packet = self._pending.popleft()
+                self._pending_bytes -= packet.size
+                hw.write(bytes(packet))
+                if time.monotonic() >= deadline:
+                    break
+            hw.check()
+            if self._pending:
+                # Saturated: give the decoder a moment instead of letting a caller's loop spin on this method.
+                self._wait(_POLL_INTERVAL_S)
+        except HardwareDecodeError as e:
+            raise SensingStreamError(str(e)) from e
+
     def _checked(self, frame: Any) -> Any:
         """The decoded frame, if it has the geometry the station and the producer agreed on."""
         if (frame.width, frame.height) != (self._width, self._height):
@@ -233,9 +326,18 @@ class SensingStreamReader:
             )
         return frame
 
+    def _has_frame(self) -> bool:
+        """Whether a decoded frame is waiting to be delivered."""
+        if self._use_hardware:
+            return self._hw is not None and self._hw.has_frame
+        return self._newest is not None
+
     def _deliver(self) -> tuple[np.ndarray, int] | None:
         """Convert the newest undelivered decoded frame to RGB, or None if there is none."""
-        frame, self._newest = self._newest, None
+        if self._use_hardware:
+            frame = self._take_hardware_frame()
+        else:
+            frame, self._newest = self._newest, None
         if frame is None:
             return None
         selected_ns = time.monotonic_ns()
@@ -245,6 +347,24 @@ class SensingStreamReader:
             format="rgb24", src_colorspace="ITU601", src_color_range="JPEG" if self._full_range else "MPEG"
         ).to_ndarray()
         return rgb, selected_ns
+
+    def _take_hardware_frame(self) -> Any:
+        """The hardware decoder's newest frame as a PyAV ``yuv420p`` frame, or None.
+
+        Building the PyAV frame copies the pixels, so the decoder's buffer is released at once and its output
+        thread can go on; the conversion to RGB then goes through the same call as the software path.
+        """
+        import av  # noqa: PLC0415 -- already loaded by connect(); named here for the call below
+
+        if self._hw is None:
+            return None
+        yuv = self._hw.take_frame()
+        if yuv is None:
+            return None
+        try:
+            return av.VideoFrame.from_ndarray(yuv, format="yuv420p")
+        finally:
+            self._hw.release_frame()
 
     def _reclaim(self) -> None:
         """Hand the consumed prefix back to the filesystem once enough has accumulated; failure is an error.
@@ -285,7 +405,7 @@ class SensingStreamReader:
                 work_deadline = max(deadline, time.monotonic() + _MIN_WORK_S)
                 self._drain_file(work_deadline)
                 self._decode_pending(work_deadline)
-                if self._newest is not None:
+                if self._has_frame():
                     return self._deliver()
                 if time.monotonic() >= deadline:
                     return None
@@ -327,8 +447,7 @@ class SensingStreamReader:
             while self._pending:
                 self._check_finish_budget(far)
                 self._decode_pending(far)
-            for frame in self._decoder.decode(None):  # flush the decoder's delayed output
-                self._newest = self._checked(frame)
+            self._flush_decoder(far)  # the decoder's delayed output
             return self._deliver()
         except SensingStreamError:
             self._fail()
@@ -337,11 +456,42 @@ class SensingStreamReader:
             self._fail()
             raise SensingStreamError(f"{type(e).__name__}: {e}") from e
 
+    def _flush_decoder(self, far: float) -> None:
+        """Drain the decoder's delayed output into the newest-frame slot, within the finish budget ``far``.
+
+        The hardware decoder is flushed by closing its input: it then emits what it still holds and exits, and
+        the output thread ends. A decoder that never saw a unit has nothing to flush.
+        """
+        if not self._use_hardware:
+            for frame in self._decoder.decode(None):
+                self._newest = self._checked(frame)
+            return
+        hw = self._hw
+        if hw is None:
+            return
+        try:
+            # Input still queued must be accepted before the end of stream can be signalled.
+            while not hw.close_input():
+                self._check_finish_budget(far)
+                self._wait(_POLL_INTERVAL_S)
+            while not hw.wait_finished(_POLL_INTERVAL_S):
+                self._check_finish_budget(far)
+            hw.check()
+        except HardwareDecodeError as e:
+            raise SensingStreamError(str(e)) from e
+
     def _fail(self) -> None:
         """Make the reader terminal. The descriptor stays open so :meth:`reclaim_all` can keep reclaiming."""
         self._failed = True
         self._pending.clear()
         self._pending_bytes = 0
+        self._stop_hardware()
+
+    def _stop_hardware(self) -> None:
+        """End the hardware decoder's process, if one is running; it is never needed again once the reader ends."""
+        hw, self._hw = self._hw, None
+        if hw is not None:
+            hw.close()
 
     def reclaim_all(self) -> None:
         """For a stream that has failed: keep handing the file's bytes back to the filesystem, without decoding.
@@ -393,8 +543,9 @@ class SensingStreamReader:
             )
 
     def close(self) -> None:
-        """Close the file; nothing else is held (the producer owns the file's lifetime and directory)."""
+        """Close the file and the hardware decoder process; the producer owns the file itself."""
         self._closed = True
+        self._stop_hardware()
         fd, self._fd = self._fd, None
         if fd is not None:
             os.close(fd)

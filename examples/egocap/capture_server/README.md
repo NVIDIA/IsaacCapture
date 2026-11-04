@@ -86,8 +86,13 @@ status when the device provides them.
 YAML file (`sensing_rig:` plus `cameras:` entries of `type: SENSING_COLOR`) and
 `--sensing-config FILE`; the file format is documented on `load_sensing_station` in
 `capture_server/acquisition/sensing.py`. The server launches the plugin's executable itself, reads each
-sensor's H.264 output file, decodes it on the CPU (every unit in order) and sends the newest decoded frame as a JPEG
+sensor's H.264 output file, decodes it (every unit in order) and sends the newest decoded frame as a JPEG
 (`av`, i.e. PyAV, is a declared dependency; nothing is loaded unless a SENSING stream is used).
+The decoder is `sensing_rig.decoder`: `auto` (default) uses the Jetson NVDEC hardware decoder through GStreamer's
+`nvv4l2decoder` when `/dev/v4l2-nvdec`, `gst-launch-1.0` and that element exist, and otherwise PyAV on the CPU;
+`hardware` fails the stream if NVDEC is unavailable; `software` forces the CPU. Each stream logs which decoder it
+uses (`isaaccapture.capture_server.sensing_h264`). A 2560x1984 stream at 60 fps is beyond one CPU core of software
+decoding (about 30 fps on an Orin core), which shows as a picture that falls further behind; use hardware decode there.
 `--mock` with a SENSING station requires the plugin's MOCK build, whose encoder must write real H.264;
 an older mock encoder wrote placeholder bytes that are not video, which the decoder rejects, so such a
 build shows a degraded camera instead of pictures. With `--sensing-config`, `cameras` accepts only the
