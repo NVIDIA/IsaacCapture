@@ -33,22 +33,25 @@ Depth and infrared capture are not supported.
 Installation
 ------------
 
-On Linux x86_64, install CMake 3.24 or newer and ``uv``, then run from the
-Isaac Capture repository root:
+On Linux x86_64, first install the toolchain and system packages in
+:doc:`/development/build_from_source/index`, for ``install.sh`` and the manual
+build alike. Then run from the Isaac Capture repository root:
 
 .. code-block:: bash
 
    ./src/plugins/orbbec_ego/install.sh
 
-The installer prepares native dependencies, downloads the pinned
+The installer adds the packages EGO itself uses (``ca-certificates``, ``curl``,
+``ffmpeg`` and ``usbutils``), downloads the pinned
 `OrbbecSDK_v2-EGO v2.10.6-EGO-20261019 <https://github.com/orbbec/OrbbecSDK_v2-EGO/releases/tag/v2.10.6-EGO-20261019>`_
 package, verifies its SHA-256, installs udev rules, and builds the plugin.
 General OrbbecSDK v2 packages do not provide the required EGO APIs.
 
 Run the installer as your normal user; it requests elevated privileges for
 system setup when needed. Add ``--preview`` for optional SDL2/FFmpeg preview
-support. To use an extracted EGO SDK, pass ``--sdk-root /path/to/OrbbecSDK``
-or set ``ORBBEC_SDK_ROOT``. Manual setup and build options are documented in
+support, which also installs ``libsdl2-dev``, ``libavcodec-dev``,
+``libavutil-dev`` and ``libswscale-dev``. To use an extracted EGO SDK, pass
+``--sdk-root /path/to/OrbbecSDK`` or set ``ORBBEC_SDK_ROOT``. Manual setup and build options are documented in
 the :code-file:`plugin README <src/plugins/orbbec_ego/README.md>`.
 
 Reconnect the camera after installation, then inspect its profiles and controls:

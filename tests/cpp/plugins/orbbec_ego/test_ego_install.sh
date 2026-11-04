@@ -136,6 +136,9 @@ expect_failure 'positive integer' "$INSTALLER" --jobs 0
 expect_failure 'Only Linux x86_64' env MOCK_ARCH=aarch64 "$INSTALLER"
 expect_failure 'Only Linux x86_64' env MOCK_PLATFORM=Darwin "$INSTALLER"
 expect_failure 'too old' env MOCK_CMAKE_VERSION=3.23.0 "$INSTALLER" --skip-deps --skip-udev
+grep -F 'Prerequisites and One time setup sections' "$TMPDIR_TEST/failure.log" >/dev/null
+# The prerequisite check runs before EGO's packages are installed.
+expect_failure 'too old' env MOCK_CMAKE_VERSION=3.23.0 MOCK_MISSING_DEPS=1 "$INSTALLER" --skip-udev
 [[ ! -s "$MOCK_LOG" ]]
 
 LOCAL_SDK="$TMPDIR_TEST/local SDK"
@@ -159,8 +162,9 @@ cp "$TMPDIR_TEST/original-rules" "$LOCAL_SDK/shared/99-obsensor-libusb.rules"
 : > "$MOCK_LOG"
 env MOCK_MISSING_DEPS=1 "$INSTALLER" --sdk-root "$LOCAL_SDK" --container --preview > "$TMPDIR_TEST/container.log"
 grep -F 'apt-get update' "$MOCK_LOG" >/dev/null
-grep -F 'apt-get install -y build-essential' "$MOCK_LOG" >/dev/null
-grep -F 'libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev' "$MOCK_LOG" >/dev/null
+# Exactly EGO's packages; the source-build prerequisites are left to the documented setup.
+grep -Fx 'apt-get install -y ca-certificates curl ffmpeg usbutils libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev' \
+    "$MOCK_LOG" >/dev/null
 grep -F 'Container: skipping host udev setup' "$TMPDIR_TEST/container.log" >/dev/null
 grep -F 'host for EGO USB 2bc5:1201, then reconnect' "$TMPDIR_TEST/container.log" >/dev/null
 if grep -Eq '^install |^udevadm |^sudo .*orbbec_ego.sh|^curl ' "$MOCK_LOG"; then

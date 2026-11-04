@@ -18,20 +18,26 @@ die() {
     exit 1
 }
 
+missing_prerequisite() {
+    die "$1 First install the source-build prerequisites from the Prerequisites and One time setup sections of $SOURCE_ROOT/docs/source/development/build_from_source/index.rst, then rerun this command."
+}
+
 usage() {
     cat <<'EOF'
 Usage: ./src/plugins/orbbec_ego/install.sh [options]
 
-Install native build dependencies, fetch the pinned Linux x86_64 EGO SDK,
+Install the system packages EGO adds, fetch the pinned Linux x86_64 EGO SDK,
 install host udev rules, and build the EGO plugin as the invoking user.
-Requires uv and CMake 3.24 or newer. Run from a source checkout, without sudo;
-only missing system packages and host udev setup request sudo.
+First install the source-build prerequisites from the Prerequisites and
+One time setup sections of docs/source/development/build_from_source/index.rst.
+Run from a source checkout, without sudo; only missing system packages and
+host udev setup request sudo.
 
 Options:
   --sdk-root PATH       Use an extracted SDK instead of downloading it.
                         ORBBEC_SDK_ROOT also selects a local SDK.
   --container           Skip host udev setup (also detected automatically).
-  --skip-deps           Use already installed system dependencies.
+  --skip-deps           Skip installing the system packages EGO adds.
   --skip-udev           Keep existing host udev configuration.
   --preset NAME         Python build preset: py3.11 (default), py3.12, py3.13.
   --jobs N              Number of parallel build jobs.
@@ -94,19 +100,21 @@ run_as_root() {
     fi
 }
 
+command -v uv >/dev/null 2>&1 || missing_prerequisite "uv is not installed."
+command -v cmake >/dev/null 2>&1 || missing_prerequisite "CMake is not installed."
+cmake_version="$(cmake --version | awk 'NR == 1 {print $3}')"
+[[ "$(printf '%s\n%s\n' 3.24 "$cmake_version" | sort -V | head -n 1)" == 3.24 ]] \
+    || missing_prerequisite "CMake $cmake_version is too old; the source build needs CMake 3.24 or newer."
+
+# Only what EGO adds to the source-build prerequisites: the SDK download, ffmpeg/ffprobe for
+# verify, and lsusb for doctor.
+packages=(ca-certificates curl ffmpeg usbutils)
+if (( preview )); then
+    packages+=(libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev)
+fi
 if (( !skip_deps )); then
     command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1 \
-        || die "Automatic dependency installation requires apt-get; install the documented dependencies and use --skip-deps."
-    packages=(
-        build-essential ca-certificates cmake ccache clang-format-14 curl git
-        patchelf pkg-config libudev-dev libusb-1.0-0-dev ffmpeg jq usbutils
-        glslang-tools libegl-dev libvulkan-dev
-        libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev
-        libxinerama-dev libxkbcommon-dev libxrandr-dev wayland-protocols
-    )
-    if (( preview )); then
-        packages+=(libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev)
-    fi
+        || die "Installing EGO's system packages requires apt-get; install ${packages[*]} yourself and use --skip-deps."
     missing=()
     for package in "${packages[@]}"; do
         if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fq 'install ok installed'; then
@@ -118,15 +126,9 @@ if (( !skip_deps )); then
         run_as_root apt-get update
         run_as_root apt-get install -y "${missing[@]}"
     else
-        echo "==> System dependencies are already installed."
+        echo "==> EGO's system packages are already installed."
     fi
 fi
-
-command -v uv >/dev/null 2>&1 || die "Install uv, a prerequisite for the Isaac Capture source build, then rerun this command."
-command -v cmake >/dev/null 2>&1 || die "Install CMake 3.24 or newer, then rerun this command."
-cmake_version="$(cmake --version | awk 'NR == 1 {print $3}')"
-[[ "$(printf '%s\n%s\n' 3.24 "$cmake_version" | sort -V | head -n 1)" == 3.24 ]] \
-    || die "CMake $cmake_version is too old; install CMake 3.24 or newer."
 
 validate_sdk() {
     local root="$1" path

@@ -25,16 +25,16 @@ The plugin does not provide depth, IR, D2C, point clouds, or YUYV streams.
 
 ### One-command Installation
 
-On Linux x86_64, install CMake 3.24 or newer and `uv`, then run from the
-Isaac Capture repository root:
+On Linux x86_64, complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+first, then run from the Isaac Capture repository root:
 
 ```bash
 ./src/plugins/orbbec_ego/install.sh
 ```
 
-The installer installs native build/media dependencies, downloads the pinned
-EGO SDK below, verifies its SHA-256, installs the SDK's udev rules, and builds
-the plugin with `orbbec_ego.sh build`. Reconnect the camera after installation.
+The installer installs the packages EGO adds (see Manual Prerequisites),
+downloads the pinned EGO SDK below, verifies its SHA-256, installs the SDK's
+udev rules, and builds the plugin with `orbbec_ego.sh build`. Reconnect the camera after installation.
 Repeated runs reuse the verified download. Add `--preview` for SDL preview.
 
 After reconnecting, inspect the camera with the native executable:
@@ -76,13 +76,14 @@ lib/libOrbbecSDK.so.2
 lib/extensions/
 ```
 
-Install CMake 3.24 or newer, Python 3.11, `uv`, and the normal Isaac Capture
-build dependencies. These packages cover the common native build and media tools:
+Install the toolchain and system packages in the
+[source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html),
+then the packages EGO adds: `curl` for the SDK download, `ffmpeg` for
+`orbbec_ego.sh verify`, and `usbutils` for its `doctor` camera check:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake ccache clang-format-14 patchelf \
-  pkg-config libudev-dev ffmpeg jq usbutils
+sudo apt install -y ca-certificates curl ffmpeg usbutils
 ```
 
 EGO uses USB VID `0x2bc5`, PID `0x1201`. The SDK's

@@ -17,7 +17,8 @@ EGO camera -> orbbec_ego_camera plugin -> metadata.mcap -> replay
 ## Prerequisites
 
 - **To record:** an Orbbec EGO camera and the `orbbec_ego_camera` plugin, built
-  against the EGO SDK release `v2.10.6-EGO-20261019`.
+  against the EGO SDK release `v2.10.6-EGO-20261019`. After the
+  [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html),
   `./src/plugins/orbbec_ego/install.sh` downloads that SDK and builds the plugin;
   a CMake build needs `-DBUILD_PLUGIN_ORBBEC_EGO_CAMERA=ON` and
   `-DORBBEC_SDK_ROOT=<sdk>`. The install tree carries this example only when
