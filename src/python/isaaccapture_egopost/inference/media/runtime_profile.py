@@ -42,9 +42,8 @@ _RELEASE_HELP = {
     "bbox_detector_config": (
         "Bbox detector config YAML. Default: $EGOHAND_DEFAULT_DETECTOR_CONFIG "
         "(/workspace/artifacts/rtdetr.yaml), which uses the bundled RT-DETR weights. "
-        "The configs under inference/hand_detector_2d/configs/ are source files that "
-        "do not point at the bundled weights; to change a setting, edit a copy of the "
-        "default config and pass it here. Supports ${ENV_VAR} substitution."
+        "To change a setting, edit a copy of the default config and pass it here. "
+        "Supports ${ENV_VAR} substitution."
     ),
     "soma_hand_assets": (
         "Directory containing SOMAHand.npz, SOMA_neutral.npz, SOMA_template_rig.usda, "
