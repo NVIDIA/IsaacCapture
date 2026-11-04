@@ -54,6 +54,8 @@ _LOCKED_PROTOCOL_VERSION = 3
 _MAX_PROTOCOL_VERSION = 3
 #: Bound on one JSON line; a frame notice with full receiver metadata is a few KiB, so this is generous.
 _MAX_LINE_BYTES = 1 << 20
+#: Largest generation a slot guard file can hold: the guard stores it as an unsigned 64-bit integer.
+_MAX_GENERATION = (1 << 64) - 1
 
 
 class FeedError(RuntimeError):
@@ -214,6 +216,13 @@ def _require_guards(catalog: dict[str, StreamInfo]) -> None:
                 )
 
 
+def _exact_int(value: Any, name: str) -> int:
+    """``value`` if it is a JSON integer, else ``ValueError``; booleans, floats and numeric strings are not."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    return value
+
+
 def _parse_notice(message: dict[str, Any], catalog: dict[str, StreamInfo], locked: bool) -> FrameNotice:
     """Validate one ``frame`` message into a :class:`FrameNotice`, or raise :class:`FeedError` if it is untrusted.
 
@@ -223,8 +232,13 @@ def _parse_notice(message: dict[str, Any], catalog: dict[str, StreamInfo], locke
     """
     try:
         stream = str(message["stream"])
-        slot = int(message["slot"])
-        generation = int(message["slot_generation"]) if locked else int(message.get("slot_generation", 0))
+        if locked:
+            # ``int()`` would turn 1.5, "1" and true into 1; the guard format has no room for such values.
+            slot = _exact_int(message["slot"], "slot")
+            generation = _exact_int(message["slot_generation"], "slot_generation")
+        else:
+            slot = int(message["slot"])
+            generation = int(message.get("slot_generation", 0))
         seq = int(message["seq"])
         timestamp_ns = int(message["timestamp_ns"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -237,8 +251,10 @@ def _parse_notice(message: dict[str, Any], catalog: dict[str, StreamInfo], locke
             raise FeedError(
                 f"frame notification for {stream!r} names slot {slot}, outside its {len(info.slots)} slots"
             )
-        if generation <= 0:
-            raise FeedError(f"frame notification for {stream!r} has no positive slot_generation ({generation})")
+        if not 0 < generation <= _MAX_GENERATION:
+            raise FeedError(
+                f"frame notification for {stream!r} has a slot_generation outside 1..2**64-1 ({generation})"
+            )
     return FrameNotice(
         stream=stream,
         slot=slot,

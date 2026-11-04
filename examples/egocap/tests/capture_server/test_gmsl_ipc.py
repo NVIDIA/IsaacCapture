@@ -15,6 +15,7 @@ import asyncio
 import base64
 import fcntl
 import json
+import re
 import socket
 import struct
 import threading
@@ -893,8 +894,15 @@ def good_frame(**changes) -> dict:
     ("changes", "reason"),
     [
         ({"slot_generation": None}, "malformed frame notification"),
-        ({"slot_generation": 0}, "no positive slot_generation"),
-        ({"slot_generation": -3}, "no positive slot_generation"),
+        ({"slot_generation": 0}, "outside 1..2**64-1"),
+        ({"slot_generation": -3}, "outside 1..2**64-1"),
+        ({"slot_generation": 2**64}, "outside 1..2**64-1"),
+        ({"slot_generation": 1.5}, "must be an integer"),
+        ({"slot_generation": "1"}, "must be an integer"),
+        ({"slot_generation": True}, "must be an integer"),
+        ({"slot": 1.0}, "must be an integer"),
+        ({"slot": "1"}, "must be an integer"),
+        ({"slot": True}, "must be an integer"),
         ({"slot": RING}, "outside its"),
         ({"slot": -1}, "outside its"),
         ({"slot": "x"}, "malformed frame notification"),
@@ -915,7 +923,7 @@ def test_version_3_feed_fails_on_a_frame_notification_it_cannot_trust(publisher,
             return False
 
         wait_until(failed)
-        with pytest.raises(FeedError, match=reason):
+        with pytest.raises(FeedError, match=re.escape(reason)):
             feed.read_slot("cam0", 1, 1)  # a failed feed never reads its mappings again
     finally:
         feed.close()
@@ -927,6 +935,16 @@ def test_version_3_feed_accepts_a_well_formed_notification(publisher):
         publisher.publish_raw(good_frame())
         wait_until(lambda: feed.latest("cam0") is not None)
         assert feed.latest("cam0").slot_generation == 1
+    finally:
+        feed.close()
+
+
+def test_version_3_feed_accepts_the_largest_generation_the_guard_can_hold(publisher):
+    feed = connected_feed(publisher)
+    try:
+        publisher.publish_raw(good_frame(slot_generation=2**64 - 1))
+        wait_until(lambda: feed.latest("cam0") is not None)
+        assert feed.latest("cam0").slot_generation == 2**64 - 1
     finally:
         feed.close()
 
