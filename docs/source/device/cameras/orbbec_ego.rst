@@ -205,7 +205,8 @@ Troubleshooting
 ---------------
 
 - **No camera or USB access:** install the selected SDK's udev rules, reconnect,
-  and re-run ``doctor`` and ``capabilities``.
+  and run ``./src/plugins/orbbec_ego/orbbec_ego.sh doctor`` and
+  ``capabilities``.
 - **Profile rejected:** choose an exact advertised left/right combination;
   the current plugin rejects H.264/H.265 profiles above 30 FPS.
 - **Partial MCAP:** the recording did not finish successfully. Preserve it and

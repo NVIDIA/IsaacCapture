@@ -409,11 +409,11 @@ video counts/cadence, enabled sensors, and capture health; it reports video
 sequence gaps, dropped video frame sets, and capture epochs that ended before
 their first video frame without failing:
 
-When the active Python has no MCAP reader, `verify` runs these checks through uv.
-
 ```bash
 ./src/plugins/orbbec_ego/orbbec_ego.sh verify "$RUN" --expect-imu
 ```
+
+When the active Python has no MCAP reader, `verify` runs these checks through uv.
 
 To require complete calibration as well, add `--require-calibration` to `record`
 or `verify`:
