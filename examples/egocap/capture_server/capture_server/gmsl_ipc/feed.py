@@ -12,10 +12,12 @@ a broadcast publisher -- several consumers may subscribe at once and a consumer 
 reading is dropped by the publisher, never blocked -- so attaching here never disturbs the
 recorder that may also be consuming the same feed.
 
-Handshake (publisher protocol version 2): the publisher sends ``hello`` (stream catalog without
+Handshake (publisher protocol version 2 or 3): the publisher sends ``hello`` (stream catalog without
 memory handles), the client answers ``subscribe`` with the stream names it wants, and the
 publisher replies ``subscribed`` with those streams' slots (shape, strides, byte size and the
 base64 CUDA IPC handle of each slot) or ``error``. Every later line is a ``frame`` notification.
+Version 3 additionally requires ``"version": 3`` in ``subscribe``, names a ``guard_path`` for every slot
+and obliges readers to hold that guard's shared lock while they copy the slot (see :mod:`.slot_guard`).
 
 Reading the slot bytes is isolated behind :class:`SlotMapper` so the protocol client, the frame
 source and their tests need no GPU: the production mapper (:mod:`.cuda_slots`) opens the IPC
@@ -43,9 +45,13 @@ __all__ = [
     "probe_feed",
 ]
 
-#: Publisher protocol version this client speaks; older publishers sent slots inside ``hello`` and had no
-#: subscription step, a layout this client does not support.
+#: Oldest publisher protocol version this client speaks; older publishers sent slots inside ``hello`` and had
+#: no subscription step, a layout this client does not support.
 _PROTOCOL_VERSION = 2
+#: The first version with per-slot read locks. Its publisher refuses a ``subscribe`` that does not say so.
+_LOCKED_PROTOCOL_VERSION = 3
+#: Newest version this client understands; a newer publisher may change rules a reader must honor.
+_MAX_PROTOCOL_VERSION = 3
 #: Bound on one JSON line; a frame notice with full receiver metadata is a few KiB, so this is generous.
 _MAX_LINE_BYTES = 1 << 20
 
@@ -84,8 +90,12 @@ class FrameNotice:
 class SlotReader(Protocol):
     """Reads the pixel bytes of one stream's ring slots into host memory."""
 
-    def read(self, slot: int) -> np.ndarray:
-        """A host copy of ``slot``'s bytes with the slot's advertised shape (rows x pitch, uint8)."""
+    def read(self, slot: int, generation: int) -> np.ndarray | None:
+        """A host copy of ``slot``'s bytes with the slot's advertised shape (rows x pitch, uint8).
+
+        ``generation`` is the one in the frame notice. A publisher with read locks (protocol v3) may have
+        reused the slot since; then this returns None instead of bytes that belong to a different frame.
+        """
 
     def close(self) -> None:
         """Release whatever the mapping holds; idempotent."""
@@ -140,18 +150,42 @@ def _stream_info(entry: dict[str, Any]) -> StreamInfo:
         raise FeedError(f"malformed stream catalog entry {entry!r}: {exc}") from exc
 
 
+def _hello_version(hello: dict[str, Any]) -> int:
+    """The publisher's protocol version, after checking that this client can read its frames safely.
+
+    Raises :class:`FeedError` for a publisher without subscriptions, one newer than this client understands,
+    or a version-3 publisher that does not offer the slot read locks version 3 is defined by.
+    """
+    try:
+        version = int(hello.get("version", 1))
+    except (TypeError, ValueError) as exc:
+        raise FeedError(f"frame feed sent a malformed protocol version {hello.get('version')!r}") from exc
+    features = set(hello.get("features") or [])
+    # A publisher without subscriptions would never answer ``subscribe``; fail here with a clear reason
+    # instead of hanging on the reply.
+    if version < _PROTOCOL_VERSION and "subscriptions" not in features:
+        raise FeedError(f"frame feed protocol version {hello.get('version')!r} lacks subscriptions")
+    # A newer publisher may add rules a reader must honor to avoid torn frames; refuse rather than guess.
+    if version > _MAX_PROTOCOL_VERSION:
+        raise FeedError(f"frame feed protocol version {version} is newer than this client understands")
+    # Without the read-lock feature a "version 3" publisher would overwrite slots under a reader's copy.
+    if version >= _LOCKED_PROTOCOL_VERSION and "slot_read_locks" not in features:
+        raise FeedError("frame feed protocol 3 publisher does not offer slot read locks")
+    return version
+
+
 def _handshake(line: _LineSocket, streams: tuple[str, ...]) -> tuple[dict[str, Any], dict[str, StreamInfo]]:
     """Run hello/subscribe/subscribed and return the hello message plus the subscribed catalog."""
     hello = line.recv()
     if hello is None or hello.get("type") != "hello":
         raise FeedError(f"expected a hello message from the frame feed, got {hello!r}")
-    # A publisher without subscriptions would never answer ``subscribe``; fail here with a clear reason
-    # instead of hanging on the reply.
-    if int(hello.get("version", 1)) < _PROTOCOL_VERSION and "subscriptions" not in set(
-        hello.get("features") or []
-    ):
-        raise FeedError(f"frame feed protocol version {hello.get('version')!r} lacks subscriptions")
-    line.send({"type": "subscribe", "streams": list(streams)})
+    version = _hello_version(hello)
+    subscribe: dict[str, Any] = {"type": "subscribe", "streams": list(streams)}
+    if version >= _LOCKED_PROTOCOL_VERSION:
+        # The version 3 publisher rejects a subscription that does not state it, so an old client fails loudly
+        # instead of reading slots without the locks.
+        subscribe["version"] = _LOCKED_PROTOCOL_VERSION
+    line.send(subscribe)
     reply = line.recv()
     if reply is None:
         raise FeedError("frame feed closed the connection before confirming the subscription")
@@ -160,7 +194,59 @@ def _handshake(line: _LineSocket, streams: tuple[str, ...]) -> tuple[dict[str, A
     if reply.get("type") != "subscribed":
         raise FeedError(f"expected a subscribed message from the frame feed, got {reply!r}")
     catalog = {info.name: info for info in (_stream_info(e) for e in reply.get("streams", []))}
+    if version >= _LOCKED_PROTOCOL_VERSION:
+        _require_guards(catalog)
     return hello, catalog
+
+
+def _require_guards(catalog: dict[str, StreamInfo]) -> None:
+    """Reject a version 3 catalog whose slots do not all name a guard file.
+
+    Without a guard path the reader would fall back to copying with no lock, which is the version 2 behavior this
+    protocol exists to replace; a publisher that promised read locks and omitted them is incompatible, not lenient.
+    """
+    for info in catalog.values():
+        for index, slot in enumerate(info.slots):
+            guard = slot.get("guard_path")
+            if not isinstance(guard, str) or not guard:
+                raise FeedError(
+                    f"frame feed stream {info.name!r} slot {index} has no guard_path (protocol 3 requires one)"
+                )
+
+
+def _parse_notice(message: dict[str, Any], catalog: dict[str, StreamInfo], locked: bool) -> FrameNotice:
+    """Validate one ``frame`` message into a :class:`FrameNotice`, or raise :class:`FeedError` if it is untrusted.
+
+    With read locks (version 3) the notice must name a subscribed stream, a slot of its ring and a positive
+    generation: anything else would be read without a lock or discarded as stale forever, so the feed fails.
+    Version 2 notices keep the lenient reading they always had.
+    """
+    try:
+        stream = str(message["stream"])
+        slot = int(message["slot"])
+        generation = int(message["slot_generation"]) if locked else int(message.get("slot_generation", 0))
+        seq = int(message["seq"])
+        timestamp_ns = int(message["timestamp_ns"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FeedError(f"malformed frame notification {message!r}: {exc!r}") from exc
+    if locked:
+        info = catalog.get(stream)
+        if info is None:
+            raise FeedError(f"frame notification for unsubscribed stream {stream!r}")
+        if not 0 <= slot < len(info.slots):
+            raise FeedError(
+                f"frame notification for {stream!r} names slot {slot}, outside its {len(info.slots)} slots"
+            )
+        if generation <= 0:
+            raise FeedError(f"frame notification for {stream!r} has no positive slot_generation ({generation})")
+    return FrameNotice(
+        stream=stream,
+        slot=slot,
+        slot_generation=generation,
+        seq=seq,
+        timestamp_ns=timestamp_ns,
+        metadata=dict(message.get("metadata") or {}),
+    )
 
 
 def probe_feed(
@@ -192,6 +278,11 @@ class FeedClient:
     camera adapter polls for the newest frame and skips any it did not get to, so older notices have
     no consumer here. Slot bytes are read on the caller's thread through the stream's
     :class:`SlotReader`.
+
+    There is no reconnect. If the publisher restarts or the socket closes, the feed fails for good: every later
+    poll and slot read raises :class:`FeedError`, the adapter reports the camera failed (a required camera ends the
+    session), and the next acquisition builds a new client with a fresh handshake and fresh mappings. That is what
+    keeps a mapping or notice from before a restart from ever being read as a frame of the restarted publisher.
     """
 
     def __init__(
@@ -211,6 +302,7 @@ class FeedClient:
         self._sock: socket.socket | None = None
         self._readers: dict[str, SlotReader] = {}
         self._catalog: dict[str, StreamInfo] = {}
+        self._locked_reads = False
         self._latest: dict[str, FrameNotice] = {}
         self._lock = threading.Lock()
         # Woken on every notice and on failure/close so a per-stream encoder can sleep between frames
@@ -225,6 +317,15 @@ class FeedClient:
         """The subscribed streams' catalog entries (valid after :meth:`connect`)."""
         return dict(self._catalog)
 
+    @property
+    def locked_reads(self) -> bool:
+        """True when the publisher speaks protocol 3, so :meth:`read_slot` is exact about stale slots.
+
+        With a version 2 publisher there is no lock and no generation to check, and callers must keep their own
+        guard against a slot being overwritten while it is read.
+        """
+        return self._locked_reads
+
     def connect(self) -> None:
         """Connect, subscribe, map every subscribed stream's slots and start the reader thread."""
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -235,7 +336,7 @@ class FeedClient:
             except OSError as exc:
                 raise FeedError(f"cannot connect to the frame feed at {self._socket_path}: {exc}") from exc
             line = _LineSocket(sock)
-            _, catalog = _handshake(line, self._streams)
+            hello, catalog = _handshake(line, self._streams)
             missing = [name for name in self._streams if name not in catalog]
             if missing:
                 raise FeedError(f"frame feed did not confirm stream(s) {missing}")
@@ -247,6 +348,7 @@ class FeedClient:
             raise
         self._sock = sock
         self._catalog = catalog
+        self._locked_reads = _hello_version(hello) >= _LOCKED_PROTOCOL_VERSION
         self._readers = readers
         # The reader thread blocks in recv(); a short timeout lets it notice close() promptly.
         sock.settimeout(0.5)
@@ -267,14 +369,7 @@ class FeedClient:
                     raise FeedError("frame feed closed the connection")
                 if message.get("type") != "frame":
                     continue
-                notice = FrameNotice(
-                    stream=str(message["stream"]),
-                    slot=int(message["slot"]),
-                    slot_generation=int(message.get("slot_generation", 0)),
-                    seq=int(message["seq"]),
-                    timestamp_ns=int(message["timestamp_ns"]),
-                    metadata=dict(message.get("metadata") or {}),
-                )
+                notice = _parse_notice(message, self._catalog, self._locked_reads)
                 with self._changed:
                     self._latest[notice.stream] = notice
                     self._changed.notify_all()
@@ -316,9 +411,22 @@ class FeedClient:
                     return None
                 self._changed.wait(remaining)
 
-    def read_slot(self, stream: str, slot: int) -> np.ndarray:
-        """Host copy of ``slot`` of ``stream`` (rows x pitch, uint8) through the stream's slot reader."""
-        return self._readers[stream].read(slot)
+    def read_slot(self, stream: str, slot: int, generation: int) -> np.ndarray | None:
+        """Host copy of ``slot`` of ``stream`` (rows x pitch, uint8) through the stream's slot reader.
+
+        ``generation`` is the frame notice's. None means the publisher is rewriting the slot or has reused it
+        since the notice, so there is no frame to deliver; that is normal under load, not a failure.
+
+        Raises :class:`FeedError` once the feed has failed or closed, so no mapping from before a publisher
+        restart is ever read: a failed feed is finished, and a new acquisition builds a new client.
+        """
+        with self._lock:
+            if self._failure is not None:
+                raise FeedError(self._failure)
+            reader = self._readers.get(stream)
+        if reader is None or self._closed.is_set():
+            raise FeedError("the frame feed is closed")
+        return reader.read(slot, generation)
 
     def close(self) -> None:
         """Stop the reader, unmap the slots and close the socket; idempotent."""

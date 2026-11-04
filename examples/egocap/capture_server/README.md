@@ -100,6 +100,28 @@ SENSING names it lists (`--camera` is real-acquisition only), so the OAK mock ca
 Measure per-frame cost on the target with `tests/capture_server/bench_sensing_decode.py`
 before choosing `delivery_fps`.
 
+**GMSL cameras from the camera streamer.** Cameras streamed from an Orin by `examples/camera_streamer` (native
+libargus capture, hardware HEVC, AVS1 over TCP) reach the server through the receiver's local CUDA IPC feed. On
+the PC, start the receiver as the camera streamer's README describes; it publishes the feed on a Unix socket
+(`/tmp/isaac-camera-streamer.sock` unless `--socket` says otherwise). Then name each camera after its stream:
+
+```sh
+uv sync --extra gmsl
+uv run capture-server --gmsl-ipc /tmp/isaac-camera-streamer.sock \
+    --gmsl-camera 'head=STREAM_NAME' --gmsl-camera 'left_wrist=STREAM_NAME'
+```
+
+`--gmsl-camera NAME=STREAM[:WIDTHxHEIGHT]` maps the logical name a client requests to a stream the receiver
+publishes. The server probes the feed at startup and refuses unknown streams, so a wrong name fails before any
+session. It speaks feed protocol 3, in which the publisher hands out a guard file per ring slot and a reader holds
+that slot's shared lock while it copies the frame to host memory; a frame whose slot was rewritten after its
+notice is skipped, never served. A protocol 2 publisher still works, with the older sequence-distance guard,
+which is best-effort because it can only run after the copy.
+Frames are copied from the GPU, converted and JPEG-encoded on the PC, so the browser protocol is unchanged.
+The server does not start the sender or the receiver, and it reports a camera as failed when its feed stops.
+It does not reconnect inside a session: if the receiver restarts, that session's cameras fail (a required camera
+ends the session) and the next session connects with a fresh handshake and fresh GPU mappings.
+
 **Failure policy.** A camera that produces no frame for max(5 s, five frame periods)
 counts as failed. A required camera failure ends the session; an optional one reports
 a degraded camera. There is no automatic reconnection: retry by starting a new session.

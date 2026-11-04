@@ -18,20 +18,25 @@ from typing import Any
 import numpy as np
 
 from .feed import FeedError, StreamInfo
+from .slot_guard import read_slot
 
 __all__ = ["CudaSlotMapper", "CudaSlotReader"]
 
 
 class CudaSlotReader:
-    """Mapped CUDA IPC slots of one stream; ``read`` copies a slot to host memory."""
+    """Mapped CUDA IPC slots of one stream; ``read`` copies a slot to host memory under the slot's read lock."""
 
     def __init__(self, stream: StreamInfo, cupy: Any) -> None:
         self._cp = cupy
         self._gpu_id = stream.gpu_id
         self._ptrs: list[int] = []
         self._arrays: list[Any] = []
+        # One guard file per slot with a version 3 publisher; None for a version 2 one, which has no locks.
+        self._guards: list[str | None] = []
         with cupy.cuda.Device(stream.gpu_id):
             for slot in stream.slots:
+                guard = slot.get("guard_path")
+                self._guards.append(str(guard) if guard else None)
                 handle = base64.b64decode(slot["handle"])
                 # Lazy peer access matches the receiver's own consumer example; the handle is owned by the
                 # publisher process and must be closed with ipcCloseMemHandle, never freed.
@@ -49,10 +54,22 @@ class CudaSlotReader:
                     )
                 )
 
-    def read(self, slot: int) -> np.ndarray:
-        """Device-to-host copy of ``slot`` as a uint8 array with the slot's shape."""
+    def read(self, slot: int, generation: int) -> np.ndarray | None:
+        """Device-to-host copy of ``slot`` as a uint8 array with the slot's shape, or None if it is stale.
+
+        With a version 3 publisher the copy runs while holding the slot's shared lock, so the publisher cannot
+        overwrite it mid-copy, and only if the slot still holds ``generation``. ``asnumpy`` blocks until the
+        copy has finished, so the lock is never released while the GPU is still reading.
+        """
+        guard = self._guards[slot]
         with self._cp.cuda.Device(self._gpu_id):
-            return self._cp.asnumpy(self._arrays[slot])
+            if guard is None:
+                # Version 2 publisher: no lock exists, the caller guards against torn frames itself.
+                return self._cp.asnumpy(self._arrays[slot])
+            with read_slot(guard, generation) as current:
+                if not current:
+                    return None
+                return self._cp.asnumpy(self._arrays[slot])
 
     def close(self) -> None:
         """Close every opened IPC handle; idempotent."""

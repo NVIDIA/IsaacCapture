@@ -291,13 +291,18 @@ class Pipeline:
     def _encode(self, notice: FrameNotice) -> EncodedFrame | None:
         """JPEG for one announced frame, or None when its slot was already overwritten by the publisher."""
         assert self._info is not None
-        pixels = self._feed.read_slot(self._stream, notice.slot)
-        # The ring may have wrapped onto this slot while it was being copied (the publisher overwrites a slot
-        # every ``slot_count`` frames); a notice that far behind the newest means the bytes are not this
-        # frame's. Skip it rather than serve a torn image.
-        newest = self._feed.latest(self._stream)
-        if newest is not None and newest.seq - notice.seq >= self._info.slot_count:
+        pixels = self._feed.read_slot(self._stream, notice.slot, notice.slot_generation)
+        if pixels is None:
+            # The publisher is rewriting this slot or has reused it since the notice: the bytes are not this
+            # frame's, and the newer frame's own notice is already on its way.
             return None
+        if not self._feed.locked_reads:
+            # A publisher without slot locks gives no exact answer. The ring may have wrapped onto this slot while
+            # it was being copied (a slot is overwritten every ``slot_count`` frames); a notice that far behind the
+            # newest means the bytes are not this frame's. Skip it rather than serve a torn image.
+            newest = self._feed.latest(self._stream)
+            if newest is not None and newest.seq - notice.seq >= self._info.slot_count:
+                return None
         bgr = decode_to_bgr(pixels, self._info)
         if self._output_size is not None and self._output_size != (bgr.shape[1], bgr.shape[0]):
             bgr = cv2.resize(bgr, self._output_size, interpolation=cv2.INTER_AREA)
