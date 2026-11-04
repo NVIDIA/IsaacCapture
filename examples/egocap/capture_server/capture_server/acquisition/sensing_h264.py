@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from .sensing_nvdec import HardwareDecodeError, HardwareDecoder, hardware_decoder_unavailable_reason
+from .sensing_nvdec import BACKENDS, HardwareDecodeError, HardwareDecoder, hardware_decoder_unavailable_reason
 
 __all__ = ["DECODERS", "SensingStreamError", "SensingStreamReader"]
 
@@ -117,6 +117,8 @@ class SensingStreamReader:
         stop: threading.Event | None = None,
         decoder: str = "software",
         hardware_command: list[str] | None = None,
+        hardware_backend: str = "jetson",
+        start_at_end: bool = False,
     ) -> None:
         """Record the expected geometry and colour range; the file is opened later, in :meth:`connect`.
 
@@ -124,12 +126,21 @@ class SensingStreamReader:
         at least every fraction of a second and ends with :class:`SensingStreamError`, so Stop never queues
         behind a long startup, read or final flush.
 
-        ``decoder`` is ``"software"`` (PyAV on the CPU), ``"hardware"`` (Jetson NVDEC; an error if it is not
-        available) or ``"auto"`` (hardware when available, otherwise software). ``hardware_command`` replaces the
-        hardware decoder's process for tests.
+        ``decoder`` is ``"software"`` (PyAV on the CPU), ``"hardware"`` (NVDEC; an error if it is not available)
+        or ``"auto"`` (hardware when available, otherwise software). ``hardware_backend`` says which NVDEC:
+        ``"jetson"`` (the V4L2 engine) or ``"desktop"`` (a desktop NVIDIA GPU through GStreamer's nvcodec).
+        ``hardware_command`` replaces the hardware decoder's process for tests.
+
+        ``start_at_end`` attaches at the file's current end instead of its start, for a file someone else keeps
+        appending to across sessions: whatever is already there belongs to an earlier session, and its consumed
+        prefix may have been given back to the filesystem as zeroes. Decoding then starts at the next keyframe.
         """
         if decoder not in DECODERS:
             raise ValueError(f"decoder must be one of {DECODERS}, got {decoder!r}")
+        if hardware_backend not in BACKENDS:
+            raise ValueError(f"hardware_backend must be one of {BACKENDS}, got {hardware_backend!r}")
+        self._hardware_backend = hardware_backend
+        self._start_at_end = start_at_end
         self._decoder_choice = decoder
         self._hardware_command = hardware_command
         self._hw: HardwareDecoder | None = None
@@ -186,6 +197,9 @@ class SensingStreamReader:
                 self._wait(_POLL_INTERVAL_S * 4)
             except OSError as e:
                 raise SensingStreamError(f"cannot open {self._path} for reading and reclamation: {e}") from e
+        if self._start_at_end:
+            # Nothing before this point is ours: it is neither read nor handed back, so reclamation starts here.
+            self._offset = self._punched = os.fstat(self._fd).st_size
         if self._fallocate is None:
             self._fallocate = _bind_fallocate()
         import av  # noqa: PLC0415 -- lazy: only a SENSING stream needs the decoder
@@ -207,9 +221,15 @@ class SensingStreamReader:
             _log.info("SENSING stream %s: decoding on the CPU (PyAV software), as configured", self._path)
             return False
         # An injected command stands in for the whole GStreamer stack, so the machine's own capability is moot.
-        reason = None if self._hardware_command is not None else hardware_decoder_unavailable_reason()
+        reason = (
+            None
+            if self._hardware_command is not None
+            else hardware_decoder_unavailable_reason(self._hardware_backend)
+        )
         if reason is None:
-            _log.info("SENSING stream %s: decoding on the Jetson NVDEC hardware decoder", self._path)
+            _log.info(
+                "SENSING stream %s: decoding on the %s NVDEC hardware decoder", self._path, self._hardware_backend
+            )
             return True
         if self._decoder_choice == "hardware":
             raise SensingStreamError(f"hardware decoding was requested but is unavailable: {reason}")
@@ -288,7 +308,9 @@ class SensingStreamReader:
             raise SensingStreamError(
                 f"decoded {self._parser.width}x{self._parser.height}, expected {self._width}x{self._height}"
             )
-        hw = HardwareDecoder(self._width, self._height, command=self._hardware_command)
+        hw = HardwareDecoder(
+            self._width, self._height, command=self._hardware_command, backend=self._hardware_backend
+        )
         hw.start()
         self._hw = hw
         return hw

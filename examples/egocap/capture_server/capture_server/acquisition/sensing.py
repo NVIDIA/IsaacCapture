@@ -15,6 +15,11 @@ and JPEG-encodes the newest decoded frame. No CUDA is touched in this process.
 
 Native configuration is server-owned: a client's Begin selects logical camera names only, never paths,
 masks or arguments.
+
+A rig can also be *external*: the producer runs on another machine and something the operator starts copies each
+sensor's H.264 into a regular local file. The station configuration then lists those sensors and files
+(``sensing_rig.external_sensors``), and this server only tails them: it never spawns, inspects or stops anything
+(see :class:`ExternalSensingRig`).
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ import functools
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -40,10 +46,13 @@ from .clock import Clock, MonotonicClock
 from .errors import CameraSourceError, SourceError
 from .sensing_h264 import DECODERS, SensingStreamError, SensingStreamReader
 from .sensing_jpeg import encode_rgb_jpeg
+from .sensing_nvdec import BACKENDS as HARDWARE_BACKENDS
 
 __all__ = [
+    "ExternalSensingRig",
     "SensingAdapter",
     "SensingDescription",
+    "SensingExternalSensor",
     "SensingRig",
     "SensingRigConfig",
     "SensingSensor",
@@ -78,14 +87,48 @@ _PR_SET_PDEATHSIG = 1
 
 
 @dataclass(frozen=True)
-class SensingRigConfig:
-    """Server-owned settings of the one native producer: which binary, backend, platform and link masks."""
+class SensingExternalSensor:
+    """One sensor of an external rig: what it is and the local file its H.264 stream is appended to.
 
-    executable: str
+    The geometry is stated here because nothing is run to list it. ``spool`` must be a regular file that the
+    operator's transport appends to; it is never a FIFO, because the reader reads it in place and hands consumed
+    bytes back to the filesystem.
+    """
+
+    module_name: str
+    pipeline_id: int
+    width: int
+    height: int
+    fps: float
+    spool: str
+
+    def __post_init__(self) -> None:
+        """Reject an empty name or path, a negative id, or a non-positive size or rate."""
+        if not self.module_name or not self.spool:
+            raise ValueError("SensingExternalSensor needs a module_name and a spool path")
+        if type(self.pipeline_id) is not int or self.pipeline_id < 0:
+            raise ValueError(
+                f"SensingExternalSensor.pipeline_id must be a non-negative integer, got {self.pipeline_id!r}"
+            )
+        if self.width <= 0 or self.height <= 0 or not 0 < self.fps < float("inf"):
+            raise ValueError(
+                f"SensingExternalSensor needs a positive size and rate, got {self.width}x{self.height}@{self.fps}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SensingRigConfig:
+    """Server-owned settings of the SENSING producer: which binary, backend, platform and link masks.
+
+    With ``external`` set the producer is not run by this server and the binary, platform and link masks are not
+    used (and not required): the listed sensors' files are tailed instead.
+    """
+
     expected_backend: str
-    platform_config: str
-    config_name: str
-    link_masks: tuple[str, ...]
+    executable: str = ""
+    platform_config: str = ""
+    config_name: str = ""
+    link_masks: tuple[str, ...] = ()
     gpu_id: int = 0
     nito_dir: str | None = None
     # Encoder settings passed to the producer only when set; otherwise its own defaults apply. The decoder handles
@@ -100,18 +143,38 @@ class SensingRigConfig:
     # How the H.264 is decoded: "auto" uses the Jetson's NVDEC hardware decoder when it is reachable and the CPU
     # otherwise (the choice is logged), "hardware" requires NVDEC, "software" forces the CPU. See sensing_h264.py.
     decoder: str = "auto"
+    # Which NVDEC "auto" and "hardware" mean: "jetson" (the V4L2 engine of an Orin) or "desktop" (a desktop NVIDIA
+    # GPU through GStreamer's nvcodec plugin, for a server that is not on the Jetson).
+    hardware_backend: str = "jetson"
+    # Sensors whose H.264 an operator-run producer and transport append to local files; see the module docstring.
+    external: tuple[SensingExternalSensor, ...] = ()
 
     def __post_init__(self) -> None:
-        """Reject an unknown backend or decoder, a missing executable/platform/name, or empty link masks."""
+        """Reject an unknown backend or decoder; a local rig also needs its executable, platform, name, masks."""
         if self.expected_backend not in _BACKENDS:
             raise ValueError(f"SensingRigConfig.expected_backend must be one of {_BACKENDS}")
         if self.decoder not in DECODERS:
             raise ValueError(f"SensingRigConfig.decoder must be one of {DECODERS}, got {self.decoder!r}")
-        if not (self.executable and self.platform_config and self.config_name and self.link_masks):
+        if self.hardware_backend not in HARDWARE_BACKENDS:
+            raise ValueError(
+                f"SensingRigConfig.hardware_backend must be one of {HARDWARE_BACKENDS}, "
+                f"got {self.hardware_backend!r}"
+            )
+        if self.external:
+            # Two sensors on one pipeline id or one file would tail the same bytes under two names.
+            ids = [s.pipeline_id for s in self.external]
+            spools = [s.spool for s in self.external]
+            if len(set(ids)) != len(ids) or len(set(spools)) != len(spools):
+                raise ValueError(
+                    "SensingRigConfig.external needs a distinct pipeline_id and spool for every sensor"
+                )
+        elif not (self.executable and self.platform_config and self.config_name and self.link_masks):
             raise ValueError("SensingRigConfig needs executable, platform_config, config_name and link_masks")
 
     def base_args(self) -> list[str]:
         """The producer's rig arguments as an argument list (never a shell command)."""
+        if self.external:
+            raise ValueError("an external SENSING rig has no producer of its own to build arguments for")
         args = [
             self.executable,
             f"--platform-config={self.platform_config}",
@@ -192,6 +255,17 @@ _RIG_KEYS = {
     "full_range",
     "runtime_dir",
     "decoder",
+    "hardware_backend",
+    "external_sensors",
+}
+_EXTERNAL_SENSOR_KEYS = {"module_name", "pipeline_id", "width", "height", "fps", "spool"}
+_EXTERNAL_SENSOR_TYPES: dict[str, type | tuple[type, ...]] = {
+    "module_name": str,
+    "pipeline_id": int,
+    "width": int,
+    "height": int,
+    "fps": (int, float),
+    "spool": str,
 }
 _CAMERA_KEYS = {"type", "module_name", "delivery_fps", "jpeg_quality", "required", "sensor_index"}
 
@@ -209,6 +283,7 @@ _RIG_TYPES: dict[str, type] = {
     "full_range": bool,
     "runtime_dir": str,
     "decoder": str,
+    "hardware_backend": str,
 }
 _CAMERA_TYPES: dict[str, type | tuple[type, ...]] = {
     "type": str,
@@ -230,8 +305,27 @@ def _check_types(where: str, mapping: dict, types: dict) -> None:
             raise ValueError(f"{where}.{key} must be {names}, got {type(value).__name__} {value!r}")
 
 
+def _load_external_sensors(path: str, raw: Any) -> tuple[SensingExternalSensor, ...]:
+    """The ``sensing_rig.external_sensors`` list as typed sensors; raises ``ValueError`` on any malformed entry."""
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: sensing_rig.external_sensors must be a list of sensor mappings")
+    sensors = []
+    for index, entry in enumerate(raw):
+        where = f"{path}: sensing_rig.external_sensors[{index}]"
+        if not isinstance(entry, dict) or set(entry) != _EXTERNAL_SENSOR_KEYS:
+            raise ValueError(f"{where} must have exactly the keys {sorted(_EXTERNAL_SENSOR_KEYS)}")
+        _check_types(where, entry, _EXTERNAL_SENSOR_TYPES)
+        try:
+            sensors.append(SensingExternalSensor(**entry))
+        except ValueError as e:
+            raise ValueError(f"{where}: {e}") from e
+    return tuple(sensors)
+
+
 def load_sensing_station(path: str) -> tuple[SensingRigConfig, dict[str, SensingStationCamera]]:
     """Load the station's SENSING rig and cameras from a YAML file; the one configuration entry point.
+
+    ``sensing_rig.external_sensors`` (a list of :class:`SensingExternalSensor` entries) makes the rig external.
 
     Expected shape: ``sensing_rig:`` (see :class:`SensingRigConfig`) and ``cameras:`` mapping logical names
     to ``type: SENSING_COLOR`` entries (see :class:`SensingStationCamera`). Unknown keys, wrongly typed values,
@@ -254,10 +348,11 @@ def load_sensing_station(path: str) -> tuple[SensingRigConfig, dict[str, Sensing
     masks = rig.get("link_masks", [])
     if not isinstance(masks, list) or not all(isinstance(m, str) for m in masks):
         raise ValueError(f"{path}: sensing_rig.link_masks must be a list of quoted strings such as '0x0000'")
-    scalars = {k: v for k, v in rig.items() if k != "link_masks"}
+    scalars = {k: v for k, v in rig.items() if k not in ("link_masks", "external_sensors")}
+    external = _load_external_sensors(path, rig.get("external_sensors", []))
     try:
         _check_types(f"{path}: sensing_rig", scalars, _RIG_TYPES)
-        rig_config = SensingRigConfig(**{**scalars, "link_masks": tuple(masks)})
+        rig_config = SensingRigConfig(**{**scalars, "link_masks": tuple(masks), "external": external})
     except TypeError as e:
         raise ValueError(f"{path}: invalid sensing_rig: {e}") from e
     raw_cameras = data.get("cameras")
@@ -356,8 +451,12 @@ def inspect_rig(
     """Ask the native executable which sensors the configured platform resolves to; blocking and bounded.
 
     Uses the producer's existing ``--list-sensors`` (hardware-free; it never starts capture). Run it off the
-    event loop.
+    event loop. An external rig runs nothing: its sensors are the ones the station configuration lists.
     """
+    if config.external:
+        return SensingDescription(
+            tuple(SensingSensor(s.module_name, s.pipeline_id, s.width, s.height, s.fps) for s in config.external)
+        )
     try:
         done = run(
             config.base_args() + ["--list-sensors"],
@@ -429,6 +528,9 @@ class SensingRig:
     recorded in ``start_error`` for each adapter to report under its own required/optional policy rather
     than ending the attempt here.
     """
+
+    # Its stream files are created fresh for each session, so a reader starts at their beginning.
+    attach_at_end = False
 
     def __init__(
         self,
@@ -587,6 +689,74 @@ class SensingRig:
         return True
 
 
+class ExternalSensingRig:
+    """The SENSING streams of a producer this server does not own: files that something else keeps appending to.
+
+    The operator runs the native producer on the Orin and, for each sensor, a transport that appends its H.264 to a
+    regular local file (a spool); the station configuration names those files. Nothing is spawned, inspected,
+    created or removed here: ``start`` only checks that each spool is a regular file, and ``close`` has nothing to
+    release. A dead transport or producer shows up as a stream that stops advancing, which each adapter's stall
+    rule turns into a camera failure. Readers attach at the end of the file (:attr:`attach_at_end`), because the
+    file outlives sessions and what is already in it belongs to an earlier one.
+    """
+
+    attach_at_end = True
+
+    def __init__(self, config: SensingRigConfig, pipeline_ids: tuple[int, ...]) -> None:
+        """Pick the spool of each requested pipeline from the station's external sensors."""
+        spools = {s.pipeline_id: s.spool for s in config.external}
+        missing = [i for i in pipeline_ids if i not in spools]
+        if missing:
+            raise ValueError(f"no external sensor is configured for pipeline id(s) {missing}")
+        self._spools = {i: spools[i] for i in pipeline_ids}
+        self._abort_reason = ""
+        self.start_error: str | None = None
+        self.cleanup_ok = True
+
+    def stream_path(self, pipeline_id: int) -> str:
+        """The spool file of one selected sensor."""
+        return self._spools[pipeline_id]
+
+    async def start(self) -> None:
+        """Check the spools now, so a missing or wrong-kind file is reported at once, not after the startup wait.
+
+        A problem is recorded in ``start_error`` for each adapter to report under its own required/optional policy,
+        the same contract the local rig has.
+        """
+        problems = []
+        for pipeline_id, path in self._spools.items():
+            try:
+                mode = os.stat(path).st_mode
+            except FileNotFoundError:
+                problems.append(f"{path} does not exist (start the transport for sensor {pipeline_id} first)")
+                continue
+            except OSError as e:
+                problems.append(f"{path}: {e}")
+                continue
+            # A FIFO or device cannot be read in place and reclaimed; only a regular file can.
+            if not stat.S_ISREG(mode):
+                problems.append(f"{path} is not a regular file (the transport must append to a regular file)")
+        if problems:
+            self.start_error = "SENSING spool problem: " + "; ".join(problems)
+
+    def exit_code(self) -> int | None:
+        """Always ``None``: the producer is not this server's process, so it never reports its own exit."""
+        return None
+
+    def diagnostics(self) -> str:
+        """What to look at when a stream stops: the operator's producer and transport, not this server."""
+        reason = f"{self._abort_reason}; " if self._abort_reason else ""
+        return f"{reason}the producer and transport are run by the operator; check them on the Orin and the pump"
+
+    def abort(self, reason: str) -> None:
+        """Record why a stream gave up; there is no process here to stop."""
+        self._abort_reason = self._abort_reason or reason
+
+    async def close(self) -> bool:
+        """Nothing is owned, so there is nothing to release."""
+        return True
+
+
 class SensingAdapter:
     """One SENSING stream: tail its H.264 file, deliver the newest frame as JPEG at the delivery rate.
 
@@ -600,11 +770,12 @@ class SensingAdapter:
     def __init__(
         self,
         *,
-        rig: SensingRig,
+        rig: SensingRig | ExternalSensingRig,
         sensor: SensingSensor,
         camera: p.CameraStreamConfig,
         full_range: bool = False,
         decoder: str = "software",
+        hardware_backend: str = "jetson",
         clock: Clock | None = None,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
     ) -> None:
@@ -615,6 +786,7 @@ class SensingAdapter:
         The reader is created later, in :meth:`enter`.
         """
         self._decoder = decoder
+        self._hardware_backend = hardware_backend
         self._rig = rig
         self._sensor = sensor
         self._camera = camera
@@ -670,6 +842,9 @@ class SensingAdapter:
             full_range=self._full_range,
             stop=self._stop,
             decoder=self._decoder,
+            hardware_backend=self._hardware_backend,
+            # An external rig's file outlives sessions; a local rig's is new, so it is read from its start.
+            start_at_end=getattr(self._rig, "attach_at_end", False),
         )
         # The file existing is not readiness: attach, then wait for a complete, decodable frame.
         while True:

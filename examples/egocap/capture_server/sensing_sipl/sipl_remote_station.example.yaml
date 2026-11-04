@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Station configuration for SENSING cameras whose SIPL producer runs on an Orin while this server runs on a PC.
+# The operator starts the producer and a transport per sensor (see README.md in this directory); this file only
+# names the local files the transports append to and states each sensor's geometry. Pass it with
+# `capture-server --sensing-config sipl_remote_station.example.yaml`.
+#
+# Every value marked SUBSTITUTE is an installation input, not a default:
+#   - width, height and fps: from the Orin's `camera_plugin_sensing ... --list-sensors` for the same platform
+#     config, config name and link masks that the producer is started with.
+#   - pipeline_id: the `sensor=N` of that listing, which is also the `sensor=N` given to `--add-stream`.
+#   - spool: a regular local file on this PC that the matching transport appends to.
+sensing_rig:
+  expected_backend: JETSON      # the producer is the Jetson build running on the Orin
+  decoder: hardware             # fail with a clear error instead of falling back to a CPU decode that cannot keep up
+  hardware_backend: desktop     # NVDEC of this PC's NVIDIA GPU through GStreamer nvcodec, not the Jetson's
+  full_range: false             # SUBSTITUTE: true only if the producer is started with --full-range
+  external_sensors:
+    - module_name: SENSOR_A     # any label; the cameras entry below refers to it
+      pipeline_id: 0            # SUBSTITUTE
+      width: 2560               # SUBSTITUTE
+      height: 1984              # SUBSTITUTE
+      fps: 30                   # SUBSTITUTE
+      spool: /var/tmp/sensing/sensor0.h264   # SUBSTITUTE
+    - module_name: SENSOR_B
+      pipeline_id: 1            # SUBSTITUTE
+      width: 2560               # SUBSTITUTE
+      height: 1984              # SUBSTITUTE
+      fps: 30                   # SUBSTITUTE
+      spool: /var/tmp/sensing/sensor1.h264   # SUBSTITUTE
+
+# The names clients request. Start with one camera: delete the other entry here and in external_sensors, and do not
+# pass its sensor to the producer.
+cameras:
+  cam0:
+    type: SENSING_COLOR
+    module_name: SENSOR_A
+    delivery_fps: 15            # preview cadence; the decoder still reads every frame the pump delivers
+    jpeg_quality: 80
+    required: true
+  cam1:
+    type: SENSING_COLOR
+    module_name: SENSOR_B
+    delivery_fps: 15
+    jpeg_quality: 80
+    required: false

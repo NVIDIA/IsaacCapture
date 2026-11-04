@@ -33,6 +33,7 @@ from . import protocol as p
 from .acquisition import (
     Acquisition,
     DepthAIAdapter,
+    ExternalSensingRig,
     IsaacCaptureAdapter,
     SensingAdapter,
     SensingRig,
@@ -96,7 +97,7 @@ def _tracking_adapter(
 
 def _sensing_composition(
     config: ServerConfig | None, cameras: tuple[p.CameraStreamConfig, ...]
-) -> tuple[SensingRig | None, dict[int, SensingAdapter]]:
+) -> tuple[SensingRig | ExternalSensingRig | None, dict[int, SensingAdapter]]:
     """The shared SENSING rig and one adapter per SENSING-station camera, keyed by stream id.
 
     Identical for mock and real: a SENSING camera always runs the native producer (its MOCK build on
@@ -112,7 +113,13 @@ def _sensing_composition(
         # server's inspection result never arrived: say so instead of rejecting with an empty message.
         raise ValueError("SENSING cameras are requested but the factory has no rig or sensor description")
     sensors = resolve_sensors(config.sensing_description, wanted)
-    rig = SensingRig(config.sensing_rig, tuple(sensors[name].pipeline_id for name in wanted))
+    pipeline_ids = tuple(sensors[name].pipeline_id for name in wanted)
+    # An external rig's producer is the operator's: it is never spawned, only its spool files are tailed.
+    rig = (
+        ExternalSensingRig(config.sensing_rig, pipeline_ids)
+        if config.sensing_rig.external
+        else SensingRig(config.sensing_rig, pipeline_ids)
+    )
     adapters = {
         c.stream_id: SensingAdapter(
             rig=rig,
@@ -120,6 +127,7 @@ def _sensing_composition(
             camera=c,
             full_range=config.sensing_rig.full_range,
             decoder=config.sensing_rig.decoder,
+            hardware_backend=config.sensing_rig.hardware_backend,
         )
         for c in cameras
         if c.name in wanted

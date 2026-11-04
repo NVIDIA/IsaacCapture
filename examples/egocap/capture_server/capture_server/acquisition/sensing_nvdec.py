@@ -31,7 +31,13 @@ from collections.abc import Sequence
 
 import numpy as np
 
-__all__ = ["HardwareDecodeError", "HardwareDecoder", "hardware_decoder_unavailable_reason", "pipeline_command"]
+__all__ = [
+    "BACKENDS",
+    "HardwareDecodeError",
+    "HardwareDecoder",
+    "hardware_decoder_unavailable_reason",
+    "pipeline_command",
+]
 
 _log = logging.getLogger("isaaccapture.capture_server.sensing_nvdec")
 
@@ -39,6 +45,11 @@ _DEVICE_NODE = "/dev/v4l2-nvdec"
 _GST_LAUNCH = "gst-launch-1.0"
 _GST_INSPECT = "gst-inspect-1.0"
 _DECODER_ELEMENT = "nvv4l2decoder"
+# The two hardware decoders this module can drive: the Jetson's V4L2 engine, and a desktop NVIDIA GPU through
+# GStreamer's nvcodec plugin. Their elements, memory and conversion steps differ, so the choice is explicit.
+BACKENDS = ("jetson", "desktop")
+_DESKTOP_DECODER_ELEMENT = "nvh264dec"
+_DESKTOP_REQUIRED_ELEMENTS = ("h264parse", _DESKTOP_DECODER_ELEMENT, "videoconvert")
 _PROBE_TIMEOUT_S = 10.0
 # Bytes the decoder process may have queued on its input before the caller is asked to wait. The pipe itself
 # holds up to _STDIN_PIPE_BYTES; the rest waits in this process, where the reader's own overload policy sees it.
@@ -58,34 +69,42 @@ class HardwareDecodeError(Exception):
 
 
 @functools.cache
-def hardware_decoder_unavailable_reason() -> str | None:
-    """Why NVDEC decoding cannot be used on this machine, or ``None`` when it can; cached for the process.
+def hardware_decoder_unavailable_reason(backend: str = "jetson") -> str | None:
+    """Why NVDEC decoding cannot be used with ``backend`` on this machine, or ``None``; cached per backend.
 
-    Checks the decoder device node, the GStreamer tools, and that the ``nvv4l2decoder`` element is installed,
-    so "auto" falls back to software on a desktop or a Jetson without the NVIDIA GStreamer plugins.
+    The Jetson backend checks the decoder device node, the GStreamer tools, and that ``nvv4l2decoder`` is
+    installed. The desktop backend has no device node to look for: it checks the GStreamer tools and that
+    every element its pipeline uses (``nvh264dec`` among them) is installed. "auto" then falls back to software
+    where the hardware path is missing.
     """
-    # The node exists only on Jetson platforms with an NVDEC engine.
-    if not os.path.exists(_DEVICE_NODE):
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
+    # The node exists only on Jetson platforms with an NVDEC engine; a desktop GPU has none.
+    if backend == "jetson" and not os.path.exists(_DEVICE_NODE):
         return f"{_DEVICE_NODE} is missing (this is not a Jetson with NVDEC)"
     for tool in (_GST_LAUNCH, _GST_INSPECT):
         if shutil.which(tool) is None:
             return f"{tool} is not installed"
-    try:
-        probe = subprocess.run(  # noqa: S603 -- fixed argument list, no shell
-            [_GST_INSPECT, "--exists", _DECODER_ELEMENT],
-            capture_output=True,
-            timeout=_PROBE_TIMEOUT_S,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return f"could not query GStreamer for {_DECODER_ELEMENT}: {e}"
-    if probe.returncode != 0:
-        return f"the GStreamer element {_DECODER_ELEMENT} is not installed"
+    for element in (_DECODER_ELEMENT,) if backend == "jetson" else _DESKTOP_REQUIRED_ELEMENTS:
+        try:
+            probe = subprocess.run(  # noqa: S603 -- fixed argument list, no shell
+                [_GST_INSPECT, "--exists", element],
+                capture_output=True,
+                timeout=_PROBE_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"could not query GStreamer for {element}: {e}"
+        if probe.returncode != 0:
+            return f"the GStreamer element {element} is not installed"
     return None
 
 
-def pipeline_command(*, low_delay: bool = True) -> list[str]:
+def pipeline_command(*, low_delay: bool = True, backend: str = "jetson") -> list[str]:
     """The ``gst-launch-1.0`` argument list: Annex-B on stdin, tightly packed I420 frames on stdout.
+
+    ``backend="desktop"`` builds the nvcodec pipeline instead (see :func:`_desktop_pipeline`); the rest of this
+    docstring describes the Jetson one.
 
     ``nvvidconv`` only converts NV12 to planar I420 (no scaling and no colour-matrix change), so the reader's own
     explicit BT.601 conversion still decides the colours. ``low_delay`` turns off the decoder's reorder buffer:
@@ -97,6 +116,10 @@ def pipeline_command(*, low_delay: bool = True) -> list[str]:
     (measured: 11 fps decode against 124 fps with the queue). With it, frames the reader is too slow to take are
     dropped inside GStreamer before the costly copy, so the reader always sees the newest one.
     """
+    if backend == "desktop":
+        return _desktop_pipeline()
+    if backend != "jetson":
+        raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
     decoder = [_DECODER_ELEMENT, "enable-max-performance=1"]
     if low_delay:
         decoder.append("disable-dpb=true")
@@ -127,6 +150,44 @@ def pipeline_command(*, low_delay: bool = True) -> list[str]:
     ]
 
 
+def _desktop_pipeline() -> list[str]:
+    """The desktop ``gst-launch-1.0`` pipeline: ``nvh264dec`` to system-memory NV12, then I420 for the reader.
+
+    The Jetson-only decoder properties (``enable-max-performance``, ``disable-dpb``) do not exist on
+    ``nvh264dec`` and are not passed. The one-buffer leaky queue plays the same role as on the Jetson: frames the
+    reader is too slow to take are dropped inside GStreamer before the costly copy. ``videoconvert`` does only the
+    NV12 to planar I420 repacking, with no scaling and no colour-matrix change, so the reader's own explicit BT.601
+    conversion still decides the colours.
+    """
+    return [
+        _GST_LAUNCH,
+        "-q",
+        "fdsrc",
+        "fd=0",
+        "blocksize=4194304",
+        "!",
+        "h264parse",
+        "!",
+        _DESKTOP_DECODER_ELEMENT,
+        "!",
+        "video/x-raw,format=NV12",
+        "!",
+        "queue",
+        "max-size-buffers=1",
+        "max-size-bytes=0",
+        "max-size-time=0",
+        "leaky=downstream",
+        "!",
+        "videoconvert",
+        "!",
+        "video/x-raw,format=I420",
+        "!",
+        "fdsink",
+        "fd=1",
+        "sync=false",
+    ]
+
+
 class HardwareDecoder:
     """One decoder process: feed Annex-B access units in, take the newest decoded I420 frame out.
 
@@ -135,16 +196,19 @@ class HardwareDecoder:
     belong to the reader's single worker; only the internal output and stderr threads run beside it.
     """
 
-    def __init__(self, width: int, height: int, *, command: Sequence[str] | None = None) -> None:
+    def __init__(
+        self, width: int, height: int, *, command: Sequence[str] | None = None, backend: str = "jetson"
+    ) -> None:
         """Record the geometry; the process starts in :meth:`start`.
 
-        ``command`` replaces the GStreamer pipeline (tests inject a stand-in that follows the same pipe contract).
+        ``command`` replaces the GStreamer pipeline (tests inject a stand-in that follows the same pipe contract);
+        ``backend`` picks which pipeline is built when there is none.
         """
         if width <= 0 or height <= 0 or width % 2 or height % 2:
             raise ValueError(f"I420 needs positive even dimensions, got {width}x{height}")
         self._width, self._height = width, height
         self._frame_bytes = width * height * 3 // 2
-        self._command = list(command) if command is not None else pipeline_command()
+        self._command = list(command) if command is not None else pipeline_command(backend=backend)
         self._proc: subprocess.Popen[bytes] | None = None
         self._buffers = [np.empty((height * 3 // 2, width), dtype=np.uint8) for _ in range(_FRAME_BUFFERS)]
         self._lock = threading.Condition()

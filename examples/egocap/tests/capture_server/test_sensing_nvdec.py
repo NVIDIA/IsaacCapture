@@ -438,7 +438,7 @@ def test_unknown_decoder_name_is_rejected(tmp_path):
 
 
 def test_hardware_requested_but_unavailable_is_an_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda: "no NVDEC here")
+    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda _backend: "no NVDEC here")
     (tmp_path / "s.h264").write_bytes(b"")
     reader = h264.SensingStreamReader(str(tmp_path / "s.h264"), width=W, height=H, decoder="hardware")
     with pytest.raises(h264.SensingStreamError, match="requested but is unavailable: no NVDEC here"):
@@ -447,7 +447,7 @@ def test_hardware_requested_but_unavailable_is_an_error(tmp_path, monkeypatch):
 
 
 def test_auto_falls_back_to_software_and_says_why(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda: "no NVDEC here")
+    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda _backend: "no NVDEC here")
     units = encode_units(W, H, [RED, GREEN], gop=1)
     path = tmp_path / "s.h264"
     path.write_bytes(b"".join(units) * 2)
@@ -461,7 +461,7 @@ def test_auto_falls_back_to_software_and_says_why(tmp_path, monkeypatch, caplog)
 
 
 def test_auto_uses_hardware_when_available(tmp_path, monkeypatch):
-    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda: None)
+    monkeypatch.setattr(h264, "hardware_decoder_unavailable_reason", lambda _backend: None)
     units = encode_units(W, H, [RED, GREEN], gop=1)
     path = tmp_path / "s.h264"
     path.write_bytes(b"".join(units) * 4)
