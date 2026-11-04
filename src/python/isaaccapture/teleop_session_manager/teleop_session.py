@@ -1345,7 +1345,7 @@ class TeleopSession:
         self._twin_teardown_clean = stopped and joined
 
     def _resolve_monitored_plugins(self) -> None:
-        """Resolve supported plugin inventories and their official status readers."""
+        """Resolve the initially supported Manus inventory and status reader."""
         for plugin_config in self.config.plugins:
             if (
                 not plugin_config.enabled
