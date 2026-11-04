@@ -1,0 +1,844 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>RevoHuman Glove &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/hand_tracking/revohuman';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Body Tracking" href="../body_tracking/index.html" />
+    <link rel="prev" title="Haptikos Exoskeletons" href="haptikos.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.8.x" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../xr/index.html">XR headsets</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Hand tracking</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="manus.html">MANUS Gloves</a></li>
+<li class="toctree-l2"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sharpa_avatar.html">Sharpa AvatarExo Glove</a></li>
+<li class="toctree-l2"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">RevoHuman Glove</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Hand tracking</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">RevoHuman Glove</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="revohuman-glove">
+<h1>RevoHuman Glove<a class="headerlink" href="#revohuman-glove" title="Link to this heading">#</a></h1>
+<p>A Linux-only plugin for BrainCo RevoHuman exoskeleton gloves. It reads each
+glove’s 21 encoder angles and its tactile forces through the RevoHuman C SDK,
+maps the SDK’s hand points to the 26 OpenXR hand joints and injects them into
+the OpenXR hand-tracking layer. It also pushes the encoder angles as joint
+states and the forces with the common tactile contract, laid out with the SDK’s
+taxel layout.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#data-flow" id="id1">Data flow</a></p></li>
+<li><p><a class="reference internal" href="#outputs" id="id2">Outputs</a></p></li>
+<li><p><a class="reference internal" href="#prerequisites" id="id3">Prerequisites</a></p></li>
+<li><p><a class="reference internal" href="#installation" id="id4">Installation</a></p></li>
+<li><p><a class="reference internal" href="#running-the-plugin" id="id5">Running the Plugin</a></p></li>
+<li><p><a class="reference internal" href="#wrist-pose" id="id6">Wrist pose</a></p></li>
+<li><p><a class="reference internal" href="#tactile-layout" id="id7">Tactile layout</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id8">Troubleshooting</a></p></li>
+</ul>
+</nav>
+<section id="data-flow">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Data flow</a><a class="headerlink" href="#data-flow" title="Link to this heading">#</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>RevoHuman glove (USB) ──► RevoHuman C SDK ─┐
+                                           ├─► revohuman plugin ──► CloudXR OpenXR runtime
+Optical hand / controller ─────────────────┘   (hand points,        (hand joints, joint states,
+                                                wrist-pose fusion)   tactile forces)
+</pre></div>
+</div>
+<p>The plugin computes no kinematics of its own: the SDK turns the angles into hand
+points for the glove’s mechanical model, and the plugin maps those points to
+OpenXR order with corrections reviewed for that model. No URDF is loaded.</p>
+</section>
+<section id="outputs">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Outputs</a><a class="headerlink" href="#outputs" title="Link to this heading">#</a></h2>
+<p>Per hand, with the default collection prefix <code class="docutils literal notranslate"><span class="pre">revohuman</span></code>
+(<code class="docutils literal notranslate"><span class="pre">--collection-prefix=NAME</span></code> changes it):</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Output</p></th>
+<th class="head"><p>Contents</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>OpenXR hand <code class="docutils literal notranslate"><span class="pre">/hand/left</span></code>, <code class="docutils literal notranslate"><span class="pre">/hand/right</span></code></p></td>
+<td><p>26 joints relative to the wrist, placed at the wrist pose described below</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">revohuman_&lt;side&gt;_joint_state</span></code> / tensor <code class="docutils literal notranslate"><span class="pre">joint_state</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> with the 21 encoder angles in radians, in SDK order;
+see <a class="reference internal" href="../joint_space/index.html"><span class="doc">Generic Joint-Space Device</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">revohuman_&lt;side&gt;_tactile</span></code> / tensor <code class="docutils literal notranslate"><span class="pre">tactile</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">TactileDataArray</span></code> taxel forces: the SDK’s calibrated reading, unchanged,
+along each taxel’s outward normal; see <a class="reference internal" href="../tactile/index.html"><span class="doc">Tactile devices</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">revohuman_&lt;side&gt;_tactile/metadata</span></code></p></td>
+<td><p>The <code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code> layout the forces belong to</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Started by hand, the plugin publishes <code class="docutils literal notranslate"><span class="pre">&lt;id&gt;/device_status</span></code> only with
+<code class="docutils literal notranslate"><span class="pre">--plugin-root-id=&lt;id&gt;</span></code>.</p>
+</section>
+<section id="prerequisites">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Linux</strong> — x86_64 or aarch64.</p></li>
+<li><p><strong>Source-build prerequisites</strong> — the toolchain and system packages in
+<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>, for <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> and the manual
+CMake build alike.</p></li>
+<li><p><strong>RevoHuman C SDK 0.1.3</strong> — the <code class="docutils literal notranslate"><span class="pre">c-sdk-v0.1.3</span></code> release of
+<a class="reference external" href="https://github.com/BrainCoTech/brainco-revohuman-sdk" rel="noopener noreferrer" target="_blank">brainco-revohuman-sdk</a>,
+which extracts to <code class="docutils literal notranslate"><span class="pre">include/revohuman.h</span></code>, <code class="docutils literal notranslate"><span class="pre">lib/librevohuman.so</span></code> with its
+versioned names, and <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>. The install script downloads it
+automatically. A Python SDK wheel cannot replace it.</p></li>
+<li><p><strong>RevoHuman gloves</strong> connected over USB, with access to their serial ports.</p></li>
+<li><p><strong>CloudXR runtime</strong> running on the plugin host.</p></li>
+</ul>
+</section>
+<section id="installation">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">install.sh</span></code> downloads the pinned C SDK release, verifies it against a
+per-architecture SHA-256, extracts it next to the script (re-runs reuse the
+extracted copy), and configures, builds, and installs the plugin with the SDK
+library and its licence next to it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/revohuman/install.sh
+</pre></div>
+</div>
+<p>Pass <code class="docutils literal notranslate"><span class="pre">--build-dir</span> <span class="pre">&lt;path&gt;</span></code> to reuse a non-default top-level CMake build
+directory and <code class="docutils literal notranslate"><span class="pre">--install-prefix</span> <span class="pre">&lt;dir&gt;</span></code> to choose where the plugin goes.
+<code class="docutils literal notranslate"><span class="pre">--sdk-root</span> <span class="pre">&lt;dir&gt;</span></code> (or <code class="docutils literal notranslate"><span class="pre">REVOHUMAN_SDK_ROOT</span></code>) uses an SDK package you already
+extracted.</p>
+<p>To drive CMake directly:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGINS<span class="o">=</span>ON<span class="w"> </span>-DBUILD_PLUGIN_REVOHUMAN<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-DREVOHUMAN_SDK_ROOT<span class="o">=</span>/path/to/revohuman-c-sdk
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>revohuman_plugin
+cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>revohuman
+</pre></div>
+</div>
+<p>The installed plugin finds the SDK library next to itself, so it needs neither
+the download nor the build directory afterwards. Keep the library’s symlinks.</p>
+</section>
+<section id="running-the-plugin">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Running the Plugin</a><a class="headerlink" href="#running-the-plugin" title="Link to this heading">#</a></h2>
+<p>The plugin reaches the Teleop session through the CloudXR / OpenXR runtime, so
+start the runtime first and source its environment in the shell that launches
+the plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/plugins/revohuman/revohuman_plugin
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> and
+<a class="reference internal" href="../../references/cloudxr.html#load-cloudxr-environment-variables"><span class="std std-ref">Load CloudXR environment variables</span></a> for the full service setup.
+Applications can also launch it through its <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code> using
+<code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code>. The gloves are its only source, so it takes no source
+argument; an unknown argument such as <code class="docutils literal notranslate"><span class="pre">--live</span></code> or <code class="docutils literal notranslate"><span class="pre">--replay</span></code> is ignored with
+a warning.</p>
+<p>The plugin neither records nor plays back: record its collections with
+<code class="docutils literal notranslate"><span class="pre">McapRecordingConfig</span></code> and play them back with <code class="docutils literal notranslate"><span class="pre">McapReplayConfig</span></code>, as for any
+other tracker (see <a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a>).</p>
+<p>The plugin finds the gloves through the SDK, at most one left and one right,
+with nothing to declare. When both are plugged in, it opens them in one
+two-hand SDK kit with time sync on, so the two hands’ samples come from the
+same USB frame. A glove plugged in alone opens on its own; when the other one
+arrives, both are reopened together. Gloves that cannot be opened together
+keep streaming on their own. Until a glove is found, the plugin looks for it
+every 2 s and reports the SDK’s reason in its status, without holding up the
+other hand. The SDK reconnects a glove after a short dropout; when the stream
+ends anyway, the plugin closes the glove, together with its partner when the
+two share a kit, and looks for them again.</p>
+<p>Each glove’s mechanical model follows the product the SDK identifies: a PTV1
+glove uses the DV1 model and a P1 glove the P model. A P1 glove has no tactile
+sensors, so it streams the hand and joint states without tactile outputs. A
+glove of the wrong product or with incompatible firmware is reported as failed.</p>
+</section>
+<section id="wrist-pose">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Wrist pose</a><a class="headerlink" href="#wrist-pose" title="Link to this heading">#</a></h2>
+<p>The glove stream contains wrist-relative joints but no absolute 6DoF wrist
+pose. Before injection, the plugin places the hand at a wrist pose from optical
+hand tracking or from a controller aim pose combined with a rigid per-hand
+offset.</p>
+<p>Set <code class="docutils literal notranslate"><span class="pre">REVOHUMAN_WRIST_SOURCE</span></code> (or pass <code class="docutils literal notranslate"><span class="pre">--wrist-source</span></code>) to <code class="docutils literal notranslate"><span class="pre">auto</span></code> (the
+default), <code class="docutils literal notranslate"><span class="pre">hand_tracking</span></code>, or <code class="docutils literal notranslate"><span class="pre">controller</span></code>. In <code class="docutils literal notranslate"><span class="pre">auto</span></code> mode, optical
+tracking is preferred; the controller is used when optical tracking provides no
+valid pose. The plugin refuses a <code class="docutils literal notranslate"><span class="pre">--wrist-source</span></code> that disagrees with the
+variable.</p>
+<p>A controller reports its aim pose, not the wrist. No controller mount is
+calibrated for these gloves yet, so the aim-to-wrist offsets default to
+identity and the plugin warns for each hand without one unless the source is
+<code class="docutils literal notranslate"><span class="pre">hand_tracking</span></code>. Set them with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/revohuman/revohuman_plugin<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--aim-to-wrist-left<span class="o">=</span>px,py,pz,qx,qy,qz,qw<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--aim-to-wrist-right<span class="o">=</span>px,py,pz,qx,qy,qz,qw
+</pre></div>
+</div>
+<p>Position values are in meters and quaternion values use <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z,</span> <span class="pre">w)</span></code>.</p>
+<p>Without a tracked wrist the hand is still injected, without tracking flags, at
+the last valid wrist pose (or the stage origin), and its status is degraded.</p>
+<p>The glove’s wrist is a reference point of its mechanical model: the origin of
+its <code class="docutils literal notranslate"><span class="pre">palm_link</span></code>, on the back of the hand near the end of the forearm, moved
+about 12.6 mm towards the palm to the depth of the palm centre. It is not the
+anatomical wrist centre that the OpenXR wrist joint stands for. Nominally the
+wrist centre is about 4 cm further towards the fingers and about 0.2 to 0.7 cm
+further towards the palm; these figures come from typical adult hand
+dimensions, not from measurements on the glove, and vary with the wearer. With
+optical hand tracking, the injected hand therefore sits that much further
+towards the fingers and the palm than the tracked hand. With a controller, set
+the aim-to-wrist offsets to end at the glove’s wrist point. Verify the
+alignment for the wearer.</p>
+</section>
+<section id="tactile-layout">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Tactile layout</a><a class="headerlink" href="#tactile-layout" title="Link to this heading">#</a></h2>
+<p>At start-up the plugin builds each hand’s <code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code> from the C SDK’s
+taxel layout for the DV1 model (<code class="docutils literal notranslate"><span class="pre">rh_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">model_</span><wbr><span class="pre">taxel_</span><wbr><span class="pre">layout</span></code>); there is no
+layout file or option. Each taxel is bound rigidly to the OpenXR joint its SDK
+link moves with, with its +Z along the outward normal. That joint is rigid on
+the link, so the skinned taxels stay on the SDK’s taxels as the fingers bend.
+The log names the layout source, taxel count and SHA-256 of each hand’s
+metadata. When the SDK has no layout, the plugin logs why and pushes no tactile
+data; the other outputs are unaffected.</p>
+<p>A force sample is pushed only while it is calibrated, recent and newer than the
+last one, and its status names the reason when it is not. Consumers must check
+that status as well as the presence of data.</p>
+</section>
+<section id="troubleshooting">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">install.sh</span></code> fails with a SHA-256 mismatch</p></td>
+<td><p>The downloaded package does not match the pinned release. Re-run to
+rule out a corrupted download; if it persists, do not bypass the check
+— verify the release assets upstream.</p></td>
+</tr>
+<tr class="row-odd"><td><p>No <code class="docutils literal notranslate"><span class="pre">revohuman_plugin</span></code> is built, <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> refuses the install, or
+the plugin stops before the OpenXR session naming an SDK function</p></td>
+<td><p>The SDK found during configuration is incomplete: its library is missing
+or lacks a function the plugin calls. Point <code class="docutils literal notranslate"><span class="pre">REVOHUMAN_SDK_ROOT</span></code> at a
+complete C SDK release and reconfigure.</p></td>
+</tr>
+<tr class="row-even"><td><p>A glove is never opened and its status names a busy port</p></td>
+<td><p>Another process, such as the SDK viewer, holds the glove’s serial port.
+Close it; the plugin opens the glove on its next attempt.</p></td>
+</tr>
+<tr class="row-odd"><td><p>A glove is reported as failed</p></td>
+<td><p>The status carries the SDK’s reason: a product or variant the plugin
+does not support, or incompatible firmware. These are not retried.</p></td>
+</tr>
+<tr class="row-even"><td><p>Hands appear but a downstream client sees no tactile data</p></td>
+<td><p>A P1 glove has no tactile sensors. Otherwise check the start-up log for
+why there is no <code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code> (an SDK without the taxel layout),
+and the tactile status for the reason a sample was not pushed.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="haptikos.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Haptikos Exoskeletons</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../body_tracking/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Body Tracking</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow">Data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#outputs">Outputs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation">Installation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-plugin">Running the Plugin</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-pose">Wrist pose</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tactile-layout">Tactile layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
