@@ -206,7 +206,7 @@ def validate_calibration(value, profiles, need_imu):
                 )
             stream = "ColorLeft" if name == "color_left" else "ColorRight"
             expected = profiles.get(epoch, {}).get(stream, set())
-            if expected != {(item["width"], item["height"])}:
+            if epoch in profiles and expected != {(item["width"], item["height"])}:
                 raise SystemExit(
                     f"{label} dimensions differ from video profiles {sorted(expected)}"
                 )
@@ -427,12 +427,35 @@ for calibration in calibrations:
     print(
         f"  Calibration epoch={calibration['capture_epoch']}: present={','.join(present) or 'none'} missing={','.join(absent) or 'none'}"
     )
-if require_calibration:
-    calibration_epochs = {value["capture_epoch"] for value in calibrations}
-    if calibration_epochs != set(video_epochs):
-        raise SystemExit(
-            f"Calibration capture epochs differ from video: {sorted(calibration_epochs)}"
+
+# An epoch can end before its first video frame; its calibration and IMU are kept.
+auxiliary_epochs = {}
+for calibration in calibrations:
+    auxiliary_epochs.setdefault(calibration["capture_epoch"], set()).add("calibration")
+for topic, state in imu.items():
+    for capture_epoch in state["epochs"]:
+        auxiliary_epochs.setdefault(capture_epoch, set()).add(topic)
+for capture_epoch, records in sorted(auxiliary_epochs.items()):
+    if capture_epoch not in video_profiles:
+        print(
+            f"  WARNING: capture epoch {capture_epoch} has {', '.join(sorted(records))} but no video; "
+            "it ended before its first video frame"
         )
+
+
+def check_video_epochs(label, epochs):
+    # Every ColorLeft epoch needs the record; an extra epoch passes only without any video.
+    extra = epochs - set(video_epochs)
+    if not set(video_epochs) <= epochs or extra & set(video_profiles):
+        raise SystemExit(
+            f"{label} capture epochs {sorted(epochs)} differ from video epochs {sorted(video_epochs)}"
+        )
+
+
+if require_calibration:
+    check_video_epochs(
+        "Calibration", {value["capture_epoch"] for value in calibrations}
+    )
     for calibration in calibrations:
         validate_calibration(calibration, video_profiles, expect_imu)
     print("  Required structured calibration: OK")
@@ -444,17 +467,10 @@ if expect_imu:
                 f"ColorLeft epoch {capture_epoch} has too few timestamps for auxiliary coverage"
             )
     for topic, state in imu.items():
-        if set(state["epochs"]) != set(video_epochs):
-            raise SystemExit(
-                f"{topic} capture epochs differ from video: {sorted(state['epochs'])}"
-            )
+        check_video_epochs(topic, set(state["epochs"]))
         for capture_epoch, epoch in sorted(state["epochs"].items()):
             if epoch["samples"] < 2 or epoch["last"] <= epoch["first"]:
                 raise SystemExit(f"{topic} epoch {capture_epoch} has too few samples")
-            video_span = (
-                video_epochs[capture_epoch]["last"]
-                - video_epochs[capture_epoch]["first"]
-            )
             sample_span = epoch["last"] - epoch["first"]
             observed_rate = (epoch["samples"] - 1) * 1_000_000_000 / sample_span
             tolerance = max(5.0, state["rate"] * 0.05)
@@ -463,12 +479,17 @@ if expect_imu:
                     f"{topic} epoch {capture_epoch} raw-device cadence is {observed_rate:.3f} Hz; "
                     f"batches declare {state['rate']} Hz"
                 )
-            coverage = sample_span + 1_000_000_000 / state["rate"]
-            if coverage < video_span * 0.90:
-                raise SystemExit(
-                    f"{topic} epoch {capture_epoch} covers only {coverage / 1_000_000_000:.3f}s "
-                    f"of the {video_span / 1_000_000_000:.3f}s video timeline"
+            if capture_epoch in video_epochs:
+                video_span = (
+                    video_epochs[capture_epoch]["last"]
+                    - video_epochs[capture_epoch]["first"]
                 )
+                coverage = sample_span + 1_000_000_000 / state["rate"]
+                if coverage < video_span * 0.90:
+                    raise SystemExit(
+                        f"{topic} epoch {capture_epoch} covers only {coverage / 1_000_000_000:.3f}s "
+                        f"of the {video_span / 1_000_000_000:.3f}s video timeline"
+                    )
             print(
                 f"  {topic}: epoch={capture_epoch} batches={epoch['batches']} samples={epoch['samples']} "
                 f"declared_hz={state['rate']} raw_device_hz={observed_rate:.3f}"

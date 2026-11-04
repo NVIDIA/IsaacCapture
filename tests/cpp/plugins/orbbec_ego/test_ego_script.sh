@@ -521,8 +521,10 @@ class _Reader:
         for frame_index in range(31):
             if scenario == "video_gap" and 10 <= frame_index <= 12:
                 continue
-            capture_epoch = 1 if scenario in ("reconnect", "calibration_missing_epoch") and frame_index >= 15 else 0
-            sequence = frame_index - 15 if capture_epoch else frame_index
+            # First frame of epoch 1; no_video_epoch's epoch 0 ends before its first video frame.
+            split = {"reconnect": 15, "calibration_missing_epoch": 15, "imu_missing_epoch": 15, "no_video_epoch": 0}.get(scenario)
+            capture_epoch = 1 if split is not None and frame_index >= split else 0
+            sequence = frame_index - split if capture_epoch else frame_index
             timestamp = base + sequence * video_period
             log_time = base + frame_index * video_period
             yield from self._message(
@@ -532,7 +534,7 @@ class _Reader:
                 "orbbec_ego_metadata_colorright/FrameMetadata", _video(sequence, timestamp, capture_epoch, video_fps), log_time
             )
         yield from self._message("orbbec_ego_calibration/Calibration", _calibration(scenario), base)
-        if scenario == "reconnect":
+        if scenario in ("reconnect", "imu_missing_epoch", "no_video_epoch"):
             yield from self._message("orbbec_ego_calibration/Calibration", _calibration(scenario, 1), base + 1)
         if self.fixture.get("diagnostics"):
             yield (
@@ -546,17 +548,20 @@ class _Reader:
         else:
             yield from self._message("orbbec_ego_device/DeviceState", b"fixture", base)
 
-        if scenario in ("valid", "video_gap", "empty_imu", "bad_imu_cadence") or (scenario.startswith("calibration_") and scenario != "calibration_missing_epoch"):
-            sample_index = 0
+        if scenario in ("valid", "video_gap", "empty_imu", "bad_imu_cadence", "imu_missing_epoch", "no_video_epoch") or (scenario.startswith("calibration_") and scenario != "calibration_missing_epoch"):
             sample_period = 2_000_000 if scenario == "bad_imu_cadence" else 1_000_000
-            for sequence in range(40):
-                timestamps = [base + (sample_index + offset) * sample_period for offset in range(25)]
-                sample_index += len(timestamps)
-                accel_timestamps = [] if scenario == "empty_imu" and sequence == 0 else timestamps
-                yield from self._message(
-                    "orbbec_ego_imu_accel/Imu", _imu(0, sequence, 1000, accel_timestamps), timestamps[-1]
-                )
-                yield from self._message("orbbec_ego_imu_gyro/Imu", _imu(1, sequence, 1000, timestamps), timestamps[-1])
+            # (capture_epoch, batches, first sample time) of 25-sample batches.
+            imu_epochs = [(0, 2, base - 100_000_000), (1, 40, base)] if scenario == "no_video_epoch" else [(0, 40, base)]
+            for capture_epoch, batches, start in imu_epochs:
+                for sequence in range(batches):
+                    timestamps = [start + (25 * sequence + offset) * sample_period for offset in range(25)]
+                    accel_timestamps = [] if scenario == "empty_imu" and sequence == 0 else timestamps
+                    yield from self._message(
+                        "orbbec_ego_imu_accel/Imu", _imu(0, sequence, 1000, accel_timestamps, capture_epoch), timestamps[-1]
+                    )
+                    yield from self._message(
+                        "orbbec_ego_imu_gyro/Imu", _imu(1, sequence, 1000, timestamps, capture_epoch), timestamps[-1]
+                    )
 
     @staticmethod
     def _message(topic, data, timestamp):
@@ -627,6 +632,8 @@ for scenario in calibration_missing calibration_bad_rotation calibration_reflect
         "$SCRIPT" verify "$run" --require-calibration
     grep -F 'Calibration' "$run/verification_report.failed.txt" >/dev/null
 done
+grep -F 'Calibration capture epochs [0] differ from video epochs [0, 1]' \
+    "$TMPDIR_TEST/calibration_missing_epoch/verification_report.failed.txt" >/dev/null
 CALIBRATION_OPTIONAL_RUN="$TMPDIR_TEST/calibration_missing"
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$CALIBRATION_OPTIONAL_RUN" >/dev/null 2>&1
@@ -871,6 +878,24 @@ AUX_RECONNECT_RUN="$TMPDIR_TEST/aux_reconnect"
 make_aux_verify_run "$AUX_RECONNECT_RUN" reconnect
 PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
     "$SCRIPT" verify "$AUX_RECONNECT_RUN" >/dev/null 2>&1
+if grep -Fq 'but no video' "$AUX_RECONNECT_RUN/verification_report.txt"; then
+    echo "an epoch with video was reported as having none" >&2
+    exit 1
+fi
+
+# An epoch without video is reported and passes; a video epoch without IMU fails.
+AUX_NO_VIDEO_EPOCH_RUN="$TMPDIR_TEST/aux_no_video_epoch"
+make_aux_verify_run "$AUX_NO_VIDEO_EPOCH_RUN" no_video_epoch
+PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$AUX_NO_VIDEO_EPOCH_RUN" --expect-imu --require-calibration >/dev/null 2>&1
+grep -F 'capture epoch 0 has calibration, orbbec_ego_imu_accel/Imu, orbbec_ego_imu_gyro/Imu but no video' \
+    "$AUX_NO_VIDEO_EPOCH_RUN/verification_report.txt" >/dev/null
+AUX_IMU_MISSING_EPOCH_RUN="$TMPDIR_TEST/aux_imu_missing_epoch"
+make_aux_verify_run "$AUX_IMU_MISSING_EPOCH_RUN" imu_missing_epoch
+expect_failure env PYTHONPATH="$AUX_MCAP_MODULES" PATH="$AUX_VERIFY_BIN:$PATH" \
+    "$SCRIPT" verify "$AUX_IMU_MISSING_EPOCH_RUN" --expect-imu
+grep -F 'orbbec_ego_imu_accel/Imu capture epochs [0] differ from video epochs [0, 1]' \
+    "$AUX_IMU_MISSING_EPOCH_RUN/verification_report.failed.txt" >/dev/null
 
 AUX_EMPTY_IMU_RUN="$TMPDIR_TEST/aux_empty_imu"
 make_aux_verify_run "$AUX_EMPTY_IMU_RUN" empty_imu

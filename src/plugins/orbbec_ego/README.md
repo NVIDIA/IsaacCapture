@@ -402,7 +402,8 @@ ffprobe -v error -select_streams v:0 \
 
 For the two-eye local MCAP layout above, the helper also checks MCAP topics,
 video counts/cadence, enabled sensors, and capture health; it reports video
-sequence gaps and dropped video frame sets without failing:
+sequence gaps, dropped video frame sets, and capture epochs that ended before
+their first video frame without failing:
 
 When the active Python has no MCAP reader, `verify` runs these checks through uv.
 
