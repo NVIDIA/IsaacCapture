@@ -1,0 +1,759 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>RealHand FFG Glove &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/realhand_ffg_glove';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Body Tracking" href="body_tracking/index.html" />
+    <link rel="prev" title="Haptikos Exoskeletons" href="hand_tracking/haptikos.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.8.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="xr/index.html">XR headsets</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="hand_tracking/index.html">Hand tracking</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="hand_tracking/manus.html">MANUS Gloves</a></li>
+<li class="toctree-l2"><a class="reference internal" href="hand_tracking/wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l2"><a class="reference internal" href="hand_tracking/sharpa_avatar.html">Sharpa AvatarExo Glove</a></li>
+<li class="toctree-l2"><a class="reference internal" href="hand_tracking/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">RealHand FFG Glove</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="hand_tracking/index.html" class="nav-link">Hand tracking</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">RealHand FFG Glove</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="realhand-ffg-glove">
+<h1>RealHand FFG Glove<a class="headerlink" href="#realhand-ffg-glove" title="Link to this heading">#</a></h1>
+<p>The Linux RealHand FFG Glove plugin reads one or two gloves over USB serial and publishes each
+glove as a standard 26-joint OpenXR <code class="docutils literal notranslate"><span class="pre">hand_tracker</span></code>. It discovers serial ports and
+baud rates, queries the firmware-reported side, and reconnects after a disconnect. Either side can
+operate alone; a missing glove does not control the opposite hand.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#data-flow" id="id1">Data flow</a></p></li>
+<li><p><a class="reference internal" href="#build" id="id2">Build</a></p></li>
+<li><p><a class="reference internal" href="#usb-permissions" id="id3">USB permissions</a></p></li>
+<li><p><a class="reference internal" href="#run" id="id4">Run</a></p></li>
+<li><p><a class="reference internal" href="#wrist-placement" id="id5">Wrist placement</a></p></li>
+<li><p><a class="reference internal" href="#retargeting-and-calibration" id="id6">Retargeting and calibration</a></p></li>
+</ul>
+</nav>
+<section id="data-flow">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Data flow</a><a class="headerlink" href="#data-flow" title="Link to this heading">#</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FFG USB -&gt; calibrated human skeleton -&gt; HandInjector -&gt; HandsSource -&gt; HandInput retargeter
+        21 angle sensors               26 OpenXR joints                any robot hand
+</pre></div>
+</div>
+<p>The serial protocol follows the Apache-2.0
+<a class="reference external" href="https://github.com/RealHand-Robotics/FFG_realhand_pure_python" rel="noopener noreferrer" target="_blank">RealHand FFG Glove pure-Python SDK</a>. The plugin implements the protocol
+directly in C++, so the Python SDK is not redistributed or required at runtime.</p>
+<p>The primary device paths are <code class="docutils literal notranslate"><span class="pre">/hand/left</span></code> and <code class="docutils literal notranslate"><span class="pre">/hand/right</span></code>. They are consumed by
+<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> and the same <code class="docutils literal notranslate"><span class="pre">HandInput</span></code> retargeters used for optical hand tracking,
+including <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code>, Sharpa, and Wuji. The device plugin contains
+no robot-specific retargeting. Human joint poses are estimated from glove angles
+and approximate hand dimensions.</p>
+</section>
+<section id="build">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Build</a><a class="headerlink" href="#build" title="Link to this heading">#</a></h2>
+<p>The plugin is enabled by default on POSIX systems. Configure and build IsaacCapture normally:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
+<span class="gp">$ </span>cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>realhand_ffg_glove_plugin
+<span class="gp">$ </span>cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>realhand_ffg_glove
+</pre></div>
+</div>
+<p>Set <code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_REALHAND_FFG_GLOVE=OFF</span></code> to exclude it from a POSIX build. The serial backend
+is not built by default on Windows.</p>
+</section>
+<section id="usb-permissions">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">USB permissions</a><a class="headerlink" href="#usb-permissions" title="Link to this heading">#</a></h2>
+<p>The current user must be able to open the glove’s serial device. On Ubuntu, add the user to the
+<code class="docutils literal notranslate"><span class="pre">dialout</span></code> group, then log out and back in:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>sudo<span class="w"> </span>usermod<span class="w"> </span>-aG<span class="w"> </span>dialout<span class="w"> </span><span class="s2">"</span><span class="nv">$USER</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>Do not run IsaacCapture as root. Check permissions with <code class="docutils literal notranslate"><span class="pre">ls</span> <span class="pre">-l</span> <span class="pre">/dev/ttyUSB*</span></code> and membership with
+<code class="docutils literal notranslate"><span class="pre">id</span> <span class="pre">-nG</span></code>.</p>
+</section>
+<section id="run">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Run</a><a class="headerlink" href="#run" title="Link to this heading">#</a></h2>
+<p>Start the CloudXR runtime, source its OpenXR environment, and launch the installed plugin:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start
+<span class="gp">$ </span><span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+<span class="gp">$ </span>./install/plugins/realhand_ffg_glove/realhand_ffg_glove_plugin
+</pre></div>
+</div>
+<p>Automatic discovery only probes <code class="docutils literal notranslate"><span class="pre">/dev/serial/by-id/</span></code> entries whose names contain
+<code class="docutils literal notranslate"><span class="pre">RealHand</span></code>, <code class="docutils literal notranslate"><span class="pre">RealForce</span></code>, or <code class="docutils literal notranslate"><span class="pre">FFG</span></code> (case insensitive). A generic USB UART identifier
+does not distinguish a glove from other hardware. For these devices, explicitly
+select the verified glove ports:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>./install/plugins/realhand_ffg_glove/realhand_ffg_glove_plugin<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--ports<span class="o">=</span>/dev/ttyUSB0,/dev/ttyUSB1<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--baudrates<span class="o">=</span><span class="m">2000000</span>,460800
+</pre></div>
+</div>
+<p>Use only verified glove ports and close other applications reading the same devices.</p>
+<p>When a Python example starts the plugin with <code class="docutils literal notranslate"><span class="pre">--plugin-path</span></code>, pass
+<code class="docutils literal notranslate"><span class="pre">--realhand-ffg-glove-ports=/dev/ttyUSB0,/dev/ttyUSB1</span></code> to select its ports.
+If the plugin is already running separately, omit <code class="docutils literal notranslate"><span class="pre">--plugin-path</span></code> instead of
+starting another process on the same ports.</p>
+<p>The supplementary collections <code class="docutils literal notranslate"><span class="pre">realhand_ffg_glove_left</span></code> and
+<code class="docutils literal notranslate"><span class="pre">realhand_</span><wbr><span class="pre">ffg_</span><wbr><span class="pre">glove_</span><wbr><span class="pre">right</span></code> publish <code class="docutils literal notranslate"><span class="pre">sensor_0</span></code> through <code class="docutils literal notranslate"><span class="pre">sensor_20</span></code> in radians.
+These <code class="docutils literal notranslate"><span class="pre">JointStateSource</span></code> inputs are for calibration and diagnostics, not robot
+control. Mechanical hands consume the standard human skeleton through <code class="docutils literal notranslate"><span class="pre">HandsSource</span></code>.</p>
+</section>
+<section id="wrist-placement">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Wrist placement</a><a class="headerlink" href="#wrist-placement" title="Link to this heading">#</a></h2>
+<p>The plugin uses the shared <code class="docutils literal notranslate"><span class="pre">WristPoseSource</span></code> utility, as in the Wuji Glove plugin.
+<code class="docutils literal notranslate"><span class="pre">--wrist-source=auto</span></code> (default) prefers native hand tracking, then falls back to the
+controller aim pose. Use <code class="docutils literal notranslate"><span class="pre">controller</span></code> or <code class="docutils literal notranslate"><span class="pre">handtracking</span></code> to select one source explicitly.
+The combined FFG example selects controller wrists; P7 arm targets still use controller
+grip poses.</p>
+<p>The default offsets support PICO 4 Ultra controllers mounted upright on the back of
+each FFG glove using the RealHand bracket, with mirrored left/right installation.
+For a different mount, override them with
+<code class="docutils literal notranslate"><span class="pre">--left-aim-to-wrist=px,py,pz,qx,qy,qz,qw</span></code> and
+<code class="docutils literal notranslate"><span class="pre">--right-aim-to-wrist=px,py,pz,qx,qy,qz,qw</span></code>. Translation is in meters in the aim frame;
+quaternions use XYZW order. <code class="docutils literal notranslate"><span class="pre">--hand-scale=1.0</span></code> adjusts the estimated hand size
+(supported range 0.5 to 2.0).</p>
+<p>In controller mode, the hand becomes inactive if wrist tracking is lost or jumps.
+Disconnected gloves and stale sensor streams also become inactive.</p>
+</section>
+<section id="retargeting-and-calibration">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Retargeting and calibration</a><a class="headerlink" href="#retargeting-and-calibration" title="Link to this heading">#</a></h2>
+<p>Human skeleton calibration describes the device, not a target mechanical hand. One calibration
+can feed L6, O6, L20, or another manufacturer’s <code class="docutils literal notranslate"><span class="pre">HandInput</span></code> retargeter. Wear the glove
+in its final fit. The command-line workflow waits for Enter before every step, then gives
+8 seconds to release the keyboard and prepare, followed by a 6-second hold. It requires
+at least 120 samples per hold. Change <code class="docutils literal notranslate"><span class="pre">--prepare-seconds</span></code>, <code class="docutils literal notranslate"><span class="pre">--hold-seconds</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">--samples</span></code> if needed.</p>
+<p>Capture these five endpoint poses for each connected side:</p>
+<ul class="simple">
+<li><p><strong>Open palm:</strong> wrist neutral, palm flat, four fingers straight and together; thumb points sideways.</p></li>
+<li><p><strong>Full fist:</strong> curl the four fingers fully; keep the thumb outside the fist, without forcing it.</p></li>
+<li><p><strong>Thumb-only curl:</strong> keep the four fingers straight; fully bend the thumb MCP and IP joints.</p></li>
+<li><p><strong>Thumb opposition:</strong> keep the four fingers straight; sweep the thumb across the palm toward
+the little-finger base, without forcing fingertip contact.</p></li>
+<li><p><strong>Finger spread:</strong> keep the fingers straight and spread them sideways as far as comfortable.</p></li>
+</ul>
+<p>Then lightly touch the thumb tip to the <strong>index, middle, ring, and little fingertip</strong>, one
+at a time. Keep the unused fingers relaxed, without squeezing. Release and repeat each
+of these four contacts, then repeat the original <strong>open palm</strong> pose. This is one 14-step
+calibration sequence; when both sides are selected, do the same pose with both hands.
+The PC calibration window in the hand demos uses this same sequence, sample reduction,
+and fitting. L6, O6, and L20 reuse one human calibration without a model-specific step.</p>
+<p>Calibration requires NumPy and SciPy in the Capture interpreter. Fingers remain
+independently driven; contact poses are used for calibration, not runtime snapping.</p>
+<p>Capture a calibration from the standard DeviceIO stream:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.realhand_ffg_glove_calibration<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--side<span class="w"> </span>both<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--plugin-path<span class="w"> </span>install/plugins<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--realhand-ffg-glove-ports<span class="o">=</span>/dev/ttyUSB0,/dev/ttyUSB1<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output<span class="w"> </span>/path/to/ffg_human.yml
+</pre></div>
+</div>
+<p>Use <code class="docutils literal notranslate"><span class="pre">--side</span> <span class="pre">left</span></code> or <code class="docutils literal notranslate"><span class="pre">--side</span> <span class="pre">right</span></code> when one glove is connected. A later run for the other
+side updates the same YAML and preserves the existing side. Pass the resulting
+path with <code class="docutils literal notranslate"><span class="pre">--realhand-ffg-glove-calibration</span></code>
+when starting the plugin from the combined FFG example.
+For a separately launched plugin, restart it with <code class="docutils literal notranslate"><span class="pre">--calibration=/path/to/ffg_human.yml</span></code>.
+Without calibration the plugin publishes raw sensors for capture but no active human hand.
+Recalibrate after re-wearing, power-cycling, or materially shifting a glove. Failed
+captures leave the previous calibration intact. Files use
+<code class="docutils literal notranslate"><span class="pre">realhand-ffg-glove-human-calibration-v1</span></code>; robot-specific calibration files are incompatible.
+The demo loads existing human calibrations, including those used before CTS, without
+refitting or rewriting them. Calibration itself does not certify CTS conformance.</p>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p><a class="reference internal" href="../references/retargeting/realhand.html"><span class="doc">Retargeters: P7 and RealHand</span></a> describes the P7 and RealHand output pipelines.
+For device verification, see the official <a class="reference external" href="https://nvidia.github.io/IsaacCapture/main/conformance/hand.html" rel="noopener noreferrer" target="_blank">Hand CTS workflow</a>.</p>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="hand_tracking/haptikos.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Haptikos Exoskeletons</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="body_tracking/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Body Tracking</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow">Data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build">Build</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#usb-permissions">USB permissions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run">Run</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-placement">Wrist placement</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#retargeting-and-calibration">Retargeting and calibration</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
