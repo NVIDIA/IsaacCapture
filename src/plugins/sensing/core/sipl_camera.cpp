@@ -408,7 +408,7 @@ struct SiplCamera::Impl
         uint64_t consumed_sequence = 0;
         uint64_t published_timestamp_ns = 0;
         uint64_t published_unix_ns = 0;
-        uint64_t published_capture_tsc_ns = 0;
+        uint64_t published_capture_tsc = 0;
 
         std::thread frame_thread;
         std::thread event_thread;
@@ -485,7 +485,7 @@ struct SiplCamera::Impl
     void frame_loop(Sensor& sensor);
     void event_loop(Sensor& sensor);
     void convert(Sensor& sensor, const Slot& slot, uint32_t write_idx);
-    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc_ns);
+    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc);
     uint32_t pick_write_index(const Sensor& sensor) const;
     void cleanup();
 };
@@ -850,7 +850,7 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
             // The TSC is what makes the two eyes pairable; do not substitute a
             // host clock, which carries this sensor's own queueing jitter.
             const auto& meta = nvm->GetImageData();
-            const uint64_t capture_tsc_ns = meta.frameCaptureTSC;
+            const uint64_t capture_tsc = meta.frameCaptureTSC;
             // SENSING_TSC_PROBE=1 logs, twice a second, the capture TSC beside the host clocks read at dequeue.
             // The difference holds sensor readout, ISP and dequeue delay as well as any clock offset, so it only
             // shows the order of magnitude and the drift of the relation: it is not a counter-to-host mapping and
@@ -871,10 +871,10 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
                     const int64_t raw_ns = clock_ns(CLOCK_MONOTONIC_RAW);
                     isaaccapture::Logger::get("isaaccapture.plugins.sensing.SiplCamera")
                         ->info(
-                            "[tsc] sensor {} tsc_ns={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={} "
-                            "raw_minus_tsc_ns={}",
-                            sensor.info.id, capture_tsc_ns, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME),
-                            raw_ns - static_cast<int64_t>(capture_tsc_ns));
+                            "[tsc] sensor {} tsc={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={} "
+                            "raw_minus_tsc={}",
+                            sensor.info.id, capture_tsc, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME),
+                            raw_ns - static_cast<int64_t>(capture_tsc));
                 }
             }
             // SENSING_AE_PROBE=1 logs the sensor's exposure and gain once a
@@ -926,7 +926,7 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
             buffer->Release();
             // Both clocks are read back to back, so the pair names one instant.
             const uint64_t stamp_ns = monotonic_ns();
-            publish(sensor, write_idx, stamp_ns, unix_ns(), capture_tsc_ns);
+            publish(sensor, write_idx, stamp_ns, unix_ns(), capture_tsc);
         }
     }
     catch (const std::exception& e)
@@ -974,13 +974,13 @@ void SiplCamera::Impl::event_loop(Sensor& sensor)
 }
 
 void SiplCamera::Impl::publish(
-    Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc_ns)
+    Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc)
 {
     std::lock_guard<std::mutex> guard(sensor.publish_mutex);
     sensor.publish_idx = static_cast<int>(write_idx);
     sensor.published_timestamp_ns = timestamp_ns;
     sensor.published_unix_ns = unix_stamp_ns;
-    sensor.published_capture_tsc_ns = capture_tsc_ns;
+    sensor.published_capture_tsc = capture_tsc;
     ++sensor.published_sequence;
 }
 
@@ -1237,7 +1237,7 @@ std::optional<FrameView> SiplCamera::latest(uint32_t sensor_id)
     view.height = sensor->info.height;
     view.timestamp_ns = sensor->published_timestamp_ns;
     view.unix_ns = sensor->published_unix_ns;
-    view.capture_tsc_ns = sensor->published_capture_tsc_ns;
+    view.capture_tsc = sensor->published_capture_tsc;
     view.sequence = sensor->published_sequence;
     return view;
 }

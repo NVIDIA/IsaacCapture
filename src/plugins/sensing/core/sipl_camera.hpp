@@ -80,9 +80,9 @@ struct FrameView
     /// conversion, so later than the capture event. Published as the frame's application timestamp; it is
     /// only as accurate as the two hosts' clock synchronisation and is not a capture time.
     uint64_t unix_ns = 0;
-    /// Capture time on the TSC timebase, shared by every sensor on the rig.
-    /// This is what makes the two eyes pairable; a host clock is not.
-    uint64_t capture_tsc_ns = 0;
+    /// SIPL's raw frame capture counter, shared by every sensor on the rig, so it pairs the two eyes. Its units
+    /// are unscaled ticks until the SIPL headers confirm otherwise; it is not nanoseconds or a host time.
+    uint64_t capture_tsc = 0;
     uint64_t sequence = 0;
 };
 
