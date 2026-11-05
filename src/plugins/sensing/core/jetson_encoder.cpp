@@ -78,9 +78,8 @@ struct JetsonEncoder::Impl
         if (buffer && buffer->planes[0].bytesused > 0)
         {
             const auto* data = static_cast<const uint8_t*>(buffer->planes[0].data);
-            // V4L2 M2M copies the OUTPUT buffer's timestamp onto the CAPTURE
-            // buffer it produces, so this unit carries its own frame's stamp
-            // rather than whatever was submitted most recently.
+            // V4L2 M2M encoders may copy the OUTPUT buffer's timestamp onto the CAPTURE buffer, but the Orin driver
+            // observed here returns its own frame-rate numbering instead: treat this stamp as the unit's own.
             EncodedUnit unit;
             unit.data.assign(data, data + buffer->planes[0].bytesused);
             unit.timestamp_ns = static_cast<int64_t>(v4l2_buf->timestamp.tv_sec) * 1000000000LL +
