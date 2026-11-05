@@ -47,9 +47,8 @@ not from fitting measurements:
    the camera and a tracking device as the test of real alignment. The recorder's frame-age check only catches gross
    disagreement.
 
-`SENSING_TSC_PROBE=1` prints the capture counter beside the host clocks twice a second, off by default. Its
-difference includes sensor readout, ISP and dequeue delay as well as any clock offset, so it only shows the order of
-magnitude and the drift of the relation. It is not a mapping and must not be fitted or subtracted as one.
+`SENSING_TSC_PROBE=1` prints the capture counter beside the host clocks twice a second, off by default, as separate
+uncalibrated samples. The counter's units are unconfirmed, so they must not be subtracted, fitted or used as a mapping.
 
 **Not yet exercised on the Orin.** The publisher, the browser's acceptance of its H.264 profile and the end-to-end
 latency have not been run or measured. Report those as untested until someone has run them.
