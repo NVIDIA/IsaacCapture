@@ -22,7 +22,7 @@ function placeholderFor(phase: LiveKitPhase, track: RemoteTrack | null, hasFrame
   return stale ? "No video frames" : null;
 }
 
-/** A named preview tile; always labelled preview-only because these feeds are not recorded. */
+/** A named live tile. It makes no claim about recording: whether a stream is saved is the recorder's state. */
 export function LiveKitCameraTile({
   name,
   track,
@@ -91,10 +91,7 @@ export function LiveKitCameraTile({
       {/* The element stays mounted while a track exists so attach/detach never races a re-created node. */}
       {track !== null && <video ref={videoRef} muted autoPlay playsInline aria-label={name} />}
       {placeholder !== null && <div className="camera-placeholder">{placeholder}</div>}
-      <figcaption>
-        {name}
-        <span className="camera-preview-badge">Preview only, not recorded</span>
-      </figcaption>
+      <figcaption>{name}</figcaption>
     </figure>
   );
 }
