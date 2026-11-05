@@ -70,9 +70,9 @@ build/src/plugins/sensing/app/camera_plugin_sensing \
 
 The `livekit=` names must equal the `track` names in the PC's streams file. Stop with Ctrl-C. `--help` lists every
 option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform-config`, `--link-masks`).
-`SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second; its difference includes
-capture, ISP and dequeue delay, so it is a diagnostic and not a clock mapping.
+`SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second, as separate uncalibrated
+samples. The counter's units are unconfirmed, so do not subtract or fit them.
 
-Status: built and run on an AGX Orin (both sensors, 2560x1984 at 30 fps, H.264). If a build or run fails, fix the
+Status: built and run on an AGX Orin by the author (both sensors, 2560x1984 at 30 fps, H.264; not reproduced in CI). If a build or run fails, fix the
 failure at the file it names. `examples/egocap/LIVEKIT_PREVIEW.md` section 4 covers the PC side, and what recording from this
 publisher still needs.

@@ -318,7 +318,8 @@ struct LiveKitVideoOutput::Impl
         in_encoder.push_back(
             { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
         // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
-        // Keep the queue bounded so one lost unit cannot leave every later frame paired with the wrong capture.
+        // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
+        // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
         constexpr std::size_t kMaxInFlight = 12;
         while (in_encoder.size() > kMaxInFlight)
             in_encoder.pop_front();

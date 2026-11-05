@@ -852,10 +852,8 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
             const auto& meta = nvm->GetImageData();
             const uint64_t capture_tsc = meta.frameCaptureTSC;
             // SENSING_TSC_PROBE=1 logs, twice a second, the capture TSC beside the host clocks read at dequeue.
-            // The difference holds sensor readout, ISP and dequeue delay as well as any clock offset, so it only
-            // shows the order of magnitude and the drift of the relation: it is not a counter-to-host mapping and
-            // must not be fitted or subtracted as one. The environment is read once, so a disabled probe costs a
-            // branch per frame.
+            // Uncalibrated samples: the counter's units are unconfirmed, so it is logged beside the host clocks and
+            // never subtracted from them. The environment is read once, so a disabled probe costs a branch per frame.
             static const bool tsc_probe = std::getenv("SENSING_TSC_PROBE") != nullptr;
             if (tsc_probe)
             {
@@ -871,10 +869,8 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
                     const int64_t raw_ns = clock_ns(CLOCK_MONOTONIC_RAW);
                     isaaccapture::Logger::get("isaaccapture.plugins.sensing.SiplCamera")
                         ->info(
-                            "[tsc] sensor {} tsc={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={} "
-                            "raw_minus_tsc={}",
-                            sensor.info.id, capture_tsc, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME),
-                            raw_ns - static_cast<int64_t>(capture_tsc));
+                            "[tsc] sensor {} tsc={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={}",
+                            sensor.info.id, capture_tsc, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME));
                 }
             }
             // SENSING_AE_PROBE=1 logs the sensor's exposure and gain once a
