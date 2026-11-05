@@ -42,14 +42,14 @@ def jpeg_camera(stream_id: int = 1) -> p.CameraStream:
         stream_id=stream_id,
         kind=p.StreamKind.IMAGE,
         name="jpeg",
-        type=next(iter(p.CameraType)),
+        type=p.CameraType.OAK_D_COLOR,
         required=False,
         width=6,
         height=4,
         fps=30.0,
-        codec=next(iter(p.ImageCodec)),
+        codec=p.ImageCodec.JPEG,
         jpeg_quality=80,
-        orientation=next(iter(p.ImageOrientation)),
+        orientation=p.ImageOrientation(),
     )
 
 
