@@ -3,8 +3,8 @@
 
 #pragma once
 
+#include "camera_capture.hpp"
 #include "sensing_types.hpp"
-#include "sipl_camera.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -59,7 +59,7 @@ private:
     };
 
     SensingConfig m_config;
-    std::unique_ptr<SiplCamera> m_camera;
+    std::unique_ptr<CameraCapture> m_camera;
     /// Declared before the streams so it is destroyed after their tracks have been unpublished.
     std::unique_ptr<LiveKitSession> m_livekit;
     std::vector<Stream> m_streams;
