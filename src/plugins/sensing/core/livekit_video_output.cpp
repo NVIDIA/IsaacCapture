@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <variant>
@@ -62,6 +63,8 @@ struct LiveKitVideoOutput::Impl
         out_height = config.source_height / config.scale_div;
         if (sink->width() != out_width || sink->height() != out_height)
             throw std::runtime_error("LiveKit output: the track size does not match the output size");
+        if (config.input == PixelKind::DmaBufNv12 && config.scale_div != 1)
+            throw std::runtime_error("LiveKit output: DMA-BUF input cannot be reduced (scale_div must be 1)");
         period_ns = 1'000'000'000ull / config.fps;
         if (config.bitrate_bps < kMinBitrateBps)
         {
@@ -86,11 +89,14 @@ struct LiveKitVideoOutput::Impl
             encoder_config.fps = config.fps;
             encoder_config.gop = config.gop;
             encoder_config.full_range = config.full_range;
+            encoder_config.input = config.input;
             encoder = std::make_unique<JetsonEncoder>(encoder_config);
             applied_bitrate = config.bitrate_bps;
 
             for (auto& slot : slots)
             {
+                if (config.input != PixelKind::CudaRgba)
+                    break; // DMA-BUF frames are not copied
                 check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&slot.ptr), &slot.pitch,
                                            static_cast<size_t>(config.source_width) * 4, config.source_height),
                            "cudaMallocPitch(snapshot)");
@@ -147,12 +153,13 @@ struct LiveKitVideoOutput::Impl
     }
 
     // Polling thread.
-    void submit(const CaptureFrame& frame)
+    void submit(CaptureFrame& frame)
     {
+        const bool dma = config.input == PixelKind::DmaBufNv12;
         const auto* rgba = std::get_if<CudaRgbaPixels>(&frame.pixels);
-        if (rgba == nullptr)
+        if (dma ? !std::holds_alternative<DmaBufNv12Pixels>(frame.pixels) : rgba == nullptr)
         {
-            fail("LiveKit output: this pixel type has no encoder input yet");
+            fail("LiveKit output: the frame's pixel type does not match the encoder input");
             return;
         }
         ++offered;
@@ -164,6 +171,23 @@ struct LiveKitVideoOutput::Impl
         if (have_last && frame.monotonic_ns < last_accepted_ns + period_ns * 9 / 10)
         {
             ++paced_out;
+            return;
+        }
+
+        if (dma)
+        {
+            const uint64_t accepted_ns = frame.monotonic_ns;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                // A frame still waiting is replaced by this newer one; assigning releases its lease.
+                if (pending_dma)
+                    ++replaced;
+                pending_dma = std::move(frame);
+            }
+            ++snapshots;
+            have_last = true;
+            last_accepted_ns = accepted_ns;
+            wake.notify_one();
             return;
         }
 
@@ -222,22 +246,30 @@ struct LiveKitVideoOutput::Impl
             for (;;)
             {
                 int index = -1;
+                std::optional<CaptureFrame> dma;
                 bool flush_now = false;
                 {
                     std::unique_lock<std::mutex> lock(mutex);
                     // Frames in the encoder come out a little later: poll for them soon, and otherwise
                     // wake now and then to pick up the receiving side's requests.
                     const auto wait = in_encoder.empty() ? std::chrono::milliseconds(100) : std::chrono::milliseconds(2);
-                    wake.wait_for(lock, wait, [&] { return stopping || pending >= 0 || flush_requested; });
+                    wake.wait_for(lock, wait, [&] { return stopping || pending >= 0 || pending_dma || flush_requested; });
                     if (stopping)
                         return;
                     index = pending;
                     pending = -1;
                     inflight = index;
+                    dma = std::move(pending_dma);
+                    pending_dma.reset();
                     flush_now = flush_requested;
                 }
 
                 apply_feedback();
+                if (dma)
+                {
+                    encode_dma(*dma);
+                    dma.reset();
+                }
                 if (index >= 0)
                 {
                     encode(slots[index]);
@@ -325,8 +357,31 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        in_encoder.push_back(
-            { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
+        track_in_flight(stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000);
+    }
+
+    // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
+    void encode_dma(CaptureFrame& frame)
+    {
+        if (keyframe_wanted)
+        {
+            encoder->request_keyframe();
+            keyframe_wanted = false;
+        }
+        const int fd = std::get<DmaBufNv12Pixels>(frame.pixels).fd;
+        if (!encoder->submit_dmabuf(fd, static_cast<int64_t>(frame.monotonic_ns), std::move(frame.lease)))
+        {
+            ++encoder_busy;
+            return;
+        }
+        track_in_flight(static_cast<int64_t>(frame.monotonic_ns) / 1000, static_cast<uint32_t>(frame.sequence),
+                        frame.sensor_time, frame.unix_ns / 1000);
+    }
+
+    // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
+    void track_in_flight(int64_t stamp_us, uint32_t sequence, uint64_t capture_tsc, uint64_t unix_us)
+    {
+        in_encoder.push_back({ stamp_us, sequence, capture_tsc, unix_us });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -413,6 +468,8 @@ struct LiveKitVideoOutput::Impl
     std::chrono::steady_clock::time_point last_bitrate_change = std::chrono::steady_clock::now();
 
     Slot slots[2];
+    /// DMA-BUF input only: the newest accepted frame, waiting for the worker. Guarded by `mutex`.
+    std::optional<CaptureFrame> pending_dma;
     uint8_t* d_scaled = nullptr;
     size_t scaled_pitch = 0;
     cudaStream_t snapshot_stream = nullptr;
@@ -473,7 +530,7 @@ LiveKitVideoOutput::LiveKitVideoOutput(std::unique_ptr<VideoTrackSink> sink, con
 
 LiveKitVideoOutput::~LiveKitVideoOutput() = default;
 
-void LiveKitVideoOutput::submit(const CaptureFrame& frame)
+void LiveKitVideoOutput::submit(CaptureFrame& frame)
 {
     m_impl->submit(frame);
 }

@@ -47,6 +47,10 @@ hardware encoder and publishes one LiveKit video track per camera. The
 [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/device/camera/sensing.html)
 has the build and run steps.
 
-`--camera-backend=auto|sipl|argus` selects the capture backend once at startup. Only SIPL is built in today: `argus` fails
-with a message saying so, and `auto` picks the only matching backend (and, with several, names the override instead of
-guessing).
+`--camera-backend=auto|sipl|argus` selects the capture backend once at startup: an explicit choice must match or fail
+with its own reason, and `auto` picks the only matching backend (with several it names the override instead of
+guessing). SIPL is built by default (`-DSENSING_WITH_SIPL=OFF` for an Argus-only rig). The Argus backend
+(`-DSENSING_WITH_ARGUS=ON`, Argus device index with `--add-stream=sensor=N,...`, `--argus-mode=K`) captures NV12 into
+DMA-BUFs that the hardware encoder reads without a copy. **The Argus code has never been built or run: there is no
+Argus SDK or Argus camera available to the author.** Argus DMA-BUF input cannot be combined with
+`--livekit-scale-div` above 1.

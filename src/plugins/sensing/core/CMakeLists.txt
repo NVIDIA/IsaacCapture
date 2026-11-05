@@ -4,22 +4,35 @@
 # SIPL capture, colour conversion, the hardware encoder and the LiveKit track output.
 add_library(sensing_core STATIC
     sensing_camera.cpp
-    sipl_camera.cpp
-    sipl_capture.cpp
     camera_backend.cpp
+    capture_factory.cpp
     jetson_encoder.cpp
     livekit_video_output.cpp
-    yuv_to_rgba.cu
     rgba_to_nv12.cu
     rgba_box_downscale.cu
+    inc/sensing_core/argus_capture.hpp
     inc/sensing_core/camera_backend.hpp
     inc/sensing_core/camera_capture.hpp
+    inc/sensing_core/capture_factory.hpp
     inc/sensing_core/sensing_camera.hpp
     inc/sensing_core/sensing_types.hpp
     inc/sensing_core/sipl_camera.hpp
     ${JETSON_MMAPI_SOURCES}
 )
 add_library(sensing::core ALIAS sensing_core)
+
+if(SENSING_WITH_SIPL)
+    target_sources(sensing_core PRIVATE sipl_camera.cpp sipl_capture.cpp yuv_to_rgba.cu)
+    target_compile_definitions(sensing_core PUBLIC SENSING_HAS_SIPL)
+endif()
+
+# The Argus backend is optional: it needs the Argus headers and libnvargus, which a SIPL-only rig does not have.
+if(SENSING_WITH_ARGUS)
+    target_sources(sensing_core PRIVATE argus_capture.cpp)
+    target_compile_definitions(sensing_core PUBLIC SENSING_HAS_ARGUS)
+    target_include_directories(sensing_core PRIVATE ${ARGUS_INCLUDE_DIR})
+    target_link_libraries(sensing_core PRIVATE ${ARGUS_LIBRARY})
+endif()
 
 # RESOLVE_DEVICE_SYMBOLS as well as SEPARABLE_COMPILATION: without it the device-link step only happens
 # for consumers in a directory where CUDA is an enabled language. Resolving here makes the archive

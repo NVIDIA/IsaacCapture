@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <sensing_core/camera_backend.hpp>
+#include <sensing_core/capture_factory.hpp>
 #include <sensing_core/sensing_camera.hpp>
-#include <sensing_core/sipl_camera.hpp>
+
+#ifdef SENSING_HAS_SIPL
+#    include <sensing_core/sipl_camera.hpp>
+#endif
+#ifdef SENSING_HAS_ARGUS
+#    include <sensing_core/argus_capture.hpp>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -117,43 +124,45 @@ static std::string default_platform_config()
 
 static void print_usage(const char* program_name)
 {
-    std::cout << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
-              << "\n"
-              << "Publishes each SENSING sensor as a LiveKit camera track: SIPL capture, hardware H.264,\n"
-              << "sent as it is.\n"
-              << "\n"
-              << "Streams (repeat for each sensor):\n"
-              << "  --add-stream=sensor=N,livekit=NAME   SIPL pipeline index N, published as track NAME\n"
-              << "  --list-sensors                       print the pipelines, then exit\n"
-              << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
-              << "                                       only sipl is built in\n"
-              << "\n"
-              << "Platform:\n"
-              << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
-              << "                          binary)\n"
-              << "  --config-name=NAME      named config inside it (default: SHW5G_2)\n"
-              << "  --link-masks='M M'      one mask per deserializer (default: '0x0000 0x1100')\n"
-              << "  --nito-dir=DIR          ISP tuning directory (default: /var/nvidia/nvcam/settings/sipl)\n"
-              << "\n"
-              << "LiveKit:\n"
-              << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
-              << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
-              << "                            participant identity\n"
-              << "  --livekit-fps=N           publication rate cap (default: 30)\n"
-              << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
-              << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
-              << "  --gop=N                   IDR period in frames (default: fps*5)\n"
-              << "\n"
-              << "Other:\n"
-              << "  --gpu-id=N          CUDA device index (default: 0)\n"
-              << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
-              << "  --full-range        full-range YUV\n"
-              << "  --swap-uv           swap the chroma planes\n"
-              << "\n"
-              << "Example:\n"
-              << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
-              << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
-              << "      --add-stream=sensor=1,livekit=sensing-right\n";
+    std::cout
+        << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
+        << "\n"
+        << "Publishes each SENSING sensor as a LiveKit camera track: SIPL capture, hardware H.264,\n"
+        << "sent as it is.\n"
+        << "\n"
+        << "Streams (repeat for each sensor):\n"
+        << "  --add-stream=sensor=N,livekit=NAME   camera N (SIPL pipeline or Argus device index), published as track NAME\n"
+        << "  --list-sensors                       print the cameras, then exit\n"
+        << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
+        << "                                       (a backend must also be built in)\n"
+        << "  --argus-mode=N                       Argus sensor mode index (default: 0)\n"
+        << "\n"
+        << "Platform:\n"
+        << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
+        << "                          binary)\n"
+        << "  --config-name=NAME      named config inside it (default: SHW5G_2)\n"
+        << "  --link-masks='M M'      one mask per deserializer (default: '0x0000 0x1100')\n"
+        << "  --nito-dir=DIR          ISP tuning directory (default: /var/nvidia/nvcam/settings/sipl)\n"
+        << "\n"
+        << "LiveKit:\n"
+        << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
+        << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
+        << "                            participant identity\n"
+        << "  --livekit-fps=N           publication rate cap (default: 30)\n"
+        << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
+        << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
+        << "  --gop=N                   IDR period in frames (default: fps*5)\n"
+        << "\n"
+        << "Other:\n"
+        << "  --gpu-id=N          CUDA device index (default: 0)\n"
+        << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
+        << "  --full-range        full-range YUV\n"
+        << "  --swap-uv           swap the chroma planes\n"
+        << "\n"
+        << "Example:\n"
+        << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
+        << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
+        << "      --add-stream=sensor=1,livekit=sensing-right\n";
 }
 
 // =============================================================================
@@ -203,6 +212,10 @@ try
         else if (arg == "--list-sensors")
         {
             list_sensors = true;
+        }
+        else if (arg.find("--argus-mode=") == 0)
+        {
+            camera_config.argus_sensor_mode = static_cast<uint32_t>(std::stoul(arg.substr(13)));
         }
         else if (arg.find("--camera-backend=") == 0)
         {
@@ -266,50 +279,88 @@ try
         }
     }
 
-    if (camera_config.platform_config_json.empty())
-    {
-        camera_config.platform_config_json = default_platform_config();
-    }
-    if (camera_config.platform_config_json.empty())
-    {
-        std::cerr << "Error: no platform config. configs/shw5g.json was not found beside this\n"
-                     "binary, so pass --platform-config=PATH. SIPL cannot enumerate sensors\n"
-                     "without one."
-                  << std::endl;
-        print_usage(argv[0]);
-        return 1;
-    }
+    // Each backend reports whether it can open the configured rig; probing parses configuration or enumerates
+    // devices and opens no camera, so --list-sensors works on a rig whose cameras are unplugged.
+    std::vector<uint32_t> camera_ids;
+    for (const auto& entry : stream_map)
+        camera_ids.push_back(entry.first);
 
-    // Query is hardware-free -- it only parses the driver database and the JSON -- so --list-sensors
-    // works on a rig whose cameras are unplugged, and the poll interval below can be derived before
-    // anything is opened.
-    // Only SIPL is built in, so it is the only probe. Its query parses the configuration; it does not prove
-    // that the cameras are present, so a matching rig is a configuration that names sensors.
-    std::vector<SensorInfo> sensors;
+    std::vector<CameraInfo> sipl_cameras;
+    std::vector<CameraInfo> argus_cameras;
     BackendProbe sipl_probe;
     sipl_probe.backend = CameraBackend::Sipl;
+    BackendProbe argus_probe;
+    argus_probe.backend = CameraBackend::Argus;
+
+#ifdef SENSING_HAS_SIPL
     sipl_probe.available = true;
+    if (camera_config.platform_config_json.empty())
+        camera_config.platform_config_json = default_platform_config();
+    if (camera_config.platform_config_json.empty())
+    {
+        sipl_probe.detail =
+            "no platform config: configs/shw5g.json was not found beside this binary; pass "
+            "--platform-config=PATH";
+    }
+    else
+    {
+        // The query parses the configuration; it does not prove that the cameras are present.
+        try
+        {
+            for (const auto& s : SiplCamera::query(
+                     camera_config.platform_config_json, camera_config.platform_config_name, camera_config.link_masks))
+                sipl_cameras.push_back({ s.id, s.name, s.width, s.height, s.fps });
+            sipl_probe.matches = !sipl_cameras.empty();
+            if (!sipl_probe.matches)
+                sipl_probe.detail = "the platform configuration names no sensors";
+        }
+        catch (const std::exception& e)
+        {
+            sipl_probe.detail = e.what();
+        }
+    }
+#else
+    sipl_probe.detail = "this build has no SIPL support";
+#endif
+
+#ifdef SENSING_HAS_ARGUS
+    argus_probe.available = true;
     try
     {
-        sensors = SiplCamera::query(
-            camera_config.platform_config_json, camera_config.platform_config_name, camera_config.link_masks);
-        sipl_probe.matches = !sensors.empty();
-        if (!sipl_probe.matches)
-            sipl_probe.detail = "the platform configuration names no sensors";
+        argus_cameras = ArgusCapture::query(camera_config.argus_sensor_mode);
+        // Every requested camera must exist; with none requested (--list-sensors) any camera counts.
+        argus_probe.matches = !argus_cameras.empty();
+        for (uint32_t id : camera_ids)
+        {
+            const bool found = std::any_of(
+                argus_cameras.begin(), argus_cameras.end(), [id](const CameraInfo& c) { return c.id == id; });
+            if (!found)
+            {
+                argus_probe.matches = false;
+                argus_probe.detail = "no Argus camera device " + std::to_string(id);
+            }
+        }
+        if (argus_cameras.empty())
+            argus_probe.detail = "Argus reports no camera devices";
     }
     catch (const std::exception& e)
     {
-        sipl_probe.detail = e.what();
+        argus_probe.detail = e.what();
     }
-    const CameraBackend backend = select_camera_backend(requested_backend, { sipl_probe });
+#else
+    argus_probe.detail = "this build has no Argus support (configure with -DSENSING_WITH_ARGUS=ON)";
+#endif
+
+    const CameraBackend backend = select_camera_backend(requested_backend, { sipl_probe, argus_probe });
+    const std::vector<CameraInfo>& cameras = backend == CameraBackend::Argus ? argus_cameras : sipl_cameras;
     std::cout << "Camera backend: " << camera_backend_name(backend) << std::endl;
 
     if (list_sensors)
     {
-        std::cout << camera_config.platform_config_name << ": " << sensors.size() << " sensor(s)\n";
-        for (const auto& s : sensors)
+        std::cout << cameras.size() << " camera(s)\n";
+        for (const auto& c : cameras)
         {
-            std::cout << "  sensor=" << s.id << "  " << s.name << "  " << s.width << "x" << s.height << " @ " << s.fps
+            std::cout << "  sensor=" << c.id << "  " << c.name << "  " << c.width << "x" << c.height << " @ " << c.fps
                       << " fps\n";
         }
         return 0;
@@ -359,10 +410,10 @@ try
     std::signal(SIGTERM, signal_handler);
 
     std::cout << "============================================================" << std::endl;
-    std::cout << "SENSING Camera Plugin Starting (SIPL)" << std::endl;
+    std::cout << "SENSING Camera Plugin Starting (" << camera_backend_name(backend) << ")" << std::endl;
     std::cout << "============================================================" << std::endl;
 
-    SensingCamera camera(camera_config, stream_configs);
+    SensingCamera camera(camera_config, make_capture(backend, camera_config, camera_ids), stream_configs);
 
     std::cout << "------------------------------------------------------------" << std::endl;
     std::cout << "Running capture loop. Press Ctrl+C to stop." << std::endl;
@@ -374,9 +425,9 @@ try
     // twice the fastest sensor's frame rate rather than spinning a core flat
     // out. Capture itself runs on SIPL's own threads and is unaffected.
     double fastest_fps = 30.0;
-    for (const auto& s : sensors)
+    for (const auto& c : cameras)
     {
-        fastest_fps = std::max(fastest_fps, s.fps);
+        fastest_fps = std::max(fastest_fps, c.fps);
     }
     const auto poll_interval = std::chrono::microseconds(static_cast<int64_t>(500'000.0 / fastest_fps));
 

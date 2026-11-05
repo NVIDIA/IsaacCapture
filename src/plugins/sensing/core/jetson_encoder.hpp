@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "camera_capture.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -24,6 +26,8 @@ struct EncoderConfig
     /// IDR period in frames; 0 defers to fps*5.
     uint32_t gop = 0;
     bool full_range = false;
+    /// What submit()/submit_dmabuf() will be given; fixed for the encoder's lifetime.
+    PixelKind input = PixelKind::CudaRgba;
 };
 
 /// One encoded Annex-B unit.
@@ -76,6 +80,15 @@ public:
      * @return false when no input buffer is free (frame dropped).
      */
     bool submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_bytes, int64_t timestamp_ns);
+
+    /**
+     * @brief Queue one NV12 DMA-BUF frame for encoding, with no copy. Only for `input == DmaBufNv12`.
+     * @param dmabuf_fd The NvBufSurface fd the encoder reads.
+     * @param lease Keeps the capture buffer alive: held until the encoder's input plane returns this buffer, and
+     *        released at once if the frame is dropped.
+     * @return false when no input buffer is free (frame dropped).
+     */
+    bool submit_dmabuf(int dmabuf_fd, int64_t timestamp_ns, FrameLease lease);
 
     /** @brief Take any completed unit; empty during encoder warmup. */
     EncodedUnit poll();

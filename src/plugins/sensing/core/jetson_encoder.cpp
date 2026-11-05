@@ -47,6 +47,17 @@ struct JetsonEncoder::Impl
     EncoderConfig config;
     NvVideoEncoder* encoder = nullptr;
 
+    // DMA-BUF input: a wrapper per output buffer carrying the fd the encoder reads, and the lease that keeps the
+    // capture buffer alive until the plane returns that index. Members destroy after ~Impl deleted the encoder.
+    struct DmaInput : NvBuffer
+    {
+        DmaInput() : NvBuffer(0, 0)
+        {
+        }
+    };
+    std::vector<std::unique_ptr<DmaInput>> dma_inputs;
+    std::vector<FrameLease> dma_leases;
+
     // NV12 staging in device memory; the V4L2 output plane is host-mapped, so
     // each frame costs one device-to-host copy per plane.
     uint8_t* d_y = nullptr;
@@ -84,6 +95,29 @@ struct JetsonEncoder::Impl
         std::lock_guard<std::mutex> lock(mutex);
         if (error.empty())
             error = what;
+    }
+
+    // Fills v4l2_buf with a free output buffer (and `buffer` when the plane owns one). Until every output buffer
+    // has been queued once, index i is free by construction; after that a dequeue is what frees one. False: none
+    // is free yet, an ordinary dropped frame, or the device failed, which poll() reports.
+    bool take_input(uint32_t& queued, struct v4l2_buffer& v4l2_buf, NvBuffer** buffer)
+    {
+        if (queued < encoder->output_plane.getNumBuffers())
+        {
+            if (buffer)
+                *buffer = encoder->output_plane.getNthBuffer(queued);
+            v4l2_buf.index = queued;
+            ++queued;
+            return true;
+        }
+        if (encoder->output_plane.dqBuffer(v4l2_buf, buffer, nullptr, 0) >= 0)
+            return true;
+        // The plane logs every failure but EAGAIN, which is the non-blocking "no input buffer free yet": drop this
+        // frame rather than block. Any other errno is the device failing.
+        const int err = errno;
+        if (err != EAGAIN && err != EINTR)
+            fail((std::string("dequeueing an input buffer failed: ") + std::strerror(err)).c_str());
+        return false;
     }
 
     // Capture-plane dequeue callback; runs on the encoder's own thread.
@@ -183,7 +217,17 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
     // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
     check(enc->setHWPresetType(V4L2_ENC_HW_PRESET_FAST), "setHWPresetType");
 
-    check(enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, kOutputBuffers, true, false), "output setupPlane");
+    if (config.input == PixelKind::DmaBufNv12)
+    {
+        check(enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, kOutputBuffers, false, false), "output setupPlane");
+        for (uint32_t i = 0; i < kOutputBuffers; ++i)
+            m_impl->dma_inputs.push_back(std::make_unique<Impl::DmaInput>());
+        m_impl->dma_leases.resize(kOutputBuffers);
+    }
+    else
+    {
+        check(enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, kOutputBuffers, true, false), "output setupPlane");
+    }
     check(enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, kCaptureBuffers, true, false), "capture setupPlane");
 
     check(enc->output_plane.setStreamStatus(true), "output setStreamStatus");
@@ -205,11 +249,15 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
         check(enc->capture_plane.qBuffer(v4l2_buf, nullptr), "capture qBuffer");
     }
 
-    check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&m_impl->d_y), &m_impl->d_y_pitch, config.width, config.height),
-               "cudaMallocPitch(Y)");
-    check_cuda(
-        cudaMallocPitch(reinterpret_cast<void**>(&m_impl->d_uv), &m_impl->d_uv_pitch, config.width, config.height / 2),
-        "cudaMallocPitch(UV)");
+    if (config.input == PixelKind::CudaRgba)
+    {
+        check_cuda(
+            cudaMallocPitch(reinterpret_cast<void**>(&m_impl->d_y), &m_impl->d_y_pitch, config.width, config.height),
+            "cudaMallocPitch(Y)");
+        check_cuda(cudaMallocPitch(
+                       reinterpret_cast<void**>(&m_impl->d_uv), &m_impl->d_uv_pitch, config.width, config.height / 2),
+                   "cudaMallocPitch(UV)");
+    }
 }
 
 JetsonEncoder::~JetsonEncoder() = default;
@@ -225,24 +273,11 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     std::memset(planes, 0, sizeof(planes));
     v4l2_buf.m.planes = planes;
 
+    if (config.input != PixelKind::CudaRgba)
+        throw std::logic_error("JetsonEncoder: submit() needs a CUDA RGBA encoder; use submit_dmabuf()");
     NvBuffer* buffer = nullptr;
-    // Until every output buffer has been queued once, index i is free by
-    // construction; after that a dequeue is what frees one.
-    if (m_queued < enc->output_plane.getNumBuffers())
-    {
-        buffer = enc->output_plane.getNthBuffer(m_queued);
-        v4l2_buf.index = m_queued;
-        ++m_queued;
-    }
-    else if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 0) < 0)
-    {
-        // The plane logs every failure but EAGAIN, which is the non-blocking "no input buffer free yet": drop this
-        // frame rather than block. Any other errno is the device failing, which poll() reports.
-        const int err = errno;
-        if (err != EAGAIN && err != EINTR)
-            m_impl->fail((std::string("dequeueing an input buffer failed: ") + std::strerror(err)).c_str());
+    if (!m_impl->take_input(m_queued, v4l2_buf, &buffer))
         return false;
-    }
 
     // An input buffer is ours now, so convert: a frame that would be dropped costs no conversion. A
     // failure from here is terminal for the encoder, as a failed qBuffer is.
@@ -269,6 +304,37 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     v4l2_buf.timestamp.tv_usec = static_cast<suseconds_t>((timestamp_ns % 1000000000LL) / 1000LL);
 
     check(enc->output_plane.qBuffer(v4l2_buf, nullptr), "output qBuffer");
+    return true;
+}
+
+bool JetsonEncoder::submit_dmabuf(int dmabuf_fd, int64_t timestamp_ns, FrameLease lease)
+{
+    if (m_impl->config.input != PixelKind::DmaBufNv12)
+        throw std::logic_error("JetsonEncoder: submit_dmabuf() needs an encoder created for DMA-BUF input");
+
+    struct v4l2_buffer v4l2_buf;
+    struct v4l2_plane planes[MAX_PLANES];
+    std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+    std::memset(planes, 0, sizeof(planes));
+    v4l2_buf.m.planes = planes;
+
+    // A dropped frame returns here, and `lease` releases the capture buffer as it goes out of scope.
+    if (!m_impl->take_input(m_queued, v4l2_buf, nullptr))
+        return false;
+
+    // The encoder is finished with whatever this index carried before: give that capture buffer back.
+    const uint32_t index = v4l2_buf.index;
+    m_impl->dma_leases[index].reset();
+
+    auto& input = *m_impl->dma_inputs[index];
+    input.planes[0].fd = dmabuf_fd;
+    input.planes[0].bytesused = 1;
+    v4l2_buf.m.planes[0].bytesused = 1;
+    v4l2_buf.timestamp.tv_sec = static_cast<time_t>(timestamp_ns / 1000000000LL);
+    v4l2_buf.timestamp.tv_usec = static_cast<suseconds_t>((timestamp_ns % 1000000000LL) / 1000LL);
+
+    check(m_impl->encoder->output_plane.qBuffer(v4l2_buf, &input), "output qBuffer");
+    m_impl->dma_leases[index] = std::move(lease);
     return true;
 }
 
@@ -305,6 +371,11 @@ std::vector<EncodedUnit> JetsonEncoder::drain()
         NvBuffer* buffer = nullptr;
         if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 10) >= 0)
         {
+            if (m_impl->config.input == PixelKind::DmaBufNv12)
+            {
+                m_impl->dma_leases[v4l2_buf.index].reset();
+                v4l2_buf.m.planes[0].m.fd = -1;
+            }
             v4l2_buf.m.planes[0].bytesused = 0;
             v4l2_buf.m.planes[1].bytesused = 0;
             enc->output_plane.qBuffer(v4l2_buf, nullptr);

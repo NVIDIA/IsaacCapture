@@ -5,6 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Argus and SIPL support in the Orin LiveKit sender
 
+## Status
+
+Implemented but never built or run (no Argus SDK or Argus camera available): `core/argus_capture.*` (Argus buffer
+streams into NvBufSurface DMA-BUFs), the encoder's DMA-BUF input mode (`JetsonEncoder::submit_dmabuf`), the output's
+leased-frame path, optional builds (`SENSING_WITH_SIPL`, `SENSING_WITH_ARGUS`) and `--camera-backend`/`--argus-mode`.
+Not done: dynamically loaded backend modules, a verified per-frame correlation (below), and every measurement.
+
 ## Goal
 
 Start the same sender executable/service on Orin. It selects the camera backend
