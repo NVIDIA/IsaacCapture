@@ -20,15 +20,12 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
-
-import numpy as np
 
 from capture_server import protocol as p
 from recording_service import PixelFormat, VideoSample
 
-from .livekit_receiver import LiveKitFrameReceiver, ReceivedFrame
+from .livekit_receiver import LiveKitFrameReceiver
 from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
@@ -80,33 +77,6 @@ class UnixClockMap:
         assert best is not None
         self._offset_s = best[1]
         self._measured_at_ns = self._monotonic_ns()
-
-
-@dataclass(frozen=True)
-class MappedFrame:
-    """A received frame with the recording source it belongs to and its capture time on this machine's clock."""
-
-    frame: ReceivedFrame
-    source: str
-    capture_time: float
-
-    @property
-    def image(self) -> np.ndarray:
-        """The frame's pixels, so the ingress can size its queue by bytes."""
-        return self.frame.image
-
-
-def mapped_frame_to_samples(item: MappedFrame) -> list[VideoSample]:
-    """The recording sample for one mapped frame (the ingress's ``convert``)."""
-    return [
-        VideoSample(
-            source=item.source,
-            image=item.frame.image,
-            pixel_format=PixelFormat.RGB8,
-            capture_time=item.capture_time,
-            receive_time=item.frame.receive_time_ns / 1e9,
-        )
-    ]
 
 
 class LiveKitRecordingFeed:
@@ -180,7 +150,14 @@ class LiveKitRecordingFeed:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
                 return
             capture_time = self._clock_map.monotonic_seconds(frame.user_timestamp_us)
-            if not self._ingress.offer(MappedFrame(frame, source, capture_time)):
+            sample = VideoSample(
+                source=source,
+                image=frame.image,
+                pixel_format=PixelFormat.RGB8,
+                capture_time=capture_time,
+                receive_time=frame.receive_time_ns / 1e9,
+            )
+            if not self._ingress.offer(sample):
                 # The ingress refuses once it has failed or stopped; it reports its own reason.
                 self._fail(f"{stream.name}: the recording ingress is no longer accepting frames")
                 return

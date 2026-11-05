@@ -240,7 +240,9 @@ def _recording_readiness_check(monitor: CaptureStatusMonitor, station_config_err
         if tracking is None or (now - tracking.received_monotonic) > _READINESS_STALE_SECONDS:
             return False, "tracking source is stale or has no sample yet"
         cameras = monitor.camera_descriptors
-        if not cameras:
+        # A recordable LiveKit stream is a camera too; its liveness is checked when the take prepares and
+        # while it records, not by a preview sample here.
+        if not cameras and not recordable_livekit_streams(monitor.native.started):
             return False, "no camera selected"
         for cam in cameras:
             slot = monitor.preview.camera(cam.name)
