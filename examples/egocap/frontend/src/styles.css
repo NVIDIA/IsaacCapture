@@ -1929,6 +1929,21 @@ below for the narrow/stacked layout). */
   grid-row: 1 / -1;
 }
 
+/* Several head cameras share the main area in equal columns; other cameras stack smaller in the last column. */
+.op-stage .camera-grid-items--heads {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 2fr)) minmax(0, 1fr);
+  grid-template-rows: repeat(var(--side-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads-only {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads .camera-tile--primary {
+  grid-column: auto;
+  grid-row: 1 / -1;
+}
+
 .op-stage .camera-tile {
   display: flex;
   flex-direction: column;
