@@ -124,7 +124,7 @@ def test_session_init_still_rejects_unknown_keys():
         {"url": "https://lk.example"},
         {"url": "lk.example:7881"},
         {"url": "x" * 600},
-        {"timestamp_basis": 3},
+        {"timestamp_basis": 4},
         {"timestamp_basis": 0},
         {"timestamp_basis": "1"},
         {"timestamp_basis": True},
@@ -460,12 +460,20 @@ async def test_cli_serves_the_streams_from_the_file(tmp_path, unused_tcp_port):
 
 def test_timestamp_basis_values_are_wire_stable():
     assert int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US) == 1
-    assert int(p.LiveKitTimestampBasis.PUBLISHER_UNIX_US) == 2
+    assert int(p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US) == 2
+    assert int(p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US) == 3
 
 
-def test_unix_basis_round_trips_through_json():
-    stream = _stream(timestamp_basis=2)
-    assert stream.timestamp_basis == p.LiveKitTimestampBasis.PUBLISHER_UNIX_US
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (2, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
+        (3, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
+    ],
+)
+def test_unix_bases_round_trip_through_json(value, expected):
+    stream = _stream(timestamp_basis=value)
+    assert stream.timestamp_basis == expected
     assert p.LiveKitCameraStream.from_json(stream.to_json()) == stream
 
 
@@ -474,7 +482,8 @@ def test_unix_basis_round_trips_through_json():
     [
         ("", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
         ("timestamp_basis: monotonic_us,", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
-        ("timestamp_basis: unix_us,", p.LiveKitTimestampBasis.PUBLISHER_UNIX_US),
+        ("timestamp_basis: processing_unix_us,", p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
+        ("timestamp_basis: capture_unix_us,", p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
     ],
 )
 def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expected):
@@ -490,11 +499,13 @@ def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expect
     "value",
     [
         "wall_clock",
+        "unix_us",
         "UNIX_US",
+        "CAPTURE_UNIX_US",
         "2",
         "''",
         "null",
-        "[unix_us]",
+        "[capture_unix_us]",
         "{a: 1}",
     ],
 )
