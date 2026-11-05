@@ -6,14 +6,20 @@
  * CameraGrid's per-tile rate/latency readout: derived from successive snapshots' camera
  * sequence numbers, shown only for live fresh samples, and dashed until enough history exists.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { CameraGrid } from "./CameraGrid";
 import type { PreviewSnapshot } from "./captureProtocol";
 
+// CameraGrid asks the backend for a LiveKit preview on mount; these tests are about other behavior.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, ok: false, json: async () => ({}) })));
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(sequence: string | null, ageMs: number | null, fps = 60): PreviewSnapshot {

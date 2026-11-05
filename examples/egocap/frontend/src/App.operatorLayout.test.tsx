@@ -6,7 +6,7 @@
  * The cameras-first operator page: the status bar, the camera stage, the control dock and the side drawer that
  * holds the 3D view and raw data. useCaptureSession is mocked so each test controls the snapshot directly.
  */
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import type { PreviewSnapshot } from "./captureProtocol";
@@ -18,9 +18,15 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
   return { ...actual, useCaptureSession: vi.fn() };
 });
 
+// CameraGrid asks the backend for a LiveKit preview on mount; these tests are about other behavior.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, ok: false, json: async () => ({}) })));
+});
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 function snapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {
