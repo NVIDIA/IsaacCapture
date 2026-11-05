@@ -10,7 +10,7 @@
 namespace plugins::manus::calibration
 {
 
-// Lowercase hex SHA-256 of `data`, used to let the supervisor verify an exported file.
+// Lowercase hex SHA-256 of `data`, reported with each exported file.
 std::string sha256_hex(const std::vector<uint8_t>& data);
 
 } // namespace plugins::manus::calibration

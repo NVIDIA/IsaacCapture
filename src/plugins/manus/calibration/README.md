@@ -51,7 +51,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 
 | `type` | Fields | When |
 | --- | --- | --- |
-| `ready` | `worker_version` (string), `sdk_version` (string or null) | Once, after the IPC socket is open and before any command is read. |
+| `ready` | `worker_version` (string), `sdk_version` (string or null) | Once, after the IPC socket is open and before any command is read. `sdk_version` is currently always null, because the SDK is not initialized until `start`. |
 | `status` | `attempt`, `phase` (`discovering`, `awaiting_step`, `capturing_step`, `saving`, `stopping`), `gloves` (array of `{side, glove_id}` discovered so far) | On every phase change. |
 | `prompt` | `attempt`, `token`, `side`, `glove_id`, `index` (0-based), `count` (steps for this glove), `title`, `instruction`, `mode` (`hold`/`motion`), `duration_s`, `continuous` (bool), `estimated_s` | When a step awaits confirmation. `token` is unique per prompt within the attempt. `mode` is `motion` when the SDK reports a positive step time. Otherwise it is `hold` with `duration_s` 0; a negative SDK time (a continuous step) also sets `continuous` and puts the SDK's estimate of how long the movement lasts in `estimated_s`, which is guidance for the operator and not a completion signal. |
 | `step_accepted` | `attempt`, `token` | The SDK accepted starting the step. Re-sent unchanged for a repeated `confirm` of the same token, without starting another step. |
@@ -85,7 +85,7 @@ glove side and step index where known.
 - Export per glove, one glove at a time, and read the size and the bytes back to back
   (`CoreSdk_GetGloveCalibrationSize(glove_id)` then `CoreSdk_GetGloveCalibration`); never overlap
   left and right exports. Reject an empty export. Write `<file>.part`, flush and fsync, then hard-link
-  to the final basename `<attempt>_<side>.mcal` inside `staging_dir`.
+  to the final basename `<attempt>_<side>.mcal` inside `staging_dir`, which therefore must support hard links (not vfat or exFAT).
 - Cancellation works during discovery, while awaiting confirmation, while sampling and while
   saving. After cancellation no file is reported as exported by a `completed` result.
 - After `result` the worker ignores further commands without replying; it is already exiting.

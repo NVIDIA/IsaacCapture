@@ -632,6 +632,22 @@ def test_an_idle_workers_cancelled_result_is_accepted_only_after_a_user_cancel(
     run(scenario())
 
 
+def test_cancel_before_start_with_a_worker_that_reports_its_idle_cancel(make_worker):
+    async def scenario():
+        r = Run(make_worker, {"idle_cancel_result": True, "never_ready": True})
+        starting = asyncio.create_task(r.attempt.start(LEFT))
+        await wait_for(lambda: r.attempt._proc is not None)
+        await r.attempt.cancel()
+        _ = await asyncio.gather(starting, return_exceptions=True)
+        outcome = await r.settle()
+        # Cancelled while waiting for ready: the worker's SIGTERM result must not read as a protocol error.
+        assert outcome.kind in (OutcomeKind.CANCELLED, OutcomeKind.FAILED)
+        assert "broke the protocol" not in outcome.message
+        assert_reaped(r.attempt)
+
+    run(scenario())
+
+
 def test_cancel_before_start_never_launches_a_worker(make_worker, commands_log):
     async def scenario():
         r = Run(make_worker)
@@ -753,6 +769,41 @@ def test_a_relative_worker_path_is_spawned_by_path_not_looked_up_on_PATH(
     outcome = run(scenario())
     # It ran (exited 3 before ready) instead of failing to spawn.
     assert outcome.error.code != "spawn_failed" and outcome.exit_code == 3
+
+
+def test_a_rejected_start_fails_with_the_workers_reason(make_worker):
+    async def scenario():
+        r = Run(make_worker, {"reject_start": True}, ready_timeout_s=30)
+        await r.attempt.start(LEFT)
+        outcome = await r.settle()
+        assert outcome.kind is OutcomeKind.FAILED
+        assert "staging_dir is not a writable directory" in outcome.message
+        assert outcome.error.code == "start_rejected"
+        assert_reaped(r.attempt)
+
+    run(scenario())
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write to a read-only directory")
+def test_an_unwritable_output_folder_fails_before_the_worker_is_launched(
+    make_worker, commands_log
+):
+    async def scenario():
+        worker, folder = make_worker()
+        folder.directory.mkdir(parents=True)
+        folder.directory.chmod(0o500)
+        try:
+            attempt = worker.new_attempt()
+            with pytest.raises(AttemptError):
+                await attempt.start(LEFT)
+            outcome = await attempt.outcome()
+            assert outcome.kind is OutcomeKind.FAILED
+            assert "not a writable directory" in outcome.message
+            assert attempt._proc is None
+        finally:
+            folder.directory.chmod(0o700)
+
+    run(scenario())
 
 
 def test_a_missing_or_non_executable_worker_fails_cleanly(tmp_path):

@@ -26,8 +26,9 @@ public:
                                              const std::vector<uint8_t>& bytes) = 0;
 };
 
-// Writes `<basename>.part`, fsyncs it, renames it into place and fsyncs the directory, so a crash can
-// never leave a truncated file under the final name.
+// Writes `<basename>.part`, fsyncs it, hard-links it to the final name (never overwriting) and fsyncs the
+// directory, so a crash can never leave a truncated file under the final name. The directory must support
+// hard links, which excludes vfat and exFAT.
 class PosixExportWriter final : public ExportWriter
 {
 public:

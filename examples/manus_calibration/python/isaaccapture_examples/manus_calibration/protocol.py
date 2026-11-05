@@ -84,7 +84,7 @@ class Glove:
 
 @dataclass(frozen=True)
 class ExportedFile:
-    """One MCAL file as the worker reports it, before the supervisor has verified it."""
+    """One MCAL file as the worker reports it: its basename, size and SHA-256."""
 
     side: Side
     file: str
@@ -250,7 +250,7 @@ def _attempt(
 
 
 def _file_name(value: Any, context: str) -> str:
-    # Basename only: the supervisor joins this to its own staging directory.
+    # Basename only: the supervisor joins this to its own output directory.
     if not isinstance(value, str) or not _FILE_RE.fullmatch(value) or ".." in value:
         raise _fail(context, f"file must be a plain basename, got {value!r}")
     return value

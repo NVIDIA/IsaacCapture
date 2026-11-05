@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import errno
 import logging
 import os
 import secrets
@@ -165,6 +166,8 @@ class CalibrationAttempt:
         self._cancel_requested = asyncio.Event()
         self._result_seen = asyncio.Event()
         self._start_sent = False
+        # Why the worker refused ``start``, when it did; the worker stays idle and never reports a result.
+        self._start_rejection: str | None = None
         self._user_cancel = False
         self._reader_task: asyncio.Task[None] | None = None
         self._abort_reason: str | None = None
@@ -206,6 +209,9 @@ class CalibrationAttempt:
         try:
             self._owner.out_dir.mkdir(parents=True, exist_ok=True)
             out_dir = self._owner.out_dir.resolve(strict=True)
+            # An existing folder the worker cannot write would only surface as a rejected start much later.
+            if not os.access(out_dir, os.W_OK | os.X_OK):
+                raise PermissionError(errno.EACCES, "not a writable directory")
         except OSError as exc:
             message = f"cannot use {self._owner.out_dir}: {exc.strerror or exc}"
             self._finish(
@@ -513,6 +519,11 @@ class CalibrationAttempt:
             raise proto.ProtocolError("progress exceeds the step duration")
 
     def _on_rejected(self, rejected: proto.Rejected) -> None:
+        # A refused start means the worker never opened the SDK: end the attempt with its reason now.
+        if rejected.command == "start":
+            self._start_rejection = f"{rejected.reason.value}: {rejected.message}"
+            self._abort(f"the worker rejected start ({self._start_rejection})")
+            return
         pending = self._pending_confirm
         if (
             pending is not None
@@ -656,6 +667,15 @@ class CalibrationAttempt:
                 code,
                 forced,
                 error=proto.WorkerError("worker_unreaped", message),
+            )
+        if self._start_rejection is not None:
+            # Nothing was started, so this is a clean failure rather than an unknown SDK state.
+            return self._outcome_of(
+                OutcomeKind.FAILED,
+                f"the worker rejected start: {self._start_rejection}",
+                code,
+                forced,
+                error=proto.WorkerError("start_rejected", self._start_rejection),
             )
         result = self._result
         if result is not None and not result.released:

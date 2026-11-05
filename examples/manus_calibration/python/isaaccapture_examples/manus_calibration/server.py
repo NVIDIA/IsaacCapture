@@ -343,6 +343,8 @@ class PageServer:
         closed = asyncio.ensure_future(reader.read())
         try:
             while self._server is not None and self._server.is_serving():
+                # Cleared before the snapshot, so a change that lands while writing wakes the next wait.
+                tab.changed.clear()
                 payload = json.dumps(
                     view_to_dict(
                         self._controller.view(),
@@ -353,7 +355,6 @@ class PageServer:
                 )
                 writer.write(f"data: {payload}\n\n".encode())
                 await writer.drain()
-                tab.changed.clear()
                 waiter = asyncio.ensure_future(tab.changed.wait())
                 done, _pending = await asyncio.wait(
                     {waiter, closed},
