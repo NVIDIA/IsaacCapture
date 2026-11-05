@@ -117,14 +117,14 @@ can be resolved without relying on coincidental numbering.
 
 ## Optional SDK dependencies
 
-Build the Argus and SIPL implementations as optional shared libraries, loaded on
-demand through a small fixed create/destroy boundary. The sender's direct runtime
-dependencies must not include an unused vendor SDK: otherwise the dynamic loader
-can terminate the process before backend selection runs.
+Build-time options decide which backends exist: `SENSING_WITH_SIPL` (default on) and `SENSING_WITH_ARGUS` (default
+off), and the sender selects one at startup. Argus links the daemon client (`libnvargus_socketclient`) unless
+`SENSING_ARGUS_SINGLE_PROCESS` is set. This is the planned path and needs no loader.
 
-There is no plugin registry, service discovery layer, or separate capture worker
-process. The loader knows the two supported modules. Keep a module loaded until
-all its capture objects and frame leases have been destroyed.
+Only if a concrete target shows that the executable cannot start with the unused SDK linked (the dynamic loader
+terminates before backend selection) should a small shared-module boundary with plain C create/destroy functions be
+added, and then only for the two known backends: no plugin registry, service discovery or separate capture process.
+Until that failure is reproduced, do not add it.
 
 Build/package against the target JetPack/BSP and compatible vendor libraries.
 The same executable name, service, and configuration model do not imply a single
