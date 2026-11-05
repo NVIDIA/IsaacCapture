@@ -86,6 +86,52 @@ describe("CameraGrid with offered LiveKit streams", () => {
     expect(container.querySelector(".camera-tile--primary")?.textContent).toContain("Head left");
   });
 
+  it("gives two head tiles equal primary weight with the heads-only layout", async () => {
+    stubFetch(200, { token: "tok" });
+    const { container } = render(
+      <CameraGrid snapshot={snapshot([], STREAMS)} live={false} receivedAtMonotonic={null} />,
+    );
+    await settled();
+    const grid = container.querySelector<HTMLElement>(".camera-grid-items");
+    expect(grid?.className).toContain("camera-grid-items--heads");
+    expect(grid?.className).toContain("camera-grid-items--heads-only");
+    expect(grid?.style.getPropertyValue("--head-count")).toBe("2");
+    expect(container.querySelectorAll(".camera-tile--primary")).toHaveLength(2);
+  });
+
+  it("keeps a wrist tile secondary beside two primary head tiles", async () => {
+    stubFetch(200, { token: "tok" });
+    const offered = [
+      ...STREAMS,
+      { ...STREAMS[0], stream_id: 18, name: "Wrist left", track: "wrist" },
+    ];
+    const { container } = render(
+      <CameraGrid snapshot={snapshot([], offered)} live={false} receivedAtMonotonic={null} />,
+    );
+    await settled();
+    const grid = container.querySelector<HTMLElement>(".camera-grid-items");
+    expect(grid?.className).toContain("camera-grid-items--heads");
+    expect(grid?.className).not.toContain("camera-grid-items--heads-only");
+    expect(grid?.style.getPropertyValue("--head-count")).toBe("2");
+    expect(grid?.style.getPropertyValue("--side-count")).toBe("1");
+    const primary = container.querySelectorAll(".camera-tile--primary");
+    expect(primary).toHaveLength(2);
+    primary.forEach((tile) => expect(tile.textContent).toContain("Head"));
+    expect(screen.getByText("Wrist left", { exact: false }).closest(".camera-tile--primary")).toBeNull();
+  });
+
+  it("keeps the single-tile layout when only one LiveKit tile is offered", async () => {
+    stubFetch(200, { token: "tok" });
+    const { container } = render(
+      <CameraGrid snapshot={snapshot([], [STREAMS[0]])} live={false} receivedAtMonotonic={null} />,
+    );
+    await settled();
+    expect(container.querySelector(".camera-grid-items")?.className).toContain("camera-grid-items--n1");
+    const primary = container.querySelectorAll(".camera-tile--primary");
+    expect(primary).toHaveLength(1);
+    expect(primary[0].textContent).toContain("Head left");
+  });
+
   it("does not contact the backend and keeps MJPEG behavior when no streams are offered", async () => {
     const fetchFn = stubFetch(200, { token: "tok" });
     const { container, rerender } = render(<CameraGrid snapshot={null} live={false} receivedAtMonotonic={null} />);
