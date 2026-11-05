@@ -10,7 +10,20 @@ Backend imports are lazy so importing this API never probes a video or GPU.
 from importlib import import_module
 from pathlib import Path
 
+from ._ffmpeg_video import (
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
+    prepare_video_decode,
+)
 from .runtime_profile import get_runtime_profile
+
+# Errors a bad input video raises, for callers that report them as one line.
+VIDEO_INPUT_ERRORS = (
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
+)
 
 FPS_FALLBACK = 30.0
 
@@ -24,6 +37,12 @@ def find_videos(input_path: Path) -> list[Path]:
 def _backend():
     name = get_runtime_profile().video_backend
     return import_module(f"._{name}_video", __package__)
+
+
+def check_video_readable(video_path: str) -> None:
+    """Raise one of VIDEO_INPUT_ERRORS now if the video cannot be decoded later."""
+    if get_runtime_profile().video_backend == "ffmpeg":
+        prepare_video_decode(video_path)
 
 
 def get_video_meta(video_path: str) -> dict:

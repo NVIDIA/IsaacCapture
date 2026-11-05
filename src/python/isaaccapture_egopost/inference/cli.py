@@ -219,6 +219,8 @@ def parse_args(argv=None, *, epilog: str | None = None):
     validate_args(p, args, profile)
     if args.frame_batch_size is not None and args.frame_batch_size < 1:
         p.error("--frame_batch_size must be positive")
+    if args.max_seconds is not None and not args.max_seconds > 0:
+        p.error("--max_seconds must be positive")
     if not 0 <= args.qc_max_bad_frac <= 1:
         p.error("--qc_max_bad_frac must be between 0 and 1")
     if args.postprocessing_qc:

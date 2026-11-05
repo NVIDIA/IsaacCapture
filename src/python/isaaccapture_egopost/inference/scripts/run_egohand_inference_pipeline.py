@@ -88,6 +88,8 @@ from inference.visualization.overlay import render_clip
 from inference.cli import parse_args as parse_pipeline_args
 from inference.video_io import (
     FPS_FALLBACK,
+    VIDEO_INPUT_ERRORS,
+    check_video_readable,
     find_videos,
     get_video_meta,
     read_video_frames_batched,
@@ -96,15 +98,30 @@ from inference.video_io import (
 MESH_COLOR = (1.0, 1.0, 0.9)
 
 
+class DetectorConfigError(ValueError):
+    """A bbox detector config that cannot be loaded or names no known backend."""
+
+
 def _load_detector_config(path: str) -> dict:
     """Load a bbox detector YAML config, expanding ${ENV_VAR} references."""
     import os
     import yaml
 
-    with open(path) as f:
-        raw = f.read()
-    expanded = os.path.expandvars(raw)
-    return yaml.safe_load(expanded)
+    try:
+        with open(path) as f:
+            raw = f.read()
+        cfg = yaml.safe_load(os.path.expandvars(raw))
+    except OSError as exc:
+        raise DetectorConfigError(
+            f"Cannot read --bbox_detector_config {path}: {exc.strerror or exc}"
+        ) from None
+    except yaml.YAMLError as exc:
+        raise DetectorConfigError(f"Invalid YAML in {path}: {exc}") from None
+    if not isinstance(cfg, dict) or "detector_backend" not in cfg:
+        raise DetectorConfigError(
+            f"{path} must be a mapping with a detector_backend key"
+        )
+    return cfg
 
 
 def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tuple:
@@ -126,7 +143,10 @@ def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tupl
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == module_name:
-            raise ValueError(f"Unknown detector_backend: {backend!r}") from exc
+            raise DetectorConfigError(
+                f"Unknown detector_backend {backend!r} in the detector config; see "
+                "inference/hand_detector_2d/configs/ for the available backends"
+            ) from None
         raise
     return module.build(cfg, device, batch_size, tracking), backend
 
@@ -176,14 +196,6 @@ def process_video(
     """
     total_wall_start = time.perf_counter()
     smooth_bboxes = getattr(pipeline.bbox_detector, "requires_full_clip", False)
-    if smooth_bboxes and frame_batch_size is not None:
-        raise ValueError(
-            "bbox_smoothing requires whole-clip detection before EgoHand cropping. "
-            "Omit --frame_batch_size, or generate boxes with run_hand_detector.py "
-            "and use saved_bboxes.yaml for batched EgoHand inference. "
-            "Setting bbox_smoothing: false permits batching, but live RT-DETR "
-            "tracking then runs independently within each batch."
-        )
     print(f"\n[infer_video] === {video_path.name} ===")
 
     meta = get_video_meta(str(video_path))
@@ -485,16 +497,69 @@ def process_video(
     print(f"[infer_video] done → {out_dir}")
 
 
+def check_frame_batching(bbox_detector, frame_batch_size) -> None:
+    """Reject --frame_batch_size with a detector that needs the whole clip."""
+    if frame_batch_size is None or not getattr(
+        bbox_detector, "requires_full_clip", False
+    ):
+        return
+    raise SystemExit(
+        "--frame_batch_size cannot be used with bbox_smoothing, which needs "
+        "whole-clip detection before EgoHand cropping. Omit --frame_batch_size, "
+        "or generate boxes with run_hand_detector.py and use saved_bboxes.yaml "
+        "for batched EgoHand inference. Setting bbox_smoothing: false permits "
+        "batching, but live RT-DETR tracking then runs independently within "
+        "each batch."
+    )
+
+
+def prepare_output_dir(output_dir: Path) -> None:
+    """Create output_dir and fail now, not after inference, if it is read-only."""
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        writable = os.access(output_dir, os.W_OK | os.X_OK)
+    except OSError as exc:
+        raise SystemExit(
+            f"Cannot create --output_dir {output_dir}: {exc.strerror or exc}"
+        ) from None
+    if not writable:
+        raise SystemExit(f"--output_dir {output_dir} is not writable")
+
+
+def check_gpu_visible(device: str) -> None:
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise SystemExit(
+            f"No NVIDIA GPU visible for --device {device}. "
+            "In Docker, run the container with --gpus all."
+        )
+
+
+def check_videos_readable(videos) -> None:
+    """Probe every input for a decodable stream and supported codec up front."""
+    for video_path in videos:
+        try:
+            check_video_readable(str(video_path))
+        except VIDEO_INPUT_ERRORS as exc:
+            message = str(exc)
+            if str(video_path) not in message:
+                message = f"{video_path}: {message}"
+            raise SystemExit(message) from None
+
+
 def main():
     args = parse_args()
+    check_gpu_visible(args.device)
     hands = ["left", "right"] if args.hand == "both" else [args.hand]
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not input_path.exists():
+        raise SystemExit(f"Input not found: {input_path}")
+    prepare_output_dir(output_dir)
 
     videos = find_videos(input_path)
     if not videos:
         raise SystemExit(f"No MP4 files found at {input_path}")
+    check_videos_readable(videos)
     print(f"[infer_video] {len(videos)} video(s) to process")
 
     dtype_map = {
@@ -534,16 +599,23 @@ def main():
         args.save_crop_overlays = False
 
     if not args.bbox_detector_config:
-        raise ValueError(
+        raise SystemExit(
             "--bbox_detector_config is required. See inference/hand_detector_2d/configs/."
         )
 
-    _detector_cfg = _load_detector_config(args.bbox_detector_config)
-    bbox_detector, backend = _build_detector_from_config(
-        _detector_cfg, args.device, args.batch_size
-    )
+    try:
+        _detector_cfg = _load_detector_config(args.bbox_detector_config)
+        bbox_detector, backend = _build_detector_from_config(
+            _detector_cfg, args.device, args.batch_size
+        )
+    except DetectorConfigError as exc:
+        raise SystemExit(str(exc)) from None
+    check_frame_batching(bbox_detector, args.frame_batch_size)
     if hasattr(bbox_detector, "validate_inputs"):
-        bbox_detector.validate_inputs(videos, hands)
+        try:
+            bbox_detector.validate_inputs(videos, hands)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
     if (
         not use_perspective_cropping
         and getattr(bbox_detector, "reports_in_source_frame", False)
