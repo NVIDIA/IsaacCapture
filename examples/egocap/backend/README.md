@@ -29,7 +29,7 @@ or restarts it.
 | `WS /api/session` | The main live connection: capture-status snapshots, sampled binary tracking frames, and recording commands/replies/snapshots. One socket per browser tab; see [`frontend/README.md`](../frontend/README.md) for the full message shapes. |
 | `GET /stream{id}` | MJPEG camera preview, bound to the backend/session identity advertised in the `/api/session` snapshot. |
 | `GET /api/capture-status` | Thin HTTP inspection endpoint mirroring the latest snapshot; the frontend does not poll this during normal operation. |
-| `GET /api/livekit-token?room=ROOM` | Subscribe-only viewer token for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. See [`../LIVEKIT_PREVIEW.md`](../LIVEKIT_PREVIEW.md). |
+| `GET /api/livekit-token?room=ROOM` | Subscribe-only viewer token for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. |
 | `GET /api/task-files`, `GET /api/task-files/{name}` | Read-only task-catalog API; see [`../data/taskfiles/README.md`](../data/taskfiles/README.md). |
 | `GET /recordings/...` | The optional recordings browser's API and file routes, off unless `EGOCAP_RECORDINGS_ENABLED=1`; see [`../recordings_frontend/README.md`](../recordings_frontend/README.md). |
 
