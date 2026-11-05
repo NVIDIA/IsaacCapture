@@ -317,6 +317,11 @@ struct LiveKitVideoOutput::Impl
         }
         in_encoder.push_back(
             { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
+        // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
+        // Keep the queue bounded so one lost unit cannot leave every later frame paired with the wrong capture.
+        constexpr std::size_t kMaxInFlight = 12;
+        while (in_encoder.size() > kMaxInFlight)
+            in_encoder.pop_front();
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -324,11 +329,13 @@ struct LiveKitVideoOutput::Impl
     void publish_unit(const EncodedUnit& unit)
     {
         const int64_t stamp_us = unit.timestamp_ns / 1000;
-        // The encoder keeps submission order; a frame it never returned was dropped inside it.
-        while (!in_encoder.empty() && in_encoder.front().stamp_us < stamp_us)
-            in_encoder.pop_front();
-        if (in_encoder.empty() || in_encoder.front().stamp_us != stamp_us)
-            throw std::runtime_error("LiveKit output: the encoder returned a unit for a frame it was not given");
+        // The Jetson encoder does not return the stamp it was given: it numbers its units from its own frame
+        // rate. It does return one unit per accepted frame in submission order, so units pair with captures
+        // by order, and the stamp is only the unit's own.
+        if (in_encoder.empty())
+            throw std::runtime_error(
+                "LiveKit output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
+                std::to_string(stamp_us) + ")");
         const FrameMeta meta = in_encoder.front();
         in_encoder.pop_front();
 
