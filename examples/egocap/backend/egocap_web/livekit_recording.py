@@ -58,8 +58,7 @@ _DEFAULT_BUDGET_MS = 5.0
 _TRACKING_SEMANTICS: dict[str, str] = {
     "recorded_time": "the host's poll time for every tracking source",
     "controllers": "device value is the pose-evaluation time (a runtime-predicted XrTime), not an acquisition time",
-    "manus_gloves": "the plugin stamps each sample with host monotonic time at callback receipt (not acquisition); "
-    "the SDK publishTime is not used, and the recorded time is still CaptureServer's poll",
+    "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
     "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
 }
 

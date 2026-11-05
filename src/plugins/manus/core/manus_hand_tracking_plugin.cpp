@@ -671,8 +671,6 @@ bool ManusTracker::apply_glove_calibration(uint32_t glove_id, bool is_left)
 
 void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_info)
 {
-    // Host receipt time of this data, read before any lock or processing.
-    const int64_t receipt_ns = core::os_monotonic_now_ns();
     auto& tracker = instance();
     std::lock_guard<std::mutex> instance_lock(tracker.m_lifecycle_mutex);
     if (!tracker.m_initialized)
@@ -724,13 +722,11 @@ void ManusTracker::OnSkeletonStream(const SkeletonStreamInfo* skeleton_stream_in
             {
                 tracker.m_left_hand_nodes = nodes;
                 tracker.m_skeleton_stamps[0] = std::chrono::steady_clock::now();
-                tracker.m_skeleton_receipt_ns[0] = receipt_ns;
             }
             else if (is_right_glove)
             {
                 tracker.m_right_hand_nodes = nodes;
                 tracker.m_skeleton_stamps[1] = std::chrono::steady_clock::now();
-                tracker.m_skeleton_receipt_ns[1] = receipt_ns;
             }
         }
     }
@@ -816,7 +812,6 @@ void ManusTracker::OnLandscapeStream(const Landscape* landscape)
             tracker.m_calibration_failed[0] = false;
             tracker.m_left_hand_nodes.clear();
             tracker.m_skeleton_stamps[0] = {};
-            tracker.m_skeleton_receipt_ns[0] = 0;
             tracker.m_left_node_info.clear();
             {
                 std::lock_guard<std::mutex> sensor_lock(tracker.m_sensor_mutex);
@@ -830,7 +825,6 @@ void ManusTracker::OnLandscapeStream(const Landscape* landscape)
             tracker.m_calibration_failed[1] = false;
             tracker.m_right_hand_nodes.clear();
             tracker.m_skeleton_stamps[1] = {};
-            tracker.m_skeleton_receipt_ns[1] = 0;
             tracker.m_right_node_info.clear();
             {
                 std::lock_guard<std::mutex> sensor_lock(tracker.m_sensor_mutex);
@@ -888,8 +882,6 @@ void ManusTracker::OnLog(LogSeverity p_Severity, const char* p_Log, uint32_t p_L
 
 void ManusTracker::OnRawDeviceDataStream(const RawDeviceDataInfo* raw_device_data_info)
 {
-    // Host receipt time of this data, read before any lock or processing.
-    const int64_t receipt_ns = core::os_monotonic_now_ns();
     auto& tracker = instance();
     std::lock_guard<std::mutex> instance_lock(tracker.m_lifecycle_mutex);
     if (!tracker.m_initialized || !tracker.m_config.sensors)
@@ -929,7 +921,6 @@ void ManusTracker::OnRawDeviceDataStream(const RawDeviceDataInfo* raw_device_dat
         const uint32_t count = std::min(raw.sensorCount, static_cast<uint32_t>(kManusSensorCount));
         std::lock_guard<std::mutex> sensor_lock(tracker.m_sensor_mutex);
         tracker.m_sensor_count[side] = count;
-        tracker.m_sensor_receipt_ns[side] = receipt_ns;
         for (uint32_t j = 0; j < count; ++j)
         {
             tracker.m_sensor_transforms[side][j] = raw.sensorData[j];
@@ -1017,17 +1008,10 @@ void ManusTracker::push_sensor_side(bool is_left, core::SchemaPusher& pusher)
     const size_t side = is_left ? 0 : 1;
     uint32_t count = 0;
     std::array<ManusTransform, kManusSensorCount> transforms{};
-    int64_t receipt_ns = 0;
     {
         std::lock_guard<std::mutex> sensor_lock(m_sensor_mutex);
         count = m_sensor_count[side];
         transforms = m_sensor_transforms[side];
-        receipt_ns = m_sensor_receipt_ns[side];
-    }
-    // A cached sample already pushed is not a new acquisition.
-    if (receipt_ns == m_sensor_pushed_receipt_ns[side])
-    {
-        return;
     }
 
     // Hosts treat missing pushes as "no sensors"; only emit a full 5-tip pack.
@@ -1046,9 +1030,7 @@ void ManusTracker::push_sensor_side(bool is_left, core::SchemaPusher& pusher)
                                        core::Quaternion(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w)));
     }
 
-    // The sample's time is the host receipt of its callback, not the time of this push.
-    const auto sample_time_ns = receipt_ns;
-    m_sensor_pushed_receipt_ns[side] = receipt_ns;
+    const auto sample_time_ns = core::os_monotonic_now_ns();
     flatbuffers::FlatBufferBuilder builder(kSensorFlatbufferSize);
     const auto device_id =
         builder.CreateString(is_left ? MANUS_SENSORS_LEFT_COLLECTION_ID : MANUS_SENSORS_RIGHT_COLLECTION_ID);
@@ -1291,14 +1273,12 @@ void ManusTracker::inject_hand_data()
     std::vector<SkeletonNode> left_nodes;
     std::vector<SkeletonNode> right_nodes;
     std::array<std::chrono::steady_clock::time_point, 2> skeleton_stamps;
-    std::array<int64_t, 2> receipt_ns{};
 
     {
         std::lock_guard<std::mutex> lock(m_skeleton_mutex);
         left_nodes = m_left_hand_nodes;
         right_nodes = m_right_hand_nodes;
         skeleton_stamps = m_skeleton_stamps;
-        receipt_ns = m_skeleton_receipt_ns;
     }
 
     // Get current XrTime from the system monotonic clock
@@ -1312,15 +1292,6 @@ void ManusTracker::inject_hand_data()
         {
             return;
         }
-        // A cached skeleton already injected is not a new acquisition.
-        const size_t side = is_left ? 0 : 1;
-        if (receipt_ns[side] == m_injected_receipt_ns[side])
-        {
-            return;
-        }
-        m_injected_receipt_ns[side] = receipt_ns[side];
-        // The sample's time is the host receipt of its callback, not the time of this injection.
-        const XrTime sample_time = m_time_converter->convert_monotonic_ns_to_xrtime(receipt_ns[side]);
 
         XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
         XrPosef root_pose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
@@ -1429,11 +1400,11 @@ void ManusTracker::inject_hand_data()
 
         if (is_left)
         {
-            m_left_injector->push(joints, sample_time);
+            m_left_injector->push(joints, time);
         }
         else
         {
-            m_right_injector->push(joints, sample_time);
+            m_right_injector->push(joints, time);
         }
     };
 

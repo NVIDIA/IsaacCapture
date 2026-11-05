@@ -150,10 +150,6 @@ private:
     mutable std::mutex m_sensor_mutex;
     std::array<uint32_t, 2> m_sensor_count{ { 0, 0 } };
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
-    // CLOCK_MONOTONIC ns at entry to the callback that delivered the cached sensors; 0 when none.
-    std::array<int64_t, 2> m_sensor_receipt_ns{ { 0, 0 } };
-    // Update thread only: the receipt last pushed, so a cached read is never pushed as a new sample.
-    std::array<int64_t, 2> m_sensor_pushed_receipt_ns{ { 0, 0 } };
 
     // OpenXR State
     std::shared_ptr<core::OpenXRSession> m_session;
@@ -195,10 +191,6 @@ private:
     std::vector<SkeletonNode> m_left_hand_nodes;
     std::vector<SkeletonNode> m_right_hand_nodes;
     std::array<std::chrono::steady_clock::time_point, 2> m_skeleton_stamps{};
-    // CLOCK_MONOTONIC ns at entry to the callback that delivered each cached skeleton; 0 when none.
-    std::array<int64_t, 2> m_skeleton_receipt_ns{ { 0, 0 } };
-    // Update thread only: the receipt last injected, so a cached read is never injected as a new sample.
-    std::array<int64_t, 2> m_injected_receipt_ns{ { 0, 0 } };
     // Node topology (parent IDs) — populated once per glove connect
     std::vector<NodeInfo> m_left_node_info;
     std::vector<NodeInfo> m_right_node_info;
