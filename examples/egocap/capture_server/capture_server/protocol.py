@@ -942,11 +942,17 @@ _MCAL_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.mcal")
 _MAX_TOKEN_LEN = 128
 
 
+def is_mcal_name(value: object) -> bool:
+    """True for a name the protocol can carry: ASCII letters, digits, ``_``, ``.`` and ``-``, starting with a
+    letter or digit, lower-case ``.mcal`` extension, at most 133 characters."""
+    return type(value) is str and _MCAL_NAME_RE.fullmatch(value) is not None
+
+
 def _require_mcal_name(value: Any, context: str) -> str | None:
     """An optional ``.mcal`` basename, or ``ProtocolError`` when present but not one."""
     if value is None:
         return None
-    if not isinstance(value, str) or not _MCAL_NAME_RE.fullmatch(value):
+    if not is_mcal_name(value):
         raise ProtocolError(f"{context} must be an .mcal basename or null")
     return value
 
@@ -1026,7 +1032,7 @@ class PluginRequest:
         if type(self.plugin) is not PluginType:
             raise ValueError(f"PluginRequest.plugin must be a PluginType, got {self.plugin!r}")
         for name in (self.left_calibration, self.right_calibration):
-            if name is not None and (type(name) is not str or not _MCAL_NAME_RE.fullmatch(name)):
+            if name is not None and not is_mcal_name(name):
                 raise ValueError(f"PluginRequest calibration must be an .mcal basename, got {name!r}")
         if self.left_calibration is not None and self.left_calibration == self.right_calibration:
             raise ValueError("left_calibration and right_calibration must name different files")
@@ -1982,7 +1988,7 @@ class DeviceEntry:
             raise ValueError("mcal_files are present only for a READY listing")
         if len(self.mcal_files) > MAX_MCAL_FILES:
             raise ValueError(f"at most {MAX_MCAL_FILES} MCAL files fit in one reply")
-        if not all(_MCAL_NAME_RE.fullmatch(name) for name in self.mcal_files):
+        if not all(is_mcal_name(name) for name in self.mcal_files):
             raise ValueError("mcal_files must be .mcal basenames")
         if len(set(self.mcal_files)) != len(self.mcal_files):
             raise ValueError("an MCAL file appears twice in the listing")
@@ -2073,7 +2079,6 @@ _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {
     MessageType.SESSION_STATUS: SessionStatus.from_json,
     MessageType.SESSION_STOPPED: SessionStopped.from_json,
     MessageType.REQUEST_REJECTED: RequestRejected.from_json,
-    MessageType.DEVICES: DevicesReply.from_json,
 }
 
 

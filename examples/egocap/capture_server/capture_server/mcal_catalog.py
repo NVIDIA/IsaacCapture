@@ -68,7 +68,7 @@ def _selectable(root: Path) -> list[str]:
     with os.scandir(root) as listing:
         for entry in listing:
             # Names the protocol cannot carry are never offered.
-            if not p._MCAL_NAME_RE.fullmatch(entry.name):
+            if not p.is_mcal_name(entry.name):
                 continue
             try:
                 # Links are refused even when their target stays inside the directory.

@@ -60,15 +60,18 @@ def _group_selected(begin: p.BeginRequest, source_type: p.SourceType) -> bool:
     return source_type in begin.tracking.sources
 
 
-def _calibration_path(name: str | None, directory: Path | None) -> str | None:
+def _calibration_path(name: str | None, directory: Path | None, *, real_hardware: bool = False) -> str | None:
     """The host path of a selected MCAL file; the name itself where no folder exists to resolve it.
 
     The server has already checked the name against the folder before this runs. Without a folder (the mock
-    and replay setups, which never reach real hardware) the name is kept as an inert marker.
+    and replay setups, which never reach real hardware) the name is kept as an inert marker; real hardware
+    refuses it, because the plugin would throw on a relative path and both hands would be lost.
     """
     if name is None:
         return None
     if directory is None:
+        if real_hardware:
+            raise ValueError(f"calibration file {name!r} was selected but no calibration directory is configured")
         return name
     return str(mcal_catalog.resolve(directory, name))
 
@@ -79,6 +82,7 @@ def _tracking_adapter(
     sdk: ModuleType,
     session_factory: Callable[[Any], Any],
     calibration_dir: Path | None = None,
+    real_hardware: bool = False,
 ) -> IsaacCaptureAdapter | None:
     """The IsaacCapture adapter for the requested tracking outputs, or None when none are requested.
 
@@ -100,10 +104,14 @@ def _tracking_adapter(
         manus_enabled=manus_plugin_request is not None,
         manus_required=manus_plugin_request.required if manus_plugin_request is not None else False,
         manus_left_calibration=_calibration_path(
-            manus_plugin_request.left_calibration if manus_plugin_request is not None else None, calibration_dir
+            manus_plugin_request.left_calibration if manus_plugin_request is not None else None,
+            calibration_dir,
+            real_hardware=real_hardware,
         ),
         manus_right_calibration=_calibration_path(
-            manus_plugin_request.right_calibration if manus_plugin_request is not None else None, calibration_dir
+            manus_plugin_request.right_calibration if manus_plugin_request is not None else None,
+            calibration_dir,
+            real_hardware=real_hardware,
         ),
     )
     return IsaacCaptureAdapter(
@@ -210,7 +218,11 @@ def build_real_source_factory(config: ServerConfig) -> SourceFactory:
         sdk = load_isaac_capture() if begin.tracking.sources else None
         tracking = (
             _tracking_adapter(
-                begin, sdk=sdk, session_factory=sdk.TeleopSession, calibration_dir=config.manus_calibration_dir
+                begin,
+                sdk=sdk,
+                session_factory=sdk.TeleopSession,
+                calibration_dir=config.manus_calibration_dir,
+                real_hardware=True,
             )
             if sdk
             else None
@@ -330,7 +342,13 @@ def build_gmsl_source_factory(
 
         sdk = load_isaac_capture() if begin.tracking.sources else None
         tracking = (
-            _tracking_adapter(begin, sdk=sdk, session_factory=sdk.TeleopSession, calibration_dir=calibration_dir)
+            _tracking_adapter(
+                begin,
+                sdk=sdk,
+                session_factory=sdk.TeleopSession,
+                calibration_dir=calibration_dir,
+                real_hardware=True,
+            )
             if sdk
             else None
         )

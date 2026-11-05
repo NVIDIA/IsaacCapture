@@ -58,10 +58,10 @@ def test_query_request_rejects_malformed_envelopes(mutate):
         p.parse_query_devices(data)
 
 
-def test_devices_reply_round_trips_through_the_server_message_parser():
+def test_devices_reply_round_trips_through_its_own_parser():
     entry = p.DeviceEntry(p.PluginType.MANUS, STATUS.READY, ("a.mcal", "b.mcal"))
     reply = p.DevicesReply("r-1", (entry,))
-    assert p.parse_server_message(json.loads(json.dumps(reply.to_json()))) == reply
+    assert p.DevicesReply.from_json(json.loads(json.dumps(reply.to_json()))) == reply
 
 
 @pytest.mark.parametrize(
@@ -110,7 +110,7 @@ def test_devices_reply_rejects_malformed_replies(mutate):
     data = p.DevicesReply("r-1", (p.DeviceEntry(p.PluginType.MANUS, STATUS.READY, ("a.mcal",)),)).to_json()
     mutate(data)
     with pytest.raises(p.ProtocolError):
-        p.parse_server_message(data)
+        p.DevicesReply.from_json(data)
 
 
 def test_plugin_request_carries_calibration_names_through_the_wire():
@@ -230,11 +230,6 @@ def test_scan_over_the_limit_is_an_error_not_a_truncated_list(tmp_path, monkeypa
 
 def test_scan_skips_an_entry_that_vanishes_mid_scan(tmp_path, monkeypatch):
     _mcal(tmp_path, "a.mcal")
-    real_stat = Path.stat
-
-    def flaky(self, *args, **kwargs):
-        return real_stat(self, *args, **kwargs)
-
     import os
 
     real_scandir = os.scandir
@@ -254,7 +249,6 @@ def test_scan_skips_an_entry_that_vanishes_mid_scan(tmp_path, monkeypatch):
             return False
 
     monkeypatch.setattr(mcal_catalog.os, "scandir", lambda root: _Listing())
-    monkeypatch.setattr(Path, "stat", flaky)
     assert list(mcal_catalog.scan(tmp_path).files) == ["a.mcal"]
 
 
@@ -284,10 +278,41 @@ def test_server_config_resolves_the_calibration_folder_once(tmp_path):
 # -- launch and adapter -------------------------------------------------------------------------------------
 
 
-def test_calibration_path_resolves_inside_the_folder_or_keeps_an_inert_name(tmp_path):
+def test_calibration_path_joins_onto_the_folder_or_keeps_an_inert_name(tmp_path):
     assert _calibration_path(None, tmp_path) is None
     assert _calibration_path("a.mcal", None) == "a.mcal"
-    assert _calibration_path("a.mcal", tmp_path) == str(tmp_path.resolve() / "a.mcal")
+    assert _calibration_path("a.mcal", tmp_path) == str(tmp_path / "a.mcal")
+
+
+def test_real_hardware_refuses_a_selected_file_without_a_folder():
+    with pytest.raises(ValueError, match="no calibration directory"):
+        _calibration_path("a.mcal", None, real_hardware=True)
+    assert _calibration_path(None, None, real_hardware=True) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "ok"),
+    [
+        ("a.mcal", True),
+        ("left-1_v2.mcal", True),
+        ("a" * 128 + ".mcal", True),
+        ("left glove (2).mcal", False),
+        ("_a.mcal", False),
+        ("-a.mcal", False),
+        ("A.MCAL", False),
+        ("é.mcal", False),
+        ("a" * 129 + ".mcal", False),
+        (None, False),
+    ],
+)
+def test_is_mcal_name_states_the_offered_name_rule(name, ok):
+    assert p.is_mcal_name(name) is ok
+
+
+def test_a_devices_message_is_not_a_control_connection_message():
+    reply = p.DevicesReply("r-1", (p.DeviceEntry(p.PluginType.MANUS, STATUS.READY),))
+    with pytest.raises(p.ProtocolError):
+        p.parse_server_message(reply.to_json())
 
 
 def test_adapter_passes_selected_files_to_the_manus_plugin():
@@ -324,7 +349,7 @@ async def _ask(url: str, request: dict | str | bytes, *, request_id: str = "q-1"
         await ws.send(request if isinstance(request, (str, bytes)) else json.dumps(request))
         reply = None
         try:
-            reply = p.parse_server_message(json.loads(await asyncio.wait_for(ws.recv(), 5)))
+            reply = p.DevicesReply.from_json(json.loads(await asyncio.wait_for(ws.recv(), 5)))
         except websockets.ConnectionClosed:
             pass  # a rejected request is closed without a reply; the close code is what the caller checks
         await asyncio.wait_for(ws.wait_closed(), 5)
@@ -426,7 +451,7 @@ async def test_oversized_reply_becomes_an_unavailable_entry(station, monkeypatch
     assert reply.devices[0].mcal_status is STATUS.UNAVAILABLE and "too large" in reply.devices[0].error_message
 
 
-async def test_a_scan_that_times_out_or_fails_is_unavailable(station, monkeypatch):
+async def test_a_scan_that_fails_is_unavailable(station, monkeypatch):
     url, _, _ = station
     monkeypatch.setattr(mcal_catalog, "scan", lambda directory: (_ for _ in ()).throw(RuntimeError("boom")))
     reply, _ = await _ask(url, _query())
@@ -437,7 +462,6 @@ async def test_scan_timeout_is_reported_without_leaking_the_slot(station, monkey
     from capture_server import server as server_module
 
     url, _, server = station
-    release = asyncio.Event()
     import threading
 
     gate = threading.Event()
@@ -448,7 +472,6 @@ async def test_scan_timeout_is_reported_without_leaking_the_slot(station, monkey
     reply, _ = await _ask(url, _query())
     assert "timed out" in reply.devices[0].error_message
     gate.set()
-    release.set()
     for _ in range(100):
         if server.server._mcal_slots._value == server_module._MCAL_SCANS:
             break
@@ -481,6 +504,34 @@ async def test_close_returns_within_its_deadline_while_a_query_waits_on_a_scan(s
         await ws.close()
 
 
+async def test_close_returns_within_its_deadline_while_a_begin_waits_on_a_scan(station, monkeypatch):
+    import threading
+
+    url, _, server = station
+    started = threading.Event()
+    gate = threading.Event()
+
+    def blocked_scan(directory):
+        started.set()
+        gate.wait(10)
+        return mcal_catalog.Catalog(STATUS.READY, ("left.mcal",))
+
+    monkeypatch.setattr(mcal_catalog, "scan", blocked_scan)
+    client = CaptureClient(url)
+    begin = asyncio.ensure_future(
+        client.start(sources=(p.SourceType.HEAD,), plugins=(ManusPluginConfig(left_calibration="left.mcal"),))
+    )
+    try:
+        await asyncio.wait_for(asyncio.to_thread(started.wait, 5), 6)
+        server.server.request_stop()
+        # close() must settle the Begin waiting on the scan rather than raise TimeoutError from wait_closed().
+        await asyncio.wait_for(server.server.close(), 4)
+    finally:
+        gate.set()
+        begin.cancel()
+        await asyncio.gather(begin, return_exceptions=True)
+
+
 async def test_begin_accepts_files_that_are_in_the_folder_and_echoes_the_names(station):
     url, _, _ = station
     client = CaptureClient(url)
@@ -509,7 +560,7 @@ async def test_begin_refuses_a_file_that_is_not_in_the_folder(station):
     assert "not an available file" in excinfo.value.error_message
 
 
-async def test_begin_refuses_a_file_that_became_a_link_or_empty_since_listing(station):
+async def test_begin_refuses_a_file_that_became_empty_since_listing(station):
     url, folder, _ = station
     (folder / "left.mcal").write_bytes(b"")
     with pytest.raises(RequestRejectedError):

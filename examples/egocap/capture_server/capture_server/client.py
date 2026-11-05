@@ -311,7 +311,7 @@ class ManusPluginConfig:
     def __post_init__(self) -> None:
         """Reject names the protocol cannot carry, and one file chosen for both hands."""
         for name in (self.left_calibration, self.right_calibration):
-            if name is not None and (not isinstance(name, str) or not p._MCAL_NAME_RE.fullmatch(name)):
+            if name is not None and not p.is_mcal_name(name):
                 raise ValueError(f"calibration file must be an .mcal basename, got {name!r}")
         if self.left_calibration is not None and self.left_calibration == self.right_calibration:
             raise ValueError("left_calibration and right_calibration must name different files")
@@ -776,7 +776,8 @@ class CaptureClient:
         Raises :class:`DeviceQueryError` when no answer is obtained, including when the server is too old to
         know the query.
         """
-        # The query route is a sibling of the control path on the same listener.
+        # The query route is at the root path of the same listener; a station URL with a path prefix is not
+        # supported.
         url = urlsplit(self._url)._replace(path="/query", query="", fragment="").geturl()
         request = p.QueryDevicesRequest(request_id=f"devices-{uuid.uuid4()}")
         try:
@@ -790,15 +791,15 @@ class CaptureClient:
                 f"the server closed the device query (close code {code}); it may not support device queries"
             ) from None
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
-            raise DeviceQueryError(f"the device query failed: {exc or type(exc).__name__}") from None
+            raise DeviceQueryError(f"the device query failed: {str(exc) or type(exc).__name__}") from None
         if isinstance(raw, bytes):
             raise DeviceQueryError("the server answered the device query with a binary message")
         try:
-            reply = p.parse_server_message(_from_json_text(raw))
+            reply = p.DevicesReply.from_json(_from_json_text(raw))
         except p.ProtocolError as exc:
             raise DeviceQueryError(f"the server's device reply was invalid: {exc}") from None
-        # A reply for another request, or of another kind, is never accepted as this query's answer.
-        if not isinstance(reply, p.DevicesReply) or reply.request_id != request.request_id:
+        # A reply for another request is never accepted as this query's answer.
+        if reply.request_id != request.request_id:
             raise DeviceQueryError("the server's reply does not answer this device query")
         return reply.devices
 

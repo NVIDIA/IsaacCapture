@@ -1145,8 +1145,6 @@ class CaptureServer:
         # request that asked for it, so timed-out queries can never accumulate live scans.
         self._mcal_slots = asyncio.Semaphore(_MCAL_SCANS)
         self._mcal_pool = ThreadPoolExecutor(max_workers=_MCAL_SCANS, thread_name_prefix="mcal-scan")
-        # In-flight /query handlers, so close() can cancel one that is waiting on a slow scan.
-        self._query_tasks: set[asyncio.Task[Any]] = set()
         self._ws_server: websockets.WebSocketServer | None = None
         self._owner: ServerConnection | None = None
         # The ONE connection-owned Outbox, constructed once per owner
@@ -1259,9 +1257,6 @@ class CaptureServer:
         finally:
             # Queued scans are dropped; a scan already running finishes on its own and its result is discarded.
             self._mcal_pool.shutdown(wait=False, cancel_futures=True)
-            # A query waiting on a running scan would otherwise hold wait_closed() past its deadline.
-            for task in list(self._query_tasks):
-                task.cancel()
             if self._ws_server is not None:
                 self._ws_server.close()
                 await asyncio.wait_for(self._ws_server.wait_closed(), timeout=_CLOSE_TIMEOUT_S)
@@ -1277,14 +1272,7 @@ class CaptureServer:
         # Station queries are dispatched before owner admission: they never take or disturb the owner.
         request_path = getattr(getattr(ws, "request", None), "path", "")
         if request_path.split("?", 1)[0] == "/query":
-            task = asyncio.current_task()
-            if task is not None:
-                self._query_tasks.add(task)
-            try:
-                await self._handle_query(ws)
-            finally:
-                if task is not None:
-                    self._query_tasks.discard(task)
+            await self._handle_query(ws)
             return
         if self._owner is not None:
             await ws.close(code=1013, reason="owner connection already active")
@@ -1543,10 +1531,8 @@ class CaptureServer:
         # Only a Begin that would allocate a new session scans the folder, so a duplicate of an accepted Begin is
         # replayed above without depending on a file that may have changed since.
         refusal = await self._calibration_selection_refusal(begin)
-        if refusal is not None:
-            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.INVALID_CONFIG, refusal)
-            return
-        # The scan awaited: shutdown, the writer or admission may have changed since the checks above.
+        # The scan awaited: shutdown, the writer or admission may have changed since the checks above. Checked
+        # before the refusal, so a scan cut short by shutdown reads as BUSY rather than as a bad selection.
         if self._stop_event.is_set() or self._outbox is None or self._outbox.closed:
             self._reject(
                 begin.session_id,
@@ -1554,6 +1540,9 @@ class CaptureServer:
                 p.RejectionReason.BUSY,
                 "server is shutting down" if self._stop_event.is_set() else "this connection is no longer usable",
             )
+            return
+        if refusal is not None:
+            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.INVALID_CONFIG, refusal)
             return
         if self._active_session is not None:
             self._reject(
@@ -1595,12 +1584,17 @@ class CaptureServer:
 
         The permit is released by the scan's own completion, not by the caller, so a request that times out or
         is cancelled cannot leave more than ``_MCAL_SCANS`` scans running. The caller waits at most
-        ``_QUERY_DEADLINE_S`` for a free slot and for the result, and gets UNAVAILABLE otherwise.
+        ``_QUERY_DEADLINE_S`` for a free slot and for the result, and gets UNAVAILABLE otherwise; it stops
+        waiting as soon as shutdown begins, so neither a query nor a Begin can hold ``close()`` open.
         """
         directory = self.config.manus_calibration_dir
+        shutting_down = mcal_catalog.Catalog(
+            p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the server is shutting down"
+        )
         try:
             async with asyncio.timeout(_QUERY_DEADLINE_S):
-                await self._mcal_slots.acquire()
+                if not await self._acquire_scan_slot():
+                    return shutting_down
                 try:
                     future = asyncio.get_running_loop().run_in_executor(
                         self._mcal_pool, mcal_catalog.scan, directory
@@ -1611,7 +1605,18 @@ class CaptureServer:
                     raise
                 future.add_done_callback(self._mcal_scan_finished)
                 # Shielded: cancelling this wait must not cancel the job whose permit is still held.
-                return await asyncio.shield(future)
+                scan = asyncio.shield(future)
+                stop = asyncio.ensure_future(self._stop_event.wait())
+                try:
+                    await asyncio.wait({scan, stop}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    stop.cancel()
+                    # Cancels only this wait, never the scan thread; a timeout or shutdown leaves nothing dangling.
+                    if not scan.done():
+                        scan.cancel()
+                if scan.cancelled():
+                    return shutting_down
+                return scan.result()
         except TimeoutError:
             return mcal_catalog.Catalog(
                 p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan timed out"
@@ -1621,6 +1626,25 @@ class CaptureServer:
             return mcal_catalog.Catalog(
                 p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan failed"
             )
+
+    async def _acquire_scan_slot(self) -> bool:
+        """Take a scan permit, or give up (False) the moment shutdown begins; never leaves a permit held."""
+        if self._stop_event.is_set():
+            return False
+        acquire = asyncio.ensure_future(self._mcal_slots.acquire())
+        stop = asyncio.ensure_future(self._stop_event.wait())
+        try:
+            await asyncio.wait({acquire, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+            if not acquire.done():
+                acquire.cancel()
+        if acquire.done() and not acquire.cancelled():
+            if not self._stop_event.is_set():
+                return True
+            # Shutdown arrived as the permit was granted: hand it straight back.
+            self._mcal_slots.release()
+        return False
 
     def _mcal_scan_finished(self, future: asyncio.Future[Any]) -> None:
         """Free the scan's slot when its thread ends, and consume an abandoned job's exception."""
