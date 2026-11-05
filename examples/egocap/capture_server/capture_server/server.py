@@ -177,7 +177,10 @@ class ServerConfig:
     manus_calibration_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        """Reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        # Resolved here, at construction, so no later request re-resolves it on the event loop.
+        if self.manus_calibration_dir is not None:
+            self.manus_calibration_dir = self.manus_calibration_dir.resolve()
         if self.cameras is not None:
             ids = [c.device_id for c in self.cameras.values()]
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
@@ -1142,6 +1145,8 @@ class CaptureServer:
         # request that asked for it, so timed-out queries can never accumulate live scans.
         self._mcal_slots = asyncio.Semaphore(_MCAL_SCANS)
         self._mcal_pool = ThreadPoolExecutor(max_workers=_MCAL_SCANS, thread_name_prefix="mcal-scan")
+        # In-flight /query handlers, so close() can cancel one that is waiting on a slow scan.
+        self._query_tasks: set[asyncio.Task[Any]] = set()
         self._ws_server: websockets.WebSocketServer | None = None
         self._owner: ServerConnection | None = None
         # The ONE connection-owned Outbox, constructed once per owner
@@ -1254,6 +1259,9 @@ class CaptureServer:
         finally:
             # Queued scans are dropped; a scan already running finishes on its own and its result is discarded.
             self._mcal_pool.shutdown(wait=False, cancel_futures=True)
+            # A query waiting on a running scan would otherwise hold wait_closed() past its deadline.
+            for task in list(self._query_tasks):
+                task.cancel()
             if self._ws_server is not None:
                 self._ws_server.close()
                 await asyncio.wait_for(self._ws_server.wait_closed(), timeout=_CLOSE_TIMEOUT_S)
@@ -1269,7 +1277,14 @@ class CaptureServer:
         # Station queries are dispatched before owner admission: they never take or disturb the owner.
         request_path = getattr(getattr(ws, "request", None), "path", "")
         if request_path.split("?", 1)[0] == "/query":
-            await self._handle_query(ws)
+            task = asyncio.current_task()
+            if task is not None:
+                self._query_tasks.add(task)
+            try:
+                await self._handle_query(ws)
+            finally:
+                if task is not None:
+                    self._query_tasks.discard(task)
             return
         if self._owner is not None:
             await ws.close(code=1013, reason="owner connection already active")

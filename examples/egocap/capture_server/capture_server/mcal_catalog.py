@@ -98,5 +98,5 @@ def selection_refusal(catalog: Catalog, names: list[str]) -> str | None:
 
 def resolve(directory: Path, name: str) -> Path:
     """The host path of one selected file; the server has already checked it against a scan."""
-    # The resolved real path is handed to the tracking plugin, so nothing outside the directory can reach it.
-    return directory.resolve() / name
+    # ``directory`` is the real path ServerConfig resolved at construction, so this does no filesystem access.
+    return directory / name

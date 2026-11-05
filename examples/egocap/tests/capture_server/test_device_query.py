@@ -268,8 +268,17 @@ def test_selection_refusal_explains_each_case(tmp_path):
     assert "disk on fire" in mcal_catalog.selection_refusal(broken, ["a.mcal"])
 
 
-def test_resolve_joins_the_name_onto_the_real_directory(tmp_path):
-    assert mcal_catalog.resolve(tmp_path, "a.mcal") == tmp_path.resolve() / "a.mcal"
+def test_resolve_joins_the_name_onto_the_directory_without_touching_the_filesystem(tmp_path):
+    assert mcal_catalog.resolve(tmp_path / "gone", "a.mcal") == tmp_path / "gone" / "a.mcal"
+
+
+def test_server_config_resolves_the_calibration_folder_once(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    assert ServerConfig(manus_calibration_dir=link).manus_calibration_dir == real.resolve()
+    assert ServerConfig().manus_calibration_dir is None
 
 
 # -- launch and adapter -------------------------------------------------------------------------------------
@@ -445,6 +454,31 @@ async def test_scan_timeout_is_reported_without_leaking_the_slot(station, monkey
             break
         await asyncio.sleep(0.02)
     assert server.server._mcal_slots._value == server_module._MCAL_SCANS
+
+
+async def test_close_returns_within_its_deadline_while_a_query_waits_on_a_scan(station, monkeypatch):
+    import threading
+
+    url, _, server = station
+    started = threading.Event()
+    gate = threading.Event()
+
+    def blocked_scan(directory):
+        started.set()
+        gate.wait(10)
+        return mcal_catalog.Catalog(STATUS.READY)
+
+    monkeypatch.setattr(mcal_catalog, "scan", blocked_scan)
+    ws = await websockets.connect(f"{url}/query")
+    try:
+        await ws.send(json.dumps(_query()))
+        await asyncio.wait_for(asyncio.to_thread(started.wait, 5), 6)
+        server.server.request_stop()
+        # close() must settle the waiting query handler rather than raise TimeoutError from wait_closed().
+        await asyncio.wait_for(server.server.close(), 4)
+    finally:
+        gate.set()
+        await ws.close()
 
 
 async def test_begin_accepts_files_that_are_in_the_folder_and_echoes_the_names(station):
