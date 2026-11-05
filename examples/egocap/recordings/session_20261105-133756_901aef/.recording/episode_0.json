@@ -1,0 +1,119 @@
+{
+  "assignment": null,
+  "capture_policy": null,
+  "capture_quality": null,
+  "config_digest": "abfcca2e09b9bc09a1efcf67b110b4652b915fb5decb65d005f7521bc98537ad",
+  "counts": {},
+  "duration_seconds": 0.0,
+  "episode_id": "session_20261105-133756_901aef/episode_0",
+  "episode_index": 0,
+  "final_path": "episode_0",
+  "finalization": null,
+  "issues": [],
+  "layout_digest": "abfcca2e09b9bc09a1efcf67b110b4652b915fb5decb65d005f7521bc98537ad",
+  "operator": "<tester>",
+  "pending_path": "episode_0.pending",
+  "qc_decision": null,
+  "quality": null,
+  "schema_version": 3,
+  "session_id": "session_20261105-133756_901aef",
+  "sources": [
+    {
+      "fields": [
+        {
+          "dtype": "float64",
+          "name": "head_pose",
+          "shape": [
+            4,
+            4
+          ]
+        },
+        {
+          "dtype": "float64",
+          "name": "left_pose",
+          "shape": [
+            4,
+            4
+          ]
+        },
+        {
+          "dtype": "float64",
+          "name": "right_pose",
+          "shape": [
+            4,
+            4
+          ]
+        },
+        {
+          "dtype": "float64",
+          "name": "left_trigger",
+          "shape": []
+        },
+        {
+          "dtype": "float64",
+          "name": "right_trigger",
+          "shape": []
+        },
+        {
+          "dtype": "bool",
+          "name": "a_button",
+          "shape": []
+        },
+        {
+          "dtype": "bool",
+          "name": "b_button",
+          "shape": []
+        },
+        {
+          "dtype": "bool",
+          "name": "x_button",
+          "shape": []
+        },
+        {
+          "dtype": "bool",
+          "name": "y_button",
+          "shape": []
+        }
+      ],
+      "kind": "numeric",
+      "name": "pico_controller"
+    },
+    {
+      "fields": [
+        {
+          "dtype": "float64",
+          "name": "left_hand_pose",
+          "shape": [
+            25,
+            4,
+            4
+          ]
+        },
+        {
+          "dtype": "float64",
+          "name": "right_hand_pose",
+          "shape": [
+            25,
+            4,
+            4
+          ]
+        }
+      ],
+      "kind": "numeric",
+      "name": "manus_glove"
+    },
+    {
+      "encoder": "ffmpeg_h264",
+      "encoder_options": null,
+      "fps": 30.0,
+      "height": 720,
+      "intrinsics": false,
+      "kind": "video",
+      "name": "head_human_camera",
+      "width": 1280
+    }
+  ],
+  "storage_phase": "DISCARDED",
+  "studio": null,
+  "task": "Pour water."
+}
