@@ -35,3 +35,18 @@ export async function fetchLiveKitToken(room: string, signal?: AbortSignal): Pro
   }
   return body.token;
 }
+
+/** The backend's measured delay from a stream's publisher stamp to its own receipt, per stream name. */
+export interface LiveKitLatencyEntry {
+  basis: string;
+  summary: { median_ms: number; p95_ms: number; samples: number } | null;
+  note: string;
+}
+
+/** Fetches the backend-side stamp-to-receipt delay of the offered LiveKit streams. */
+export async function fetchLiveKitLatency(signal?: AbortSignal): Promise<Record<string, LiveKitLatencyEntry>> {
+  const response = await fetch("/api/livekit-latency", { signal });
+  if (!response.ok) return {};
+  const body = (await response.json()) as { streams?: Record<string, LiveKitLatencyEntry> };
+  return body.streams ?? {};
+}

@@ -35,6 +35,8 @@ from recording_service import (
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
+from .livekit_latency import LiveKitLatencyProbe
+from .livekit_latency import router as livekit_latency_router
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
@@ -397,6 +399,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     monitor.set_recording(coordinator)
     await monitor.start()
     app.state.monitor = monitor
+    app.state.livekit_latency = LiveKitLatencyProbe(
+        lambda: [s for s in (monitor.native.started.streams if monitor.native.started else ())],
+        _recorder_livekit_token,
+    )
     # Generated once per backend process start (a restart is the only way
     # to issue a new one) and printed here -- this console line is the
     # distribution mechanism, which the operator reads off the machine
@@ -417,6 +423,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         try:
+            await app.state.livekit_latency.stop()
             if visualization is not None:
                 await visualization.stop()
         finally:
@@ -444,6 +451,7 @@ def _optional_visualization(monitor: CaptureStatusMonitor) -> VisualizationScene
 app = FastAPI(lifespan=lifespan)
 app.include_router(preview_router)
 app.include_router(livekit_preview_router)
+app.include_router(livekit_latency_router)
 app.include_router(task_file_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see

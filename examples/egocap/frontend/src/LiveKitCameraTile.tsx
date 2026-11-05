@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RemoteTrack } from "livekit-client";
+import type { LiveKitLatencyEntry } from "./livekitPreview";
 import type { LiveKitPhase } from "./useLiveKitPreview";
 
 /** No decoded frame for this long means the picture is frozen. */
@@ -50,11 +51,14 @@ export function LiveKitCameraTile({
   track,
   phase,
   primary,
+  pcLatency = null,
 }: {
   name: string;
   track: RemoteTrack | null;
   phase: LiveKitPhase;
   primary: boolean;
+  /** The backend's measured publisher-stamp-to-receipt delay for this stream, used when the browser has none. */
+  pcLatency?: LiveKitLatencyEntry | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
@@ -161,6 +165,19 @@ export function LiveKitCameraTile({
     };
   }, [track]);
 
+  // The browser's own capture-to-display figure when it has one; otherwise the backend's stamp-to-receipt delay.
+  const browserHasLatency = latencyLabel !== null && latencyLabel !== "latency unavailable";
+  const pcSummary = pcLatency?.summary ?? null;
+  const latencyText = browserHasLatency
+    ? latencyLabel
+    : pcSummary !== null
+      ? `${pcSummary.median_ms.toFixed(0)} ms (p95 ${pcSummary.p95_ms.toFixed(0)}) to PC`
+      : (latencyLabel ?? "");
+  const latencyTitle = browserHasLatency
+    ? "Sender capture time to expected display time, as the browser reports it; not a qualified sensor timestamp"
+    : pcSummary !== null
+      ? "Publisher stamp to this PC's backend receiving the frame; includes the publisher's clock offset and excludes browser decode and render"
+      : (pcLatency?.note ?? "No capture time reaches the browser for this stream");
   const placeholder = placeholderFor(phase, track, hasFrame, stale);
   return (
     <figure className={`camera-tile${primary ? " camera-tile--primary" : ""}${stale ? " tone-warning" : ""}`}>
@@ -171,8 +188,8 @@ export function LiveKitCameraTile({
         {name}
         {fpsLabel !== null && <span className="camera-stats">{fpsLabel}</span>}
         {latencyLabel !== null && (
-          <span className="camera-stats" title="Sender capture time to expected display time, as the browser reports it; not a qualified sensor timestamp">
-            {latencyLabel}
+          <span className="camera-stats" title={latencyTitle}>
+            {latencyText}
           </span>
         )}
       </figcaption>
