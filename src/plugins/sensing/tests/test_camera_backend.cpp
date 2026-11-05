@@ -99,6 +99,13 @@ TEST_CASE("An explicit request that does not match throws with its own detail an
     CHECK_THAT(message, ContainsSubstring("--camera-backend=sipl"));
 }
 
+TEST_CASE("A probe that matches but is not available is never selected", "[sensing][backend]")
+{
+    const std::vector<BackendProbe> probes = { probe(CameraBackend::Argus, false, true, "argus unavailable") };
+    CHECK_THROWS_AS(select_camera_backend(CameraBackend::Auto, probes), std::runtime_error);
+    CHECK_THROWS_AS(select_camera_backend(CameraBackend::Argus, probes), std::runtime_error);
+}
+
 TEST_CASE("An explicit request for a backend missing from the probes throws", "[sensing][backend]")
 {
     const auto message = error_of(CameraBackend::Argus, { probe(CameraBackend::Sipl, true, true) });
