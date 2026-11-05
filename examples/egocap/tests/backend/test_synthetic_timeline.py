@@ -109,12 +109,20 @@ TRUTH_BY_ID = {i + 1: t for i, t in enumerate(TRUTH_S)}
 
 
 async def test_recorded_capture_time_shows_the_injected_offset_and_drift():
-    offset_us, drift_us = 12_000, 150.0
-    frames = [frame(i, stamp_us(t, offset_us, drift_us), t + 0.1) for i, t in TRUTH_BY_ID.items()]
-    feed, samples = await record(frames, PcClocks())
-    assert len(samples) == len(TRUTH_S)
-    for r in residuals(samples, TRUTH_BY_ID):
-        assert r == pytest.approx((offset_us + drift_us) * 1e-6, abs=MICROSECOND)
+    offset_us, drift_ppm = 12_000, 20.0  # ppm is microseconds of error per elapsed second
+    run_start_s = 100.0
+    truth_by_id = {i + 1: run_start_s + e for i, e in enumerate([0.0, 15.0, 30.0, 45.0, 60.0])}
+    elapsed_s = {i: t - run_start_s for i, t in truth_by_id.items()}
+    frames = [frame(i, stamp_us(t, offset_us, elapsed_s[i] * drift_ppm), t + 0.1) for i, t in truth_by_id.items()]
+    _, samples = await record(frames, PcClocks())
+    assert len(samples) == len(truth_by_id)
+    got = residuals(samples, truth_by_id)
+    for r, i in zip(got, truth_by_id):
+        assert r == pytest.approx((offset_us + elapsed_s[i] * drift_ppm) * MICROSECOND, abs=MICROSECOND)
+    assert all(b > a for a, b in zip(got, got[1:]))
+
+
+# Jitter/drop/restart cases: LiveKitRecordingFeed fed manual ReceivedFrames, not the full wire path.
 
 
 async def test_delivery_jitter_does_not_change_capture_time():
