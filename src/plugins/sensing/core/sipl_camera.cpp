@@ -868,9 +868,8 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
                     };
                     const int64_t raw_ns = clock_ns(CLOCK_MONOTONIC_RAW);
                     isaaccapture::Logger::get("isaaccapture.plugins.sensing.SiplCamera")
-                        ->info(
-                            "[tsc] sensor {} tsc={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={}",
-                            sensor.info.id, capture_tsc, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME));
+                        ->info("[tsc] sensor {} tsc={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={}",
+                               sensor.info.id, capture_tsc, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME));
                 }
             }
             // SENSING_AE_PROBE=1 logs the sensor's exposure and gain once a
