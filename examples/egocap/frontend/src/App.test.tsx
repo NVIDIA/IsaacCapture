@@ -7,7 +7,7 @@
  * directly rather than driving a real socket.
  */
 import type { ReactElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import { useCaptureSession, type AcceptedTracking, type CaptureSessionState } from "./useCaptureSession";
@@ -17,11 +17,6 @@ import type { ControllerDisplay, DecodedTracking, HandDisplay } from "./tracking
 vi.mock("./useCaptureSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./useCaptureSession")>();
   return { ...actual, useCaptureSession: vi.fn() };
-});
-
-// CameraGrid asks the backend for a LiveKit preview on mount; these tests are about other behavior.
-beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, ok: false, json: async () => ({}) })));
 });
 
 afterEach(() => {

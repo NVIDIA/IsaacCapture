@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 # Live camera video over LiveKit
 
 The camera host (an Orin running the SENSING publisher) publishes hardware-encoded H.264 into a LiveKit room.
-CaptureServer says where that video is: it offers the room's streams in the `livekit_streams` list of the existing
-session message, taken from a small file you give it. The egocap backend passes the list on and issues viewer
+CaptureServer says where that video is: it lists the room's cameras in the session's existing `streams` list, next to
+its other cameras, from a small file you give it. The egocap backend passes the list on and issues viewer
 tokens; the browser then connects to LiveKit itself to receive the video. No video passes through CaptureServer or
 the backend, and CaptureServer never joins the room.
 
@@ -40,13 +40,13 @@ livekit:
   room: sensing-preview
   publisher: orin-sensing          # the publisher's participant identity
   streams:                         # up to eight
-    - {id: head_left, name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
-    - {id: head_right, name: Head right, track: sensing-right}
+    - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
+    - {name: Head right, track: sensing-right}
 ```
 
 `width`, `height` and `fps` are optional and only describe what to expect; leave them out when unknown. Start
-CaptureServer with `--livekit-streams FILE` in addition to its usual options. The list reaches the backend in the
-session start message, so it appears once the backend's capture session has started. Offering a stream does not mean
+CaptureServer with `--livekit-streams FILE` in addition to its usual options. The entries reach the backend in the
+session start message, so they appear once the backend's capture session has started. Offering a stream does not mean
 frames are arriving.
 
 ## 3. Backend credentials

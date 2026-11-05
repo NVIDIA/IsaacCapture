@@ -164,7 +164,7 @@ class ServerConfig:
     data_note: str | None = None
     # LiveKit video offered to clients in SessionInit. Video never passes through this server; the list only says
     # where each stream is published.
-    livekit_streams: tuple[p.LiveKitStream, ...] = ()
+    livekit_streams: tuple[p.LiveKitCameraStream, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject one physical camera assigned to more than one logical name."""
@@ -562,7 +562,7 @@ class _Session:
         mode: p.CaptureMode,
         outbox: _Outbox,
         owner_ws: ServerConnection,
-        livekit_streams: tuple[p.LiveKitStream, ...] = (),
+        livekit_streams: tuple[p.LiveKitCameraStream, ...] = (),
     ) -> None:
         self.session_id = begin.session_id
         self._livekit_streams = livekit_streams
@@ -769,17 +769,13 @@ class _Session:
         exception here into a recorded diagnostic."""
         tracking_stream = self._tracking_stream()
         camera_streams = tuple(p.camera_stream_descriptor(c) for c in self._cameras)
-        streams: list[p.TrackingStream | p.CameraStream] = list(camera_streams)
+        streams: list[p.TrackingStream | p.CameraStream | p.LiveKitCameraStream] = list(camera_streams)
         if tracking_stream is not None:
             streams.insert(0, tracking_stream)
 
-        init = p.session_init_event(
-            session_id=self.session_id,
-            mode=self._mode,
-            begin=self.begin,
-            streams=streams,
-            livekit_streams=self._livekit_streams,
-        )
+        # Offered LiveKit cameras ride in the same registry; this server never produces frames for them.
+        streams.extend(self._livekit_streams)
+        init = p.session_init_event(session_id=self.session_id, mode=self._mode, begin=self.begin, streams=streams)
         self.init_event = init  # cached for CaptureServer._handle_begin's replay path
         # The shared connection Outbox/writer is already running (started
         # once in CaptureServer._handle_connection, for the whole

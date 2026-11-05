@@ -127,9 +127,7 @@ class CaptureStarted:
     mode: p.CaptureMode
     effective_config: p.CaptureConfiguration
     clock: p.CaptureClock
-    streams: tuple[FrameDescription | p.CameraStream, ...]
-    #: LiveKit video the server offers (where to find it, not frames it sends); empty from a server without any.
-    livekit_streams: tuple[p.LiveKitStream, ...] = ()
+    streams: tuple[FrameDescription | p.CameraStream | p.LiveKitCameraStream, ...]
 
 
 def _to_client_started(wire: p.SessionInit) -> CaptureStarted:
@@ -140,7 +138,6 @@ def _to_client_started(wire: p.SessionInit) -> CaptureStarted:
         effective_config=wire.effective_config,
         clock=wire.clock,
         streams=wire.streams,
-        livekit_streams=wire.livekit_streams,
     )
 
 
@@ -319,8 +316,9 @@ class _StreamRegistry:
         for stream in event.streams:
             if isinstance(stream, p.TrackingStream):
                 registry.tracking = stream
-            else:
+            elif isinstance(stream, p.CameraStream):
                 registry.cameras[stream.stream_id] = stream
+            # A LiveKit camera is only located here, never decoded from a binary message: nothing to register.
         return registry
 
 

@@ -4,7 +4,8 @@
 
 """Viewer tokens for the LiveKit video CaptureServer offers.
 
-CaptureServer says where the video is (URL, room, publisher, tracks) in the session's ``livekit_streams``. This
+CaptureServer says where the video is (URL, room, publisher, track) in the LiveKit camera entries of the
+session's ``streams``. This
 module only issues the credential a consumer needs to join that room and subscribe, so a missing signing key can
 stop video but never hides the stream list. The backend does not decode or relay video.
 
@@ -24,6 +25,8 @@ import time
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from capture_server import protocol as p
 
 API_KEY_ENV = "LIVEKIT_API_KEY"
 API_SECRET_ENV = "LIVEKIT_API_SECRET"
@@ -65,14 +68,16 @@ def subscriber_token(*, api_key: str, api_secret: str, room: str, now: int, ttl_
 
 @router.get("/api/livekit-token")
 async def get_livekit_token(request: Request, room: str = "") -> JSONResponse:
-    """A fresh subscribe-only token for ``room``, which must be one the current session offers.
+    """A fresh subscribe-only token for ``room``, which must be one the current session's LiveKit cameras offer.
 
     Like the camera preview routes this is unauthenticated: anyone who can reach the backend can watch the
     cameras, which is why the token cannot publish and is only issued for rooms CaptureServer offers.
     """
     headers = {"Cache-Control": "no-store"}
     started = request.app.state.monitor.native.started
-    offered = {s.room for s in started.livekit_streams} if started is not None else set()
+    offered = (
+        {s.room for s in started.streams if isinstance(s, p.LiveKitCameraStream)} if started is not None else set()
+    )
     # A token for an arbitrary room would let a caller probe or join rooms this station never advertised.
     if room not in offered:
         return JSONResponse({"detail": "room is not offered by CaptureServer"}, status_code=404, headers=headers)

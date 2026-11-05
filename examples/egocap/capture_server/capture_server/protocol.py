@@ -117,6 +117,8 @@ class RejectionReason(IntEnum):
 class StreamKind(IntEnum):
     TRACKING = 1
     IMAGE = 2
+    # A camera offered through a LiveKit room: described here, never sent as frames by this server.
+    LIVEKIT_IMAGE = 3
 
 
 class BinaryKind(IntEnum):
@@ -864,6 +866,8 @@ def camera_stream_descriptor(camera: CameraStreamConfig) -> CameraStream:
 
 _MAX_LIVEKIT_STREAMS = 8
 _MAX_LIVEKIT_TEXT_LEN = 512
+#: LiveKit streams take stream_ids above the JPEG cameras' 1-3 so one registry has one id space.
+LIVEKIT_STREAM_ID_BASE = 16
 
 
 def _require_text(value: Any, context: str) -> str:
@@ -883,14 +887,14 @@ def _optional_positive_int(value: Any, context: str) -> int | None:
 
 
 @dataclass(frozen=True)
-class LiveKitStream:
-    """One video stream offered through a LiveKit room.
+class LiveKitCameraStream:
+    """One camera offered through a LiveKit room: a ``streams`` entry that locates video instead of carrying it.
 
     ``width``/``height``/``fps`` are the configured values, or None when not known; a consumer learns the
     actual values from the video itself. Offering a stream does not mean frames are arriving.
     """
 
-    stream_id: str
+    stream_id: int
     name: str
     url: str
     room: str
@@ -900,10 +904,12 @@ class LiveKitStream:
     width: int | None = None
     height: int | None = None
     fps: float | None = None
+    kind: StreamKind = dataclass_field(default=StreamKind.LIVEKIT_IMAGE, init=False)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "stream_id": self.stream_id,
+            "kind": int(self.kind),
             "name": self.name,
             "url": self.url,
             "room": self.room,
@@ -916,53 +922,63 @@ class LiveKitStream:
         }
 
     @classmethod
-    def from_json(cls, data: Any) -> LiveKitStream:
+    def from_json(cls, data: Any) -> LiveKitCameraStream:
         keys = {
-            "stream_id", "name", "url", "room", "publisher", "track", "timestamp_basis", "width", "height", "fps",
+            "stream_id", "kind", "name", "url", "room", "publisher", "track", "timestamp_basis", "width", "height",
+            "fps",
         }  # fmt: skip
-        _require_keys(data, keys, "a LiveKit stream descriptor")
-        url = _require_text(data.get("url"), "LiveKit stream.url")
+        _require_keys(data, keys, "a LiveKit camera stream descriptor")
+        if data.get("kind") != int(StreamKind.LIVEKIT_IMAGE):
+            raise ProtocolError("LiveKit camera stream.kind must be LIVEKIT_IMAGE")
+        stream_id = data.get("stream_id")
+        if type(stream_id) is not int or not (
+            LIVEKIT_STREAM_ID_BASE <= stream_id < LIVEKIT_STREAM_ID_BASE + _MAX_LIVEKIT_STREAMS
+        ):
+            raise ProtocolError(
+                f"LiveKit camera stream.stream_id must be an integer from {LIVEKIT_STREAM_ID_BASE} to "
+                f"{LIVEKIT_STREAM_ID_BASE + _MAX_LIVEKIT_STREAMS - 1}"
+            )
+        url = _require_text(data.get("url"), "LiveKit camera stream.url")
         if not url.startswith(("ws://", "wss://")):
-            raise ProtocolError("LiveKit stream.url must start with ws:// or wss://")
+            raise ProtocolError("LiveKit camera stream.url must start with ws:// or wss://")
         fps = data.get("fps")
         # NaN and infinity pass an ordinary `<= 0` check but are not valid JSON numbers, so require a finite value.
         if fps is not None and (
             isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0
         ):
-            raise ProtocolError("LiveKit stream.fps must be a finite positive number or null")
+            raise ProtocolError("LiveKit camera stream.fps must be a finite positive number or null")
         return cls(
-            stream_id=_require_text(data.get("stream_id"), "LiveKit stream.stream_id"),
-            name=_require_text(data.get("name"), "LiveKit stream.name"),
+            stream_id=stream_id,
+            name=_require_text(data.get("name"), "LiveKit camera stream.name"),
             url=url,
-            room=_require_text(data.get("room"), "LiveKit stream.room"),
-            publisher=_require_text(data.get("publisher"), "LiveKit stream.publisher"),
-            track=_require_text(data.get("track"), "LiveKit stream.track"),
+            room=_require_text(data.get("room"), "LiveKit camera stream.room"),
+            publisher=_require_text(data.get("publisher"), "LiveKit camera stream.publisher"),
+            track=_require_text(data.get("track"), "LiveKit camera stream.track"),
             timestamp_basis=_require_int_enum(
-                data.get("timestamp_basis"), LiveKitTimestampBasis, "LiveKit stream.timestamp_basis"
+                data.get("timestamp_basis"), LiveKitTimestampBasis, "LiveKit camera stream.timestamp_basis"
             ),
-            width=_optional_positive_int(data.get("width"), "LiveKit stream.width"),
-            height=_optional_positive_int(data.get("height"), "LiveKit stream.height"),
+            width=_optional_positive_int(data.get("width"), "LiveKit camera stream.width"),
+            height=_optional_positive_int(data.get("height"), "LiveKit camera stream.height"),
             fps=None if fps is None else float(fps),
         )
 
 
-def parse_livekit_streams(raw: Any) -> tuple[LiveKitStream, ...]:
-    """A ``livekit_streams`` list. Absent means none are offered (a server without the field)."""
-    if raw is None:
-        return ()
-    if not isinstance(raw, list) or len(raw) > _MAX_LIVEKIT_STREAMS:
-        raise ProtocolError(
-            f"SessionInit.livekit_streams must be a list of at most {_MAX_LIVEKIT_STREAMS} entries"
-        )
-    streams = tuple(LiveKitStream.from_json(s) for s in raw)
-    for label, values in (
-        ("stream_id", [s.stream_id for s in streams]),
-        ("name", [s.name for s in streams]),
-        ("publisher/track", [(s.publisher, s.track) for s in streams]),
-    ):
-        if len(values) != len(set(values)):
-            raise ProtocolError(f"SessionInit.livekit_streams has a duplicate {label}")
-    return streams
+def check_livekit_streams(streams: Any) -> None:
+    """Reject a registry whose LiveKit entries are too many or ambiguous.
+
+    Names are checked against the JPEG cameras too: one camera name must mean one stream. Stream ids are unique
+    across the whole registry already (checked by the caller).
+    """
+    livekit = [s for s in streams if isinstance(s, LiveKitCameraStream)]
+    if len(livekit) > _MAX_LIVEKIT_STREAMS:
+        raise ProtocolError(f"at most {_MAX_LIVEKIT_STREAMS} LiveKit camera streams may be offered")
+    other_names = {s.name for s in streams if isinstance(s, CameraStream)}
+    names = [s.name for s in livekit]
+    if len(names) != len(set(names)) or other_names & set(names):
+        raise ProtocolError("LiveKit camera stream names must be unique among camera streams")
+    locations = [(s.publisher, s.track) for s in livekit]
+    if len(locations) != len(set(locations)):
+        raise ProtocolError("two LiveKit camera streams name the same publisher and track")
 
 
 # ---------------------------------------------------------------------------
@@ -1661,14 +1677,28 @@ def _parse_optional_status(data: Any) -> StatusSnapshot | None:
 # ---------------------------------------------------------------------------
 
 
+def _parse_stream(data: Any) -> TrackingStream | CameraStream | LiveKitCameraStream:
+    """One entry of SessionInit's ``streams``, dispatched on its ``kind``.
+
+    A non-dict entry (e.g. a string or list, however malformed) still reaches a ``from_json`` and its own
+    ``_require_keys`` check, which raises a clean ProtocolError, never AttributeError from calling ``.get`` on
+    something that is not a dict.
+    """
+    kind = data.get("kind") if isinstance(data, dict) else None
+    if kind == int(StreamKind.TRACKING):
+        return TrackingStream.from_json(data)
+    if kind == int(StreamKind.LIVEKIT_IMAGE):
+        return LiveKitCameraStream.from_json(data)
+    return CameraStream.from_json(data)
+
+
 @dataclass(frozen=True)
 class SessionInit:
     session_id: str
     mode: CaptureMode
     effective_config: CaptureConfiguration
     clock: CaptureClock
-    streams: tuple[TrackingStream | CameraStream, ...]
-    livekit_streams: tuple[LiveKitStream, ...] = ()
+    streams: tuple[TrackingStream | CameraStream | LiveKitCameraStream, ...]
     type: MessageType = dataclass_field(default=MessageType.SESSION_INIT, init=False)
     version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
 
@@ -1681,14 +1711,13 @@ class SessionInit:
             "effective_config": self.effective_config.to_json(),
             "clock": self.clock.to_json(),
             "streams": [s.to_json() for s in self.streams],
-            "livekit_streams": [s.to_json() for s in self.livekit_streams],
         }
 
     @classmethod
     def from_json(cls, data: Any) -> SessionInit:
         _require_keys(
             data,
-            {"type", "version", "session_id", "mode", "effective_config", "clock", "streams", "livekit_streams"},
+            {"type", "version", "session_id", "mode", "effective_config", "clock", "streams"},
             "SessionInit",
         )
         _require_message_type(data, MessageType.SESSION_INIT)
@@ -1698,27 +1727,17 @@ class SessionInit:
         streams_raw = data.get("streams")
         if not isinstance(streams_raw, list):
             raise ProtocolError("SessionInit.streams must be a list")
-        streams = tuple(
-            TrackingStream.from_json(s)
-            # isinstance guard first: a non-dict entry (e.g. a string or
-            # list, however malformed) must still reach *_.from_json's own
-            # _require_keys check and raise a clean ProtocolError there,
-            # never AttributeError from calling .get on something that
-            # isn't a dict.
-            if isinstance(s, dict) and s.get("kind") == int(StreamKind.TRACKING)
-            else CameraStream.from_json(s)
-            for s in streams_raw
-        )
+        streams = tuple(_parse_stream(s) for s in streams_raw)
         stream_ids = [s.stream_id for s in streams]
         if len(stream_ids) != len(set(stream_ids)):
             raise ProtocolError(f"SessionInit.streams has duplicate stream_id(s): {stream_ids}")
+        check_livekit_streams(streams)
         return cls(
             session_id=session_id,
             mode=mode,
             effective_config=CaptureConfiguration.from_json(data.get("effective_config")),
             clock=CaptureClock.from_json(data.get("clock")),
             streams=streams,
-            livekit_streams=parse_livekit_streams(data.get("livekit_streams")),
         )
 
 
@@ -1727,8 +1746,7 @@ def session_init_event(
     session_id: str,
     mode: CaptureMode,
     begin: BeginRequest,
-    streams: list[TrackingStream | CameraStream],
-    livekit_streams: tuple[LiveKitStream, ...] = (),
+    streams: list[TrackingStream | CameraStream | LiveKitCameraStream],
 ) -> SessionInit:
     return SessionInit(
         session_id=session_id,
@@ -1736,7 +1754,6 @@ def session_init_event(
         effective_config=effective_config(begin),
         clock=_capture_clock(),
         streams=tuple(streams),
-        livekit_streams=livekit_streams,
     )
 
 

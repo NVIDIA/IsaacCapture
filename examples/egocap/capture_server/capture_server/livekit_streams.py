@@ -14,7 +14,7 @@ each consumer connects to LiveKit itself and learns the live details there.
       room: sensing-preview
       publisher: orin-sensing
       streams:
-        - {id: head_left, name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
+        - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import yaml
 from . import protocol as p
 
 _ROOM_KEYS = {"url", "room", "publisher", "streams"}
-_STREAM_KEYS = {"id", "name", "track", "width", "height", "fps"}
+_STREAM_KEYS = {"name", "track", "width", "height", "fps"}
 
 
 def _mapping(value: object, where: str, allowed: set[str]) -> dict:
@@ -39,7 +39,7 @@ def _mapping(value: object, where: str, allowed: set[str]) -> dict:
     return value
 
 
-def load_livekit_streams(path: Path) -> tuple[p.LiveKitStream, ...]:
+def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
     """The streams named by the YAML file at ``path``; raises ``ValueError`` for anything unusable."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -53,25 +53,29 @@ def load_livekit_streams(path: Path) -> tuple[p.LiveKitStream, ...]:
     raw_streams = room.get("streams")
     if not isinstance(raw_streams, list):
         raise ValueError("livekit.streams must be a list")
-    descriptors = []
-    for i, raw in enumerate(raw_streams):
-        entry = _mapping(raw, f"livekit.streams[{i}]", _STREAM_KEYS)
-        descriptors.append(
-            {
-                "stream_id": entry.get("id"),
-                "name": entry.get("name"),
-                "url": room.get("url"),
-                "room": room.get("room"),
-                "publisher": room.get("publisher"),
-                "track": entry.get("track"),
-                "timestamp_basis": int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
-                "width": entry.get("width"),
-                "height": entry.get("height"),
-                "fps": entry.get("fps"),
-            }
-        )
     try:
         # The wire parser is the one validator: a file that loads is a list every client will accept.
-        return p.parse_livekit_streams(descriptors)
+        streams = tuple(
+            p.LiveKitCameraStream.from_json(
+                {
+                    "stream_id": p.LIVEKIT_STREAM_ID_BASE + i,
+                    "kind": int(p.StreamKind.LIVEKIT_IMAGE),
+                    "name": entry.get("name"),
+                    "url": room.get("url"),
+                    "room": room.get("room"),
+                    "publisher": room.get("publisher"),
+                    "track": entry.get("track"),
+                    "timestamp_basis": int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+                    "width": entry.get("width"),
+                    "height": entry.get("height"),
+                    "fps": entry.get("fps"),
+                }
+            )
+            for i, entry in enumerate(
+                _mapping(raw, f"livekit.streams[{i}]", _STREAM_KEYS) for i, raw in enumerate(raw_streams)
+            )
+        )
+        p.check_livekit_streams(streams)
     except p.ProtocolError as exc:
         raise ValueError(f"LiveKit streams file {path}: {exc}") from exc
+    return streams

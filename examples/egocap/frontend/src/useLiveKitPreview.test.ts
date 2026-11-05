@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { CONFIG, FakeRoom, fakeTrack, participant, publication } from "./livekitTestDoubles";
+import { STREAMS, FakeRoom, fakeTrack, participant, publication } from "./livekitTestDoubles";
 
 vi.mock("livekit-client", async () => {
   const doubles = await import("./livekitTestDoubles");
@@ -32,8 +32,7 @@ function stubFetch(handler: () => Promise<unknown>): ReturnType<typeof vi.fn> {
   return fn;
 }
 
-const ok = (body: unknown) => async () => ({ status: 200, ok: true, json: async () => body });
-const notFound = async () => ({ status: 404, ok: false, json: async () => ({ detail: "nf" }) });
+const ok = (token = "tok") => async () => ({ status: 200, ok: true, json: async () => ({ token }) });
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -42,7 +41,7 @@ async function flush(): Promise<void> {
 }
 
 async function mounted() {
-  const view = renderHook(() => useLiveKitPreview());
+  const view = renderHook(() => useLiveKitPreview(STREAMS));
   await flush();
   return view;
 }
@@ -59,16 +58,65 @@ afterEach(() => {
 });
 
 describe("useLiveKitPreview", () => {
-  it("is unconfigured and creates no Room when the backend answers 404", async () => {
-    stubFetch(notFound);
-    const { result } = await mounted();
-    expect(result.current.phase).toBe("unconfigured");
+  it("is idle, fetches nothing and creates no Room when no streams are offered", async () => {
+    const fetchFn = stubFetch(ok());
+    const { result } = renderHook(() => useLiveKitPreview([]));
+    await flush();
+    expect(result.current.phase).toBe("idle");
     expect(result.current.tiles).toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
     expect(FakeRoom.instances).toHaveLength(0);
   });
 
+  it("requests a token for the offered room", async () => {
+    const fetchFn = stubFetch(ok());
+    await mounted();
+    expect(fetchFn.mock.calls[0][0]).toBe("/api/livekit-token?room=r");
+  });
+
+  it("does not reconnect when re-rendered with the same stream content in a new array", async () => {
+    const fetchFn = stubFetch(ok());
+    const { rerender } = renderHook(({ streams }) => useLiveKitPreview(streams), {
+      initialProps: { streams: STREAMS },
+    });
+    await flush();
+    rerender({ streams: STREAMS.map((s) => ({ ...s })) });
+    await flush();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(FakeRoom.instances).toHaveLength(1);
+    expect(FakeRoom.instances[0].disconnect).not.toHaveBeenCalled();
+  });
+
+  it("disconnects and reconnects when the stream content changes", async () => {
+    const fetchFn = stubFetch(ok());
+    const { result, rerender } = renderHook(({ streams }) => useLiveKitPreview(streams), {
+      initialProps: { streams: STREAMS },
+    });
+    await flush();
+    rerender({ streams: [{ ...STREAMS[0], url: "wss://other", room: "r2" }] });
+    await flush();
+    expect(FakeRoom.instances[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls[1][0]).toBe("/api/livekit-token?room=r2");
+    expect(FakeRoom.instances[1].connect).toHaveBeenCalledWith("wss://other", "tok");
+    expect(result.current.tiles).toEqual([{ name: "Head left", track: null }]);
+  });
+
+  it("goes back to idle and disconnects when the offer disappears", async () => {
+    stubFetch(ok());
+    const { result, rerender } = renderHook(({ streams }) => useLiveKitPreview(streams), {
+      initialProps: { streams: STREAMS },
+    });
+    await flush();
+    rerender({ streams: [] });
+    await flush();
+    expect(FakeRoom.instances[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe("idle");
+    expect(result.current.tiles).toEqual([]);
+  });
+
   it("connects with the fetched url and token and lists configured tiles empty", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     expect(FakeRoom.instances[0].connect).toHaveBeenCalledWith("wss://lk", "tok");
     expect(result.current.phase).toBe("connected");
@@ -79,7 +127,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("is connecting while the connect is still pending", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     let release!: () => void;
     FakeRoom.connectGate = new Promise<void>((r) => (release = r));
     const { result } = await mounted();
@@ -90,7 +138,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("adopts already-published video tracks of the publisher after connect", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const left = fakeTrack();
     FakeRoom.seed = [
       [
@@ -110,14 +158,14 @@ describe("useLiveKitPreview", () => {
   });
 
   it("does not adopt same-named tracks from another participant after connect", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     FakeRoom.seed = [["intruder", participant("intruder", [{ name: "left", track: fakeTrack() }])]];
     const { result } = await mounted();
     expect(result.current.tiles[0].track).toBeNull();
   });
 
   it("picks up tracks published while the SDK was reconnecting", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const room = FakeRoom.instances[0];
     const left = fakeTrack();
@@ -127,7 +175,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("shows a track on TrackSubscribed for the configured publisher and track name", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const track = fakeTrack();
     act(() => FakeRoom.instances[0].emit("TrackSubscribed", track, publication("right"), { identity: "orin" }));
@@ -136,14 +184,14 @@ describe("useLiveKitPreview", () => {
   });
 
   it("ignores a correctly named track from a different participant", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     act(() => FakeRoom.instances[0].emit("TrackSubscribed", fakeTrack(), publication("left"), { identity: "intruder" }));
     expect(result.current.tiles[0].track).toBeNull();
   });
 
   it("ignores a subscribed audio track with a configured name", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const audio = { ...fakeTrack(), kind: "audio" };
     act(() => FakeRoom.instances[0].emit("TrackSubscribed", audio, publication("left"), { identity: "orin" }));
@@ -151,7 +199,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("clears a tile on TrackUnsubscribed", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const track = fakeTrack();
     act(() => FakeRoom.instances[0].emit("TrackSubscribed", track, publication("left"), { identity: "orin" }));
@@ -160,7 +208,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("keeps a republished track when the old one is unsubscribed afterwards", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const oldTrack = fakeTrack();
     const newTrack = fakeTrack();
@@ -172,7 +220,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("clears every tile when the publisher disconnects but not for another participant", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const room = FakeRoom.instances[0];
     act(() => room.emit("TrackSubscribed", fakeTrack(), publication("left"), { identity: "orin" }));
@@ -185,7 +233,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("reports reconnecting then connected, keeping tracks across the SDK reconnect", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     const { result } = await mounted();
     const room = FakeRoom.instances[0];
     const track = fakeTrack();
@@ -199,7 +247,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("registers each listener once per Room", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     await mounted();
     const room = FakeRoom.instances[0];
     for (const event of ["TrackSubscribed", "TrackUnsubscribed", "ParticipantDisconnected", "Reconnecting", "Reconnected", "Disconnected"]) {
@@ -209,7 +257,7 @@ describe("useLiveKitPreview", () => {
 
   it("on full Disconnected shows an error, then refetches a fresh token and builds a new Room after the delay", async () => {
     let n = 0;
-    const fetchFn = stubFetch(async () => ({ status: 200, ok: true, json: async () => ({ ...CONFIG, token: `tok${++n}` }) }));
+    const fetchFn = stubFetch(async () => ({ status: 200, ok: true, json: async () => ({ token: `tok${++n}` }) }));
     const { result } = await mounted();
     act(() => FakeRoom.instances[0].emit("Disconnected"));
     expect(result.current.phase).toBe("error");
@@ -230,7 +278,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("retries after a failed connect with the SDK's message", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     FakeRoom.connectError = new Error("ws refused");
     const { result } = await mounted();
     expect(result.current.phase).toBe("error");
@@ -256,7 +304,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("reports a parse error for an unusable body", async () => {
-    stubFetch(ok({ url: "wss://lk" }));
+    stubFetch(async () => ({ status: 200, ok: true, json: async () => ({}) }));
     const { result } = await mounted();
     expect(result.current.phase).toBe("error");
     expect(result.current.message).toContain("must be");
@@ -266,12 +314,15 @@ describe("useLiveKitPreview", () => {
     let fail = true;
     const fetchFn = stubFetch(async () => {
       if (fail) throw new TypeError("fetch failed");
-      return { status: 200, ok: true, json: async () => CONFIG };
+      return { status: 200, ok: true, json: async () => ({ token: "tok" }) };
     });
     const { result } = await mounted();
     expect(result.current.phase).toBe("error");
     expect(result.current.message).toBe("Cannot reach the backend");
-    expect(result.current.tiles).toEqual([]);
+    expect(result.current.tiles).toEqual([
+      { name: "Head left", track: null },
+      { name: "Head right", track: null },
+    ]);
     fail = false;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(RETRY_MS);
@@ -281,7 +332,7 @@ describe("useLiveKitPreview", () => {
   });
 
   it("disconnects on unmount and does not retry afterwards", async () => {
-    const fetchFn = stubFetch(ok(CONFIG));
+    const fetchFn = stubFetch(ok());
     const { unmount } = await mounted();
     const room = FakeRoom.instances[0];
     unmount();
@@ -307,7 +358,7 @@ describe("useLiveKitPreview", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts the in-flight config fetch on unmount and creates no Room", async () => {
+  it("aborts the in-flight token fetch on unmount and creates no Room", async () => {
     let signal: AbortSignal | undefined;
     let resolve!: (v: unknown) => void;
     vi.stubGlobal(
@@ -317,16 +368,16 @@ describe("useLiveKitPreview", () => {
         return new Promise((r) => (resolve = r));
       }),
     );
-    const { unmount } = renderHook(() => useLiveKitPreview());
+    const { unmount } = renderHook(() => useLiveKitPreview(STREAMS));
     unmount();
     expect(signal?.aborted).toBe(true);
-    resolve({ status: 200, ok: true, json: async () => CONFIG });
+    resolve({ status: 200, ok: true, json: async () => ({ token: "tok" }) });
     await flush();
     expect(FakeRoom.instances).toHaveLength(0);
   });
 
   it("disconnects a Room whose connect finishes after unmount", async () => {
-    stubFetch(ok(CONFIG));
+    stubFetch(ok());
     let release!: () => void;
     FakeRoom.connectGate = new Promise<void>((r) => (release = r));
     const { unmount } = await mounted();
