@@ -69,8 +69,9 @@ public:
      * @brief Convert one GPU-resident RGBA8 frame to NV12 and queue it.
      * @param rgba_device_ptr Device pointer to a HxWx4 RGBA8 buffer.
      * @param row_pitch_bytes Byte stride between rows.
-     * @param timestamp_ns Capture stamp, carried on the V4L2 output buffer and
-     *        returned by poll() on the unit this frame produces.
+     * @param timestamp_ns Capture stamp, set on the V4L2 output buffer. On the verified Orin driver the unit
+     *        poll() returns does not carry it back (units are numbered from the encoder's own frame rate), so
+     *        callers pair units with submissions by order and must not match on this value.
      * @return false when no input buffer is free (frame dropped).
      */
     bool submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_bytes, int64_t timestamp_ns);
