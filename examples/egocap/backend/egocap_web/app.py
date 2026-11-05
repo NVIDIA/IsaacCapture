@@ -39,7 +39,7 @@ from .operator_settings import OperatorSettingsStore, operator_settings_path
 from .operator_settings import router as operator_settings_router
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
-from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
+from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams, unrecordable_reason
 from .preview_routes import router as preview_router
 from .recording_adapter import (
     MANUS_GLOVE_SPEC,
@@ -243,6 +243,10 @@ def _recording_readiness_check(monitor: CaptureStatusMonitor, station_config_err
         tracking = monitor.preview.tracking()
         if tracking is None or (now - tracking.received_monotonic) > _READINESS_STALE_SECONDS:
             return False, "tracking source is stale or has no sample yet"
+        # An offered LiveKit stream that cannot be recorded blocks recording by name, never silently dropped.
+        blocked = unrecordable_reason(monitor.native.started)
+        if blocked is not None:
+            return False, blocked
         cameras = monitor.camera_descriptors
         # A recordable LiveKit stream is a camera too; its liveness is checked when the take prepares and
         # while it records, not by a preview sample here.
