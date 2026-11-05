@@ -136,6 +136,72 @@ def test_stepped_unix_clock_is_picked_up_at_the_next_refresh():
     state["mono"] = 2_000_000_000
     # Unix now reads 1003 s at monotonic 2 s: unix 1000 s is 3 s before that, i.e. -1 s.
     assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(-1.0)
+    assert mapper.step_detected  # a 3 s change in offset is far beyond any bracket uncertainty
+
+
+class _SteppedClocks:
+    """Each monotonic read advances ``tick_ns``; the Unix clock is monotonic plus a settable offset."""
+
+    def __init__(self, tick_ns: int = 2_000_000) -> None:
+        self.mono = 0
+        self.tick_ns = tick_ns
+        self.unix_offset_ns = 1_000_000_000_000_000
+
+    def monotonic_ns(self) -> int:
+        self.mono += self.tick_ns
+        return self.mono
+
+    def unix_ns(self) -> int:
+        return self.mono + self.unix_offset_ns
+
+
+def _remeasure(mapper: UnixClockMap, clocks: _SteppedClocks) -> None:
+    clocks.mono += 1_500_000_000  # past the pair's maximum age
+    mapper.monotonic_seconds(0)
+
+
+def _stepped_map(clocks: _SteppedClocks) -> UnixClockMap:
+    return UnixClockMap(monotonic_ns=clocks.monotonic_ns, unix_ns=clocks.unix_ns)
+
+
+def test_uncertainty_is_half_the_bracket_span_and_a_stable_offset_is_never_a_step():
+    clocks = _SteppedClocks(tick_ns=2_000_000)  # before/after reads are 2 ms apart
+    mapper = _stepped_map(clocks)
+    assert mapper.uncertainty_s is None
+    for _ in range(6):
+        _remeasure(mapper, clocks)
+        assert mapper.uncertainty_s == pytest.approx(0.001)
+        assert not mapper.step_detected
+
+
+def test_slow_drift_is_not_a_step():
+    clocks = _SteppedClocks()
+    mapper = _stepped_map(clocks)
+    for _ in range(20):
+        clocks.unix_offset_ns += 300_000  # 0.3 ms per second of slew
+        _remeasure(mapper, clocks)
+    assert not mapper.step_detected
+
+
+def test_a_50_ms_step_between_measurements_is_detected_and_stays_set():
+    clocks = _SteppedClocks()
+    mapper = _stepped_map(clocks)
+    _remeasure(mapper, clocks)
+    clocks.unix_offset_ns += 50_000_000
+    _remeasure(mapper, clocks)
+    assert mapper.step_detected
+    for _ in range(3):  # later stable measurements do not clear it
+        _remeasure(mapper, clocks)
+    assert mapper.step_detected
+
+
+def test_a_step_under_5_ms_is_not_detected():
+    clocks = _SteppedClocks()
+    mapper = _stepped_map(clocks)
+    _remeasure(mapper, clocks)
+    clocks.unix_offset_ns += 4_000_000
+    _remeasure(mapper, clocks)
+    assert not mapper.step_detected
 
 
 def test_default_clocks_map_now_to_about_now():
@@ -224,6 +290,20 @@ class FixedMap(UnixClockMap):
         return unix_us / 1e6 + 10.0
 
 
+class StepAfterFirstMap(FixedMap):
+    """Reports a clock step from the second frame on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def monotonic_seconds(self, unix_us: int) -> float:
+        self.calls += 1
+        if self.calls >= 2:
+            self.step_detected = True
+        return super().monotonic_seconds(unix_us)
+
+
 async def _settle(times: int = 10) -> None:
     for _ in range(times):
         await asyncio.sleep(0)
@@ -246,6 +326,27 @@ async def test_capture_stream_frames_are_offered_with_source_and_mapped_capture_
     assert [m.capture_time for m in ingress.offered] == [11.0, 12.0]
     assert all(isinstance(m, VideoSample) for m in ingress.offered)
     assert feed.failure is None
+
+
+async def test_a_clock_step_fails_the_take_and_records_no_further_frames():
+    reasons: list[str] = []
+    frames = [_received(16, 1_000_000), _received(16, 2_000_000), _received(16, 3_000_000)]
+    ingress = FakeIngress()
+    feed = LiveKitRecordingFeed(
+        FakeReceiver({16: frames}),
+        [_stream(16, "Head left")],
+        ingress,
+        {16: "head_left"},
+        clock_map=StepAfterFirstMap(),
+        on_failure=reasons.append,
+    )
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert "clock stepped" in feed.failure
+    assert reasons == [feed.failure]
+    assert [m.capture_time for m in ingress.offered] == [11.0]
 
 
 async def test_offered_sample_is_rgb8_with_the_frame_image_and_receive_time_in_seconds():
