@@ -227,7 +227,7 @@ async def run(args: argparse.Namespace, stop: asyncio.Event) -> None:
             source = rtc.VideoSource(args.width, args.height)
             sources.append(source)
             track = rtc.LocalVideoTrack.create_video_track(spec.name, source)
-            # As the native sender does, request all three per-frame metadata fields; otherwise none reach the receiver.
+            # As the native sender does, request all three per-frame metadata fields, or none reach the receiver.
             options = rtc.TrackPublishOptions(
                 source=rtc.TrackSource.SOURCE_CAMERA,
                 frame_metadata_features=[
