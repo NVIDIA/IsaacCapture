@@ -32,7 +32,8 @@ export function measureTimerResolutionNs(now: () => number = () => performance.n
   let last = start;
   let best = Number.POSITIVE_INFINITY;
   let steps = 0;
-  while (steps < 5 && now() - start < windowMs) {
+  // Bounded by iterations as well as time, so a clock that never advances cannot hang the caller.
+  for (let i = 0; i < 2_000_000 && steps < 5 && now() - start < windowMs; i += 1) {
     const t = now();
     if (t !== last) {
       best = Math.min(best, t - last);
