@@ -50,6 +50,7 @@ import os
 import sys
 from pathlib import Path
 import time
+from typing import NoReturn
 
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
@@ -135,15 +136,30 @@ def read_video_frames_batched(
         cap.release()
 
 
+class DetectorConfigError(ValueError):
+    """A bbox detector config that cannot be loaded or names no known backend."""
+
+
 def _load_detector_config(path: str) -> dict:
     """Load a bbox detector YAML config, expanding ${ENV_VAR} references."""
     import os
     import yaml
 
-    with open(path) as f:
-        raw = f.read()
-    expanded = os.path.expandvars(raw)
-    return yaml.safe_load(expanded)
+    try:
+        with open(path) as f:
+            raw = f.read()
+        cfg = yaml.safe_load(os.path.expandvars(raw))
+    except OSError as exc:
+        raise DetectorConfigError(
+            f"Cannot read --bbox_detector_config {path}: {exc.strerror or exc}"
+        ) from None
+    except yaml.YAMLError as exc:
+        raise DetectorConfigError(f"Invalid YAML in {path}: {exc}") from None
+    if not isinstance(cfg, dict) or "detector_backend" not in cfg:
+        raise DetectorConfigError(
+            f"{path} must be a mapping with a detector_backend key"
+        )
+    return cfg
 
 
 def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tuple:
@@ -165,12 +181,21 @@ def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tupl
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == module_name:
-            raise ValueError(f"Unknown detector_backend: {backend!r}") from exc
+            raise DetectorConfigError(
+                f"Unknown detector_backend {backend!r} in the detector config; see "
+                "inference/hand_detector_2d/configs/ for the available backends"
+            ) from None
         raise
-    return module.build(cfg, device, batch_size, tracking), backend
+    try:
+        return module.build(cfg, device, batch_size, tracking), backend
+    except ValueError as exc:
+        # Backends raise ValueError for invalid settings; missing files and
+        # import failures use other exception types and propagate unchanged.
+        raise DetectorConfigError(f"Invalid {backend} detector config: {exc}") from exc
 
 
 def parse_args():
+    """Parse and validate command-line arguments."""
     p = argparse.ArgumentParser(
         description="E2E EgoHand hand inference with 2D hand bbox detection on video files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -358,6 +383,8 @@ def parse_args():
     args = p.parse_args()
     if args.frame_batch_size is not None and args.frame_batch_size < 1:
         p.error("--frame_batch_size must be positive")
+    if args.max_seconds is not None and not 0 < args.max_seconds < float("inf"):
+        p.error("--max_seconds must be positive and finite")
     if not 0 <= args.qc_max_bad_frac <= 1:
         p.error("--qc_max_bad_frac must be between 0 and 1")
     if args.postprocessing_qc:
@@ -368,7 +395,84 @@ def parse_args():
     return args
 
 
+EXIT_RUNTIME_ERROR = 1
+EXIT_INVALID_INPUT = 2
+
+
+def reject_input(message: str) -> NoReturn:
+    """Print one line to stderr and exit with the invalid-input code.
+
+    Argument errors from argparse also exit 2, so every rejection made before
+    inference starts shares one code.
+    """
+    print(message, file=sys.stderr)
+    raise SystemExit(EXIT_INVALID_INPUT)
+
+
+def fail_runtime(message: str) -> NoReturn:
+    """Print one line to stderr and exit with the runtime-failure code."""
+    print(message, file=sys.stderr)
+    raise SystemExit(EXIT_RUNTIME_ERROR)
+
+
+def check_gpu_visible(device: str) -> None:
+    """Fail with a runtime error when a CUDA device is requested but unavailable."""
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        fail_runtime(
+            f"No CUDA GPU available for --device {device}. "
+            "In Docker, run the container with --gpus all."
+        )
+
+
+def check_video_decodable(video_path, video_metadata: dict) -> None:
+    """Fail unless the video reports a size and yields a readable first frame.
+
+    OpenCV reports 0x0 for an empty, truncated or unsupported file, and can
+    report a size for a stream whose frames cannot be decoded.
+    """
+    decodable = video_metadata["width"] > 0 and video_metadata["height"] > 0
+    if decodable:
+        cap = cv2.VideoCapture(str(video_path))
+        try:
+            decodable, _ = cap.read()
+        finally:
+            cap.release()
+    if not decodable:
+        fail_runtime(
+            f"Cannot read video {video_path}: no decodable video stream "
+            "(empty, truncated, or unsupported file)"
+        )
+
+
+def check_frame_batching(bbox_detector, frame_batch_size) -> None:
+    """Reject --frame_batch_size with a detector that needs the whole clip."""
+    if frame_batch_size is None or not getattr(
+        bbox_detector, "requires_full_clip", False
+    ):
+        return
+    reject_input(
+        "--frame_batch_size cannot be used with bbox_smoothing, which needs "
+        "whole-clip detection before EgoHand cropping. Omit --frame_batch_size, "
+        "or generate boxes with run_hand_detector.py and use saved_bboxes.yaml "
+        "for batched EgoHand inference. Setting bbox_smoothing: false permits "
+        "batching, but live RT-DETR tracking then runs independently within "
+        "each batch."
+    )
+
+
+def prepare_output_dir(output_dir: Path) -> None:
+    """Create output_dir and fail now, not after inference, if it is read-only."""
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        writable = os.access(output_dir, os.W_OK | os.X_OK)
+    except OSError as exc:
+        reject_input(f"Cannot create --output_dir {output_dir}: {exc.strerror or exc}")
+    if not writable:
+        reject_input(f"--output_dir {output_dir} is not writable")
+
+
 def find_videos(input_path: Path) -> list[Path]:
+    """Return the input file, or the sorted ``*.mp4`` files in the input folder."""
     if input_path.is_file():
         return [input_path]
     return sorted(input_path.glob("*.mp4"))
@@ -415,14 +519,6 @@ def process_video(
     """
     total_wall_start = time.perf_counter()
     smooth_bboxes = getattr(pipeline.bbox_detector, "requires_full_clip", False)
-    if smooth_bboxes and frame_batch_size is not None:
-        raise ValueError(
-            "bbox_smoothing requires whole-clip detection before EgoHand cropping. "
-            "Omit --frame_batch_size, or generate boxes with run_hand_detector.py "
-            "and use saved_bboxes.yaml for batched EgoHand inference. "
-            "Setting bbox_smoothing: false permits batching, but live RT-DETR "
-            "tracking then runs independently within each batch."
-        )
     print(f"\n[infer_video] === {video_path.name} ===")
 
     meta = get_video_meta(str(video_path))
@@ -725,15 +821,19 @@ def process_video(
 
 
 def main():
+    """Run EgoHand inference over every input video."""
     args = parse_args()
+    check_gpu_visible(args.device)
     hands = ["left", "right"] if args.hand == "both" else [args.hand]
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not input_path.exists():
+        reject_input(f"Input not found: {input_path}")
+    prepare_output_dir(output_dir)
 
     videos = find_videos(input_path)
     if not videos:
-        raise SystemExit(f"No MP4 files found at {input_path}")
+        reject_input(f"No MP4 files found at {input_path}")
     print(f"[infer_video] {len(videos)} video(s) to process")
 
     dtype_map = {
@@ -754,6 +854,7 @@ def main():
                 parsed_calibration = json.load(calibration_file)
         for video_path in videos:
             video_metadata = get_video_meta(str(video_path))
+            check_video_decodable(video_path, video_metadata)
             source_camera, K_source = resolve_K(
                 video_metadata["width"],
                 video_metadata["height"],
@@ -767,22 +868,29 @@ def main():
             )
             video_cameras[video_path] = (source_camera, K_source, video_metadata)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise SystemExit(f"Invalid camera calibration: {exc}") from None
+        reject_input(f"Invalid camera calibration: {exc}")
 
     if use_perspective_cropping:
         args.save_crop_overlays = False
 
     if not args.bbox_detector_config:
-        raise ValueError(
+        reject_input(
             "--bbox_detector_config is required. See inference/hand_detector_2d/configs/."
         )
 
-    _detector_cfg = _load_detector_config(args.bbox_detector_config)
-    bbox_detector, backend = _build_detector_from_config(
-        _detector_cfg, args.device, args.batch_size
-    )
+    try:
+        _detector_cfg = _load_detector_config(args.bbox_detector_config)
+        bbox_detector, backend = _build_detector_from_config(
+            _detector_cfg, args.device, args.batch_size
+        )
+    except DetectorConfigError as exc:
+        reject_input(str(exc))
+    check_frame_batching(bbox_detector, args.frame_batch_size)
     if hasattr(bbox_detector, "validate_inputs"):
-        bbox_detector.validate_inputs(videos, hands)
+        try:
+            bbox_detector.validate_inputs(videos, hands)
+        except ValueError as exc:
+            reject_input(str(exc))
     if (
         not use_perspective_cropping
         and getattr(bbox_detector, "reports_in_source_frame", False)
@@ -790,7 +898,7 @@ def main():
             not isinstance(camera[0], np.ndarray) for camera in video_cameras.values()
         )
     ):
-        raise ValueError(
+        reject_input(
             "Full-image undistortion requires detection on the undistorted frames. "
             "Use a live bbox detector, or --perspective_cropping with source-frame boxes."
         )
