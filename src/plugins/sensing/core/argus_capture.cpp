@@ -366,6 +366,7 @@ std::optional<CaptureFrame> ArgusCapture::acquire_latest(uint32_t camera_id)
     if (metadata)
     {
         frame.sensor_time = metadata->getSensorTimestamp();
+        frame.sensor_domain = SensorTimeDomain::MonotonicRawNs;
         frame.sequence = metadata->getCaptureId();
     }
     frame.pixels = DmaBufNv12Pixels{ data->fd };

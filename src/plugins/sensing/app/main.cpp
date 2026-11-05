@@ -150,6 +150,9 @@ static void print_usage(const char* program_name)
         << "                            participant identity\n"
         << "  --livekit-fps=N           publication rate cap (default: 30)\n"
         << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
+        << "  --timestamp-basis=B       capture_monotonic_us publishes the sensor's capture event on this host's\n"
+        << "                            monotonic clock (recordable); processing_unix_us, the default, publishes\n"
+        << "                            processing time. A frame whose sensor time cannot be placed fails the stream.\n"
         << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
         << "\n"
@@ -238,6 +241,16 @@ try
         else if (arg.find("--livekit-fps=") == 0)
         {
             camera_config.livekit.fps = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+        }
+        else if (arg.find("--timestamp-basis=") == 0)
+        {
+            const std::string basis = arg.substr(18);
+            if (basis != "capture_monotonic_us" && basis != "processing_unix_us")
+            {
+                std::cerr << "Error: --timestamp-basis must be capture_monotonic_us or processing_unix_us." << std::endl;
+                return 1;
+            }
+            camera_config.livekit.publish_capture_time = basis == "capture_monotonic_us";
         }
         else if (arg.find("--livekit-bitrate=") == 0)
         {

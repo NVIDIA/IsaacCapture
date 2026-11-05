@@ -43,6 +43,7 @@ std::optional<CaptureFrame> SiplCapture::acquire_latest(uint32_t camera_id)
     frame.monotonic_ns = view->timestamp_ns;
     frame.unix_ns = view->unix_ns;
     frame.sensor_time = view->capture_tsc;
+    frame.sensor_domain = SensorTimeDomain::GenericCounterTicks;
     frame.pixels = CudaRgbaPixels{ view->ptr, view->pitch };
     return frame;
 }
