@@ -48,7 +48,7 @@ struct LiveKitVideoOutput::Impl
         size_t pitch = 0;
         uint64_t timestamp_ns = 0;
         uint64_t unix_ns = 0;
-        uint64_t capture_tsc_ns = 0;
+        uint64_t capture_tsc = 0;
         uint64_t sequence = 0;
     };
 
@@ -191,7 +191,7 @@ struct LiveKitVideoOutput::Impl
 
             slot.timestamp_ns = view.timestamp_ns;
             slot.unix_ns = view.unix_ns;
-            slot.capture_tsc_ns = view.capture_tsc_ns;
+            slot.capture_tsc = view.capture_tsc;
             slot.sequence = view.sequence;
             pending = target;
         }
@@ -316,7 +316,7 @@ struct LiveKitVideoOutput::Impl
             return;
         }
         in_encoder.push_back(
-            { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc_ns, slot.unix_ns / 1000 });
+            { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -342,7 +342,7 @@ struct LiveKitVideoOutput::Impl
         frame.keyframe = unit.keyframe;
         frame.timestamp_us = static_cast<uint64_t>(stamp_us);
         frame.frame_id = meta.sequence;
-        frame.capture_tsc_ns = meta.capture_tsc_ns;
+        frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
         if (sink->submit(frame))
         {
@@ -367,7 +367,7 @@ struct LiveKitVideoOutput::Impl
     {
         int64_t stamp_us = 0;
         uint32_t sequence = 0;
-        uint64_t capture_tsc_ns = 0;
+        uint64_t capture_tsc = 0;
         /// Unix time of the same instant as stamp_us, for the frame's application timestamp.
         uint64_t unix_us = 0;
     };
