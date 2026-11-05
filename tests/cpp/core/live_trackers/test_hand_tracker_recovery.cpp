@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
+#include <deviceio_base/hand_tracker_base.hpp>
 #include <deviceio_session/deviceio_session.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
+#include <live_trackers/live_deviceio_factory.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
 
 #include <XR_MNDX_xdev_space.h>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -63,6 +66,21 @@ public:
     int xdev_list_create_attempts() const
     {
         return xdev_list_create_attempts_;
+    }
+
+    int locate_attempts() const
+    {
+        return locate_attempts_;
+    }
+
+    int time_conversion_attempts() const
+    {
+        return time_conversion_attempts_;
+    }
+
+    void set_hands_active()
+    {
+        hands_active_ = true;
     }
 
     void advance_xdev_generation()
@@ -181,12 +199,24 @@ private:
                                                   const XrHandJointsLocateInfoEXT*,
                                                   XrHandJointLocationsEXT* locations)
     {
-        locations->isActive = XR_FALSE;
+        ++current_->locate_attempts_;
+        locations->isActive = current_->hands_active_ ? XR_TRUE : XR_FALSE;
+        if (current_->hands_active_)
+        {
+            for (uint32_t i = 0; i < locations->jointCount; ++i)
+            {
+                locations->jointLocations[i] = {};
+                locations->jointLocations[i].pose.orientation.w = 1;
+                locations->jointLocations[i].locationFlags =
+                    XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+            }
+        }
         return XR_SUCCESS;
     }
 
     static XrResult XRAPI_CALL timespec_to_time(XrInstance, const struct timespec* timespec, XrTime* time)
     {
+        ++current_->time_conversion_attempts_;
         *time = static_cast<XrTime>(timespec->tv_sec) * 1'000'000'000 + timespec->tv_nsec;
         return XR_SUCCESS;
     }
@@ -228,6 +258,9 @@ private:
     uintptr_t next_xdev_list_handle_ = 1;
     int left_xdev_create_attempts_ = 0;
     int xdev_list_create_attempts_ = 0;
+    int locate_attempts_ = 0;
+    int time_conversion_attempts_ = 0;
+    bool hands_active_ = false;
     uint64_t xdev_generation_ = 1;
     std::map<XrXDevListMNDX, uint64_t> xdev_list_generations_;
     XDevBehavior xdev_behavior_;
@@ -290,4 +323,39 @@ TEST_CASE("HandTracker rebinds unchanged XDev IDs from a new generation", "[unit
     session->update();
 
     CHECK(runtime.left_xdev_create_attempts() == 2);
+}
+
+TEST_CASE("HandTracker pauses XDev recovery while stopped and resumes with fresh hands", "[unit][hand][xdev]")
+{
+    FakeHandRuntime runtime;
+    runtime.set_hands_active();
+    auto running = std::make_shared<std::atomic_bool>(true);
+    auto handles = runtime.handles();
+    handles.session_running = running;
+    core::HandTracker hand;
+    core::LiveDeviceIOFactory factory(handles, nullptr, {});
+    auto tracker = factory.create_hand_tracker_impl(&hand);
+    tracker->update(1);
+    REQUIRE(tracker->get_left_hand());
+    REQUIRE(tracker->get_right_hand());
+    const int creates = runtime.xdev_list_create_attempts();
+    const int locates = runtime.locate_attempts();
+    const int conversions = runtime.time_conversion_attempts();
+
+    running->store(false);
+    runtime.advance_xdev_generation();
+    tracker->update(2'000'000'001);
+    CHECK_FALSE(tracker->get_left_hand());
+    CHECK_FALSE(tracker->get_right_hand());
+    CHECK(runtime.xdev_list_create_attempts() == creates);
+    CHECK(runtime.locate_attempts() == locates);
+    CHECK(runtime.time_conversion_attempts() == conversions);
+
+    running->store(true);
+    tracker->update(2'000'000'002);
+    REQUIRE(tracker->get_left_hand());
+    REQUIRE(tracker->get_right_hand());
+    CHECK(runtime.xdev_list_create_attempts() == creates + 1);
+    CHECK(runtime.locate_attempts() > locates);
+    CHECK(runtime.time_conversion_attempts() > conversions);
 }

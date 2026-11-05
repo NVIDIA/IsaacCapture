@@ -50,6 +50,14 @@ def immediate_to_thread(monkeypatch):
         "_adb_run",
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
     )
+
+    async def passive_presence(_self):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.PresenceRecovery.run",
+        passive_presence,
+    )
     monkeypatch.setattr(adb, "assert_supported_headset", lambda: None)
     monkeypatch.setattr(adb, "assert_headset_awake", lambda **_kwargs: None)
 
@@ -3539,3 +3547,148 @@ async def test_run_consumes_pending_cdp_error_before_observing_stream():
     handle.assert_awaited_once_with("Stream did not attach within 500ms")
     observe.assert_not_called()
     assert lifecycle._pending_cdp_terminal_error is None
+
+
+@pytest.mark.parametrize("usb_local", [False, True])
+async def test_presence_worker_owned_by_lifecycle_preserves_asleep_browser(
+    monkeypatch, usb_local
+):
+    started, stopped = asyncio.Event(), asyncio.Event()
+    created = []
+
+    class Worker:
+        def __init__(self, serial):
+            created.append(serial)
+            self.snapshot = {
+                "state": "paused",
+                "presence": "absent",
+                "wakefulness": "Asleep",
+                "attempts": 0,
+                "reason": "Headset removed; waiting for presence",
+            }
+
+        async def run(self):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+    async def stop_after_observation(_delay):
+        await started.wait()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.PresenceRecovery", Worker
+    )
+    monkeypatch.setattr(
+        adb, "enumerate_adb_devices", lambda: AdbDevices((("owned-headset", "device"),))
+    )
+    monkeypatch.setattr(
+        adb,
+        "probe_headset_network",
+        lambda **_kw: HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=usb_local,
+        host_client=False,
+        config=RecoveryConfig(),
+        sleep=stop_after_observation,
+    )
+    lifecycle.selected = "owned-headset"
+    lifecycle._last_observation = ((("owned-headset", "device"),), "")
+    lifecycle._ready_count = 2
+    lifecycle.browser_ready = True
+    prepare = AsyncMock()
+    monkeypatch.setattr(lifecycle, "_prepare_device", prepare)
+    monkeypatch.setattr(lifecycle, "_observe_stream", prepare)
+    monkeypatch.setattr(lifecycle, "_close_teleop_tab", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_shielded_cleanup", AsyncMock())
+    with pytest.raises(asyncio.CancelledError):
+        await lifecycle.run()
+    assert created == ["owned-headset"]
+    assert started.is_set() and stopped.is_set()
+    assert lifecycle._presence_task is None
+    assert lifecycle.snapshot["state"] == "WAITING_FOR_AWAKE"
+    assert lifecycle.snapshot["presenceRecovery"]["presence"] == "absent"
+    prepare.assert_not_called()
+    assert not adb.PRESENCE_RECOVERY_OWNS_WAKE.get()
+
+
+@pytest.mark.parametrize("usb_local", [False, True])
+async def test_presence_wait_renews_episode_after_initial_and_repeated_long_absence(
+    monkeypatch, usb_local
+):
+    now = [0.0]
+    resume_times = iter([61.0, 62.0, 63.0, 124.0])
+    actions = []
+    devices = AdbDevices((("owned-headset", "device"),))
+
+    class Worker:
+        def __init__(self, serial):
+            self.snapshot = {}
+
+        async def run(self):
+            await asyncio.Event().wait()
+
+    def network(**_kwargs):
+        absent = now[0] in {0.0, 63.0}
+        lifecycle.presence_recovery.snapshot = {
+            "presence": "absent" if absent else "present",
+            "wakefulness": "Asleep" if absent else "Awake",
+            "reason": "Headset removed" if absent else "Headset awake",
+        }
+        return HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT)
+
+    async def sleep(_seconds):
+        next_time = next(resume_times, None)
+        assert next_time is not None, "Recovery did not resume after presence returned"
+        now[0] = next_time
+
+    async def automate():
+        actions.append(("launch", now[0], lifecycle.episode_start))
+        lifecycle.browser_ready = True
+
+    async def observe_stream():
+        actions.append(("observe", now[0], lifecycle.episode_start))
+        if now[0] == 124.0:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=usb_local,
+        host_client=False,
+        config=RecoveryConfig(),
+        clock=lambda: now[0],
+        sleep=sleep,
+        usb_health_policy="off",
+    )
+    lifecycle.selected = "owned-headset"
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 2
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.PresenceRecovery", Worker
+    )
+    monkeypatch.setattr(adb, "enumerate_adb_devices", lambda: devices)
+    monkeypatch.setattr(adb, "probe_headset_network", network)
+    monkeypatch.setattr(lifecycle, "_prepare_device", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_rebuild_usb", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_check_usb_prerequisites", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_automate", automate)
+    monkeypatch.setattr(lifecycle, "_observe_stream", observe_stream)
+    monkeypatch.setattr(lifecycle, "_close_teleop_tab", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_shielded_cleanup", AsyncMock())
+
+    with pytest.raises(asyncio.CancelledError):
+        await lifecycle.run()
+
+    assert actions == [
+        ("launch", 61.0, 61.0),
+        ("observe", 62.0, 61.0),
+        ("observe", 124.0, 124.0),
+    ]
+    assert lifecycle._presence_waiting_for_awake is False

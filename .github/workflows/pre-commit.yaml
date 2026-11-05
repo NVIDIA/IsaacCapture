@@ -40,6 +40,21 @@ jobs:
     - name: Test preview selection
       run: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py -v
 
+  wheel-publication-tests:
+    name: Test wheel publication lookup
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Test Artifactory wheel selection
+      run: python3 -m unittest discover -s tests/python/ci -p test_artifactory_wheel.py -v
+
   synthetic-xr-example-tests:
     name: Test Synthetic XR task contracts
     runs-on: ubuntu-latest

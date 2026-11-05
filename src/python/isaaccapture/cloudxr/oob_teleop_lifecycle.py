@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from . import oob_teleop_adb as adb
 from . import usb_health
+from .headset_presence_recovery import PresenceRecovery
 from .oob_teleop_env import (
     USB_TURN_CREDENTIAL,
     USB_TURN_USER,
@@ -193,6 +194,9 @@ class OobLifecycle:
         self._streamed = False
         self._prerequisite_signature: tuple | None = None
         self.snapshot: dict = {}
+        self.presence_recovery: PresenceRecovery | None = None
+        self._presence_task: asyncio.Task | None = None
+        self._presence_waiting_for_awake = False
 
     def _restart_episode(self) -> None:
         self.episode_start = self.clock()
@@ -283,6 +287,9 @@ class OobLifecycle:
             self._streaming = False
         snapshot = {
             "schemaVersion": 1,
+            "presenceRecovery": dict(self.presence_recovery.snapshot)
+            if self.presence_recovery
+            else None,
             "generation": self.generation,
             "health": health,
             "state": state,
@@ -685,7 +692,9 @@ class OobLifecycle:
         if not self._identity_verified:
             await asyncio.to_thread(adb.assert_supported_headset)
             self._identity_verified = True
-        await asyncio.to_thread(adb.assert_headset_awake, timeout=10.0)
+        await asyncio.to_thread(
+            adb.assert_headset_awake, timeout=10.0, require_awake=True
+        )
         if not self._cache_cleared:
             try:
                 await asyncio.to_thread(
@@ -951,10 +960,12 @@ class OobLifecycle:
         )
         self._record_usb_event("CHECKING_USB_WAKE")
         try:
-            # Device preparation's soft wake helper may return while still asleep.
-            # Require mWakefulness=Awake after reverse setup and before transfer.
+            # The presence worker owns wake requests; recheck after reverse setup
+            # so a power transition cannot authorize an active transfer.
             await asyncio.to_thread(
-                adb.assert_headset_awake, timeout=10.0, require_awake=True
+                adb.assert_headset_awake,
+                timeout=10.0,
+                require_awake=True,
             )
         except (Exception, asyncio.CancelledError):
             self._usb_waiting_for_awake = True
@@ -1680,6 +1691,7 @@ class OobLifecycle:
         new episode. The loop runs until cancelled and always cleans up its owned resources.
         """
         token = adb.SELECTED_ADB_SERIAL.set(self.selected) if self.selected else None
+        wake_owner_token = adb.PRESENCE_RECOVERY_OWNS_WAKE.set(True)
         try:
             self._ensure_usb_report()
             if not self.snapshot:
@@ -1702,6 +1714,11 @@ class OobLifecycle:
                     self.selected = devices.devices[0][0]
                     token = adb.SELECTED_ADB_SERIAL.set(self.selected)
                     self._ensure_usb_report()
+                if self.selected and self._presence_task is None:
+                    self.presence_recovery = PresenceRecovery(self.selected)
+                    self._presence_task = asyncio.create_task(
+                        self.presence_recovery.run()
+                    )
                 self.ignored_serials = (
                     tuple(
                         sorted(
@@ -1817,6 +1834,32 @@ class OobLifecycle:
                     )
                     await self.sleep(self._transport_retry_interval())
                     continue
+                presence = (
+                    self.presence_recovery.snapshot if self.presence_recovery else {}
+                )
+                if (
+                    presence.get("wakefulness") == "Asleep"
+                    or presence.get("presence") == "absent"
+                ):
+                    self._presence_waiting_for_awake = True
+                    # Preserve the current page and XR session during presence-gated
+                    # power recovery, including normal menus and headless clients.
+                    await self._publish(
+                        "degraded",
+                        "WAITING_FOR_AWAKE",
+                        presence["reason"],
+                        adbReady=True,
+                        networkPresent=True,
+                    )
+                    await self.sleep(self.config.interval_sec)
+                    continue
+                if (
+                    self._presence_waiting_for_awake
+                    and presence.get("wakefulness") == "Awake"
+                ):
+                    # Waiting for the wearer must not consume the next recovery episode.
+                    self._presence_waiting_for_awake = False
+                    self._restart_episode()
                 preserving_browser = (
                     self._transport_lost and self._restore_existing_browser
                 )
@@ -1886,7 +1929,9 @@ class OobLifecycle:
                                 networkPresent=True,
                             )
                             await asyncio.to_thread(
-                                adb.assert_headset_awake, timeout=10.0
+                                adb.assert_headset_awake,
+                                timeout=10.0,
+                                require_awake=True,
                             )
                             if self.usb_health_policy != "off":
                                 # A surviving page gets passive link evidence; a new
@@ -2060,6 +2105,10 @@ class OobLifecycle:
                     )
                 await self.sleep(self.config.interval_sec)
         finally:
+            if self._presence_task is not None:
+                self._presence_task.cancel()
+                await asyncio.gather(self._presence_task, return_exceptions=True)
+                self._presence_task = None
             if (
                 self._usb_health_report is not None
                 and self._usb_health_report.payload["decision"]["overallOutcome"]
@@ -2071,5 +2120,6 @@ class OobLifecycle:
             await self._shielded_cleanup()
             if self.coturn is not None:
                 await asyncio.to_thread(adb.stop_coturn, self.coturn)
+            adb.PRESENCE_RECOVERY_OWNS_WAKE.reset(wake_owner_token)
             if token is not None:
                 adb.SELECTED_ADB_SERIAL.reset(token)

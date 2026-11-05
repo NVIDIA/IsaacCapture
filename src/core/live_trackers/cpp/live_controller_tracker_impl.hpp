@@ -59,6 +59,7 @@ private:
     void apply_haptic_feedback(Side side, float amplitude, float frequency_hz, float duration_s) const;
 
     const OpenXRCoreFunctions core_funcs_;
+    OpenXRSessionHandles handles_;
     XrTimeConverter time_converter_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.LiveControllerTrackerImpl");
 
