@@ -333,9 +333,8 @@ struct LiveKitVideoOutput::Impl
         // rate. It does return one unit per accepted frame in submission order, so units pair with captures
         // by order, and the stamp is only the unit's own.
         if (in_encoder.empty())
-            throw std::runtime_error(
-                "LiveKit output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
-                std::to_string(stamp_us) + ")");
+            throw std::runtime_error("LiveKit output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
+                                     std::to_string(stamp_us) + ")");
         const FrameMeta meta = in_encoder.front();
         in_encoder.pop_front();
 
