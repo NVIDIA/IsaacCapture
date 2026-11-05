@@ -322,8 +322,7 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        in_encoder.push_back(
-            { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
+        in_encoder.push_back({ static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
         // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
         // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
         // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
@@ -379,10 +378,9 @@ struct LiveKitVideoOutput::Impl
 
     struct FrameMeta
     {
-        int64_t stamp_us = 0;
         uint32_t sequence = 0;
         uint64_t capture_tsc = 0;
-        /// Unix time of the same instant as stamp_us, for the frame's application timestamp.
+        /// Unix time when the frame was handed over, for the frame's application timestamp.
         uint64_t unix_us = 0;
     };
 

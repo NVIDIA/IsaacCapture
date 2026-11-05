@@ -205,6 +205,10 @@ add_subdirectory(livekit)
 add_subdirectory(core)
 add_subdirectory(app)
 
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/plugin.yaml"
     "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
