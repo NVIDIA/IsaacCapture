@@ -120,10 +120,11 @@ describe("LiveKitCameraTile track wiring and labels", () => {
     expect(screen.getByText("Waiting for video")).not.toBeNull();
   });
 
-  it("always labels the tile as preview only and shows its name", () => {
+  it("shows its name and makes no claim about recording", () => {
     render(<LiveKitCameraTile name="Head left" track={null} phase="connected" primary={true} />);
     expect(screen.getByText("Head left", { exact: false })).not.toBeNull();
-    expect(screen.getByText(/Preview only/)).not.toBeNull();
+    expect(screen.queryByText(/Preview only/)).toBeNull();
+    expect(document.querySelector(".camera-preview-badge")).toBeNull();
     expect(document.querySelector(".camera-tile--primary")).not.toBeNull();
   });
 });
