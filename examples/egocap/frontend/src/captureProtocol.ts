@@ -265,7 +265,12 @@ export interface LiveKitStreamDescriptor {
   /** Participant identity of the camera host; a track name is only unique within one participant. */
   publisher: string;
   track: string;
+  /** What the publisher's frame timestamp means (the backend's LiveKitTimestampBasis value). */
+  timestamp_basis: number;
 }
+
+/** LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: the capture event on the publisher's monotonic clock. */
+export const TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US = 4;
 
 export type StreamDescriptor = TrackingStreamDescriptor | CameraStreamDescriptor | LiveKitStreamDescriptor;
 
@@ -349,6 +354,7 @@ function parseStreamDescriptor(value: unknown, field: string): StreamDescriptor 
       room: expectString(value.room, `${field}.room`),
       publisher: expectString(value.publisher, `${field}.publisher`),
       track: expectString(value.track, `${field}.track`),
+      timestamp_basis: expectBoundedNonnegativeInt(value.timestamp_basis, `${field}.timestamp_basis`, 255),
     };
   }
   // kind === StreamKind.IMAGE (the only remaining value expectEnum(StreamKind, ...) allows)

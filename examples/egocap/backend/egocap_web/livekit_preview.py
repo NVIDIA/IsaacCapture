@@ -55,7 +55,8 @@ def subscriber_token(*, api_key: str, signing_key: str, room: str, now: int, ttl
             "roomJoin": True,
             "canSubscribe": True,
             "canPublish": False,
-            "canPublishData": False,
+            # Data messages only, for the clock-sync exchange with the publisher; it still cannot publish media.
+            "canPublishData": True,
         },
     }
     # Compact JSON: the signature covers exactly these bytes, so both sides must agree on them.
