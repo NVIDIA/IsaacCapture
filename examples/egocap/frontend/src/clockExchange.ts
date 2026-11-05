@@ -109,11 +109,17 @@ export class ClockEstimator {
     return null;
   }
 
-  /** The current mapping, or null when there is none yet or the last exchange is stale at `nowNs`. */
+  /**
+   * The current mapping, or null when there is none yet or the last exchange is stale at `nowNs`. The uncertainty
+   * is recomputed for `nowNs` from the exchange's own age (never added to the cached figure), so it keeps growing
+   * while replies are late.
+   */
   mapping(nowNs: bigint): ClockMapping | null {
     const current = this.current;
     if (current === null || this.newestNs === null || nowNs - this.newestNs > this.staleAfterNs) return null;
-    return current;
+    const age = nowNs > current.acceptedAtNs ? nowNs - current.acceptedAtNs : 0n;
+    const aged = current.rttNs / 2n + (age * DEFAULT_DRIFT_ALLOWANCE_PPM) / 1_000_000n + this.timerResolutionNs;
+    return aged <= current.uncertaintyNs ? current : { ...current, uncertaintyNs: aged };
   }
 
   /** Half the round trip, the drift its age allows, and this browser's timer resolution. */

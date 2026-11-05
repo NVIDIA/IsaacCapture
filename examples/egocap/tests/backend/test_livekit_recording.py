@@ -259,6 +259,72 @@ async def test_the_budget_comes_from_the_environment_when_not_passed(monkeypatch
     assert "1.00 ms budget" in feed.failure
 
 
+async def test_a_mapping_in_budget_at_the_first_frame_ages_over_budget_when_replies_stop(monkeypatch):
+    """Real estimator and sync client: only time passing, with no new exchange, pushes the take over budget."""
+    from egocap_web.clock_exchange import ClockEstimator, Exchange
+    from egocap_web.livekit_clock_sync import ClockSyncClient
+
+    monkeypatch.delenv(BUDGET_ENV, raising=False)
+    s = 1_000_000_000
+    now = [100 * s]
+    # Stale limit raised so the aged figure, not the staleness rule, is what stops the take.
+    client = ClockSyncClient(
+        None,  # type: ignore[arg-type]  # only mapping() is used; no room is needed
+        "o",
+        monotonic_ns=lambda: now[0],
+        estimator=ClockEstimator(stale_after_ns=600 * s),
+    )
+    remote_offset_ns = 1_000 * s  # the publisher's clock reads this far ahead of ours
+    # A 2 ms round trip: 1 ms uncertainty at the exchange, 5 ms budget.
+    t1 = 99 * s
+    assert (
+        client.estimator.add(
+            Exchange(
+                t1=t1,
+                t2=t1 + 1_000_000 + remote_offset_ns,
+                t3=t1 + 1_000_000 + remote_offset_ns,
+                t4=t1 + 2_000_000,
+            )
+        )
+        is None
+    )
+
+    def frame(capture_local_s: float) -> ReceivedFrame:
+        user_ts_us = round((capture_local_s * s + remote_offset_ns) / 1000)
+        return _received(16, user_ts_us, receive_ns=round((capture_local_s + 0.1) * s))
+
+    class AgingReceiver(FakeReceiver):
+        """Delivers each frame at its own local time: the clock moves, no clock-sync reply arrives."""
+
+        def __init__(self, scripted: list[tuple[int, ReceivedFrame]]) -> None:
+            super().__init__({}, client)
+            self.scripted = scripted
+
+        async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+            if not self.scripted:
+                await asyncio.Event().wait()
+            at_ns, received = self.scripted.pop(0)
+            now[0] = at_ns
+            return received
+
+    first, second, third = frame(100.0), frame(129.9), frame(130.0)
+    receiver = AgingReceiver([(round(100.1 * s), first), (round(130 * s), second), (round(130.1 * s), third)])
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, {16: "head_left"}, max_uncertainty_ns=5_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+
+    assert client.mapping() is not None  # not stale: the budget, not staleness, is what failed
+    assert [m.capture_time for m in ingress.offered] == [pytest.approx(100.0)]  # the earlier frame stays recorded
+    assert feed.failure is not None
+    assert BUDGET_ENV in feed.failure
+    assert "5.00 ms budget" in feed.failure
+    # 1 ms from the round trip plus the default 200 ppm over the 31 s since the exchange.
+    assert "uncertain by 7.20 ms" in feed.failure
+    assert len(receiver.scripted) == 1  # nothing after the failing frame was taken
+
+
 def test_a_receiver_without_clock_sync_is_refused():
     receiver = FakeReceiver({})
     receiver.clock_sync = None

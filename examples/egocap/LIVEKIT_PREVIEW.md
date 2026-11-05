@@ -38,7 +38,8 @@ offset assumes both directions took equally long, so the mapping's uncertainty i
 smaller is claimed. The best recent exchange is used; a mapping is withheld when its last exchange is more than 5 s
 old; and a new exchange that disagrees with the current mapping by more than the two uncertainties plus a 200 ppm
 drift allowance is a discontinuity. A take cannot start until the publisher has answered at least once, and ends if
-the mapping goes missing, goes stale or jumps; frames already recorded keep the mapping they were made under, and
+the mapping goes missing, goes stale or jumps; frames already recorded keep the mapping they were made under (a jump is only seen at the next exchange, so frames
+captured since the previous one carry its error), and
 the newest mapping epochs, their uncertainties and the budget are saved in the kept episode's `timing` attributes. A
 take also ends when the mapping's uncertainty exceeds the budget, 5 ms by default and set in milliseconds with
 `EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS`; the default is a policy choice, not a measurement. The recorder

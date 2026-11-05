@@ -93,7 +93,8 @@ def test_high_rtt_outlier_does_not_replace_better_mapping() -> None:
         good.rtt_ns,
         good.accepted_at_ns,
     )
-    assert mapping.uncertainty_ns == good.uncertainty_ns + int(200e-6 * (slow.t4 - good.accepted_at_ns))
+    # Aged at read: half the old exchange's round trip plus the drift allowance over its age at the read time.
+    assert mapping.uncertainty_ns == good.rtt_ns // 2 + int(200e-6 * (3 * S - good.accepted_at_ns))
 
 
 def test_uncertainty_includes_the_age_of_the_chosen_exchange() -> None:
@@ -160,12 +161,13 @@ def test_rejected_exchange_reports_reason_and_leaves_mapping_unchanged(name: str
     estimator.add(make_exchange(S, offset=MS))
     before = estimator.mapping(2 * S)
     assert before is not None
+    history_before = list(estimator.history)
 
     reason = estimator.add(bad)
 
     assert isinstance(reason, str) and reason
-    assert estimator.mapping(2 * S) is before
-    assert estimator.history == [before]
+    assert estimator.mapping(2 * S) == before
+    assert estimator.history == history_before
     assert not estimator.discontinuity
 
 
