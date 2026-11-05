@@ -183,11 +183,15 @@ async def publish_stream(
     frame_id = 0
     while not stop.is_set():
         frame_id += 1
-        # Both stamps are taken together, before the frame is synthesized, as a camera stamps at capture.
+        # The counter and a capture-time stamp are taken before the frame is synthesized, as a camera stamps at
+        # capture; a processing-time stamp is taken once the frame is ready, as the real sender's is.
         capture_ns = capture_clock()
-        timestamp_us = user_timestamp_us(args.timestamp_basis)
+        at_capture = args.timestamp_basis != "processing_unix_us"
+        timestamp_us = user_timestamp_us(args.timestamp_basis) if at_capture else 0
         pixels = make_pattern(args.width, args.height, spec.sensor, frame_id)
         frame = rtc.VideoFrame(args.width, args.height, rtc.VideoBufferType.RGBA, pixels.tobytes())
+        if not at_capture:
+            timestamp_us = user_timestamp_us(args.timestamp_basis)
         source.capture_frame(
             frame,
             timestamp_us=timestamp_us,
