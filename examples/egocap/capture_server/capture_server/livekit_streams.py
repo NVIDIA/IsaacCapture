@@ -13,6 +13,7 @@ each consumer connects to LiveKit itself and learns the live details there.
       url: wss://LIVEKIT_HOST
       room: sensing-preview
       publisher: orin-sensing
+      timestamp_basis: unix_us   # optional; default monotonic_us (not recordable against tracking)
       streams:
         - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
 """
@@ -25,7 +26,11 @@ import yaml
 
 from . import protocol as p
 
-_ROOM_KEYS = {"url", "room", "publisher", "streams"}
+_ROOM_KEYS = {"url", "room", "publisher", "timestamp_basis", "streams"}
+_BASES = {
+    "monotonic_us": p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US,
+    "unix_us": p.LiveKitTimestampBasis.PUBLISHER_UNIX_US,
+}
 _STREAM_KEYS = {"name", "track", "width", "height", "fps"}
 
 
@@ -53,6 +58,10 @@ def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
     raw_streams = room.get("streams")
     if not isinstance(raw_streams, list):
         raise ValueError("livekit.streams must be a list")
+    basis_name = room.get("timestamp_basis", "monotonic_us")
+    # A YAML list or mapping is unhashable, so check the type before the lookup.
+    if not isinstance(basis_name, str) or basis_name not in _BASES:
+        raise ValueError(f"livekit.timestamp_basis must be one of {sorted(_BASES)}")
     streams: list[p.LiveKitCameraStream] = []
     try:
         for index, raw in enumerate(raw_streams):
@@ -68,7 +77,7 @@ def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
                         "room": room.get("room"),
                         "publisher": room.get("publisher"),
                         "track": entry.get("track"),
-                        "timestamp_basis": int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+                        "timestamp_basis": int(_BASES[basis_name]),
                         "width": entry.get("width"),
                         "height": entry.get("height"),
                         "fps": entry.get("fps"),
