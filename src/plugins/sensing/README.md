@@ -38,3 +38,36 @@ Keep the file byte-identical to the vendor copy. Compare new vendor drops
 before replacing it; do not hand-edit the board wiring. Its CSI ports, I2C
 buses, deserializer addresses, GPIOs, and link modes must match the installed
 SIPL drivers.
+
+## Orin: build and run the LiveKit publisher
+
+The application is **`camera_plugin_sensing`**. On the Orin it does one job: capture the GMSL cameras with SIPL,
+encode H.264 on the hardware encoder, and publish one LiveKit video track per camera. Everything else (CaptureServer,
+the egocap backend, recording, the browser) runs on the PC; see `examples/egocap/LIVEKIT_PREVIEW.md`.
+
+Prerequisites: an AGX Orin on JetPack 7.2.1 / L4T R39.2.1 with the SENSING drivers installed and the cameras
+working, CUDA, CMake, and network access to the LiveKit server.
+
+```bash
+# 1. Once: vendor drivers, the Multimedia API and the SIPL headers (see scripts/setup.sh --help).
+src/plugins/sensing/scripts/setup.sh
+# 2. Build. The LiveKit SDK v1.12.4 prebuilt is downloaded and hash-checked; use -DLIVEKIT_SDK_DIR=... for a local copy.
+cmake -B build -DBUILD_PLUGIN_SENSING=ON -DSIPL_API_DIR=/usr/src/jetson_sipl_api   # SIPL_API_DIR only if not found
+cmake --build build --target camera_plugin_sensing -j
+# 3. Check the cameras are visible.
+build/src/plugins/sensing/app/camera_plugin_sensing --list-sensors
+# 4. Publish. The token file is a LiveKit token for the room and publisher identity named in the PC's streams file.
+build/src/plugins/sensing/app/camera_plugin_sensing \
+  --livekit-url=ws://LIVEKIT_HOST:7880 --livekit-token-file=join.token \
+  --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right
+```
+
+The `livekit=` names must equal the `track` names in the PC's streams file. Stop with Ctrl-C. `--help` lists every
+option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform-config`, `--link-masks`).
+`SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second; its difference includes
+capture, ISP and dequeue delay, so it is a diagnostic and not a clock mapping.
+
+Status: the Jetson sources (SIPL, hardware encoder, ISP path) have only been compiled against a mock backend off the
+Orin. If the first Orin build or run fails, fix the failure at the file it names, and record which of the commands
+above worked. `examples/egocap/LIVEKIT_PREVIEW.md` section 4 covers the PC side, and what recording from this
+publisher still needs.
