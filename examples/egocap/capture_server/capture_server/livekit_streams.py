@@ -53,29 +53,29 @@ def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
     raw_streams = room.get("streams")
     if not isinstance(raw_streams, list):
         raise ValueError("livekit.streams must be a list")
+    streams: list[p.LiveKitCameraStream] = []
     try:
-        # The wire parser is the one validator: a file that loads is a list every client will accept.
-        streams = tuple(
-            p.LiveKitCameraStream.from_json(
-                {
-                    "stream_id": p.LIVEKIT_STREAM_ID_BASE + i,
-                    "kind": int(p.StreamKind.LIVEKIT_IMAGE),
-                    "name": entry.get("name"),
-                    "url": room.get("url"),
-                    "room": room.get("room"),
-                    "publisher": room.get("publisher"),
-                    "track": entry.get("track"),
-                    "timestamp_basis": int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
-                    "width": entry.get("width"),
-                    "height": entry.get("height"),
-                    "fps": entry.get("fps"),
-                }
+        for index, raw in enumerate(raw_streams):
+            entry = _mapping(raw, f"livekit.streams[{index}]", _STREAM_KEYS)
+            # The wire parser is the one validator: a file that loads is a list every client will accept.
+            streams.append(
+                p.LiveKitCameraStream.from_json(
+                    {
+                        "stream_id": p.LIVEKIT_STREAM_ID_BASE + index,
+                        "kind": int(p.StreamKind.LIVEKIT_IMAGE),
+                        "name": entry.get("name"),
+                        "url": room.get("url"),
+                        "room": room.get("room"),
+                        "publisher": room.get("publisher"),
+                        "track": entry.get("track"),
+                        "timestamp_basis": int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+                        "width": entry.get("width"),
+                        "height": entry.get("height"),
+                        "fps": entry.get("fps"),
+                    }
+                )
             )
-            for i, entry in enumerate(
-                _mapping(raw, f"livekit.streams[{i}]", _STREAM_KEYS) for i, raw in enumerate(raw_streams)
-            )
-        )
         p.check_livekit_streams(streams)
     except p.ProtocolError as exc:
         raise ValueError(f"LiveKit streams file {path}: {exc}") from exc
-    return streams
+    return tuple(streams)
