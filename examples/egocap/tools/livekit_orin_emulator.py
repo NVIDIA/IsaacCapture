@@ -227,7 +227,15 @@ async def run(args: argparse.Namespace, stop: asyncio.Event) -> None:
             source = rtc.VideoSource(args.width, args.height)
             sources.append(source)
             track = rtc.LocalVideoTrack.create_video_track(spec.name, source)
-            options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_CAMERA)
+            # As the native sender does, request all three per-frame metadata fields; otherwise none reach the receiver.
+            options = rtc.TrackPublishOptions(
+                source=rtc.TrackSource.SOURCE_CAMERA,
+                frame_metadata_features=[
+                    rtc.FrameMetadataFeature.FMF_USER_TIMESTAMP,
+                    rtc.FrameMetadataFeature.FMF_FRAME_ID,
+                    rtc.FrameMetadataFeature.FMF_USER_DATA,
+                ],
+            )
             publications.append(await room.local_participant.publish_track(track, options))
             tasks.append(asyncio.create_task(publish_stream(source, spec, args, stop, counters)))
         tasks.append(asyncio.create_task(report_stats(stop, counters)))
