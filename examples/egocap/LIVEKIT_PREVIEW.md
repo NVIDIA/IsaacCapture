@@ -32,8 +32,9 @@ thereby proven aligned.
 
 **What recording from the real Orin still needs.** The native sender must publish `capture_unix_us`, the Unix time
 of the sensor's capture event. Its only capture-event clock is the SIPL frame capture counter (`frameCaptureTSC`),
-which Slack reports as the end-of-frame time in nanoseconds on the Tegra TSC timebase, not exposure; none of that is
-checked here, and the SIPL headers and an Orin are needed. The evidence required, from a supported platform API and
+which NVIDIA's public SIPL documentation describes as raw ARM generic-timer ticks, not nanoseconds (the `capture_tsc_ns`
+names in the sender code are misleading until units are confirmed). The deployed Orin's SIPL headers are not available
+here, so nothing about its units or event is verified. The evidence required, from a supported platform API and
 not from fitting measurements:
 
 1. The counter's definition, units and event (which instant of the frame it marks) from the SIPL image-metadata
