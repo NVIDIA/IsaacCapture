@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -118,7 +119,9 @@ class FakeSource:
 @pytest.fixture
 def fake_rtc(monkeypatch):
     """Replaces the SDK with recorders so no server is needed."""
-    log = SimpleNamespace(published=[], options=[], unpublished=[], disconnected=False, sources=[], stop=None)
+    log = SimpleNamespace(
+        published=[], options=[], unpublished=[], disconnected=False, sources=[], stop=None, handlers={}
+    )
 
     class Participant:
         async def publish_track(self, track, options):
@@ -131,6 +134,9 @@ def fake_rtc(monkeypatch):
 
     class Room:
         local_participant = Participant()
+
+        def on(self, event, callback=None):
+            log.handlers[event] = callback
 
         async def connect(self, url, token):
             log.connected = (url, token)
@@ -169,6 +175,7 @@ async def test_run_publishes_paces_and_shuts_down_cleanly(token_file, fake_rtc):
     # Every track is published by name and each source stops at its own limit or on shutdown.
     assert [t[0] for t in fake_rtc.published] == ["a", "b"]
     assert fake_rtc.connected == ("ws://x", "secret-token")
+    assert "data_received" in fake_rtc.handlers
     ids = [m.frame_id for _, _, m in fake_rtc.sources[0].calls]
     assert ids == list(range(1, len(ids) + 1)) and len(ids) >= 1
     # Cleanup happened: unpublished, closed, disconnected.
@@ -300,24 +307,100 @@ def test_drift_grows_linearly_with_injected_run_time():
     assert seen == [0, 150, 300]
 
 
-def test_pipeline_delay_applies_at_capture_only_and_monotonic_is_never_adjusted():
+def test_pipeline_delay_applies_at_capture_only_and_monotonic_follows_its_own_offset():
     now_ns = [10_000_000_000]
-    model = _model(now_ns, offset_us=1_000, drift_ppm=15.0, pipeline_delay_us=40_000)
+    model = _model(
+        now_ns, offset_us=1_000, drift_ppm=15.0, pipeline_delay_us=40_000, monotonic_offset_ns=3_000_000_000
+    )
     assert model.adjustment_us("capture_unix_us", at_capture=True) == 1_000 + 150 - 40_000
     assert model.adjustment_us("processing_unix_us", at_capture=False) == 1_000 + 150
-    assert model.adjustment_us("monotonic_us", at_capture=True) == 0
-    assert model.adjustment_us("monotonic_us", at_capture=False) == 0
+    # The Unix offset does not leak into the monotonic basis.
+    assert model.adjustment_us("monotonic_us", at_capture=True) == 3_000_000 + 150 - 40_000
+    assert model.adjustment_us("monotonic_us", at_capture=False) == 3_000_000 + 150
+
+
+def test_orin_monotonic_is_host_plus_offset_plus_drift():
+    now_ns = [0]
+    model = _model(now_ns, monotonic_offset_ns=3_000_000_000, drift_ppm=15.0)
+    assert model.orin_monotonic_ns() == 3_000_000_000
+    now_ns[0] = 10_000_000_000
+    assert model.orin_monotonic_ns() == 10_000_000_000 + 3_000_000_000 + 150_000
 
 
 def test_from_args_reads_the_command_line_units():
-    args = SimpleNamespace(clock_offset_ms=-1.5, clock_drift_ppm=2.0, pipeline_delay_ms=30.0)
-    model = emu.ClockModel.from_args(args, monotonic_ns=lambda: 42)
-    assert (model.offset_us, model.drift_ppm, model.pipeline_delay_us, model.started_ns) == (
-        -1_500,
-        2.0,
-        30_000,
-        42,
+    args = SimpleNamespace(
+        clock_offset_ms=-1.5, clock_drift_ppm=2.0, pipeline_delay_ms=30.0, monotonic_offset_s=3.0
     )
+    model = emu.ClockModel.from_args(args, monotonic_ns=lambda: 42)
+    assert (
+        model.offset_us,
+        model.drift_ppm,
+        model.pipeline_delay_us,
+        model.monotonic_offset_ns,
+        model.started_ns,
+    ) == (-1_500, 2.0, 30_000, 3_000_000_000, 42)
+
+
+# --- Clock-sync replies --------------------------------------------------------
+
+
+def _request(seq=7, t1=123_456_789, kind=b"Q"):
+    return struct.pack("<cIq", kind, seq, t1)
+
+
+def test_build_sync_reply_round_trips_and_echoes_the_request():
+    reply = emu.build_sync_reply(_request(), 1_000, 2_000)
+    assert struct.unpack("<cIqqq", reply) == (b"R", 7, 123_456_789, 1_000, 2_000)
+
+
+@pytest.mark.parametrize("request_bytes", [b"", _request()[:-1], _request() + b"\0", _request(kind=b"R")])
+def test_build_sync_reply_rejects_malformed_requests(request_bytes):
+    assert emu.build_sync_reply(request_bytes, 1, 2) is None
+
+
+class FakeRoom:
+    """A room whose local participant records every publish_data call."""
+
+    def __init__(self):
+        self.sent = []
+        self.local_participant = self
+
+    async def publish_data(self, payload, **kwargs):
+        self.sent.append((payload, kwargs))
+
+
+async def test_answer_clock_sync_replies_to_the_requester_only_with_t3_after_t2():
+    now_ns = [5_000_000_000]
+    clock = _model(now_ns, monotonic_offset_ns=3_000_000_000)
+    t2 = clock.orin_monotonic_ns()
+    now_ns[0] += 40_000
+    room = FakeRoom()
+    await emu.answer_clock_sync(room, "pc", _request(), t2, clock)
+    [(payload, kwargs)] = room.sent
+    assert kwargs == {"reliable": False, "destination_identities": ["pc"], "topic": emu.CLOCK_SYNC_TOPIC}
+    kind, seq, t1, got_t2, t3 = struct.unpack("<cIqqq", payload)
+    assert (kind, seq, t1, got_t2) == (b"R", 7, 123_456_789, t2)
+    assert t3 == t2 + 40_000
+
+
+async def test_answer_clock_sync_sends_nothing_for_a_malformed_request():
+    room = FakeRoom()
+    await emu.answer_clock_sync(room, "pc", b"junk", 1, _model([0]))
+    assert room.sent == []
+
+
+def test_exchange_with_the_emulator_reply_recovers_the_monotonic_offset():
+    exchange_cls = pytest.importorskip("egocap_web.clock_exchange").Exchange
+    now_ns = [0]
+    clock = _model(now_ns, monotonic_offset_ns=3_000_000_000)
+    one_way, t1 = 5_000_000, 100_000_000_000
+    # The PC's clock is this host's; the emulator reads host + 3 s and replies on arrival.
+    now_ns[0] = t1 + one_way
+    t2 = t3 = clock.orin_monotonic_ns()
+    _, _, echoed_t1, r2, r3 = struct.unpack("<cIqqq", emu.build_sync_reply(_request(t1=t1), t2, t3))
+    exchange = exchange_cls(t1=echoed_t1, t2=r2, t3=r3, t4=t1 + 2 * one_way)
+    assert abs(exchange.offset_ns - 3_000_000_000) <= 1_000
+    assert exchange.rtt_ns == 10_000_000
 
 
 async def _publish_one(token_file, monkeypatch, sensor, clock, *extra):
