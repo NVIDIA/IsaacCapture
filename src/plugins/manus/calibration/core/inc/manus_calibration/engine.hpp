@@ -174,7 +174,7 @@ private:
     Outcome m_outcome = Outcome::Cancelled;
 
     std::string m_attempt;
-    std::string m_staging_dir;
+    std::string m_out_dir;
     std::vector<Side> m_sides;
     std::vector<GloveRef> m_pinned;
     bool m_sdk_initialized = false;

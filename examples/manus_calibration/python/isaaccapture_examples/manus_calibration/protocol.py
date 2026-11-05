@@ -381,7 +381,8 @@ def _parse_prompt(d: dict[str, Any]) -> Prompt:
         index=index,
         count=count,
         title=_str(d, "title", "prompt"),
-        instruction=_str(d, "instruction", "prompt", nonempty=True),
+        # The worker forwards the SDK description verbatim, so it may be empty.
+        instruction=_str(d, "instruction", "prompt"),
         mode=mode,
         duration_s=duration,
         continuous=continuous,
@@ -501,7 +502,7 @@ def parse_event(line: bytes | str) -> WorkerEvent:
     return parser(data)
 
 
-def encode_start(attempt: str, sides: tuple[Side, ...], staging_dir: str) -> bytes:
+def encode_start(attempt: str, sides: tuple[Side, ...], out_dir: str) -> bytes:
     """Build the `start` command line."""
     if not _ATTEMPT_RE.fullmatch(attempt):
         raise ProtocolError("attempt must be 1-64 characters of [A-Za-z0-9_-]")
@@ -515,7 +516,7 @@ def encode_start(attempt: str, sides: tuple[Side, ...], staging_dir: str) -> byt
             "type": "start",
             "attempt": attempt,
             "sides": ordered,
-            "staging_dir": staging_dir,
+            "out_dir": out_dir,
         }
     )
 

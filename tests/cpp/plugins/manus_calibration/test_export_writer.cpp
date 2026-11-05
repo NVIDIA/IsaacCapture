@@ -138,7 +138,7 @@ TEST_CASE("write handles an empty payload and a large payload", "[unit][export_w
     CHECK(read_file(dir / "large.mcal") == large);
 }
 
-TEST_CASE("write refuses a basename that could leave the staging directory", "[unit][export_writer]")
+TEST_CASE("write refuses a basename that could leave the output directory", "[unit][export_writer]")
 {
     TempDir dir;
     fs::create_directory(dir / "inner");

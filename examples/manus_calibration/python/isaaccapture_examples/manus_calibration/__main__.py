@@ -84,7 +84,8 @@ async def _serve(args: argparse.Namespace) -> int:
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    # SIGHUP: a dropped terminal session must cancel an active calibration rather than kill the page mid-write.
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         loop.add_signal_handler(sig, stop.set)
     await stop.wait()
     logger.info("shutting down; cancelling any active calibration")

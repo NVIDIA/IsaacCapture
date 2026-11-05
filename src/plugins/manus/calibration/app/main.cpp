@@ -213,6 +213,8 @@ int main(int argc, char** argv)
 
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGINT, signal_handler);
+    // A dropped terminal session sends SIGHUP; cancel instead of dying with a half-written export.
+    std::signal(SIGHUP, signal_handler);
     std::signal(SIGPIPE, SIG_IGN);
 
     // The supervisor owns this process: if it dies, cancel rather than keep the dongles open.

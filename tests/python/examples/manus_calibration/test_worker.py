@@ -777,7 +777,7 @@ def test_a_rejected_start_fails_with_the_workers_reason(make_worker):
         await r.attempt.start(LEFT)
         outcome = await r.settle()
         assert outcome.kind is OutcomeKind.FAILED
-        assert "staging_dir is not a writable directory" in outcome.message
+        assert "out_dir is not a writable directory" in outcome.message
         assert outcome.error.code == "start_rejected"
         assert_reaped(r.attempt)
 

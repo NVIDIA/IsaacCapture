@@ -35,7 +35,7 @@ std::optional<std::string> PosixExportWriter::write(const std::string& dir,
                                                     const std::string& basename,
                                                     const std::vector<uint8_t>& bytes)
 {
-    // The basename is built by the engine, but a separator here would escape the staging directory.
+    // The basename is built by the engine, but a separator here would escape the output directory.
     if (basename.empty() || basename.find('/') != std::string::npos)
     {
         return "invalid export file name";

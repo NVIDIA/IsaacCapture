@@ -32,7 +32,7 @@ struct StartCommand
     std::string attempt;
     // Always in processing order: left before right.
     std::vector<Side> sides;
-    std::string staging_dir;
+    std::string out_dir;
 };
 
 struct ConfirmCommand

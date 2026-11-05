@@ -45,10 +45,10 @@ void require_rejected(const std::string& line, const std::string& expected_comma
 
 std::string start_line(const std::string& attempt = "att1",
                        const std::string& sides = "[\"left\",\"right\"]",
-                       const std::string& staging = "/stage")
+                       const std::string& out_dir = "/stage")
 {
-    return "{\"v\":1,\"type\":\"start\",\"attempt\":\"" + attempt + "\",\"sides\":" + sides + ",\"staging_dir\":\"" +
-           staging + "\"}";
+    return "{\"v\":1,\"type\":\"start\",\"attempt\":\"" + attempt + "\",\"sides\":" + sides + ",\"out_dir\":\"" +
+           out_dir + "\"}";
 }
 
 std::string confirm_line(const std::string& token = "att1-1")
@@ -66,7 +66,7 @@ TEST_CASE("valid commands parse into typed commands", "[unit][protocol][parse]")
     CHECK_FALSE(start.rejection.has_value());
     CHECK(as_start(start)->attempt == "att1");
     CHECK(as_start(start)->sides == std::vector<Side>{ Side::Left, Side::Right });
-    CHECK(as_start(start)->staging_dir == "/stage");
+    CHECK(as_start(start)->out_dir == "/stage");
 
     const ParsedCommand confirm = parse_command(confirm_line("att1-7"));
     REQUIRE(as_confirm(confirm));
@@ -103,10 +103,10 @@ TEST_CASE("start rejects bad sides", "[unit][protocol][parse]")
     // An array element that is not a string is a JSON-level failure, so no command name is known.
     require_rejected(start_line("a", "[1]"));
     require_rejected(start_line("a", "7"), "start");
-    require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"staging_dir\":\"/s\"}", "start");
+    require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"out_dir\":\"/s\"}", "start");
 }
 
-TEST_CASE("start rejects a bad staging_dir", "[unit][protocol][parse]")
+TEST_CASE("start rejects a bad out_dir", "[unit][protocol][parse]")
 {
     require_rejected(start_line("a", "[\"left\"]", ""), "start");
     require_rejected(start_line("a", "[\"left\"]", "relative/dir"), "start");
@@ -114,7 +114,7 @@ TEST_CASE("start rejects a bad staging_dir", "[unit][protocol][parse]")
     // An escaped NUL would truncate the path in C APIs.
     require_rejected(start_line("a", "[\"left\"]", "/stage\\u0000/x"), "start");
     require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"]}", "start");
-    require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"],\"staging_dir\":5}", "start");
+    require_rejected("{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"],\"out_dir\":5}", "start");
     require_rejected(start_line("a", "[\"left\"]", "/" + std::string(4096, 'x')), "start");
 
     CHECK(as_start(parse_command(start_line("a", "[\"left\"]", "/" + std::string(4095, 'x')))));
@@ -172,7 +172,7 @@ TEST_CASE("a rejection for a known command echoes the attempt once it is valid",
 TEST_CASE("unknown keys are rejected for every command", "[unit][protocol][parse]")
 {
     require_rejected(
-        "{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"],\"staging_dir\":\"/s\","
+        "{\"v\":1,\"type\":\"start\",\"attempt\":\"a\",\"sides\":[\"left\"],\"out_dir\":\"/s\","
         "\"extra\":1}",
         "start");
     require_rejected("{\"v\":1,\"type\":\"confirm\",\"attempt\":\"a\",\"token\":\"t\",\"extra\":\"x\"}", "confirm");
@@ -284,7 +284,7 @@ TEST_CASE("string escapes decode and invalid ones are rejected", "[unit][protoco
     // All the standard escapes decode inside a path.
     const ParsedCommand escaped = parse_command(start_line("a", "[\"left\"]", "/a\\/b\\\\c\\\"d\\be\\ff\\ng\\rh\\ti"));
     REQUIRE(as_start(escaped));
-    CHECK(as_start(escaped)->staging_dir == std::string("/a/b\\c\"d\be\ff\ng\rh\ti"));
+    CHECK(as_start(escaped)->out_dir == std::string("/a/b\\c\"d\be\ff\ng\rh\ti"));
 
     require_rejected(start_line("a", "[\"left\"]", "/bad\\q"));
     require_rejected(start_line("a", "[\"left\"]", "/bad\\x41"));
@@ -297,24 +297,24 @@ TEST_CASE("unicode escapes decode to UTF-8 including surrogate pairs", "[unit][p
 {
     const ParsedCommand two_byte = parse_command(start_line("a", "[\"left\"]", "/\\u00e9"));
     REQUIRE(as_start(two_byte));
-    CHECK(as_start(two_byte)->staging_dir == "/\xC3\xA9");
+    CHECK(as_start(two_byte)->out_dir == "/\xC3\xA9");
 
     const ParsedCommand three_byte = parse_command(start_line("a", "[\"left\"]", "/\\u20AC"));
     REQUIRE(as_start(three_byte));
-    CHECK(as_start(three_byte)->staging_dir == "/\xE2\x82\xAC");
+    CHECK(as_start(three_byte)->out_dir == "/\xE2\x82\xAC");
 
     const ParsedCommand pair = parse_command(start_line("a", "[\"left\"]", "/\\ud83d\\ude00"));
     REQUIRE(as_start(pair));
-    CHECK(as_start(pair)->staging_dir == "/\xF0\x9F\x98\x80");
+    CHECK(as_start(pair)->out_dir == "/\xF0\x9F\x98\x80");
 
     const ParsedCommand upper = parse_command(start_line("a", "[\"left\"]", "/\\uD83D\\uDE00"));
     REQUIRE(as_start(upper));
-    CHECK(as_start(upper)->staging_dir == "/\xF0\x9F\x98\x80");
+    CHECK(as_start(upper)->out_dir == "/\xF0\x9F\x98\x80");
 
     // Raw multi-byte UTF-8 passes through unchanged.
     const ParsedCommand raw = parse_command(start_line("a", "[\"left\"]", "/caf\xC3\xA9"));
     REQUIRE(as_start(raw));
-    CHECK(as_start(raw)->staging_dir == "/caf\xC3\xA9");
+    CHECK(as_start(raw)->out_dir == "/caf\xC3\xA9");
 }
 
 TEST_CASE("unpaired surrogates are rejected", "[unit][protocol][json]")

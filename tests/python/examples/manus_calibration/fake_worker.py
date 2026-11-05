@@ -129,7 +129,7 @@ def main() -> int:
                 "attempt": attempt,
                 "command": "start",
                 "reason": "invalid",
-                "message": "staging_dir is not a writable directory",
+                "message": "out_dir is not a writable directory",
             }
         )
         time.sleep(60)
@@ -142,7 +142,7 @@ def main() -> int:
 
 def run_attempt(channel: "Channel", attempt: str, start: dict) -> int:
     sides = start["sides"]
-    staging = start["staging_dir"]
+    out_dir = start["out_dir"]
     if SCENARIO.get("hang_after_start"):
         hang()
     if SCENARIO.get("malformed_line"):
@@ -240,7 +240,7 @@ def run_attempt(channel: "Channel", attempt: str, start: dict) -> int:
         if SCENARIO.get("save_delay"):
             channel.status("saving", gloves)
             channel.sleep(SCENARIO["save_delay"])
-        exported.append(export(channel, attempt, staging, side))
+        exported.append(export(channel, attempt, out_dir, side))
         if SCENARIO.get("fail_after_first_export"):
             return fail(
                 channel, attempt, "export_failed", "second glove failed", None, None
@@ -334,11 +334,11 @@ def confirm_step(channel: "Channel", attempt: str, token: str, step: dict) -> No
             )
 
 
-def export(channel: "Channel", attempt: str, staging: str, side: str) -> dict:
+def export(channel: "Channel", attempt: str, out_dir: str, side: str) -> dict:
     empty = SCENARIO.get("empty_export") or SCENARIO.get("empty_side") == side
     data = b"" if empty else (b"MCAL-" + side.encode()) * 64
     name = f"{attempt}_{side}.mcal"
-    path = os.path.join(staging, name)
+    path = os.path.join(out_dir, name)
     if SCENARIO.get("symlink_side") == side:
         os.symlink(SCENARIO["symlink_target"], path)
     elif SCENARIO.get("directory_side") == side:

@@ -99,7 +99,7 @@ ParsedCommand accept(Command command)
 
 ParsedCommand parse_start(const FieldReader& fields)
 {
-    static const std::set<std::string_view> allowed = { "v", "type", "attempt", "sides", "staging_dir" };
+    static const std::set<std::string_view> allowed = { "v", "type", "attempt", "sides", "out_dir" };
     if (const auto unknown = fields.unknown_key(allowed))
     {
         return reject(invalid("start", "unknown key \"" + *unknown + "\""));
@@ -130,11 +130,11 @@ ParsedCommand parse_start(const FieldReader& fields)
         }
         seen = true;
     }
-    const std::string* staging_dir = fields.string_field("staging_dir");
-    if (!staging_dir || staging_dir->empty() || staging_dir->size() > kMaxPathChars || (*staging_dir)[0] != '/' ||
-        staging_dir->find('\0') != std::string::npos)
+    const std::string* out_dir = fields.string_field("out_dir");
+    if (!out_dir || out_dir->empty() || out_dir->size() > kMaxPathChars || (*out_dir)[0] != '/' ||
+        out_dir->find('\0') != std::string::npos)
     {
-        return reject(invalid("start", "staging_dir must be an absolute path", *attempt));
+        return reject(invalid("start", "out_dir must be an absolute path", *attempt));
     }
 
     StartCommand command;
@@ -148,7 +148,7 @@ ParsedCommand parse_start(const FieldReader& fields)
     {
         command.sides.push_back(Side::Right);
     }
-    command.staging_dir = *staging_dir;
+    command.out_dir = *out_dir;
     return accept(std::move(command));
 }
 

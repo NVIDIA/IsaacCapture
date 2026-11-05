@@ -131,7 +131,6 @@ def mutate(name: str, **changes) -> str:
         ("prompt", {"mode": "hold", "duration_s": 1.0}),
         ("prompt", {"mode": "motion", "duration_s": 0}),
         ("prompt", {"mode": "dance"}),
-        ("prompt", {"instruction": ""}),
         ("prompt", {"token": ""}),
         ("prompt", {"side": "middle"}),
         ("prompt", {"attempt": "has space"}),
@@ -342,7 +341,7 @@ def test_commands_round_trip_and_order_sides_left_first():
         "type": "start",
         "attempt": "cal-1",
         "sides": ["left", "right"],
-        "staging_dir": "/stage",
+        "out_dir": "/stage",
     }
     assert json.loads(proto.encode_confirm("cal-1", "tok")) == {
         "v": 1,
@@ -370,6 +369,11 @@ def test_start_rejects_a_bad_attempt_id():
 
 
 # --- prompt: continuous steps -------------------------------------------------------------
+
+
+def test_a_prompt_with_an_empty_instruction_is_accepted():
+    prompt = proto.parse_event(mutate("prompt", instruction=""))
+    assert prompt.instruction == ""
 
 
 def test_a_plain_hold_prompt_is_not_continuous():

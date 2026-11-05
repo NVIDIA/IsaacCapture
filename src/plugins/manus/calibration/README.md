@@ -24,7 +24,7 @@ manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS]
   logging and are never parsed.
 - One attempt per process. After the terminal `result` event the worker exits: `0` for
   `completed`/`cancelled`, `1` for `failed`.
-- `SIGTERM`, EOF on the IPC socket, and loss of the parent each request cancellation. The worker
+- `SIGTERM`, `SIGHUP`, EOF on the IPC socket, and loss of the parent each request cancellation. The worker
   stops the SDK calibration, shuts the SDK down, sends `result` (`cancelled`) if it still can, and
   exits. The supervisor escalates to `SIGKILL` after its own bounded grace period.
 - `result` is sent only after SDK shutdown has been attempted. `released` is false when the SDK calibration
@@ -43,7 +43,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `start` | `attempt` (string, 1-64 chars of `[A-Za-z0-9_-]`), `sides` (non-empty, unique, subset of `left`,`right`; processed in the order left then right), `staging_dir` (absolute path of an existing directory the worker writes its `.mcal` files into; the field name is historical, it is the output folder) | Begin the attempt. Accepted once per process. |
+| `start` | `attempt` (string, 1-64 chars of `[A-Za-z0-9_-]`), `sides` (non-empty, unique, subset of `left`,`right`; processed in the order left then right), `out_dir` (absolute path of an existing directory the worker writes its `.mcal` files into) | Begin the attempt. Accepted once per process. |
 | `confirm` | `attempt`, `token` | Start the SDK step offered by the `prompt` with this token. |
 | `cancel` | `attempt` | Cancel the attempt. Idempotent. |
 
@@ -53,7 +53,7 @@ are seconds as JSON numbers. Side values are the strings `"left"` and `"right"`.
 | --- | --- | --- |
 | `ready` | `worker_version` (string), `sdk_version` (string or null) | Once, after the IPC socket is open and before any command is read. `sdk_version` is currently always null, because the SDK is not initialized until `start`. |
 | `status` | `attempt`, `phase` (`discovering`, `awaiting_step`, `capturing_step`, `saving`, `stopping`), `gloves` (array of `{side, glove_id}` discovered so far) | On every phase change. |
-| `prompt` | `attempt`, `token`, `side`, `glove_id`, `index` (0-based), `count` (steps for this glove), `title`, `instruction`, `mode` (`hold`/`motion`), `duration_s`, `continuous` (bool), `estimated_s` | When a step awaits confirmation. `token` is unique per prompt within the attempt. `mode` is `motion` when the SDK reports a positive step time. Otherwise it is `hold` with `duration_s` 0; a negative SDK time (a continuous step) also sets `continuous` and puts the SDK's estimate of how long the movement lasts in `estimated_s`, which is guidance for the operator and not a completion signal. |
+| `prompt` | `attempt`, `token`, `side`, `glove_id`, `index` (0-based), `count` (steps for this glove), `title`, `instruction` (the SDK text, possibly empty), `mode` (`hold`/`motion`), `duration_s`, `continuous` (bool), `estimated_s` | When a step awaits confirmation. `token` is unique per prompt within the attempt. `mode` is `motion` when the SDK reports a positive step time. Otherwise it is `hold` with `duration_s` 0; a negative SDK time (a continuous step) also sets `continuous` and puts the SDK's estimate of how long the movement lasts in `estimated_s`, which is guidance for the operator and not a completion signal. |
 | `step_accepted` | `attempt`, `token` | The SDK accepted starting the step. Re-sent unchanged for a repeated `confirm` of the same token, without starting another step. |
 | `step_progress` | `attempt`, `token`, `elapsed_s` | About every 0.25 s while a `motion` step samples; `elapsed_s` never exceeds `duration_s`. Elapsed sampling time, not a quality measure. |
 | `rejected` | `attempt` (string or null), `command`, `reason` (`invalid`, `unknown_attempt`, `stale_token`, `unexpected`, `busy`), `message`, `token` (when relevant) | A command was refused. No state changes. |
@@ -85,7 +85,7 @@ glove side and step index where known.
 - Export per glove, one glove at a time, and read the size and the bytes back to back
   (`CoreSdk_GetGloveCalibrationSize(glove_id)` then `CoreSdk_GetGloveCalibration`); never overlap
   left and right exports. Reject an empty export. Write `<file>.part`, flush and fsync, then hard-link
-  to the final basename `<attempt>_<side>.mcal` inside `staging_dir`, which therefore must support hard links (not vfat or exFAT).
+  to the final basename `<attempt>_<side>.mcal` inside `out_dir`, which therefore must support hard links (not vfat or exFAT).
 - Cancellation works during discovery, while awaiting confirmation, while sampling and while
   saving. After cancellation no file is reported as exported by a `completed` result.
 - After `result` the worker ignores further commands without replying; it is already exiting.

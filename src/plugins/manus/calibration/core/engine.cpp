@@ -105,14 +105,14 @@ void CalibrationEngine::begin_attempt(const StartCommand& command)
         reject("start", command.attempt, RejectReason::Busy, "an attempt is already active");
         return;
     }
-    if (!m_writer.directory_usable(command.staging_dir))
+    if (!m_writer.directory_usable(command.out_dir))
     {
-        reject("start", command.attempt, RejectReason::Invalid, "staging_dir is not a writable directory");
+        reject("start", command.attempt, RejectReason::Invalid, "out_dir is not a writable directory");
         return;
     }
     m_attempt = command.attempt;
     m_sides = command.sides;
-    m_staging_dir = command.staging_dir;
+    m_out_dir = command.out_dir;
     m_state = State::Discovering;
     m_discovery_started_s = m_clock.now_s();
     m_last_connect_s = m_discovery_started_s - m_config.connect_retry_s;
@@ -420,7 +420,7 @@ void CalibrationEngine::finish_glove()
         return;
     }
     const std::string basename = m_attempt + "_" + std::string(side_name(glove.side)) + ".mcal";
-    if (const auto error = m_writer.write(m_staging_dir, basename, bytes))
+    if (const auto error = m_writer.write(m_out_dir, basename, bytes))
     {
         fail(ErrorCode::ExportFailed, "cannot save the calibration: " + *error, glove.side);
         return;

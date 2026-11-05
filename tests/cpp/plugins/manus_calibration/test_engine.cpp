@@ -657,7 +657,7 @@ TEST_CASE("a second start while an attempt is active is rejected as busy", "[uni
     CHECK(the_result(rig).outcome == Outcome::Completed);
 }
 
-TEST_CASE("a start with an unusable staging directory is rejected before any SDK call", "[unit][engine][start]")
+TEST_CASE("a start with an unusable output directory is rejected before any SDK call", "[unit][engine][start]")
 {
     Rig rig;
     rig.writer.usable = false;
