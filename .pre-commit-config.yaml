@@ -31,7 +31,7 @@ repos:
       - id: debug-statements
   # SPDX license headers (REUSE): require SPDX-FileCopyrightText and SPDX-License-Identifier
   - repo: https://github.com/fsfe/reuse-tool
-    rev: v6.2.0
+    rev: v6.2.0  # scripts/sbom/pyproject.toml pins the same reuse to read this metadata
     hooks:
       - id: reuse-lint-file
         name: REUSE licenses (source files and complete EgoPost subtree)
@@ -52,8 +52,9 @@ repos:
         name: Check copyright year (include current year)
         entry: python3 scripts/check_copyright_year.py --fix
         language: system
-        # Include CMakeLists.txt and Dockerfile.xxx by matching those explicitly in the regex
-        files: \.(py|js|ts|cpp|c|h|hpp|cxx|hxx|cmake|md|yaml|yml|sh|fbs|toml|html)$|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$
+        # Include CMakeLists.txt and Dockerfile.xxx by matching those explicitly in the regex.
+        # Same rule as SOURCE_FILES in scripts/check_licenses.py; change both together.
+        files: \.(py|pyi|js|ts|cpp|cc|c|h|hpp|cxx|hxx|inc|cu|cuh|frag|vert|cmake|md|yaml|yml|sh|fbs|toml|html)$|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$
       - id: check-lfs-pointers
         name: Ensure Git LFS-marked files are LFS pointers
         entry: python3 scripts/check_lfs_pointers.py

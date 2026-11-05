@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tomllib
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
@@ -68,6 +69,13 @@ def test_chromium_notice_ships_beside_the_key_table() -> None:
     with zipfile.ZipFile(_wheel()) as archive:
         shipped = archive.read(f"{DIST}/deviceio_trackers/CHROMIUM_LICENSE")
     assert shipped == vendored
+
+
+def test_wheel_does_not_ship_cts() -> None:
+    wheel = _wheel()
+    with zipfile.ZipFile(wheel) as archive:
+        shipped = [n for n in archive.namelist() if n.startswith(f"{DIST}/cts/")]
+    assert shipped == []
 
 
 def test_the_shim_ships_beside_the_real_package() -> None:
@@ -134,6 +142,33 @@ def test_capture_license_ships_in_distribution_metadata() -> None:
         license_path = metadata_path.removesuffix("METADATA") + "licenses/LICENSE.md"
         assert archive.read(license_path) == (repo_root() / "LICENSE.md").read_bytes()
         assert not any("isaaccapture_egopost/" in name for name in archive.namelist())
+
+
+def test_wheel_ships_exactly_the_root_license_files() -> None:
+    root = repo_root()
+    with (root / "pyproject.toml").open("rb") as handle:
+        patterns = tomllib.load(handle)["project"]["license-files"]
+    expected = {
+        path.relative_to(root).as_posix()
+        for pattern in patterns
+        for path in root.glob(pattern)
+        if path.is_file()
+    }
+    with zipfile.ZipFile(_wheel()) as archive:
+        metadata_path = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+        # Third-party texts the SBOM collector appends live under other names.
+        own = {
+            name
+            for name in metadata.get_all("License-File", [])
+            if name == "LICENSE.md" or name.startswith("LICENSES/")
+        }
+        assert own == expected
+        licenses_dir = metadata_path.removesuffix("METADATA") + "licenses/"
+        for name in own:
+            assert archive.read(licenses_dir + name) == (root / name).read_bytes()
 
 
 @pytest.mark.skipif(

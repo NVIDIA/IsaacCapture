@@ -4,4 +4,4 @@
 cmake_minimum_required(VERSION 3.20)
 
 include(${CMAKE_SOURCE_DIR}/cmake/InstallPythonExample.cmake)
-install_python_example(DESTINATION examples/haptic_feedback/python)
+install_python_example(DESTINATION examples/haptic_feedback)

@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../integrations/lerobot/data_collection_real.html
+
 Data Collection in Real
 =======================
 

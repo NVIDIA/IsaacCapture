@@ -33,6 +33,8 @@ src/plugins/haptikos/
 ```
 ### Build
 
+Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html) first.
+
 ####  Build the plugin
 
 ```bash

@@ -162,11 +162,26 @@ std::string child_launch_error_message(const ChildLaunchError& error,
 } // namespace
 #endif
 
+void validate_plugin_shutdown_timeout(double seconds)
+{
+    // Written so that NaN fails too.
+    if (!(seconds > 0.0 && seconds <= MAX_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS))
+    {
+        std::ostringstream message;
+        message << "shutdown_timeout_seconds must be greater than 0 and at most " << MAX_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS
+                << ", got " << seconds;
+        throw std::invalid_argument(message.str());
+    }
+}
+
 Plugin::Plugin(const std::string& command,
                const std::string& working_dir,
                const std::string& plugin_root_id,
-               const std::vector<std::string>& plugin_args)
+               const std::vector<std::string>& plugin_args,
+               double shutdown_timeout_seconds)
+    : m_shutdown_timeout(shutdown_timeout_seconds)
 {
+    validate_plugin_shutdown_timeout(shutdown_timeout_seconds);
     start_process(command, working_dir, plugin_root_id, plugin_args);
 }
 
@@ -459,6 +474,9 @@ void Plugin::start_process(const std::string& command,
 void Plugin::stop_process()
 {
 #ifndef _WIN32
+    // A concurrent caller waits here for the stop in progress, then finds the process
+    // gone, instead of sending a second SIGINT into the plugin's cleanup.
+    std::lock_guard<std::mutex> stop_lock(m_stop_mutex);
     std::unique_lock<std::mutex> lock(m_process_mutex);
     if (m_pid == -1)
     {
@@ -478,7 +496,8 @@ void Plugin::stop_process()
         throw PluginCrashException(m_process_snapshot.error);
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::duration_cast<std::chrono::steady_clock::duration>(m_shutdown_timeout);
     while (m_pid != -1 && std::chrono::steady_clock::now() < deadline)
     {
         refresh_process_snapshot_locked(false);
@@ -496,6 +515,11 @@ void Plugin::stop_process()
         return;
     }
 
+    isaaccapture::Logger::get("isaaccapture.core.Plugin")
+        ->warn(
+            "Plugin process {} did not exit within {} s of SIGINT; sending SIGKILL. Raise "
+            "shutdown_timeout_seconds in its plugin.yaml if it needs longer to shut down.",
+            m_pid, m_shutdown_timeout.count());
     if (kill(m_pid, SIGKILL) == -1)
     {
         cache_signal_error_locked(errno, "send SIGKILL to plugin process");

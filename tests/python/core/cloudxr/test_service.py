@@ -74,6 +74,25 @@ class TestServiceConstruction:
                 )
             mocks["popen"].assert_not_called()
 
+    def test_embedded_usb_port_conflict_fails_before_runtime_spawn(self, tmp_path):
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch("isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_turn_port_free"),
+            patch(
+                "isaaccapture.cloudxr.oob_teleop_env.print_host_preflight_warnings",
+                side_effect=RuntimeError("required ports occupied"),
+            ) as ports,
+        ):
+            with pytest.raises(RuntimeError, match="required ports occupied"):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            ports.assert_called_once_with(usb_local=True, emit_console=False)
+            mocks["popen"].assert_not_called()
+
     def test_oob_rejects_incompatible_webxr_bundle_before_runtime_spawn(self, tmp_path):
         with (
             mock_service_deps(tmp_path, ready=True) as mocks,
@@ -217,6 +236,25 @@ class TestServiceConstruction:
 @_windows_skip
 class TestServiceStop:
     """Tests for CloudXRService.stop()."""
+
+    def test_stop_failure_retains_runtime_and_restores_handlers(self, tmp_path):
+        """Failed drain preserves the owner and allows an ordinary cleanup retry."""
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            service = CloudXRService()
+            failure = RuntimeError("owned runtime did not drain")
+            with (
+                patch.object(service, "_terminate_runtime", side_effect=failure),
+                patch.object(service, "_stop_wss_proxy"),
+                patch.object(service, "_restore_signal_handlers") as restore,
+            ):
+                with pytest.raises(RuntimeError) as caught:
+                    service.stop()
+            assert caught.value is failure
+            restore.assert_called_once_with()
+            assert not service._stopping
+            assert service._runtime_proc is mocks["proc"]
+            mocks["proc"].poll.return_value = 0
+            service.stop()
 
     @_posix_only
     def test_stop_terminates_runtime(self, tmp_path):

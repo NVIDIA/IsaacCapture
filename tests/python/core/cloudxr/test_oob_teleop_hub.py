@@ -19,7 +19,9 @@ from typing import Any
 
 import pytest
 
-from oob_teleop_hub import OOBControlHub
+from oob_teleop_hub import MAX_FRAME_BYTES, OOBControlHub
+
+TOKEN = "test-control-token"
 
 
 class QueueWS:
@@ -56,10 +58,12 @@ def _loads_sent(ws: QueueWS) -> list[dict]:
     return [json.loads(s) for s in ws.sent]
 
 
-def test_check_token_no_requirement() -> None:
+def test_check_token_without_configured_token_fails_closed() -> None:
     hub = OOBControlHub(control_token=None)
-    assert hub.check_token(None) is True
-    assert hub.check_token("anything") is True
+    assert hub.check_token(None) is False
+    assert hub.check_token("") is False
+    assert hub.check_token("anything") is False
+    assert OOBControlHub(control_token="").check_token("") is False
 
 
 def test_check_token_required() -> None:
@@ -67,11 +71,13 @@ def test_check_token_required() -> None:
     assert hub.check_token(None) is False
     assert hub.check_token("wrong") is False
     assert hub.check_token("secret") is True
+    assert hub.check_token(123) is False  # type: ignore[arg-type]
+    assert hub.check_token("sécret") is False
 
 
 @pytest.mark.asyncio
 async def test_get_snapshot_empty() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     snap = await hub.get_snapshot()
     assert snap["configVersion"] == 0
     assert snap["config"] == {}
@@ -81,13 +87,18 @@ async def test_get_snapshot_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_headset_register_hello_and_snapshot() -> None:
-    hub = OOBControlHub(initial_config={"serverIP": "1.2.3.4", "port": 1111})
+    hub = OOBControlHub(
+        control_token=TOKEN, initial_config={"serverIP": "1.2.3.4", "port": 1111}
+    )
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
     await ws.inject(
         json.dumps(
-            {"type": "register", "payload": {"role": "headset", "deviceLabel": "Q3"}}
+            {
+                "type": "register",
+                "payload": {"role": "headset", "deviceLabel": "Q3", "token": TOKEN},
+            }
         )
     )
     await asyncio.sleep(0)
@@ -109,10 +120,12 @@ async def test_headset_register_hello_and_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_baseline_client_can_register_stream_without_health_probe_reply() -> None:
     """The pre-healthProbe client still sends its existing OOB messages."""
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
     await ws.inject(
         json.dumps({"type": "streamStatus", "payload": {"streaming": True}})
@@ -130,10 +143,12 @@ async def test_baseline_client_can_register_stream_without_health_probe_reply() 
 
 @pytest.mark.asyncio
 async def test_generation_probe_requires_matching_fresh_client() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     handler = asyncio.create_task(hub.handle_connection(ws))
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
     registered_at = (await hub.get_snapshot())["headsets"][0]["registeredAt"] / 1000
     assert await hub.probe_browser(1, registered_at + 1, timeout=0.02) is None
@@ -201,11 +216,15 @@ async def test_register_rejects_bad_token() -> None:
 
 @pytest.mark.asyncio
 async def test_register_rejects_non_headset_role() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "dashboard"}}))
+    await ws.inject(
+        json.dumps(
+            {"type": "register", "payload": {"role": "dashboard", "token": TOKEN}}
+        )
+    )
     await asyncio.sleep(0)
     err = json.loads(ws.sent[0])
     assert err["type"] == "error"
@@ -217,7 +236,7 @@ async def test_register_rejects_non_headset_role() -> None:
 
 @pytest.mark.asyncio
 async def test_first_message_must_be_register() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
@@ -232,11 +251,13 @@ async def test_first_message_must_be_register() -> None:
 
 @pytest.mark.asyncio
 async def test_client_metrics_stored_in_snapshot() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
     await ws.inject(
         json.dumps(
@@ -263,11 +284,13 @@ async def test_client_metrics_stored_in_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_stream_status_updates_snapshot() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
 
     # Snapshot before any streamStatus: defaults to streaming=False, since=None.
@@ -309,10 +332,12 @@ async def test_stream_status_updates_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_structured_stream_status_retains_terminal_until_new_attempt() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
 
     await ws.inject(
@@ -375,11 +400,13 @@ async def test_structured_stream_status_retains_terminal_until_new_attempt() -> 
 
 @pytest.mark.asyncio
 async def test_wait_for_streaming_returns_on_rising_edge() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
 
     waiter = asyncio.create_task(hub.wait_for_streaming(poll_seconds=0.01))
@@ -400,11 +427,13 @@ async def test_wait_for_streaming_returns_on_rising_edge() -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_message_type_returns_error() -> None:
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
     ws.sent.clear()
 
@@ -419,9 +448,11 @@ async def test_unknown_message_type_returns_error() -> None:
 
 @pytest.mark.asyncio
 async def test_http_oob_set_config_noop_returns_changed_false() -> None:
-    hub = OOBControlHub(initial_config={"serverIP": "10.0.0.1", "port": 9000})
+    hub = OOBControlHub(
+        control_token=TOKEN, initial_config={"serverIP": "10.0.0.1", "port": 9000}
+    )
     status, body = await hub.http_oob_set_config(
-        {"config": {"serverIP": "10.0.0.1", "port": 9000}, "token": None}
+        {"config": {"serverIP": "10.0.0.1", "port": 9000}, "token": TOKEN}
     )
     assert status == 200
     assert body.get("changed") is False
@@ -429,15 +460,19 @@ async def test_http_oob_set_config_noop_returns_changed_false() -> None:
 
 @pytest.mark.asyncio
 async def test_http_oob_set_config_updates_and_pushes() -> None:
-    hub = OOBControlHub(initial_config={"serverIP": "127.0.0.1", "port": 49100})
+    hub = OOBControlHub(
+        control_token=TOKEN, initial_config={"serverIP": "127.0.0.1", "port": 49100}
+    )
     hw = QueueWS()
     th = asyncio.create_task(hub.handle_connection(hw))
-    await hw.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await hw.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
     await asyncio.sleep(0)
     hw.sent.clear()
 
     status, body = await hub.http_oob_set_config(
-        {"config": {"serverIP": "10.0.0.2"}, "token": None}
+        {"config": {"serverIP": "10.0.0.2"}, "token": TOKEN}
     )
     assert status == 200
     assert body.get("changed") is True
@@ -447,3 +482,81 @@ async def test_http_oob_set_config_updates_and_pushes() -> None:
 
     await hw.end_stream()
     await th
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hub_token", [None, ""])
+async def test_register_rejected_when_hub_has_no_token(hub_token) -> None:
+    hub = OOBControlHub(control_token=hub_token)
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+    assert json.loads(ws.sent[0])["payload"]["code"] == "UNAUTHORIZED"
+    assert ws.close_calls
+    assert (await hub.get_snapshot())["headsets"] == []
+
+    await ws.end_stream()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_non_string_token() -> None:
+    hub = OOBControlHub(control_token="123")
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": 123}})
+    )
+    await asyncio.sleep(0)
+    assert json.loads(ws.sent[0])["payload"]["code"] == "UNAUTHORIZED"
+
+    await ws.end_stream()
+    await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hub_token", [None, TOKEN])
+@pytest.mark.parametrize("caller_token", [None, "", "wrong"])
+async def test_http_oob_set_config_rejects_unauthenticated(
+    hub_token, caller_token
+) -> None:
+    hub = OOBControlHub(
+        control_token=hub_token, initial_config={"serverIP": "10.0.0.1", "port": 9000}
+    )
+    status, body = await hub.http_oob_set_config(
+        {"config": {"serverIP": "attacker.example"}, "token": caller_token}
+    )
+    assert status == 401
+    assert body == {"error": "Unauthorized"}
+    snapshot = await hub.get_snapshot()
+    assert snapshot["config"] == {"serverIP": "10.0.0.1", "port": 9000}
+    assert snapshot["configVersion"] == 0
+
+
+@pytest.mark.asyncio
+async def test_oversized_frame_closes_connection() -> None:
+    hub = OOBControlHub(control_token="test-control-token")
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    await ws.inject("x" * (MAX_FRAME_BYTES + 1))
+    await task
+
+    assert json.loads(ws.sent[0])["payload"]["message"] == "Frame too large"
+    assert ws.close_calls == [(1009, "Frame too large")]
+
+
+@pytest.mark.asyncio
+async def test_multibyte_frame_over_byte_limit_is_rejected() -> None:
+    hub = OOBControlHub(control_token="test-control-token")
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    # Fewer characters than the limit, more UTF-8 bytes (4 per character).
+    await ws.inject("\U0001f600" * (MAX_FRAME_BYTES // 4 + 1))
+    await task
+
+    assert ws.close_calls == [(1009, "Frame too large")]

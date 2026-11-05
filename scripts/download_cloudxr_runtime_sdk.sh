@@ -112,6 +112,8 @@ download_ngc_file() {
         rm -f "$out_path"
         return 1
     fi
+    # Preserve the download URL as SBOM provenance.
+    printf '%s\n' "$url" > "${out_path}.source"
 }
 
 # Try each remote name in turn; the first that resolves wins.

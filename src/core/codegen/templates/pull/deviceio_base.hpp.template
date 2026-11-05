@@ -7,9 +7,15 @@
 namespace core
 {
 struct @FB_TABLE@;
+#if @HAS_METADATA@
+struct @METADATA@;
+#endif
 class @IFACE@ : public ITrackerImpl
 {
 public:
     virtual const Serialized<@FB_TABLE@>& get_data() const = 0;
+#if @HAS_METADATA@
+    virtual const Serialized<@METADATA@>& get_metadata() const = 0;
+#endif
 };
 } // namespace core

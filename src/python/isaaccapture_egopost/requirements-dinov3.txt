@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+#
+# Install separately with --no-deps after the inference requirements.
+# This backbone uses torch and numpy, supplied by the inference environment.
+# Upstream also declares training/evaluation dependencies we do not use here.
+dinov3 @ git+https://github.com/facebookresearch/dinov3.git@5aa7e93ab42ae3526291f6b4e3fcd22637e03326

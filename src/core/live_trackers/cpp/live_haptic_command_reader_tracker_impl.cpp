@@ -38,23 +38,40 @@ SchemaTrackerConfig make_haptic_command_reader_config(const HapticCommandReaderT
 
 LiveHapticCommandReaderTrackerImpl::LiveHapticCommandReaderTrackerImpl(const OpenXRSessionHandles& handles,
                                                                        const HapticCommandReaderTracker* tracker)
-    : schema_reader_(handles, make_haptic_command_reader_config(tracker), /*mcap_channels=*/nullptr)
+    : schema_reader_(handles, make_haptic_command_reader_config(tracker), /*mcap_channels=*/nullptr),
+      max_sample_age_(tracker->max_sample_age())
 {
 }
 
-void LiveHapticCommandReaderTrackerImpl::update(int64_t /*monotonic_time_ns*/)
+void LiveHapticCommandReaderTrackerImpl::update(int64_t monotonic_time_ns)
 {
-    samples_.clear();
-    const bool present = schema_reader_.read_all_samples(samples_);
-    if (samples_.empty())
+    for (auto it = tracked_by_endpoint_.begin(); it != tracked_by_endpoint_.end();)
     {
-        // Producer collection gone: drop stale commands so a disconnected device
-        // stops rendering. A present-but-sample-less tick holds the last values.
-        if (!present)
+        if (SchemaTrackerBase::timestamp_is_fresh(it->second.timestamp, monotonic_time_ns, max_sample_age_))
         {
-            tracked_by_endpoint_.clear();
+            ++it;
+            continue;
+        }
+        if (latest_endpoint_ == it->first)
+        {
             latest_endpoint_.clear();
         }
+        it = tracked_by_endpoint_.erase(it);
+    }
+
+    samples_.clear();
+    const bool present = schema_reader_.read_all_samples(samples_);
+    if (!present)
+    {
+        // Do not publish a partial drain after the producer collection was lost.
+        tracked_by_endpoint_.clear();
+        latest_endpoint_.clear();
+        return;
+    }
+    if (samples_.empty())
+    {
+        // A present-but-sample-less tick holds only values still inside their
+        // configured source-age window.
         return;
     }
 
@@ -64,6 +81,10 @@ void LiveHapticCommandReaderTrackerImpl::update(int64_t /*monotonic_time_ns*/)
     // but the last one pushed each frame).
     for (auto& sample : samples_)
     {
+        if (!SchemaTrackerBase::sample_is_fresh(sample, monotonic_time_ns, max_sample_age_))
+        {
+            continue;
+        }
         const auto* fb = flatbuffers::GetRoot<HapticCommand>(sample.buffer.data());
         if (fb == nullptr)
         {
@@ -73,7 +94,8 @@ void LiveHapticCommandReaderTrackerImpl::update(int64_t /*monotonic_time_ns*/)
         // The wire already carries HapticCommand, so adopt the sample's bytes instead of
         // unpacking and re-encoding them. `fb` dangles past this point; read the endpoint
         // out first.
-        tracked_by_endpoint_[endpoint] = Serialized<HapticCommand>::adopt(std::move(sample.buffer));
+        tracked_by_endpoint_.insert_or_assign(
+            endpoint, TrackedCommand{ Serialized<HapticCommand>::adopt(std::move(sample.buffer)), sample.timestamp });
         latest_endpoint_ = std::move(endpoint);
     }
 }
@@ -89,7 +111,7 @@ const Serialized<HapticCommand>& LiveHapticCommandReaderTrackerImpl::get_data(st
 {
     static const Serialized<HapticCommand> kEmpty{};
     const auto it = tracked_by_endpoint_.find(endpoint);
-    return it != tracked_by_endpoint_.end() ? it->second : kEmpty;
+    return it != tracked_by_endpoint_.end() ? it->second.command : kEmpty;
 }
 
 } // namespace core

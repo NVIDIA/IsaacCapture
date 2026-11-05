@@ -32,7 +32,6 @@ from .constants import (
     EePoseFrame,
 )
 from .geometry import (
-    apply_manus_controller_to_hand_pose,
     apply_relative_pose,
     apply_transform_to_pose,
     make_transform,
@@ -41,6 +40,7 @@ from .geometry import (
 from .tensor_group_helpers import (
     controller_aim_is_valid,
     hand_wrist_is_valid,
+    head_is_tracked,
     head_is_valid,
     joint_names_from_group_type,
 )
@@ -70,10 +70,8 @@ def _compose_ee_msg(
 
 def _compute_ee_pose_from_controller(
     ctrl: OptionalTensorGroup,
-    side: str,
     transform_rot: Rotation | None = None,
     transform_trans: Sequence[float] | None = None,
-    apply_manus_controller_mount_offset: bool = False,
 ) -> Pose | None:
     if not controller_aim_is_valid(ctrl):
         return None
@@ -84,9 +82,6 @@ def _compute_ee_pose_from_controller(
 
     if transform_rot is not None or transform_trans is not None:
         pose = apply_transform_to_pose(pose, transform_rot, transform_trans)
-
-    if apply_manus_controller_mount_offset:
-        pose = apply_manus_controller_to_hand_pose(pose, side)
 
     return pose
 
@@ -142,7 +137,11 @@ def _finalize_ee_output(
 ) -> tuple[NamedPoseArray, list[TransformStamped]]:
     if ee_poses_frame == EePoseFrame.HEAD:
         frame_id = head_frame
-        head_pose = _compute_head_pose(head, transform_rot, transform_trans)
+        head_pose = (
+            _compute_head_pose(head, transform_rot, transform_trans)
+            if head is not None and head_is_tracked(head)
+            else None
+        )
         if head_pose is None:
             # Tracking loss must not change coordinates or reparent wrist TFs.
             left_pose = right_pose = None
@@ -296,7 +295,6 @@ def build_ee_output_from_controllers(
     right_wrist_frame: str,
     transform_rot: Rotation | None = None,
     transform_trans: Sequence[float] | None = None,
-    apply_manus_controller_mount_offset: bool = False,
     *,
     head: OptionalTensorGroup | None = None,
     head_frame: str = "head",
@@ -305,17 +303,13 @@ def build_ee_output_from_controllers(
     """Build the controller-derived EE message and its valid wrist TFs."""
     left_pose = _compute_ee_pose_from_controller(
         left_ctrl,
-        "left",
         transform_rot,
         transform_trans,
-        apply_manus_controller_mount_offset,
     )
     right_pose = _compute_ee_pose_from_controller(
         right_ctrl,
-        "right",
         transform_rot,
         transform_trans,
-        apply_manus_controller_mount_offset,
     )
     return _finalize_ee_output(
         left_pose,

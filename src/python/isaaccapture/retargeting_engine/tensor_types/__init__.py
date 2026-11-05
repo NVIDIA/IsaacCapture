@@ -24,6 +24,8 @@ from .standard_types import (
     RobotHandJoints,
 )
 from .tactile_types import (
+    TactileForces,
+    TactileLBSLayout,
     TactileVector,
     TactileHeatmap,
     FingerPowerVector,
@@ -42,6 +44,7 @@ from .indices import (
     Generic3AxisPedalInputIndex,
     FullBodyInputIndex,
     SomaBodyInputIndex,
+    TactileLBSLayoutIndex,
     HandJointIndex,
     BodyJointIndex,
     FingerIndex,
@@ -72,6 +75,8 @@ __all__ = [
     "NUM_SOMA_BODY_JOINTS",
     "RobotHandJoints",
     # Tactile / haptic types
+    "TactileForces",
+    "TactileLBSLayout",
     "TactileVector",
     "TactileHeatmap",
     "FingerPowerVector",
@@ -89,6 +94,7 @@ __all__ = [
     "Generic3AxisPedalInputIndex",
     "FullBodyInputIndex",
     "SomaBodyInputIndex",
+    "TactileLBSLayoutIndex",
     "HandJointIndex",
     "BodyJointIndex",
     "FingerIndex",

@@ -588,6 +588,7 @@ class OobLifecycle:
             oob_progress(
                 "usb-local" if self.usb_local else "setup-oob",
                 f"closed {closed} teleop tab(s) on the headset; session ended",
+                level=logging.DEBUG,
             )
 
     async def _shielded_cleanup(self) -> None:

@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -17,6 +18,36 @@ from isaaccapture.cloudxr import background
 _posix_only = pytest.mark.skipif(
     sys.platform == "win32", reason="setsid/process groups are POSIX-only"
 )
+
+
+@pytest.fixture
+def stand_in_service(tmp_path, monkeypatch):
+    """Have spawn() run a module that sleeps for its last argument.
+
+    Stands in for the real service, which needs a GPU.  Not ``-m time``: a
+    builtin has no code object, so that child exits within milliseconds.
+    """
+    (tmp_path / "stand_in_service.py").write_text(
+        "import sys, time\ntime.sleep(float(sys.argv[-1]))\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(background, "_MODULE", "stand_in_service")
+
+
+def _await_exec(pid: int) -> None:
+    """Wait for *pid*'s own cmdline: Popen() can return mid-exec.
+
+    Until exec finishes it reads empty or, on the posix_spawn path, briefly
+    this process's argv. Neither names the service, so a check made then fails
+    a positive test and passes a negative one without testing anything.
+    """
+    cmdline = Path(f"/proc/{pid}/cmdline")
+    ours = Path("/proc/self/cmdline").read_bytes()
+    deadline = time.monotonic() + 5.0
+    while cmdline.read_bytes() in (b"", ours):
+        if time.monotonic() > deadline:
+            pytest.fail(f"{cmdline} is still empty 5s after the spawn")
+        time.sleep(0.01)
 
 
 @_posix_only
@@ -41,6 +72,7 @@ class TestReadPid:
         """Pid reuse: the recorded pid is alive, but is not our service."""
         other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
+            _await_exec(other.pid)
             background.pid_path(str(tmp_path)).write_text(f"{other.pid}\n")
             assert background.read_pid(str(tmp_path)) is None
         finally:
@@ -57,16 +89,9 @@ class TestReadPid:
             [sys.executable, "-c", "import time; time.sleep(30)", module, "run"]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
-            # A freshly spawned pid's /proc/<pid>/cmdline isn't guaranteed to be
-            # populated the instant Popen() returns, especially on a loaded CI
-            # runner - poll briefly instead of asserting on the very first read.
-            deadline = time.monotonic() + 2.0
-            pid = background.read_pid(str(tmp_path))
-            while pid is None and time.monotonic() < deadline:
-                time.sleep(0.05)
-                pid = background.read_pid(str(tmp_path))
-            assert pid == proc.pid
+            assert background.read_pid(str(tmp_path)) == proc.pid
         finally:
             proc.kill()
             proc.wait()
@@ -83,6 +108,7 @@ class TestReadPid:
             ]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
             assert background.read_pid(str(tmp_path)) is None
         finally:
@@ -94,13 +120,11 @@ class TestReadPid:
 class TestSpawn:
     """Tests for the detached spawn itself."""
 
-    def test_child_leads_its_own_session(self, tmp_path, monkeypatch):
+    def test_child_leads_its_own_session(self, tmp_path, stand_in_service):
         """The whole point: a signal aimed at our process group must miss it."""
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
 
-        # Stand in for `-m isaaccapture.cloudxr.service run`, which needs a GPU.
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, log = background.spawn(["30"], run_dir, logs_dir)
         try:
             assert os.getsid(pid) == pid  # session leader
@@ -139,14 +163,13 @@ class TestSpawn:
         assert "ISAACCAPTURE_LOG_SOCKET" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
 
-    def test_log_is_appended_not_truncated(self, tmp_path, monkeypatch):
+    def test_log_is_appended_not_truncated(self, tmp_path, stand_in_service):
         """A restart must not erase the log that explains the last crash."""
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir(parents=True)
         background.log_path(logs_dir).write_text("earlier run\n")
 
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, log = background.spawn(["30"], run_dir, logs_dir)
         try:
             assert log.read_text().startswith("earlier run")
@@ -179,6 +202,7 @@ class TestReadRunFlags:
             ]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
             flags = background.read_run_flags(str(tmp_path))
             assert flags == ["--host-client"]
@@ -200,20 +224,24 @@ class TestTerminate:
         assert background.terminate(str(tmp_path)) is False
         assert not background.pid_path(str(tmp_path)).exists()
 
-    def test_sigterm_and_clears_the_pid_file(self, tmp_path, monkeypatch):
+    def test_sigterm_and_clears_the_pid_file(self, tmp_path, stand_in_service):
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
 
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, _ = background.spawn(["30"], run_dir, logs_dir)
+        try:
+            _await_exec(pid)
+            assert background.read_pid(run_dir) == pid
 
-        assert background.terminate(run_dir, timeout_sec=10) is True
-        assert not background.pid_path(run_dir).exists()
-        # Not `os.kill(pid, 0)`: this process is still the child's parent and
-        # has not reaped it, so the pid survives as a zombie and signalling it
-        # succeeds.  A zombie's /proc/<pid>/cmdline is empty, which is why the
-        # liveness check reports it gone — that is the contract that matters.
-        assert background._is_our_service(pid) is False
+            assert background.terminate(run_dir, timeout_sec=10) is True
+            assert not background.pid_path(run_dir).exists()
+            # Not `os.kill(pid, 0)`: this process is still the child's parent and
+            # has not reaped it, so the pid survives as a zombie and signalling it
+            # succeeds.  A zombie's /proc/<pid>/cmdline is empty, which is why the
+            # liveness check reports it gone — that is the contract that matters.
+            assert background._is_our_service(pid) is False
+        finally:
+            os.kill(pid, signal.SIGKILL)
 
     def test_never_escalates_to_sigkill(self, tmp_path, monkeypatch):
         """SIGKILL would orphan the runtime, which leads its own session."""

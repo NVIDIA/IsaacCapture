@@ -14,4 +14,10 @@ const Serialized<@FB_TABLE@>& @CLASS@::get_data(const ITrackerSession& session) 
 {
     return static_cast<const @IFACE@&>(session.get_tracker_impl(*this)).get_data();
 }
+#if @HAS_METADATA@
+const Serialized<@METADATA@>& @CLASS@::get_metadata(const ITrackerSession& session) const
+{
+    return static_cast<const @IFACE@&>(session.get_tracker_impl(*this)).get_metadata();
+}
+#endif
 } // namespace core

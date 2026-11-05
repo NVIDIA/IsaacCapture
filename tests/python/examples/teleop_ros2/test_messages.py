@@ -222,54 +222,6 @@ def test_build_ee_output_from_controllers_keeps_message_and_tfs_consistent() -> 
     assert transform.transform.rotation.w == 1.0
 
 
-def test_build_ee_output_from_controllers_preserves_manus_calibration() -> None:
-    msg, transforms = build_ee_output_from_controllers(
-        _active_controller(),
-        OptionalTensorGroup(ControllerInput()),
-        Time(),
-        "world",
-        "left_wrist",
-        "right_wrist",
-        apply_manus_controller_mount_offset=True,
-    )
-
-    expected_position = [4.0103315472, 5.055536544, 5.9433523928]
-    expected_orientation = [
-        -0.1315856570103413,
-        -0.3586609382547703,
-        0.9111816820492541,
-        -0.15425786377769118,
-    ]
-    actual_pose = msg.pose[0]
-    actual_transform = transforms[0].transform
-
-    np.testing.assert_allclose(
-        [
-            actual_pose.position.x,
-            actual_pose.position.y,
-            actual_pose.position.z,
-        ],
-        expected_position,
-    )
-    np.testing.assert_allclose(
-        [
-            actual_pose.orientation.x,
-            actual_pose.orientation.y,
-            actual_pose.orientation.z,
-            actual_pose.orientation.w,
-        ],
-        expected_orientation,
-    )
-    np.testing.assert_allclose(
-        [
-            actual_transform.translation.x,
-            actual_transform.translation.y,
-            actual_transform.translation.z,
-        ],
-        expected_position,
-    )
-
-
 def test_build_ee_output_from_controllers_in_the_head_frame() -> None:
     right = _active_controller()
     right[ControllerInputIndex.AIM_POSITION] = np.array(
@@ -302,6 +254,28 @@ def test_build_ee_output_from_controllers_in_the_head_frame() -> None:
         "left_wrist",
         "right_wrist",
     ]
+
+
+def test_build_ee_output_from_controllers_rejects_untracked_head() -> None:
+    head = _active_head()
+    head[HeadInputIndex.IS_TRACKED] = False
+
+    msg, transforms = build_ee_output_from_controllers(
+        _active_controller(),
+        _active_controller(),
+        Time(),
+        "world",
+        "left_wrist",
+        "right_wrist",
+        head=head,
+        head_frame="headset",
+        ee_poses_frame=EePoseFrame.HEAD,
+    )
+
+    assert msg.header.frame_id == "headset"
+    assert list(msg.is_valid) == [False, False]
+    assert all(_position(pose) == [0.0, 0.0, 0.0] for pose in msg.pose)
+    assert transforms == []
 
 
 def test_build_ee_output_from_hands_in_head_frame_keeps_untracked_sides_invalid() -> (

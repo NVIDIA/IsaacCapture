@@ -22,7 +22,8 @@ provides it.
 ## Build
 
 The SDK is fetched from `https://github.com/pnmocap/MocapApi`; it is not checked
-into this repository.
+into this repository. Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+first.
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON
@@ -57,13 +58,14 @@ python src/plugins/noitom_mocap/tools/noitom_mocap_printer.py --duration=10
 ```
 
 Record through the Noitom example wrapper and replay with the shared MCAP
-script:
+script, in a venv set up as in [Running an example](../../../examples/README.md#running-an-example):
 
 ```bash
-uv run python examples/noitom/record_noitom_full_body.py \
-  10 examples/noitom/recordings/noitom_full_body.mcap
+uv pip install -e ./examples/noitom
+python -m isaaccapture_examples.noitom.record_noitom_full_body \
+  10 recordings/noitom_full_body.mcap
 
 uv pip install -e ./examples/mcap_record_replay
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
-  examples/noitom/recordings/noitom_full_body.mcap
+  recordings/noitom_full_body.mcap
 ```

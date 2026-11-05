@@ -1,0 +1,4 @@
+# Cached downloads: the jetson_multimedia_api deb, the Jetson_SIPL_API tarball
+# and a sparse clone of SENSING's driver repo (.drivers-repo, reached through
+# the flat SG8A-AGON-G2Y-A1-JetPack7.2.1 symlink). ~80 MB, refetched when absent.
+.cache/

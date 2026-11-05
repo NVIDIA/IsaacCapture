@@ -1,0 +1,894 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""The conditions that must stop a wheel from being published."""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import zipfile
+
+import pytest
+import synth
+from isaaccapture_sbom import build as build_module
+from isaaccapture_sbom import cli
+from isaaccapture_sbom import licensing
+from isaaccapture_sbom import wheelfile
+from isaaccapture_sbom import validate as validate_module
+
+DIST_INFO = synth.DIST_INFO
+WHEEL_NAME = synth.WHEEL_NAME
+
+
+def _rebuild(workspace, payload):
+    synth.write_wheel(workspace.wheel, payload)
+    return build_module.build(
+        workspace.root, workspace.build, workspace.wheel, workspace.root / "sbom"
+    )
+
+
+def test_a_member_from_nowhere_blocks_the_build(workspace):
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture/mystery/libmystery.so.7"] = synth.elf_shared_object(
+        "libmystery.so.7"
+    )
+
+    with pytest.raises(build_module.BuildError, match=r"libmystery\.so\.7"):
+        _rebuild(workspace, payload)
+
+
+def test_a_component_with_no_license_text_blocks_the_build(workspace):
+    (workspace.build / "_deps/alpha-src/LICENSE").unlink()
+
+    with pytest.raises(build_module.BuildError, match="alpha"):
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+
+def test_a_root_sidecar_is_not_a_fetched_component_s_license_text(workspace):
+    alpha = workspace.build / "_deps/alpha-src"
+    (alpha / "LICENSE").unlink()
+    (alpha / "README.md").write_text("# alpha\n", encoding="utf-8")
+    (alpha / "README.md.license").write_text(
+        "SPDX-License-Identifier: MIT\n", encoding="utf-8"
+    )
+
+    with pytest.raises(build_module.BuildError, match=r"no license text.*alpha"):
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+
+def test_an_empty_license_file_does_not_count_as_evidence(workspace):
+    # delta reaches the wheel through a static archive, so emptying its license
+    # leaves the wheel's contents untouched and isolates the evidence gate.
+    (workspace.build / "_deps/delta-src/BSD-LICENSE").write_text(
+        "   \n", encoding="utf-8"
+    )
+
+    with pytest.raises(build_module.BuildError, match="delta"):
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+
+def test_a_library_the_host_cannot_resolve_is_not_claimed_as_the_host_s(workspace):
+    """Resolving the SONAME is required evidence for attribution to the build host."""
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture.libs/libunknown-a1b2c3.so"] = synth.elf_shared_object(
+        "libunknown.so.1", ("libc.so.6",)
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    with pytest.raises(build_module.BuildError, match="could not be traced"):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            workspace.wheel,
+            workspace.root / "sbom",
+            system_resolver=lambda soname: {
+                "soname": soname,
+                "resolved_path": None,
+                "package": None,
+                "copyright": None,
+            },
+        )
+
+
+def test_the_build_host_is_the_last_resort_not_a_directory_name(workspace):
+    """Build provenance takes precedence even inside a repair tool's directory."""
+    produced = (workspace.build / "lib/libgamma_renamed.so").read_bytes()
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture.libs/libgamma_renamed-abc123.so"] = produced
+    staged = workspace.staged / "isaaccapture.libs"
+    staged.mkdir(parents=True, exist_ok=True)
+    (staged / "libgamma_renamed-abc123.so").write_bytes(produced)
+    _rebuild(workspace, payload)
+
+    stem = WHEEL_NAME.removesuffix(".whl")
+    evidence = json.loads(
+        (workspace.root / "sbom" / f"{stem}.build-evidence.json").read_text()
+    )
+    entry = next(
+        item
+        for item in evidence["attributions"]
+        if item["path"] == "isaaccapture.libs/libgamma_renamed-abc123.so"
+    )
+
+    assert entry["origin"] == "built"
+    assert entry["primary"] == "gamma"
+
+
+def test_a_vendored_library_is_attributed_to_the_package_that_supplied_it(
+    workspace, tmp_path
+):
+    copyright_file = tmp_path / "copyright"
+    copyright_file.write_text(synth.spdx_text("Zlib"), encoding="utf-8")
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture.libs/libz-a1b2c3.so"] = synth.elf_shared_object(
+        "libz.so.1", ("libc.so.6",)
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    build_module.build(
+        workspace.root,
+        workspace.build,
+        workspace.wheel,
+        workspace.root / "sbom",
+        system_resolver=lambda soname: {
+            "soname": soname,
+            "resolved_path": "/usr/lib/libz.so.1.3",
+            "package": "zlib1g",
+            # The package name identifies the software, not its supplier.
+            "supplier": "Organization: Ubuntu Developers (ubuntu-devel@example.com)",
+            "copyright": str(copyright_file),
+        },
+    )
+
+    report = json.loads(
+        (
+            workspace.root / "sbom" / f"{WHEEL_NAME.removesuffix('.whl')}.licenses.json"
+        ).read_text()
+    )
+    vendored = next(
+        item for item in report["components"] if item["component"] == "system:libz.so.1"
+    )
+    assert vendored["license_concluded"] == "Zlib"
+    assert vendored["supplier"] == (
+        "Organization: Ubuntu Developers (ubuntu-devel@example.com)"
+    )
+
+
+def test_editing_a_file_after_the_fact_fails_verification(built):
+    synth.replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
+
+    failures = validate_module.check(built["wheel"])
+
+    assert any("SHA256 mismatch" in failure for failure in failures)
+    assert any("RECORD digest mismatch" in failure for failure in failures)
+
+
+def test_adding_a_file_after_the_fact_fails_verification(built):
+    synth.replace_member(built["wheel"], "isaaccapture/surprise.py", b"# added later\n")
+
+    failures = validate_module.check(built["wheel"])
+
+    assert any("not covered by the SBOM" in failure for failure in failures)
+
+
+def test_mutating_the_wheel_breaks_its_manifest_binding(built):
+    synth.replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
+
+    failures = validate_module.check(
+        built["wheel"],
+        build_evidence=built["evidence_path"],
+        manifest=built["manifest_path"],
+    )
+
+    assert any("modified after its digest was bound" in failure for failure in failures)
+
+
+def test_an_empty_member_verifies(built):
+    """RECORD states size 0 for py.typed and namespace __init__.py."""
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        empty = [item.filename for item in archive.infolist() if item.file_size == 0]
+
+    assert empty, "fixture no longer carries an empty member"
+    assert validate_module.check(built["wheel"]) == []
+
+
+def test_another_tools_document_beside_ours_is_kept(built):
+    """auditwheel ships `sboms/auditwheel.cdx.json`; PEP 770 shares that directory."""
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        names = set(archive.namelist())
+
+    assert f"{DIST_INFO}/sboms/{synth.AUDITWHEEL_SBOM}" in names
+    assert validate_module.check(built["wheel"]) == []
+
+
+def test_our_own_document_going_missing_is_rejected(built):
+    synth.drop_member(built["wheel"], f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json")
+
+    failures = validate_module.check(built["wheel"])
+
+    assert any("embedded SBOM" in failure for failure in failures)
+
+
+def test_one_wheel_described_by_several_builds_merges_to_one_record(tmp_path, built):
+    """Matrix entries may produce identical universal wheels; merge their records."""
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    for path in (first, second):
+        path.write_text(json.dumps(built["manifest"]), encoding="utf-8")
+
+    merged = build_module.merge_manifests([first, second])
+    names = [item["filename"] for item in merged["wheels"]]
+
+    assert names == sorted(set(names)), "a repeated record was published twice"
+
+
+def test_two_wheels_wearing_one_filename_are_refused(tmp_path, built):
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
+    other = json.loads(json.dumps(built["manifest"]))
+    other["wheels"][0]["sha256"] = "0" * 64  # a different wheel, same filename
+    second.write_text(json.dumps(other), encoding="utf-8")
+
+    with pytest.raises(build_module.BuildError, match="different contents"):
+        build_module.merge_manifests([first, second])
+
+
+def _release_layout(built, tmp_path):
+    """The shape publish-sbom-evidence assembles from the matrix artifacts."""
+    wheels = tmp_path / "release" / "wheels"
+    evidence = tmp_path / "release" / "evidence"
+    wheels.mkdir(parents=True)
+    evidence.mkdir(parents=True)
+    (wheels / built["wheel"].name).write_bytes(built["wheel"].read_bytes())
+    for sidecar in built["out_dir"].glob("*"):
+        if sidecar.name != "manifest.json":
+            (evidence / sidecar.name).write_bytes(sidecar.read_bytes())
+    merged = tmp_path / "release" / "isaaccapture-sbom-manifest.json"
+    merged.write_text(
+        json.dumps(built["manifest"], indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return merged, wheels, evidence
+
+
+def test_a_complete_release_evidence_set_verifies(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+
+    assert validate_module.check_set(merged, wheels, evidence) == []
+    assert _check_set_cli(merged, wheels, evidence) == 0
+
+
+def test_a_missing_sidecar_fails_the_release_set(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    next(evidence.glob("*.licenses.md")).unlink()
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert any("is missing" in failure for failure in failures)
+
+
+def test_a_missing_wheel_fails_the_release_set(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    (wheels / built["wheel"].name).unlink()
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert any("is missing from" in failure for failure in failures)
+
+
+def _check_set_cli(merged, wheels, evidence):
+    return cli.main(
+        [
+            "check-set",
+            "--manifest",
+            str(merged),
+            "--wheel-dir",
+            str(wheels),
+            "--evidence-dir",
+            str(evidence),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({}, "no 'wheels' list"),
+        ([], "not a JSON object"),
+        ({"wheels": []}, "lists no wheels"),
+        ({"wheels": "x"}, "no 'wheels' list"),
+        ({"wheels": ["x"]}, "entry is not an object"),
+        ({"wheels": [{}]}, "entry names no wheel"),
+        ({"wheels": [{"filename": 1}]}, "entry names no wheel"),
+        ({"wheels": [{"filename": "../x.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "/tmp/x.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "a\\b.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "C:x.whl"}]}, "not a bare wheel file name"),
+    ],
+)
+def test_manifest_records_refuses(tmp_path, manifest, message):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=f"{re.escape(str(path))}: .*{message}"
+    ):
+        validate_module.manifest_records(path)
+
+
+def test_manifest_records_names_the_file_it_cannot_parse(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=rf"{re.escape(str(path))}: .*not JSON"
+    ):
+        validate_module.manifest_records(path)
+
+
+def test_check_set_refuses_sidecars_that_are_not_named_files(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    manifest = json.loads(merged.read_text(encoding="utf-8"))
+    manifest["wheels"][0]["sidecars"] = list(manifest["wheels"][0]["sidecars"])
+    merged.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        validate_module.check_set(merged, wheels, evidence)
+
+
+def _manifest_of(tmp_path, records):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"wheels": records}), encoding="utf-8")
+    return path
+
+
+def _record(filename="x-1.0-py3-none-any.whl", sidecar="x.spdx.json"):
+    return {
+        "filename": filename,
+        "sha256": "0" * 64,
+        "size": 0,
+        "sbom_in_wheel": "x-1.0.dist-info/sboms/x.spdx.json",
+        "sidecars": {"spdx": {"filename": sidecar, "sha256": "0" * 64}},
+    }
+
+
+@pytest.mark.parametrize("sidecar", ["../x.spdx.json", "/tmp/x.spdx.json", ".."])
+def test_check_set_refuses_a_sidecar_that_is_not_a_bare_name(tmp_path, sidecar):
+    manifest = _manifest_of(tmp_path, [_record(sidecar=sidecar)])
+
+    with pytest.raises(validate_module.ManifestError, match="not a bare file name"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def test_check_set_refuses_a_sidecar_with_no_digest(tmp_path):
+    record = _record()
+    del record["sidecars"]["spdx"]["sha256"]
+    manifest = _manifest_of(tmp_path, [record])
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def test_check_set_refuses_a_wheel_advertised_twice(tmp_path):
+    manifest = _manifest_of(tmp_path, [_record(), _record()])
+
+    with pytest.raises(validate_module.ManifestError, match="advertised 2 times"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def _empty_manifest(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"wheels": []}), encoding="utf-8")
+    return path
+
+
+def test_check_set_refuses_a_manifest_listing_no_wheel(tmp_path, capsys):
+    manifest = _empty_manifest(tmp_path)
+
+    with pytest.raises(validate_module.ManifestError, match="lists no wheels"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+    assert _check_set_cli(manifest, tmp_path, tmp_path) == 2
+    assert "lists no wheels" in capsys.readouterr().err
+
+
+def _tiny_wheel(tmp_path):
+    return synth.write_wheel(
+        tmp_path / "x-1.0-py3-none-any.whl",
+        {
+            "x-1.0.dist-info/METADATA": b"Metadata-Version: 2.4\nName: x\nVersion: 1.0\n",
+            "x-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n",
+        },
+    )
+
+
+def test_check_refuses_a_manifest_listing_no_wheel(tmp_path):
+    with pytest.raises(validate_module.ManifestError, match="lists no wheels"):
+        validate_module.check(_tiny_wheel(tmp_path), manifest=_empty_manifest(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("records", "message"),
+    [
+        ([_record(sidecar="../x.spdx.json")], "not a bare file name"),
+        ([_record(), _record()], "advertised 2 times"),
+    ],
+)
+def test_check_refuses_a_malformed_record_for_its_wheel(tmp_path, records, message):
+    manifest = _manifest_of(tmp_path, records)
+
+    with pytest.raises(validate_module.ManifestError, match=message):
+        validate_module.check(_tiny_wheel(tmp_path), manifest=manifest)
+
+
+def test_merge_manifests_refuses_a_manifest_listing_no_wheel(tmp_path):
+    good = tmp_path / "a" / "manifest.json"
+    good.parent.mkdir()
+    good.write_text(
+        json.dumps({"wheels": [{"filename": "x-1.0-py3-none-any.whl"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "b").mkdir()
+    empty = _empty_manifest(tmp_path / "b")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=f"{re.escape(str(empty))}: "
+    ):
+        build_module.merge_manifests([good, empty])
+    output = str(tmp_path / "m.json")
+    assert cli.main(["merge-manifests", "--output", output, str(empty)]) == 2
+
+
+def test_a_wheel_the_manifest_does_not_list_fails_the_release_set(
+    built, tmp_path, capsys
+):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = wheels / "isaacteleop-0.4.0-py3-none-any.whl"
+    stray.write_bytes(built["wheel"].read_bytes())
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert failures == [
+        f"{stray.name} is in {wheels}, and {merged.name} does not list it"
+    ]
+    assert _check_set_cli(merged, wheels, evidence) == 1
+    assert "does not list it" in capsys.readouterr().err
+
+
+def test_missing_spdx_license_data_stops_the_build(workspace):
+    shutil.rmtree(workspace.build / "_deps/license-list-data-src")
+
+    with pytest.raises(licensing.CorpusError, match="SPDX license list data not found"):
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+
+def test_a_malformed_reuse_tag_does_not_reach_the_document(workspace):
+    """Reject malformed tags before emitting a document that fails SPDX conformance."""
+    payload = synth.wheel_payload(workspace)
+    good = "# SPDX-" + "License-Identifier: mit or Apache-2.0\n"
+    bad = "# SPDX-" + "License-Identifier: !!! not an expression\n"
+    for name, text in (("tagged_ok.py", good), ("tagged_bad.py", bad)):
+        payload[f"isaaccapture/{name}"] = text.encode()
+        (workspace.root / "src/python/isaaccapture" / name).write_text(text)
+        (workspace.staged / "isaaccapture" / name).write_text(text)
+    synth.track(workspace.root)
+    _rebuild(workspace, payload)
+
+    with zipfile.ZipFile(workspace.wheel) as archive:
+        spdx = json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
+    concluded = {
+        item["fileName"].removeprefix("./"): item["licenseConcluded"]
+        for item in spdx["files"]
+    }
+
+    assert concluded["isaaccapture/tagged_ok.py"] == "MIT OR Apache-2.0"
+    assert concluded["isaaccapture/tagged_bad.py"] == "NOASSERTION"
+
+
+def test_building_twice_on_the_same_wheel_is_refused(built):
+    with pytest.raises(build_module.BuildError, match="already carries"):
+        build_module.build(
+            built["workspace"].root,
+            built["workspace"].build,
+            built["wheel"],
+            built["out_dir"],
+        )
+
+
+def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data):
+    """Patched libraries can lose hash identity while retaining a shared filename.
+    A contradictory build ID must prevent attribution by name.
+    """
+
+    licensing.load_corpus(license_data)
+    payload = synth.wheel_payload(workspace)
+    # Match the SDK basename but contradict its build ID and content hash.
+    payload["isaaccapture/other_sdk/libdemo.so"] = synth.elf_shared_object(
+        "libdemo.so",
+        ("libc.so.6", "libm.so.6"),
+        build_id="2222222222222222222222222222222222222222",
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    with pytest.raises(build_module.BuildError, match="could not be traced"):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            workspace.wheel,
+            workspace.root / "sbom",
+        )
+
+
+def test_an_unreadable_archive_says_so(workspace, license_data):
+    """Only fetched archives are indexed, so an unreadable one indicates a broken input."""
+    from isaaccapture_sbom import discovery
+
+    licensing.load_corpus(license_data)
+    (workspace.root / synth.SDK_ARCHIVE).write_bytes(b"not an archive at all")
+
+    with pytest.raises(discovery.ArchiveError, match="cannot be read"):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            workspace.wheel,
+            workspace.root / "sbom",
+        )
+
+
+def test_bytes_more_than_one_component_holds_name_no_single_source(
+    workspace, license_data
+):
+    """Identical license bytes can belong to several projects.
+    Do not assign ownership based on index order.
+    """
+
+    licensing.load_corpus(license_data)
+    shared = synth.spdx_text("Apache-2.0").encode()
+    for key in ("alpha", "beta"):
+        (workspace.build / "_deps" / f"{key}-src").mkdir(parents=True, exist_ok=True)
+        (workspace.build / "_deps" / f"{key}-src" / "LICENSE").write_bytes(shared)
+
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture/viz/SOMEDEP_LICENSE"] = shared
+    synth.write_wheel(workspace.wheel, payload)
+
+    build_module.build(
+        workspace.root, workspace.build, workspace.wheel, workspace.root / "sbom"
+    )
+    with zipfile.ZipFile(workspace.wheel) as archive:
+        spdx = json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
+    entry = next(
+        item for item in spdx["files"] if item["fileName"].endswith("SOMEDEP_LICENSE")
+    )
+
+    assert "shared-content" in entry["comment"]
+    assert "more than one component" in entry["comment"]
+    assert "alpha" in entry["comment"] and "beta" in entry["comment"]
+
+
+def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
+    """The checked document controls its exclusion list; trusting it would let an editor
+    exempt arbitrary added files from coverage checks.
+    """
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        payload = {item: archive.read(item) for item in archive.namelist()}
+    # write_wheel regenerates RECORD; remove it here to avoid testing duplicate members.
+    payload.pop(f"{DIST_INFO}/RECORD", None)
+
+    payload["isaaccapture/_backdoor.py"] = b"import os\n"
+    document = f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"
+    spdx = json.loads(payload[document])
+    for package in spdx["packages"]:
+        if package["SPDXID"] == "SPDXRef-Package-wheel":
+            package["packageVerificationCode"][
+                "packageVerificationCodeExcludedFiles"
+            ].append("./isaaccapture/_backdoor.py")
+    payload[document] = json.dumps(spdx, indent=2, sort_keys=True).encode() + b"\n"
+    synth.write_wheel(built["wheel"], payload)
+
+    failures = validate_module.check(built["wheel"])
+
+    assert any("excluded-files list must be exactly" in item for item in failures)
+    assert any("not covered by the SBOM" in item for item in failures)
+
+
+def test_two_members_under_one_name_are_refused(built):
+    """Name-based reads select one duplicate; extractors may select another.
+    No single hash can describe both members.
+    """
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        names = [item for item in archive.namelist() if not item.endswith("/")]
+        payload = {item: archive.read(item) for item in names}
+
+    smuggled = built["wheel"].with_name("duplicated.whl")
+    with zipfile.ZipFile(smuggled, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            if name == "isaaccapture/__init__.py":
+                archive.writestr(name, b"import os\n")
+            archive.writestr(name, payload[name])
+
+    with pytest.raises(wheelfile.WheelError, match="more than one member"):
+        validate_module.check(smuggled)
+
+
+def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
+    workspace, tmp_path
+):
+    """Host-library discoveries belong to each wheel's evidence.
+    Mutating shared discovery would leak components into subsequent wheels.
+    """
+    from isaaccapture_sbom import evidence as evidence_module
+
+    copyright_file = tmp_path / "copyright"
+    copyright_file.write_text(synth.spdx_text("Zlib"), encoding="utf-8")
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture.libs/libz-a1b2c3.so"] = synth.elf_shared_object(
+        "libz.so.1", ("libc.so.6",)
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    plain = workspace.wheel.parent / "plain-1.0-py3-none-any.whl"
+    synth.write_wheel(plain, synth.wheel_payload(workspace))
+
+    licensing.load_corpus(workspace.build / "_deps" / "license-list-data-src" / "json")
+    discovery = evidence_module.discover(workspace.root, workspace.build)
+    resolver = lambda soname: {  # noqa: E731
+        "soname": soname,
+        "resolved_path": "/usr/lib/libz.so.1.3",
+        "package": "zlib1g",
+        "supplier": "Organization: Ubuntu Developers (ubuntu-devel@example.com)",
+        "copyright": str(copyright_file),
+    }
+    for wheel in (workspace.wheel, plain):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            wheel,
+            workspace.root / "sbom",
+            system_resolver=resolver,
+            discovery=discovery,
+        )
+
+    def components(wheel_name):
+        stem = wheel_name.removesuffix(".whl")
+        sidecar = workspace.root / "sbom" / f"{stem}.build-evidence.json"
+        return json.loads(sidecar.read_text())["components"]
+
+    assert "system:libz.so.1" in components(WHEEL_NAME), (
+        "the wheel's own evidence must account for what its members needed"
+    )
+    assert "system:libz.so.1" not in components(plain.name), (
+        "a wheel that ships no such library must not inherit it"
+    )
+    assert validate_module.check(workspace.wheel) == []
+
+
+def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_data):
+    """A third-party license with the same basename cannot satisfy the requirement
+    to package the distribution's own terms.
+    """
+
+    licensing.load_corpus(license_data)
+    assert build_module._own_license_texts(
+        "Apache-2.0", {"third-party/openxr-sdk/LICENSES/Apache-2.0.txt"}
+    ), "a third party's copy must not count as this distribution's"
+    assert not build_module._own_license_texts(
+        "Apache-2.0", {"LICENSES/Apache-2.0.txt"}
+    ), "the distribution's own copy counts"
+    assert build_module._declared_without_text(
+        "Apache-2.0", {"third-party/openxr-sdk/licenses/apache-2.0.txt"}
+    ) == ["Apache-2.0"]
+
+
+@pytest.mark.parametrize("kind", [*validate_module.CONTENT_SIDECARS, "build_evidence"])
+def test_builds_of_one_wheel_may_differ_only_in_build_evidence(tmp_path, built, kind):
+    """Every entry builds a `py3-none-any` wheel. Its evidence describes each
+    build, so it may differ and the first entry's is bound; what is derived
+    from the wheel alone may not."""
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
+    other = json.loads(json.dumps(built["manifest"]))
+    other["wheels"][0]["sidecars"][kind]["sha256"] = "1" * 64
+    second.write_text(json.dumps(other), encoding="utf-8")
+
+    if kind == "build_evidence":
+        merged = build_module.merge_manifests([first, second])
+        assert merged["wheels"] == built["manifest"]["wheels"]
+    else:
+        with pytest.raises(
+            build_module.BuildError, match=rf"described it .*\({kind}\)"
+        ):
+            build_module.merge_manifests([first, second])
+
+
+def _two_builds_of_one_wheel(built, tmp_path):
+    """Two entries' sidecar directories whose build evidence differs."""
+    entries = []
+    for name, note in (("a", ""), ("b", "\n")):
+        entry = tmp_path / "sidecars" / name
+        shutil.copytree(built["out_dir"], entry)
+        evidence = entry / built["evidence_path"].name
+        evidence.write_bytes(evidence.read_bytes() + note.encode())
+        manifest = json.loads((entry / "manifest.json").read_text(encoding="utf-8"))
+        manifest["wheels"][0]["sidecars"]["build_evidence"]["sha256"] = (
+            build_module.sha256_file(evidence)
+        )
+        (entry / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        entries.append(entry)
+    return entries
+
+
+def test_a_merged_release_holds_the_evidence_it_binds_and_verifies(built, tmp_path):
+    first, second = _two_builds_of_one_wheel(built, tmp_path)
+    release = tmp_path / "release"
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    shutil.copy(built["wheel"], wheels)
+
+    # Named out of order: the first in path order is bound, and copied.
+    assert _merge_cli([second, first], release) == 0
+
+    manifest = release / "isaaccapture-sbom-manifest.json"
+    bound = json.loads(manifest.read_text(encoding="utf-8"))["wheels"][0]["sidecars"]
+    assert {item.name for item in release.iterdir()} == {
+        manifest.name,
+        *(item["filename"] for item in bound.values()),
+    }
+    evidence = release / bound["build_evidence"]["filename"]
+    assert evidence.read_bytes() == (first / evidence.name).read_bytes()
+    assert validate_module.check_set(manifest, wheels, release) == []
+
+
+def test_evidence_the_manifest_does_not_bind_fails_the_release_set(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = evidence / f"b.{built['evidence_path'].name}"
+    stray.write_bytes(built["evidence_path"].read_bytes())
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert failures == [
+        f"{stray.name} is in {evidence}, and {merged.name} does not bind it"
+    ]
+
+
+def test_a_file_named_like_a_manifest_kept_elsewhere_is_stray(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = evidence / merged.name
+    stray.write_text("{}", encoding="utf-8")
+
+    assert validate_module.check_set(merged, wheels, evidence) == [
+        f"{stray.name} is in {evidence}, and {merged.name} does not bind it"
+    ]
+
+
+def test_merging_into_the_directory_holding_the_evidence(built, tmp_path):
+    entry = tmp_path / "entry"
+    shutil.copytree(built["out_dir"], entry)
+
+    assert _merge_cli([entry], entry) == 0
+
+
+def test_a_release_checked_from_one_directory_verifies(built, tmp_path):
+    """The documented recipe: wheels, evidence and manifest side by side."""
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    shutil.copy(next(wheels.iterdir()), evidence)
+    shutil.copy(merged, evidence)
+
+    manifest = evidence / merged.name
+    assert validate_module.check_set(manifest, evidence, evidence) == []
+
+    stray = evidence / "isaacteleop-0.4.0-py3-none-any.whl"
+    shutil.copy(built["wheel"], stray)
+    assert validate_module.check_set(manifest, evidence, evidence) == [
+        f"{stray.name} is in {evidence}, and {manifest.name} does not list it"
+    ]
+
+
+def _merge_cli(entries, release):
+    return cli.main(
+        [
+            "merge-manifests",
+            "--output",
+            str(release / "isaaccapture-sbom-manifest.json"),
+            "--evidence-out",
+            str(release),
+            *(str(entry / "manifest.json") for entry in entries),
+        ]
+    )
+
+
+def test_a_missing_bound_sidecar_copies_nothing(built, tmp_path, capsys):
+    first, second = _two_builds_of_one_wheel(built, tmp_path)
+    (first / built["spdx_path"].name).unlink()
+    release = tmp_path / "release"
+
+    assert _merge_cli([first, second], release) == 2
+    assert "sidecar spdx is missing" in capsys.readouterr().err
+    assert not release.exists()
+
+
+def test_merge_manifests_refuses_malformed_sidecars(tmp_path):
+    record = _record()
+    record["sidecars"] = list(record["sidecars"])
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        build_module.merge_manifests([_manifest_of(tmp_path, [record])])
+
+
+def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
+    """Model an untagged vendored header such as Chromium's key table."""
+    synth.write(
+        workspace.root / "src/vendor/keys/include/keys/table.h", synth.UNTAGGED_HEADER
+    )
+    synth.write(
+        workspace.root / "REUSE.toml",
+        synth.reuse_toml(
+            synth.annotation(
+                "src/vendor/keys/**",
+                "The Keys Authors",
+                licence="BSD-3-Clause",
+                year=2013,
+            )
+        ),
+    )
+    synth.track(workspace.root)
+    _rebuild(workspace, synth.wheel_payload(workspace))
+
+    stem = WHEEL_NAME.removesuffix(".whl")
+    evidence = json.loads(
+        (workspace.root / "sbom" / f"{stem}.build-evidence.json").read_text()
+    )
+    component = evidence["components"][synth.UNTAGGED_KEY]
+    assert component["in_this_wheel"]
+    assert component["license_concluded"] == "BSD-3-Clause"
+    assert [item["path"] for item in component["evidence"]] == ["BSD-3-Clause.txt"]
+
+
+@pytest.mark.parametrize(
+    ("relative", "text", "key"),
+    [
+        pytest.param(
+            "src/vendor/keys/include/keys/table.h",
+            synth.UNTAGGED_HEADER,
+            synth.UNTAGGED_KEY,
+            id="no-sibling",
+        ),
+        pytest.param(
+            "src/vendor/widgets_extra.h",
+            "// Copyright 2024, Upstream Widgets Ltd.\n",
+            "vendored:upstream-widgets-ltd",
+            id="no-info",
+        ),
+        pytest.param(
+            "src/vendor/widgets_extra.h",
+            "// Copyright 2024, Upstream Widgets Ltd.\n"
+            "// SPDX-" + "License-Identifier: LicenseRef-Widgets\n",
+            "vendored:upstream-widgets-ltd",
+            id="licenseref-only",
+        ),
+    ],
+)
+def test_each_vendored_file_needs_a_listed_licence_of_its_own(
+    workspace, relative, text, key
+):
+    """A listed license on upstream_helper.h cannot cover other files that declare
+    no license or a LicenseRef without text.
+    """
+    synth.write(workspace.root / relative, text)
+    synth.track(workspace.root)
+
+    with pytest.raises(build_module.BuildError) as raised:
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+    message = str(raised.value)
+    assert "fails the per-file gate" in message
+    assert f"{relative} ({key}): no current SPDX-listed licence" in message
+    assert "upstream_helper.h" not in message

@@ -24,7 +24,8 @@ SOMA-X example_animation.npy
     -> SchemaPusher collection soma_body_demo
 ```
 
-Install the example:
+Install the example into a venv set up as in
+[Running an example](../README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/soma_body_publisher

@@ -69,13 +69,15 @@ import { readUrlParam } from './config/resolve';
 import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
+import { SyntheticXRFrameObserver, SyntheticXRPanel } from './syntheticXR/SyntheticXRPanel';
 import { TraceVisualization } from './TraceVisualization';
 import {
-  SystemNotice,
   formatSystemNotice,
   formatSystemNoticeBody,
   isSystemNoticeMessage,
+  SystemNotice,
 } from './types/serverMessages';
+import { useSessionError } from './useSessionError';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.
 // Signals update their value without triggering React re-renders.
@@ -209,9 +211,13 @@ function AppContent() {
   // Session status management
   const [sessionStatus, setSessionStatus] = useState('Disconnected');
   // Error message management
-  const [errorMessage, setErrorMessage] = useState('');
+  const setErrorMessage = useSessionError(cloudXR2DUI);
   // CloudXR session reference
   const [cloudXRSession, setCloudXRSession] = useState<CloudXR.Session | null>(null);
+  // The space CloudXR resolved for the current session, so the recorder can express
+  // poses in the same frame the stream uses. Cleared with the session: a space from an
+  // ended session yields no poses.
+  const [streamingSpace, setStreamingSpace] = useState<XRReferenceSpace | null>(null);
   // XR mode state for UI visibility
   const [isXRMode, setIsXRMode] = useState(false);
   // Server address being used for connection
@@ -480,17 +486,6 @@ function AppContent() {
     return () => button?.removeEventListener('click', onLoadRecording);
   }, [onLoadRecording]);
 
-  // Update HTML error message display when error state changes
-  useEffect(() => {
-    if (cloudXR2DUI) {
-      if (errorMessage) {
-        cloudXR2DUI.showError(errorMessage);
-      } else {
-        cloudXR2DUI.hideError();
-      }
-    }
-  }, [errorMessage, cloudXR2DUI]);
-
   // Listen for XR session state changes to update button and UI visibility
   useEffect(() => {
     const handleXRStateChange = () => {
@@ -559,6 +554,7 @@ function AppContent() {
   const handleStatusChange = (connected: boolean, status: string) => {
     setIsConnected(connected);
     setSessionStatus(status);
+    if (connected && status === 'Connected') setErrorMessage('');
     const streaming = connected && status === 'Connected';
     const streamPhase = streamPhaseForStatus(connected, status);
     controlChannelRef.current?.sendStreamStatus(streaming, streamPhase, status);
@@ -604,10 +600,7 @@ function AppContent() {
 
     // Reload on session end per mode; read live off the stable 2D UI to avoid a stale closure.
     const autoRefreshMode = cloudXR2DUI?.getConfiguration().autoRefreshMode;
-    if (
-      (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) ||
-      (status === 'Error' && autoRefreshMode === 'any')
-    ) {
+    if (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) {
       window.location.reload();
     }
   };
@@ -701,6 +694,7 @@ function AppContent() {
     stopStreamTestCountdown();
     streamTest.value = null;
     setCloudXRSession(session);
+    if (!session) setStreamingSpace(null);
   };
 
   const systemNoticeTimerRef = useRef<number | null>(null);
@@ -1014,7 +1008,6 @@ function AppContent() {
   };
 
   // Memo config based on configVersion (manual dependency tracker incremented on config changes)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const config = useMemo(
     () => (cloudXR2DUI ? cloudXR2DUI.getConfiguration() : null),
     [cloudXR2DUI, configVersion]
@@ -1058,7 +1051,8 @@ function AppContent() {
 
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    () =>
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
     [config?.controlPanelPosition, controlPanelLayout]
   );
 
@@ -1159,6 +1153,13 @@ function AppContent() {
 
   return (
     <>
+      <SyntheticXRPanel
+        ready={iwerLoaded}
+        connected={isConnected}
+        replaying={recorder.mode === 'replaying'}
+        onStartTeleop={handleStartTeleop}
+        startingOrRunning={isCountingDown || isTeleopRunning}
+      />
       <Canvas
         events={noEvents}
         style={{
@@ -1187,18 +1188,24 @@ function AppContent() {
         }}
       >
         <SuppressWebGLRendererWhenHeadless headless={!!config?.headless} />
+        <SyntheticXRFrameObserver />
         <PointerEvents batchEvents={false} />
         <XR store={store}>
           <SimpleEnvironment />
           <XROrigin />
           {cloudXR2DUI && config && (
             <>
-              <RecorderComponent isConnected={isConnected} showTrace={config.showTrace ?? false} />
+              <RecorderComponent
+                isConnected={isConnected}
+                showTrace={config.showTrace ?? false}
+                streamingSpace={streamingSpace}
+              />
               <TraceVisualization showTrace={config.showTrace ?? false} />
               <CloudXRComponent
                 config={config}
                 applicationName={`Isaac Teleop Web Client (${config.teleopPath})`}
                 trackingFrameAdapter={recorder.adaptTrackingFrame}
+                onReferenceSpace={setStreamingSpace}
                 iceServers={iceServersConfig}
                 reconnect={
                   config?.reconnectEnabled
@@ -1213,8 +1220,10 @@ function AppContent() {
                 warmupEndTimeoutMs={config?.warmupEndTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
-                  if (cloudXR2DUI) {
-                    cloudXR2DUI.showError(error);
+                  // onStatusChange('Error') arrives first; persist the full error code before reloading.
+                  setErrorMessage(error);
+                  if (cloudXR2DUI?.getConfiguration().autoRefreshMode === 'any') {
+                    window.location.reload();
                   }
                 }}
                 onExitImmersiveXR={handleDisconnect}

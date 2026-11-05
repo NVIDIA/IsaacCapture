@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+detector_backend: rtdetr
+rtdetr_config:
+  weights: /workspace/weights/rtdetr.onnx
+  # Offline post-filter; set false to retain the previous native boxes.
+  bbox_smoothing: true
+  bbox_size_scale: 0.8
+  bbox_size_alpha_grow: 0.12
+  bbox_size_alpha_shrink: 0.06
+  bbox_max_size_change: 0.01
+tracking: true

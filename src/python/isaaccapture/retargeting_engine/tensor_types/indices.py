@@ -25,6 +25,7 @@ from .standard_types import (
     FullBodyInput,
     SomaBodyInput,
 )
+from .tactile_types import TactileLBSLayout
 
 
 def _create_index_enum(name: str, group_type, prefix: str = "") -> IntEnum:
@@ -58,6 +59,9 @@ FullBodyInputIndex: Any = _create_index_enum(
 )
 SomaBodyInputIndex: Any = _create_index_enum(
     "SomaBodyInputIndex", SomaBodyInput(), "soma_body_"
+)
+TactileLBSLayoutIndex: Any = _create_index_enum(
+    "TactileLBSLayoutIndex", TactileLBSLayout(0, 0)
 )
 
 

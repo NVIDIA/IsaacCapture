@@ -2,4 +2,7 @@ struct @TRAITS@
 {
     static constexpr std::array recording_channels = { @RECORDING_CHANNELS@ };
     static constexpr std::array replay_channels = { @REPLAY_CHANNELS@ };
+#if @HAS_METADATA@
+    static constexpr std::array metadata_channels = { "@METADATA_CHANNEL@" };
+#endif
 };

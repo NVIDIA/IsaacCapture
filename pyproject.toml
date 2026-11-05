@@ -15,7 +15,15 @@ description = "Isaac Teleop"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE.md"]
+# Shared with the setuptools wheel via src/core/python/CMakeLists.txt.
+# Avoid a LICENSES/ glob: the pool includes terms for components no wheel carries.
+license-files = [
+    "LICENSE.md",
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/BSD-3-Clause.txt",
+    "LICENSES/BSL-1.0.txt",
+    "LICENSES/MIT.txt",
+]
 authors = [
     { name = "NVIDIA" },
 ]
@@ -28,6 +36,9 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[project.urls]
+Homepage = "https://github.com/NVIDIA/IsaacCapture"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
@@ -38,16 +49,34 @@ dev = [
 ]
 ui = [
     "imgui[glfw]>=2.0.0",
+    "numpy>=1.23.0",
+    # Dockable panels and Trimesh 5 compatibility require Viser >=1.1.1.
+    # https://github.com/viser-project/viser/pull/769
+    "viser>=1.1.1",
+    "yourdfpy",
+    "trimesh",
+    "rtree",
+]
+ovxr = [
+    "ovxr==0.1.0.5842",
+    "cuda-bindings>=13,<14",
+]
+desktop-mirror = [
+    # OVUI requires 3.12; core Capture continues to support 3.11.
+    "ovui==0.3.0; python_version >= '3.12'",
+    "cuda-bindings>=13,<14",
 ]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
+    # dex-retargeting imports six without declaring it; python-dateutil>=4 no longer pulls it in.
+    "six>=1.16",
     "scipy>=1.15.0",
     "pyyaml>=6.0.3",
     "torch>=2.7.0",
     "nlopt>=2.6.2",
-    "pin>=2.7.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "pin>=4.1",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 retargeters-lite = [
     "scipy>=1.15.0",
@@ -57,22 +86,22 @@ grounding = [
     "torch>=2.7.0",
     "trimesh",
     "viser",
-    "pin>=2.7.0",
+    "pin>=4.1",
     "pin-pink>=4.0.0",
     "loop-rate-limiters>=1.0.0",
     "daqp>=0.5.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 wuji = [
     "wuji-sdk[retarget]==2026.7.14",
-    "pin>=2.7.0",
-    "cmeel-urdfdom<5",
-    "cmeel-tinyxml2<11",
+    "pin>=4.1",
+    "cmeel-urdfdom>=6,<7",
+    "cmeel-tinyxml2>=11,<12",
 ]
 cloudxr = [
     "cryptography>=3.0",
-    "websockets>=14.0",
+    "websockets>=17.3",
     "Pillow>=10.0; sys_platform == 'linux'",
     "cupy-cuda12x>=13.0; sys_platform == 'linux'",
 ]
@@ -98,6 +127,8 @@ result = "{major}.{minor}+local"
 # [build-system], not [tool.uv]).
 [tool.uv]
 package = false
+# Ignore Viser's websockets requirement while preserving CloudXR's requirement.
+exclude-dependencies = [{ package = { name = "viser" }, dependencies = ["websockets"] }]
 
 [tool.uv.sources]
 isaacteleop = { path = "src/compat" }
@@ -105,11 +136,9 @@ isaacteleop = { path = "src/compat" }
 [tool.scikit-build]
 # EgoPost is hosted here but is not part of the Isaac Capture distribution.
 sdist.exclude = ["src/python/isaaccapture_egopost/**", "LICENSES/LicenseRef-OpenMDW-1.1.txt"]
-# Floor matches CMakeLists' cmake_minimum_required (3.24, for `cmake --fresh`).
-# Ubuntu 22.04's apt CMake is 3.22 and no longer satisfies it, so scikit-build-core
-# fetches CMake from PyPI there; the <4 cap keeps that fetch on the 3.x line rather
-# than silently jumping to 4.x.
-cmake.version = ">=3.24,<4"
+# SBOM file-API queries require CMake 3.27. scikit-build-core fetches a newer
+# CMake when the system copy is too old; keep that fetch on the 3.x line.
+cmake.version = ">=3.27,<4"
 cmake.build-type = "Release"
 
 # Keep the CMake build tree under build-wheel/<cache-tag>/ (e.g.
@@ -146,6 +175,7 @@ install.components = ["isaacteleop_wheel", "isaacteleop_binaries"]
 # TODO(1.9): drop the isaacteleop entry.
 [tool.scikit-build.wheel]
 packages = { isaaccapture = "src/python/isaaccapture", "isaacteleop.py" = "src/compat/isaacteleop.py" }
+exclude = ["isaaccapture/cts/**"]
 
 # `rebuild = false`: no recompile on import, so build products (.so, .pyi, py.typed,
 # the vendored CloudXR runtime) are frozen until a rebuild + re-install. Authored .py

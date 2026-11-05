@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../integrations/lerobot/rebot.html
+
 reBot B601-RS on Jetson AGX Orin
 ================================
 

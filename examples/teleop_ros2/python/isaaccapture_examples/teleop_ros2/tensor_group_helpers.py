@@ -34,5 +34,9 @@ def head_is_valid(head: OptionalTensorGroup) -> bool:
     return _flag_is_valid(head, HeadInputIndex.IS_VALID)
 
 
+def head_is_tracked(head: OptionalTensorGroup) -> bool:
+    return _flag_is_valid(head, HeadInputIndex.IS_TRACKED)
+
+
 def joint_names_from_group_type(group_type) -> list[str]:
     return [tensor_type.name for tensor_type in group_type.types]

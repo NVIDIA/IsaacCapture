@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 include(${CMAKE_SOURCE_DIR}/cmake/InstallPythonExample.cmake)
-install_python_example(DESTINATION examples/vehicle_teleop/python)
+install_python_example(DESTINATION examples/vehicle_teleop)
 
 if(BUILD_TESTING AND BUILD_PYTHON_BINDINGS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(tests)

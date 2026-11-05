@@ -1,0 +1,259 @@
+{
+    "deserializers": [
+        {
+            "name": "MAX96712_Fusa_nv_AB",
+            "description": "Maxim MAX96712 GMSL2 Deserializer - CSI-AB",
+            "i2cAddress": "0x29"
+        },
+        {
+            "name": "MAX96712_Fusa_nv_CD",
+            "description": "Maxim MAX96712 GMSL2 Deserializer - CSI-CD",
+            "i2cAddress": "0x2d"
+        }
+    ],
+    "serializers": [
+        {
+            "name": "MAX9295",
+            "description": "Maxim MAX9295D Serializer",
+            "i2cAddress": "0x40",
+            "useCDIv2API": true
+        },
+        {
+            "name": "MAX96717F",
+            "description": "Maxim MAX96717F Serializer",
+            "i2cAddress": "0x40",
+            "useCDIv2API": true
+        },
+        {
+            "name": "MAX96717",
+            "description": "Maxim MAX96717 Serializer",
+            "i2cAddress": "0x40",
+            "useCDIv2API": true
+        }
+    ],
+    "imageSensors": [
+        {
+            "name": "VB1940",
+            "description": "SHW5G link2/3 VB1940 physical 0x10",
+            "i2cAddress": "0x10",
+            "virtualChannels": [
+                {
+                    "cfa": "gbrg",
+                    "embeddedTopLines": 1,
+                    "embeddedBottomLines": 0,
+                    "inputFormat": "raw10",
+                    "width": 2560,
+                    "height": 1984,
+                    "fps": 60.0,
+                    "isEmbeddedDataTypeEnabled": true
+                }
+            ],
+            "isTriggerModeEnabled": true,
+            "isTPGEnabled": false,
+            "useCDIv2API": true
+        }
+    ],
+    "platformTransportSettings": [
+        {
+            "name": "jetson-thor",
+            "description": "Thor - Jetson AGX Thor Devkit (p3834)",
+            "boardIdPrefix": "p3834",
+            "enableMasks": ["0x0000", "0x1100"],
+            "transportSettings": [
+                {
+                    "name": "transportSettings_jetson-thor_AB",
+                    "type": "GMSL",
+                    "description": "GMSL CSI-AB with external MAX96712",
+                    "csiPort": "csi-gh",
+                    "phyMode": "dphy",
+                    "desTxPort": 1,
+                    "deserInfo": {
+                        "name": "Max96712GmslDeserializer",
+                        "i2cAddress": "0x2d"
+                    },
+                    "powerControlInfo": {
+                        "deserializerInfo": {
+                            "name": "TegraDeserPowerDriver",
+                            "gpioPinIndex": 9043968
+                        }
+                    },
+                    "i2cDevice": 10,
+                    "desI2CPort": 0,
+                    "groupInitProg": true
+                },
+                {
+                    "name": "transportSettings_jetson-thor_CD",
+                    "type": "GMSL",
+                    "description": "GMSL CSI-CD with external MAX96712",
+                    "csiPort": "csi-cd",
+                    "phyMode": "dphy",
+                    "desTxPort": 1,
+                    "deserInfo": {
+                        "name": "Max96712GmslDeserializer",
+                        "i2cAddress": "0x29"
+                    },
+                    "powerControlInfo": {
+                        "deserializerInfo": {
+                            "name": "TegraDeserPowerDriver",
+                            "gpioPinIndex": 3211264
+                        }
+                    },
+                    "i2cDevice": 9,
+                    "desI2CPort": 0,
+                    "groupInitProg": true
+                }
+            ]
+        }
+    ],
+    "cameraConfigs": [
+        {
+            "name": "SHW5G_2",
+            "type": "GMSL",
+            "description": "MAX96712 (CSI-CD / CN1): link2/link3 SHW5G mono",
+            "cameraModules": [
+                {
+                    "name": "SHW5G_MIX_L2",
+                    "linkIndex": 2,
+                    "transportIndex": 1
+                },
+                {
+                    "name": "SHW5G_MIX_L3",
+                    "linkIndex": 3,
+                    "transportIndex": 1
+                }
+            ],
+            "transportSettings": [
+                {
+                    "name": "transportSettings_jetson-thor_AB",
+                    "type": "GMSL",
+                    "csiPort": "csi-gh",
+                    "phyMode": "dphy",
+                    "desTxPort": 1,
+                    "deserInfo": {
+                        "name": "Max96712GmslDeserializer",
+                        "i2cAddress": "0x2d"
+                    },
+                    "powerControlInfo": {
+                        "deserializerInfo": {
+                            "name": "TegraDeserPowerDriver",
+                            "gpioPinIndex": 9043968
+                        }
+                    },
+                    "i2cDevice": 10,
+                    "desI2CPort": 0,
+                    "groupInitProg": false
+                },
+                {
+                    "name": "transportSettings_jetson-thor_CD",
+                    "type": "GMSL",
+                    "csiPort": "csi-cd",
+                    "phyMode": "dphy",
+                    "desTxPort": 1,
+                    "deserInfo": {
+                        "name": "Max96712GmslDeserializer",
+                        "i2cAddress": "0x29"
+                    },
+                    "powerControlInfo": {
+                        "deserializerInfo": {
+                            "name": "TegraDeserPowerDriver",
+                            "gpioPinIndex": 3211264
+                        }
+                    },
+                    "i2cDevice": 9,
+                    "desI2CPort": 0,
+                    "groupInitProg": true
+                }
+            ]
+        },
+        {
+            "name": "SHW5G_MIX_L2",
+            "type": "GMSL",
+            "description": "SHW5G mono on physical link2, output VC2",
+            "moduleDriverName": "SHW5G",
+            "serInfo": {
+                "name": "MAX96717",
+                "i2cAddress": "0x40"
+            },
+            "linkMode": "LINK_MODE_GMSL2_6GBPS",
+            "fsyncMode": "osc_manual",
+            "mipiSettings": {
+                "dphyRate": 2500000,
+                "phyMode": "dphy"
+            },
+            "sensorInfo": [
+                {
+                    "name": "VB1940",
+                    "id": 2,
+                    "description": "SHW5G link2 sensor",
+                    "i2cAddress": "0x10",
+                    "numContext": 1,
+                    "isTriggerModeEnabled": true,
+                    "deviceIndex": 0,
+                    "virtualChannels": [
+                        {
+                            "vcIdSrc": 2,
+                            "vcIdDst": 2,
+                            "cfa": "gbrg",
+                            "embeddedTopLines": 1,
+                            "embeddedBottomLines": 0,
+                            "inputFormat": "raw10",
+                            "width": 2560,
+                            "height": 1984,
+                            "fps": 60.0,
+                            "isEmbeddedDataTypeEnabled": true
+                        }
+                    ]
+                }
+            ],
+            "eepromInfo": {
+                "name": "BR24H128",
+                "i2cAddress": "0x50"
+            }
+        },
+        {
+            "name": "SHW5G_MIX_L3",
+            "type": "GMSL",
+            "description": "SHW5G mono on physical link3, output VC3",
+            "moduleDriverName": "SHW5G",
+            "serInfo": {
+                "name": "MAX96717",
+                "i2cAddress": "0x40"
+            },
+            "linkMode": "LINK_MODE_GMSL2_6GBPS",
+            "fsyncMode": "osc_manual",
+            "mipiSettings": {
+                "dphyRate": 2500000,
+                "phyMode": "dphy"
+            },
+            "sensorInfo": [
+                {
+                    "name": "VB1940",
+                    "id": 3,
+                    "description": "SHW5G link3 sensor",
+                    "i2cAddress": "0x10",
+                    "numContext": 1,
+                    "isTriggerModeEnabled": true,
+                    "deviceIndex": 0,
+                    "virtualChannels": [
+                        {
+                            "vcIdSrc": 3,
+                            "vcIdDst": 3,
+                            "cfa": "gbrg",
+                            "embeddedTopLines": 1,
+                            "embeddedBottomLines": 0,
+                            "inputFormat": "raw10",
+                            "width": 2560,
+                            "height": 1984,
+                            "fps": 60.0,
+                            "isEmbeddedDataTypeEnabled": true
+                        }
+                    ]
+                }
+            ],
+            "eepromInfo": {
+                "name": "BR24H128",
+                "i2cAddress": "0x50"
+            }
+        }
+    ]
+}

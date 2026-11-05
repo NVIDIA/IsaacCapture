@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# A tracker with metadata, generated for tracker_metadata_tests alone. Its metadata table is
+# fbs/test_tracker_metadata.fbs.
+
+[[tracker]]
+name = "metadata_test"
+table = "Generic3AxisPedalOutput"
+schema = "pedals"
+metadata = "TestTrackerMetadata"

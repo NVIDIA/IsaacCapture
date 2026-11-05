@@ -65,8 +65,8 @@ class DefaultTeleopStateManager(TeleopStateManager):
     """Default execution state manager.
 
     Inputs:
-        - kill_button: dedicated safety button. When pressed, force STOPPED and
-          emit reset_event=True.
+        - kill_button: dedicated safety button. While held, force STOPPED; its
+          rising edge emits reset_event=True once per press.
         - run_toggle_button: rising edge drives the sequence:
           * STOPPED -> PAUSED
           * PAUSED -> RUNNING
@@ -75,7 +75,8 @@ class DefaultTeleopStateManager(TeleopStateManager):
 
     Safety:
         If kill/run-toggle input is absent (OptionalTensorGroup is None),
-        fail-safe immediately to STOPPED. Reset input is optional.
+        fail-safe immediately to STOPPED and emit reset_event=True on the first
+        frame of the loss, whether or not the optional reset input is present.
     """
 
     INPUT_KILL = "kill_button"
@@ -87,7 +88,8 @@ class DefaultTeleopStateManager(TeleopStateManager):
         self._prev_kill = False
         self._prev_run_toggle = False
         self._prev_reset = False
-        self._required_inputs_lost_prev = False
+        # Inputs absent from startup are not a loss; state already starts STOPPED.
+        self._required_inputs_lost_prev = True
         super().__init__(name=name)
 
     def input_spec(self) -> RetargeterIOType:
@@ -106,7 +108,7 @@ class DefaultTeleopStateManager(TeleopStateManager):
 
         if inputs[self.INPUT_KILL].is_none or inputs[self.INPUT_RUN_TOGGLE].is_none:
             self._state = ExecutionState.STOPPED
-            reset_on_loss = reset_present and not self._required_inputs_lost_prev
+            reset_on_loss = not self._required_inputs_lost_prev
             self._required_inputs_lost_prev = True
             # Conservative fail-safe: require button release after input recovery
             # so a still-held button cannot appear as a synthetic rising edge.
@@ -128,14 +130,14 @@ class DefaultTeleopStateManager(TeleopStateManager):
         else:
             reset_edge = False
 
+        kill_edge = kill_pressed and not self._prev_kill
         run_toggle_edge = run_toggle_pressed and not self._prev_run_toggle
         self._prev_kill = kill_pressed
         self._prev_run_toggle = run_toggle_pressed
 
-        reset = reset_edge
+        reset = reset_edge or kill_edge
         if kill_pressed:
             self._state = ExecutionState.STOPPED
-            reset = True
         elif run_toggle_edge:
             if self._state == ExecutionState.STOPPED:
                 self._state = ExecutionState.PAUSED

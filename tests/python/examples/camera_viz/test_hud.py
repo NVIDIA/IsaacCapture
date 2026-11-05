@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from controls import hud
-from controls.hud import (
+from isaaccapture_examples.camera_viz.controls import hud
+from isaaccapture_examples.camera_viz.controls.hud import (
     _BODY,
     _H,
     _TITLE,

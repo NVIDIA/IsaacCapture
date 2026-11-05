@@ -8,7 +8,7 @@ import io
 import os
 import re
 
-from dashboard import CameraRow, Dashboard, Snapshot
+from isaaccapture_examples.camera_viz.dashboard import CameraRow, Dashboard, Snapshot
 
 ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 

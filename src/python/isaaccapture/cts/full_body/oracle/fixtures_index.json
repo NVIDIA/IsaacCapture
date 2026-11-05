@@ -1,0 +1,831 @@
+{
+  "schema": {
+    "mcap_schema_name": "core.FullBodyPoseRecord",
+    "schema_encoding": "flatbuffer",
+    "schema_data": "binary FlatBuffers schema (.bfbs) for full_body.fbs",
+    "message_encoding": "flatbuffer",
+    "topic": "full_body/full_body",
+    "mcap_profile": "teleop",
+    "log_time": "available_time_local_common_clock",
+    "publish_time": "available_time_local_common_clock"
+  },
+  "conventions": {
+    "up_axis": "+Y",
+    "handedness": "right",
+    "facing": "-Z",
+    "lateral": "+X is the subject's right, -X the subject's left",
+    "position_units": "metres",
+    "quaternion_order": "x, y, z, w",
+    "nominal_rate_hz": 60.0
+  },
+  "categories": {
+    "golden": "clean and correct; the checker must report an overall pass",
+    "benign": "unusual but correct; the checker must also pass these -- they are the false-positive guards, modelled on the Noitom plugin's output",
+    "defect": "exactly one injected fault; the checker must fail the named check"
+  },
+  "fixtures": [
+    {
+      "filename": "fixtures/golden_scripted_sequence.mcap",
+      "batch": "envelope",
+      "category": "golden",
+      "description": "14 s @ 60 Hz: A-pose still, T-pose hold, single right-arm raise, single left-leg raise, return to T-pose. Y-up right-handed metres, all joints valid.",
+      "expected_verdict": "pass",
+      "frames": 840,
+      "size_bytes": 745972
+    },
+    {
+      "filename": "fixtures/golden_tpose_hold.mcap",
+      "batch": "envelope",
+      "category": "golden",
+      "description": "6 s @ 60 Hz static T-pose hold with breathing sway only -- a minimal baseline for still-window statistics and noise-floor estimation.",
+      "expected_verdict": "pass",
+      "frames": 360,
+      "size_bytes": 324052
+    },
+    {
+      "filename": "fixtures/benign_invalid_joints_zero_pose.mcap",
+      "batch": "envelope",
+      "category": "benign",
+      "description": "Four joints the vendor does not provide (collars, feet) are permanently is_valid=false carrying an all-zero Point and all-zero Quaternion -- byte-for-byte what make_invalid_body_joint_pose() emits in the Noitom plugin. A quaternion-norm check applied unconditionally would wrongly fail this valid output.",
+      "expected_verdict": "pass",
+      "frames": 840,
+      "size_bytes": 745972
+    },
+    {
+      "filename": "fixtures/benign_backfilled_endpoints.mcap",
+      "batch": "envelope",
+      "category": "benign",
+      "description": "Hands and feet are back-filled from the wrists and ankles and marked valid, as the Noitom plugin does for a skeleton with no hand/foot joints. Consequence: those four bones have a constantly zero length. Legitimate -- reportable as 'derived, not measured', but not a fault.",
+      "expected_verdict": "pass",
+      "frames": 840,
+      "size_bytes": 745972
+    },
+    {
+      "filename": "fixtures/benign_dropout_recovery.mcap",
+      "batch": "envelope",
+      "category": "benign",
+      "description": "The whole left-arm chain goes is_valid=false (zero pose) for ~1 s mid-run and then recovers cleanly; all_joint_poses_tracked follows. A transient occlusion, not a broken integration.",
+      "expected_verdict": "pass",
+      "frames": 840,
+      "size_bytes": 745972
+    },
+    {
+      "filename": "fixtures/defect_z_up.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Whole rig expressed Z-up instead of Y-up (right-handed throughout): positions and orientations both rotated +90 deg about X.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "coordinate_frame.up_axis"
+    },
+    {
+      "filename": "fixtures/defect_centimetre_units.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Positions written in centimetres; orientations untouched. Stature reads ~175 units.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "units.position_scale_metres"
+    },
+    {
+      "filename": "fixtures/defect_left_right_swapped.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Every left/right joint pair has its data written into the other's index. The skeleton is geometrically intact but the labelling is inverted.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "skeleton.left_right_labelling"
+    },
+    {
+      "filename": "fixtures/defect_quaternion_wxyz_order.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Quaternion components serialised w,x,y,z into the x,y,z,w fields of core.Quaternion. Norm still 1, so only an orientation-vs-position consistency test catches it.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "quaternion.component_order"
+    },
+    {
+      "filename": "fixtures/defect_mirrored_handedness.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "X negated on positions with the matching mirror conjugation on orientations: a left-handed coordinate frame. Bone lengths and the joint tree survive, chirality does not.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "coordinate_frame.handedness"
+    },
+    {
+      "filename": "fixtures/defect_positions_rotated_orientations_not.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Positions rotated 90 deg about Y into another frame while orientations were left in the original one -- the classic half-finished frame conversion.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "consistency.position_orientation_same_frame"
+    },
+    {
+      "filename": "fixtures/defect_joint_index_permutation.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Three joint pairs written to each other's indices (SPINE1<->SPINE2, NECK<->HEAD, LEFT_KNEE<->LEFT_ANKLE): the parent/child tree no longer matches the XR_BD_body_tracking layout.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "skeleton.joint_index_assignment"
+    },
+    {
+      "filename": "fixtures/defect_bone_length_drift.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Every bone grows smoothly by 22% over the run -- a 'rubber' skeleton whose segment lengths are not invariant.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "skeleton.bone_length_constancy"
+    },
+    {
+      "filename": "fixtures/defect_implausible_proportions.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Anthropometrically impossible skeleton: forearms 2.3x the upper arm and a ~3.0 m stature. Internally consistent, just not a human.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "skeleton.anthropometric_plausibility"
+    },
+    {
+      "filename": "fixtures/defect_pose_teleport.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "At t=5.5 s (inside a still window) the whole skeleton jumps 2.6 m in one 16.7 ms frame and jumps back three frames later: ~155 m/s, far past any human movement.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "continuity.max_joint_velocity"
+    },
+    {
+      "filename": "fixtures/defect_nan_inf_positions.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "NaN and +/-infinity injected into the positions of a handful of valid joints on about 4% of frames.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "values.finite"
+    },
+    {
+      "filename": "fixtures/defect_non_unit_quaternions.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Orientations on several is_valid=true joints are scaled off the unit sphere (norms ~1.8 and ~0.35) -- unnormalised output, not the benign all-zero invalid case.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "quaternion.unit_norm_on_valid_joints"
+    },
+    {
+      "filename": "fixtures/defect_joints_field_absent.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "About 9% of records carry a FullBodyPose table whose `joints` struct field is absent, though the schema comment states all fields are present whenever the table is. Distinct from a null payload: the data table itself is there.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 676908,
+      "expected_failing_check": "schema.required_field_present.joints"
+    },
+    {
+      "filename": "fixtures/defect_zero_positions_on_valid_joints.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Six joints report position (0,0,0) with an identity quaternion while is_valid stays true -- an uninitialised slot reported as good data.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "values.zero_pose_on_valid_joint"
+    },
+    {
+      "filename": "fixtures/defect_non_monotonic_timestamps.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Twelve frames have sample/available timestamps (and therefore MCAP logTime) that step ~40 ms backwards relative to their predecessor.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "timestamps.monotonic"
+    },
+    {
+      "filename": "fixtures/defect_device_clock_copies_common.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "sample_time_raw_device_clock is a verbatim copy of sample_time_local_common_clock: the vendor exposes no real device clock, so cross-device sync has nothing to use.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "timestamps.device_clock_distinct"
+    },
+    {
+      "filename": "fixtures/defect_available_before_sample.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "available_time_local_common_clock is 5 ms *earlier* than sample_time_local_common_clock on every record: the sample became available before it was taken.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "timestamps.available_not_before_sample"
+    },
+    {
+      "filename": "fixtures/defect_null_payload_majority.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "About 68% of records carry a timestamp and no `data` table at all. Each such record is legal (pack_record emits exactly this for an inactive device) but in bulk it means the integration is producing almost no body data.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 291364,
+      "expected_failing_check": "coverage.payload_presence_rate"
+    },
+    {
+      "filename": "fixtures/defect_all_tracked_flag_inconsistent.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "all_joint_poses_tracked stays true on every record while four joints report is_valid=false throughout -- the quality flag contradicts the per-joint flags.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "consistency.all_joint_poses_tracked"
+    },
+    {
+      "filename": "fixtures/defect_irregular_frame_intervals.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Frame intervals jitter by up to +/-9 ms around the 16.7 ms nominal period, well beyond the sub-millisecond jitter of the clean recording.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "rate.interval_regularity"
+    },
+    {
+      "filename": "fixtures/defect_dropped_frames.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Four blocks of consecutive frames are missing, leaving 250-450 ms gaps in an otherwise 60 Hz stream.",
+      "expected_verdict": "fail",
+      "frames": 756,
+      "size_bytes": 672136,
+      "expected_failing_check": "rate.frame_gaps"
+    },
+    {
+      "filename": "fixtures/defect_validity_degradation.mcap",
+      "batch": "envelope",
+      "category": "defect",
+      "description": "Per-joint validity coverage falls steadily from 100% at the start to ~30% at the end -- trackers dropping out progressively rather than a single transient.",
+      "expected_verdict": "fail",
+      "frames": 840,
+      "size_bytes": 745972,
+      "expected_failing_check": "coverage.validity_trend"
+    },
+    {
+      "filename": "fixtures/posture/posture_golden_full_script.mcap",
+      "batch": "posture",
+      "category": "golden",
+      "kind": null,
+      "description": "Clean run of the full 11-step script (clap, A-pose, T-pose, neutral, L/R arm raise, L/R leg raise, 2x squat, march, closing T-pose) at 50 Hz. Correct device, competent performance. Every posture assertion should pass.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_golden_full_script.labels.json"
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_drift_000mrad.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Closing T-pose shoulder angle offset from the opening T-pose by exactly 0.0 rad (0.00 deg), applied to both arms.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_drift_000mrad.labels.json",
+      "measured_by_check": "posture.cumulative_drift_between_tpose_windows",
+      "injected": {
+        "quantity": "cumulative_drift",
+        "value": 0.0,
+        "unit": "rad"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_drift_020mrad.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Closing T-pose shoulder angle offset from the opening T-pose by exactly 0.02 rad (1.15 deg), applied to both arms.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_drift_020mrad.labels.json",
+      "measured_by_check": "posture.cumulative_drift_between_tpose_windows",
+      "injected": {
+        "quantity": "cumulative_drift",
+        "value": 0.02,
+        "unit": "rad"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_drift_050mrad.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Closing T-pose shoulder angle offset from the opening T-pose by exactly 0.05 rad (2.86 deg), applied to both arms.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_drift_050mrad.labels.json",
+      "measured_by_check": "posture.cumulative_drift_between_tpose_windows",
+      "injected": {
+        "quantity": "cumulative_drift",
+        "value": 0.05,
+        "unit": "rad"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_drift_150mrad.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Closing T-pose shoulder angle offset from the opening T-pose by exactly 0.15 rad (8.59 deg), applied to both arms.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_drift_150mrad.labels.json",
+      "measured_by_check": "posture.cumulative_drift_between_tpose_windows",
+      "injected": {
+        "quantity": "cumulative_drift",
+        "value": 0.15,
+        "unit": "rad"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_crosstalk_00deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "During each single-leg raise the *opposite* hip also flexes by exactly 0.0 deg at peak -- contralateral cross-talk.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_crosstalk_00deg.labels.json",
+      "measured_by_check": "posture.contralateral_crosstalk_single_leg_raise",
+      "injected": {
+        "quantity": "contralateral_crosstalk",
+        "value": 0.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_crosstalk_02deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "During each single-leg raise the *opposite* hip also flexes by exactly 2.0 deg at peak -- contralateral cross-talk.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_crosstalk_02deg.labels.json",
+      "measured_by_check": "posture.contralateral_crosstalk_single_leg_raise",
+      "injected": {
+        "quantity": "contralateral_crosstalk",
+        "value": 2.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_crosstalk_10deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "During each single-leg raise the *opposite* hip also flexes by exactly 10.0 deg at peak -- contralateral cross-talk.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_crosstalk_10deg.labels.json",
+      "measured_by_check": "posture.contralateral_crosstalk_single_leg_raise",
+      "injected": {
+        "quantity": "contralateral_crosstalk",
+        "value": 10.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_crosstalk_25deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "During each single-leg raise the *opposite* hip also flexes by exactly 25.0 deg at peak -- contralateral cross-talk.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_crosstalk_25deg.labels.json",
+      "measured_by_check": "posture.contralateral_crosstalk_single_leg_raise",
+      "injected": {
+        "quantity": "contralateral_crosstalk",
+        "value": 25.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_droop_00deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Both arms held exactly 0.0 deg below horizontal during both T-pose windows.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_droop_00deg.labels.json",
+      "measured_by_check": "posture.tpose_arm_droop",
+      "injected": {
+        "quantity": "tpose_arm_droop",
+        "value": 0.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_droop_05deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Both arms held exactly 5.0 deg below horizontal during both T-pose windows.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_droop_05deg.labels.json",
+      "measured_by_check": "posture.tpose_arm_droop",
+      "injected": {
+        "quantity": "tpose_arm_droop",
+        "value": 5.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_droop_15deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Both arms held exactly 15.0 deg below horizontal during both T-pose windows.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_droop_15deg.labels.json",
+      "measured_by_check": "posture.tpose_arm_droop",
+      "injected": {
+        "quantity": "tpose_arm_droop",
+        "value": 15.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_droop_30deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "Both arms held exactly 30.0 deg below horizontal during both T-pose windows.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_droop_30deg.labels.json",
+      "measured_by_check": "posture.tpose_arm_droop",
+      "injected": {
+        "quantity": "tpose_arm_droop",
+        "value": 30.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_asymmetry_00deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "LEFT arm held exactly 0.0 deg lower than the RIGHT in both T-pose windows.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_asymmetry_00deg.labels.json",
+      "measured_by_check": "posture.tpose_left_right_asymmetry",
+      "injected": {
+        "quantity": "tpose_left_right_asymmetry",
+        "value": 0.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_asymmetry_03deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "LEFT arm held exactly 3.0 deg lower than the RIGHT in both T-pose windows.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_asymmetry_03deg.labels.json",
+      "measured_by_check": "posture.tpose_left_right_asymmetry",
+      "injected": {
+        "quantity": "tpose_left_right_asymmetry",
+        "value": 3.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_graded_asymmetry_10deg.mcap",
+      "batch": "posture",
+      "category": "graded",
+      "kind": null,
+      "description": "LEFT arm held exactly 10.0 deg lower than the RIGHT in both T-pose windows.",
+      "expected_verdict": "graded",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_graded_asymmetry_10deg.labels.json",
+      "measured_by_check": "posture.tpose_left_right_asymmetry",
+      "injected": {
+        "quantity": "tpose_left_right_asymmetry",
+        "value": 10.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_device_march_ankles_in_phase.mcap",
+      "batch": "posture",
+      "category": "device_fault",
+      "kind": "device_fault",
+      "description": "March performed normally but the two ankles move in phase instead of antiphase: a left/right confusion that only shows up dynamically, invisible in any static pose.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_device_march_ankles_in_phase.labels.json",
+      "expected_failing_check": "posture.march_ankle_antiphase",
+      "injected": {
+        "quantity": "march_phase_offset",
+        "value": 0.0,
+        "unit": "rad",
+        "expected_clean_value": 3.14159
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_device_squat_reps_mismatched.mcap",
+      "batch": "posture",
+      "category": "device_fault",
+      "kind": "device_fault",
+      "description": "Two squat reps of the same real depth are reported 35% apart -- error accumulating between reps rather than a performance difference.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_device_squat_reps_mismatched.labels.json",
+      "expected_failing_check": "posture.squat_rep_repeatability",
+      "injected": {
+        "quantity": "squat_rep2_hip_angle_delta",
+        "value": 0.35,
+        "unit": "fraction of rep-1 peak hip flexion angle",
+        "note": "pelvis-height depth is a nonlinear function of the hip angle, so the measured depth ratio is larger (~+71%) than 0.35"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_device_squat_knee_asymmetry.mcap",
+      "batch": "posture",
+      "category": "device_fault",
+      "kind": "device_fault",
+      "description": "Knee flexion differs by 22 deg between left and right at full squat depth while hips, ankles and pelvis stay symmetric -- the person squatted evenly.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_device_squat_knee_asymmetry.labels.json",
+      "expected_failing_check": "posture.squat_knee_symmetry",
+      "injected": {
+        "quantity": "squat_knee_asymmetry",
+        "value": 22.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_device_arm_raise_saturates.mcap",
+      "batch": "posture",
+      "category": "device_fault",
+      "kind": "device_fault",
+      "description": "Both arm raises stop tracking at 25 deg above horizontal and flat-line there instead of reaching overhead: the shoulder angle saturates mid-raise.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_device_arm_raise_saturates.labels.json",
+      "expected_failing_check": "posture.arm_raise_range_of_motion",
+      "injected": {
+        "quantity": "arm_raise_saturation_angle",
+        "value": -25.0,
+        "unit": "deg",
+        "expected_clean_value": -95.0
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_perf_squat_too_shallow.mcap",
+      "batch": "posture",
+      "category": "performance_fault",
+      "kind": "performance_fault",
+      "description": "Squats only 22% of nominal depth -- too shallow for knee symmetry or pelvis height to be measurable. Device is fine; the capture needs redoing.",
+      "expected_verdict": "retake",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_perf_squat_too_shallow.labels.json",
+      "expected_failing_check": "performance.squat_depth_sufficient",
+      "injected": {
+        "quantity": "squat_depth_scale",
+        "value": 0.22,
+        "unit": "fraction"
+      },
+      "notes": "Reduced depth also shrinks any knee-symmetry signal, so a checker that reports knee symmetry without a depth precondition will look clean here."
+    },
+    {
+      "filename": "fixtures/posture/posture_perf_march_slow_irregular.mcap",
+      "batch": "posture",
+      "category": "performance_fault",
+      "kind": "performance_fault",
+      "description": "March performed slowly and irregularly (cadence wandering 0.35-0.75 Hz, amplitude 14-38 deg) instead of at a steady cadence. Still antiphase.",
+      "expected_verdict": "retake",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_perf_march_slow_irregular.labels.json",
+      "expected_failing_check": "performance.march_cadence_steady",
+      "injected": {
+        "quantity": "march_cadence_range",
+        "value": [
+          0.35,
+          0.75
+        ],
+        "unit": "Hz",
+        "expected_clean_value": 0.9
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_perf_lean_during_arm_raise.mcap",
+      "batch": "posture",
+      "category": "performance_fault",
+      "kind": "performance_fault",
+      "description": "Torso leans 12 deg away while each arm is raised. The arm itself tracks correctly; the isolation assumption does not hold.",
+      "expected_verdict": "retake",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_perf_lean_during_arm_raise.labels.json",
+      "expected_failing_check": "performance.arm_raise_torso_stability",
+      "injected": {
+        "quantity": "torso_lean_during_arm_raise",
+        "value": 12.0,
+        "unit": "deg"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_perf_left_leg_raise_skipped.mcap",
+      "batch": "posture",
+      "category": "performance_fault",
+      "kind": "performance_fault",
+      "description": "The left-leg raise never happens -- the subject stands in neutral through the whole labelled window. Labels still claim the step was performed.",
+      "expected_verdict": "retake",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_perf_left_leg_raise_skipped.labels.json",
+      "expected_failing_check": "segmentation.labelled_step_actually_performed",
+      "injected": {
+        "quantity": "skipped_steps",
+        "value": [
+          "left_leg_raise"
+        ]
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_perf_steps_out_of_order.mcap",
+      "batch": "posture",
+      "category": "performance_fault",
+      "kind": "performance_fault",
+      "description": "right_arm_raise and left_leg_raise are performed in each other's time slots; the sidecar labels still describe the nominal order.",
+      "expected_verdict": "retake",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_perf_steps_out_of_order.labels.json",
+      "expected_failing_check": "segmentation.step_order_matches_labels",
+      "injected": {
+        "quantity": "swapped_steps",
+        "value": [
+          "right_arm_raise",
+          "left_leg_raise"
+        ]
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_seg_labels_absent.mcap",
+      "batch": "posture",
+      "category": "segmentation",
+      "kind": null,
+      "description": "Clean performance, no sidecar at all. The checker must say that the per-step posture measurements are skipped.",
+      "expected_verdict": "pass",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": null,
+      "measured_by_check": "segmentation.fallback_without_labels"
+    },
+    {
+      "filename": "fixtures/posture/posture_seg_labels_offset.mcap",
+      "batch": "posture",
+      "category": "segmentation",
+      "kind": null,
+      "description": "Clean performance, but every sidecar window is 0.5 s later than the motion it names -- each window straddles a step boundary.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_seg_labels_offset.labels.json",
+      "expected_failing_check": "segmentation.label_alignment",
+      "injected": {
+        "quantity": "label_offset",
+        "value": 0.5,
+        "unit": "s"
+      }
+    },
+    {
+      "filename": "fixtures/posture/posture_seg_labels_overlap_and_gaps.mcap",
+      "batch": "posture",
+      "category": "segmentation",
+      "kind": null,
+      "description": "Clean performance, but the sidecar windows overlap by 0.6 s in places and leave 0.8 s unlabelled in others: the label set is not a partition of the run.",
+      "expected_verdict": "fail",
+      "frames": 2050,
+      "size_bytes": 1809709,
+      "labels_sidecar": "fixtures/posture/posture_seg_labels_overlap_and_gaps.labels.json",
+      "expected_failing_check": "segmentation.label_windows_wellformed"
+    }
+  ],
+  "batches": {
+    "envelope": "Schema/encoding/geometry/rate correctness of the recording itself.",
+    "posture": "Posture semantics over the 11-step motion script."
+  },
+  "verdicts": {
+    "pass": "checker must accept",
+    "fail": "CTS failure attributable to the device/integration",
+    "retake": "capture unusable because of human performance; device not implicated",
+    "graded": "a known magnitude is injected; the checker reports the measured value and does not judge it"
+  },
+  "motion_script": [
+    {
+      "index": 0,
+      "label": "clap",
+      "duration_s": 1.0
+    },
+    {
+      "index": 1,
+      "label": "a_pose_still",
+      "duration_s": 3.0
+    },
+    {
+      "index": 2,
+      "label": "t_pose_hold_open",
+      "duration_s": 3.0
+    },
+    {
+      "index": 3,
+      "label": "neutral_stance",
+      "duration_s": 2.0
+    },
+    {
+      "index": 4,
+      "label": "left_arm_raise",
+      "duration_s": 4.0
+    },
+    {
+      "index": 5,
+      "label": "right_arm_raise",
+      "duration_s": 4.0
+    },
+    {
+      "index": 6,
+      "label": "left_leg_raise",
+      "duration_s": 4.0
+    },
+    {
+      "index": 7,
+      "label": "right_leg_raise",
+      "duration_s": 4.0
+    },
+    {
+      "index": 8,
+      "label": "squat_x2",
+      "duration_s": 8.0
+    },
+    {
+      "index": 9,
+      "label": "march_in_place",
+      "duration_s": 5.0
+    },
+    {
+      "index": 10,
+      "label": "t_pose_hold_close",
+      "duration_s": 3.0
+    }
+  ]
+}

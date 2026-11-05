@@ -1570,7 +1570,7 @@ limitations under the License.
 
               <div class="config-section">
                 <label for="cloudxrWarmupBeginTimeoutMs" class="input-label"
-                  >Warm-up Begin Timeout (ms, default: 10000 / 10 seconds)</label
+                  >Warm-up Begin Timeout (ms, default: 0 / disabled)</label
                 >
                 <input
                   id="cloudxrWarmupBeginTimeoutMs"
@@ -1580,7 +1580,7 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up begin timeout in ms"
                   spellcheck="false"
-                  value="10000"
+                  value="0"
                 />
                 <div class="config-text">
                   How long to wait, after the stream attaches, for the first sign that decoder
@@ -1592,7 +1592,7 @@ limitations under the License.
 
               <div class="config-section">
                 <label for="cloudxrWarmupEndTimeoutMs" class="input-label"
-                  >Warm-up End Timeout (ms, default: 30000 / 30 seconds)</label
+                  >Warm-up End Timeout (ms, default: 0 / disabled)</label
                 >
                 <input
                   id="cloudxrWarmupEndTimeoutMs"
@@ -1602,7 +1602,7 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up end timeout in ms"
                   spellcheck="false"
-                  value="30000"
+                  value="0"
                 />
                 <div class="config-text">
                   How long to wait for decoder warm-up to finish once it has begun before treating
@@ -1621,14 +1621,16 @@ limitations under the License.
                   class="ui-input config-input"
                   aria-label="When to reload the page after the XR session ends"
                 >
-                  <option value="never">Never refresh</option>
-                  <option value="clean" selected>Refresh on clean session end</option>
+                  <option value="never" selected>Never refresh</option>
+                  <option value="clean">Refresh on clean session end</option>
                   <option value="any">Refresh on any session end (including errors)</option>
                 </select>
                 <div class="config-text">
                   Reload the page after the XR session ends to return to a fresh state. Choose to
                   refresh only on a clean end (Disconnect, headset exit, server stop), on any end
-                  including a streaming error, or never.
+                  including a connection error, or never. Defaults to any end for PICO 4 Ultra and
+                  never for other profiles. Errors remain visible after refresh until a connection
+                  succeeds.
                 </div>
               </div>
             </div>
