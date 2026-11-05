@@ -82,10 +82,58 @@ def test_high_rtt_outlier_does_not_replace_better_mapping() -> None:
     good = estimator.mapping(2 * S)
     assert good is not None
 
-    # Same clock, but a much slower exchange: it joins the window yet must not win.
-    estimator.add(make_exchange(2 * S, offset=10 * MS, forward=20 * MS, back=20 * MS))
-    assert estimator.mapping(3 * S) is good
-    assert estimator.history == [good]
+    # Same clock, but a much slower exchange: 0.5 * (40 - 2) ms is far more than 200 ppm of a 1 s age, so the old
+    # exchange stays the one the mapping comes from; only its reported uncertainty has grown with its age.
+    slow = make_exchange(2 * S, offset=10 * MS, forward=20 * MS, back=20 * MS)
+    estimator.add(slow)
+    mapping = estimator.mapping(3 * S)
+    assert mapping is not None
+    assert (mapping.offset_ns, mapping.rtt_ns, mapping.accepted_at_ns) == (
+        good.offset_ns,
+        good.rtt_ns,
+        good.accepted_at_ns,
+    )
+    assert mapping.uncertainty_ns == good.uncertainty_ns + int(200e-6 * (slow.t4 - good.accepted_at_ns))
+
+
+def test_uncertainty_includes_the_age_of_the_chosen_exchange() -> None:
+    estimator = ClockEstimator()
+    old = make_exchange(S, offset=MS, forward=MS, back=MS)
+    estimator.add(old)
+    fresh = make_exchange(11 * S, offset=MS, forward=5 * MS, back=5 * MS)
+    estimator.add(fresh)
+
+    mapping = estimator.mapping(fresh.t4)
+    assert mapping is not None
+    assert mapping.accepted_at_ns == old.t4
+    age_ns = fresh.t4 - old.t4
+    assert mapping.uncertainty_ns == MS + int(200e-6 * age_ns)
+    assert mapping.uncertainty_ns > old.rtt_ns // 2
+
+
+def test_equal_uncertainty_picks_the_newest_exchange() -> None:
+    # With no drift allowance an equal round trip is an exact tie.
+    estimator = ClockEstimator(drift_allowance=0.0)
+    first = make_exchange(S, offset=MS, forward=2 * MS, back=2 * MS)
+    second = make_exchange(2 * S, offset=MS + 1_000, forward=2 * MS, back=2 * MS)
+    estimator.add(first)
+    estimator.add(second)
+
+    mapping = estimator.mapping(second.t4)
+    assert mapping is not None
+    assert mapping.accepted_at_ns == second.t4
+    assert mapping.offset_ns == second.offset_ns
+
+
+def test_fresher_exchange_with_the_same_rtt_keeps_uncertainty_from_growing_with_age() -> None:
+    estimator = ClockEstimator()
+    for second in range(1, 31):
+        ex = make_exchange(second * S, offset=MS, forward=2 * MS, back=2 * MS)
+        estimator.add(ex)
+        mapping = estimator.mapping(ex.t4)
+        assert mapping is not None
+        assert mapping.accepted_at_ns == ex.t4
+        assert mapping.uncertainty_ns == 2 * MS
 
 
 def test_best_of_window_is_the_lowest_rtt() -> None:
@@ -232,19 +280,27 @@ def test_reset_bumps_epoch_clears_mapping_and_keeps_history() -> None:
     assert len(estimator.history) == len(adopted) + 1
 
 
-def test_jittery_link_stays_available_while_replies_arrive_and_keeps_best_exchange() -> None:
-    # The best exchange is the earliest and ages far past the stale limit while later, worse ones keep arriving.
+def test_jittery_link_stays_available_and_keeps_the_best_exchange_until_its_age_costs_more() -> None:
+    # The early exchange (rtt 2.2 ms) beats later ones (rtt 10 ms) while 200 ppm of its age is under the 3.9 ms
+    # difference in half round trips, about 19.5 s; after that the newest exchange is chosen.
+    # Replies keep arriving, so the mapping stays available throughout.
     estimator = ClockEstimator(window=64)
     best = make_exchange(S, offset=MS, forward=MS, back=1_200_000)
     estimator.add(best)
-    for i in range(1, 21):
+    for i in range(1, 31):
         ex = make_exchange(S + i * S, offset=MS, forward=5 * MS, back=5 * MS)
         assert estimator.add(ex) is None
         mapping = estimator.mapping(ex.t4)
         assert mapping is not None, f"mapping lost {i} s in"
-        assert mapping.offset_ns == best.offset_ns
-        assert mapping.rtt_ns == best.rtt_ns
-        assert mapping.accepted_at_ns == best.t4
+        if i <= 19:
+            assert mapping.offset_ns == best.offset_ns
+            assert mapping.rtt_ns == best.rtt_ns
+            assert mapping.accepted_at_ns == best.t4
+        else:
+            assert mapping.offset_ns == ex.offset_ns
+            assert mapping.rtt_ns == ex.rtt_ns
+            assert mapping.accepted_at_ns == ex.t4
+            assert mapping.uncertainty_ns == 5 * MS
 
 
 def test_mapping_goes_stale_when_exchanges_stop_and_returns_with_a_new_one() -> None:

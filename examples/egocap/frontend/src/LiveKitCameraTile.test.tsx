@@ -10,11 +10,13 @@ import { fakeTrack } from "./livekitTestDoubles";
 type FrameMetadata = { presentedFrames: number; [field: string]: number };
 let frameCallbacks: Array<(now: number, metadata: FrameMetadata) => void> = [];
 let presentedTotal = 0;
+let presentationClockMs = 0;
 
 beforeEach(() => {
   vi.useFakeTimers();
   frameCallbacks = [];
   presentedTotal = 0;
+  presentationClockMs = 0;
   // jsdom has no requestVideoFrameCallback; this one lets a test present frames by hand.
   (HTMLVideoElement.prototype as any).requestVideoFrameCallback = function (cb: (typeof frameCallbacks)[number]) {
     frameCallbacks.push(cb);
@@ -30,12 +32,18 @@ afterEach(() => {
   delete (HTMLVideoElement.prototype as any).cancelVideoFrameCallback;
 });
 
-/** Presents `frames` frames at once: the browser's cumulative presentedFrames grows by that much. */
+/**
+ * Presents `frames` frames at once: the browser's cumulative presentedFrames grows by that much. The frame's
+ * presentationTime is its own, independent of the fake timers' clock: by default a second after the previous call's.
+ */
 function presentFrame(frames = 1, times: Record<string, number> = {}): void {
   presentedTotal += frames;
+  presentationClockMs += 1000;
   const cbs = frameCallbacks;
   frameCallbacks = [];
-  act(() => cbs.forEach((cb) => cb(0, { presentedFrames: presentedTotal, ...times })));
+  act(() =>
+    cbs.forEach((cb) => cb(0, { presentedFrames: presentedTotal, presentationTime: presentationClockMs, ...times })),
+  );
 }
 
 describe("LiveKitCameraTile placeholders", () => {
@@ -175,6 +183,50 @@ describe("LiveKitCameraTile FPS label", () => {
     expect(statsTexts()[0]).toBe("30 fps");
   });
 
+  it("divides by the callback presentationTime endpoints, not by the timer tick", () => {
+    renderTile();
+    presentFrame(0, { presentationTime: 5000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    presentFrame(30, { presentationTime: 6000 });
+    act(() => {
+      vi.advanceTimersByTime(1500); // a late tick: the window's length still comes from the frames
+    });
+    expect(statsTexts()[0]).toBe("30 fps");
+  });
+
+  it("gives no figure for a window with a counter reset and is right again in the next", () => {
+    renderTile();
+    presentFrame(30, { presentationTime: 1000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    presentedTotal = 0; // the browser restarted its count
+    presentFrame(10, { presentationTime: 2000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.body.textContent).not.toMatch(/fps/);
+    presentFrame(30, { presentationTime: 3000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()[0]).toBe("30 fps");
+  });
+
+  it("gives no figure for a window in which no new frame arrived", () => {
+    renderTile();
+    presentFrame(5, { presentationTime: 1000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.body.textContent).not.toMatch(/fps/);
+  });
+
   it("shows 0 FPS when no frame arrives for more than three seconds", () => {
     renderTile();
     presentFrame();
@@ -306,7 +358,7 @@ describe("LiveKitCameraTile latency", () => {
       vi.advanceTimersByTime(1000);
     });
     const span = document.querySelectorAll(".camera-stats")[1];
-    expect(span.getAttribute("title")).toContain("reports: expectedDisplayTime, presentedFrames, rtpTimestamp.");
+    expect(span.getAttribute("title")).toContain("reports: expectedDisplayTime, presentationTime, presentedFrames, rtpTimestamp.");
   });
 
   it("has no reports text in the tooltip before any frame", () => {
@@ -351,9 +403,9 @@ describe("LiveKitCameraTile measured latency", () => {
   const MS = 1_000_000n;
   /** Remote clock = local + 3 s, so a frame displayed at local 997_072 ms and stamped 1_000_000 us is 72 ms old. */
   const mappingOf = (epoch = 1) => ({ epoch, offsetNs: 3_000n * MS, rttNs: 4n * MS, uncertaintyNs: 2n * MS, acceptedAtNs: 0n });
-  const stampedTrack = (stamp: { userTimestamp: bigint } | undefined = { userTimestamp: 1_000_000_000n }) => {
+  const stampedTrack = (stamp: { userTimestamp: bigint } | null = { userTimestamp: 1_000_000_000n }) => {
     const track = fakeTrack();
-    track.lookupFrameMetadata = vi.fn(() => stamp);
+    track.lookupFrameMetadata = vi.fn(() => stamp ?? undefined);
     return track;
   };
   const frame = { rtpTimestamp: 42, expectedDisplayTime: 997_072 };
@@ -382,9 +434,11 @@ describe("LiveKitCameraTile measured latency", () => {
   });
 
   it("is unavailable without a stamp", () => {
-    renderWith(stampedTrack(undefined), { mapping: () => mappingOf() });
+    renderWith(stampedTrack(null), { mapping: () => mappingOf() });
     presentFrame(1, frame);
-    windows();
+    windows(1);
+    presentFrame(1, frame); // a frame in the second window, so it has an FPS figure beside the latency
+    windows(1);
     expect(statsTexts()[1]).toBe("– ms latency");
   });
 
@@ -392,7 +446,9 @@ describe("LiveKitCameraTile measured latency", () => {
     const track = stampedTrack();
     renderWith(track, { mapping: () => mappingOf() }, 1);
     presentFrame(1, frame);
-    windows();
+    windows(1);
+    presentFrame(1, frame); // a frame in the second window, so it has an FPS figure beside the latency
+    windows(1);
     expect(statsTexts()[1]).toBe("– ms latency");
     expect(track.lookupFrameMetadata).not.toHaveBeenCalled();
   });
@@ -400,7 +456,9 @@ describe("LiveKitCameraTile measured latency", () => {
   it("is unavailable without a mapping", () => {
     renderWith(stampedTrack(), { mapping: () => null });
     presentFrame(1, frame);
-    windows();
+    windows(1);
+    presentFrame(1, frame); // a frame in the second window, so it has an FPS figure beside the latency
+    windows(1);
     expect(statsTexts()[1]).toBe("– ms latency");
   });
 

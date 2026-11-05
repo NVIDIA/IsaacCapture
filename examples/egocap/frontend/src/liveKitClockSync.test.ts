@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLOCK_SYNC_TOPIC, encodeRequest } from "./clockExchange";
-import { LiveKitClockSync, measureTimerResolutionNs } from "./liveKitClockSync";
+import { ASSUMED_TIMER_RESOLUTION_NS, LiveKitClockSync } from "./liveKitClockSync";
 
 const DATA_RECEIVED = "DataReceived";
 
@@ -101,6 +101,16 @@ describe("LiveKitClockSync", () => {
     expect(sync.mapping()!.acceptedAtNs).toBe(1_010n * MS);
   });
 
+  it("adds the assumed timer resolution to the mapping uncertainty by default", () => {
+    const room = fakeRoom();
+    const sync = new LiveKitClockSync(room as any, "orin", () => now);
+    sync.start();
+    now = 1_010n * MS;
+    room.handlers.forEach((h) => h(reply(1, 1_000n * MS, 4_005n * MS, 4_005n * MS), { identity: "orin" }, undefined, CLOCK_SYNC_TOPIC));
+    expect(ASSUMED_TIMER_RESOLUTION_NS).toBe(1n * MS);
+    expect(sync.mapping()!.uncertaintyNs).toBe(5n * MS + ASSUMED_TIMER_RESOLUTION_NS);
+  });
+
   it("stop removes the handler and the timer", () => {
     const { room, sync } = started();
     sync.stop();
@@ -108,28 +118,5 @@ describe("LiveKitClockSync", () => {
     vi.advanceTimersByTime(3000);
     expect(room.localParticipant.publishData).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-describe("measureTimerResolutionNs", () => {
-  it("reports the smallest step of a stepping clock", () => {
-    let t = 0;
-    let calls = 0;
-    const clock = () => {
-      calls += 1;
-      if (calls % 3 === 0) t += 0.1;
-      return t;
-    };
-    expect(measureTimerResolutionNs(clock)).toBe(100_000n);
-  });
-
-  it("reports 100 ms for a frozen clock", () => {
-    let calls = 0;
-    // Time passes between calls only so the loop ends, without any step in the clock itself.
-    const clock = () => {
-      calls += 1;
-      return calls > 3 ? 31 : 0;
-    };
-    expect(measureTimerResolutionNs(clock)).toBe(100_000_000n);
   });
 });
