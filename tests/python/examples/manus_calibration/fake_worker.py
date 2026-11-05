@@ -14,7 +14,8 @@ Hang scenarios keep the process alive and silent (``ignore_term`` makes it survi
 ``chatty_discovery`` and ``chatty_finish`` (seconds) keep emitting status events while the worker is busy.
 Every ``result`` carries ``released``: true unless the scenario sets ``not_released``, which models a worker
 whose SDK calibration could not be stopped or whose SDK could not be shut down.
-Run as ``python fake_worker.py --ipc-fd=N``.
+A continuous step is held for its estimate only when run with ``--continuous-pacing=window``.
+Run as ``python fake_worker.py --ipc-fd=N [--continuous-pacing=window]``.
 """
 
 from __future__ import annotations
@@ -308,7 +309,8 @@ def confirm_step(channel: "Channel", attempt: str, token: str, step: dict) -> No
             continue
         channel.send({"type": "step_accepted", "attempt": attempt, "token": token})
         accepted = True
-    if step["time"] > 0:
+    window = step_window(step)
+    if window > 0:
         elapsed = 0.0
         channel.status("capturing_step", [])
         if SCENARIO.get("progress_overrun"):
@@ -317,13 +319,13 @@ def confirm_step(channel: "Channel", attempt: str, token: str, step: dict) -> No
                     "type": "step_progress",
                     "attempt": attempt,
                     "token": token,
-                    "elapsed_s": step["time"] + 5,
+                    "elapsed_s": window + 5,
                 }
             )
             time.sleep(60)
-        while elapsed < step["time"]:
+        while elapsed < window:
             channel.sleep(0.1)
-            elapsed = min(step["time"], elapsed + 0.1)
+            elapsed = min(window, elapsed + 0.1)
             channel.send(
                 {
                     "type": "step_progress",
@@ -332,6 +334,16 @@ def confirm_step(channel: "Channel", attempt: str, token: str, step: dict) -> No
                     "elapsed_s": elapsed,
                 }
             )
+
+
+def step_window(step: dict) -> float:
+    """Seconds the worker holds a step after accepting it: a motion's duration, or a continuous step's estimate
+    when the worker runs with ``--continuous-pacing=window``."""
+    if step["time"] > 0:
+        return step["time"]
+    if step.get("continuous") and "--continuous-pacing=window" in sys.argv[1:]:
+        return float(step.get("estimated", 0.0))
+    return 0.0
 
 
 def export(channel: "Channel", attempt: str, out_dir: str, side: str) -> dict:

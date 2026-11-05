@@ -61,6 +61,15 @@ def finished_view(kind: OutcomeKind, **changes) -> View:
     return View(stage=Stage.FINISHED, outcome=outcome)
 
 
+def test_the_continuous_pacing_policy_is_part_of_the_browser_state():
+    view = active_view()
+    assert view_to_dict(view, OWNER, OUT)["continuous_pacing"] == "operator"
+    assert (
+        view_to_dict(view, OWNER, OUT, "both", "window")["continuous_pacing"]
+        == "window"
+    )
+
+
 def test_the_owner_alone_receives_the_prompt_token():
     view = active_view()
     owner = view_to_dict(view, OWNER, OUT)

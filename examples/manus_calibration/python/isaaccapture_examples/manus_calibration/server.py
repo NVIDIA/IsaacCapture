@@ -101,6 +101,7 @@ class PageServer:
         port: int,
         default_sides: str = "both",
     ) -> None:
+        self._continuous_pacing = worker.continuous_pacing
         self._out_dir = str(out_dir)
         self._default_sides = default_sides
         self._host = host
@@ -351,6 +352,7 @@ class PageServer:
                         client,
                         self._out_dir,
                         self._default_sides,
+                        self._continuous_pacing,
                     )
                 )
                 writer.write(f"data: {payload}\n\n".encode())

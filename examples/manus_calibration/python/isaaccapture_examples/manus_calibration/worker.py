@@ -100,8 +100,13 @@ class CalibrationWorker:
         startup_timeout_s: float | None = None,
         confirm_timeout_s: float = 30.0,
         finish_timeout_s: float = 60.0,
+        continuous_pacing: str = "operator",
     ) -> None:
         # Absolute, so a bare "./worker" is not re-read as a PATH lookup when the process is spawned.
+        if continuous_pacing not in ("operator", "window"):
+            raise ValueError("continuous_pacing must be 'operator' or 'window'")
+        # How the worker paces a continuous step; the page words its instruction to match.
+        self.continuous_pacing = continuous_pacing
         self.executable = Path(os.path.abspath(executable))
         # The plain folder the worker writes its .mcal files into.
         self.out_dir = Path(out_dir)
@@ -304,6 +309,7 @@ class CalibrationAttempt:
                 str(self._owner.executable),
                 f"--ipc-fd={child.fileno()}",
                 f"--discovery-timeout={self._owner.discovery_timeout_s}",
+                f"--continuous-pacing={self._owner.continuous_pacing}",
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -502,7 +508,7 @@ class CalibrationAttempt:
         if not done.done():
             done.set_result(None)
         # The next prompt follows at once, or the worker finishes and exports after the last step.
-        window = self._prompt.duration_s if self._prompt is not None else 0.0
+        window = self._prompt.pacing_s if self._prompt is not None else 0.0
         self._expect(
             "the next step or the result", self._owner.finish_timeout_s + window
         )
@@ -515,7 +521,7 @@ class CalibrationAttempt:
             or self._accepted_token != prompt.token
         ):
             raise proto.ProtocolError("progress for a step that is not running")
-        if progress.elapsed_s > prompt.duration_s + _PROGRESS_SLACK_S:
+        if progress.elapsed_s > prompt.pacing_s + _PROGRESS_SLACK_S:
             raise proto.ProtocolError("progress exceeds the step duration")
 
     def _on_rejected(self, rejected: proto.Rejected) -> None:

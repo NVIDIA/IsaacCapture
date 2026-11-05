@@ -53,12 +53,16 @@ struct Options
 {
     int ipc_fd = -1;
     double discovery_timeout_s = 15.0;
+    ContinuousPacing continuous_pacing = ContinuousPacing::Operator;
 };
 
 void print_usage()
 {
     // Deliberate terminal output: usage text for a person running the executable by hand.
-    std::fputs("usage: manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS]\n", stderr);
+    std::fputs(
+        "usage: manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS] "
+        "[--continuous-pacing=operator|window]\n",
+        stderr);
 }
 
 std::optional<Options> parse_options(int argc, char** argv)
@@ -87,6 +91,14 @@ std::optional<Options> parse_options(int argc, char** argv)
                 return std::nullopt;
             }
             options.discovery_timeout_s = seconds;
+        }
+        else if (arg == "--continuous-pacing=operator")
+        {
+            options.continuous_pacing = ContinuousPacing::Operator;
+        }
+        else if (arg == "--continuous-pacing=window")
+        {
+            options.continuous_pacing = ContinuousPacing::Window;
         }
         else
         {
@@ -231,6 +243,7 @@ int main(int argc, char** argv)
     Ipc ipc(options->ipc_fd);
     EngineConfig config;
     config.discovery_timeout_s = options->discovery_timeout_s;
+    config.continuous_pacing = options->continuous_pacing;
     CalibrationEngine engine(
         sdk, writer, clock, [&ipc](const Event& event) { ipc.send(event); }, config);
 

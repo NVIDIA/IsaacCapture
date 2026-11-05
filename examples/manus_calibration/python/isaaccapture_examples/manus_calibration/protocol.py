@@ -125,9 +125,15 @@ class Prompt:
     instruction: str
     mode: StepMode
     duration_s: float
-    # A continuous SDK step: operator-paced like a hold, with the SDK's estimate of its length as guidance.
+    # A continuous SDK step: a hold with the SDK's estimate of its length. Whether the worker waits that
+    # estimate after the step starts depends on its pacing policy; the estimate never signals completion.
     continuous: bool = False
     estimated_s: float = 0.0
+
+    @property
+    def pacing_s(self) -> float:
+        """The longest the step can run after it starts: its estimate when continuous, else its duration."""
+        return self.estimated_s if self.continuous else self.duration_s
 
 
 @dataclass(frozen=True)

@@ -95,8 +95,17 @@ public:
     virtual double now_s() = 0;
 };
 
+// How a continuous step (negative SDK time) is paced. Operator: the operator moves first, then confirms, and the
+// step ends at once. Window: confirming starts the SDK step, then the worker waits the SDK's estimate.
+enum class ContinuousPacing
+{
+    Operator,
+    Window,
+};
+
 struct EngineConfig
 {
+    ContinuousPacing continuous_pacing = ContinuousPacing::Operator;
     double discovery_timeout_s = 15.0;
     double progress_interval_s = 0.25;
     double connect_retry_s = 1.0;
@@ -191,6 +200,9 @@ private:
     std::string m_current_token;
     StepMode m_current_mode = StepMode::Hold;
     double m_current_duration_s = 0.0;
+    // How long the step is held after the SDK accepts it: the motion duration, or a continuous step's estimate
+    // under ContinuousPacing::Window; zero ends the step at once.
+    double m_pacing_s = 0.0;
     double m_step_started_s = 0.0;
     double m_last_progress_s = 0.0;
     std::set<std::string> m_accepted_tokens;

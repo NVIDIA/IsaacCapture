@@ -320,6 +320,148 @@ TEST_CASE("a routine of all continuous steps, like the real gloves report, compl
     CHECK(rig.all<StepAcceptedEvent>().size() == 16);
 }
 
+// --- continuous steps under window pacing -----------------------------------------------------------------
+
+namespace
+{
+
+EngineConfig window_pacing()
+{
+    EngineConfig config;
+    config.continuous_pacing = ContinuousPacing::Window;
+    return config;
+}
+
+} // namespace
+
+TEST_CASE("window pacing holds a continuous step for its estimate after the SDK starts it",
+          "[unit][engine][flow][continuous][window]")
+{
+    Rig rig(window_pacing());
+    rig.sdk.steps = 2;
+    rig.sdk.step_times = { -2.0f, 0.0f };
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+
+    const PromptEvent* first = rig.last_prompt();
+    REQUIRE(first != nullptr);
+    CHECK(first->continuous);
+    CHECK(first->mode == StepMode::Hold);
+    CHECK(first->duration_s == 0.0);
+    CHECK(first->estimated_s == 2.0);
+
+    rig.confirm_current();
+    CHECK(rig.sdk.count("start_step") == 1);
+    CHECK(rig.all<StepAcceptedEvent>().size() == 1);
+    REQUIRE(rig.all<StepProgressEvent>().size() == 1);
+    CHECK(rig.all<StepProgressEvent>()[0]->elapsed_s == 0.0);
+
+    // No next prompt before the estimate has elapsed, and exactly at it the next prompt appears.
+    rig.clock.advance(1.9);
+    rig.engine->tick();
+    CHECK(rig.all<PromptEvent>().size() == 1);
+    rig.clock.advance(0.1);
+    rig.engine->tick();
+    REQUIRE(rig.all<PromptEvent>().size() == 2);
+    CHECK_FALSE(rig.last_prompt()->continuous);
+    CHECK(rig.all<StepProgressEvent>().back()->elapsed_s == 2.0);
+
+    // A duplicate confirm during or after the window is acknowledged and never starts another SDK step.
+    rig.send(ConfirmCommand{ "att1", first->token });
+    CHECK(rig.sdk.count("start_step") == 1);
+}
+
+TEST_CASE("window pacing holds the last continuous step before finishing and exporting",
+          "[unit][engine][flow][continuous][window]")
+{
+    Rig rig(window_pacing());
+    rig.sdk.steps = 1;
+    rig.sdk.step_times = { -3.0f };
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+    rig.confirm_current();
+
+    rig.clock.advance(2.9);
+    rig.engine->tick();
+    CHECK_FALSE(rig.engine->finished());
+    CHECK(rig.sdk.count("finish") == 0);
+    CHECK(rig.writer.files.empty());
+
+    rig.clock.advance(0.1);
+    rig.engine->tick();
+    require_clean_terminal(rig);
+    CHECK(the_result(rig).outcome == Outcome::Completed);
+    CHECK(rig.writer.files.count("/stage/att1_left.mcal") == 1);
+}
+
+TEST_CASE("a routine of all continuous steps completes under window pacing with bounded progress",
+          "[unit][engine][flow][continuous][window]")
+{
+    const std::vector<float> real_times = { -2.0f, -2.0f, -10.0f, -5.0f, -3.0f, -3.0f, -3.0f, -3.0f };
+    Rig rig(window_pacing());
+    rig.sdk.steps = 8;
+    rig.sdk.step_times = real_times;
+    rig.start({ Side::Left, Side::Right });
+    rig.run_to_end();
+
+    require_clean_terminal(rig);
+    CHECK(the_result(rig).outcome == Outcome::Completed);
+    CHECK(rig.sdk.count("start_step") == 16);
+    CHECK(rig.all<StepAcceptedEvent>().size() == 16);
+    const auto prompts = rig.all<PromptEvent>();
+    REQUIRE(prompts.size() == 16);
+    for (const StepProgressEvent* progress : rig.all<StepProgressEvent>())
+    {
+        // Progress never exceeds the estimate of the prompt it belongs to.
+        for (const PromptEvent* prompt : prompts)
+        {
+            if (prompt->token == progress->token)
+            {
+                CHECK(progress->elapsed_s <= prompt->estimated_s);
+            }
+        }
+    }
+}
+
+TEST_CASE("cancelling inside a window-paced continuous step ends cancelled and publishes no file",
+          "[unit][engine][flow][continuous][window]")
+{
+    Rig rig(window_pacing());
+    rig.sdk.steps = 2;
+    rig.sdk.step_times = { -5.0f, -5.0f };
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+    rig.confirm_current();
+    rig.clock.advance(1.0);
+    rig.engine->tick();
+
+    rig.engine->request_cancel();
+    rig.engine->tick();
+
+    require_clean_terminal(rig);
+    CHECK(the_result(rig).outcome == Outcome::Cancelled);
+    CHECK(rig.writer.files.empty());
+}
+
+TEST_CASE("a glove disappearing during a window-paced continuous step fails the attempt",
+          "[unit][engine][flow][continuous][window]")
+{
+    Rig rig(window_pacing());
+    rig.sdk.steps = 1;
+    rig.sdk.step_times = { -5.0f };
+    rig.start({ Side::Left });
+    rig.run_to_prompt();
+    rig.confirm_current();
+
+    rig.sdk.landscape = {};
+    rig.clock.advance(1.0);
+    rig.engine->tick();
+
+    require_clean_terminal(rig);
+    CHECK(the_result(rig).outcome == Outcome::Failed);
+    CHECK(rig.writer.files.empty());
+}
+
 namespace
 {
 

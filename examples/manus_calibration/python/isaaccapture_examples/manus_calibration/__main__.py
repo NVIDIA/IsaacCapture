@@ -54,6 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=15.0,
         help="seconds the worker waits for the requested gloves (default: 15)",
     )
+    parser.add_argument(
+        "--continuous-pacing",
+        choices=("operator", "window"),
+        default="operator",
+        help="how a continuous step is paced: 'operator' (move, then confirm; the step ends at once) or "
+        "'window' (confirm, then move for the SDK's estimate); default: operator",
+    )
     return parser
 
 
@@ -71,7 +78,10 @@ async def _serve(args: argparse.Namespace) -> int:
     """Serve until interrupted, then cancel any active attempt and wait for the worker to settle."""
     out_dir = args.out_dir.resolve()
     worker = CalibrationWorker(
-        args.worker, out_dir, discovery_timeout_s=args.discovery_timeout
+        args.worker,
+        out_dir,
+        discovery_timeout_s=args.discovery_timeout,
+        continuous_pacing=args.continuous_pacing,
     )
     server = PageServer(worker, out_dir, args.host, args.port, args.sides)
     await server.start()

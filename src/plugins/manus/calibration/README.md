@@ -16,7 +16,7 @@ consumer first (the tracking plugin, other SDK clients): the dongles are not sha
 ## Process contract
 
 ```
-manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS]
+manus_glove_calibrator --ipc-fd=N [--discovery-timeout=SECONDS] [--continuous-pacing=operator|window]
 ```
 
 - `N` is an inherited, already-connected `AF_UNIX`/`SOCK_STREAM` socket (a `socketpair` end). The
@@ -71,10 +71,15 @@ glove side and step index where known.
   (`glove_missing`/`glove_replaced`).
 - Read step count, titles, instructions and times from the SDK; never hardcode them. Every step of a
   glove is checked before the first prompt, and a non-finite time fails the attempt with `step_failed`.
-- A continuous step (negative SDK time) is paced by the operator: the operator performs the pose or
-  movement, confirms, the worker starts the SDK step and offers the next prompt. The SDK documents no completion signal for such steps, so the worker never
-  claims one; whether a routine made of them yields a usable calibration is established only by the
-  exported files loading in tracking.
+- A continuous step (negative SDK time) is a hold whose prompt carries the SDK's estimate. The SDK
+  documents no completion signal for such steps, so the worker never claims one; whether a routine
+  made of them yields a usable calibration is established only by the exported files loading in
+  tracking. `--continuous-pacing` selects the order. `operator` (default): the operator moves,
+  confirms, the worker starts the SDK step and offers the next prompt at once. `window`: the operator
+  confirms and moves, the worker starts the SDK step, then holds it for the estimate, reporting
+  `step_progress` bounded by `estimated_s`, before the next prompt or the finish and export after the
+  last step. The window is a time estimate, not completion detection. The supervisor and the page
+  must be started with the same policy as the worker; the JSON schema is unchanged.
 - Every prompt needs its own `confirm`, including the first prompt of the second glove. A `confirm`
   that is not for the currently offered token is `rejected` (`stale_token`) and changes nothing. A
   step is not skippable.

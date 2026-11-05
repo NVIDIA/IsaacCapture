@@ -11,6 +11,8 @@ const STAGE_TEXT = {
   discovering: "Looking for the requested gloves...",
   awaiting_confirmation: "Waiting for your confirmation.",
   sampling: "The SDK is sampling. Follow the instruction below.",
+  sampling_estimate:
+    "The SDK started this step. Keep following the instruction; the bar is a time estimate, not a sign the step finished.",
   saving: "Saving the calibration files...",
   stopping: "Stopping...",
   finished: "Finished.",
@@ -73,9 +75,21 @@ function selectedSides() {
   return value === "both" ? ["left", "right"] : [value];
 }
 
+// A continuous step the worker holds for the SDK's estimate after the step starts.
+function windowContinuous(prompt) {
+  return Boolean(prompt && prompt.continuous && state.continuous_pacing === "window");
+}
+
 function guidance(prompt) {
   if (prompt.mode === "motion") {
     return `Confirm, then perform the movement for ${prompt.duration_s.toFixed(1)} seconds.`;
+  }
+  if (windowContinuous(prompt)) {
+    if (state.confirm_pending || requestInFlight) {
+      // Do not make the operator wait for the SDK before moving: the call may take a while to return.
+      return "Follow the instruction now. Waiting for the SDK to start the step.";
+    }
+    return `Confirm, then begin the instructed movement immediately and continue for about ${Math.round(prompt.estimated_s)} seconds.`;
   }
   if (prompt.continuous) {
     return `Get into the pose (or start the movement) for about ${Math.round(prompt.estimated_s)} seconds, then confirm.`;
@@ -87,6 +101,9 @@ function confirmLabel(prompt) {
   if (state.confirm_pending || requestInFlight) {
     return "Starting...";
   }
+  if (windowContinuous(prompt)) {
+    return `Start step (~${Math.round(prompt.estimated_s)} s)`;
+  }
   return prompt.mode === "motion" ? `Start motion (${Math.round(prompt.duration_s)} s)` : "Capture pose";
 }
 
@@ -97,7 +114,10 @@ function renderStatus() {
     $("stage").textContent =
       "Another browser is running a calibration; this page is read-only until it finishes.";
   } else {
-    $("stage").textContent = STAGE_TEXT[state.stage] || state.stage;
+    const timedEstimate = state.stage === "sampling" && windowContinuous(state.prompt);
+    $("stage").textContent = timedEstimate
+      ? STAGE_TEXT.sampling_estimate
+      : STAGE_TEXT[state.stage] || state.stage;
   }
   $("gloves").textContent = state.gloves.length
     ? "Gloves found: " + state.gloves.map((g) => `${g.side} (id ${g.glove_id})`).join(", ")
@@ -116,10 +136,11 @@ function renderStep() {
   $("step-title").textContent = prompt.title;
   $("step-instruction").textContent = prompt.instruction;
   $("step-guidance").textContent = guidance(prompt);
-  const sampling = state.stage === "sampling" && prompt.mode === "motion";
+  const sampling = state.stage === "sampling" && (prompt.mode === "motion" || windowContinuous(prompt));
   $("progress").hidden = !sampling;
-  if (sampling && prompt.duration_s > 0 && state.elapsed_s !== null) {
-    $("progress").value = Math.min(100, (100 * state.elapsed_s) / prompt.duration_s);
+  const window_s = prompt.continuous ? prompt.estimated_s : prompt.duration_s;
+  if (sampling && window_s > 0 && state.elapsed_s !== null) {
+    $("progress").value = Math.min(100, (100 * state.elapsed_s) / window_s);
   }
 }
 

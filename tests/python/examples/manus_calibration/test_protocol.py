@@ -376,6 +376,18 @@ def test_a_prompt_with_an_empty_instruction_is_accepted():
     assert prompt.instruction == ""
 
 
+def test_the_pacing_interval_is_the_estimate_for_a_continuous_step_else_the_duration():
+    assert (
+        proto.parse_event(mutate("prompt", continuous=True, estimated_s=3.5)).pacing_s
+        == 3.5
+    )
+    motion = mutate(
+        "prompt", mode="motion", duration_s=0.4, continuous=False, estimated_s=0
+    )
+    assert proto.parse_event(motion).pacing_s == 0.4
+    assert proto.parse_event(mutate("prompt")).pacing_s == 0
+
+
 def test_a_plain_hold_prompt_is_not_continuous():
     prompt = proto.parse_event(line(VALID["prompt"]))
     assert prompt.continuous is False

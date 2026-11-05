@@ -154,6 +154,65 @@ def test_a_listener_that_raises_does_not_stop_supervision(make_worker):
     run(scenario())
 
 
+CONTINUOUS = {
+    "steps": [
+        {
+            "title": "Fist",
+            "instruction": "f",
+            "time": 0,
+            "continuous": True,
+            "estimated": 0.3,
+        },
+        {
+            "title": "Open",
+            "instruction": "o",
+            "time": 0,
+            "continuous": True,
+            "estimated": 0.2,
+        },
+    ]
+}
+
+
+def test_window_pacing_holds_each_continuous_step_for_its_estimate(make_worker):
+    async def scenario():
+        r = Run(make_worker, CONTINUOUS, continuous_pacing="window")
+        began = time.monotonic()
+        outcome = await drive(r.attempt, LEFT)
+        assert outcome.kind is OutcomeKind.COMPLETED
+        # The last step is held too: export follows only after both estimates.
+        assert time.monotonic() - began >= 0.5
+        by_token: dict[str, list[float]] = {}
+        for e in r.events:
+            if isinstance(e, proto.StepProgress):
+                by_token.setdefault(e.token, []).append(e.elapsed_s)
+        prompts = [e for e in r.events if isinstance(e, proto.Prompt)]
+        assert len(prompts) == 2 and all(p.continuous for p in prompts)
+        for prompt in prompts:
+            progress = by_token[prompt.token]
+            assert progress == sorted(progress)
+            assert progress[-1] == pytest.approx(prompt.estimated_s)
+
+    run(scenario())
+
+
+def test_operator_pacing_ends_a_continuous_step_at_once_without_progress(make_worker):
+    async def scenario():
+        r = Run(make_worker, CONTINUOUS)
+        began = time.monotonic()
+        outcome = await drive(r.attempt, LEFT)
+        assert outcome.kind is OutcomeKind.COMPLETED
+        assert not r.seen(proto.StepProgress)
+        assert time.monotonic() - began < 0.5
+
+    run(scenario())
+
+
+def test_an_unknown_continuous_pacing_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        CalibrationWorker(tmp_path / "w", tmp_path / "out", continuous_pacing="fast")
+
+
 def test_motion_steps_report_progress_within_the_step_duration(make_worker):
     steps = {"steps": [{"title": "Wave", "instruction": "w", "time": 0.3}]}
 

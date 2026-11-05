@@ -255,7 +255,11 @@ inline std::string event_name(const Event& event)
 // Engine plus fakes, with every emitted event captured in order.
 struct Rig
 {
-    Rig() : sdk(log)
+    Rig() : Rig(EngineConfig{})
+    {
+    }
+
+    explicit Rig(const EngineConfig& engine_config) : sdk(log), config(engine_config)
     {
         engine = std::make_unique<CalibrationEngine>(
             sdk, writer, clock,

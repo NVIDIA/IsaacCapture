@@ -281,12 +281,14 @@ void CalibrationEngine::offer_prompt()
     }
     m_current_token = m_attempt + "-" + std::to_string(++m_prompt_seq);
     // A negative time marks a continuous step with only an estimated duration. The SDK offers no way to
-    // detect its completion, so it is paced by the operator like a hold: confirm starts the SDK step and
-    // the next prompt follows. The estimate is guidance only.
+    // detect its completion, so the estimate only paces the step: the operator moves first and the step
+    // ends at once (Operator), or the worker waits the estimate after the SDK accepts it (Window).
     const bool continuous = step.time_s < 0.0f;
     m_current_mode = step.time_s > 0.0f ? StepMode::Motion : StepMode::Hold;
     m_current_duration_s = m_current_mode == StepMode::Motion ? wire_seconds(static_cast<double>(step.time_s)) : 0.0;
     const double estimated_s = continuous ? wire_seconds(-static_cast<double>(step.time_s)) : 0.0;
+    const bool window_continuous = continuous && m_config.continuous_pacing == ContinuousPacing::Window;
+    m_pacing_s = m_current_mode == StepMode::Motion ? m_current_duration_s : (window_continuous ? estimated_s : 0.0);
     m_state = State::AwaitingStep;
     emit_status(Phase::AwaitingStep);
     m_sink(PromptEvent{ m_attempt, m_current_token, glove.side, glove.glove_id, m_step_index, m_step_count, step.title,
@@ -331,8 +333,13 @@ void CalibrationEngine::handle_confirm(const ConfirmCommand& command)
     }
     m_accepted_tokens.insert(command.token);
     m_sink(StepAcceptedEvent{ m_attempt, command.token });
+    // A cancellation that arrived while the SDK call ran must not advance or export.
+    if (terminate_if_cancelled())
+    {
+        return;
+    }
 
-    if (m_current_mode == StepMode::Motion)
+    if (m_pacing_s > 0.0)
     {
         m_state = State::CapturingStep;
         m_step_started_s = m_clock.now_s();
@@ -358,8 +365,8 @@ void CalibrationEngine::handle_cancel(const CancelCommand& command)
 void CalibrationEngine::advance_capture()
 {
     const double now = m_clock.now_s();
-    const double elapsed = std::min(std::max(now - m_step_started_s, 0.0), m_current_duration_s);
-    const bool window_over = elapsed >= m_current_duration_s;
+    const double elapsed = std::min(std::max(now - m_step_started_s, 0.0), m_pacing_s);
+    const bool window_over = elapsed >= m_pacing_s;
     if (window_over || now - m_last_progress_s >= m_config.progress_interval_s)
     {
         m_last_progress_s = now;

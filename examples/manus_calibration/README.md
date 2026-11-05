@@ -47,6 +47,7 @@ forward the port (`ssh -L 8080:127.0.0.1:8080 host`).
 | `--sides {left,right,both}` | Gloves preselected in the page. |
 | `--host`, `--port` | Where to serve. |
 | `--discovery-timeout SECONDS` | How long the worker waits for the requested gloves. |
+| `--continuous-pacing operator\|window` | How a continuous step is paced (default `operator`). `operator`: move, then confirm. `window`: confirm, then move for the SDK's estimate while the worker holds the step. Experimental until compared on real gloves. |
 
 ## What the operator sees
 
@@ -57,9 +58,11 @@ confirmation starts that step in the SDK.
 - A step with a positive SDK time starts a timed sampling window when confirmed, with a progress
   bar showing elapsed time (not a quality score).
 - A step with no time is confirmed once the operator is already in the pose.
-- A step with a negative SDK time is a continuous step whose duration the SDK only estimates. The page
-  shows the estimate as guidance. The worker has no completion signal for it: confirming starts the SDK
-  step and the next prompt follows, so a negative time does not prove the SDK finished sampling.
+- A step with a negative SDK time is a continuous step whose duration the SDK only estimates. The worker
+  has no completion signal for it, so a negative time does not prove the SDK finished sampling. With
+  `--continuous-pacing operator` the page asks you to get into the pose, then confirm, and the next
+  prompt follows at once. With `window` it asks you to confirm and move immediately; the worker holds
+  the step for the estimate and the bar shows elapsed time against it, not completion.
 
 One browser owns an attempt, and it must have the page's event stream open to start one. Other
 browsers see its progress but cannot confirm or cancel. If the owning tab disconnects, the attempt is

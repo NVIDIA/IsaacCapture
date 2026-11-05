@@ -23,7 +23,11 @@ _ACTIVE = frozenset(
 
 
 def view_to_dict(
-    view: View, client_id: str, out_dir: str, default_sides: str = "both"
+    view: View,
+    client_id: str,
+    out_dir: str,
+    default_sides: str = "both",
+    continuous_pacing: str = "operator",
 ) -> dict[str, Any]:
     """Snapshot for ``client_id``; only the owning browser is offered the prompt token."""
     owner = view.owner == client_id
@@ -49,6 +53,7 @@ def view_to_dict(
         "owner": owner,
         "out_dir": out_dir,
         "default_sides": default_sides,
+        "continuous_pacing": continuous_pacing,
         "gloves": [{"side": g.side.value, "glove_id": g.glove_id} for g in view.gloves],
         "prompt": prompt,
         "confirm_pending": view.confirm_pending,
