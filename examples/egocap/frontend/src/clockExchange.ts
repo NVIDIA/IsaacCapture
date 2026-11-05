@@ -58,6 +58,8 @@ export class ClockEstimator {
   private recent: Exchange[] = [];
   private epoch = 1;
   private current: ClockMapping | null = null;
+  /** Local time of the newest accepted exchange: staleness is about replies still arriving. */
+  private newestNs: bigint | null = null;
   /** Set, and left set, when a new exchange disagrees with the current mapping by more than it can explain. */
   discontinuity = false;
 
@@ -72,6 +74,7 @@ export class ClockEstimator {
   reset(): void {
     this.recent = [];
     this.current = null;
+    this.newestNs = null;
     this.epoch += 1;
   }
 
@@ -80,6 +83,7 @@ export class ClockEstimator {
     if (!wellFormed(exchange)) return "malformed exchange";
     if (rttNs(exchange) > this.maxRttNs) return "round trip too long";
     const previous = this.current;
+    this.newestNs = exchange.t4;
     const newest = this.mappingOf(exchange);
     let candidate: ClockMapping;
     if (previous !== null && this.disagrees(previous, newest)) {
@@ -105,7 +109,7 @@ export class ClockEstimator {
   /** The current mapping, or null when there is none yet or the last exchange is stale at `nowNs`. */
   mapping(nowNs: bigint): ClockMapping | null {
     const current = this.current;
-    if (current === null || nowNs - current.acceptedAtNs > this.staleAfterNs) return null;
+    if (current === null || this.newestNs === null || nowNs - this.newestNs > this.staleAfterNs) return null;
     return current;
   }
 

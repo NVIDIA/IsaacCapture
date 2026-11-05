@@ -124,7 +124,7 @@ def test_session_init_still_rejects_unknown_keys():
         {"url": "https://lk.example"},
         {"url": "lk.example:7881"},
         {"url": "x" * 600},
-        {"timestamp_basis": 4},
+        {"timestamp_basis": 5},
         {"timestamp_basis": 0},
         {"timestamp_basis": "1"},
         {"timestamp_basis": True},
@@ -480,6 +480,7 @@ def test_timestamp_basis_values_are_wire_stable():
     assert int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US) == 1
     assert int(p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US) == 2
     assert int(p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US) == 3
+    assert int(p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US) == 4
 
 
 @pytest.mark.parametrize(
@@ -487,9 +488,10 @@ def test_timestamp_basis_values_are_wire_stable():
     [
         (2, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
         (3, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
+        (4, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
     ],
 )
-def test_unix_bases_round_trip_through_json(value, expected):
+def test_non_default_bases_round_trip_through_json(value, expected):
     stream = _stream(timestamp_basis=value)
     assert stream.timestamp_basis == expected
     assert p.LiveKitCameraStream.from_json(stream.to_json()) == stream
@@ -502,6 +504,7 @@ def test_unix_bases_round_trip_through_json(value, expected):
         ("timestamp_basis: monotonic_us,", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
         ("timestamp_basis: processing_unix_us,", p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
         ("timestamp_basis: capture_unix_us,", p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
+        ("timestamp_basis: capture_monotonic_us,", p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
     ],
 )
 def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expected):
@@ -520,6 +523,8 @@ def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expect
         "unix_us",
         "UNIX_US",
         "CAPTURE_UNIX_US",
+        "CAPTURE_MONOTONIC_US",
+        "capture_monotonic",
         "2",
         "''",
         "null",

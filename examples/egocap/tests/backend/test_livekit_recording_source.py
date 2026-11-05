@@ -16,10 +16,12 @@ import pytest
 
 from capture_server import protocol as p
 from egocap_web import livekit_recording as lrec
+from egocap_web.clock_exchange import ClockMapping
 from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 
-CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
+UNIX_CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
 
@@ -59,10 +61,10 @@ def frame(stream_id: int, *, width=6, height=4) -> ReceivedFrame:
     return ReceivedFrame(
         stream_id=stream_id,
         image=np.zeros((height, width, 3), dtype=np.uint8),
-        # Captured just now on this host's clocks, so it passes the feed's frame-age check.
+        # Captured just now on this host's clock (the fake mapping is the identity): passes the frame-age check.
         receive_time_ns=time.monotonic_ns(),
         transport_timestamp_us=1,
-        user_timestamp_us=time.time_ns() // 1000,
+        user_timestamp_us=time.monotonic_ns() // 1000,
         frame_id=None,
         user_data=None,
     )
@@ -81,6 +83,7 @@ def test_only_capture_time_streams_with_full_geometry_are_recordable():
         keep,
         livekit_stream(17, basis=PROCESSING),
         livekit_stream(18, basis=MONO),
+        livekit_stream(22, basis=UNIX_CAPTURE),
         livekit_stream(19, width=None),
         livekit_stream(20, height=None),
         livekit_stream(21, fps=None),
@@ -92,6 +95,20 @@ def test_only_capture_time_streams_with_full_geometry_are_recordable():
 # --- LiveKitRecordingSource ------------------------------------------------------
 
 
+class FakeClockSync:
+    """Identity mapping once ``ready``; ``mapping()`` is None before that, like a publisher not yet answering."""
+
+    discontinuity = False
+
+    def __init__(self, ready: bool) -> None:
+        self.ready = ready
+
+    def mapping(self):
+        if not self.ready:
+            return None
+        return ClockMapping(epoch=1, offset_ns=0, rtt_ns=2_000, uncertainty_ns=1_000, accepted_at_ns=0)
+
+
 class FakeReceiver:
     """Per-stream queues; a ``None`` item is a lost track, an empty queue is a quiet camera."""
 
@@ -100,8 +117,11 @@ class FakeReceiver:
     #: When set, ``start``/``stop`` wait on it, so a test can stall the join or the leave.
     start_gate: asyncio.Event | None = None
     stop_gate: asyncio.Event | None = None
+    mapping_ready = True
 
-    def __init__(self, streams, token):
+    def __init__(self, streams, token, clock_sync=False):
+        self.clock_sync_requested = clock_sync
+        self.clock_sync = FakeClockSync(FakeReceiver.mapping_ready) if clock_sync else None
         self.streams, self.token = list(streams), token
         self.queues = {s.stream_id: asyncio.Queue() for s in streams}
         self.events: list[str] = []
@@ -146,6 +166,7 @@ def fake_receiver(monkeypatch):
     FakeReceiver.instances = []
     FakeReceiver.start_error = None
     FakeReceiver.start_gate = FakeReceiver.stop_gate = None
+    FakeReceiver.mapping_ready = True
     monkeypatch.setattr(lrec, "LiveKitFrameReceiver", FakeReceiver)
 
 
@@ -189,6 +210,7 @@ async def test_prepare_joins_with_a_token_for_the_first_streams_room_and_takes_e
     receiver = FakeReceiver.instances[0]
     assert tokens == ["room-a"]
     assert receiver.token == "token-room-a"
+    assert receiver.clock_sync_requested
     assert receiver.events == ["start"]
     assert all(q.empty() for q in receiver.queues.values())
     await source.stop()
@@ -219,6 +241,27 @@ async def test_a_quiet_stream_times_out_and_leaves_the_room():
     with pytest.raises(RuntimeError, match="sent no frame"):
         await source.prepare()
     assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_no_clock_mapping_before_the_timeout_fails_naming_clock_sync_and_leaves_the_room():
+    FakeReceiver.mapping_ready = False
+    streams = [livekit_stream(16)]
+    source = make_source(streams, timeout=0.2)
+    with pytest.raises(RuntimeError, match="clock-sync"):
+        await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_mapping_that_arrives_late_still_lets_the_take_start():
+    FakeReceiver.mapping_ready = False
+    streams = [livekit_stream(16)]
+    source = make_source(streams, timeout=2.0)
+    task = asyncio.ensure_future(prepare_with_frames(source, streams))
+    await asyncio.sleep(0.1)
+    assert not task.done()
+    FakeReceiver.instances[0].clock_sync.ready = True
+    await task
+    await source.stop()
 
 
 async def test_a_failing_join_leaves_the_room_and_propagates():

@@ -35,7 +35,12 @@ def test_parse_valid_streams_and_defaults(token_file):
     )
     assert args.streams == [emu.StreamSpec(0, "left"), emu.StreamSpec(1, "right")]
     assert args.token == "secret-token"
-    assert (args.width, args.height, args.fps, args.timestamp_basis) == (1280, 720, 30.0, "capture_unix_us")
+    assert (args.width, args.height, args.fps, args.timestamp_basis) == (
+        1280,
+        720,
+        30.0,
+        "capture_monotonic_us",
+    )
 
 
 @pytest.mark.parametrize(
@@ -66,7 +71,9 @@ def test_missing_or_empty_token_file_is_rejected(tmp_path, token_file):
         emu.parse_args(argv(empty, stream))
 
 
-@pytest.mark.parametrize("basis", ["capture_unix_us", "processing_unix_us", "monotonic_us"])
+@pytest.mark.parametrize(
+    "basis", ["capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"]
+)
 def test_each_timestamp_basis_choice_is_accepted(token_file, basis):
     args = emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a", f"--timestamp-basis={basis}"))
     assert args.timestamp_basis == basis
@@ -86,6 +93,7 @@ def test_user_timestamp_basis(monkeypatch):
     assert emu.user_timestamp_us("capture_unix_us") == 5_000
     assert emu.user_timestamp_us("processing_unix_us") == 5_000
     assert emu.user_timestamp_us("monotonic_us") == 9_000
+    assert emu.user_timestamp_us("capture_monotonic_us") == 9_000
 
 
 def test_metadata_fields_and_little_endian_user_data():
@@ -254,7 +262,12 @@ async def test_stamps_are_taken_together_before_the_frame_is_synthesized(token_f
 
 @pytest.mark.parametrize(
     ("basis", "expected_us"),
-    [("capture_unix_us", 1_000), ("monotonic_us", 1_000), ("processing_unix_us", 1_500)],
+    [
+        ("capture_monotonic_us", 1_000),
+        ("capture_unix_us", 1_000),
+        ("monotonic_us", 1_500),
+        ("processing_unix_us", 1_500),
+    ],
 )
 async def test_only_the_processing_basis_is_stamped_after_synthesis(
     token_file, fake_rtc, monkeypatch, basis, expected_us
@@ -317,6 +330,8 @@ def test_pipeline_delay_applies_at_capture_only_and_monotonic_follows_its_own_of
     # The Unix offset does not leak into the monotonic basis.
     assert model.adjustment_us("monotonic_us", at_capture=True) == 3_000_000 + 150 - 40_000
     assert model.adjustment_us("monotonic_us", at_capture=False) == 3_000_000 + 150
+    assert model.adjustment_us("capture_monotonic_us", at_capture=True) == 3_000_000 + 150 - 40_000
+    assert model.adjustment_us("capture_monotonic_us", at_capture=False) == 3_000_000 + 150
 
 
 def test_orin_monotonic_is_host_plus_offset_plus_drift():
@@ -421,7 +436,8 @@ async def test_tracks_sharing_one_model_get_equal_stamps_and_keep_their_identity
     clock = _model([10_000_000_000], offset_us=2_000, drift_ppm=15.0)
     first = await _publish_one(token_file, monkeypatch, 0, clock)
     second = await _publish_one(token_file, monkeypatch, 1, clock)
-    expected = 5_000_000 + 2_000 + 150
+    # The default basis is on the monotonic clock, which the Unix offset does not touch.
+    expected = 5_000_000 + 150
     for _, timestamp_us, metadata in (first, second):
         assert timestamp_us == metadata.user_timestamp == expected
         assert metadata.frame_id == 1
@@ -430,7 +446,7 @@ async def test_tracks_sharing_one_model_get_equal_stamps_and_keep_their_identity
 
 async def test_all_zero_model_reproduces_this_hosts_readings(token_file, monkeypatch):
     model = emu.ClockModel()
-    for basis in ("capture_unix_us", "processing_unix_us", "monotonic_us"):
+    for basis in ("capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"):
         assert model.adjustment_us(basis, at_capture=True) == model.adjustment_us(basis, at_capture=False) == 0
     _, timestamp_us, metadata = await _publish_one(token_file, monkeypatch, 0, model)
     assert timestamp_us == metadata.user_timestamp == 5_000_000
