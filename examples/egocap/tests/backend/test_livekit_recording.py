@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""livekit_recording: Unix-to-monotonic mapping, frame-to-sample conversion and the per-stream feed."""
+"""livekit_recording: Unix-to-monotonic mapping, the per-stream feed."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ from capture_server import protocol as p
 from egocap_web.livekit_receiver import ReceivedFrame
 from egocap_web.livekit_recording import (
     LiveKitRecordingFeed,
-    MappedFrame,
     UnixClockMap,
-    mapped_frame_to_samples,
+    unrecordable_reason,
 )
-from recording_service import PixelFormat
+from egocap_web.recording_adapter import RecordingIngress
+from recording_service import PixelFormat, SubmissionResult, SubmissionStatus, VideoSample
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
@@ -143,12 +143,15 @@ def test_default_clocks_map_now_to_about_now():
     assert mapped == pytest.approx(time.monotonic(), abs=0.05)
 
 
-# --- mapped_frame_to_samples ---------------------------------------------------
+# --- received frames -----------------------------------------------------------
 
 
 def _received(
-    stream_id: int = 16, user_ts: int | None = 1_000_000, receive_ns: int = 2_500_000_000
+    stream_id: int = 16, user_ts: int | None = 1_000_000, receive_ns: int | None = None
 ) -> ReceivedFrame:
+    if receive_ns is None:
+        # Arrives 0.1 s after capture on FixedMap's clock (capture = user_ts / 1e6 + 10).
+        receive_ns = int(((user_ts or 0) / 1e6 + 10.1) * 1e9)
     return ReceivedFrame(
         stream_id=stream_id,
         image=np.zeros((4, 6, 3), dtype=np.uint8),
@@ -158,23 +161,6 @@ def _received(
         frame_id=None,
         user_data=None,
     )
-
-
-def test_mapped_frame_becomes_one_rgb8_sample_in_seconds():
-    frame = _received()
-    samples = mapped_frame_to_samples(MappedFrame(frame, "head_left", 1.25))
-    assert len(samples) == 1
-    sample = samples[0]
-    assert sample.source == "head_left"
-    assert sample.pixel_format == PixelFormat.RGB8
-    assert sample.capture_time == 1.25
-    assert sample.receive_time == pytest.approx(2.5)
-    assert sample.image is frame.image
-
-
-def test_mapped_frame_image_is_the_received_image():
-    frame = _received()
-    assert MappedFrame(frame, "s", 0.0).image is frame.image
 
 
 # --- LiveKitRecordingFeed ------------------------------------------------------
@@ -218,10 +204,10 @@ class FakeIngress:
     """Records offers; answers each with the next scripted value (True once the script runs out)."""
 
     def __init__(self, answers: list[bool] | None = None) -> None:
-        self.offered: list[MappedFrame] = []
+        self.offered: list[VideoSample] = []
         self._answers = list(answers or [])
 
-    def offer(self, item: MappedFrame) -> bool:
+    def offer(self, item: VideoSample) -> bool:
         self.offered.append(item)
         return self._answers.pop(0) if self._answers else True
 
@@ -253,7 +239,48 @@ async def test_capture_stream_frames_are_offered_with_source_and_mapped_capture_
     await feed.stop()
     assert [m.source for m in ingress.offered] == ["head_left", "head_left"]
     assert [m.capture_time for m in ingress.offered] == [11.0, 12.0]
+    assert all(isinstance(m, VideoSample) for m in ingress.offered)
     assert feed.failure is None
+
+
+async def test_offered_sample_is_rgb8_with_the_frame_image_and_receive_time_in_seconds():
+    frame = _received(16, 1_000_000, receive_ns=11_100_000_000)
+    ingress = FakeIngress()
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left")], ingress, {16: "head_left"})
+    feed.start()
+    await _settle()
+    await feed.stop()
+    (sample,) = ingress.offered
+    assert isinstance(sample, VideoSample)
+    assert sample.source == "head_left"
+    assert sample.pixel_format == PixelFormat.RGB8
+    assert sample.image is frame.image
+    assert sample.capture_time == 11.0
+    assert sample.receive_time == pytest.approx(11.1)
+
+
+async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
+    submitted: list[VideoSample] = []
+
+    def submit(sample):
+        submitted.append(sample)
+        return SubmissionResult(SubmissionStatus.ACCEPTED, sample.source, None)
+
+    ingress = RecordingIngress(queue_capacity=4, submit=submit)
+    await ingress.start()
+    frame = _received(16, 1_000_000)
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left")], ingress, {16: "head_left"})
+    feed.start()
+    for _ in range(50):
+        if submitted:
+            break
+        await asyncio.sleep(0.01)
+    await feed.stop()
+    await ingress.stop()
+    assert feed.failure is None
+    assert ingress.failure is None
+    assert [x.source for x in submitted] == ["head_left"]
+    assert submitted[0].image is frame.image
 
 
 @pytest.mark.parametrize("basis", [MONO, PROCESSING])
@@ -416,3 +443,85 @@ async def test_a_stream_still_waiting_on_its_track_does_not_delay_another_that_i
     await _settle()
     await feed.stop()
     assert feed.failure == "Head left: the LiveKit track was lost"
+
+
+# --- frame age window ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("age_s", [-0.04, 0.0, 0.5, 1.99])
+async def test_frames_inside_the_age_window_are_offered(age_s):
+    frame = _received(16, 1_000_000, receive_ns=int((11.0 + age_s) * 1e9))
+    ingress = FakeIngress()
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left")], ingress)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert len(ingress.offered) == 1
+    assert feed.failure is None
+
+
+@pytest.mark.parametrize(
+    ("age_s", "text"), [(3.0, "frame age +3.000 s"), (-0.5, "frame age -0.500 s"), (2.01, "frame age +2.010 s")]
+)
+async def test_frames_outside_the_age_window_fail_the_feed_and_are_not_offered(age_s, text):
+    reasons: list[str] = []
+    frame = _received(16, 1_000_000, receive_ns=int((11.0 + age_s) * 1e9))
+    ingress = FakeIngress()
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left")], ingress, on_failure=reasons.append)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert ingress.offered == []
+    assert feed.failure == f"Head left: the publisher's clock disagrees with this host's ({text})"
+    assert reasons == [feed.failure]
+
+
+# --- unrecordable_reason -------------------------------------------------------
+
+
+def _started(*streams):
+    return type("Started", (), {"streams": list(streams)})()
+
+
+def _geometry(stream_id, basis=CAPTURE, **missing):
+    values = {"width": 6, "height": 4, "fps": 30.0} | missing
+    return p.LiveKitCameraStream(
+        stream_id=stream_id,
+        name=f"cam{stream_id}",
+        url="wss://lk",
+        room="r",
+        publisher="o",
+        track=f"t{stream_id}",
+        timestamp_basis=basis,
+        **values,
+    )
+
+
+def test_unrecordable_reason_is_none_without_a_session_or_streams():
+    assert unrecordable_reason(None) is None
+    assert unrecordable_reason(_started()) is None
+
+
+def test_unrecordable_reason_is_none_when_every_stream_is_recordable():
+    assert unrecordable_reason(_started(_geometry(16), _geometry(17))) is None
+
+
+def test_unrecordable_reason_names_a_stream_that_is_not_a_capture_time():
+    started = _started(_geometry(16), _geometry(17, PROCESSING), _geometry(18, MONO))
+    assert (
+        unrecordable_reason(started)
+        == "LiveKit stream 'cam17': its timestamps are not a capture time, so it cannot be recorded"
+    )
+
+
+@pytest.mark.parametrize("field", ["width", "height", "fps"])
+def test_unrecordable_reason_names_a_stream_missing_geometry(field):
+    started = _started(_geometry(16, **{field: None}))
+    assert (
+        unrecordable_reason(started)
+        == "LiveKit stream 'cam16': width, height and fps must be configured to record it"
+    )
+
+
+def test_unrecordable_reason_ignores_streams_that_are_not_livekit():
+    assert unrecordable_reason(_started(object(), _geometry(16))) is None

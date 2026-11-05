@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -67,3 +68,52 @@ def test_recorder_token_names_the_missing_variables(monkeypatch, missing):
     monkeypatch.delenv(missing)
     with pytest.raises(RuntimeError, match="LIVEKIT_API_KEY and LIVEKIT_API_SECRET"):
         app_module._recorder_livekit_token("room")
+
+
+# --- recording readiness -------------------------------------------------------
+
+
+def _ready_monitor(streams, cameras=()):
+    now = time.monotonic()
+    return SimpleNamespace(
+        tracking_descriptor=object(),
+        camera_descriptors=tuple(cameras),
+        native=SimpleNamespace(status=SimpleNamespace(running=True), started=SimpleNamespace(streams=streams)),
+        preview=SimpleNamespace(
+            tracking=lambda: SimpleNamespace(received_monotonic=now),
+            camera=lambda name: SimpleNamespace(received_monotonic=now),
+        ),
+    )
+
+
+@pytest.fixture
+def accepted_tracking(monkeypatch):
+    monkeypatch.setattr(app_module, "validate_tracking_descriptor", lambda descriptor: None)
+
+
+def test_readiness_accepts_recordable_livekit_streams_without_a_jpeg_camera(accepted_tracking):
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    check = app_module._recording_readiness_check(_ready_monitor([_stream(16, capture)]), None)
+    assert check() == (True, None)
+
+
+def test_readiness_without_any_stream_says_no_camera(accepted_tracking):
+    assert app_module._recording_readiness_check(_ready_monitor([]), None)() == (False, "no camera selected")
+
+
+def test_readiness_names_a_stream_whose_timestamps_are_not_a_capture_time(accepted_tracking):
+    streams = [
+        _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
+        _stream(17, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
+    ]
+    check = app_module._recording_readiness_check(_ready_monitor(streams), None)
+    assert check() == (
+        False,
+        "LiveKit stream 'cam17': its timestamps are not a capture time, so it cannot be recorded",
+    )
+
+
+def test_readiness_names_a_stream_without_geometry(accepted_tracking):
+    stream = _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US, width=None)
+    check = app_module._recording_readiness_check(_ready_monitor([stream]), None)
+    assert check() == (False, "LiveKit stream 'cam16': width, height and fps must be configured to record it")
