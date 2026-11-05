@@ -221,3 +221,25 @@ def test_banner_never_shows_token(token_file, capsys):
     emu.print_banner(emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a")))
     out = capsys.readouterr().out
     assert "secret-token" not in out and "a" in out
+
+
+async def test_stamps_are_taken_together_before_the_frame_is_synthesized(token_file, fake_rtc, monkeypatch):
+    args = emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a", "--fps=200"))
+    args.width, args.height = 4, 4
+    now_us = [1_000]
+
+    def slow_pattern(width, height, sensor, frame_id):
+        now_us[0] += 500  # synthesizing a frame takes time
+        return np.zeros((height, width, 4), np.uint8)
+
+    monkeypatch.setattr(emu, "make_pattern", slow_pattern)
+    monkeypatch.setattr(emu, "user_timestamp_us", lambda basis: now_us[0])
+    stop = asyncio.Event()
+    source = FakeSource(stop, limit=1)
+    await emu.publish_stream(
+        source, emu.StreamSpec(0, "a"), args, stop, emu.Counters({"a": 0}), capture_clock=lambda: now_us[0] * 1000
+    )
+    _, timestamp_us, metadata = source.calls[0]
+    # The same stamp goes to the frame and the metadata, and excludes the synthesis time.
+    assert timestamp_us == metadata.user_timestamp == 1_000
+    assert int.from_bytes(bytes(metadata.user_data), "little") == 1_000_000
