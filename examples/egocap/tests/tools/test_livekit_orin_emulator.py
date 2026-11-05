@@ -243,3 +243,33 @@ async def test_stamps_are_taken_together_before_the_frame_is_synthesized(token_f
     # The same stamp goes to the frame and the metadata, and excludes the synthesis time.
     assert timestamp_us == metadata.user_timestamp == 1_000
     assert int.from_bytes(bytes(metadata.user_data), "little") == 1_000_000
+
+
+@pytest.mark.parametrize(
+    ("basis", "expected_us"),
+    [("capture_unix_us", 1_000), ("monotonic_us", 1_000), ("processing_unix_us", 1_500)],
+)
+async def test_only_the_processing_basis_is_stamped_after_synthesis(
+    token_file, fake_rtc, monkeypatch, basis, expected_us
+):
+    args = emu.parse_args(
+        argv(token_file, "--add-stream=sensor=0,livekit=a", "--fps=200", f"--timestamp-basis={basis}")
+    )
+    args.width, args.height = 4, 4
+    now_us = [1_000]
+
+    def slow_pattern(width, height, sensor, frame_id):
+        now_us[0] += 500
+        return np.zeros((height, width, 4), np.uint8)
+
+    monkeypatch.setattr(emu, "make_pattern", slow_pattern)
+    monkeypatch.setattr(emu, "user_timestamp_us", lambda _basis: now_us[0])
+    stop = asyncio.Event()
+    source = FakeSource(stop, limit=1)
+    await emu.publish_stream(
+        source, emu.StreamSpec(0, "a"), args, stop, emu.Counters({"a": 0}), capture_clock=lambda: now_us[0] * 1000
+    )
+    _, timestamp_us, metadata = source.calls[0]
+    assert timestamp_us == metadata.user_timestamp == expected_us
+    # The raw capture counter is always read before synthesis.
+    assert int.from_bytes(bytes(metadata.user_data), "little") == 1_000_000
