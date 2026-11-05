@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("CameraGrid with offered LiveKit streams", () => {
-  it("renders LiveKit tiles beside MJPEG tiles, preview-only, with the MJPEG camera keeping the primary slot", async () => {
+  it("renders LiveKit tiles beside MJPEG tiles, with the MJPEG camera keeping the primary slot", async () => {
     stubFetch(200, { token: "tok" });
     const { container } = render(
       <CameraGrid snapshot={snapshot(["head_camera"], STREAMS)} live={true} receivedAtMonotonic={performance.now()} />,
@@ -68,7 +68,8 @@ describe("CameraGrid with offered LiveKit streams", () => {
     expect(screen.getByText("head_camera")).not.toBeNull();
     expect(screen.getByText("Head left", { exact: false })).not.toBeNull();
     expect(screen.getByText("Head right", { exact: false })).not.toBeNull();
-    expect(screen.getAllByText(/Preview only/)).toHaveLength(2);
+    expect(screen.queryByText(/Preview only/)).toBeNull();
+    expect(container.querySelector(".camera-preview-badge")).toBeNull();
     expect(container.querySelector(".camera-grid-items")?.className).toContain("camera-grid-items--n3");
     const primary = container.querySelectorAll(".camera-tile--primary");
     expect(primary).toHaveLength(1);

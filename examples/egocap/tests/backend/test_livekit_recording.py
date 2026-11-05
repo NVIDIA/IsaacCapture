@@ -364,19 +364,17 @@ async def test_streams_are_independent():
     assert sorted(m.source for m in ingress.offered) == ["src16", "src17"]
 
 
-async def test_a_stream_still_flowing_when_another_fails_stops_after_its_next_frame():
+async def test_a_stream_starting_after_another_has_failed_never_takes_a_frame():
     streams = [_stream(16, "Head left"), _stream(17, "Head right")]
     receiver = FakeReceiver({16: [], 17: [_received(17, 2_000_000)]})
     receiver.lost.add(16)
-    receiver.gates[17] = asyncio.Event()
     ingress = FakeIngress()
     feed = _feed(receiver, streams, ingress)
     feed.start()
     await _settle()
     assert feed.failure == "Head left: the LiveKit track was lost"
-    receiver.gates[17].set()
-    await _settle()
-    assert receiver.calls.count(17) == 1  # the loop ended instead of waiting for another frame
+    assert receiver.calls == [16]
+    assert ingress.offered == []
     await feed.stop()
 
 
