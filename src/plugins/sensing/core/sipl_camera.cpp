@@ -482,7 +482,7 @@ struct SiplCamera::Impl
     void frame_loop(Sensor& sensor);
     void event_loop(Sensor& sensor);
     void convert(Sensor& sensor, const Slot& slot, uint32_t write_idx);
-    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_ns, uint64_t capture_tsc_ns);
+    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc_ns);
     uint32_t pick_write_index(const Sensor& sensor) const;
     void cleanup();
 };
@@ -945,12 +945,12 @@ void SiplCamera::Impl::event_loop(Sensor& sensor)
 }
 
 void SiplCamera::Impl::publish(
-    Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_ns, uint64_t capture_tsc_ns)
+    Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_stamp_ns, uint64_t capture_tsc_ns)
 {
     std::lock_guard<std::mutex> guard(sensor.publish_mutex);
     sensor.publish_idx = static_cast<int>(write_idx);
     sensor.published_timestamp_ns = timestamp_ns;
-    sensor.published_unix_ns = unix_ns;
+    sensor.published_unix_ns = unix_stamp_ns;
     sensor.published_capture_tsc_ns = capture_tsc_ns;
     ++sensor.published_sequence;
 }
