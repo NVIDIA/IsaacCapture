@@ -63,6 +63,12 @@ uint64_t monotonic_ns()
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+uint64_t unix_ns()
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
 /// SIPL reports almost every failure as NVSIPL_STATUS_ERROR (10), which says
 /// nothing on its own -- the reason only appears in its own log, above a
 /// threshold that defaults to silent. SENSING_SIPL_TRACE=1..4 raises it
@@ -398,6 +404,7 @@ struct SiplCamera::Impl
         uint64_t published_sequence = 0;
         uint64_t consumed_sequence = 0;
         uint64_t published_timestamp_ns = 0;
+        uint64_t published_unix_ns = 0;
         uint64_t published_capture_tsc_ns = 0;
 
         std::thread frame_thread;
@@ -475,7 +482,7 @@ struct SiplCamera::Impl
     void frame_loop(Sensor& sensor);
     void event_loop(Sensor& sensor);
     void convert(Sensor& sensor, const Slot& slot, uint32_t write_idx);
-    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t capture_tsc_ns);
+    void publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_ns, uint64_t capture_tsc_ns);
     uint32_t pick_write_index(const Sensor& sensor) const;
     void cleanup();
 };
@@ -888,7 +895,9 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
                 }
             }
             buffer->Release();
-            publish(sensor, write_idx, monotonic_ns(), capture_tsc_ns);
+            // Both clocks are read back to back, so the pair names one instant.
+            const uint64_t stamp_ns = monotonic_ns();
+            publish(sensor, write_idx, stamp_ns, unix_ns(), capture_tsc_ns);
         }
     }
     catch (const std::exception& e)
@@ -935,11 +944,13 @@ void SiplCamera::Impl::event_loop(Sensor& sensor)
     }
 }
 
-void SiplCamera::Impl::publish(Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t capture_tsc_ns)
+void SiplCamera::Impl::publish(
+    Sensor& sensor, uint32_t write_idx, uint64_t timestamp_ns, uint64_t unix_ns, uint64_t capture_tsc_ns)
 {
     std::lock_guard<std::mutex> guard(sensor.publish_mutex);
     sensor.publish_idx = static_cast<int>(write_idx);
     sensor.published_timestamp_ns = timestamp_ns;
+    sensor.published_unix_ns = unix_ns;
     sensor.published_capture_tsc_ns = capture_tsc_ns;
     ++sensor.published_sequence;
 }
@@ -1196,6 +1207,7 @@ std::optional<FrameView> SiplCamera::latest(uint32_t sensor_id)
     view.width = sensor->info.width;
     view.height = sensor->info.height;
     view.timestamp_ns = sensor->published_timestamp_ns;
+    view.unix_ns = sensor->published_unix_ns;
     view.capture_tsc_ns = sensor->published_capture_tsc_ns;
     view.sequence = sensor->published_sequence;
     return view;
