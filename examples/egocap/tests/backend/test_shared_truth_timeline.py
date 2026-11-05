@@ -8,7 +8,12 @@ Truth events happen at known times on one reference timeline (the PC's monotonic
 three ways, each through the production path:
 
 * a camera on its own clock (offset, drift), through ``LiveKitRecordingFeed`` with the real ``ClockEstimator``; its
-  frame stamp is the capture instant, a fixed pipeline delay after the event, and its delivery delay jitters;
+  frame stamp is a fixed, stated delay after the event, and its delivery delay jitters. Two camera bases are
+  covered: ``SENSOR_CAPTURE_MONOTONIC_US`` (the stamp is the capture instant: exposure and readout after the event)
+  and ``PUBLISHER_MONOTONIC_US`` (the stamp is when the frame was ready to encode: the capture delay plus further
+  pipeline delay). Both are mapped identically and neither is corrected toward the event; the saved time is the
+  stamped time on the PC clock, i.e. the event time plus that basis's stated delay, within the declared
+  uncertainty;
 * a glove-like and a controller-like source, as ``CaptureFrame`` tracking blobs through the real conversion, saved
   under the HOST POLL time (``capture_time_ns``). That is not a device measurement time and nothing here maps it:
   an event shows up in the first poll at or after it, so its saved time is the poll time, up to one poll period
@@ -59,6 +64,12 @@ EVENT_PERIOD_S = 0.25
 EVENTS = 24
 #: The camera stamps the capture instant this long after the physical event (exposure and readout).
 CAM_PIPELINE_S = 0.012
+#: Frame-ready stamps add encode-queue delay on top of capture; the recording applies no correction for it.
+FRAME_READY_PIPELINE_S = 0.041
+CAMERA_BASES = {
+    p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: CAM_PIPELINE_S,
+    p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: FRAME_READY_PIPELINE_S,
+}
 #: Host polls of the two tracking sources; phases differ so they never coincide.
 GLOVE_POLL_S, GLOVE_PHASE_S = 0.010, 0.003
 CONTROLLER_POLL_S, CONTROLLER_PHASE_S = 0.014, 0.005
@@ -131,12 +142,14 @@ class Saved:
     controller_k: np.ndarray
     feed_failure: str | None
     raw_cam_stamp_s: dict[int, float]  # what the camera wrote, before any mapping
+    stamp_delay_s: float = CAM_PIPELINE_S  # the stated delay of the stamped instant after the event
 
 
 async def run_take(
     tmp_path,
     *,
     cam_clock: DeviceClock,
+    basis: p.LiveKitTimestampBasis = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
     cam_drop: frozenset[int] = frozenset(),
     glove_gaps: tuple[tuple[float, float], ...] = (),
     controller_gaps: tuple[tuple[float, float], ...] = (),
@@ -150,7 +163,7 @@ async def run_take(
     for k in range(EVENTS):
         if k in cam_drop:
             continue
-        capture_pc_ns = round((event_time_s(k) + CAM_PIPELINE_S) * S)
+        capture_pc_ns = round((event_time_s(k) + CAMERA_BASES[basis]) * S)
         # Delivery jitter stays under the event period so frames arrive in capture order.
         delay_s = rng.uniform(0.02, 0.2)
         stamp_us = round(cam_clock.read_ns(capture_pc_ns) / 1000)
@@ -174,7 +187,7 @@ async def run_take(
         room="r",
         publisher="o",
         track="t",
-        timestamp_basis=p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
+        timestamp_basis=basis,
     )
 
     config = ServiceConfig(
@@ -235,6 +248,7 @@ async def run_take(
         controller_k=np.array(controller_k),
         feed_failure=feed.failure,
         raw_cam_stamp_s=raw_stamp_s,
+        stamp_delay_s=CAMERA_BASES[basis],
     )
 
 
@@ -275,7 +289,7 @@ def assert_saved_artifacts_agree_with_truth(saved: Saved, *, observed_by_camera:
     for k, cam_s in cam_by_k.items():
         truth_s, unc_s = event_time_s(k), unc_by_k[k]
         # Camera against truth: the stated pipeline delay, within the declared uncertainty of its mapping.
-        assert abs(cam_s - (truth_s + CAM_PIPELINE_S)) <= unc_s + QUANTIZATION_S, (k, cam_s - truth_s)
+        assert abs(cam_s - (truth_s + saved.stamp_delay_s)) <= unc_s + QUANTIZATION_S, (k, cam_s - truth_s)
         for firsts, period_s in ((glove_first, GLOVE_POLL_S), (controller_first, CONTROLLER_POLL_S)):
             if k not in firsts:
                 continue  # a stall swallowed every poll that would have first shown this event
@@ -283,15 +297,18 @@ def assert_saved_artifacts_agree_with_truth(saved: Saved, *, observed_by_camera:
             poll_delay_s = poll_s - truth_s
             # Relative time between two sources: known pipeline minus known poll delay, within the camera's
             # declared uncertainty. The poll-time source adds none: its time is host time.
-            assert abs((cam_s - poll_s) - (CAM_PIPELINE_S - poll_delay_s)) <= unc_s + QUANTIZATION_S, k
+            assert abs((cam_s - poll_s) - (saved.stamp_delay_s - poll_delay_s)) <= unc_s + QUANTIZATION_S, k
             # The same claim in the bound a reader can state without knowing the delays exactly.
-            assert abs(cam_s - poll_s) <= unc_s + CAM_PIPELINE_S + max(poll_delay_s, period_s) + QUANTIZATION_S
+            assert (
+                abs(cam_s - poll_s) <= unc_s + saved.stamp_delay_s + max(poll_delay_s, period_s) + QUANTIZATION_S
+            )
             paired += 1
     assert paired
 
 
-async def test_camera_events_line_up_with_host_polled_sources_in_the_saved_timestamps(tmp_path):
-    saved = await run_take(tmp_path, cam_clock=default_cam_clock())
+@pytest.mark.parametrize("basis", list(CAMERA_BASES), ids=lambda b: b.name)
+async def test_camera_events_line_up_with_host_polled_sources_in_the_saved_timestamps(tmp_path, basis):
+    saved = await run_take(tmp_path, cam_clock=default_cam_clock(), basis=basis)
     assert saved.feed_failure == "cam: the LiveKit track was lost"
     assert len(saved.camera_t) == EVENTS
     assert set(saved.glove_k) == set(saved.controller_k) == set(range(EVENTS))
@@ -363,6 +380,9 @@ def assert_saved_artifacts_agree_with_truth_for(saved: Saved, ks: set[int]) -> N
     glove_first = first_poll_showing(saved.glove_t, saved.glove_k)
     for k in ks:
         truth_s = event_time_s(k)
-        assert abs(cam_by_k[k] - (truth_s + CAM_PIPELINE_S)) <= unc_by_k[k] + QUANTIZATION_S, k
+        assert abs(cam_by_k[k] - (truth_s + saved.stamp_delay_s)) <= unc_by_k[k] + QUANTIZATION_S, k
         poll_s = glove_first[k]
-        assert abs((cam_by_k[k] - poll_s) - (CAM_PIPELINE_S - (poll_s - truth_s))) <= unc_by_k[k] + QUANTIZATION_S
+        assert (
+            abs((cam_by_k[k] - poll_s) - (saved.stamp_delay_s - (poll_s - truth_s)))
+            <= unc_by_k[k] + QUANTIZATION_S
+        )

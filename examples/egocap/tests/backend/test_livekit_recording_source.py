@@ -79,19 +79,20 @@ def test_no_started_session_has_no_recordable_streams():
     assert recordable_livekit_streams(None) == ()
 
 
-def test_only_capture_time_streams_with_full_geometry_are_recordable():
+def test_only_monotonic_streams_with_full_geometry_are_recordable():
     keep = livekit_stream(16)
+    frame_ready = livekit_stream(18, basis=MONO)
     streams = [
         keep,
+        frame_ready,
         livekit_stream(17, basis=PROCESSING),
-        livekit_stream(18, basis=MONO),
         livekit_stream(22, basis=UNIX_CAPTURE),
         livekit_stream(19, width=None),
         livekit_stream(20, height=None),
         livekit_stream(21, fps=None),
         jpeg_camera(),
     ]
-    assert recordable_livekit_streams(SimpleNamespace(streams=streams)) == (keep,)
+    assert recordable_livekit_streams(SimpleNamespace(streams=streams)) == (keep, frame_ready)
 
 
 # --- LiveKitRecordingSource ------------------------------------------------------
@@ -416,7 +417,7 @@ async def test_without_clock_sync_there_is_no_timing_evidence():
 
 async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(monkeypatch):
     monkeypatch.delenv(lrec.BUDGET_ENV, raising=False)
-    streams = [livekit_stream(16), livekit_stream(17)]
+    streams = [livekit_stream(16), livekit_stream(17, basis=MONO)]
     source, receiver = await prepared_source(streams)
     history = history_of(3)
     receiver.clock_sync = clock_sync_with(history, discontinuity=True, rejected=4, current=False)
@@ -428,8 +429,14 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
             "method": "four_timestamp_exchange",
             "local_clock": "pc_monotonic",
             "remote_clock": "publisher_monotonic",
-            "streams": [{"name": "cam16", "timestamp_basis": "SENSOR_CAPTURE_MONOTONIC_US"}]
-            + [{"name": "cam17", "timestamp_basis": "SENSOR_CAPTURE_MONOTONIC_US"}],
+            "streams": [
+                {
+                    "name": "cam16",
+                    "timestamp_basis": "SENSOR_CAPTURE_MONOTONIC_US",
+                    "time_meaning": "sensor_capture",
+                },
+                {"name": "cam17", "timestamp_basis": "PUBLISHER_MONOTONIC_US", "time_meaning": "frame_ready"},
+            ],
             "mappings": [
                 {
                     "epoch": m.epoch,

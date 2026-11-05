@@ -202,10 +202,14 @@ class TimeUnit(IntEnum):
 
 
 class LiveKitTimestampBasis(IntEnum):
-    """What a LiveKit frame's ``user_timestamp_us`` means. Only the capture bases name a capture event."""
+    """What a LiveKit frame's ``user_timestamp_us`` means.
 
-    # The publisher host's monotonic clock in microseconds, read when the frame is processed. Not on any clock
-    # this host can convert.
+    Recording accepts the two monotonic bases: the frame-ready time (1) and the sensor capture event (4).
+    """
+
+    # The publisher host's monotonic clock in microseconds, read when the frame is ready to encode: after capture
+    # and conversion, so later than the sensor's capture event. Recordable: the PC maps it onto its own monotonic
+    # clock with the publisher's four-timestamp clock-sync exchanges.
     PUBLISHER_MONOTONIC_US = 1
     # Unix time in microseconds on the publisher host when the frame finished conversion: processing time,
     # later than capture by the capture and conversion delay.
@@ -215,8 +219,7 @@ class LiveKitTimestampBasis(IntEnum):
     # approved synchronization path, so the value is kept for the wire's sake only.
     SENSOR_CAPTURE_UNIX_US = 3
     # The sensor's capture event in microseconds on the publisher host's monotonic clock, mapped from the sensor's
-    # own counter by a sender that has verified the mapping. The basis a recording accepts: the PC maps it onto its
-    # own monotonic clock with four-timestamp clock-sync exchanges answered by the same publisher.
+    # own counter by a sender that has verified the mapping. Recordable the same way as PUBLISHER_MONOTONIC_US.
     SENSOR_CAPTURE_MONOTONIC_US = 4
 
 

@@ -105,7 +105,7 @@ def test_readiness_without_any_stream_says_no_camera(accepted_tracking):
     assert app_module._recording_readiness_check(_ready_monitor([]), None)() == (False, "no camera selected")
 
 
-def test_readiness_names_a_stream_whose_timestamps_are_not_a_capture_time(accepted_tracking):
+def test_readiness_names_a_stream_whose_timestamps_are_not_monotonic(accepted_tracking):
     streams = [
         _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
         _stream(17, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
@@ -113,7 +113,7 @@ def test_readiness_names_a_stream_whose_timestamps_are_not_a_capture_time(accept
     check = app_module._recording_readiness_check(_ready_monitor(streams), None)
     assert check() == (
         False,
-        "LiveKit stream 'cam17': its timestamps are not a capture event on the publisher's monotonic clock, "
+        "LiveKit stream 'cam17': its timestamps are not on the publisher's monotonic clock, "
         "so it cannot be recorded",
     )
 

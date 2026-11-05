@@ -269,8 +269,15 @@ export interface LiveKitStreamDescriptor {
   timestamp_basis: number;
 }
 
+/** LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: the frame-ready time on the publisher's monotonic clock. */
+export const TIMESTAMP_BASIS_PUBLISHER_MONOTONIC_US = 1;
 /** LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: the capture event on the publisher's monotonic clock. */
 export const TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US = 4;
+/** The bases whose stamp the browser can place on the publisher's monotonic clock. */
+export const MONOTONIC_TIMESTAMP_BASES: readonly number[] = [
+  TIMESTAMP_BASIS_PUBLISHER_MONOTONIC_US,
+  TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US,
+];
 
 export type StreamDescriptor = TrackingStreamDescriptor | CameraStreamDescriptor | LiveKitStreamDescriptor;
 

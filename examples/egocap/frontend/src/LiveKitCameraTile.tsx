@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RemoteTrack } from "livekit-client";
 import { latencySample, summarizeLatency } from "./displayLatency";
 import type { LatencySample } from "./displayLatency";
-import { TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US } from "./captureProtocol";
+import { MONOTONIC_TIMESTAMP_BASES } from "./captureProtocol";
 import type { LiveKitClockSync } from "./liveKitClockSync";
 import type { LiveKitPhase } from "./useLiveKitPreview";
 
@@ -118,7 +118,7 @@ export function LiveKitCameraTile({
         frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
         // The publisher's stamp for exactly this frame, by its RTP timestamp, against its expected display time.
         const rtp = (metadata as { rtpTimestamp?: number }).rtpTimestamp;
-        if (basis === TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US && typeof rtp === "number" && "lookupFrameMetadata" in track) {
+        if (MONOTONIC_TIMESTAMP_BASES.includes(basis) && typeof rtp === "number" && "lookupFrameMetadata" in track) {
           const stamp = (track as { lookupFrameMetadata: (a: { rtpTimestamp: number }) => { userTimestamp: bigint } | undefined })
             .lookupFrameMetadata({ rtpTimestamp: rtp });
           const sample = latencySample(metadata.expectedDisplayTime, stamp, clock?.mapping() ?? null);

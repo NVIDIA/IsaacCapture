@@ -348,6 +348,19 @@ async def test_offered_sample_is_rgb8_with_the_frame_image_and_receive_time_in_s
     assert sample.receive_time == pytest.approx(11.1)
 
 
+async def test_publisher_monotonic_stream_is_recorded_through_the_clock_mapping():
+    ingress = FakeIngress()
+    frame = _received(16, 1_000_000, receive_ns=11_100_000_000)
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left", MONO)], ingress, {16: "head_left"})
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    (sample,) = ingress.offered
+    assert sample.source == "head_left"
+    assert sample.capture_time == 11.0
+
+
 async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
     submitted: list[VideoSample] = []
 
@@ -372,7 +385,7 @@ async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
     assert submitted[0].image is frame.image
 
 
-@pytest.mark.parametrize("basis", [MONO, PROCESSING, UNIX_CAPTURE])
+@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
 async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
     reasons: list[str] = []
     streams = [_stream(16, "Head left", basis)]
@@ -386,7 +399,7 @@ async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
     assert receiver.calls == []  # refused before any frame was taken
     assert feed.failure is not None
     assert "Head left" in feed.failure
-    assert feed.failure == "Head left: its timestamps are not a capture event on the publisher's monotonic clock"
+    assert feed.failure == "Head left: its timestamps are not on the publisher's monotonic clock"
     assert reasons == [feed.failure]
 
 
@@ -421,7 +434,7 @@ async def test_refusing_ingress_fails_and_stops_that_stream():
 
 async def test_failure_is_reported_once_across_streams():
     reasons: list[str] = []
-    streams = [_stream(16, "Head left", MONO), _stream(17, "Head right", MONO)]
+    streams = [_stream(16, "Head left", PROCESSING), _stream(17, "Head right", PROCESSING)]
     feed = _feed(FakeReceiver({}), streams, FakeIngress(), on_failure=reasons.append)
     feed.start()
     await _settle()
@@ -432,7 +445,7 @@ async def test_failure_is_reported_once_across_streams():
 
 
 async def test_failure_without_a_callback_is_still_stored():
-    feed = _feed(FakeReceiver({}), [_stream(16, "Head left", MONO)], FakeIngress())
+    feed = _feed(FakeReceiver({}), [_stream(16, "Head left", PROCESSING)], FakeIngress())
     feed.start()
     await _settle()
     await feed.stop()
@@ -710,11 +723,23 @@ def test_unrecordable_reason_is_none_when_every_stream_is_recordable():
     assert unrecordable_reason(_started(_geometry(16), _geometry(17))) is None
 
 
-def test_unrecordable_reason_names_a_stream_that_is_not_a_capture_time():
+def test_unrecordable_reason_names_a_stream_that_is_not_monotonic():
     started = _started(_geometry(16), _geometry(17, PROCESSING), _geometry(18, MONO))
     assert (
         unrecordable_reason(started)
-        == "LiveKit stream 'cam17': its timestamps are not a capture event on the publisher's monotonic clock, "
+        == "LiveKit stream 'cam17': its timestamps are not on the publisher's monotonic clock, "
+        "so it cannot be recorded"
+    )
+
+
+def test_publisher_monotonic_stream_is_recordable():
+    assert unrecordable_reason(_started(_geometry(16, MONO), _geometry(17))) is None
+
+
+@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
+def test_non_monotonic_bases_are_still_refused(basis):
+    assert unrecordable_reason(_started(_geometry(16, basis))) == (
+        "LiveKit stream 'cam16': its timestamps are not on the publisher's monotonic clock, "
         "so it cannot be recorded"
     )
 
