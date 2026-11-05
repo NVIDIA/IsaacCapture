@@ -23,9 +23,9 @@ struct EncodedVideoFrame
     bool keyframe = false;
     /// CLOCK_MONOTONIC microseconds at capture: the host timeline, not sensor time.
     uint64_t timestamp_us = 0;
-    /// Unix time in microseconds on the publishing host at the same instant. Carried as the frame's
-    /// application timestamp, which a consumer on another host maps onto its own clock; the transport
-    /// timestamp above stays monotonic.
+    /// Unix time in microseconds on the publishing host when the frame finished conversion: processing
+    /// time, not a capture time. Carried as the frame's application timestamp; the transport timestamp
+    /// above stays monotonic.
     uint64_t user_timestamp_us = 0;
     /// The camera's own frame sequence.
     uint32_t frame_id = 0;
