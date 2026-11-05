@@ -21,6 +21,9 @@ const FRAME_STALE_AFTER_MS = 3000;
 const FPS_WINDOW_MS = 1000;
 /** Recent latency samples kept per window. */
 const MAX_LATENCY_SAMPLES = 240;
+/** Shown in place of a number that is not available. */
+const NO_LATENCY = "– ms";
+const NO_FPS = "– FPS";
 
 /** The displayed rate for one window from cumulative presented-frame counts; null for an invalid interval. */
 export function displayedFps(previous: { presented: number; at: number }, presented: number, at: number): number | null {
@@ -67,7 +70,8 @@ export function LiveKitCameraTile({
   const [frameFields, setFrameFields] = useState<string>("");
   // Latency of each presented frame in the current window, and the label shown for the last full window.
   const latencySamplesRef = useRef<LatencySample[]>([]);
-  const [latencyLabel, setLatencyLabel] = useState<string>("latency unavailable");
+  const [latencyLabel, setLatencyLabel] = useState<string>(NO_LATENCY);
+  const [latencyDetail, setLatencyDetail] = useState<string>("");
   const [fpsLabel, setFpsLabel] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
   const [stale, setStale] = useState(false);
@@ -79,7 +83,8 @@ export function LiveKitCameraTile({
     presentedRef.current = null;
     baselineRef.current = null;
     latencySamplesRef.current = [];
-    setLatencyLabel("latency unavailable");
+    setLatencyLabel(NO_LATENCY);
+    setLatencyDetail("");
     setFpsLabel(null);
     setHasFrame(false);
     setStale(false);
@@ -140,27 +145,25 @@ export function LiveKitCameraTile({
       latencySamplesRef.current = [];
       const mapping = clock?.mapping() ?? null;
       const summary = mapping === null ? null : summarizeLatency(samples, mapping.epoch);
-      const latencyText =
-        summary === null
-          ? "latency unavailable"
-          : `${summary.median.toFixed(0)} ms ±${summary.uncertaintyMs.toFixed(0)} (p95 ${summary.p95.toFixed(0)})`;
+      const latencyText = summary === null ? NO_LATENCY : `${summary.mean.toFixed(0)} ms`;
+      setLatencyDetail(summary === null ? "" : `±${summary.uncertaintyMs.toFixed(1)} ms, 95th percentile ${summary.p95.toFixed(0)} ms`);
       if (!hasFrameCallback) {
-        setFpsLabel("FPS unavailable");
-        setLatencyLabel("latency unavailable");
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
       } else if (document.hidden) {
         baselineRef.current = null; // a hidden tab's scheduling is not comparable: restart after it returns
-        setFpsLabel("paused");
-        setLatencyLabel("latency unavailable");
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
       } else if (isStale) {
         baselineRef.current = null;
         setFpsLabel("0 FPS");
-        setLatencyLabel("latency unavailable");
+        setLatencyLabel(NO_LATENCY);
       } else if (presented !== null) {
         setLatencyLabel(latencyText);
         const previous = baselineRef.current;
         baselineRef.current = { presented, at: now };
         const fps = previous === null ? null : displayedFps(previous, presented, now);
-        if (fps !== null) setFpsLabel(`${fps.toFixed(1)} FPS`);
+        if (fps !== null) setFpsLabel(`${fps.toFixed(0)} FPS`);
       }
     }, FPS_WINDOW_MS);
     // The timer can be throttled or suspended while the tab is hidden, so the transition itself resets the window:
@@ -169,8 +172,8 @@ export function LiveKitCameraTile({
       baselineRef.current = null;
       latencySamplesRef.current = [];
       if (document.hidden) {
-        setFpsLabel("paused");
-        setLatencyLabel("latency unavailable");
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -196,11 +199,11 @@ export function LiveKitCameraTile({
           <span
             className="camera-stats"
             title={
-              latencyLabel === "latency unavailable"
+              latencyLabel === NO_LATENCY
                 ? `No latency for the displayed frame: it needs the publisher's per-frame capture stamp (matched by RTP timestamp), a current clock mapping to the publisher, and a stream whose timestamp is a capture event on the publisher's monotonic clock.${
                     frameFields === "" ? "" : ` This browser's frame callback reports: ${frameFields}.`
                   }`
-                : "Capture event on the publisher's clock to the frame's expected display on this page, including receive, decode and render; ± is half the clock-exchange round trip plus this browser's timer resolution"
+                : `Capture event on the publisher's clock to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is half the clock-exchange round trip plus this browser's timer resolution`
             }
           >
             {latencyLabel}

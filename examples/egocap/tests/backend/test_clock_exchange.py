@@ -230,3 +230,64 @@ def test_reset_bumps_epoch_clears_mapping_and_keeps_history() -> None:
     assert mapping.epoch == adopted[0].epoch + 1
     assert estimator.history[: len(adopted)] == adopted
     assert len(estimator.history) == len(adopted) + 1
+
+
+def test_jittery_link_stays_available_while_replies_arrive_and_keeps_best_exchange() -> None:
+    # The best exchange is the earliest and ages far past the stale limit while later, worse ones keep arriving.
+    estimator = ClockEstimator(window=64)
+    best = make_exchange(S, offset=MS, forward=MS, back=1_200_000)
+    estimator.add(best)
+    for i in range(1, 21):
+        ex = make_exchange(S + i * S, offset=MS, forward=5 * MS, back=5 * MS)
+        assert estimator.add(ex) is None
+        mapping = estimator.mapping(ex.t4)
+        assert mapping is not None, f"mapping lost {i} s in"
+        assert mapping.offset_ns == best.offset_ns
+        assert mapping.rtt_ns == best.rtt_ns
+        assert mapping.accepted_at_ns == best.t4
+
+
+def test_mapping_goes_stale_when_exchanges_stop_and_returns_with_a_new_one() -> None:
+    estimator = ClockEstimator(stale_after_ns=5 * S, window=64)
+    first = make_exchange(S, offset=MS, forward=MS, back=MS)
+    last = make_exchange(4 * S, offset=MS, forward=4 * MS, back=4 * MS)
+    estimator.add(first)
+    estimator.add(last)
+
+    assert estimator.mapping(last.t4 + 5 * S) is not None
+    # The window still holds both, and the best one is older still, but staleness follows the newest exchange.
+    assert estimator.mapping(last.t4 + 5 * S + 1) is None
+    assert estimator.mapping(last.t4 + 60 * S) is None
+
+    again = make_exchange(70 * S, offset=MS, forward=4 * MS, back=4 * MS)
+    assert estimator.add(again) is None
+    assert estimator.mapping(again.t4) is not None
+
+
+def test_rejected_exchanges_do_not_refresh_staleness() -> None:
+    estimator = ClockEstimator(stale_after_ns=5 * S, max_rtt_ns=50 * MS)
+    ex = make_exchange(S, offset=MS)
+    estimator.add(ex)
+    late = ex.t4 + 5 * S + 1
+    assert estimator.mapping(late) is None
+
+    too_slow = make_exchange(3 * S, offset=MS, forward=60 * MS, back=60 * MS)
+    assert estimator.add(too_slow) == "round trip too long"
+    malformed = Exchange(t1=6 * S, t2=0, t3=0, t4=5 * S)
+    assert estimator.add(malformed) == "malformed exchange"
+    assert estimator.mapping(late) is None
+
+
+def test_reset_clears_newest_exchange_time_until_the_next_exchange() -> None:
+    estimator = ClockEstimator()
+    ex = make_exchange(S, offset=MS)
+    estimator.add(ex)
+    assert estimator.mapping(ex.t4) is not None
+
+    estimator.reset()
+    assert estimator.mapping(ex.t4) is None
+    assert estimator.mapping(ex.t4 + 1) is None
+
+    nxt = make_exchange(2 * S, offset=MS)
+    estimator.add(nxt)
+    assert estimator.mapping(nxt.t4) is not None
