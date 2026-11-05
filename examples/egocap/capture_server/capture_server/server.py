@@ -2056,11 +2056,10 @@ def _manus_calibration_dir(args: argparse.Namespace) -> Path | None:
 
 
 def _calibration_config(args: argparse.Namespace) -> CalibrationConfig | None:
-    """The calibration setup from ``--manus-calibration-dir``; None leaves calibration and file selection off.
+    """The calibration setup from ``--manus-calibration-dir``; None leaves calibration off.
 
-    The directory is always kept, so capture can select saved MCAL files. An explicit ``--manus-calibrator``
-    that is not an executable is a startup error. A missing default worker only disables generating new
-    calibrations, with a note so the operator knows why.
+    An explicit ``--manus-calibrator`` that is not an executable is a startup error. A missing default worker
+    only disables generating new calibrations, with a note so the operator knows why.
     """
     if args.manus_calibration_dir is None:
         if args.manus_calibrator is not None:
@@ -2072,8 +2071,7 @@ def _calibration_config(args: argparse.Namespace) -> CalibrationConfig | None:
             raise ValueError(f"--manus-calibrator {args.manus_calibrator} is not an executable file")
         print(
             "capture-server: no manus_glove_calibrator found under $ISAAC_ROOT/install/plugins/manus; "
-            "generating new calibrations is unavailable (pass --manus-calibrator PATH); saved files in "
-            "the calibration directory can still be selected for capture",
+            "generating new calibrations is unavailable (pass --manus-calibrator PATH)",
             file=sys.stderr,
         )
     return CalibrationConfig(directory=Path(args.manus_calibration_dir), worker_path=worker)

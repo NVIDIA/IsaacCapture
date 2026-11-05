@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from isaaccapture_manus_calibration import protocol as wp
 from isaaccapture_manus_calibration.worker import (
+    AttemptEnded,
     AttemptError,
     CalibrationAttempt,
     CalibrationOutcome,
@@ -56,10 +57,10 @@ _REASON_TO_WIRE = {
 
 @dataclass(frozen=True)
 class CalibrationConfig:
-    """The managed MCAL directory on this host and, when one is available, the worker that generates files.
+    """The MCAL directory on this host and, when one is available, the worker that generates files.
 
-    Generated files are written into this directory as plain ``.mcal`` files, the same folder the device query
-    lists. Calibration only writes there; it never reads or selects files back.
+    Generated files are written into this directory as plain ``.mcal`` files. Calibration only writes there;
+    it never reads or selects files back.
     """
 
     directory: Path
@@ -182,6 +183,10 @@ class CalibrationSession:
             raise ConfirmRefused("that step is not awaiting confirmation")
         try:
             await self._attempt.confirm(token)
+        except AttemptEnded:
+            # The attempt ended while the confirm was in flight; the terminal message ends the caller's wait, so
+            # no rejection is sent for a request that was not wrong.
+            return
         except AttemptError as exc:
             raise ConfirmRefused(str(exc)) from None
 

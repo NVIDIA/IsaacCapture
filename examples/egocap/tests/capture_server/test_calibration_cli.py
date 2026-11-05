@@ -4,8 +4,8 @@
 
 """The ``--manus-calibration-dir`` / ``--manus-calibrator`` options and worker discovery.
 
-The managed directory is always kept when it is given, so saved files stay selectable for capture; only a
-missing worker disables generating a calibration. An explicit worker path that cannot run is a startup error.
+The directory is always kept when it is given; only a missing worker disables generating a calibration.
+An explicit worker path that cannot run is a startup error.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def test_the_calibration_options_round_trip(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_no_calibration_options_leave_calibration_and_file_selection_off():
+def test_no_calibration_options_leave_calibration_off():
     assert _calibration_config(_args()) is None
 
 
@@ -77,7 +77,6 @@ def test_a_directory_without_a_findable_worker_is_kept_and_only_generation_is_di
     assert config == CalibrationConfig(directory=tmp_path, worker_path=None)
     err = capsys.readouterr().err
     assert "generating new calibrations is unavailable" in err
-    assert "can still be selected for capture" in err
 
 
 def test_a_directory_with_a_found_worker_enables_both_without_a_note(tmp_path, monkeypatch, capsys):

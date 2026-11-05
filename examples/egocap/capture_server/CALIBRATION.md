@@ -20,8 +20,7 @@ capture-server --manus-calibration-dir /var/lib/egocap/mcal \
 ```
 
 - `--manus-calibration-dir` enables the feature. New files are written there as plain `.mcal` files. It is the
-  same folder the server offers its MCAL files from, so a file written here is found wherever that folder is
-  read. It is created on first use.
+  plain folder, so other tools can read the files from it, and it is created on first use.
 - The worker is the explicit `--manus-calibrator` path (an unusable path is a startup error), else
   `$ISAAC_ROOT/install/plugins/manus/manus_glove_calibrator`, where the Manus component installs it. When no
   worker is found, ordinary capture is unaffected and only a calibration request is rejected with

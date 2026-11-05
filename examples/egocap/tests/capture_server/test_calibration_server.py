@@ -20,7 +20,7 @@ import pytest
 
 from capture_server import protocol as p
 from capture_server.calibration import CalibrationConfig, CalibrationSession
-from capture_server.client import CaptureClient
+from capture_server.client import CalibrationEndedError, CaptureClient
 from capture_server.server import ServerConfig
 from tests.capture_server.calibration_helpers import (
     BOTH,
@@ -681,3 +681,18 @@ async def test_calibration_messages_are_json_text_only_and_carry_no_capture_fram
                 break
     finally:
         await ws.close()
+
+
+async def test_a_confirm_in_flight_when_the_calibration_stops_ends_with_calibration_ended(make_station):
+    station = await make_station(scenario={"slow_confirm": 5.0})
+    run = CalibrationRun(station.url)
+    try:
+        await run.start()
+        await poll_until(lambda: bool(run.prompts()))
+        await poll_until(lambda: bool(run._tasks))
+        await run.client.stop_calibration()
+        await run.wait()
+        await poll_until(lambda: bool(run.errors))
+        assert [type(e) for e in run.errors] == [CalibrationEndedError]
+    finally:
+        await run.aclose()

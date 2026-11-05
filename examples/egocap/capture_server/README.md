@@ -92,7 +92,7 @@ restarted, because a timeout does not prove the device was released.
 
 CaptureServer can calibrate Manus gloves on its host and keep the MCAL files in a managed directory for
 later capture. See [`CALIBRATION.md`](CALIBRATION.md) for setup, the `CaptureClient` calibration API, the
-wire messages and the file-selection rules.
+wire messages.
 
 ## Validation status
 
