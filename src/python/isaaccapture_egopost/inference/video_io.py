@@ -5,9 +5,18 @@
 
 from inference.media.video_io import (
     FPS_FALLBACK,
+    VIDEO_INPUT_ERRORS,
+    check_video_readable,
     find_videos,
     get_video_meta,
     read_video_frames_batched,
 )
 
-__all__ = ["FPS_FALLBACK", "find_videos", "get_video_meta", "read_video_frames_batched"]
+__all__ = [
+    "FPS_FALLBACK",
+    "VIDEO_INPUT_ERRORS",
+    "check_video_readable",
+    "find_videos",
+    "get_video_meta",
+    "read_video_frames_batched",
+]
