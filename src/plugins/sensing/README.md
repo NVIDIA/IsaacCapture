@@ -46,3 +46,7 @@ SIPL drivers.
 hardware encoder and publishes one LiveKit video track per camera. The
 [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/device/camera/sensing.html)
 has the build and run steps.
+
+`--camera-backend=auto|sipl|argus` selects the capture backend once at startup. Only SIPL is built in today: `argus` fails
+with a message saying so, and `auto` picks the only matching backend (and, with several, names the override instead of
+guessing).
