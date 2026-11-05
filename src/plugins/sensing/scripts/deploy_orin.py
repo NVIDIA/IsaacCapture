@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import pwd
@@ -38,7 +39,6 @@ from pathlib import Path
 
 SERVICE = "isaaccapture-producer.service"
 BIN_REL = "plugins/sensing_camera/camera_plugin_sensing"
-SCRIPT_REL = "src/plugins/sensing/scripts/deploy_orin.py"
 UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
 CONFIG_KEYS = {"livekit_url", "token_file", "args"}
@@ -188,31 +188,90 @@ def repo_root() -> Path:
     return Path(out.stdout.strip())
 
 
-def make_snapshot(root: Path, dest: Path) -> dict:
-    """Archive the tracked files as they are on disk, including tracked local edits; nothing untracked."""
+# Files that change while developing the producer, and everything else, which rarely does. A group whose digest
+# matches the Orin's is not compared file by file.
+VOLATILE_PREFIXES = ("src/", "cmake/", "tests/", "examples/egocap/")
+GROUPS = ("source", "bulk")
+DEPLOY_DIR = ".deploy"
+
+
+def file_group(path: str) -> str:
+    return (
+        "source"
+        if path == "CMakeLists.txt" or path.startswith(VOLATILE_PREFIXES)
+        else "bulk"
+    )
+
+
+def tracked_files(root: Path) -> list[str]:
+    """The tracked files that exist on disk, so tracked local edits are included and untracked files never are."""
     listing = subprocess.run(
         ["git", "ls-files", "-z", "--recurse-submodules"],
         cwd=root,
         capture_output=True,
         check=True,
     ).stdout
-    files = sorted(
-        f for f in listing.decode().split("\0") if f and (root / f).is_file()
-    )
-    bar = Progress("packing", len(files))
-    with tarfile.open(dest, "w:gz") as tar:
-        for done, name in enumerate(files, 1):
-            tar.add(root / name, arcname=name, recursive=False)
-            if done % 200 == 0:
-                bar.update(done)
+    return sorted(f for f in listing.decode().split("\0") if f and (root / f).is_file())
+
+
+def hash_files(root: Path, files: list[str]) -> dict[str, str]:
+    """Content hash per file, with the executable bit, which the Orin's copy must also have."""
+    bar = Progress("hashing", len(files))
+    entries = {}
+    for done, name in enumerate(files, 1):
+        path = root / name
+        executable = "x" if os.access(path, os.X_OK) else "-"
+        entries[name] = f"{sha256_file(path)}{executable}"
+        if done % 200 == 0:
+            bar.update(done)
     bar.finish()
+    return entries
+
+
+def group_digest(entries: dict[str, str], group: str) -> str:
+    lines = (
+        f"{name}\0{entries[name]}"
+        for name in sorted(entries)
+        if file_group(name) == group
+    )
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def diff_manifests(
+    local: dict[str, str], remote: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """(files to send, files to remove on the Orin). A group with an equal digest is skipped without comparing."""
+    send, removed = [], []
+    for group in GROUPS:
+        mine = {n: h for n, h in local.items() if file_group(n) == group}
+        theirs = {n: h for n, h in remote.items() if file_group(n) == group}
+        if group_digest(local, group) == group_digest(remote, group):
+            continue
+        send += [n for n, h in mine.items() if theirs.get(n) != h]
+        removed += [n for n in theirs if n not in mine]
+    return sorted(send), sorted(removed)
+
+
+def read_remote_manifest(target: "Target", cache: str) -> dict[str, str]:
+    """What the Orin's source copy holds, or nothing when it has no copy or the record is unreadable."""
+    text = target.capture(
+        f"test -d {cache}/src && cat {cache}/src.manifest.json || true"
+    )
+    try:
+        entries = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return entries if isinstance(entries, dict) else {}
+
+
+def git_state(root: Path) -> dict:
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
         capture_output=True,
         text=True,
         check=True,
-    )
+    ).stdout.strip()
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
         cwd=root,
@@ -220,11 +279,30 @@ def make_snapshot(root: Path, dest: Path) -> dict:
         text=True,
         check=True,
     ).stdout.strip()
-    return {
-        "base_revision": head.stdout.strip(),
-        "dirty": bool(dirty),
-        "sha256": sha256_file(dest),
-    }
+    return {"base_revision": head, "dirty": bool(dirty)}
+
+
+def build_delta(
+    root: Path,
+    send: list[str],
+    removed: list[str],
+    manifest: dict[str, str],
+    dest: Path,
+) -> None:
+    """Archive only the files to send, with the new full manifest and the list of files to remove."""
+    bar = Progress("packing", len(send))
+    with tarfile.open(dest, "w:gz") as tar:
+        for done, name in enumerate(send, 1):
+            tar.add(root / name, arcname=name, recursive=False)
+            if done % 200 == 0:
+                bar.update(done)
+        for name, payload in (("manifest.json", manifest), ("removed.json", removed)):
+            data = json.dumps(payload).encode()
+            info = tarfile.TarInfo(f"{DEPLOY_DIR}/{name}")
+            info.size = len(data)
+            info.mtime = int(time.time())
+            tar.addfile(info, io.BytesIO(data))
+    bar.finish()
 
 
 PASSWORD_ENV = "ORIN_PASSWORD"
@@ -375,25 +453,49 @@ def run_deploy(args: argparse.Namespace, config: dict, target: Target) -> None:
         raise DeployError(
             f"the token file {config['token_file']} is not readable on the Orin"
         )
+    # The helper always travels alone and fresh, so the Orin-side steps never depend on an older source copy.
+    helper = f"{cache}/deploy_orin.py"
+    target.put(Path(__file__).resolve(), helper)
+    remote = f"python3 {helper} remote"
+    target.ssh(
+        f"{remote} preflight --backend {args.backend} --sdk-root {shlex.quote(args.sdk_root)}"
+    )
 
     with tempfile.TemporaryDirectory() as tmp:
-        snapshot_path = Path(tmp) / "snapshot.tar.gz"
-        step(3, "Snapshot and upload")
-        meta = make_snapshot(root, snapshot_path)
+        step(3, "Compare the source with the Orin's and upload what differs")
+        meta = git_state(root)
+        files = tracked_files(root)
+        local = hash_files(root, files)
+        meta["manifest_sha256"] = hashlib.sha256(
+            json.dumps(local, sort_keys=True).encode()
+        ).hexdigest()
         release = f"{time.strftime('%Y%m%d-%H%M%S')}-{meta['base_revision'][:9]}{'-dirty' if meta['dirty'] else ''}"
         print(
-            f"    base {meta['base_revision'][:12]}, dirty={meta['dirty']}, sha256 {meta['sha256'][:16]}"
+            f"    base {meta['base_revision'][:12]}, dirty={meta['dirty']}, {len(files)} tracked files"
         )
-        src = f"{cache}/src-{meta['sha256'][:16]}"
-        target.put(snapshot_path, f"{cache}/snapshot.tar.gz")
-        target.ssh(
-            f"rm -rf {src} && mkdir -p {src} && tar -xzf {cache}/snapshot.tar.gz -C {src}"
-        )
-        remote = f"python3 {src}/{SCRIPT_REL} remote"
-        target.ssh(
-            f"{remote} preflight --backend {args.backend} --sdk-root {shlex.quote(args.sdk_root)}"
-        )
-
+        # One fixed source path, so the persistent build directory's CMake cache keeps matching it; files that are
+        # unchanged keep their modification times and are not rebuilt.
+        src = f"{cache}/src"
+        remote_manifest = read_remote_manifest(target, cache)
+        send, removed = diff_manifests(local, remote_manifest)
+        for group in GROUPS:
+            names = [n for n in local if file_group(n) == group]
+            to_send = [n for n in send if file_group(n) == group]
+            size = sum((root / n).stat().st_size for n in to_send)
+            print(
+                f"    {group}: {len(names) - len(to_send)} identical, {len(to_send)} to send "
+                f"({size / 1e6:.1f} MB), {sum(1 for n in removed if file_group(n) == group)} to remove"
+            )
+        if send or removed:
+            delta = Path(tmp) / "delta.tar.gz"
+            build_delta(root, send, removed, local, delta)
+            target.put(delta, f"{cache}/delta.tar.gz")
+            target.ssh(
+                f"{remote} apply --archive {cache}/delta.tar.gz --src {src} --manifest {cache}/src.manifest.json"
+                + ("" if remote_manifest else " --fresh")
+            )
+        else:
+            print("    the Orin's source is identical; nothing to send")
         step(4, "Build and package on the Orin (the running producer is untouched)")
         stage, archive = (
             f"{cache}/stage-{release}",
@@ -451,6 +553,12 @@ def sdk_dirs(sdk_root: str) -> tuple[Path, Path]:
     return base / "jetson_multimedia_api", base / "jetson_sipl_api"
 
 
+def build_path() -> str:
+    """PATH for the build: an ssh command runs without the login profile, which is where uv and CUDA are added."""
+    extra = [str(Path.home() / ".local/bin"), "/usr/local/cuda/bin"]
+    return ":".join([*extra, os.environ.get("PATH", "")])
+
+
 def remote_preflight(args: argparse.Namespace) -> None:
     if os.uname().machine != "aarch64":
         raise DeployError(f"the target is {os.uname().machine}, not aarch64")
@@ -458,12 +566,18 @@ def remote_preflight(args: argparse.Namespace) -> None:
     if not release_file.exists():
         raise DeployError("no /etc/nv_tegra_release: this is not a Jetson L4T system")
     print(f"  L4T: {release_file.read_text().splitlines()[0]}")
-    for tool in ("cmake", "g++", "systemctl"):
-        if (
-            subprocess.run(["which", tool], capture_output=True, check=False).returncode
-            != 0
-        ):
-            raise DeployError(f"{tool} is not installed")
+    on_path = {**os.environ, "PATH": build_path()}
+    for tool in ("cmake", "g++", "systemctl", "uv"):
+        found = subprocess.run(
+            ["which", tool], capture_output=True, check=False, env=on_path
+        )
+        if found.returncode != 0:
+            hint = (
+                " (the build's Python setup needs it: curl -LsSf https://astral.sh/uv/install.sh | sh)"
+                if tool == "uv"
+                else ""
+            )
+            raise DeployError(f"{tool} is not installed{hint}")
     if (
         not Path("/usr/local/cuda/bin/nvcc").exists()
         and subprocess.run(
@@ -502,6 +616,7 @@ def remote_build(args: argparse.Namespace) -> None:
             Path("/etc/nv_tegra_release").read_text().splitlines()[0],
             tail(["cmake", "--version"]).splitlines()[0],
             tail(["g++", "-dumpfullversion"]),
+            args.src,
         ]
     )
     stamp_file = build_dir / ".stamp"
@@ -512,7 +627,7 @@ def remote_build(args: argparse.Namespace) -> None:
         stamp_file.write_text(stamp)
     sipl, argus = ("ON", "OFF") if args.backend == "sipl" else ("OFF", "ON")
     mmapi, sipl_api = sdk_dirs(args.sdk_root)
-    env = {**os.environ, "PATH": f"/usr/local/cuda/bin:{os.environ.get('PATH', '')}"}
+    env = {**os.environ, "PATH": build_path()}
     sdk_flags = [f"-DJETSON_MMAPI_DIR={mmapi}"]
     if args.backend == "sipl":
         sdk_flags.append(f"-DSIPL_API_DIR={sipl_api}")
@@ -583,6 +698,46 @@ def remote_build(args: argparse.Namespace) -> None:
             + "\n".join(missing)
         )
     print(f"  staged {sum(1 for p in stage.rglob('*') if p.is_file())} files")
+
+
+def remote_apply(args: argparse.Namespace) -> None:
+    """Apply a source delta: extract the sent files, delete the removed ones, verify, record the new manifest."""
+    src = Path(args.src)
+    if args.fresh:
+        # No trustworthy record of what is there: start from nothing so no stale file can reach the build.
+        shutil.rmtree(src, ignore_errors=True)
+    src.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(args.archive) as tar:
+        members = tar.getmembers()
+        meta = {m.name: m for m in members if m.name.startswith(f"{DEPLOY_DIR}/")}
+        manifest = json.loads(
+            tar.extractfile(meta[f"{DEPLOY_DIR}/manifest.json"]).read()
+        )
+        removed = json.loads(tar.extractfile(meta[f"{DEPLOY_DIR}/removed.json"]).read())
+        sent = [m for m in members if m.name not in meta]
+        tar.extractall(src, members=sent, filter="data")
+    for name in removed:
+        target = (src / name).resolve()
+        if src.resolve() not in target.parents:
+            raise DeployError(
+                f"refusing to remove {name}: outside the source directory"
+            )
+        target.unlink(missing_ok=True)
+        for parent in target.parents:
+            if parent == src.resolve() or any(parent.iterdir()):
+                break
+            parent.rmdir()
+    for member in sent:
+        expected = manifest[member.name]
+        if (
+            f"{sha256_file(src / member.name)}{'x' if os.access(src / member.name, os.X_OK) else '-'}"
+            != expected
+        ):
+            raise DeployError(
+                f"{member.name} does not match its recorded hash after extraction"
+            )
+    Path(args.manifest).write_text(json.dumps(manifest))
+    print(f"  applied {len(sent)} files, removed {len(removed)}")
 
 
 def remote_package(args: argparse.Namespace) -> None:
@@ -768,6 +923,10 @@ def remote_parser() -> argparse.ArgumentParser:
     build.add_argument("--stage", required=True)
     build.add_argument("--jobs", type=int, default=2)
     build.add_argument("--sdk-root", default="")
+    apply_ = sub.add_parser("apply")
+    for name in ("archive", "src", "manifest"):
+        apply_.add_argument(f"--{name}", required=True)
+    apply_.add_argument("--fresh", action="store_true")
     pack = sub.add_parser("package")
     pack.add_argument("--stage", required=True)
     pack.add_argument("--archive", required=True)
@@ -787,6 +946,7 @@ def main(argv: list[str]) -> int:
                 "preflight": remote_preflight,
                 "build": remote_build,
                 "package": remote_package,
+                "apply": remote_apply,
                 "activate": remote_activate,
             }[args.step](args)
         else:

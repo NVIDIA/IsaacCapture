@@ -237,40 +237,130 @@ class PasswordTests(unittest.TestCase):
                 target.sudo("true")
 
 
-class DeployOrderTests(TempDirTestCase):
-    def run_deploy(self, validate_effect=None):
-        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+CACHE_DIR = "/home/u/.cache/isaaccapture-deploy"
+
+
+def git_repo(test, files):
+    """A temp git repo holding the given {path: text} tracked files; returns (root, git runner)."""
+    root = Path(tempfile.mkdtemp(dir=test.tmp))
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.org",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.strip()  # fmt: skip
+
+    git("init", "-q")
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    git("add", "-A")
+    git("commit", "-q", "-m", "init")
+    return root, git
+
+
+class FakeOrin:
+    """A mock Target that records uploads and keeps the source manifest an `apply` would write."""
+
+    def __init__(self, manifest=None):
+        self.manifest = manifest
+        self.events = []
+        self.deltas = []
+        self.pending = None
+        self.target = mock.Mock()
+        self.target.host = "u@orin"
+        self.target.readable.return_value = True
+        self.target.capture.side_effect = self.capture
+        self.target.put.side_effect = self.put
+        self.target.ssh.side_effect = self.ssh
+
+    def capture(self, cmd):
+        if "pwd" in cmd:
+            return CACHE_DIR
+        if "src.manifest.json" in cmd:
+            return json.dumps(self.manifest) if self.manifest is not None else ""
+        return "u"
+
+    def put(self, local, remote):
+        self.events.append(("put", remote))
+        if remote.endswith("delta.tar.gz"):
+            with tarfile.open(local) as tar:
+                names = tar.getnames()
+                self.pending = json.loads(
+                    tar.extractfile(f"{deploy_orin.DEPLOY_DIR}/manifest.json").read()
+                )
+            self.deltas.append(sorted(n for n in names if not n.startswith(".deploy/")))
+
+    def ssh(self, cmd):
+        self.events.append(("ssh", cmd))
+        if " apply " in cmd:
+            self.manifest = self.pending
+
+    def run(self, root):
         args = deploy_orin.parser().parse_args(
             ["u@orin", "--backend", "sipl", "--config", "orin.json", "--no-activate"]
         )
-        manager = mock.Mock()
-        manager.make_snapshot.return_value = {
-            "base_revision": "a" * 40,
-            "dirty": False,
-            "sha256": "b" * 64,
-        }
-        manager.target.validate_connection.side_effect = validate_effect
-        manager.target.capture.return_value = "x"
-        manager.target.readable.return_value = True
-        with (
-            mock.patch.object(deploy_orin, "repo_root", return_value=self.tmp),
-            mock.patch.object(deploy_orin, "make_snapshot", manager.make_snapshot),
-        ):
-            try:
-                deploy_orin.run_deploy(args, config, manager.target)
-            except DeployError:
-                pass
-        return [c[0] for c in manager.mock_calls]
+        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+        with mock.patch.object(deploy_orin, "repo_root", return_value=root):
+            deploy_orin.run_deploy(args, config, self.target)
 
-    def test_validates_connection_first(self):
-        names = self.run_deploy()
-        self.assertEqual(names[0], "target.validate_connection")
-        self.assertIn("make_snapshot", names)
-        self.assertIn("target.put", names)
 
+class DeployOrderTests(TempDirTestCase):
     def test_failed_validation_blocks_everything_else(self):
-        names = self.run_deploy(validate_effect=DeployError("no route"))
-        self.assertEqual(names, ["target.validate_connection"])
+        orin = FakeOrin()
+        orin.target.validate_connection.side_effect = DeployError("no route")
+        with self.assertRaises(DeployError):
+            orin.run(self.tmp)
+        self.assertEqual(orin.target.mock_calls[0][0], "validate_connection")
+        self.assertEqual(len(orin.target.mock_calls), 1)
+
+    def test_helper_uploaded_and_preflight_run_before_any_delta(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n", "README.md": "r\n"})
+        orin = FakeOrin()
+        orin.run(root)
+        kinds = []
+        for kind, value in orin.events:
+            if kind == "put" and value.endswith("/deploy_orin.py"):
+                kinds.append("helper")
+            elif kind == "ssh" and " preflight " in value:
+                kinds.append("preflight")
+            elif kind == "put" and value.endswith("delta.tar.gz"):
+                kinds.append("delta")
+        self.assertEqual(kinds, ["helper", "preflight", "delta"])
+        apply_cmd = next(v for k, v in orin.events if k == "ssh" and " apply " in v)
+        self.assertIn("--fresh", apply_cmd)
+
+    def test_unchanged_second_run_sends_nothing_and_one_change_sends_only_it(self):
+        root, _ = git_repo(
+            self, {"src/a.cpp": "a\n", "src/b.cpp": "b\n", "README.md": "r\n"}
+        )
+        orin = FakeOrin()
+        orin.run(root)
+        self.assertEqual(orin.deltas, [["README.md", "src/a.cpp", "src/b.cpp"]])
+
+        orin.run(root)
+        self.assertEqual(len(orin.deltas), 1)
+
+        (root / "src/b.cpp").write_text("changed\n")
+        orin.run(root)
+        self.assertEqual(orin.deltas[1:], [["src/b.cpp"]])
+        applies = [v for k, v in orin.events if k == "ssh" and " apply " in v]
+        self.assertIn("--fresh", applies[0])
+        self.assertNotIn("--fresh", applies[-1])
+
+    def test_same_src_path_for_different_edits(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.run(root)
+        (root / "src/a.cpp").write_text("z\n")
+        orin.run(root)
+        srcs = {
+            m.group(1)
+            for k, v in orin.events
+            if k == "ssh" and (m := re.search(r"--src (\S+)", v))
+        }
+        self.assertEqual(srcs, {f"{CACHE_DIR}/src"})
 
     def test_deploy_closes_target_on_failure(self):
         config = self.tmp / "orin.json"
@@ -290,59 +380,187 @@ class DeployOrderTests(TempDirTestCase):
         target.close.assert_called_once()
 
 
-class SnapshotTests(TempDirTestCase):
-    def git(self, *args):
-        return subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.org",
-                "-c",
-                "commit.gpgsign=false",
-                *args,
-            ],
-            cwd=self.repo,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+class SyncTests(TempDirTestCase):
+    def test_file_group(self):
+        for name in ("CMakeLists.txt", "src/a.cpp", "cmake/x.cmake", "tests/t.py", "examples/egocap/x"):  # fmt: skip
+            self.assertEqual(deploy_orin.file_group(name), "source", name)
+        for name in ("deps/lib/x.c", "README.md", "examples/other/x", "docs/CMakeLists.txt"):  # fmt: skip
+            self.assertEqual(deploy_orin.file_group(name), "bulk", name)
 
+    def test_tracked_files_include_edits_not_untracked(self):
+        root, _ = git_repo(self, {"a.txt": "1\n", "sub/b.txt": "2\n"})
+        (root / "a.txt").write_text("edited\n")
+        (root / "untracked.txt").write_text("x")
+        self.assertEqual(deploy_orin.tracked_files(root), ["a.txt", "sub/b.txt"])
+
+    def test_tracked_files_skip_deleted(self):
+        root, _ = git_repo(self, {"a.txt": "1\n", "b.txt": "2\n"})
+        (root / "b.txt").unlink()
+        self.assertEqual(deploy_orin.tracked_files(root), ["a.txt"])
+
+    def test_hash_files_records_exec_bit(self):
+        root, _ = git_repo(self, {"a.txt": "1\n", "run.sh": "#!/bin/sh\n"})
+        (root / "run.sh").chmod(0o755)
+        entries = deploy_orin.hash_files(root, ["a.txt", "run.sh"])
+        self.assertEqual(
+            entries["a.txt"], deploy_orin.sha256_file(root / "a.txt") + "-"
+        )
+        self.assertEqual(
+            entries["run.sh"], deploy_orin.sha256_file(root / "run.sh") + "x"
+        )
+
+    def test_group_digest_is_stable_and_tracks_changes(self):
+        entries = {"src/a": "h1-", "src/b": "h2-", "README.md": "h3-"}
+        reordered = {"README.md": "h3-", "src/b": "h2-", "src/a": "h1-"}
+        digest = deploy_orin.group_digest
+        self.assertEqual(digest(entries, "source"), digest(reordered, "source"))
+        for changed in ({"src/a": "h9-"}, {"src/a": "h1x"}, {"src/c": "h4-"}):
+            self.assertNotEqual(
+                digest(entries, "source"), digest({**entries, **changed}, "source")
+            )
+        self.assertEqual(
+            digest(entries, "bulk"), digest({**entries, "src/a": "h9-"}, "bulk")
+        )
+
+    def test_diff_identical_sends_nothing(self):
+        entries = {"src/a": "1-", "README.md": "2-"}
+        self.assertEqual(deploy_orin.diff_manifests(entries, dict(entries)), ([], []))
+
+    def test_diff_changed_new_and_removed_per_group(self):
+        local = {"src/a": "1-", "src/new": "n-", "src/same": "s-", "README.md": "r2-", "doc": "d-"}  # fmt: skip
+        remote = {"src/a": "0-", "src/same": "s-", "src/gone": "g-", "README.md": "r1-", "doc": "d-", "old.txt": "o-"}  # fmt: skip
+        send, removed = deploy_orin.diff_manifests(local, remote)
+        self.assertEqual(send, ["README.md", "src/a", "src/new"])
+        self.assertEqual(removed, ["old.txt", "src/gone"])
+
+    def test_diff_skips_a_group_with_equal_digest_without_comparing_files(self):
+        local = {"src/a": "1-", "README.md": "r2-"}
+        remote = {"src/a": "0-", "README.md": "r1-"}
+
+        def fake_digest(entries, group):
+            return "same" if group == "source" else repr(sorted(entries.items()))
+
+        with mock.patch.object(deploy_orin, "group_digest", fake_digest):
+            send, removed = deploy_orin.diff_manifests(local, remote)
+        self.assertEqual((send, removed), (["README.md"], []))
+
+    def test_diff_against_empty_remote_sends_everything(self):
+        local = {"src/a": "1-", "README.md": "2-"}
+        self.assertEqual(
+            deploy_orin.diff_manifests(local, {}), (["README.md", "src/a"], [])
+        )
+
+    def test_build_delta_has_only_sent_files_and_deploy_members(self):
+        root, _ = git_repo(self, {"src/a": "a\n", "src/b": "b\n", "README.md": "r\n"})
+        manifest = deploy_orin.hash_files(root, deploy_orin.tracked_files(root))
+        dest = self.tmp / "delta.tar.gz"
+        deploy_orin.build_delta(root, ["src/b"], ["old/x"], manifest, dest)
+        with tarfile.open(dest) as tar:
+            self.assertEqual(
+                sorted(tar.getnames()),
+                [".deploy/manifest.json", ".deploy/removed.json", "src/b"],
+            )
+            self.assertEqual(
+                json.loads(tar.extractfile(".deploy/manifest.json").read()), manifest
+            )
+            self.assertEqual(
+                json.loads(tar.extractfile(".deploy/removed.json").read()), ["old/x"]
+            )
+
+    def test_read_remote_manifest_tolerates_missing_or_garbage(self):
+        def read(text):
+            target = mock.Mock()
+            target.capture.return_value = text
+            return deploy_orin.read_remote_manifest(target, "/c")
+
+        self.assertEqual(read('{"a": "h-"}'), {"a": "h-"})
+        for text in ("", "{oops", "[1]"):
+            self.assertEqual(read(text), {})
+
+
+class ApplyTests(TempDirTestCase):
     def setUp(self):
         super().setUp()
-        self.repo = self.tmp / "repo"
-        (self.repo / "sub").mkdir(parents=True)
-        self.git("init", "-q")
-        (self.repo / "a.txt").write_text("one\n")
-        (self.repo / "sub/b.txt").write_text("two\n")
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "init")
-        self.dest = self.tmp / "snap.tar.gz"
+        self.src = self.tmp / "orin" / "src"
+        self.manifest_path = self.tmp / "orin" / "src.manifest.json"
+        self.manifest_path.parent.mkdir()
 
-    def members(self):
-        with tarfile.open(self.dest) as tar:
-            return {
-                m.name: tar.extractfile(m).read().decode()
-                for m in tar.getmembers()
-                if m.isfile()
-            }
+    def delta(self, files, removed=(), manifest=None):
+        root = self.tmp / "local"
+        root.mkdir(exist_ok=True)
+        for name, text in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text)
+        if manifest is None:
+            manifest = deploy_orin.hash_files(root, sorted(files))
+        dest = self.tmp / "delta.tar.gz"
+        deploy_orin.build_delta(root, sorted(files), list(removed), manifest, dest)
+        return dest
 
-    def test_clean_tree_ignores_untracked(self):
-        (self.repo / "untracked.txt").write_text("x")
-        meta = deploy_orin.make_snapshot(self.repo, self.dest)
-        self.assertEqual(self.members(), {"a.txt": "one\n", "sub/b.txt": "two\n"})
-        self.assertFalse(meta["dirty"])
-        self.assertEqual(meta["base_revision"], self.git("rev-parse", "HEAD"))
-        self.assertEqual(meta["sha256"], deploy_orin.sha256_file(self.dest))
+    def apply(self, archive, fresh=False):
+        deploy_orin.remote_apply(
+            argparse.Namespace(
+                archive=str(archive),
+                src=str(self.src),
+                manifest=str(self.manifest_path),
+                fresh=fresh,
+            )
+        )
 
-    def test_tracked_edit_is_included_and_marks_dirty(self):
-        (self.repo / "a.txt").write_text("edited\n")
-        (self.repo / "untracked.txt").write_text("x")
-        meta = deploy_orin.make_snapshot(self.repo, self.dest)
-        self.assertEqual(self.members()["a.txt"], "edited\n")
-        self.assertNotIn("untracked.txt", self.members())
-        self.assertTrue(meta["dirty"])
+    def test_extracts_and_writes_manifest(self):
+        self.apply(self.delta({"src/a.cpp": "a\n", "README.md": "r\n"}))
+        self.assertEqual((self.src / "src/a.cpp").read_text(), "a\n")
+        self.assertFalse((self.src / ".deploy").exists())
+        manifest = json.loads(self.manifest_path.read_text())
+        self.assertEqual(sorted(manifest), ["README.md", "src/a.cpp"])
+
+    def test_removes_files_and_prunes_empty_dirs(self):
+        (self.src / "gone/deep").mkdir(parents=True)
+        (self.src / "gone/deep/x").write_text("x")
+        (self.src / "keep").mkdir()
+        (self.src / "keep/a").write_text("a")
+        (self.src / "keep/b").write_text("b")
+        self.apply(self.delta({"new": "n\n"}, removed=["gone/deep/x", "keep/b"]))
+        self.assertFalse((self.src / "gone").exists())
+        self.assertTrue((self.src / "keep/a").exists())
+        self.assertFalse((self.src / "keep/b").exists())
+        self.assertTrue(self.src.is_dir())
+
+    def test_hash_mismatch_raises_and_leaves_manifest_unwritten(self):
+        bad = {"a": "0" * 64 + "-"}
+        with self.assertRaisesRegex(DeployError, "does not match"):
+            self.apply(self.delta({"a": "a\n"}, manifest=bad))
+        self.assertFalse(self.manifest_path.exists())
+
+    def test_fresh_wipes_stale_files(self):
+        self.src.mkdir()
+        (self.src / "stale").write_text("old")
+        self.apply(self.delta({"a": "a\n"}), fresh=True)
+        self.assertFalse((self.src / "stale").exists())
+        self.assertTrue((self.src / "a").exists())
+
+    def test_without_fresh_keeps_untouched_files(self):
+        self.src.mkdir()
+        (self.src / "stale").write_text("old")
+        self.apply(self.delta({"a": "a\n"}))
+        self.assertTrue((self.src / "stale").exists())
+
+    def test_refuses_removal_outside_src(self):
+        victim = self.tmp / "orin" / "victim"
+        victim.write_text("keep")
+        for name in ("../victim", "/etc/hostname"):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(DeployError, "outside"),
+            ):
+                self.apply(self.delta({"a": "a\n"}, removed=[name]))
+        self.assertTrue(victim.exists())
+
+    def test_remote_parser_apply_arguments(self):
+        parsed = deploy_orin.remote_parser().parse_args(
+            ["apply", "--archive", "a", "--src", "s", "--manifest", "m", "--fresh"]
+        )
+        self.assertTrue(parsed.fresh)
 
 
 class ActivateTests(TempDirTestCase):
@@ -639,15 +857,65 @@ class SdkDirsTests(unittest.TestCase):
                 deploy_orin.remote_preflight(args)
 
 
+class BuildPathTests(unittest.TestCase):
+    def test_build_path_prefixes_uv_then_cuda_before_the_inherited_path(self):
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+            self.assertEqual(
+                deploy_orin.build_path(),
+                f"{Path.home()}/.local/bin:/usr/local/cuda/bin:/usr/bin:/bin",
+            )
+
+    def preflight(self, missing=()):
+        seen = []
+
+        def fake_run(cmd, **kwargs):
+            seen.append((cmd, kwargs))
+            return completed(1 if cmd[0] == "which" and cmd[1] in missing else 0)
+
+        args = argparse.Namespace(backend="sipl", sdk_root="/nonexistent-sdk")
+        with (
+            mock.patch.object(deploy_orin.os, "uname") as uname,
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "read_text", return_value="# R36\n"),
+            mock.patch.object(Path, "is_dir", return_value=True),
+            mock.patch.object(deploy_orin.os, "statvfs") as statvfs,
+            mock.patch.object(deploy_orin.subprocess, "run", fake_run),
+            mock.patch.dict(os.environ, {"PATH": "/usr/bin"}),
+        ):
+            uname.return_value.machine = "aarch64"
+            statvfs.return_value.f_bavail = 1 << 30
+            statvfs.return_value.f_frsize = 4096
+            try:
+                deploy_orin.remote_preflight(args)
+            finally:
+                self.seen = seen
+
+    def test_preflight_requires_uv_using_the_build_path(self):
+        with self.assertRaisesRegex(DeployError, "uv is not installed.*astral.sh"):
+            self.preflight(missing=("uv",))
+        uv_call = next(k for c, k in self.seen if c == ["which", "uv"])
+        self.assertEqual(
+            uv_call["env"]["PATH"],
+            f"{Path.home()}/.local/bin:/usr/local/cuda/bin:/usr/bin",
+        )
+
+    def test_preflight_succeeds_when_uv_present(self):
+        self.preflight()
+        self.assertIn(["which", "uv"], [c for c, _ in self.seen])
+
+
 class RemoteBuildTests(TempDirTestCase):
     LIBCUDA = "/opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1"
+    EXPECTED_PATH = f"{Path.home()}/.local/bin:/usr/local/cuda/bin:/usr/bin"
 
-    def build(self, backend="sipl", sdk_root="", libcuda=False, path="/usr/bin"):
+    def build(
+        self, backend="sipl", sdk_root="", libcuda=False, path="/usr/bin", src="/src"
+    ):
         stage = self.tmp / "stage"
         (stage / deploy_orin.BIN_REL).parent.mkdir(parents=True, exist_ok=True)
         (stage / deploy_orin.BIN_REL).write_text("bin")
         args = argparse.Namespace(
-            src="/src",
+            src=src,
             backend=backend,
             stage=str(stage),
             jobs=3,
@@ -667,6 +935,8 @@ class RemoteBuildTests(TempDirTestCase):
 
         def fake_run(cmd, **kwargs):
             calls.append((list(cmd), kwargs))
+            if cmd[:2] == ["rm", "-rf"] and "build-" in cmd[2]:
+                shutil.rmtree(cmd[2], ignore_errors=True)
             return completed(0)
 
         with (
@@ -694,12 +964,21 @@ class RemoteBuildTests(TempDirTestCase):
             "-DCMAKE_CXX_FLAGS=-I/usr/local/cuda/include",
         ):
             self.assertIn(flag, cmd)
-        self.assertEqual(kwargs["env"]["PATH"], "/usr/local/cuda/bin:/usr/bin")
+        self.assertEqual(kwargs["env"]["PATH"], self.EXPECTED_PATH)
+
+    def cleaned(self, calls):
+        return [c for c, _ in calls if c[:2] == ["rm", "-rf"] and "build-sipl" in c[2]]
+
+    def test_changed_source_path_cleans_build_dir_but_same_path_keeps_it(self):
+        self.assertTrue(self.cleaned(self.build(src="/cache/src")))
+        self.assertFalse(self.cleaned(self.build(src="/cache/src")))
+        self.assertTrue(self.cleaned(self.build(src="/cache/src-abc123")))
+        self.assertFalse(self.cleaned(self.build(src="/cache/src-abc123")))
 
     def test_build_step_also_gets_the_cuda_path(self):
         calls = self.build()
         cmd, kwargs = next(c for c in calls if c[0][:2] == ["cmake", "--build"])
-        self.assertEqual(kwargs["env"]["PATH"], "/usr/local/cuda/bin:/usr/bin")
+        self.assertEqual(kwargs["env"]["PATH"], self.EXPECTED_PATH)
         self.assertIn("camera_plugin_sensing", cmd)
 
     def test_argus_has_no_sipl_dir(self):
