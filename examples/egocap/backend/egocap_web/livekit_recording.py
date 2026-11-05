@@ -32,9 +32,13 @@ from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
-#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly; a step of
-#: the Unix clock is simply reflected in the offset at the next measurement, not detected.
+#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly (a slewing
+#: clock moves them well under a millisecond per second), so a larger change between two measurements is a step.
 _PAIR_MAX_AGE_S = 1.0
+#: An offset change below this is measurement noise or slew; above it, and above a few times the bracket's own
+#: uncertainty, the Unix clock stepped and the take's capture times can no longer be trusted.
+_STEP_FLOOR_S = 0.005
+_STEP_UNCERTAINTY_FACTOR = 4
 #: A frame older than this when it arrives, or stamped further than the lead below in the future, means the
 #: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
 _MAX_FRAME_AGE_S = 2.0
@@ -53,9 +57,14 @@ class UnixClockMap:
     """Converts Unix-time microseconds to this process's monotonic seconds, from a recently measured pair.
 
     The pair is two clock readings taken back to back and refreshed about once a second, from the consumer's
-    thread and never from an SDK callback. It converts on this machine only: it does not detect a step of the
-    Unix clock, and says nothing about whether the publisher's clock agrees with this one.
+    thread and never from an SDK callback. It converts on this machine only and says nothing about whether the
+    publisher's clock agrees with this one. It keeps the uncertainty of its pair (half the bracketing span) and
+    flags a step of the Unix clock between two measurements: `step_detected` stays set, because samples already
+    mapped are never remapped with a newer offset, and a map covers one take.
     """
+
+    step_detected = False
+    uncertainty_s: float | None = None
 
     def __init__(
         self,
@@ -87,7 +96,14 @@ class UnixClockMap:
                 # The Unix reading happened somewhere in [before, after]; its midpoint is the best estimate.
                 best = (span, ((before + after) / 2 - unix) / 1e9)
         assert best is not None
-        self._offset_s = best[1]
+        span_ns, offset_s = best
+        uncertainty_s = span_ns / 2e9
+        if self._measured_at_ns is not None:
+            bound_s = max(_STEP_FLOOR_S, _STEP_UNCERTAINTY_FACTOR * max(uncertainty_s, self.uncertainty_s or 0.0))
+            if abs(offset_s - self._offset_s) > bound_s:
+                self.step_detected = True
+        self._offset_s = offset_s
+        self.uncertainty_s = uncertainty_s
         self._measured_at_ns = self._monotonic_ns()
 
 
@@ -241,6 +257,12 @@ class LiveKitRecordingFeed:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
                 return
             capture_time = self._clock_map.monotonic_seconds(frame.user_timestamp_us)
+            if self._clock_map.step_detected:
+                # Frames already recorded keep their mapping; none after the step is recorded with a guessed one.
+                self._fail(
+                    f"{stream.name}: this host's clock stepped during the take, so capture times are untrustworthy"
+                )
+                return
             receive_time = frame.receive_time_ns / 1e9
             age = receive_time - capture_time
             if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
