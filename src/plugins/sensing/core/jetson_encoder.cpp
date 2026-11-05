@@ -8,6 +8,7 @@
 #include <linux/videodev2.h>
 
 #include <NvVideoEncoder.h>
+#include <cerrno>
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
@@ -235,7 +236,12 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     }
     else if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 0) < 0)
     {
-        return false; // encoder still busy; drop this frame rather than block
+        // The plane logs every failure but EAGAIN, which is the non-blocking "no input buffer free yet": drop this
+        // frame rather than block. Any other errno is the device failing, which poll() reports.
+        const int err = errno;
+        if (err != EAGAIN && err != EINTR)
+            m_impl->fail((std::string("dequeueing an input buffer failed: ") + std::strerror(err)).c_str());
+        return false;
     }
 
     // An input buffer is ours now, so convert: a frame that would be dropped costs no conversion. A
