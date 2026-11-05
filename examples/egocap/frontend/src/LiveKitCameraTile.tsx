@@ -26,8 +26,8 @@ const FPS_WINDOW_MS = 1000;
 /** Recent latency samples kept per window. */
 const MAX_LATENCY_SAMPLES = 240;
 /** Shown in place of a number that is not available. */
-const NO_LATENCY = "– ms";
-const NO_FPS = "– FPS";
+const NO_LATENCY = "– ms latency";
+const NO_FPS = "– fps";
 
 /** The displayed rate for one window from cumulative presented-frame counts; null for an invalid interval. */
 export function displayedFps(previous: { presented: number; at: number }, presented: number, at: number): number | null {
@@ -149,7 +149,7 @@ export function LiveKitCameraTile({
       latencySamplesRef.current = [];
       const mapping = clock?.mapping() ?? null;
       const summary = mapping === null ? null : summarizeLatency(samples, mapping.epoch);
-      const latencyText = summary === null ? NO_LATENCY : `${summary.mean.toFixed(0)} ms`;
+      const latencyText = summary === null ? NO_LATENCY : `${summary.mean.toFixed(0)} ms latency`;
       setLatencyDetail(summary === null ? "" : `±${summary.uncertaintyMs.toFixed(1)} ms, 95th percentile ${summary.p95.toFixed(0)} ms`);
       if (!hasFrameCallback) {
         setFpsLabel(NO_FPS);
@@ -160,14 +160,14 @@ export function LiveKitCameraTile({
         setLatencyLabel(NO_LATENCY);
       } else if (isStale) {
         baselineRef.current = null;
-        setFpsLabel("0 FPS");
+        setFpsLabel("0 fps");
         setLatencyLabel(NO_LATENCY);
       } else if (presented !== null) {
         setLatencyLabel(latencyText);
         const previous = baselineRef.current;
         baselineRef.current = { presented, at: now };
         const fps = previous === null ? null : displayedFps(previous, presented, now);
-        if (fps !== null) setFpsLabel(`${fps.toFixed(0)} FPS`);
+        if (fps !== null) setFpsLabel(`${fps.toFixed(0)} fps`);
       }
     }, FPS_WINDOW_MS);
     // The timer can be throttled or suspended while the tab is hidden, so the transition itself resets the window:

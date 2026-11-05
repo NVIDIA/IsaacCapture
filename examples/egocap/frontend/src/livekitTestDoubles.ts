@@ -17,6 +17,7 @@ export class FakeRoom {
     if (FakeRoom.connectError !== null) throw FakeRoom.connectError;
   });
   disconnect = vi.fn(async () => {});
+  localParticipant = { publishData: vi.fn(async () => {}) };
   /** Participants already in the room when a new Room is created, i.e. published before we joined. */
   static seed: Array<[string, any]> = [];
   static connectError: Error | null = null;
@@ -28,6 +29,10 @@ export class FakeRoom {
   }
   on(event: string, handler: Handler): this {
     this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
+    return this;
+  }
+  off(event: string, handler: Handler): this {
+    this.handlers.set(event, (this.handlers.get(event) ?? []).filter((h) => h !== handler));
     return this;
   }
   emit(event: string, ...args: any[]): void {
