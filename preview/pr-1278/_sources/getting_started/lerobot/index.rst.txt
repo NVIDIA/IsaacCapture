@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../integrations/lerobot/index.html
+
 LeRobot and SO-101
 ==================
 

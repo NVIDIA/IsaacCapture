@@ -35,6 +35,9 @@ Prerequisites
 -------------
 
 - **Linux** — x86_64 or aarch64 (tested on Ubuntu 22.04 / 24.04).
+- **Source-build prerequisites** — the toolchain and system packages in
+  :doc:`/development/build_from_source/index`, for ``install.sh`` and the manual
+  CMake build alike.
 - **wuji_sdk C SDK v2026.7.14** — the
   ``wuji-sdk-c-2026.7.14-<arch>-linux-gnu.tar.gz`` GitHub release asset, which
   extracts to ``include/wuji_sdk.h`` plus ``lib/libwuji_sdk_c.so`` and its

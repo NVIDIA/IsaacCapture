@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=spatial_controllers/spacemouse.html
+
 SpaceMouse Plugin
 =================
 

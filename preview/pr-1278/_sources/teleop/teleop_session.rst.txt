@@ -15,7 +15,7 @@ Overview
 The main component is :code-file:`TeleopSession <src/python/isaaccapture/teleop_session_manager/teleop_session.py>`, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 :code-file:`DeviceIOSession <src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp>`
-and :doc:`device trackers <../device/trackers>` so that callers don't need to
+and :doc:`device trackers <../device/trackers/index>` so that callers don't need to
 manage them directly:
 
 #. Creates and configures trackers (head, hands, controllers)
@@ -23,6 +23,15 @@ manage them directly:
 #. Initializes and manages plugins
 #. Runs retargeting pipeline with automatic updates
 #. Handles cleanup via RAII
+
+If resource cleanup fails during entry rollback or exit, ``cleanup_failed``
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling ``__exit__`` again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.
 
 Quick Start
 -----------
@@ -172,8 +181,13 @@ Per application frame in pipelined mode, ``step()`` submits the current request
 and returns the latest completed ``RetargeterIO``. On a normal hit this is often
 the previous application frame's output. If that returned output came from
 request N-1, then ``session.last_context`` also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use ``mode="sync"`` when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful ``step()`` return delivers it through ``last_context``. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use ``mode="sync"`` when the
 application needs exact current-frame sample/compute/return behavior.
 
 The return type is unchanged; inspect ``session.last_step_info`` for age and
@@ -456,14 +470,18 @@ Examples
 Complete Examples
 ^^^^^^^^^^^^^^^^^
 
-#. **Simplified Gripper Example**: ``examples/teleop/python/gripper_retargeting_example_simple.py``
+#. **Simplified Gripper Example**: ``examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py``
    -- Shows the minimal configuration approach and demonstrates auto-creation
-   of input sources. Run it from the project root, with the environment set up
-   as in the :doc:`Quick Start <quick_start>`:
+   of input sources. Install ``isaaccapture`` into the active environment first:
+   from your source build as in
+   :doc:`step 4 of Build from source </development/build_from_source/index>`, or
+   from the package index as in the :doc:`Quick Start <quick_start>`. Then install
+   this example from the project root:
 
    .. code-block:: bash
 
-      python examples/teleop/python/gripper_retargeting_example_simple.py
+      uv pip install -e ./examples/teleop
+      python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Before vs After
 ^^^^^^^^^^^^^^^

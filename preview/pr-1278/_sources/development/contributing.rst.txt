@@ -38,40 +38,28 @@ Every PR preview is published to a single canonical location:
 
    https://nvidia.github.io/IsaacCapture/preview/pr-<N>/
 
-How the preview gets built depends on where the PR's branch lives.
+PRs changing ``docs/`` publish automatically after a successful build, including
+PRs from forks. GitHub may first require a maintainer to approve a fork's workflow
+run. The PR does not need to be merged.
 
-PRs from a branch on ``NVIDIA/IsaacCapture``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``Build docs and deploy production`` builds the PR changes without publishing
+privileges. ``Publish docs PR preview`` then uses trusted code from ``main`` to
+validate and publish that run's artifacts. A single bot comment links to the
+preview and is updated after subsequent successful builds.
 
-The ``Build & deploy docs`` workflow runs automatically on every push to the
-PR branch and publishes the preview. The preview URL is added to the workflow
-run's *Summary* tab and refreshed on every push. No extra action required.
+Same-repository web-client-only PRs retain automatic previews at
+``preview/pr-<N>/client/``. Fork PRs without docs changes require a maintainer retry
+for a web-client preview.
 
-PRs from a fork
-^^^^^^^^^^^^^^^
+A maintainer with write access can retry publication of the current successful
+build by commenting:
 
-GitHub Actions on PRs from forks run with a read-only token, so the workflow
-cannot push to ``gh-pages`` automatically. Instead:
+.. code-block:: text
 
-1. ``Build & deploy docs`` still runs and uploads the built artifacts; only
-   the deploy step is skipped.
-2. When a fork PR is opened, a bot comments with instructions.
-3. A maintainer (anyone with write access to ``NVIDIA/IsaacCapture``) deploys
-   the preview by commenting on the PR:
+   /preview-docs
 
-   .. code-block:: text
+This command can publish docs or web-client artifacts, including for PRs without
+``docs/`` changes. It reuses built artifacts and never executes PR code in the
+publisher. The command receives 👀 while deploying and 👍 after publication.
 
-      /preview-docs
-
-4. The maintainer-triggered workflow downloads the artifacts that
-   ``Build & deploy docs`` already produced for that commit and pushes them
-   to ``preview/pr-<N>/``, reacting to the comment with 👀 while deploying
-   and 👍 once published. A follow-up comment posts the preview URL.
-
-Because the deploy reuses the same artifacts that the build job validated,
-``/preview-docs`` does not run any PR code itself. Re-comment
-``/preview-docs`` after new commits land to redeploy from the latest build.
-
-Previews are not auto-cleaned; maintainers can run the
-``Cleanup docs PR previews`` workflow from the *Actions* tab to clear the
-``preview/`` tree.
+Previews are removed when PRs close; a scheduled sweep also removes stale previews.
