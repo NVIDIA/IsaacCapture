@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -57,9 +58,10 @@ def frame(stream_id: int, *, width=6, height=4) -> ReceivedFrame:
     return ReceivedFrame(
         stream_id=stream_id,
         image=np.zeros((height, width, 3), dtype=np.uint8),
-        receive_time_ns=1,
+        # Captured just now on this host's clocks, so it passes the feed's frame-age check.
+        receive_time_ns=time.monotonic_ns(),
         transport_timestamp_us=1,
-        user_timestamp_us=1_000_000,
+        user_timestamp_us=time.time_ns() // 1000,
         frame_id=None,
         user_data=None,
     )
