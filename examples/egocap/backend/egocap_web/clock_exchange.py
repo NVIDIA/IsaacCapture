@@ -109,29 +109,22 @@ class ClockEstimator:
             return "malformed exchange"
         if exchange.rtt_ns > self._max_rtt_ns:
             return "round trip too long"
-        self._recent.append(exchange)
-        best = min(self._recent, key=lambda e: e.rtt_ns)
-        candidate = ClockMapping(
-            epoch=self._epoch,
-            offset_ns=best.offset_ns,
-            rtt_ns=best.rtt_ns,
-            uncertainty_ns=best.rtt_ns // 2,
-            accepted_at_ns=best.t4,
-        )
         previous = self._current
-        if previous is not None and self._disagrees(previous, candidate):
-            # Not a refinement: the clocks moved. Keep the evidence, start a new epoch from this exchange alone.
+        newest = self._mapping_of(exchange)
+        if previous is not None and self._disagrees(previous, newest):
+            # Not a refinement: the clocks moved. Judged on the newest exchange, not on the best of the window, so
+            # a jump is seen at once even when old exchanges have an equally good round trip. Keep the evidence and
+            # start a new epoch from this exchange alone.
             self.discontinuity = True
             self._epoch += 1
             self._recent.clear()
             self._recent.append(exchange)
-            candidate = ClockMapping(
-                epoch=self._epoch,
-                offset_ns=exchange.offset_ns,
-                rtt_ns=exchange.rtt_ns,
-                uncertainty_ns=exchange.rtt_ns // 2,
-                accepted_at_ns=exchange.t4,
-            )
+            candidate = self._mapping_of(exchange)
+        else:
+            self._recent.append(exchange)
+            # On equal round trips the newest wins, so a steady link keeps its mapping fresh.
+            best = min(self._recent, key=lambda e: (e.rtt_ns, -e.t4))
+            candidate = self._mapping_of(best)
         if candidate != previous:
             self._current = candidate
             self.history.append(candidate)
@@ -143,6 +136,15 @@ class ClockEstimator:
         if current is None or now_ns - current.accepted_at_ns > self._stale_after_ns:
             return None
         return current
+
+    def _mapping_of(self, exchange: Exchange) -> ClockMapping:
+        return ClockMapping(
+            epoch=self._epoch,
+            offset_ns=exchange.offset_ns,
+            rtt_ns=exchange.rtt_ns,
+            uncertainty_ns=exchange.rtt_ns // 2,
+            accepted_at_ns=exchange.t4,
+        )
 
     def _disagrees(self, previous: ClockMapping, candidate: ClockMapping) -> bool:
         elapsed_ns = max(0, candidate.accepted_at_ns - previous.accepted_at_ns)
