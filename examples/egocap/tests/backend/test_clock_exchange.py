@@ -124,8 +124,7 @@ def test_rejected_exchange_reports_reason_and_leaves_mapping_unchanged(name: str
 def test_drift_stays_continuous_and_tracks_within_uncertainty_plus_drift() -> None:
     ppm = 50.0
     forward = back = MS
-    # Staleness is not under test: equal-rtt ties pick the oldest windowed exchange, which outlives the default.
-    estimator = ClockEstimator(stale_after_ns=60 * S)
+    estimator = ClockEstimator()
     for second in range(1, 31):
         ex = make_exchange(second * S, offset=0, forward=forward, back=back, rate_ppm=ppm)
         assert estimator.add(ex) is None
@@ -137,6 +136,40 @@ def test_drift_stays_continuous_and_tracks_within_uncertainty_plus_drift() -> No
         assert abs(mapping.offset_ns - true_offset) <= mapping.uncertainty_ns + drift_since_best + 2
     assert not estimator.discontinuity
     assert {m.epoch for m in estimator.history} == {1}
+
+
+def test_steady_link_with_identical_rtt_never_goes_stale() -> None:
+    estimator = ClockEstimator()
+    for second in range(1, 31):
+        ex = make_exchange(second * S, offset=7 * MS, forward=2 * MS, back=2 * MS)
+        assert estimator.add(ex) is None
+        mapping = estimator.mapping(ex.t4)
+        assert mapping is not None
+        assert mapping.accepted_at_ns == ex.t4
+
+
+def test_step_with_same_rtt_is_a_discontinuity_on_that_exchange() -> None:
+    estimator = ClockEstimator()
+    for second in range(1, 6):
+        estimator.add(make_exchange(second * S, offset=0, forward=2 * MS, back=2 * MS))
+    earlier = estimator.history[-1]
+    snapshot = dataclasses.replace(earlier)
+    history_before = list(estimator.history)
+    assert not estimator.discontinuity
+
+    step = make_exchange(6 * S, offset=50 * MS, forward=2 * MS, back=2 * MS)
+    assert step.rtt_ns == earlier.rtt_ns
+    assert estimator.add(step) is None
+
+    assert estimator.discontinuity
+    current = estimator.mapping(step.t4)
+    assert current is not None
+    assert current.epoch == earlier.epoch + 1
+    assert current.offset_ns == 50 * MS
+    assert current.accepted_at_ns == step.t4
+    assert estimator.history[: len(history_before)] == history_before
+    assert estimator.history[len(history_before) :] == [current]
+    assert earlier == snapshot
 
 
 def test_clock_step_sets_sticky_discontinuity_and_keeps_earlier_mapping() -> None:
