@@ -17,11 +17,15 @@ add_custom_command(TARGET camera_plugin_sensing POST_BUILD
     COMMENT "Staging SIPL platform configs beside camera_plugin_sensing"
 )
 
+# Everything below is the `producer` install component: `cmake --install <build> --component producer` stages
+# exactly what scripts/deploy-orin.sh packages for an Orin.
 install(TARGETS camera_plugin_sensing
     RUNTIME DESTINATION plugins/sensing_camera
+    COMPONENT producer
 )
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../configs/"
     DESTINATION plugins/sensing_camera/configs
+    COMPONENT producer
 )
 
 # The plugin links the LiveKit runtime, whose RUNPATH points into the build tree; ship it beside the
@@ -30,7 +34,9 @@ install(FILES
     "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit.so"
     "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
     DESTINATION plugins/sensing_camera
+    COMPONENT producer
 )
 install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
     DESTINATION plugins/sensing_camera/licenses/livekit-sdk
+    COMPONENT producer
 )

@@ -39,6 +39,8 @@ jobs:
         python-version: "3.12"
     - name: Test preview selection
       run: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py -v
+    - name: Test the Orin deployment script
+      run: python3 -m unittest discover -s tests/python/ci -p test_deploy_orin.py -v
 
   synthetic-xr-example-tests:
     name: Test Synthetic XR task contracts
