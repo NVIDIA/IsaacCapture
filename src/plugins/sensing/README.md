@@ -70,6 +70,11 @@ build/src/plugins/sensing/app/camera_plugin_sensing \
 
 The `livekit=` names must equal the `track` names in the PC's streams file. Stop with Ctrl-C. `--help` lists every
 option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform-config`, `--link-masks`).
+`--camera-backend=auto|sipl|argus` selects the capture backend once at startup. Only SIPL is built in today:
+`argus` fails with a message saying so, and `auto` picks the only matching backend (and, with several, names the
+override instead of guessing). Argus capture is not implemented yet and has never been run: there is no Argus SDK
+or Argus camera available to the author.
+
 `SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second, as separate uncalibrated
 samples. The counter's units are unconfirmed, so do not subtract or fit them.
 
