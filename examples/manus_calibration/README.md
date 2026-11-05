@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 Calibrate Manus gloves from a browser and save the MCAL files on the machine the gloves are
 plugged into. The page guides the operator through the steps the Manus SDK provides; the SDK work
 happens in the `manus_glove_calibrator` executable (see
-[`src/plugins/manus/calibration/README.md`](../../src/plugins/manus/calibration/README.md)).
+[`src/plugins/manus_calibration/README.md`](../../src/plugins/manus_calibration/README.md)).
 No capture session, OpenXR runtime, or CaptureServer is involved.
 
 This is vendor glove calibration only. Camera calibration, spatial alignment, and flex-sensor
@@ -28,12 +28,12 @@ offsets are separate operations.
 ## Run
 
 The page needs only Python 3.11 or newer and the standard library. The worker supervisor and file storage
-come from the `isaaccapture-manus-calibration` library in `src/plugins/manus/calibration/python`; install it
-(`pip install ../../src/plugins/manus/calibration/python`) or put it on `PYTHONPATH` as below:
+come from the `isaaccapture-manus-calibration` library in `src/plugins/manus_calibration/python`; install it
+(`pip install ../../src/plugins/manus_calibration/python`) or put it on `PYTHONPATH` as below:
 
 ```bash
 cd examples/manus_calibration
-PYTHONPATH=python:../../src/plugins/manus/calibration/python python3 -m isaaccapture_examples.manus_calibration \
+PYTHONPATH=python:../../src/plugins/manus_calibration/python python3 -m isaaccapture_examples.manus_calibration \
     --worker /path/to/manus_glove_calibrator \
     --out-dir ~/manus-calibration
 ```

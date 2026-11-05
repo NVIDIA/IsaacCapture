@@ -3,7 +3,7 @@
 
 """Typed events and commands of the calibration worker's wire protocol.
 
-The contract is `src/plugins/manus/calibration/README.md`. Parsing is strict: any line that is not
+The contract is `src/plugins/manus_calibration/README.md`. Parsing is strict: any line that is not
 exactly a documented message raises :class:`ProtocolError`, so a misbehaving worker is a visible
 failure rather than a skipped line.
 """

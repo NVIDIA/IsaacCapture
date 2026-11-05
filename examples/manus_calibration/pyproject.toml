@@ -30,4 +30,4 @@ only-include = ["python/isaaccapture_examples/manus_calibration"]
 sources = ["python"]
 
 [tool.uv.sources]
-isaaccapture-manus-calibration = { path = "../../src/plugins/manus/calibration/python" }
+isaaccapture-manus-calibration = { path = "../../src/plugins/manus_calibration/python" }

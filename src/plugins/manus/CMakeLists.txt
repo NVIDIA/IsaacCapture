@@ -73,24 +73,18 @@ if(MANUS_SHOULD_BUILD)
   endif()
 endif()
 
-# The calibration engine and wire format need no Manus SDK, so they build, and their tests run, without it.
-# POSIX file and process calls make it Linux-only.
-if(UNIX AND NOT APPLE)
-  add_subdirectory(calibration/core)
-endif()
-
 if(NOT MANUS_SHOULD_BUILD)
   message(STATUS "Skipping Manus plugin build: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_plugin_core COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_plugin_core: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_hand_plugin COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_hand_plugin: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_hand_tracker_printer COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_hand_tracker_printer: ${MANUS_SKIP_REASON}")
-  add_custom_target(manus_glove_calibrator COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_glove_calibrator: ${MANUS_SKIP_REASON}")
   return()
 endif()
 
 # Create imported library target for Manus SDK
 # Note: The Manus SDK library doesn't have a SONAME, so we need to use IMPORTED_NO_SONAME
-add_library(ManusSDK::ManusSDK SHARED IMPORTED)
+# GLOBAL: the separate src/plugins/manus_calibration worker links the same vendor library.
+add_library(ManusSDK::ManusSDK SHARED IMPORTED GLOBAL)
 
 get_filename_component(_MANUS_LIB_NAME "${_MANUS_LIB}" NAME)
 
@@ -107,12 +101,13 @@ if(MANUS_ADD_SDK_TO_BUILD_RPATH)
   list(APPEND _ISAAC_MANUS_EFFECTIVE_BUILD_RPATH "${MANUS_SDK_LIBRARY_DIR}")
 endif()
 list(JOIN _ISAAC_MANUS_EFFECTIVE_BUILD_RPATH ";" _ISAAC_MANUS_EFFECTIVE_BUILD_RPATH_STR)
+# For src/plugins/manus_calibration, which shares the vendor SDK's build setup but none of this plugin's code.
+set(ISAAC_MANUS_SDK_BUILD_RPATH "${_ISAAC_MANUS_EFFECTIVE_BUILD_RPATH_STR}" PARENT_SCOPE)
 
 add_subdirectory(core)
 add_library(isaac::manus_plugin ALIAS manus_plugin_core)
 add_subdirectory(app)
 add_subdirectory(tools)
-add_subdirectory(calibration)
 
 # Install Manus SDK shared library
 install(FILES "${_MANUS_LIB}"

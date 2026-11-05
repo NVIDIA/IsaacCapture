@@ -12,7 +12,7 @@
 #include <vector>
 
 // Newline-delimited JSON wire format between the calibration worker and its supervisor.
-// The field contract is documented in src/plugins/manus/calibration/README.md.
+// The field contract is documented in src/plugins/manus_calibration/README.md.
 namespace plugins::manus::calibration
 {
 
