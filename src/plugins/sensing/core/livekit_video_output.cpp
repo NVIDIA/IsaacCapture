@@ -177,13 +177,17 @@ struct LiveKitVideoOutput::Impl
         if (dma)
         {
             const uint64_t accepted_ns = frame.monotonic_ns;
+            // A frame still waiting is replaced by this newer one. Its lease is released after the lock is dropped:
+            // that is a camera API call, and must not run inside the section the worker waits on.
+            std::optional<CaptureFrame> replaced_frame;
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                // A frame still waiting is replaced by this newer one; assigning releases its lease.
                 if (pending_dma)
                     ++replaced;
+                replaced_frame = std::move(pending_dma);
                 pending_dma = std::move(frame);
             }
+            replaced_frame.reset();
             ++snapshots;
             have_last = true;
             last_accepted_ns = accepted_ns;
