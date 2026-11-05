@@ -225,7 +225,7 @@ TEST_CASE("a zero step time is a hold and a positive one is a motion with that d
     CHECK(prompts[1]->mode == StepMode::Motion);
     CHECK(prompts[1]->duration_s == 0.5);
     CHECK(prompts[2]->mode == StepMode::Motion);
-    CHECK(prompts[2]->duration_s == static_cast<double>(0.001f));
+    CHECK(prompts[2]->duration_s == 0.001);
     CHECK(prompts[3]->mode == StepMode::Hold);
     CHECK(prompts[3]->duration_s == 0.0);
     for (const PromptEvent* prompt : prompts)
@@ -233,6 +233,24 @@ TEST_CASE("a zero step time is a hold and a positive one is a motion with that d
         CHECK_FALSE(prompt->continuous);
         CHECK(prompt->estimated_s == 0.0);
     }
+}
+
+TEST_CASE("a step time below one millisecond is reported as one millisecond", "[unit][engine][flow]")
+{
+    Rig rig;
+    rig.sdk.steps = 2;
+    rig.sdk.step_times = { 0.0004f, -0.0004f };
+    rig.start({ Side::Left });
+    rig.run_to_end();
+
+    require_clean_terminal(rig);
+    const auto prompts = rig.all<PromptEvent>();
+    REQUIRE(prompts.size() == 2);
+    // The mode, the duration and the estimate must agree after the wire rounds to milliseconds.
+    CHECK(prompts[0]->mode == StepMode::Motion);
+    CHECK(prompts[0]->duration_s == 0.001);
+    CHECK(prompts[1]->continuous);
+    CHECK(prompts[1]->estimated_s == 0.001);
 }
 
 TEST_CASE("a negative step time is a continuous hold carrying the SDK estimate", "[unit][engine][flow][continuous]")
@@ -260,7 +278,7 @@ TEST_CASE("a negative step time is a continuous hold carrying the SDK estimate",
     CHECK(prompts[1]->index == 1);
     CHECK(prompts[1]->mode == StepMode::Hold);
     CHECK(prompts[1]->continuous);
-    CHECK(prompts[1]->estimated_s == static_cast<double>(0.001f));
+    CHECK(prompts[1]->estimated_s == 0.001);
 
     // A zero-time step after continuous ones is a plain hold again.
     confirm_and_advance(rig);
