@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import json
 import time
 from collections import defaultdict
 from types import SimpleNamespace
@@ -372,3 +374,108 @@ async def test_cancelling_prepare_during_the_join_does_not_cancel_the_join():
     for _ in range(5):
         await asyncio.sleep(0)
     assert receiver.events == ["start", "stop"]
+
+
+# --- timing_evidence ---------------------------------------------------------------
+
+
+def history_of(count: int) -> list[ClockMapping]:
+    return [
+        ClockMapping(
+            epoch=1 + i // 10, offset_ns=-i, rtt_ns=2_000 + i, uncertainty_ns=1_000 + i, accepted_at_ns=100 * i
+        )
+        for i in range(count)
+    ]
+
+
+def clock_sync_with(history, *, discontinuity=False, rejected=0, current=True):
+    return SimpleNamespace(
+        estimator=SimpleNamespace(history=history),
+        discontinuity=discontinuity,
+        rejected=rejected,
+        mapping=lambda: history[-1] if current else None,
+    )
+
+
+async def prepared_source(streams):
+    source = make_source(streams)
+    await prepare_with_frames(source, streams)
+    return source, FakeReceiver.instances[0]
+
+
+def test_a_source_that_never_prepared_has_no_timing_evidence():
+    assert make_source([livekit_stream(16)]).timing_evidence() is None
+
+
+async def test_without_clock_sync_there_is_no_timing_evidence():
+    streams = [livekit_stream(16)]
+    source, receiver = await prepared_source(streams)
+    receiver.clock_sync = None
+    assert source.timing_evidence() is None
+
+
+async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under():
+    streams = [livekit_stream(16), livekit_stream(17)]
+    source, receiver = await prepared_source(streams)
+    history = history_of(3)
+    receiver.clock_sync = clock_sync_with(history, discontinuity=True, rejected=4, current=False)
+
+    evidence = source.timing_evidence()
+
+    assert evidence == {
+        "clock_mapping": {
+            "method": "four_timestamp_exchange",
+            "local_clock": "pc_monotonic",
+            "remote_clock": "publisher_monotonic",
+            "streams": [{"name": "cam16", "timestamp_basis": "SENSOR_CAPTURE_MONOTONIC_US"}]
+            + [{"name": "cam17", "timestamp_basis": "SENSOR_CAPTURE_MONOTONIC_US"}],
+            "mappings": [
+                {
+                    "epoch": m.epoch,
+                    "offset_ns": m.offset_ns,
+                    "rtt_ns": m.rtt_ns,
+                    "uncertainty_ns": m.uncertainty_ns,
+                    "accepted_at_ns": m.accepted_at_ns,
+                }
+                for m in history
+            ],
+            "discontinuity": True,
+            "exchanges_rejected": 4,
+            "mapping_current_at_stop": False,
+        },
+        "tracking_time": "host_poll",
+    }
+    assert json.loads(json.dumps(evidence)) == evidence
+
+
+async def test_timing_evidence_carries_only_the_newest_mappings():
+    source, receiver = await prepared_source([livekit_stream(16)])
+    history = history_of(lrec._MAX_EVIDENCE_MAPPINGS + 36)
+    receiver.clock_sync = clock_sync_with(history)
+
+    mappings = source.timing_evidence()["clock_mapping"]["mappings"]
+
+    assert [m["accepted_at_ns"] for m in mappings] == [
+        m.accepted_at_ns for m in history[-lrec._MAX_EVIDENCE_MAPPINGS :]
+    ]
+
+
+async def test_an_exchange_reported_again_with_more_uncertainty_is_listed_once_as_first_reported():
+    source, receiver = await prepared_source([livekit_stream(16)])
+    first = ClockMapping(epoch=1, offset_ns=5, rtt_ns=2_000, uncertainty_ns=1_000, accepted_at_ns=100)
+    later_report = dataclasses.replace(first, uncertainty_ns=1_500)
+    newer = ClockMapping(epoch=1, offset_ns=6, rtt_ns=2_000, uncertainty_ns=1_000, accepted_at_ns=200)
+    other_epoch = dataclasses.replace(first, epoch=2, offset_ns=9)
+    receiver.clock_sync = clock_sync_with([first, later_report, newer, other_epoch])
+
+    mappings = source.timing_evidence()["clock_mapping"]["mappings"]
+
+    assert [(m["epoch"], m["accepted_at_ns"], m["uncertainty_ns"]) for m in mappings] == [
+        (1, 100, 1_000),
+        (2, 100, 1_000),
+        (1, 200, 1_000),
+    ] or [(m["epoch"], m["accepted_at_ns"], m["uncertainty_ns"]) for m in mappings] == [
+        (2, 100, 1_000),
+        (1, 100, 1_000),
+        (1, 200, 1_000),
+    ]
