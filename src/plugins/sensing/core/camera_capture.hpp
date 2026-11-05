@@ -47,7 +47,9 @@ struct CudaRgbaPixels
 };
 
 /// NV12 in a DMA-BUF, as an Argus buffer stream produces it. Leased: valid until the frame's lease is released.
-/// The plane layout is what the encoder must accept.
+/// Contract: the producer has finished writing when the frame is returned, and the surface is pitch-linear NV12 with
+/// the pitches and offsets below. A backend that cannot deliver that (block-linear, or still being written) must
+/// convert or wait before returning, not describe it here for the encoder to guess.
 struct DmaBufNv12Pixels
 {
     int fd = -1;
@@ -56,7 +58,8 @@ struct DmaBufNv12Pixels
 };
 
 /// Returns a frame's buffer to its backend when destroyed or reset. Move-only: exactly one holder owns the buffer,
-/// and the backend must outlive every lease it issued.
+/// and the backend must outlive every lease it issued. The release callback must not throw (it runs from a
+/// destructor), and it runs on whichever thread drops the lease, so it must be thread-safe.
 class FrameLease
 {
 public:
