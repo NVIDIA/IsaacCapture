@@ -29,7 +29,7 @@ or restarts it.
 | `WS /api/session` | The main live connection: capture-status snapshots, sampled binary tracking frames, and recording commands/replies/snapshots. One socket per browser tab; see [`frontend/README.md`](../frontend/README.md) for the full message shapes. |
 | `GET /stream{id}` | MJPEG camera preview, bound to the backend/session identity advertised in the `/api/session` snapshot. |
 | `GET /api/capture-status` | Thin HTTP inspection endpoint mirroring the latest snapshot; the frontend does not poll this during normal operation. |
-| `GET /api/livekit-preview` | Room, tracks and a subscribe-only token for the direct LiveKit camera preview; 404 unless the station file has a `livekit_preview` section. See [`../LIVEKIT_PREVIEW.md`](../LIVEKIT_PREVIEW.md). |
+| `GET /api/livekit-token?room=ROOM` | Subscribe-only viewer token for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. See [`../LIVEKIT_PREVIEW.md`](../LIVEKIT_PREVIEW.md). |
 | `GET /api/task-files`, `GET /api/task-files/{name}` | Read-only task-catalog API; see [`../data/taskfiles/README.md`](../data/taskfiles/README.md). |
 | `GET /recordings/...` | The optional recordings browser's API and file routes, off unless `EGOCAP_RECORDINGS_ENABLED=1`; see [`../recordings_frontend/README.md`](../recordings_frontend/README.md). |
 
@@ -51,7 +51,7 @@ Everything else is an environment variable:
 | --- | --- | --- |
 | `EGOCAP_STATION_CONFIG` | unset (development default) | Path to the deployment station YAML described above. |
 | `EGOCAP_CAPTURE_SERVER_URL` | `ws://127.0.0.1:8082` | Where to connect for tracking/camera data. |
-| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | unset | The LiveKit server's key pair, used only to sign viewer tokens for `GET /api/livekit-preview`. |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | unset | The LiveKit server's key pair, used only to sign viewer tokens for `GET /api/livekit-token`. |
 | `EGOCAP_TASK_FILES_DIR` | the shipped `data/taskfiles/` | Which task-catalog directory the task-file API serves. |
 | `EGOCAP_RECORDINGS_ENABLED` | off | Turns on the recordings browser's routes. |
 | `EGOCAP_ALLOWED_ORIGINS` | none (same-origin only) | Comma-separated extra origins allowed to open `WS /api/session` — needed when the frontend is hosted separately or behind a reverse proxy. |
