@@ -4,7 +4,6 @@
 #include "sensing_camera.hpp"
 
 #include "livekit_video_output.hpp"
-#include "sipl_capture.hpp"
 
 #include <sensing_livekit/livekit_session.hpp>
 
@@ -22,20 +21,6 @@ namespace sensing
 namespace
 {
 
-SiplConfig make_sipl_config(const SensingConfig& config)
-{
-    SiplConfig sipl{};
-    sipl.platform_config_json = config.platform_config_json;
-    sipl.platform_config_name = config.platform_config_name;
-    sipl.link_masks = config.link_masks;
-    sipl.nito_dir = config.nito_dir;
-    sipl.gpu_id = config.gpu_id;
-    sipl.full_range = config.full_range;
-    sipl.swap_uv = config.swap_uv;
-    sipl.isp0_buffers = config.isp0_buffers;
-    return sipl;
-}
-
 LiveKitOutputConfig make_output_config(const SensingConfig& config, const CameraInfo& sensor)
 {
     LiveKitOutputConfig output;
@@ -46,6 +31,7 @@ LiveKitOutputConfig make_output_config(const SensingConfig& config, const Camera
     output.gpu_id = config.gpu_id;
     output.bitrate_bps = config.livekit.bitrate_bps;
     output.peak_bitrate_bps = config.livekit.bitrate_bps + config.livekit.bitrate_bps / 2;
+    output.input = sensor.pixels;
     output.gop = config.gop;
     output.full_range = config.full_range;
     return output;
@@ -53,12 +39,17 @@ LiveKitOutputConfig make_output_config(const SensingConfig& config, const Camera
 
 } // namespace
 
-SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<StreamConfig>& streams) : m_config(config)
+SensingCamera::SensingCamera(const SensingConfig& config,
+                             std::unique_ptr<CameraCapture> camera,
+                             const std::vector<StreamConfig>& streams)
+    : m_config(config)
 {
     if (streams.empty())
         throw std::runtime_error("SensingCamera: no streams requested");
 
-    m_camera = std::make_unique<SiplCapture>(make_sipl_config(config));
+    m_camera = std::move(camera);
+    if (!m_camera)
+        throw std::runtime_error("SensingCamera: no camera backend");
     const auto& sensors = m_camera->cameras();
 
     // Everything that needs no network is checked first, so a bad name or divisor fails before any
@@ -77,7 +68,7 @@ SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<Stre
                 << "'. Available:";
             for (const auto& s : sensors)
                 oss << ' ' << s.id;
-            oss << ". Note this is the SIPL pipeline index, not the GMSL link index.";
+            oss << ". Note this is the backend's own camera index (a SIPL pipeline index is not the GMSL link index).";
             throw std::runtime_error(oss.str());
         }
         LiveKitVideoOutput::validate_geometry(found->width, found->height, config.livekit.scale_div);

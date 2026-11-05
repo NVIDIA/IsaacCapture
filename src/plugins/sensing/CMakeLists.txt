@@ -29,54 +29,58 @@ set(_tegra_lib_dirs "/usr/lib/aarch64-linux-gnu/nvidia" "/usr/lib/aarch64-linux-
 # ==============================================================================
 # SIPL
 # ==============================================================================
-# Headers ship in Jetson_SIPL_API_R<rel>_aarch64.tbz2, published alongside the
-# L4T release. Not in any apt pool, so setup_container.sh fetches it by URL.
-if(NOT SIPL_API_DIR)
-    find_path(SIPL_API_DIR sipl/include/NvSIPLCamera.hpp
-        PATHS "/usr/src/jetson_sipl_api"
-              "/opt/nvidia/jetson_sipl_api"
-              "$ENV{SIPL_API_DIR}"
-    )
-endif()
-
-if(NOT SIPL_API_DIR)
-    message(FATAL_ERROR
-        "================================================================================\n"
-        "SENSING camera plugin requires the Jetson SIPL API headers.\n"
-        "\n"
-        "Run the container setup, which fetches them:\n"
-        "  src/plugins/sensing/scripts/setup.sh\n"
-        "\n"
-        "Or point CMake at an existing copy:\n"
-        "  cmake -B build -DSIPL_API_DIR=/path/to/jetson_sipl_api\n"
-        "\n"
-        "Or disable this plugin:\n"
-        "  cmake -B build -DBUILD_PLUGIN_SENSING=OFF\n"
-        "================================================================================\n"
-    )
-endif()
-
-set(SIPL_INCLUDE_DIRS
-    "${SIPL_API_DIR}/sipl/include"
-    "${SIPL_API_DIR}/sipl/include/query/include"
-    "${SIPL_API_DIR}/sipl/include/nvsci"
-)
-message(STATUS "SENSING plugin: SIPL=${SIPL_API_DIR}")
-
-# L4T ships no .so dev symlinks for these, hence the explicit sonames.
-foreach(_lib nvsipl nvsipl_query nvscibuf nvscisync nvbufsurface_nvsci)
-    string(TOUPPER "${_lib}" _upper)
-    find_library(${_upper}_LIBRARY
-        NAMES ${_lib} lib${_lib}.so.1 lib${_lib}.so.1.0.0
-        PATHS ${_tegra_lib_dirs}
-    )
-    if(NOT ${_upper}_LIBRARY)
-        message(FATAL_ERROR
-            "lib${_lib} not found. It is supplied by the L4T BSP and, in a container, by the "
-            "NVIDIA container runtime. Run src/plugins/sensing/verify.sh to see what is missing.")
+# Off for an Argus-only rig, which needs neither the SIPL headers nor its libraries.
+option(SENSING_WITH_SIPL "Build the SIPL capture backend" ON)
+if(SENSING_WITH_SIPL)
+    # Headers ship in Jetson_SIPL_API_R<rel>_aarch64.tbz2, published alongside the
+    # L4T release. Not in any apt pool, so setup_container.sh fetches it by URL.
+    if(NOT SIPL_API_DIR)
+        find_path(SIPL_API_DIR sipl/include/NvSIPLCamera.hpp
+            PATHS "/usr/src/jetson_sipl_api"
+                  "/opt/nvidia/jetson_sipl_api"
+                  "$ENV{SIPL_API_DIR}"
+        )
     endif()
-    list(APPEND SIPL_LIBRARIES ${${_upper}_LIBRARY})
-endforeach()
+
+    if(NOT SIPL_API_DIR)
+        message(FATAL_ERROR
+            "================================================================================\n"
+            "SENSING camera plugin requires the Jetson SIPL API headers.\n"
+            "\n"
+            "Run the container setup, which fetches them:\n"
+            "  src/plugins/sensing/scripts/setup.sh\n"
+            "\n"
+            "Or point CMake at an existing copy:\n"
+            "  cmake -B build -DSIPL_API_DIR=/path/to/jetson_sipl_api\n"
+            "\n"
+            "Or disable this plugin:\n"
+            "  cmake -B build -DBUILD_PLUGIN_SENSING=OFF\n"
+            "================================================================================\n"
+        )
+    endif()
+
+    set(SIPL_INCLUDE_DIRS
+        "${SIPL_API_DIR}/sipl/include"
+        "${SIPL_API_DIR}/sipl/include/query/include"
+        "${SIPL_API_DIR}/sipl/include/nvsci"
+    )
+    message(STATUS "SENSING plugin: SIPL=${SIPL_API_DIR}")
+
+    # L4T ships no .so dev symlinks for these, hence the explicit sonames.
+    foreach(_lib nvsipl nvsipl_query nvscibuf nvscisync nvbufsurface_nvsci)
+        string(TOUPPER "${_lib}" _upper)
+        find_library(${_upper}_LIBRARY
+            NAMES ${_lib} lib${_lib}.so.1 lib${_lib}.so.1.0.0
+            PATHS ${_tegra_lib_dirs}
+        )
+        if(NOT ${_upper}_LIBRARY)
+            message(FATAL_ERROR
+                "lib${_lib} not found. It is supplied by the L4T BSP and, in a container, by the "
+                "NVIDIA container runtime. Run src/plugins/sensing/verify.sh to see what is missing.")
+        endif()
+        list(APPEND SIPL_LIBRARIES ${${_upper}_LIBRARY})
+    endforeach()
+endif()
 
 # EGL stays on the capture path: NvBufSurfaceMapEglImage is how a SIPL
 # NvSciBufObj becomes a CUeglFrame. Interop path B in the design notes would
@@ -85,6 +89,21 @@ find_path(EGL_INCLUDE_DIRS EGL/egl.h)
 find_library(EGL_LIBRARIES NAMES EGL)
 if(NOT EGL_INCLUDE_DIRS OR NOT EGL_LIBRARIES)
     message(FATAL_ERROR "SENSING camera plugin requires EGL. Install libegl1-mesa-dev.")
+endif()
+
+# ==============================================================================
+# Argus (optional)
+# ==============================================================================
+# The Argus backend captures NV12 into DMA-BUFs the hardware encoder reads. It needs the Argus headers from the
+# Multimedia API and libnvargus; none of this is built or run by default.
+option(SENSING_WITH_ARGUS "Build the Argus capture backend (not built or run by the author)" OFF)
+if(SENSING_WITH_ARGUS)
+    find_path(ARGUS_INCLUDE_DIR Argus/Argus.h HINTS "${JETSON_MMAPI_DIR}/argus/include")
+    find_library(ARGUS_LIBRARY NAMES nvargus PATHS ${_tegra_lib_dirs})
+    if(NOT ARGUS_INCLUDE_DIR OR NOT ARGUS_LIBRARY)
+        message(FATAL_ERROR "SENSING_WITH_ARGUS needs the Argus headers (<jetson_multimedia_api>/argus/include) and libnvargus.")
+    endif()
+    message(STATUS "SENSING plugin: Argus=${ARGUS_INCLUDE_DIR}")
 endif()
 
 # ==============================================================================

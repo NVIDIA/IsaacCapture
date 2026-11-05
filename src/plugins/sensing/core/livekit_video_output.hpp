@@ -22,6 +22,8 @@ struct LiveKitOutputConfig
     uint32_t source_height = 0;
     /// Uniform output-only reduction; 1 publishes the sensor's native size.
     uint32_t scale_div = 1;
+    /// The frames submit() will be given; DMA-BUF input needs scale_div 1 (no CPU or CUDA copy exists to reduce).
+    PixelKind input = PixelKind::CudaRgba;
     /// Publication rate cap, independent of the capture rate.
     uint32_t fps = 30;
     int gpu_id = 0;
@@ -77,9 +79,10 @@ public:
     LiveKitVideoOutput(const LiveKitVideoOutput&) = delete;
     LiveKitVideoOutput& operator=(const LiveKitVideoOutput&) = delete;
 
-    /// Never blocks on the network. A frame sooner than the publication rate allows is skipped. Only borrowed
-    /// CUDA RGBA pixels are accepted for now; they are copied out before this returns.
-    void submit(const CaptureFrame& frame);
+    /// Never blocks on the network. A frame sooner than the publication rate allows is skipped. Borrowed CUDA
+    /// RGBA pixels are copied out before this returns; a leased DMA-BUF frame's lease is moved into the output and
+    /// released once the encoder is finished with it (or at once if the frame is dropped).
+    void submit(CaptureFrame& frame);
 
     LiveKitOutputStats stats() const;
 
