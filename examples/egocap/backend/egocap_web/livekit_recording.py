@@ -59,8 +59,8 @@ class UnixClockMap:
     The pair is two clock readings taken back to back and refreshed about once a second, from the consumer's
     thread and never from an SDK callback. It converts on this machine only and says nothing about whether the
     publisher's clock agrees with this one. It keeps the uncertainty of its pair (half the bracketing span) and
-    flags a discontinuity of the Unix clock between two measurements (a heuristic, not proof of a step or an accuracy
-    bound): `step_detected` stays set, because samples already mapped are never remapped with a newer offset, and a
+    flags a discontinuity of the Unix clock between two measurements (a heuristic, not proof of a step or of an
+    accuracy bound): `step_detected` stays set, because samples already mapped are never remapped with a newer offset, and a
     map covers one take. Frames mapped between a step and its detection are already recorded with the old offset.
     """
 
