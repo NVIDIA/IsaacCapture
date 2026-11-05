@@ -19,7 +19,7 @@ or discontinuous means the remote's timestamps cannot be placed on this clock.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 #: Exchanges whose round trip exceeds this are not used: a slow or queued exchange says little about the clocks.
 DEFAULT_MAX_RTT_NS = 250_000_000
@@ -141,11 +141,18 @@ class ClockEstimator:
         return None
 
     def mapping(self, now_ns: int) -> ClockMapping | None:
-        """The current mapping, or None when there is none yet or no exchange arrived within the stale limit."""
+        """The current mapping, or None when there is none yet or no exchange arrived within the stale limit.
+
+        The uncertainty is aged to ``now_ns``: while replies are late the offset's drift allowance keeps growing, so
+        a budget check on a returned mapping never sees a figure older than the call. History is not appended.
+        """
         current = self._current
         if current is None or self._newest_ns is None or now_ns - self._newest_ns > self._stale_after_ns:
             return None
-        return current
+        aged = current.rtt_ns // 2 + int(self._drift_allowance * max(0, now_ns - current.accepted_at_ns))
+        if aged <= current.uncertainty_ns:
+            return current
+        return replace(current, uncertainty_ns=aged)
 
     def _uncertainty_ns(self, exchange: Exchange, now_ns: int) -> int:
         """Half the round trip plus the offset drift the exchange's age allows at the allowed relative rate."""

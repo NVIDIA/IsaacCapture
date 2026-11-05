@@ -361,3 +361,37 @@ def test_history_keeps_only_the_newest_mappings_however_many_are_adopted() -> No
 
     assert len(estimator.history) == _MAX_HISTORY
     assert [m.accepted_at_ns for m in estimator.history] == [e.t4 for e in exchanges[-_MAX_HISTORY:]]
+
+
+def test_mapping_uncertainty_ages_between_exchanges_without_growing_history() -> None:
+    estimator = ClockEstimator(drift_allowance=200e-6)
+    ex = make_exchange(10 * S, offset=5 * MS, forward=2 * MS, back=2 * MS)
+    assert estimator.add(ex) is None
+    at_add = estimator.mapping(ex.t4)
+    assert at_add is not None
+    assert at_add.uncertainty_ns == ex.rtt_ns // 2
+
+    later = estimator.mapping(ex.t4 + 3 * S)
+    assert later is not None
+    assert later.uncertainty_ns == ex.rtt_ns // 2 + int(200e-6 * 3 * S)
+    assert later.uncertainty_ns > at_add.uncertainty_ns
+    # Only the offset and epoch it was made under are unchanged, and reading never appends evidence.
+    assert (later.offset_ns, later.epoch, later.accepted_at_ns) == (
+        at_add.offset_ns,
+        at_add.epoch,
+        at_add.accepted_at_ns,
+    )
+    assert len(estimator.history) == 1
+
+
+def test_mapping_uncertainty_is_withheld_past_stale_limit_and_resets_on_a_new_exchange() -> None:
+    estimator = ClockEstimator(stale_after_ns=5 * S)
+    first = make_exchange(10 * S, forward=MS, back=MS)
+    estimator.add(first)
+    assert estimator.mapping(first.t4 + 6 * S) is None
+
+    second = make_exchange(20 * S, forward=MS, back=MS)
+    estimator.add(second)
+    fresh = estimator.mapping(second.t4)
+    assert fresh is not None
+    assert fresh.uncertainty_ns == second.rtt_ns // 2

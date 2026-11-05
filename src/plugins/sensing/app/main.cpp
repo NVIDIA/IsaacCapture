@@ -150,7 +150,7 @@ static void print_usage(const char* program_name)
         << "                            participant identity\n"
         << "  --livekit-fps=N           publication rate cap (default: 30)\n"
         << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
-        << "  --timestamp-basis=B       capture_monotonic_us publishes the sensor's capture event on this host's\n"
+        << "  --timestamp-basis=B       capture_monotonic_us (UNVERIFIED on hardware) publishes the sensor's capture event on this host's\n"
         << "                            monotonic clock (recordable); processing_unix_us, the default, publishes\n"
         << "                            processing time. A frame whose sensor time cannot be placed fails the stream.\n"
         << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
