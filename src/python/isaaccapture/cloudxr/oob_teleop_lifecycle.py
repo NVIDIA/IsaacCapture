@@ -1860,6 +1860,15 @@ class OobLifecycle:
                     # Waiting for the wearer must not consume the next recovery episode.
                     self._presence_waiting_for_awake = False
                     self._restart_episode()
+                    if (
+                        self._transport_lost
+                        and self._restore_existing_browser
+                        and self._repair_started_at is not None
+                    ):
+                        # The surviving page also needs reconnect time after sleep.
+                        self._client_grace_deadline = (
+                            self._bounded_client_grace_deadline()
+                        )
                 preserving_browser = (
                     self._transport_lost and self._restore_existing_browser
                 )
