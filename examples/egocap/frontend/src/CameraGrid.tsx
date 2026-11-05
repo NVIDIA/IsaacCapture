@@ -11,7 +11,6 @@ import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
 import { LiveKitCameraTile } from "./LiveKitCameraTile";
-import { useLiveKitLatency } from "./useLiveKitLatency";
 import { useLiveKitPreview } from "./useLiveKitPreview";
 
 const CAMERA_ERROR_RETRY_LIMIT = 3;
@@ -179,7 +178,6 @@ export function CameraGrid({
 
   // Direct LiveKit tiles sit beside the CaptureServer ones; they have their own connection and readiness.
   const livekit = useLiveKitPreview(liveKitStreams(snapshot?.started));
-  const pcLatency = useLiveKitLatency(livekit.tiles.length > 0);
   const cameras = snapshot?.cameras ?? [];
   const livekitShown = livekit.tiles.length > 0 || livekit.phase === "error";
   if (cameras.length === 0 && !livekitShown) {
@@ -253,7 +251,6 @@ export function CameraGrid({
             name={tile.name}
             track={tile.track}
             phase={livekit.phase}
-            pcLatency={pcLatency[tile.name] ?? null}
             // A LiveKit tile is a main view only when no CaptureServer camera claims that place: every head
             // camera when there are several, otherwise the first tile.
             primary={liveKitOnly && (equalHeads ? isHeadTile(tile.name) : index === 0)}
