@@ -121,7 +121,7 @@ async def start(
     *,
     sources: Sequence[SourceType],
     cameras: Sequence[CameraSelection] = (),
-    plugins: Sequence[PluginType] = (),
+    plugins: Sequence[PluginType | ManusPluginConfig] = (),
     on_started: Callback[CaptureStarted] | None = None,
     on_status: Callback[CaptureStatus] | None = None,
     on_capture_frame: Callback[CaptureFrame] | None = None,
@@ -134,7 +134,11 @@ async def start(
 async def stop(self) -> None: ...
 ```
 
-`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes two operations, start and stop.
+```python
+async def query_devices(self) -> tuple[protocol.DeviceEntry, ...]: ...
+```
+
+`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes three operations: start, stop and the read-only device query. `ManusPluginConfig` and `DeviceQueryError` are imported from `capture_server.client`; `DeviceEntry` and `ManusCalibrationCatalogStatus` are in `capture_server.protocol`.
 
 #### Constructor and start arguments
 
@@ -143,7 +147,7 @@ async def stop(self) -> None: ...
 | Constructor `url` | Nonempty `str`, a `ws://` or `wss://` station URL. | Identifies the remote capture server. Construction creates an idle client without connecting. |
 | `sources` | Sequence of unique `SourceType`: `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. Required; an empty sequence is allowed. | Chooses tracking outputs. CONTROLLERS selects both controller sides; HANDS selects both hand sides. An empty sequence supports camera-only capture. |
 | `cameras` | Sequence of `CameraSelection`, default empty; at most three, with unique names. | Selects station-configured cameras by logical name and type. |
-| `plugins` | Sequence of unique `PluginType`: `MANUS=1`; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
+| `plugins` | Sequence of unique plugins: a `PluginType` (`MANUS=1`) or a `ManusPluginConfig` that also names MCAL files; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
 | Five `on_...` arguments | `Callback[T] \| None`, default None; argument types appear below. | Registers notifications. None discards that notification; it does not disable acquisition. |
 
 An empty `sources` sequence together with any enabled plugin is rejected as `INVALID_CONFIG`: an enabled plugin needs IC actually entered for discovery to run, but the real IC graph-construction API rejects an empty output mapping outright, so that combination has no valid native graph to build. Plugin requests are otherwise independent of output subscriptions — a session can enable Manus without selecting `HANDS`, and vice versa; only the specific zero-sources-with-an-enabled-plugin combination is rejected, not any particular source choice. Camera-only capture (empty `sources`, no enabled plugin) remains supported and never enters IC.
@@ -694,7 +698,7 @@ One JSON object is one text message. One complete header and payload is one bina
 
 There are ten session message families, plus the device query described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
 
-Every JSON message has these envelope fields. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
+Every JSON session message has these envelope fields. The two `/query` messages instead carry `type`, `version` and a client-chosen `request_id`, and no `session_id`; a query message that carries one is rejected. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
 
 | Field | Allowed contents | What it does |
 |---|---|---|

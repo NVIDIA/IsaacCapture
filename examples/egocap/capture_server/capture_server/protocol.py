@@ -90,13 +90,9 @@ class ManusDataset(IntEnum):
     HUMAN = 1
 
 
-class HandSide(IntEnum):
-    LEFT = 1
-    RIGHT = 2
-
-
 class ManusCalibrationCatalogStatus(IntEnum):
-    # Whether the Manus MCAL folder listing is usable.
+    """Whether the Manus MCAL folder listing is usable."""
+
     READY = 1
     DISABLED = 2
     UNAVAILABLE = 3
@@ -1974,11 +1970,14 @@ class DeviceEntry:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
+        """Enforce that the status, error message and file list agree with each other."""
+        # The error message exists exactly when the listing is unavailable, and is never empty.
         unavailable = self.mcal_status is ManusCalibrationCatalogStatus.UNAVAILABLE
         if unavailable != (self.error_message is not None):
             raise ValueError("error_message is present exactly when the MCAL listing is UNAVAILABLE")
         if self.error_message is not None and not self.error_message:
             raise ValueError("error_message must be nonempty or null")
+        # Only a READY listing carries files, and they must fit one reply as unique basenames.
         if self.mcal_status is not ManusCalibrationCatalogStatus.READY and self.mcal_files:
             raise ValueError("mcal_files are present only for a READY listing")
         if len(self.mcal_files) > MAX_MCAL_FILES:
@@ -2029,6 +2028,8 @@ class DevicesReply:
     version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
 
     def __post_init__(self) -> None:
+        """Reject a reply that lists the same device kind twice."""
+        # One entry per device kind keeps a client's lookup unambiguous.
         kinds = [d.device for d in self.devices]
         if len(kinds) != len(set(kinds)):
             raise ValueError("a device appears twice in the reply")

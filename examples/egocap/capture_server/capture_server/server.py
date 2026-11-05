@@ -41,10 +41,10 @@ import asyncio
 import collections
 import contextlib
 import json
+import logging
 import signal
 import sys
 import time
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +57,8 @@ from websockets.server import ServerConnection
 from . import mcal_catalog
 from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
+
+_LOG = logging.getLogger("isaaccapture.capture_server.server")
 
 __all__ = ["CaptureServer", "ServerConfig", "main"]
 
@@ -1600,8 +1602,7 @@ class CaptureServer:
                 p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan timed out"
             )
         except Exception:
-            print("capture-server: calibration directory scan failed", file=sys.stderr)
-            traceback.print_exc()
+            _LOG.exception("calibration directory scan failed")
             return mcal_catalog.Catalog(
                 p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan failed"
             )
