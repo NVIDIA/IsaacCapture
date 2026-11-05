@@ -1588,7 +1588,8 @@ class CaptureServer:
                     future = asyncio.get_running_loop().run_in_executor(
                         self._mcal_pool, mcal_catalog.scan, directory
                     )
-                except BaseException:
+                except Exception:
+                    # run_in_executor is synchronous and has no await to cancel at; only a submit failure lands here.
                     self._mcal_slots.release()
                     raise
                 future.add_done_callback(self._mcal_scan_finished)

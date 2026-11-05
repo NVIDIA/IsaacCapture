@@ -317,7 +317,7 @@ async def _ask(url: str, request: dict | str | bytes, *, request_id: str = "q-1"
         try:
             reply = p.parse_server_message(json.loads(await asyncio.wait_for(ws.recv(), 5)))
         except websockets.ConnectionClosed:
-            pass
+            pass  # a rejected request is closed without a reply; the close code is what the caller checks
         await asyncio.wait_for(ws.wait_closed(), 5)
         return reply, ws.close_code
     finally:
