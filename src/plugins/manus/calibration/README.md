@@ -13,6 +13,12 @@ loads the exported files through `manus_hand_plugin --left-calibration=` / `--ri
 The worker owns the SDK connection for one calibration attempt, then exits. Stop every other Manus
 consumer first (the tracking plugin, other SDK clients): the dongles are not shared.
 
+Calibration is a separate process by design: it has its own SDK adapter (`app/manus_sdk.cpp`) and shares
+no SDK code with the tracking plugin (`manus_plugin_core`), so a calibration attempt never touches the
+tracking pipeline. The Python supervisor, wire protocol and file storage that drive it are a
+standard-library-only package in [`python/`](python/), reusable by any UI or server; the browser page in
+`examples/manus_calibration` is one client of it.
+
 ## Process contract
 
 ```

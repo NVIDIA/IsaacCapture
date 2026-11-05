@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from isaaccapture_examples.manus_calibration import protocol as proto
+from isaaccapture_manus_calibration import protocol as proto
 
 SHA = "a" * 64
 ATTEMPT = "cal-abc"

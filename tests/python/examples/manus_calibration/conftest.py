@@ -15,9 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from repo_paths import repo_root  # noqa: E402
 
 sys.path.insert(0, str(repo_root() / "examples" / "manus_calibration" / "python"))
+sys.path.insert(
+    0, str(repo_root() / "src" / "plugins" / "manus" / "calibration" / "python")
+)
 
-from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.worker import (
+from isaaccapture_manus_calibration import protocol as proto  # noqa: E402
+from isaaccapture_manus_calibration.worker import (  # noqa: E402
     AttemptState,
     CalibrationAttempt,
     CalibrationOutcome,

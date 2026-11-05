@@ -27,11 +27,13 @@ offsets are separate operations.
 
 ## Run
 
-The page needs only Python 3.11 or newer and the standard library:
+The page needs only Python 3.11 or newer and the standard library. The worker supervisor and file storage
+come from the `isaaccapture-manus-calibration` library in `src/plugins/manus/calibration/python`; install it
+(`pip install ../../src/plugins/manus/calibration/python`) or put it on `PYTHONPATH` as below:
 
 ```bash
 cd examples/manus_calibration
-PYTHONPATH=python python3 -m isaaccapture_examples.manus_calibration \
+PYTHONPATH=python:../../src/plugins/manus/calibration/python python3 -m isaaccapture_examples.manus_calibration \
     --worker /path/to/manus_glove_calibrator \
     --out-dir ~/manus-calibration
 ```

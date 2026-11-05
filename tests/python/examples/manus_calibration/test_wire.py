@@ -8,10 +8,10 @@ from __future__ import annotations
 import json
 
 import pytest
-from isaaccapture_examples.manus_calibration import protocol as proto
 from isaaccapture_examples.manus_calibration.controller import Stage, View
 from isaaccapture_examples.manus_calibration.wire import view_to_dict
-from isaaccapture_examples.manus_calibration.worker import (
+from isaaccapture_manus_calibration import protocol as proto
+from isaaccapture_manus_calibration.worker import (
     CalibrationOutcome,
     OutcomeKind,
 )

@@ -20,10 +20,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import protocol as proto
+from isaaccapture_manus_calibration import protocol as proto
 from .controller import CalibrationController, NotOwner, View
 from .wire import view_to_dict
-from .worker import AttemptError, CalibrationWorker, OutcomeKind
+from isaaccapture_manus_calibration.worker import (
+    AttemptError,
+    CalibrationWorker,
+    OutcomeKind,
+)
 
 logger = logging.getLogger("isaaccapture.examples.manus_calibration.server")
 

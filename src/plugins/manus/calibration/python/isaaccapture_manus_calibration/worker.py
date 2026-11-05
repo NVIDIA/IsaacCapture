@@ -31,7 +31,7 @@ from typing import Any
 
 from . import protocol as proto
 
-logger = logging.getLogger("isaaccapture.examples.manus_calibration.worker")
+logger = logging.getLogger("isaaccapture.manus_calibration.worker")
 
 _LOG_LINE_CHARS = 1000
 _DRAIN_CHUNK = 4096

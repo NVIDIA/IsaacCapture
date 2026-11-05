@@ -9,13 +9,13 @@ import asyncio
 
 import pytest
 from conftest import commands, wait_for
-from isaaccapture_examples.manus_calibration import protocol as proto
 from isaaccapture_examples.manus_calibration.controller import (
     CalibrationController,
     NotOwner,
     Stage,
 )
-from isaaccapture_examples.manus_calibration.worker import AttemptError, OutcomeKind
+from isaaccapture_manus_calibration import protocol as proto
+from isaaccapture_manus_calibration.worker import AttemptError, OutcomeKind
 
 HOLD = {
     "steps": [

@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .server import PageServer
-from .worker import CalibrationWorker
+from isaaccapture_manus_calibration.worker import CalibrationWorker
 
 logger = logging.getLogger("isaaccapture.examples.manus_calibration")
 

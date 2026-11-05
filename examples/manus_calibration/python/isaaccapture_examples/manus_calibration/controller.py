@@ -15,8 +15,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from . import protocol as proto
-from .worker import (
+from isaaccapture_manus_calibration import protocol as proto
+from isaaccapture_manus_calibration.worker import (
     AttemptError,
     CalibrationAttempt,
     CalibrationOutcome,

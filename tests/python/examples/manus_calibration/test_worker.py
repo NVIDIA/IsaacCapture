@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 from conftest import BOTH, Folder, commands, drive, wait_for
-from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.worker import (
+from isaaccapture_manus_calibration import protocol as proto
+from isaaccapture_manus_calibration.worker import (
     AttemptEnded,
     AttemptError,
     AttemptState,

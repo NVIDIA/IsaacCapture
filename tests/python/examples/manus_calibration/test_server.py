@@ -11,7 +11,7 @@ import json
 import pytest
 from conftest import commands
 from isaaccapture_examples.manus_calibration import server as server_module
-from isaaccapture_examples.manus_calibration.worker import OutcomeKind
+from isaaccapture_manus_calibration.worker import OutcomeKind
 from web_helpers import (
     CLIENT_A,
     CLIENT_B,

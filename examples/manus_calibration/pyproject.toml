@@ -12,8 +12,9 @@ name = "isaaccapture-examples-manus-calibration"
 version = "0.0.0"  # Internal example - not versioned
 description = "Standalone Manus glove calibration with a browser page"
 requires-python = ">=3.11,<3.14"
-# Standard library only: calibration needs no OpenXR, CUDA, capture session or UI toolkit.
-dependencies = []
+# The worker supervisor and MCAL storage live in a standard-library-only library beside the native worker;
+# calibration needs no OpenXR, CUDA, capture session or UI toolkit.
+dependencies = ["isaaccapture-manus-calibration"]
 
 [project.optional-dependencies]
 dev = [
@@ -27,3 +28,6 @@ only-include = ["python/isaaccapture_examples/manus_calibration"]
 
 [tool.hatch.build.targets.wheel]
 sources = ["python"]
+
+[tool.uv.sources]
+isaaccapture-manus-calibration = { path = "../../src/plugins/manus/calibration/python" }

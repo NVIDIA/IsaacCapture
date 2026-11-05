@@ -12,8 +12,8 @@ import time
 
 import pytest
 from conftest import BOTH, commands, wait_for
-from isaaccapture_examples.manus_calibration import protocol as proto
-from isaaccapture_examples.manus_calibration.worker import (
+from isaaccapture_manus_calibration import protocol as proto
+from isaaccapture_manus_calibration.worker import (
     AttemptEnded,
     AttemptState,
     ConfirmError,

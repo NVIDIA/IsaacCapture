@@ -7,7 +7,8 @@ add_executable(manus_glove_calibrator
   manus_sdk.hpp
 )
 
-# Deliberately not manus_plugin_core: calibration needs no OpenXR or tracking pipeline.
+# Deliberately not manus_plugin_core: calibration is its own process with its own SDK adapter, and needs no
+# OpenXR or tracking pipeline.
 target_link_libraries(manus_glove_calibrator
   PRIVATE
     manus_calibration::core
