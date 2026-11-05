@@ -157,9 +157,21 @@ export function LiveKitCameraTile({
         if (fps !== null) setFpsLabel(`${fps.toFixed(1)} FPS`);
       }
     }, FPS_WINDOW_MS);
+    // The timer can be throttled or suspended while the tab is hidden, so the transition itself resets the window:
+    // paused on hide, and a fresh baseline (no figure) for the first window after it returns.
+    const onVisibility = (): void => {
+      baselineRef.current = null;
+      latencySamplesRef.current = [];
+      if (document.hidden) {
+        setFpsLabel("paused");
+        setLatencyLabel(null);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stopped = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (callbackId !== null) element.cancelVideoFrameCallback(callbackId);
       element.removeEventListener("timeupdate", markFrame);
     };
