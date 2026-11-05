@@ -33,18 +33,22 @@ thereby proven aligned.
 **What recording from the real Orin still needs.** The native sender must publish `capture_unix_us`, the Unix time
 of the sensor's capture event. Its only capture-event clock is the SIPL frame capture counter (`frameCaptureTSC`),
 which Slack reports as the end-of-frame time in nanoseconds on the Tegra TSC timebase, not exposure; none of that is
-checked here. The SIPL headers and an Orin are needed to settle three things, in order:
+checked here, and the SIPL headers and an Orin are needed. The evidence required, from a supported platform API and
+not from fitting measurements:
 
-1. Run the sender with `SENSING_TSC_PROBE=1`. It prints the capture counter next to `CLOCK_MONOTONIC_RAW`,
-   `CLOCK_MONOTONIC` and `CLOCK_REALTIME` twice a second. A `raw_minus_tsc_ns` that stays constant over minutes, apart
-   from a small jitter, shows the counter shares a timebase with a host clock. If it drifts or steps, there is no
-   mapping to build on.
-2. With the relation confirmed, convert the counter to Unix time in the sender (one offset, re-measured at a low
-   rate and never per frame) and publish that as the application timestamp with the `capture_unix_us` basis, keeping
-   the raw counter in the frame's user data. Check against the SIPL documentation what instant the counter marks.
-3. Keep the Orin's and the PC's clocks in step with an ordinary time service, and measure the residual offset;
-   the recorder's frame-age check only catches gross disagreement, and a physical event seen by both the camera and a
-   tracking device is the test of real alignment.
+1. The counter's definition, units and event (which instant of the frame it marks) from the SIPL image-metadata
+   documentation of the deployed release, and the TSC's definition and rate in the L4T documentation of the
+   deployed JetPack. Record the exact header, SDK and L4T versions.
+2. A contemporaneous counter and host-clock reading from a supported API, so that a counter value can be placed on
+   `CLOCK_REALTIME` through one offset that is re-measured at a low rate, never per frame. Convert in the sender and
+   publish that time with the `capture_unix_us` basis, keeping the raw counter in the frame's user data.
+3. A time service between the Orin and the PC with the residual offset measured, and a physical event seen by both
+   the camera and a tracking device as the test of real alignment. The recorder's frame-age check only catches gross
+   disagreement.
+
+`SENSING_TSC_PROBE=1` prints the capture counter beside the host clocks twice a second, off by default. Its
+difference includes sensor readout, ISP and dequeue delay as well as any clock offset, so it only shows the order of
+magnitude and the drift of the relation. It is not a mapping and must not be fitted or subtracted as one.
 
 **Not yet exercised on the Orin.** The publisher, the browser's acceptance of its H.264 profile and the end-to-end
 latency have not been run or measured. Report those as untested until someone has run them.

@@ -9,6 +9,8 @@
 
 #include "yuv_to_rgba.cuh"
 
+#include <log_bridge/logger.hpp>
+
 #include <NvSIPLCamera.hpp>
 #include <NvSIPLCameraQuery.hpp>
 #include <NvSIPLClient.hpp>
@@ -849,10 +851,13 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
             // host clock, which carries this sensor's own queueing jitter.
             const auto& meta = nvm->GetImageData();
             const uint64_t capture_tsc_ns = meta.frameCaptureTSC;
-            // SENSING_TSC_PROBE=1 logs, twice a second, the capture TSC beside the host clocks read at dequeue. Run on
-            // the device, a difference to CLOCK_MONOTONIC_RAW that stays constant over minutes (apart from a small
-            // jitter) is what a TSC-to-host mapping would be built on; nothing here assumes one.
-            if (std::getenv("SENSING_TSC_PROBE") != nullptr)
+            // SENSING_TSC_PROBE=1 logs, twice a second, the capture TSC beside the host clocks read at dequeue.
+            // The difference holds sensor readout, ISP and dequeue delay as well as any clock offset, so it only
+            // shows the order of magnitude and the drift of the relation: it is not a counter-to-host mapping and
+            // must not be fitted or subtracted as one. The environment is read once, so a disabled probe costs a
+            // branch per frame.
+            static const bool tsc_probe = std::getenv("SENSING_TSC_PROBE") != nullptr;
+            if (tsc_probe)
             {
                 static thread_local uint64_t tsc_probe_n = 0;
                 if ((tsc_probe_n++ % 30) == 0)
@@ -864,12 +869,12 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
                         return static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
                     };
                     const int64_t raw_ns = clock_ns(CLOCK_MONOTONIC_RAW);
-                    const int64_t mono_ns = clock_ns(CLOCK_MONOTONIC);
-                    const int64_t real_ns = clock_ns(CLOCK_REALTIME);
-                    std::cerr << "[tsc] sensor " << sensor.info.id << " tsc_ns=" << capture_tsc_ns
-                              << " monotonic_raw_ns=" << raw_ns << " monotonic_ns=" << mono_ns
-                              << " realtime_ns=" << real_ns
-                              << " raw_minus_tsc_ns=" << (raw_ns - static_cast<int64_t>(capture_tsc_ns)) << std::endl;
+                    isaaccapture::Logger::get("isaaccapture.plugins.sensing.SiplCamera")
+                        ->info(
+                            "[tsc] sensor {} tsc_ns={} monotonic_raw_ns={} monotonic_ns={} realtime_ns={} "
+                            "raw_minus_tsc_ns={}",
+                            sensor.info.id, capture_tsc_ns, raw_ns, clock_ns(CLOCK_MONOTONIC), clock_ns(CLOCK_REALTIME),
+                            raw_ns - static_cast<int64_t>(capture_tsc_ns));
                 }
             }
             // SENSING_AE_PROBE=1 logs the sensor's exposure and gain once a
