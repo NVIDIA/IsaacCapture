@@ -6,6 +6,7 @@ add_library(sensing_core STATIC
     sensing_camera.cpp
     sipl_camera.cpp
     sipl_capture.cpp
+    camera_backend.cpp
     jetson_encoder.cpp
     livekit_video_output.cpp
     yuv_to_rgba.cu
