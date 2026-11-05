@@ -31,7 +31,7 @@ struct EncodedVideoFrame
     uint32_t frame_id = 0;
     /// The sensor's capture time on its own clock, carried as user data so a consumer can pair
     /// frames from different sensors.
-    uint64_t capture_tsc_ns = 0;
+    uint64_t capture_tsc = 0;
 };
 
 /// What the receiving side asked of the encoder since the last call.
