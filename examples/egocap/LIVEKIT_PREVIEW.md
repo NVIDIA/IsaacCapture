@@ -17,13 +17,18 @@ Orin: SIPL -> hardware H.264 -> LiveKit publisher --> LiveKit server --> browser
 PC:   CaptureServer (--livekit-streams: where the streams are) -> egocap backend (list + viewer token)
 ```
 
-**Recording.** A stream is saved with a take only when its station entry gives `width`, `height` and `fps` and
+**Recording.** A LiveKit stream is saved with a take only when its entry gives `width`, `height` and `fps` and
 declares `timestamp_basis: capture_unix_us`, meaning the publisher stamps each frame with the mapped capture time of
-the sensor event. The native Orin sender stamps `processing_unix_us` (host time after capture and conversion), which
-is not a capture time, so its streams are shown in the browser but never recorded. The recorder joins the room itself
-(it needs the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`) and checks each stream's first frame against the
-configured size before a take starts. Camera and tracking alignment also assumes the backend and CaptureServer share
-one machine's clock, and that the publisher's clock is synchronised with it; neither is checked.
+the sensor event. If any offered stream does not qualify, recording is refused with that stream's name (remove it
+from the streams file, or make it recordable); preview is unaffected. The native Orin sender stamps
+`processing_unix_us` (host time after capture and conversion), so with it recording is refused until the sensor's
+capture time is mapped. The recorder joins the room itself (it needs the same `LIVEKIT_API_KEY` and
+`LIVEKIT_API_SECRET`) and checks each stream's first frame against the configured size before a take starts. The
+recorder converts the publisher's Unix time to this machine's monotonic clock and applies one coarse check: a frame
+that is more than 2 s old on arrival, or stamped in the future, ends the take. That catches gross clock disagreement
+only; it does not prove the two machines' clocks agree to milliseconds, and nothing detects a clock step. Alignment
+with tracking also assumes the backend and CaptureServer share one machine's clock. A take that passes is not
+thereby proven aligned.
 
 **Not yet exercised on the Orin.** The publisher, the browser's acceptance of its H.264 profile and the end-to-end
 latency have not been run or measured. Report those as untested until someone has run them.
