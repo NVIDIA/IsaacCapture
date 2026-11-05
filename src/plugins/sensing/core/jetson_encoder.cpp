@@ -56,6 +56,8 @@ struct JetsonEncoder::Impl
     std::mutex mutex;
     std::deque<EncodedUnit> ready;
     bool eos_reached = false;
+    /// Why the capture thread stopped early; guarded by mutex.
+    std::string error;
     bool eos_sent = false; // driving thread only
 
     ~Impl()
@@ -67,13 +69,24 @@ struct JetsonEncoder::Impl
         delete encoder;
     }
 
+    // The capture thread stops after a failure; poll() reports it so the sender does not look healthy.
+    void fail(const char* what)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (error.empty())
+            error = what;
+    }
+
     // Capture-plane dequeue callback; runs on the encoder's own thread.
     static bool capture_dq(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* /*shared*/, void* arg)
     {
         auto* self = static_cast<Impl*>(arg);
 
         if (!v4l2_buf)
+        {
+            self->fail("the capture plane returned no buffer");
             return false;
+        }
 
         if (buffer && buffer->planes[0].bytesused > 0)
         {
@@ -99,7 +112,10 @@ struct JetsonEncoder::Impl
         }
 
         if (self->encoder->capture_plane.qBuffer(*v4l2_buf, nullptr) < 0)
+        {
+            self->fail("requeueing a capture buffer failed");
             return false;
+        }
 
         return true;
     }
@@ -252,7 +268,11 @@ EncodedUnit JetsonEncoder::poll()
 {
     std::lock_guard<std::mutex> lock(m_impl->mutex);
     if (m_impl->ready.empty())
+    {
+        if (!m_impl->error.empty())
+            throw std::runtime_error("JetsonEncoder: " + m_impl->error);
         return {};
+    }
 
     auto out = std::move(m_impl->ready.front());
     m_impl->ready.pop_front();
