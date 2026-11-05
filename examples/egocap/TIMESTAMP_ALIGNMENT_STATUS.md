@@ -28,11 +28,12 @@ synchronization: no required accuracy budget has been set, and no real-source al
   `xrLocateSpace`, and the `DeviceDataTimestamp` carries that update time as both availability and sample time with
   the `XrTime` as the raw value. It is the pose evaluation time of a runtime-predicted pose, not a physical
   measurement time.
-- **Manus gloves** (`src/plugins/manus/core/manus_hand_tracking_plugin.cpp`): the SDK stream's `publishTime` is read
-  into the skeleton info but is not used for the pushed sample. The sample is pushed with the host monotonic time at
-  push for both sample and availability, and the hand poses are located at the current `XrTime`. Skeleton freshness
-  uses host `steady_clock` at the callback (receipt). So glove sample time today is host processing time; the SDK
-  time exists and could be mapped if the SDK documents its clock and a host correlation.
+- **Manus gloves** (`src/plugins/manus/core/manus_hand_tracking_plugin.cpp`): each SDK callback's host monotonic
+  receipt time is read on entry, stored with the cached skeleton or sensor sample, and used as that sample's time when
+  it is injected or pushed; a cached sample is never pushed twice. The SDK `publishTime` is not used: it is a UTC
+  or timecode value whose sampling event the vendor does not specify. Receipt time is a host time, not glove
+  acquisition time. It does not yet reach the recording: CaptureServer polls the IC graph and stamps its own poll time
+  (see Open). Not built or run: the Manus SDK and OpenXR runtime are not available off the rig.
 - **Camera (LiveKit)**: processing time on the Orin (conversion), not capture; see the plan for the SIPL/Argus
   counters, whose units and host correlation are not verified.
 
@@ -44,9 +45,9 @@ None of these is a qualified measurement time, so none can support a synchronize
   submission order, which shifts after an encoder-internal drop. Header search found
   `V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP` (undocumented, unused elsewhere); whether it works on the driver is being
   probed on the Orin. Until a verified mechanism exists, the honest options are to stop or flag the stream on loss.
-- **Tracking device times.** Tracking samples carry host poll time (`tracking_time: host_poll`). Using the Manus
-  SDK `publishTime` or a controller measurement time needs the vendor's documented clock and a schema field for the
-  raw value; a `.fbs` change makes existing recordings unreadable (see `src/core/schema/AGENTS.md`), so it is not
+- **Tracking device times.** Tracking samples carry host poll time (`tracking_time: host_poll`). Carrying the Manus receipt time
+  or a controller's evaluation time into the recording needs the timestamp exposed through the IC tensor types and a
+  new `ic_tracking_v1` layout; a `.fbs` change makes existing recordings unreadable (see `src/core/schema/AGENTS.md`), so it is not
   done on a guess.
 - **Orin verification** of the counter conversion, the encoder probe and the Argus build, and measured
   sensor-to-tracking alignment.
