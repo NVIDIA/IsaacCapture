@@ -103,8 +103,10 @@ device; a network-only connection does not provide automatic wake.
 
 On supported PICO hardware, the live ``stk_stk3x1x`` wakeup proximity sensor
 must report NEAR and Android must report Asleep before a wake request is sent.
-FAR, missing sensor data, sensor privacy, or an unsupported device leave wake
-to the operator. Quest presence probing is currently unsupported. The worker
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
 rechecks presence before each attempt, confirms Awake afterward, and allows
 at most three attempts five seconds apart. A brief Awake bounce does not reset
 that budget. Remove and put on the headset again, or press its power button,

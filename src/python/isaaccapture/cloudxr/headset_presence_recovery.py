@@ -176,7 +176,7 @@ class PresenceRecovery:
                 self.awake_since = None
                 self._publish(
                     "unsupported",
-                    "Automatic wake unavailable; wake the headset manually",
+                    "Headset presence unavailable; wake manually if needed",
                     observation,
                 )
                 return 10.0

@@ -196,6 +196,7 @@ class OobLifecycle:
         self.snapshot: dict = {}
         self.presence_recovery: PresenceRecovery | None = None
         self._presence_task: asyncio.Task | None = None
+        self._presence_waiting_for_awake = False
 
     def _restart_episode(self) -> None:
         self.episode_start = self.clock()
@@ -692,7 +693,7 @@ class OobLifecycle:
             await asyncio.to_thread(adb.assert_supported_headset)
             self._identity_verified = True
         await asyncio.to_thread(
-            adb.assert_headset_awake, timeout=10.0, require_awake=True, send_wake=False
+            adb.assert_headset_awake, timeout=10.0, require_awake=True
         )
         if not self._cache_cleared:
             try:
@@ -965,7 +966,6 @@ class OobLifecycle:
                 adb.assert_headset_awake,
                 timeout=10.0,
                 require_awake=True,
-                send_wake=False,
             )
         except (Exception, asyncio.CancelledError):
             self._usb_waiting_for_awake = True
@@ -1841,6 +1841,7 @@ class OobLifecycle:
                     presence.get("wakefulness") == "Asleep"
                     or presence.get("presence") == "absent"
                 ):
+                    self._presence_waiting_for_awake = True
                     # Preserve the current page and XR session during presence-gated
                     # power recovery, including normal menus and headless clients.
                     await self._publish(
@@ -1852,6 +1853,13 @@ class OobLifecycle:
                     )
                     await self.sleep(self.config.interval_sec)
                     continue
+                if (
+                    self._presence_waiting_for_awake
+                    and presence.get("wakefulness") == "Awake"
+                ):
+                    # Waiting for the wearer must not consume the next recovery episode.
+                    self._presence_waiting_for_awake = False
+                    self._restart_episode()
                 preserving_browser = (
                     self._transport_lost and self._restore_existing_browser
                 )
@@ -1924,7 +1932,6 @@ class OobLifecycle:
                                 adb.assert_headset_awake,
                                 timeout=10.0,
                                 require_awake=True,
-                                send_wake=False,
                             )
                             if self.usb_health_policy != "off":
                                 # A surviving page gets passive link evidence; a new

@@ -4,7 +4,7 @@
 """Presence-gated wake recovery without hardware or a running XR runtime."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -176,6 +176,7 @@ def test_lifecycle_context_disables_legacy_blind_wake(monkeypatch):
     from cloudxr_py_test_ns import oob_teleop_adb as adb
 
     monkeypatch.setattr(adb, "headset_wakefulness", lambda: "Asleep")
+    monkeypatch.setattr(adb, "_adb_getprop", lambda _prop: "")
     calls = []
     monkeypatch.setattr(adb, "_adb_run", lambda *args, **kwargs: calls.append(args))
     token = adb.PRESENCE_RECOVERY_OWNS_WAKE.set(True)
@@ -202,3 +203,54 @@ async def test_stable_awake_resets_budget_but_unknown_does_not():
     now[0] = 5
     await guard.step()
     assert guard.attempts == 0
+
+
+@pytest.mark.parametrize(
+    "manufacturer,brand,model,can_wake",
+    [
+        ("Meta", "oculus", "Quest 3", True),
+        ("Oculus", "oculus", "Quest Pro", True),
+        ("", "oculus", "Quest 2", True),
+        ("PICO", "PICO", "PICO 4", False),
+        ("PICO", "oculus", "PICO 4", False),
+        ("Meta", "PICO", "PICO 4", False),
+        ("Meta", "oculus", "", False),
+        ("Samsung", "samsung", "Galaxy", False),
+        ("", "", "", False),
+    ],
+)
+def test_owned_legacy_wake_requires_fresh_quest_identity(
+    monkeypatch, manufacturer, brand, model, can_wake
+):
+    from cloudxr_py_test_ns import oob_teleop_adb as adb
+
+    properties = {
+        "ro.product.manufacturer": manufacturer,
+        "ro.product.brand": brand,
+        "ro.product.model": model,
+    }
+    getprop = Mock(side_effect=properties.__getitem__)
+    command = Mock()
+    monkeypatch.setattr(adb, "_adb_getprop", getprop)
+    monkeypatch.setattr(adb, "_adb_run", command)
+    monkeypatch.setattr(adb, "headset_wakefulness", lambda: "Asleep")
+    token = adb.PRESENCE_RECOVERY_OWNS_WAKE.set(True)
+    try:
+        with pytest.raises(adb.HeadsetNotAwakeError):
+            adb.assert_headset_awake(timeout=0, require_awake=True)
+        assert command.call_count == int(can_wake)
+        if can_wake:
+            assert command.call_args.args[0] == [
+                "adb",
+                "shell",
+                "input",
+                "keyevent",
+                "KEYCODE_WAKEUP",
+            ]
+        properties.update(dict.fromkeys(properties, ""))
+        with pytest.raises(adb.HeadsetNotAwakeError):
+            adb.assert_headset_awake(timeout=0, require_awake=True)
+        assert command.call_count == int(can_wake)
+        assert getprop.call_count == 6
+    finally:
+        adb.PRESENCE_RECOVERY_OWNS_WAKE.reset(token)

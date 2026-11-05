@@ -1005,7 +1005,7 @@ function AppContent() {
           awake: 'Headset awake; waiting for tracking',
           recovery_failed: 'Headset recovery failed; press its power button',
           unavailable: 'Headset connection unavailable; check USB and debugging permission',
-          unsupported: 'Automatic wake unavailable; wake the headset manually',
+          unsupported: 'Headset presence unavailable; wake manually if needed',
         };
         let message = messages[state];
         if (state === 'awake') {

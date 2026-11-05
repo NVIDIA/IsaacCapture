@@ -367,13 +367,26 @@ def assert_headset_awake(
     Args:
         timeout: Seconds to poll after ``KEYCODE_WAKEUP``; zero skips retry polling.
         require_awake: Raise ``OobAdbError`` if still not Awake; otherwise warn and return.
-        send_wake: Disable when the session presence worker owns automatic wake.
+        send_wake: Permit a wake key when the selected device's recovery policy allows it.
     """
     wake = headset_wakefulness()
     if wake == "Awake":
         return
 
-    if send_wake and not PRESENCE_RECOVERY_OWNS_WAKE.get():
+    wake_allowed = not PRESENCE_RECOVERY_OWNS_WAKE.get()
+    if send_wake and not wake_allowed:
+        # Only PICO has a presence worker; retain Quest's existing one-shot wake.
+        # Re-read identity so a replaced device cannot inherit that permission.
+        vendors = {
+            _adb_getprop("ro.product.manufacturer").casefold(),
+            _adb_getprop("ro.product.brand").casefold(),
+        }
+        wake_allowed = bool(
+            _adb_getprop("ro.product.model")
+            and vendors & {"meta", "oculus"}
+            and not any("pico" in vendor for vendor in vendors)
+        )
+    if send_wake and wake_allowed:
         try:
             _adb_run(
                 ["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
