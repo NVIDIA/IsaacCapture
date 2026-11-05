@@ -10,13 +10,16 @@ synchronization: no required accuracy budget has been set, and no real-source al
 
 ## Implemented
 
-- **PC clock-map discontinuity check** (`backend/egocap_web/livekit_recording.py`, `UnixClockMap`): keeps the
-  bracket uncertainty of its realtime/monotonic pair and flags an offset change between two measurements larger than
-  the greater of 5 ms and four times that uncertainty. The recording feed then fails the take. This is a heuristic,
-  not proof of a step or an accuracy bound; frames mapped between a step and its detection (up to one refresh, about a
-  second) are already recorded, and smaller offset changes are not caught.
-- LiveKit frames keep the publisher's timestamp, frame id and raw capture counter separately; only a stream declaring a
-  sensor-capture basis is recorded; the native sender declares processing time and carries the counter unscaled.
+- **One clock path.** A four-timestamp exchange between the PC and the publisher (and the browser) maps the
+  publisher's monotonic clock onto the PC's; recording uses only that mapping, ends a take on a missing, stale,
+  jumped or over-budget mapping (`EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS`, default 5 ms, a policy choice), and saves the
+  mapping evidence in the episode's `timing` attributes.
+- **Native sender.** Answers the exchange and, with `--timestamp-basis=capture_monotonic_us`, converts the SIPL
+  counter or Argus sensor timestamp to `CLOCK_MONOTONIC` through a low-rate anchor, failing the stream on any
+  implausible conversion. Written without an Orin: units unverified, not built against the SDKs.
+- **Encoder probe.** `SENSING_ENCODER_TIMESTAMP_PROBE=1` logs returned unit stamps beside the last submitted stamp,
+  so the first Orin run shows whether the driver returns them. The `COPY_TIMESTAMP` control is not set: its header
+  is not present off the Orin.
 
 ## What each source actually stamps (source audit, not hardware-verified)
 
@@ -41,9 +44,9 @@ None of these is a qualified measurement time, so none can support a synchronize
   submission order, which shifts after an encoder-internal drop. Header search found
   `V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP` (undocumented, unused elsewhere); whether it works on the driver is being
   probed on the Orin. Until a verified mechanism exists, the honest options are to stop or flag the stream on loss.
-- **Persisting mapping epochs and quality with a take.** There is no per-take metadata slot: `config.yaml` is
-  frozen per session, and `EpisodeResult.issues` carries failures only. Proposed minimum, needing an owner's
-  decision: write the clock-map evidence (map epoch, offset, bracket uncertainty, step flag, timestamp basis per
-  source) once at stop into the episode's existing record, rather than a new file format.
-- **Orin-to-PC clock bridge**, sensor-time-to-host mapping, glove SDK time correlation, controller measurement
-  semantics, and the accuracy budget.
+- **Tracking device times.** Tracking samples carry host poll time (`tracking_time: host_poll`). Using the Manus
+  SDK `publishTime` or a controller measurement time needs the vendor's documented clock and a schema field for the
+  raw value; a `.fbs` change makes existing recordings unreadable (see `src/core/schema/AGENTS.md`), so it is not
+  done on a guess.
+- **Orin verification** of the counter conversion, the encoder probe and the Argus build, and measured
+  sensor-to-tracking alignment.

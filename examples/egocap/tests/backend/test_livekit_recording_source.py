@@ -414,7 +414,8 @@ async def test_without_clock_sync_there_is_no_timing_evidence():
     assert source.timing_evidence() is None
 
 
-async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under():
+async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(monkeypatch):
+    monkeypatch.delenv(lrec.BUDGET_ENV, raising=False)
     streams = [livekit_stream(16), livekit_stream(17)]
     source, receiver = await prepared_source(streams)
     history = history_of(3)
@@ -439,6 +440,7 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
                 }
                 for m in history
             ],
+            "uncertainty_budget_ns": 5_000_000,
             "discontinuity": True,
             "exchanges_rejected": 4,
             "mapping_current_at_stop": False,
@@ -446,6 +448,13 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
         "tracking_time": "host_poll",
     }
     assert json.loads(json.dumps(evidence)) == evidence
+
+
+async def test_timing_evidence_records_the_configured_uncertainty_budget(monkeypatch):
+    monkeypatch.setenv(lrec.BUDGET_ENV, "2.5")
+    source, receiver = await prepared_source([livekit_stream(16)])
+    receiver.clock_sync = clock_sync_with(history_of(1))
+    assert source.timing_evidence()["clock_mapping"]["uncertainty_budget_ns"] == 2_500_000
 
 
 async def test_timing_evidence_carries_only_the_newest_mappings():

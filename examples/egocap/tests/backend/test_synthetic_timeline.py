@@ -254,7 +254,14 @@ async def run_timeline(
         timestamp_basis=p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
     )
     ingress = ListIngress()
-    feed = LiveKitRecordingFeed(receiver, [stream], ingress, {16: "cam"})
+    feed = LiveKitRecordingFeed(
+        # The simulated links are deliberately noisy; the budget gate has its own tests.
+        receiver,
+        [stream],
+        ingress,
+        {16: "cam"},
+        max_uncertainty_ns=1_000_000_000,
+    )
     feed.start()
     for _ in range(5000):
         await asyncio.sleep(0)

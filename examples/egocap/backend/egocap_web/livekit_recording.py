@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import ipaddress
 import logging
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
@@ -46,6 +47,25 @@ _JOIN_TIMEOUT_S = 15.0
 _LEAVE_TIMEOUT_S = 10.0
 #: Most mappings recorded as a take's timing evidence, the newest ones; the estimator may have adopted more.
 _MAX_EVIDENCE_MAPPINGS = 64
+
+BUDGET_ENV = "EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"
+# A frame at 30 fps is 33 ms; a mapping uncertain by more than a few ms would blur which camera frame matches a
+# tracking sample. This default is a policy choice, not a measurement; set the environment variable to change it.
+_DEFAULT_BUDGET_MS = 5.0
+
+
+def uncertainty_budget_ns() -> int:
+    """The largest clock-mapping uncertainty a take may be recorded with, from the environment or the default."""
+    raw = os.environ.get(BUDGET_ENV)
+    if raw is None or not raw.strip():
+        return int(_DEFAULT_BUDGET_MS * 1e6)
+    try:
+        ms = float(raw)
+    except ValueError:
+        raise ValueError(f"{BUDGET_ENV} must be a number of milliseconds, got {raw!r}") from None
+    if not ms > 0:
+        raise ValueError(f"{BUDGET_ENV} must be positive, got {raw!r}")
+    return int(ms * 1e6)
 
 
 def is_loopback_url(url: str) -> bool:
@@ -104,6 +124,7 @@ class LiveKitRecordingFeed:
         source_names: Mapping[int, str],
         *,
         on_failure: Callable[[str], None] | None = None,
+        max_uncertainty_ns: int | None = None,
     ) -> None:
         missing = [s.name for s in streams if s.stream_id not in source_names]
         if missing:
@@ -118,6 +139,7 @@ class LiveKitRecordingFeed:
             raise ValueError("the receiver has no clock-sync client; start it with clock_sync=True")
         self._clock = clock_sync
         self._on_failure = on_failure
+        self._max_uncertainty_ns = uncertainty_budget_ns() if max_uncertainty_ns is None else max_uncertainty_ns
         self._tasks: list[asyncio.Task[None]] = []
         self.failure: str | None = None
         self._baseline: dict[int, tuple[int, int]] = {}
@@ -208,6 +230,12 @@ class LiveKitRecordingFeed:
             if mapping is None:
                 self._fail(
                     f"{stream.name}: no current clock mapping from the publisher (its clock-sync replies stopped)"
+                )
+                return
+            if mapping.uncertainty_ns > self._max_uncertainty_ns:
+                self._fail(
+                    f"{stream.name}: the clock mapping is uncertain by {mapping.uncertainty_ns / 1e6:.2f} ms, "
+                    f"over the {self._max_uncertainty_ns / 1e6:.2f} ms budget ({BUDGET_ENV})"
                 )
                 return
             capture_time = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
@@ -407,6 +435,7 @@ class LiveKitRecordingSource:
                     }
                     for m in mappings
                 ],
+                "uncertainty_budget_ns": uncertainty_budget_ns(),
                 "discontinuity": clock_sync.discontinuity,
                 "exchanges_rejected": clock_sync.rejected,
                 "mapping_current_at_stop": clock_sync.mapping() is not None,

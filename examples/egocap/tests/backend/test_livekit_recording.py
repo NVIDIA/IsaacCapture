@@ -17,7 +17,9 @@ from egocap_web import livekit_recording as lrec
 from egocap_web.clock_exchange import ClockMapping
 from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import (
+    BUDGET_ENV,
     LiveKitRecordingFeed,
+    uncertainty_budget_ns,
     unrecordable_reason,
 )
 from egocap_web.recording_adapter import RecordingIngress
@@ -105,8 +107,9 @@ class FakeIngress:
 class FakeClockSync:
     """Stands in for ClockSyncClient: a fixed mapping of the publisher clock (local = remote + 10 s)."""
 
-    def __init__(self, offset_ns: int = -10_000_000_000) -> None:
+    def __init__(self, offset_ns: int = -10_000_000_000, uncertainty_ns: int = 1_000) -> None:
         self.offset_ns = offset_ns
+        self.uncertainty_ns = uncertainty_ns
         self.discontinuity = False
         self.available = True
 
@@ -114,7 +117,7 @@ class FakeClockSync:
         if not self.available:
             return None
         return ClockMapping(
-            epoch=1, offset_ns=self.offset_ns, rtt_ns=2_000, uncertainty_ns=1_000, accepted_at_ns=0
+            epoch=1, offset_ns=self.offset_ns, rtt_ns=2_000, uncertainty_ns=self.uncertainty_ns, accepted_at_ns=0
         )
 
 
@@ -190,6 +193,70 @@ async def test_mapping_offset_places_capture_time_on_the_local_clock():
     clock.offset_ns = -20_000_000_000  # a later mapping applies to later frames only
     await feed.stop()
     assert [m.capture_time for m in ingress.offered] == [11.0]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_ns"),
+    [
+        (None, 5_000_000),
+        ("", 5_000_000),
+        ("  ", 5_000_000),
+        ("2", 2_000_000),
+        ("0.5", 500_000),
+        (" 12.5 ", 12_500_000),
+    ],
+)
+def test_uncertainty_budget_defaults_and_overrides(monkeypatch, value, expected_ns):
+    if value is None:
+        monkeypatch.delenv(BUDGET_ENV, raising=False)
+    else:
+        monkeypatch.setenv(BUDGET_ENV, value)
+    assert uncertainty_budget_ns() == expected_ns
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-1", "nan", "-0.5"])
+def test_an_invalid_or_non_positive_budget_is_refused_naming_the_variable(monkeypatch, value):
+    monkeypatch.setenv(BUDGET_ENV, value)
+    with pytest.raises(ValueError, match=BUDGET_ENV):
+        uncertainty_budget_ns()
+
+
+async def test_frames_are_recorded_when_uncertainty_is_within_the_budget():
+    ingress = FakeIngress()
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=3_000_000))
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=3_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    assert len(ingress.offered) == 1
+
+
+async def test_uncertainty_over_the_budget_fails_the_take_naming_the_budget(monkeypatch):
+    monkeypatch.delenv(BUDGET_ENV, raising=False)
+    reasons: list[str] = []
+    ingress = FakeIngress()
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=5_000_001))
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, on_failure=reasons.append)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert BUDGET_ENV in feed.failure
+    assert "5.00 ms budget" in feed.failure
+    assert reasons == [feed.failure]
+    assert ingress.offered == []
+
+
+async def test_the_budget_comes_from_the_environment_when_not_passed(monkeypatch):
+    monkeypatch.setenv(BUDGET_ENV, "1")
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=2_000_000))
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert "1.00 ms budget" in feed.failure
 
 
 def test_a_receiver_without_clock_sync_is_refused():

@@ -25,7 +25,8 @@ PC:   CaptureServer (--livekit-streams: where the streams are) -> egocap backend
 declares `timestamp_basis: capture_monotonic_us`: the publisher stamps each frame with the sensor's capture event on
 the publisher's own monotonic clock. If any offered stream does not qualify, recording is refused with that stream's
 name (remove it from the streams file, or make it recordable); preview is unaffected. The native Orin sender
-declares processing time, so with it recording is refused until the sensor's capture time is mapped.
+declares processing time by default, so with it recording is refused unless it is started with
+`--timestamp-basis=capture_monotonic_us` and the streams file declares that basis.
 
 There is one way to place the publisher's clock on this PC's, the four-timestamp exchange CloudXR uses. The recorder
 joins the room itself (it needs the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`), and once a second sends the
@@ -38,15 +39,22 @@ smaller is claimed. The best recent exchange is used; a mapping is withheld when
 old; and a new exchange that disagrees with the current mapping by more than the two uncertainties plus a 200 ppm
 drift allowance is a discontinuity. A take cannot start until the publisher has answered at least once, and ends if
 the mapping goes missing, goes stale or jumps; frames already recorded keep the mapping they were made under, and
-the mapping epochs are kept in memory (`ClockEstimator.history`) but not yet saved with the take. The recorder
+the newest mapping epochs, their uncertainties and the budget are saved in the kept episode's `timing` attributes. A
+take also ends when the mapping's uncertainty exceeds the budget, 5 ms by default and set in milliseconds with
+`EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS`; the default is a policy choice, not a measurement. The recorder
 also applies one coarse check: a frame more than 2 s old on arrival, or stamped in the future, ends the take. A take
 that passes is not thereby proven aligned with tracking, which also assumes the backend and CaptureServer share one
 machine's clock. Browser display latency is not shown: it needs the same exchange between the PC and the browser and
 an exact match of the displayed frame to its capture stamp, neither of which exists yet.
 
-**What recording from the real Orin still needs.** The native sender must answer the clock-sync requests with its own
-monotonic clock and publish `capture_monotonic_us`, the sensor's capture event on that clock. Its only capture-event
-clock is the SIPL frame capture counter (`frameCaptureTSC`), which NVIDIA's public SIPL documentation describes as
+**Recording from the real Orin.** The native sender answers the clock-sync requests with its own monotonic clock, and
+with `--timestamp-basis=capture_monotonic_us` publishes the sensor's capture event on that clock. It converts the
+backend's sensor timestamp through one anchor pair (the source clock and `CLOCK_MONOTONIC`, read back to back and
+refreshed once a second, never per frame): SIPL's capture counter as ticks of the ARM generic counter at its
+`CNTFRQ` rate, Argus's sensor timestamp as `CLOCK_MONOTONIC_RAW` nanoseconds. Both units are assumptions, so every
+frame is checked: a capture time later than the frame's ready time, or more than 2 s before it, fails the stream
+rather than being published. None of this has run on an Orin; the first run shows whether the assumed units hold, and
+real alignment still needs the evidence below. The sender's only capture-event clock is the SIPL frame capture counter (`frameCaptureTSC`), which NVIDIA's public SIPL documentation describes as
 raw ARM generic-timer ticks, not nanoseconds (the sender carries it as `capture_tsc`, an unscaled value). The deployed
 Orin's SIPL headers are not available here, so nothing about its units or event is verified. The evidence required,
 from a supported platform API and not from fitting measurements:
