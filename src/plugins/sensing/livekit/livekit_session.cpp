@@ -180,7 +180,7 @@ public:
         out.timestamp_us = static_cast<int64_t>(frame.timestamp_us);
         out.data.assign(frame.data, frame.data + frame.size);
         livekit::VideoFrameMetadata metadata;
-        metadata.user_timestamp_us = frame.timestamp_us;
+        metadata.user_timestamp_us = frame.user_timestamp_us;
         metadata.frame_id = frame.frame_id;
         std::vector<uint8_t> tsc(8);
         for (int i = 0; i < 8; ++i)
