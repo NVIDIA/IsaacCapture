@@ -163,12 +163,12 @@ describe("LiveKitCameraTile FPS label", () => {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(document.body.textContent).not.toMatch(/FPS/); // first window only sets the baseline
+    expect(document.body.textContent).not.toMatch(/fps/); // first window only sets the baseline
     presentFrame(30);
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(statsTexts()[0]).toBe("30.0 FPS");
+    expect(statsTexts()[0]).toBe("30 fps");
   });
 
   it("shows 0 FPS when no frame arrives for more than three seconds", () => {
@@ -177,10 +177,10 @@ describe("LiveKitCameraTile FPS label", () => {
     act(() => {
       vi.advanceTimersByTime(5000);
     });
-    expect(statsTexts()[0]).toBe("0 FPS");
+    expect(statsTexts()[0]).toBe("0 fps");
   });
 
-  it("shows paused while the document is hidden", () => {
+  it("shows a dash while the document is hidden", () => {
     Object.defineProperty(document, "hidden", { configurable: true, value: true });
     try {
       renderTile();
@@ -188,7 +188,7 @@ describe("LiveKitCameraTile FPS label", () => {
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(statsTexts()[0]).toBe("paused");
+      expect(statsTexts()[0]).toBe("– fps");
     } finally {
       delete (document as any).hidden;
     }
@@ -205,11 +205,11 @@ describe("LiveKitCameraTile FPS label", () => {
       delete (document as any).hidden;
     });
 
-    it("shows paused at once when the tab is hidden, without waiting for the timer", () => {
+    it("shows a dash at once when the tab is hidden, without waiting for the timer", () => {
       renderTile();
       presentFrame();
       setHidden(true);
-      expect(statsTexts()[0]).toBe("paused");
+      expect(statsTexts()[0]).toBe("– fps");
     });
 
     it("starts a fresh FPS baseline after the tab returns", () => {
@@ -222,19 +222,19 @@ describe("LiveKitCameraTile FPS label", () => {
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(statsTexts()[0]).toBe("30.0 FPS");
+      expect(statsTexts()[0]).toBe("30 fps");
       setHidden(true);
       presentFrame(300); // frames presented while hidden must not inflate the first visible window
       setHidden(false);
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(document.body.textContent).not.toMatch(/\d FPS/);
+      expect(document.body.textContent).not.toMatch(/\d fps/);
       presentFrame(30);
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(statsTexts()[0]).toBe("30.0 FPS");
+      expect(statsTexts()[0]).toBe("30 fps");
     });
 
     it("removes the visibilitychange listener on unmount", () => {
@@ -246,13 +246,13 @@ describe("LiveKitCameraTile FPS label", () => {
     });
   });
 
-  it("shows FPS unavailable without requestVideoFrameCallback", () => {
+  it("shows a dash for FPS without requestVideoFrameCallback", () => {
     delete (HTMLVideoElement.prototype as any).requestVideoFrameCallback;
     renderTile();
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(statsTexts()[0]).toBe("FPS unavailable");
+    expect(statsTexts()[0]).toBe("– fps");
   });
 });
 
@@ -273,7 +273,7 @@ describe("LiveKitCameraTile latency", () => {
     });
     const spans = document.querySelectorAll(".camera-stats");
     expect(spans).toHaveLength(2);
-    expect(spans[1].textContent).toBe("latency unavailable");
+    expect(spans[1].textContent).toBe("– ms latency");
     expect(spans[1].getAttribute("title")).toBeTruthy();
   });
 
@@ -287,8 +287,8 @@ describe("LiveKitCameraTile latency", () => {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(statsTexts()).toContain("latency unavailable");
-    expect(statsTexts().some((t) => /\bms\b/.test(t))).toBe(false);
+    expect(statsTexts()).toContain("– ms latency");
+    expect(statsTexts().some((t) => /\d ms latency/.test(t))).toBe(false);
   });
 
   it("lists the sorted frame-callback fields in the latency tooltip", () => {
@@ -320,7 +320,7 @@ describe("LiveKitCameraTile latency", () => {
     act(() => {
       vi.advanceTimersByTime(5000);
     });
-    expect(statsTexts()).toEqual(["0 FPS", "latency unavailable"]);
+    expect(statsTexts()).toEqual(["0 fps", "– ms latency"]);
   });
 
   it("keeps the fixed latency span beside paused while the document is hidden", () => {
@@ -331,7 +331,7 @@ describe("LiveKitCameraTile latency", () => {
       act(() => {
         vi.advanceTimersByTime(1000);
       });
-      expect(statsTexts()).toEqual(["paused", "latency unavailable"]);
+      expect(statsTexts()).toEqual(["– fps", "– ms latency"]);
     } finally {
       delete (document as any).hidden;
     }
@@ -340,5 +340,93 @@ describe("LiveKitCameraTile latency", () => {
   it("shows no latency text before any FPS label", () => {
     renderTile();
     expect(document.body.textContent).not.toMatch(/latency/);
+  });
+});
+
+describe("LiveKitCameraTile measured latency", () => {
+  const MS = 1_000_000n;
+  /** Remote clock = local + 3 s, so a frame displayed at local 997_072 ms and stamped 1_000_000 us is 72 ms old. */
+  const mappingOf = (epoch = 1) => ({ epoch, offsetNs: 3_000n * MS, rttNs: 4n * MS, uncertaintyNs: 2n * MS, acceptedAtNs: 0n });
+  const stampedTrack = (stamp: { userTimestamp: bigint } | undefined = { userTimestamp: 1_000_000_000n }) => {
+    const track = fakeTrack();
+    track.lookupFrameMetadata = vi.fn(() => stamp);
+    return track;
+  };
+  const frame = { rtpTimestamp: 42, expectedDisplayTime: 997_072 };
+
+  function renderWith(track: any, clock: { mapping: () => any } | null, basis = 4) {
+    return render(<LiveKitCameraTile name="Head" track={track} phase="connected" primary={false} clock={clock as any} basis={basis} />);
+  }
+  const windows = (n = 2): void => {
+    for (let i = 0; i < n; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+    }
+  };
+
+  it("shows the mean after the window, with uncertainty and p95 in the title, looking the stamp up by RTP timestamp", () => {
+    const track = stampedTrack();
+    renderWith(track, { mapping: () => mappingOf() });
+    presentFrame(1);
+    windows(1);
+    presentFrame(1, frame);
+    windows(1);
+    expect(statsTexts()[1]).toBe("72 ms latency");
+    expect(document.querySelectorAll(".camera-stats")[1].getAttribute("title")).toContain("±2.0 ms, 95th percentile 72 ms");
+    expect(track.lookupFrameMetadata).toHaveBeenCalledWith({ rtpTimestamp: 42 });
+  });
+
+  it("is unavailable without a stamp", () => {
+    renderWith(stampedTrack(undefined), { mapping: () => mappingOf() });
+    presentFrame(1, frame);
+    windows();
+    expect(statsTexts()[1]).toBe("– ms latency");
+  });
+
+  it("is unavailable when the basis is not the capture event, even with stamps", () => {
+    const track = stampedTrack();
+    renderWith(track, { mapping: () => mappingOf() }, 1);
+    presentFrame(1, frame);
+    windows();
+    expect(statsTexts()[1]).toBe("– ms latency");
+    expect(track.lookupFrameMetadata).not.toHaveBeenCalled();
+  });
+
+  it("is unavailable without a mapping", () => {
+    renderWith(stampedTrack(), { mapping: () => null });
+    presentFrame(1, frame);
+    windows();
+    expect(statsTexts()[1]).toBe("– ms latency");
+  });
+
+  it("is unavailable for a window whose mapping epoch changed", () => {
+    let epoch = 1;
+    renderWith(stampedTrack(), { mapping: () => mappingOf(epoch) });
+    presentFrame(1);
+    windows(1);
+    presentFrame(1, frame); // made under epoch 1
+    epoch = 2;
+    windows(1);
+    expect(statsTexts()[1]).toBe("– ms latency");
+  });
+
+  it("is unavailable when the stream is stale or the document is hidden", () => {
+    renderWith(stampedTrack(), { mapping: () => mappingOf() });
+    presentFrame(1, frame);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(statsTexts()).toEqual(["0 fps", "– ms latency"]);
+    cleanup();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    try {
+      renderWith(stampedTrack(), { mapping: () => mappingOf() });
+      presentFrame(1, frame);
+      windows(1);
+      expect(statsTexts()).toEqual(["– fps", "– ms latency"]);
+    } finally {
+      delete (document as any).hidden;
+    }
   });
 });

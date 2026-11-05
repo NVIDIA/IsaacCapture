@@ -15,6 +15,7 @@ vi.mock("livekit-client", async () => {
       Reconnecting: "Reconnecting",
       Reconnected: "Reconnected",
       Disconnected: "Disconnected",
+      DataReceived: "DataReceived",
     },
     Track: { Kind: { Video: "video", Audio: "audio" } },
   };
