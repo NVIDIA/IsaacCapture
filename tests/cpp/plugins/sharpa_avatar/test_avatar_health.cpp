@@ -15,6 +15,7 @@
 using plugins::avatar::DatasetHealthInput;
 using plugins::avatar::GloveIngressSignal;
 using plugins::avatar::GloveState;
+using plugins::avatar::GloveWaitReminder;
 using plugins::avatar::HapticCommandDeliveryState;
 using plugins::avatar::HapticRetryState;
 using plugins::avatar::PhysicalGloveHealthInput;
@@ -51,6 +52,35 @@ void write_text(const std::filesystem::path& path, const std::string& value)
 }
 
 } // anonymous namespace
+
+TEST_CASE("Glove wait reminders continue per side until streaming", "[sharpa_avatar][lifecycle]")
+{
+    using namespace std::chrono_literals;
+
+    const auto start = GloveWaitReminder::Clock::time_point{};
+    GloveWaitReminder left;
+    GloveWaitReminder right;
+
+    CHECK(left.observe(false, start, 60s));
+    CHECK(right.observe(false, start, 60s));
+    CHECK_FALSE(left.observe(true, start + 2s, 60s));
+    CHECK_FALSE(right.observe(false, start + 2s, 60s));
+    CHECK(right.observe(false, start + 60s, 60s));
+    CHECK_FALSE(left.observe(true, start + 60s, 60s));
+    CHECK_FALSE(right.observe(true, start + 61s, 60s));
+    CHECK(right.observe(false, start + 62s, 60s));
+}
+
+TEST_CASE("Dataset output expires when its timestamp stops advancing", "[sharpa_avatar][health]")
+{
+    using namespace std::chrono_literals;
+
+    const auto sample = std::chrono::steady_clock::time_point{};
+    CHECK_FALSE(plugins::avatar::data_is_fresh(std::nullopt, sample));
+    CHECK(plugins::avatar::data_is_fresh(sample, sample + 2999ms));
+    CHECK_FALSE(plugins::avatar::data_is_fresh(sample, sample + 3s));
+    CHECK(plugins::avatar::data_is_fresh(sample + 3s, sample + 3s));
+}
 
 TEST_CASE("Physical glove health follows inventory, ingress, and device errors", "[sharpa_avatar][health]")
 {

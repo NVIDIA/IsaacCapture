@@ -226,6 +226,30 @@ private:
     std::optional<Clock::time_point> m_stop_retry_after;
 };
 
+class GloveWaitReminder
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    bool observe(bool ready, Clock::time_point now, Clock::duration interval)
+    {
+        if (ready)
+        {
+            m_last_log.reset();
+            return false;
+        }
+        if (!m_last_log || now - *m_last_log >= interval)
+        {
+            m_last_log = now;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    std::optional<Clock::time_point> m_last_log;
+};
+
 class __attribute__((visibility("default"))) AvatarTracker
 {
 public:
@@ -245,6 +269,7 @@ private:
     void try_connect_missing_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
     void refresh_glove_activity();
+    void log_waiting_gloves();
     bool try_create_output_resources(::avatar::DeviceSide side);
     void destroy_output_resources(::avatar::DeviceSide side) noexcept;
     void refresh_data();
@@ -295,7 +320,7 @@ private:
     std::optional<std::chrono::steady_clock::time_point> m_last_dongle_check;
     UsbDevicePresence m_dongle_presence = UsbDevicePresence::UNKNOWN;
     ::avatar::UsbConnectionState m_transport_state = ::avatar::UsbConnectionState::DISCONNECTED;
-    bool m_glove_wait_logged = false;
+    std::array<GloveWaitReminder, 2> m_glove_wait_reminders;
     bool m_inventory_error_logged = false;
     bool m_status_publish_error_logged = false;
 };

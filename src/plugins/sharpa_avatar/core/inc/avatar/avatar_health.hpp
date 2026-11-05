@@ -19,6 +19,12 @@ namespace avatar
 
 inline constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 
+inline bool data_is_fresh(std::optional<std::chrono::steady_clock::time_point> last_fresh_data,
+                          std::chrono::steady_clock::time_point now) noexcept
+{
+    return last_fresh_data && now - *last_fresh_data < kAvatarDataTimeout;
+}
+
 enum class UsbDevicePresence
 {
     UNKNOWN,
