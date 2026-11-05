@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { CameraGrid } from "./CameraGrid";
-import type { PreviewSnapshot } from "./captureProtocol";
-import { CONFIG, FakeRoom } from "./livekitTestDoubles";
+import type { LiveKitStreamDescriptor, PreviewSnapshot } from "./captureProtocol";
+import { STREAMS, FakeRoom } from "./livekitTestDoubles";
 
 vi.mock("livekit-client", async () => {
   const doubles = await import("./livekitTestDoubles");
@@ -20,7 +20,7 @@ vi.mock("livekit-client", async () => {
   };
 });
 
-function snapshot(names: string[]): PreviewSnapshot {
+function snapshot(names: string[], offered: LiveKitStreamDescriptor[] = []): PreviewSnapshot {
   return {
     version: 1,
     type: 3,
@@ -29,7 +29,7 @@ function snapshot(names: string[]): PreviewSnapshot {
     station_label: "Station",
     profile_label: "Profile",
     connecting: false,
-    started: null,
+    started: { session_id: "s1", running: true, mode: 0, streams: offered },
     status: null,
     stopped: null,
     error_message: null,
@@ -40,8 +40,10 @@ function snapshot(names: string[]): PreviewSnapshot {
   } as PreviewSnapshot;
 }
 
-function stubFetch(status: number, body: unknown): void {
-  vi.stubGlobal("fetch", vi.fn(async () => ({ status, ok: status === 200, json: async () => body })));
+function stubFetch(status: number, body: unknown): ReturnType<typeof vi.fn> {
+  const fn = vi.fn(async () => ({ status, ok: status === 200, json: async () => body }));
+  vi.stubGlobal("fetch", fn);
+  return fn;
 }
 
 async function settled(): Promise<void> {
@@ -56,10 +58,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("CameraGrid with LiveKit preview", () => {
+describe("CameraGrid with offered LiveKit streams", () => {
   it("renders LiveKit tiles beside MJPEG tiles, preview-only, with the MJPEG camera keeping the primary slot", async () => {
-    stubFetch(200, CONFIG);
-    const { container } = render(<CameraGrid snapshot={snapshot(["head_camera"])} live={true} receivedAtMonotonic={performance.now()} />);
+    stubFetch(200, { token: "tok" });
+    const { container } = render(
+      <CameraGrid snapshot={snapshot(["head_camera"], STREAMS)} live={true} receivedAtMonotonic={performance.now()} />,
+    );
     await settled();
     expect(screen.getByText("head_camera")).not.toBeNull();
     expect(screen.getByText("Head left", { exact: false })).not.toBeNull();
@@ -72,15 +76,17 @@ describe("CameraGrid with LiveKit preview", () => {
   });
 
   it("shows only LiveKit tiles, the first as primary, when CaptureServer has no cameras", async () => {
-    stubFetch(200, CONFIG);
-    const { container } = render(<CameraGrid snapshot={null} live={false} receivedAtMonotonic={null} />);
+    stubFetch(200, { token: "tok" });
+    const { container } = render(
+      <CameraGrid snapshot={snapshot([], STREAMS)} live={false} receivedAtMonotonic={null} />,
+    );
     await settled();
     expect(screen.queryByText("No cameras selected.")).toBeNull();
     expect(container.querySelector(".camera-tile--primary")?.textContent).toContain("Head left");
   });
 
-  it("keeps the empty note and MJPEG behavior unchanged when LiveKit is not configured", async () => {
-    stubFetch(404, { detail: "nf" });
+  it("does not contact the backend and keeps MJPEG behavior when no streams are offered", async () => {
+    const fetchFn = stubFetch(200, { token: "tok" });
     const { container, rerender } = render(<CameraGrid snapshot={null} live={false} receivedAtMonotonic={null} />);
     await settled();
     expect(screen.getByText("No cameras selected.")).not.toBeNull();
@@ -89,20 +95,24 @@ describe("CameraGrid with LiveKit preview", () => {
     expect(container.querySelector(".camera-grid-items")?.className).toContain("camera-grid-items--n2");
     expect(screen.queryByText(/Preview only/)).toBeNull();
     expect(FakeRoom.instances).toHaveLength(0);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it("shows the unavailable note with the backend detail when the preview cannot start", async () => {
+  it("shows the unavailable note with the backend detail when the token cannot be issued", async () => {
     stubFetch(503, { detail: "LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set" });
-    render(<CameraGrid snapshot={null} live={false} receivedAtMonotonic={null} />);
+    render(<CameraGrid snapshot={snapshot([], STREAMS)} live={false} receivedAtMonotonic={null} />);
     await settled();
     expect(screen.getByText(/LiveKit preview unavailable: LIVEKIT_API_KEY/)).not.toBeNull();
   });
 
   it("shows the unavailable note when the backend cannot be reached", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new TypeError("fetch failed");
-    }));
-    render(<CameraGrid snapshot={null} live={false} receivedAtMonotonic={null} />);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+    render(<CameraGrid snapshot={snapshot([], STREAMS)} live={false} receivedAtMonotonic={null} />);
     await settled();
     expect(screen.getByText("LiveKit preview unavailable: Cannot reach the backend")).not.toBeNull();
   });

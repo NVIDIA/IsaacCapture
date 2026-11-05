@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { liveKitStreams } from "./captureProtocol";
 import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
@@ -187,7 +188,7 @@ export function CameraGrid({
   }
 
   // Direct LiveKit tiles sit beside the CaptureServer ones; they have their own connection and readiness.
-  const livekit = useLiveKitPreview(snapshot?.started?.livekit_streams ?? []);
+  const livekit = useLiveKitPreview(liveKitStreams(snapshot?.started));
   const cameras = snapshot?.cameras ?? [];
   const livekitShown = livekit.tiles.length > 0 || livekit.phase === "error";
   if (cameras.length === 0 && !livekitShown) {
