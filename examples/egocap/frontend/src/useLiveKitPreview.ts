@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
 import type { RemoteParticipant, RemoteTrack } from "livekit-client";
-import type { LiveKitStream } from "./captureProtocol";
+import type { LiveKitStreamDescriptor } from "./captureProtocol";
 import { fetchLiveKitToken } from "./livekitPreview";
 
 /** Delay before a new attempt after a failed connect or a full disconnect. */
@@ -38,7 +38,7 @@ export interface LiveKitPreviewState {
 const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [] };
 
 /** The offered streams with the given subscribed tracks filled in by track name. */
-function tilesFor(streams: LiveKitStream[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
+function tilesFor(streams: LiveKitStreamDescriptor[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
   return streams.map((s) => ({ name: s.name, track: tracks.get(s.track) ?? null }));
 }
 
@@ -46,13 +46,13 @@ function tilesFor(streams: LiveKitStream[], tracks: Map<string, RemoteTrack>): L
  * Receives the offered LiveKit streams for the lifetime of the calling component. All streams of one session
  * share a room and publisher, so the first stream names the connection.
  */
-export function useLiveKitPreview(streams: LiveKitStream[]): LiveKitPreviewState {
+export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPreviewState {
   const [state, setState] = useState<LiveKitPreviewState>(IDLE);
   // A new session offering the same streams must not reconnect, so the effect depends on content, not identity.
   const key = JSON.stringify(streams);
 
   useEffect(() => {
-    const offered: LiveKitStream[] = JSON.parse(key);
+    const offered: LiveKitStreamDescriptor[] = JSON.parse(key);
     if (offered.length === 0) {
       setState(IDLE);
       return;

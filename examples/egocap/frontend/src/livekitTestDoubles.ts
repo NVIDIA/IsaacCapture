@@ -4,6 +4,7 @@
 
 /** Fake livekit-client Room and tracks shared by the LiveKit hook and tile tests. */
 import { vi } from "vitest";
+import type { LiveKitStreamDescriptor } from "./captureProtocol";
 
 type Handler = (...args: any[]) => void;
 
@@ -58,13 +59,7 @@ export function publication(name: string): any {
   return { trackName: name };
 }
 
-export const CONFIG = {
-  url: "wss://lk",
-  room: "r",
-  publisher: "orin",
-  token: "tok",
-  tracks: [
-    { name: "Head left", track: "left" },
-    { name: "Head right", track: "right" },
-  ],
-};
+export const STREAMS: LiveKitStreamDescriptor[] = [
+  { kind: "livekit_camera", stream_id: 16, name: "Head left", url: "wss://lk", room: "r", publisher: "orin", track: "left" },
+  { kind: "livekit_camera", stream_id: 17, name: "Head right", url: "wss://lk", room: "r", publisher: "orin", track: "right" },
+];
