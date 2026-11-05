@@ -42,14 +42,15 @@ export function latencySample(
   return { ms, epoch: mapping.epoch, uncertaintyMs };
 }
 
-/** Median and 95th percentile of the samples made under `epoch`, and the largest uncertainty among them. */
+/** Mean and 95th percentile of the samples made under `epoch`, and the largest uncertainty among them. */
 export function summarizeLatency(
   samples: LatencySample[],
   epoch: number,
-): { median: number; p95: number; uncertaintyMs: number } | null {
+): { mean: number; p95: number; uncertaintyMs: number } | null {
   const own = samples.filter((s) => s.epoch === epoch);
   if (own.length === 0) return null;
   const sorted = own.map((s) => s.ms).sort((a, b) => a - b);
   const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
-  return { median: at(0.5), p95: at(0.95), uncertaintyMs: Math.max(...own.map((s) => s.uncertaintyMs)) };
+  const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+  return { mean, p95: at(0.95), uncertaintyMs: Math.max(...own.map((s) => s.uncertaintyMs)) };
 }

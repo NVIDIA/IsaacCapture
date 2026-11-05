@@ -33,9 +33,7 @@ EVENT_PERIOD_S = 0.25
 EVENTS = 60
 #: Frame timestamps are whole microseconds, so each stamp is up to 0.5 us off; allow a little more.
 QUANTIZATION_S = 3e-6
-#: The estimator keeps the best of its last 8 exchanges and calls a mapping stale when that exchange is over 5 s
-#: old, so the window must span less than 5 s or a jittery link can lose its mapping while replies keep arriving.
-EXCHANGE_PERIOD_S = 0.5
+EXCHANGE_PERIOD_S = 1.0
 TRACK_LOST = "cam: the LiveKit track was lost"
 
 #: (df, db): one-way delays of one exchange, in ns.
