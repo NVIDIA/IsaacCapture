@@ -52,7 +52,13 @@ working, CUDA, CMake, and network access to the LiveKit server.
 # 1. Once: vendor drivers, the Multimedia API and the SIPL headers (see scripts/setup.sh --help).
 src/plugins/sensing/scripts/setup.sh
 # 2. Build. The LiveKit SDK v1.12.4 prebuilt is downloaded and hash-checked; use -DLIVEKIT_SDK_DIR=... for a local copy.
-cmake -B build -DBUILD_PLUGIN_SENSING=ON -DSIPL_API_DIR=/usr/src/jetson_sipl_api   # SIPL_API_DIR only if not found
+# Flags that worked on the Orin: the viewer, examples, tests and Python bindings are not needed (the viewer
+# needs libxkbcommon-dev), nvcc's headers are not on the host compiler's path, and libcuda must be linked
+# explicitly. SIPL_API_DIR and JETSON_MMAPI_DIR point at the unpacked SIPL and Multimedia API trees.
+cmake -B build -DBUILD_PLUGIN_SENSING=ON -DBUILD_VIZ=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF \
+  -DBUILD_PYTHON_BINDINGS=OFF -DSIPL_API_DIR=... -DJETSON_MMAPI_DIR=... \
+  -DCMAKE_CXX_FLAGS=-I/usr/local/cuda/include \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,--no-as-needed /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1"
 cmake --build build --target camera_plugin_sensing -j
 # 3. Check the cameras are visible.
 build/src/plugins/sensing/app/camera_plugin_sensing --list-sensors
@@ -67,7 +73,6 @@ option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform
 `SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second; its difference includes
 capture, ISP and dequeue delay, so it is a diagnostic and not a clock mapping.
 
-Status: the Jetson sources (SIPL, hardware encoder, ISP path) have only been compiled against a mock backend off the
-Orin. If the first Orin build or run fails, fix the failure at the file it names, and record which of the commands
-above worked. `examples/egocap/LIVEKIT_PREVIEW.md` section 4 covers the PC side, and what recording from this
+Status: built and run on an AGX Orin (both sensors, 2560x1984 at 30 fps, H.264). If a build or run fails, fix the
+failure at the file it names. `examples/egocap/LIVEKIT_PREVIEW.md` section 4 covers the PC side, and what recording from this
 publisher still needs.
