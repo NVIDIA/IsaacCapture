@@ -34,7 +34,7 @@ def test_parse_valid_streams_and_defaults(token_file):
     )
     assert args.streams == [emu.StreamSpec(0, "left"), emu.StreamSpec(1, "right")]
     assert args.token == "secret-token"
-    assert (args.width, args.height, args.fps, args.timestamp_basis) == (1280, 720, 30.0, "unix_us")
+    assert (args.width, args.height, args.fps, args.timestamp_basis) == (1280, 720, 30.0, "capture_unix_us")
 
 
 @pytest.mark.parametrize(
@@ -65,7 +65,15 @@ def test_missing_or_empty_token_file_is_rejected(tmp_path, token_file):
         emu.parse_args(argv(empty, stream))
 
 
-@pytest.mark.parametrize("extra", ["--timestamp-basis=bogus", "--fps=0", "--width=1", "--height=0"])
+@pytest.mark.parametrize("basis", ["capture_unix_us", "processing_unix_us", "monotonic_us"])
+def test_each_timestamp_basis_choice_is_accepted(token_file, basis):
+    args = emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a", f"--timestamp-basis={basis}"))
+    assert args.timestamp_basis == basis
+
+
+@pytest.mark.parametrize(
+    "extra", ["--timestamp-basis=unix_us", "--timestamp-basis=bogus", "--fps=0", "--width=1", "--height=0"]
+)
 def test_bad_options_are_rejected(token_file, extra):
     with pytest.raises(SystemExit):
         emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a", extra))
@@ -74,7 +82,8 @@ def test_bad_options_are_rejected(token_file, extra):
 def test_user_timestamp_basis(monkeypatch):
     monkeypatch.setattr(emu.time, "time_ns", lambda: 5_000_000)
     monkeypatch.setattr(emu.time, "monotonic_ns", lambda: 9_000_000)
-    assert emu.user_timestamp_us("unix_us") == 5_000
+    assert emu.user_timestamp_us("capture_unix_us") == 5_000
+    assert emu.user_timestamp_us("processing_unix_us") == 5_000
     assert emu.user_timestamp_us("monotonic_us") == 9_000
 
 

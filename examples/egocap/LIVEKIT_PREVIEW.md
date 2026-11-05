@@ -17,8 +17,13 @@ Orin: SIPL -> hardware H.264 -> LiveKit publisher --> LiveKit server --> browser
 PC:   CaptureServer (--livekit-streams: where the streams are) -> egocap backend (list + viewer token)
 ```
 
-**The tiles are display-only for now and say so.** Saving these streams in a recording is planned but not built, so
-pressing Record does not save them.
+**Recording.** A stream is saved with a take only when its station entry gives `width`, `height` and `fps` and
+declares `timestamp_basis: capture_unix_us`, meaning the publisher stamps each frame with the mapped capture time of
+the sensor event. The native Orin sender stamps `processing_unix_us` (host time after capture and conversion), which
+is not a capture time, so its streams are shown in the browser but never recorded. The recorder joins the room itself
+(it needs the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`) and checks each stream's first frame against the
+configured size before a take starts. Camera and tracking alignment also assumes the backend and CaptureServer share
+one machine's clock, and that the publisher's clock is synchronised with it; neither is checked.
 
 **Not yet exercised on the Orin.** The publisher, the browser's acceptance of its H.264 profile and the end-to-end
 latency have not been run or measured. Report those as untested until someone has run them.
@@ -104,7 +109,10 @@ sender's pacing.
 uv run python tools/livekit_orin_emulator.py \
   --livekit-url=wss://LIVEKIT_HOST --livekit-token-file=join.token \
   --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right \
-  --width=1280 --height=720 --fps=30 --timestamp-basis=unix_us
+  --width=1280 --height=720 --fps=30 --timestamp-basis=capture_unix_us
 ```
 
-Use `--timestamp-basis=monotonic_us` to send what the current native sender sends (not recordable).
+`--timestamp-basis=processing_unix_us` declares what the current native sender sends: processing time, which is not
+a capture time and is not recorded. `capture_unix_us` (the default) is honest here because the emulator is the
+camera: it stamps the frame when it generates it. `monotonic_us` sends the publisher's monotonic clock, also not
+recordable.

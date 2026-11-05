@@ -79,9 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument(
         "--timestamp-basis",
-        choices=("unix_us", "monotonic_us"),
-        default="unix_us",
-        help="clock user_timestamp carries: Unix time (recordable) or this host's monotonic time (not recordable)",
+        choices=("capture_unix_us", "processing_unix_us", "monotonic_us"),
+        default="capture_unix_us",
+        help="what user_timestamp carries: this host's Unix time at frame generation, which for synthetic frames "
+        "is their capture time (recordable); the same reading declared as processing time; or monotonic time",
     )
     return parser
 
@@ -111,8 +112,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def user_timestamp_us(basis: str) -> int:
-    """Returns now in microseconds on the chosen clock (``unix_us`` or ``monotonic_us``)."""
-    ns = time.time_ns() if basis == "unix_us" else time.monotonic_ns()
+    """Returns now in microseconds on the chosen clock (a Unix basis, or ``monotonic_us``)."""
+    ns = time.monotonic_ns() if basis == "monotonic_us" else time.time_ns()
     return ns // 1000
 
 

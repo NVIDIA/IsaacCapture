@@ -21,7 +21,8 @@ from egocap_web.livekit_recording import (
 )
 from recording_service import PixelFormat
 
-UNIX = p.LiveKitTimestampBasis.PUBLISHER_UNIX_US
+CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
 
 
@@ -179,7 +180,7 @@ def test_mapped_frame_image_is_the_received_image():
 # --- LiveKitRecordingFeed ------------------------------------------------------
 
 
-def _stream(stream_id: int, name: str, basis=UNIX) -> p.LiveKitCameraStream:
+def _stream(stream_id: int, name: str, basis=CAPTURE) -> p.LiveKitCameraStream:
     return p.LiveKitCameraStream(
         stream_id=stream_id,
         name=name,
@@ -242,7 +243,7 @@ def _feed(receiver, streams, ingress, names=None, **kw) -> LiveKitRecordingFeed:
     return LiveKitRecordingFeed(receiver, streams, ingress, names, clock_map=FixedMap(), **kw)
 
 
-async def test_unix_stream_frames_are_offered_with_source_and_mapped_capture_time():
+async def test_capture_stream_frames_are_offered_with_source_and_mapped_capture_time():
     streams = [_stream(16, "Head left")]
     receiver = FakeReceiver({16: [_received(16, 1_000_000), _received(16, 2_000_000)]})
     ingress = FakeIngress()
@@ -255,9 +256,10 @@ async def test_unix_stream_frames_are_offered_with_source_and_mapped_capture_tim
     assert feed.failure is None
 
 
-async def test_monotonic_stream_fails_at_once_and_never_offers():
+@pytest.mark.parametrize("basis", [MONO, PROCESSING])
+async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
     reasons: list[str] = []
-    streams = [_stream(16, "Head left", MONO)]
+    streams = [_stream(16, "Head left", basis)]
     receiver = FakeReceiver({16: [_received(16)]})
     ingress = FakeIngress()
     feed = _feed(receiver, streams, ingress, on_failure=reasons.append)
@@ -268,7 +270,9 @@ async def test_monotonic_stream_fails_at_once_and_never_offers():
     assert receiver.calls == []  # refused before any frame was taken
     assert feed.failure is not None
     assert "Head left" in feed.failure
-    assert "own clock" in feed.failure
+    assert (
+        feed.failure == "Head left: its timestamps are not a capture time, so it cannot be aligned with tracking"
+    )
     assert reasons == [feed.failure]
 
 
@@ -358,6 +362,22 @@ async def test_streams_are_independent():
     await _settle()
     await feed.stop()
     assert sorted(m.source for m in ingress.offered) == ["src16", "src17"]
+
+
+async def test_a_stream_still_flowing_when_another_fails_stops_after_its_next_frame():
+    streams = [_stream(16, "Head left"), _stream(17, "Head right")]
+    receiver = FakeReceiver({16: [], 17: [_received(17, 2_000_000)]})
+    receiver.lost.add(16)
+    receiver.gates[17] = asyncio.Event()
+    ingress = FakeIngress()
+    feed = _feed(receiver, streams, ingress)
+    feed.start()
+    await _settle()
+    assert feed.failure == "Head left: the LiveKit track was lost"
+    receiver.gates[17].set()
+    await _settle()
+    assert receiver.calls.count(17) == 1  # the loop ended instead of waiting for another frame
+    await feed.stop()
 
 
 async def test_lost_track_fails_the_take_with_the_stream_name():
