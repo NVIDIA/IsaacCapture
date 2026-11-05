@@ -91,6 +91,9 @@ class ClockEstimator:
         self._recent: deque[Exchange] = deque(maxlen=window)
         self._epoch = 1
         self._current: ClockMapping | None = None
+        #: Local time of the newest accepted exchange: staleness is about whether replies are still arriving, not
+        #: about how old the best exchange in the window is.
+        self._newest_ns: int | None = None
         #: Every mapping adopted, oldest first, so a take can record the epochs and quality it was made under.
         self.history: list[ClockMapping] = []
         #: Set, and left set, when a new best mapping disagrees with the last by more than their uncertainties and
@@ -101,6 +104,7 @@ class ClockEstimator:
         """Start over, for a new source session or a restarted remote: the old mapping no longer applies."""
         self._recent.clear()
         self._current = None
+        self._newest_ns = None
         self._epoch += 1
 
     def add(self, exchange: Exchange) -> str | None:
@@ -110,6 +114,7 @@ class ClockEstimator:
         if exchange.rtt_ns > self._max_rtt_ns:
             return "round trip too long"
         previous = self._current
+        self._newest_ns = exchange.t4
         newest = self._mapping_of(exchange)
         if previous is not None and self._disagrees(previous, newest):
             # Not a refinement: the clocks moved. Judged on the newest exchange, not on the best of the window, so
@@ -131,9 +136,9 @@ class ClockEstimator:
         return None
 
     def mapping(self, now_ns: int) -> ClockMapping | None:
-        """The current mapping, or None when there is none yet or the last exchange is stale at ``now_ns``."""
+        """The current mapping, or None when there is none yet or no exchange arrived within the stale limit."""
         current = self._current
-        if current is None or now_ns - current.accepted_at_ns > self._stale_after_ns:
+        if current is None or self._newest_ns is None or now_ns - self._newest_ns > self._stale_after_ns:
             return None
         return current
 
