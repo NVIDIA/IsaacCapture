@@ -13,7 +13,7 @@ each consumer connects to LiveKit itself and learns the live details there.
       url: wss://LIVEKIT_HOST
       room: sensing-preview
       publisher: orin-sensing
-      timestamp_basis: unix_us   # optional; default monotonic_us (not recordable against tracking)
+      timestamp_basis: processing_unix_us   # what the publisher puts in the frame timestamp (see protocol.py)
       streams:
         - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
 """
@@ -29,7 +29,8 @@ from . import protocol as p
 _ROOM_KEYS = {"url", "room", "publisher", "timestamp_basis", "streams"}
 _BASES = {
     "monotonic_us": p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US,
-    "unix_us": p.LiveKitTimestampBasis.PUBLISHER_UNIX_US,
+    "processing_unix_us": p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US,
+    "capture_unix_us": p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US,
 }
 _STREAM_KEYS = {"name", "track", "width", "height", "fps"}
 

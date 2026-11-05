@@ -153,6 +153,12 @@ class LiveKitFrameReceiver:
                 if not task.done():
                     task.cancel()
 
+    def clear_queued(self) -> None:
+        """Drop every queued frame, so a take starts with frames acquired after it began."""
+        for queue in self._queues.values():
+            while not queue.empty():
+                queue.get_nowait()
+
     def pending(self, stream_id: int) -> int:
         """How many frames of ``stream_id`` are queued for the consumer."""
         return self._queues[stream_id].qsize()

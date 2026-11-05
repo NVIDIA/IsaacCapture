@@ -4,11 +4,10 @@
 
 """Feeds received LiveKit camera frames into a take's recording ingress.
 
-A frame is recorded only when its capture time can be put on this machine's monotonic clock, the same clock the
-tracking samples use. That is possible when the publisher's application timestamp is Unix time on a host kept in
-step with this one (``PUBLISHER_UNIX_US``). A stream whose timestamp is on the publisher's own monotonic clock has
-no honest mapping, so the feed stops with that reason instead of recording a guessed time. Arrival time is never
-used as capture time.
+A frame is recorded only when its timestamp is a capture time (``SENSOR_CAPTURE_UNIX_US``), which can then be put
+on this machine's monotonic clock, the same clock the tracking samples use. A stream stamped with the publisher's
+monotonic clock or with its processing time is not a capture time, so the feed stops with that reason instead of
+recording a guessed one. Arrival time is never used as capture time.
 
 This assumes the backend runs on the machine whose monotonic clock CaptureServer reports: tracking times come from
 CaptureServer, and the two agree only when both processes share a clock.
@@ -22,6 +21,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -44,8 +44,8 @@ class UnixClockMap:
     """Converts Unix-time microseconds to this process's monotonic seconds, from a recently measured pair.
 
     The pair is two clock readings taken back to back and refreshed about once a second, from the consumer's
-    thread and never from an SDK callback. Between refreshes the two clocks run at the same rate, so the offset
-    holds; a step of the Unix clock shows up at the next refresh.
+    thread and never from an SDK callback. It converts on this machine only: it does not detect a step of the
+    Unix clock, and says nothing about whether the publisher's clock agrees with this one.
     """
 
     def __init__(
@@ -164,10 +164,10 @@ class LiveKitRecordingFeed:
         """Feed one stream until the take fails or the feed is stopped."""
         stream = self._streams[stream_id]
         source = self._source_names[stream_id]
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.PUBLISHER_UNIX_US:
+        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
             # Checked before any frame arrives: this stream cannot become recordable by waiting.
             self._fail(
-                f"{stream.name}: timestamps are on the publisher's own clock and cannot be aligned with tracking"
+                f"{stream.name}: its timestamps are not a capture time, so it cannot be aligned with tracking"
             )
             return
         while self.failure is None:
@@ -184,3 +184,95 @@ class LiveKitRecordingFeed:
                 # The ingress refuses once it has failed or stopped; it reports its own reason.
                 self._fail(f"{stream.name}: the recording ingress is no longer accepting frames")
                 return
+
+
+def recordable_livekit_streams(started: Any) -> tuple[p.LiveKitCameraStream, ...]:
+    """The LiveKit streams of a started session that a recording may include.
+
+    A stream is recordable when its timestamps are a capture time and its geometry is configured: the recording
+    schema fixes each source's size and rate when the session opens. The rest remain preview-only.
+    """
+    if started is None:
+        return ()
+    return tuple(
+        s
+        for s in started.streams
+        if isinstance(s, p.LiveKitCameraStream)
+        and s.timestamp_basis is p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+        and None not in (s.width, s.height, s.fps)
+    )
+
+
+class LiveKitRecordingSource:
+    """The recorder's LiveKit video for one take: joins before the take, feeds during it, leaves after it.
+
+    The recordable streams are read when the take is prepared, because the session offers them only once it has
+    started. The first frame of each stream is checked against its configured size. The browser's own connection
+    is separate and unaffected.
+    """
+
+    def __init__(
+        self,
+        recordable_streams: Callable[[], Sequence[p.LiveKitCameraStream]],
+        make_token: Callable[[str], str],
+        *,
+        first_frame_timeout_s: float = 10.0,
+    ) -> None:
+        self._recordable_streams = recordable_streams
+        self._make_token = make_token
+        self._first_frame_timeout_s = first_frame_timeout_s
+        self._streams: tuple[p.LiveKitCameraStream, ...] = ()
+        self._receiver: LiveKitFrameReceiver | None = None
+        self._feed: LiveKitRecordingFeed | None = None
+
+    async def prepare(self) -> None:
+        """Join the room and wait for a usable first frame from every stream; raises if one never arrives.
+
+        Runs before the take's storage opens, so a missing camera fails the start instead of a half-written take.
+        Does nothing when the session offers no recordable stream.
+        """
+        self._streams = tuple(self._recordable_streams())
+        if not self._streams:
+            return
+        receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room))
+        self._receiver = receiver
+        try:
+            await receiver.start()
+            for stream in self._streams:
+                frame = await asyncio.wait_for(
+                    receiver.next_frame_or_lost(stream.stream_id), self._first_frame_timeout_s
+                )
+                if frame is None:
+                    raise RuntimeError(f"{stream.name}: the LiveKit track was lost before recording started")
+                if frame.image.shape[:2] != (stream.height, stream.width):
+                    raise RuntimeError(
+                        f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "
+                        f"expected {stream.width}x{stream.height}"
+                    )
+        except asyncio.TimeoutError as exc:
+            await self.stop()
+            raise RuntimeError("a LiveKit stream sent no frame before the recording could start") from exc
+        except BaseException:
+            await self.stop()
+            raise
+
+    def start(self, ingress: RecordingIngress, on_failure: Callable[[str], None]) -> None:
+        """Begin feeding the take's ingress with frames acquired from now on."""
+        if self._receiver is None:
+            return
+        # Frames queued while storage was opening were acquired before the take started.
+        self._receiver.clear_queued()
+        source_names = {s.stream_id: s.name for s in self._streams}
+        self._feed = LiveKitRecordingFeed(
+            self._receiver, self._streams, ingress, source_names, on_failure=on_failure
+        )
+        self._feed.start()
+
+    async def stop(self) -> None:
+        """Stop feeding and leave the room. Safe to call at any point, including after a failed prepare."""
+        feed, receiver = self._feed, self._receiver
+        self._feed = self._receiver = None
+        if feed is not None:
+            await feed.stop()
+        if receiver is not None:
+            await receiver.stop()

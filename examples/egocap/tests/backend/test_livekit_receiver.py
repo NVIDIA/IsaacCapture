@@ -604,8 +604,8 @@ async def test_a_different_participant_disconnecting_changes_nothing(receiver):
 async def test_feed_on_a_never_attached_stream_fails_when_the_publisher_leaves(monkeypatch):
     from egocap_web.livekit_recording import LiveKitRecordingFeed
 
-    unix = p.LiveKitTimestampBasis.PUBLISHER_UNIX_US
-    stream = camera(1, "left", timestamp_basis=unix)
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    stream = camera(1, "left", timestamp_basis=capture)
     rx = lr.LiveKitFrameReceiver([stream], TOKEN)
     await rx.start()
     reasons: list[str] = []
@@ -623,3 +623,13 @@ async def test_feed_on_a_never_attached_stream_fails_when_the_publisher_leaves(m
     finally:
         await feed.stop()
         await rx.stop()
+
+
+async def test_clear_queued_drops_every_queued_frame(receiver):
+    track = subscribe(receiver)
+    track.push(event(3, frame_id=1))
+    track.push(event(3, frame_id=2))
+    await settle()
+    assert receiver.pending(1) > 0
+    receiver.clear_queued()
+    assert receiver.pending(1) == receiver.pending(2) == 0

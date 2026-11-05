@@ -37,7 +37,9 @@ from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
 from .operator_settings import OperatorSettingsStore, operator_settings_path
 from .operator_settings import router as operator_settings_router
+from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
+from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 from .preview_routes import router as preview_router
 from .recording_adapter import (
     MANUS_GLOVE_SPEC,
@@ -123,6 +125,14 @@ def _station_calibration_assets() -> tuple[CalibrationAsset, ...]:
     )
 
 
+def _recorder_livekit_token(room: str) -> str:
+    """A subscribe-only token for the recorder's own LiveKit connection, signed with the backend's key pair."""
+    api_key, api_secret = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
+    if not api_key or not api_secret:
+        raise RuntimeError(f"{API_KEY_ENV} and {API_SECRET_ENV} must be set to record LiveKit video")
+    return subscriber_token(api_key=api_key, api_secret=api_secret, room=room, now=int(time.time()))
+
+
 def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str | None, output_root: Path):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -140,6 +150,10 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
         video_sources = tuple(
             VideoSourceSpec(cam.name, cam.width, cam.height, cam.fps, intrinsics=False)
             for cam in monitor.camera_descriptors
+        ) + tuple(
+            # LiveKit cameras with a capture-time stamp and a configured size are recorded like any camera.
+            VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
+            for s in recordable_livekit_streams(monitor.native.started)
         )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
@@ -330,12 +344,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Catalogs the operator imports from the page sit beside that file, apart from the shipped ones.
     app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
+    livekit_source = LiveKitRecordingSource(
+        lambda: recordable_livekit_streams(monitor.native.started), _recorder_livekit_token
+    )
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(monitor, config.station_label, recording_output_root),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=_INGRESS_QUEUE_BYTES,
         readiness_check=_recording_readiness_check(monitor, station_config_error),
         initial_context=initial_context,
+        livekit_source=livekit_source,
     )
     monitor.set_recording(coordinator)
     await monitor.start()
