@@ -1889,3 +1889,30 @@ below for the narrow/stacked layout). */
     min-width: 0;
   }
 }
+
+/* Direct LiveKit preview tiles: a <video> sized like the MJPEG <img>, with any status text laid over it. */
+.camera-tile video {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.op-stage .camera-tile video {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.camera-tile video + .camera-placeholder {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.camera-preview-badge {
+  margin-left: var(--space-2);
+  opacity: 0.7;
+}

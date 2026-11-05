@@ -7,7 +7,7 @@
  * directly rather than driving a real socket.
  */
 import type { ReactElement } from "react";
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import { useCaptureSession, type AcceptedTracking, type CaptureSessionState } from "./useCaptureSession";
@@ -19,9 +19,15 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
   return { ...actual, useCaptureSession: vi.fn() };
 });
 
+// CameraGrid asks the backend for a LiveKit preview on mount; these tests are about other behavior.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, ok: false, json: async () => ({}) })));
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {

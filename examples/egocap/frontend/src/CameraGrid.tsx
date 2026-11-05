@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
+import { LiveKitCameraTile } from "./LiveKitCameraTile";
+import { useLiveKitPreview } from "./useLiveKitPreview";
 
 const CAMERA_ERROR_RETRY_LIMIT = 3;
 
@@ -172,8 +174,11 @@ export function CameraGrid({
     rateTracker.current.retainOnly(keys);
   }
 
+  // Direct LiveKit tiles sit beside the CaptureServer ones; they have their own connection and readiness.
+  const livekit = useLiveKitPreview();
   const cameras = snapshot?.cameras ?? [];
-  if (cameras.length === 0) {
+  const livekitShown = livekit.tiles.length > 0 || livekit.phase === "error";
+  if (cameras.length === 0 && !livekitShown) {
     return (
       <section className="camera-grid">
         <h2 className="group-label">Cameras</h2>
@@ -188,7 +193,12 @@ export function CameraGrid({
   return (
     <section className="camera-grid">
       <h2 className="group-label">Cameras</h2>
-      <div className={`camera-grid-items camera-grid-items--n${Math.min(cameras.length, 4)}`}>
+      {livekit.phase === "error" && livekit.message !== null && (
+        <p className="empty-note">LiveKit preview unavailable: {livekit.message}</p>
+      )}
+      <div
+        className={`camera-grid-items camera-grid-items--n${Math.min(cameras.length + livekit.tiles.length, 4)}`}
+      >
         {cameras.map((cam, index) => {
           const effectiveAge = cam.age_ms === null ? null : cam.age_ms + elapsedSinceReceipt;
           // "Never had a sample" (sequence/age_ms both null) is a distinct,
@@ -222,6 +232,16 @@ export function CameraGrid({
             />
           );
         })}
+        {livekit.tiles.map((tile, index) => (
+          <LiveKitCameraTile
+            key={`livekit-${tile.name}`}
+            name={tile.name}
+            track={tile.track}
+            phase={livekit.phase}
+            // The first LiveKit tile is the main view only when no CaptureServer camera claims that place.
+            primary={cameras.length === 0 && index === 0}
+          />
+        ))}
       </div>
     </section>
   );
