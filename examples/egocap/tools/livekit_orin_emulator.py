@@ -35,6 +35,9 @@ except ImportError as exc:  # the optional "livekit" extra is not installed
 
 #: Seconds between periodic stats lines.
 STATS_INTERVAL_S = 5.0
+#: Bases on the emulated publisher's monotonic clock, and bases that stamp the capture event (not processing time).
+_MONOTONIC_BASES = ("capture_monotonic_us", "monotonic_us")
+_CAPTURE_BASES = ("capture_monotonic_us", "capture_unix_us")
 #: Width of the frame-counter strip, in bits (one coloured block per bit).
 _COUNTER_BITS = 24
 
@@ -84,10 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument(
         "--timestamp-basis",
-        choices=("capture_unix_us", "processing_unix_us", "monotonic_us"),
-        default="capture_unix_us",
-        help="what user_timestamp carries: this host's Unix time at frame generation, which for synthetic frames "
-        "is their capture time (recordable); the same reading declared as processing time; or monotonic time",
+        choices=("capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"),
+        default="capture_monotonic_us",
+        help="what user_timestamp carries: the emulated Orin's monotonic time at frame generation, which for "
+        "synthetic frames is their capture event (the recordable basis, mapped by clock-sync); or the Unix time "
+        "of it; or the Unix time declared as processing time; or monotonic processing time",
     )
     parser.add_argument(
         "--clock-offset-ms",
@@ -144,8 +148,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def user_timestamp_us(basis: str) -> int:
-    """Returns now in microseconds on the chosen clock (a Unix basis, or ``monotonic_us``)."""
-    ns = time.monotonic_ns() if basis == "monotonic_us" else time.time_ns()
+    """Returns now in microseconds on the chosen clock (a Unix basis, or a monotonic one)."""
+    ns = time.monotonic_ns() if basis in _MONOTONIC_BASES else time.time_ns()
     return ns // 1000
 
 
@@ -184,7 +188,7 @@ class ClockModel:
 
     def adjustment_us(self, basis: str, *, at_capture: bool) -> int:
         """Microseconds to add to this host's reading of ``basis`` to get the emulated Orin's stamp."""
-        offset_us = self.monotonic_offset_ns // 1000 if basis == "monotonic_us" else self.offset_us
+        offset_us = self.monotonic_offset_ns // 1000 if basis in _MONOTONIC_BASES else self.offset_us
         delay_us = self.pipeline_delay_us if at_capture else 0
         return round(offset_us + self._drift_us() - delay_us)
 
@@ -289,7 +293,7 @@ async def publish_stream(
         # The counter and a capture-time stamp are taken before the frame is synthesized, as a camera stamps at
         # capture; a processing-time stamp is taken once the frame is ready, as the real sender's is.
         capture_ns = capture_clock()
-        at_capture = args.timestamp_basis != "processing_unix_us"
+        at_capture = args.timestamp_basis in _CAPTURE_BASES
         timestamp_us = (
             user_timestamp_us(args.timestamp_basis) + clock.adjustment_us(args.timestamp_basis, at_capture=True)
             if at_capture

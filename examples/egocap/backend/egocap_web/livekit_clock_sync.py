@@ -101,8 +101,9 @@ class ClockSyncClient:
         if reply is None:
             return
         sequence, t1, t2, t3 = reply
-        if self._outstanding.pop(sequence, None) != t1:
-            return  # not an answer to a request of ours
+        if self._outstanding.get(sequence) != t1:
+            return  # not an answer to a request of ours; a stray reply must not discard the real one's entry
+        del self._outstanding[sequence]
         if self.estimator.add(Exchange(t1=t1, t2=t2, t3=t3, t4=t4)) is not None:
             self.rejected += 1
 
