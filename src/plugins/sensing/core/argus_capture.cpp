@@ -223,10 +223,25 @@ struct ArgusCapture::Impl
     {
         if (running)
             return;
-        for (auto& camera : cameras)
+        // A camera that fails to start must not leave the ones before it repeating: stop what was started, then fail.
+        std::vector<Argus::ICaptureSession*> started;
+        try
         {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            check(session->repeat(camera->request.get()), "repeat");
+            for (auto& camera : cameras)
+            {
+                auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
+                check(session->repeat(camera->request.get()), "repeat");
+                started.push_back(session);
+            }
+        }
+        catch (...)
+        {
+            for (auto* session : started)
+            {
+                session->stopRepeat();
+                session->waitForIdle();
+            }
+            throw;
         }
         running = true;
     }
@@ -299,16 +314,21 @@ std::optional<CaptureFrame> ArgusCapture::acquire_latest(uint32_t camera_id)
     Impl::Camera& camera = *found->second;
 
     // Take everything that has arrived and keep the newest: older frames are returned to the camera at once.
+    // At most one pass over the capture pool per call, so a continuously refilled stream cannot hold this call.
     Argus::Buffer* newest = nullptr;
-    for (;;)
+    for (size_t taken = 0; taken < camera.pool.size(); ++taken)
     {
         Argus::Status status = Argus::STATUS_OK;
         Argus::Buffer* buffer = camera.buffers->acquireBuffer(0, &status);
         if (!buffer)
         {
             if (status != Argus::STATUS_TIMEOUT)
+            {
+                if (newest)
+                    camera.buffers->releaseBuffer(newest); // do not leak the frame already taken
                 throw std::runtime_error("Argus: acquireBuffer failed (status " +
                                          std::to_string(static_cast<int>(status)) + ")");
+            }
             break;
         }
         if (newest)
