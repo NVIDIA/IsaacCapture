@@ -25,6 +25,17 @@ struct StreamConfig
 };
 
 /// Where and how the tracks are published.
+/// The clock and event a published frame's application timestamp is read from.
+enum class TimestampBasis
+{
+    /// CLOCK_MONOTONIC when the frame was ready to encode (`monotonic_us`); recordable.
+    FrameReadyMonotonic,
+    /// The sensor's capture event converted to CLOCK_MONOTONIC (`capture_monotonic_us`); unverified on hardware.
+    SensorCaptureMonotonic,
+    /// CLOCK_REALTIME when the frame finished conversion (`processing_unix_us`); not recordable.
+    ProcessingUnix,
+};
+
 struct LiveKitConfig
 {
     std::string url;
@@ -36,9 +47,8 @@ struct LiveKitConfig
     uint32_t scale_div = 1;
     /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again.
     uint32_t bitrate_bps = 8'000'000;
-    /// Publish each frame's sensor capture event on CLOCK_MONOTONIC (the recordable timestamp basis). Off, frames
-    /// carry processing-time Unix stamps, which the recorder refuses.
-    bool publish_capture_time = false;
+    /// What each frame's application timestamp is; the receiving side's streams file must declare the same basis.
+    TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
 };
 
 struct SensingConfig

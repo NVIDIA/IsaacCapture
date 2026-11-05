@@ -177,7 +177,7 @@ struct LiveKitVideoOutput::Impl
             return;
         }
 
-        if (config.publish_capture_time)
+        if (config.timestamp_basis == TimestampBasis::SensorCaptureMonotonic)
         {
             try
             {
@@ -379,7 +379,7 @@ struct LiveKitVideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc,
-                        application_stamp_us(slot.capture_monotonic_ns, slot.unix_ns));
+                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns, slot.unix_ns));
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
@@ -397,7 +397,7 @@ struct LiveKitVideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time,
-                        application_stamp_us(frame.capture_monotonic_ns, frame.unix_ns));
+                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns, frame.unix_ns));
     }
 
     /// Polling thread: the frame's capture event on CLOCK_MONOTONIC. The sensor clock's anchor is built from the
@@ -426,9 +426,18 @@ struct LiveKitVideoOutput::Impl
     }
 
     /// The application timestamp published with a frame, in microseconds.
-    uint64_t application_stamp_us(uint64_t capture_monotonic_ns, uint64_t unix_ns) const
+    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns, uint64_t unix_ns) const
     {
-        return config.publish_capture_time ? capture_monotonic_ns / 1000 : unix_ns / 1000;
+        switch (config.timestamp_basis)
+        {
+        case TimestampBasis::FrameReadyMonotonic:
+            return ready_monotonic_ns / 1000;
+        case TimestampBasis::SensorCaptureMonotonic:
+            return capture_monotonic_ns / 1000;
+        case TimestampBasis::ProcessingUnix:
+            return unix_ns / 1000;
+        }
+        throw std::logic_error("unknown timestamp basis");
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "inc/sensing_core/camera_capture.hpp"
+#include "inc/sensing_core/sensing_types.hpp"
 
 #include <sensing_livekit/video_track_sink.hpp>
 
@@ -34,9 +35,9 @@ struct LiveKitOutputConfig
     /// IDR period in frames; 0 defers to the encoder's default.
     uint32_t gop = 0;
     bool full_range = false;
-    /// Publish the sensor's capture event on CLOCK_MONOTONIC as each frame's application timestamp, instead of
-    /// the processing-time Unix stamp. A frame whose sensor time cannot be placed on that clock fails the output.
-    bool publish_capture_time = false;
+    /// What each frame's application timestamp is. SensorCaptureMonotonic fails the output on a frame whose sensor
+    /// time cannot be placed on CLOCK_MONOTONIC.
+    TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
 };
 
 struct LiveKitOutputStats
