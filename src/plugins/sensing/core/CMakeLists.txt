@@ -5,6 +5,7 @@
 add_library(sensing_core STATIC
     sensing_camera.cpp
     camera_backend.cpp
+    sensor_clock.cpp
     capture_factory.cpp
     jetson_encoder.cpp
     livekit_video_output.cpp

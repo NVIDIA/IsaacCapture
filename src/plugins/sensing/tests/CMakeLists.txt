@@ -36,3 +36,14 @@ target_include_directories(sensing_clock_sync_tests PRIVATE ${CMAKE_CURRENT_SOUR
 target_link_libraries(sensing_clock_sync_tests PRIVATE Catch2::Catch2WithMain)
 
 catch_discover_tests(sensing_clock_sync_tests)
+
+# The sensor-clock mapping is header-only and injectable, so it needs no SDK.
+add_executable(sensing_sensor_clock_tests
+    test_sensor_clock.cpp
+)
+
+target_include_directories(sensing_sensor_clock_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+target_link_libraries(sensing_sensor_clock_tests PRIVATE Catch2::Catch2WithMain)
+
+catch_discover_tests(sensing_sensor_clock_tests)
