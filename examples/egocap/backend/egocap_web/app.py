@@ -35,6 +35,7 @@ from recording_service import (
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
+from .livekit_preview import router as livekit_preview_router
 from .preview_routes import router as preview_router
 from .recording_adapter import (
     MANUS_GLOVE_SPEC,
@@ -300,6 +301,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the WHOLE Begin, not just that one camera, which also takes tracking preview down with it.
     if resolved_station is not None:
         config = replace(config, cameras=resolved_station.cameras)
+    # Direct LiveKit preview is independent of CaptureServer: it only tells the browser where the
+    # room is, so an invalid or absent station YAML simply leaves it unconfigured (404 from its route).
+    app.state.livekit_preview = resolved_station.livekit_preview if resolved_station is not None else None
     # task_text seeds the committed next-task instruction. operator seeds ONLY a prefill
     # default for the frontend's entry field (via recording_command.py's snapshot
     # "default_operator") -- start_episode's own operator parameter always replaces
@@ -376,6 +380,7 @@ def _optional_visualization(monitor: CaptureStatusMonitor) -> VisualizationScene
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(preview_router)
+app.include_router(livekit_preview_router)
 app.include_router(task_file_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see

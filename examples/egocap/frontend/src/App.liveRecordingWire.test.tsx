@@ -124,6 +124,8 @@ describe("RecordingPanel -> real transport -> real backend wire shape", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
+    // CameraGrid asks for a LiveKit preview on mount; this station has none.
+    vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, ok: false, json: async () => ({}) })));
   });
 
   afterEach(() => {

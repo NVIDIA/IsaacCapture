@@ -32,11 +32,15 @@ import yaml
 
 from capture_server import protocol as p
 
+from .livekit_preview import LiveKitPreview, LiveKitTrack
+
 STATION_CONFIG_ENV = "EGOCAP_STATION_CONFIG"
 _DEFAULT_FLAT_STATION_ID = "station_01"
 #: Matches capture_server.protocol's own BeginRequest.cameras limit -- checked here too so an
 #: over-limit YAML is a configuration error, not a later capture-startup failure.
 _MAX_CAMERAS = 3
+#: Preview tiles share the camera grid, whose layout tops out at four.
+_MAX_LIVEKIT_TRACKS = 4
 
 
 class StationConfigError(ValueError):
@@ -57,6 +61,8 @@ class ResolvedStation:
     task_description: str | None
     data_dir: Path | None
     cameras: tuple[p.CameraSelection, ...]
+    #: Direct LiveKit camera preview; independent of ``cameras`` and never recorded.
+    livekit_preview: LiveKitPreview | None = None
 
 
 class _DuplicateKeyLoader(yaml.SafeLoader):
@@ -130,6 +136,55 @@ def _resolve_cameras(station_id: str, entry: dict) -> tuple[p.CameraSelection, .
     return tuple(cameras)
 
 
+def _nonempty_str(mapping: dict, key: str, where: str) -> str:
+    """A required nonempty string field of ``mapping``; ``where`` names it in the error."""
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise StationConfigError(f"{where}.{key} must be a nonempty string")
+    return value
+
+
+def _resolve_livekit_preview(station_id: str, entry: dict) -> LiveKitPreview | None:
+    """The optional ``livekit_preview`` section: where the camera host publishes and which tracks to show.
+
+    Absent means the station has no direct LiveKit preview. These cameras are display-only: they are not
+    requested from CaptureServer and are never part of ``cameras``.
+    """
+    raw = entry.get("livekit_preview")
+    if raw is None:
+        return None
+    where = f"station {station_id!r}: livekit_preview"
+    if not isinstance(raw, dict):
+        raise StationConfigError(f"{where} must be a mapping")
+    # The browser connects with this URL, so only the WebSocket schemes LiveKit signalling uses are accepted.
+    url = _nonempty_str(raw, "url", where)
+    if not url.startswith(("ws://", "wss://")):
+        raise StationConfigError(f"{where}.url must start with ws:// or wss://")
+    room = _nonempty_str(raw, "room", where)
+    publisher = _nonempty_str(raw, "publisher", where)
+    raw_tracks = raw.get("tracks")
+    if not isinstance(raw_tracks, list) or not raw_tracks:
+        raise StationConfigError(f"{where}.tracks must be a nonempty list")
+    if len(raw_tracks) > _MAX_LIVEKIT_TRACKS:
+        raise StationConfigError(f"{where}.tracks supports at most {_MAX_LIVEKIT_TRACKS} entries")
+    tracks: list[LiveKitTrack] = []
+    for i, item in enumerate(raw_tracks):
+        if not isinstance(item, dict):
+            raise StationConfigError(f"{where}.tracks[{i}] must be a mapping")
+        tracks.append(
+            LiveKitTrack(
+                name=_nonempty_str(item, "name", f"{where}.tracks[{i}]"),
+                track=_nonempty_str(item, "track", f"{where}.tracks[{i}]"),
+            )
+        )
+    # Two tiles on one track, or two tiles with one label, would be indistinguishable to the operator.
+    if len({t.track for t in tracks}) != len(tracks):
+        raise StationConfigError(f"{where}.tracks has a duplicate track")
+    if len({t.name for t in tracks}) != len(tracks):
+        raise StationConfigError(f"{where}.tracks has a duplicate name")
+    return LiveKitPreview(url=url, room=room, publisher=publisher, tracks=tuple(tracks))
+
+
 def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> ResolvedStation:
     """Build a :class:`ResolvedStation` from one station's parsed mapping."""
     if not isinstance(entry, dict):
@@ -162,6 +217,7 @@ def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> Resol
         task_description=_str_field(meta, "task_description"),
         data_dir=data_dir,
         cameras=_resolve_cameras(station_id, entry),
+        livekit_preview=_resolve_livekit_preview(station_id, entry),
     )
 
 
