@@ -195,6 +195,58 @@ describe("LiveKitCameraTile FPS label", () => {
     }
   });
 
+  describe("visibility changes", () => {
+    const setHidden = (hidden: boolean): void => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+    };
+    afterEach(() => {
+      delete (document as any).hidden;
+    });
+
+    it("shows paused at once when the tab is hidden, without waiting for the timer", () => {
+      renderTile();
+      presentFrame();
+      setHidden(true);
+      expect(document.querySelector(".camera-stats")?.textContent).toBe("paused");
+    });
+
+    it("starts a fresh FPS baseline after the tab returns", () => {
+      renderTile();
+      presentFrame(0);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      presentFrame(30);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(document.querySelector(".camera-stats")?.textContent).toBe("30.0 FPS");
+      setHidden(true);
+      presentFrame(300); // frames presented while hidden must not inflate the first visible window
+      setHidden(false);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(document.body.textContent).not.toMatch(/\d FPS/);
+      presentFrame(30);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(document.querySelector(".camera-stats")?.textContent).toBe("30.0 FPS");
+    });
+
+    it("removes the visibilitychange listener on unmount", () => {
+      const remove = vi.spyOn(document, "removeEventListener");
+      const { unmount } = renderTile();
+      unmount();
+      expect(remove).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+      remove.mockRestore();
+    });
+  });
+
   it("shows FPS unavailable without requestVideoFrameCallback", () => {
     delete (HTMLVideoElement.prototype as any).requestVideoFrameCallback;
     renderTile();
