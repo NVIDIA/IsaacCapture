@@ -26,6 +26,8 @@ import numpy as np
 
 from capture_server import protocol as p
 
+from .livekit_clock_sync import ClockSyncClient
+
 try:
     from livekit import rtc
 except ImportError:  # the optional "livekit" extra is not installed
@@ -99,6 +101,7 @@ class LiveKitFrameReceiver:
         token: str,
         *,
         queue_frames: int = DEFAULT_QUEUE_FRAMES,
+        clock_sync: bool = False,
     ) -> None:
         # The package is optional; fail here with the fix rather than later with an AttributeError.
         if rtc is None:
@@ -113,6 +116,9 @@ class LiveKitFrameReceiver:
         self._by_track = {s.track: s for s in streams}
         self._url, self._publisher = streams[0].url, streams[0].publisher
         self._token = token
+        self._want_clock_sync = clock_sync
+        #: Maps the publisher's monotonic clock onto this host's; set once connected when requested.
+        self.clock_sync: ClockSyncClient | None = None
         self._room: rtc.Room | None = None
         self._queues = {s.stream_id: asyncio.Queue[ReceivedFrame](maxsize=queue_frames) for s in streams}
         self.counters = {s.stream_id: StreamCounters() for s in streams}
@@ -137,6 +143,9 @@ class LiveKitFrameReceiver:
         # Nothing is subscribed automatically: only the offered tracks are, so unrelated tracks in the room cost no
         # media work here.
         _ = await room.connect(self._url, self._token, rtc.RoomOptions(auto_subscribe=False))
+        if self._want_clock_sync:
+            self.clock_sync = ClockSyncClient(room, self._publisher)
+            self.clock_sync.start()
         # Tracks published before we joined arrive here rather than through track_published.
         for participant in room.remote_participants.values():
             for publication in participant.track_publications.values():
@@ -147,6 +156,9 @@ class LiveKitFrameReceiver:
     async def stop(self) -> None:
         """Leave the room and stop every reader; frames still queued stay available to the consumer."""
         room, self._room = self._room, None
+        if self.clock_sync is not None:
+            await self.clock_sync.stop()
+            self.clock_sync = None
         for task in self._readers.values():
             task.cancel()
         for task in list(self._readers.values()):
