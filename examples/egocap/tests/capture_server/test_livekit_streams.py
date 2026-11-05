@@ -124,7 +124,8 @@ def test_session_init_still_rejects_unknown_keys():
         {"url": "https://lk.example"},
         {"url": "lk.example:7881"},
         {"url": "x" * 600},
-        {"timestamp_basis": 2},
+        {"timestamp_basis": 3},
+        {"timestamp_basis": 0},
         {"timestamp_basis": "1"},
         {"timestamp_basis": True},
         {"width": 0},
@@ -450,3 +451,54 @@ async def test_cli_serves_the_streams_from_the_file(tmp_path, unused_tcp_port):
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Timestamp basis.
+# ---------------------------------------------------------------------------
+
+
+def test_timestamp_basis_values_are_wire_stable():
+    assert int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US) == 1
+    assert int(p.LiveKitTimestampBasis.PUBLISHER_UNIX_US) == 2
+
+
+def test_unix_basis_round_trips_through_json():
+    stream = _stream(timestamp_basis=2)
+    assert stream.timestamp_basis == p.LiveKitTimestampBasis.PUBLISHER_UNIX_US
+    assert p.LiveKitCameraStream.from_json(stream.to_json()) == stream
+
+
+@pytest.mark.parametrize(
+    ("basis_line", "expected"),
+    [
+        ("", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+        ("timestamp_basis: monotonic_us,", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+        ("timestamp_basis: unix_us,", p.LiveKitTimestampBasis.PUBLISHER_UNIX_US),
+    ],
+)
+def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expected):
+    text = (
+        f"livekit: {{url: wss://lk, room: r, publisher: o, {basis_line} "
+        "streams: [{name: A, track: t}, {name: B, track: u}]}\n"
+    )
+    streams = load_livekit_streams(_write(tmp_path, text))
+    assert [s.timestamp_basis for s in streams] == [expected, expected]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "wall_clock",
+        "UNIX_US",
+        "2",
+        "''",
+        "null",
+        "[unix_us]",
+        "{a: 1}",
+    ],
+)
+def test_loader_rejects_an_unknown_basis(tmp_path, value):
+    text = f"livekit: {{url: wss://lk, room: r, publisher: o, timestamp_basis: {value}, streams: []}}\n"
+    with pytest.raises(ValueError, match="timestamp_basis"):
+        load_livekit_streams(_write(tmp_path, text))

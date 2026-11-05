@@ -153,10 +153,13 @@ class TimeUnit(IntEnum):
 
 
 class LiveKitTimestampBasis(IntEnum):
-    """What a LiveKit frame's ``user_timestamp_us`` means: the publisher host's monotonic clock in
-    microseconds, read when the frame is published. Not sensor exposure time and not this host's clock."""
+    """What a LiveKit frame's ``user_timestamp_us`` means. Neither is sensor exposure time."""
 
+    # The publisher host's monotonic clock in microseconds, read when the frame is published. Not on any clock
+    # this host can convert, so such a stream cannot be recorded against tracking.
     PUBLISHER_MONOTONIC_US = 1
+    # Unix time in microseconds on the publisher host, which is kept in step with this host's clock.
+    PUBLISHER_UNIX_US = 2
 
 
 class SampleTimeSemantics(IntEnum):

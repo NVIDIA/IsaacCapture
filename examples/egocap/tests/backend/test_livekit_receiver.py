@@ -453,3 +453,173 @@ async def test_stop_before_start_is_harmless():
     rx = lr.LiveKitFrameReceiver([camera(1, "left")], TOKEN)
     await rx.stop()
     assert not rx.failed.is_set()
+
+
+# ---- next_frame_or_lost ----
+
+
+def _only_test_tasks() -> set:
+    return asyncio.all_tasks() - {asyncio.current_task()}
+
+
+async def test_queued_frames_are_drained_before_none(receiver):
+    track = subscribe(receiver)
+    track.push(event(1, frame_id=1))
+    track.push(event(2, frame_id=2))
+    await settle()
+    room_of(receiver).emit("track_unsubscribed", track, publication("left", track), participant())
+    first = await asyncio.wait_for(receiver.next_frame_or_lost(1), 1)
+    second = await asyncio.wait_for(receiver.next_frame_or_lost(1), 1)
+    assert (first.frame_id, second.frame_id) == (1, 2)
+    assert await asyncio.wait_for(receiver.next_frame_or_lost(1), 1) is None
+
+
+async def test_frame_is_returned_while_the_track_is_live(receiver):
+    track = subscribe(receiver)
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    assert not waiter.done()
+    track.push(event(5, frame_id=9))
+    assert (await asyncio.wait_for(waiter, 1)).frame_id == 9
+
+
+async def test_loss_while_waiting_returns_none(receiver):
+    track = subscribe(receiver)
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    assert not waiter.done()
+    room_of(receiver).emit("track_unsubscribed", track, publication("left", track), participant())
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+def _unsubscribe(rx, track):
+    room_of(rx).emit("track_unsubscribed", track, publication("left", track), participant())
+
+
+def _publisher_leaves(rx, track):
+    room_of(rx).emit("participant_disconnected", participant())
+
+
+def _room_disconnected(rx, track):
+    room_of(rx).emit("disconnected", "SOME_REASON")
+
+
+@pytest.mark.parametrize("lose", [_unsubscribe, _publisher_leaves, _room_disconnected])
+async def test_each_kind_of_loss_wakes_a_waiter_on_an_attached_stream(receiver, lose):
+    track = subscribe(receiver)
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    lose(receiver, track)
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+async def test_room_disconnect_marks_a_never_attached_stream_lost(receiver):
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(2))
+    await settle()
+    _room_disconnected(receiver, None)
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+async def test_unsubscribe_of_a_never_attached_stream_marks_it_lost(receiver):
+    track = FakeTrack()
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    _unsubscribe(receiver, track)
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+async def test_publisher_leaving_marks_a_never_attached_stream_lost(receiver):
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    _publisher_leaves(receiver, None)
+    assert await asyncio.wait_for(waiter, 1) is None
+
+
+async def test_republication_clears_the_lost_state(receiver):
+    track = subscribe(receiver)
+    _unsubscribe(receiver, track)
+    assert await asyncio.wait_for(receiver.next_frame_or_lost(1), 1) is None
+    again = subscribe(receiver)
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    assert not waiter.done()
+    again.push(event(4, frame_id=1))
+    assert (await asyncio.wait_for(waiter, 1)).frame_id == 1
+
+
+async def test_no_helper_tasks_are_left_after_returning(receiver):
+    track = subscribe(receiver)
+    await settle()
+    baseline = _only_test_tasks()
+    # Returned because of a frame.
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    track.push(event(1, frame_id=1))
+    await asyncio.wait_for(waiter, 1)
+    await settle()
+    assert _only_test_tasks() == baseline
+    # Returned because of the loss.
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    _unsubscribe(receiver, track)
+    await asyncio.wait_for(waiter, 1)
+    await settle()
+    assert _only_test_tasks() - baseline == set()
+
+
+async def test_cancelling_a_waiter_leaves_no_helper_tasks(receiver):
+    subscribe(receiver)
+    await settle()
+    baseline = _only_test_tasks()
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await settle()
+    assert _only_test_tasks() == baseline
+
+
+async def test_publisher_leaving_before_any_track_marks_every_stream_lost(receiver):
+    waiters = [asyncio.ensure_future(receiver.next_frame_or_lost(i)) for i in (1, 2)]
+    await settle()
+    assert not any(w.done() for w in waiters)
+    _publisher_leaves(receiver, None)
+    assert [await asyncio.wait_for(w, 1) for w in waiters] == [None, None]
+
+
+async def test_a_different_participant_disconnecting_changes_nothing(receiver):
+    track = subscribe(receiver)
+    waiters = [asyncio.ensure_future(receiver.next_frame_or_lost(i)) for i in (1, 2)]
+    await settle()
+    room_of(receiver).emit("participant_disconnected", participant("intruder"))
+    await settle()
+    assert not any(w.done() for w in waiters)
+    assert receiver.counters[1].subscribed
+    track.push(event(3, frame_id=1))
+    assert (await asyncio.wait_for(waiters[0], 1)).frame_id == 1
+    waiters[1].cancel()
+
+
+async def test_feed_on_a_never_attached_stream_fails_when_the_publisher_leaves(monkeypatch):
+    from egocap_web.livekit_recording import LiveKitRecordingFeed
+
+    unix = p.LiveKitTimestampBasis.PUBLISHER_UNIX_US
+    stream = camera(1, "left", timestamp_basis=unix)
+    rx = lr.LiveKitFrameReceiver([stream], TOKEN)
+    await rx.start()
+    reasons: list[str] = []
+    feed = LiveKitRecordingFeed(
+        rx, [stream], SimpleNamespace(offer=lambda item: True), {1: "src"}, on_failure=reasons.append
+    )
+    try:
+        feed.start()
+        await settle()
+        assert feed.failure is None
+        _publisher_leaves(rx, None)
+        await settle()
+        assert feed.failure == "cam1: the LiveKit track was lost"
+        assert reasons == [feed.failure]
+    finally:
+        await feed.stop()
+        await rx.stop()

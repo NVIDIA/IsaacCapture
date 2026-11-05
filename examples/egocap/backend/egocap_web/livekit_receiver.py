@@ -93,6 +93,9 @@ class LiveKitFrameReceiver:
         self._room: rtc.Room | None = None
         self._queues = {s.stream_id: asyncio.Queue[ReceivedFrame](maxsize=queue_frames) for s in streams}
         self.counters = {s.stream_id: StreamCounters() for s in streams}
+        # Set when a stream's track goes away or the room is lost, so a waiting consumer can fail instead of
+        # waiting forever; cleared when the track is subscribed again.
+        self._lost = {s.stream_id: asyncio.Event() for s in streams}
         self._readers: dict[int, asyncio.Task[None]] = {}
         # Set once the room connection is lost for good; the SDK's own reconnects do not set it.
         self.failed = asyncio.Event()
@@ -130,6 +133,26 @@ class LiveKitFrameReceiver:
         """The oldest queued frame of ``stream_id``, waiting for one if none is queued."""
         return await self._queues[stream_id].get()
 
+    async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+        """The oldest queued frame of ``stream_id``, or None once its track is lost and nothing is queued.
+
+        Frames already queued when the track goes away are still returned first, so a consumer drains what
+        arrived before it learns of the loss.
+        """
+        queue = self._queues[stream_id]
+        if not queue.empty():
+            return queue.get_nowait()
+        get = asyncio.ensure_future(queue.get())
+        lost = asyncio.ensure_future(self._lost[stream_id].wait())
+        try:
+            await asyncio.wait({get, lost}, return_when=asyncio.FIRST_COMPLETED)
+            # A frame that arrived together with the loss is still a frame the consumer is owed.
+            return get.result() if get.done() else None
+        finally:
+            for task in (get, lost):
+                if not task.done():
+                    task.cancel()
+
     def pending(self, stream_id: int) -> int:
         """How many frames of ``stream_id`` are queued for the consumer."""
         return self._queues[stream_id].qsize()
@@ -144,6 +167,7 @@ class LiveKitFrameReceiver:
         if previous is not None:
             previous.cancel()
         self.counters[stream.stream_id].subscribed = True
+        self._lost[stream.stream_id].clear()
         # A new publication restarts the publisher's numbering, so a jump from the old track is not a loss.
         self.counters[stream.stream_id].last_frame_id = None
         self._readers[stream.stream_id] = asyncio.get_running_loop().create_task(
@@ -156,6 +180,7 @@ class LiveKitFrameReceiver:
         if task is not None:
             task.cancel()
         self.counters[stream_id].subscribed = False
+        self._lost[stream_id].set()
 
     def _on_track_subscribed(
         self, track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
@@ -171,12 +196,13 @@ class LiveKitFrameReceiver:
 
     def _on_participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
         if participant.identity == self._publisher:
-            for stream_id in list(self._readers):
+            # Every offered stream, not only those already being read: one that never appeared is lost too.
+            for stream_id in self._streams:
                 self._detach(stream_id)
 
     def _on_disconnected(self, *_: object) -> None:
         # Not a reconnect (the SDK reports those separately): the room is gone, and the recorder must find out.
-        for stream_id in list(self._readers):
+        for stream_id in self._streams:
             self._detach(stream_id)
         self.failed.set()
 
