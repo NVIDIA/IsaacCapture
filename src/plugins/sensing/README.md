@@ -88,3 +88,43 @@ CMake searches for them when the `-D` variables are not given:
 
 Human to fill in: download and unpacking steps for both trees belong in the user guide; they are not stated
 anywhere else in this repository.
+
+## Orin: deploy from the desktop with one script
+
+`scripts/deploy_orin.py` builds the producer on an Orin from the checkout you run it in and runs it as the
+`isaaccapture-producer.service` systemd service, so you do not build by hand on the Orin. It needs `ssh`, `scp` and
+`git` on the desktop, and `python3`, CMake, g++, CUDA, `uv` and the SDK headers (see `scripts/setup.sh`) on the Orin.
+
+Write a config naming the producer's own options (the LiveKit token file stays on the Orin; only its path is used):
+
+```json
+{"livekit_url": "ws://127.0.0.1:7880",
+ "token_file": "/home/ido/livekit/join.token",
+ "args": ["--camera-backend=sipl", "--link-masks=0x0000 0x1100",
+          "--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
+```
+
+Then run it from the repository root. The ssh user and password can come from the environment, which keeps the
+password out of the command line and the output:
+
+```bash
+export ORIN_USER=ido
+read -rs ORIN_PASSWORD && export ORIN_PASSWORD   # optional; without it ssh and sudo prompt
+python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --backend sipl --config orin.json \
+  --sdk-root /home/ido/sensing-sdk/root --replace-unmanaged
+```
+
+- `--backend sipl|argus` selects which capture SDK is built in. `--sdk-root DIR` is the Orin directory holding
+  `usr/src/jetson_multimedia_api` and `usr/src/jetson_sipl_api` when they are not under `/usr/src`.
+- `--replace-unmanaged` stops a `camera_plugin_sensing` that someone started by hand (its exact PIDs are shown);
+  without it the deployment refuses and changes nothing. `--no-activate` builds and packages only, `--fetch-archive
+  DIR` copies the package back, `--jobs N` bounds compile jobs, `--prefix DIR` changes the install root
+  (default `/opt/isaaccapture`).
+- The script checks the ssh connection first, then preflights the Orin, uploads only the source files that differ
+  from what the Orin already holds, builds, installs a versioned release, replaces the running producer and waits for
+  it to join the room and publish frames. Steps are numbered and the upload and packing show progress. The sudo steps
+  prompt for the Orin password.
+- A failed build or transfer leaves the running producer untouched. There is no automatic rollback; earlier releases
+  stay under `/opt/isaaccapture/releases/`. Logs: `journalctl -u isaaccapture-producer.service -f` on the Orin. Stop
+  it with `sudo systemctl stop isaaccapture-producer.service` before starting a producer by hand: the cameras are
+  exclusive.
