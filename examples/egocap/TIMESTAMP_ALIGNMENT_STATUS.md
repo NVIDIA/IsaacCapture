@@ -44,9 +44,9 @@ None of these is a qualified measurement time, so none can support a synchronize
   submission order, which shifts after an encoder-internal drop. Header search found
   `V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP` (undocumented, unused elsewhere); whether it works on the driver is being
   probed on the Orin. Until a verified mechanism exists, the honest options are to stop or flag the stream on loss.
-- **Tracking device times.** Tracking samples carry host poll time (`tracking_time: host_poll`). Using the Manus
-  SDK `publishTime` or a controller measurement time needs the vendor's documented clock and a schema field for the
-  raw value; a `.fbs` change makes existing recordings unreadable (see `src/core/schema/AGENTS.md`), so it is not
-  done on a guess.
+- **Tracking device times.** Tracking is recorded on the existing CaptureServer frame timestamp, the host's poll
+  time (`tracking_time: host_poll`); the take's evidence says so and that physical alignment is unavailable. Carrying
+  a controller's evaluation time or a glove's receipt time into the recording would need changes outside egocap
+  (tracker accessors, tensor types, the plugins), which are out of scope.
 - **Orin verification** of the counter conversion, the encoder probe and the Argus build, and measured
   sensor-to-tracking alignment.
