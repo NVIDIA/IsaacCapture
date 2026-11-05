@@ -273,3 +273,81 @@ async def test_only_the_processing_basis_is_stamped_after_synthesis(
     assert timestamp_us == metadata.user_timestamp == expected_us
     # The raw capture counter is always read before synthesis.
     assert int.from_bytes(bytes(metadata.user_data), "little") == 1_000_000
+
+
+# --- ClockModel ----------------------------------------------------------------
+
+
+def _model(now_ns, **kw):
+    """A model whose run-time clock is the one-element list ``now_ns`` (read at call time)."""
+    return emu.ClockModel(started_ns=0, monotonic_ns=lambda: now_ns[0], **kw)
+
+
+def test_offset_only_applies_to_unix_bases_at_any_run_time():
+    now_ns = [0]
+    model = _model(now_ns, offset_us=250_000)
+    for now_ns[0] in (0, 10_000_000_000):
+        assert model.adjustment_us("capture_unix_us", at_capture=True) == 250_000
+        assert model.adjustment_us("processing_unix_us", at_capture=False) == 250_000
+
+
+def test_drift_grows_linearly_with_injected_run_time():
+    now_ns = [0]
+    model = _model(now_ns, drift_ppm=15.0)
+    seen = []
+    for now_ns[0] in (0, 10_000_000_000, 20_000_000_000):
+        seen.append(model.adjustment_us("capture_unix_us", at_capture=True))
+    assert seen == [0, 150, 300]
+
+
+def test_pipeline_delay_applies_at_capture_only_and_monotonic_is_never_adjusted():
+    now_ns = [10_000_000_000]
+    model = _model(now_ns, offset_us=1_000, drift_ppm=15.0, pipeline_delay_us=40_000)
+    assert model.adjustment_us("capture_unix_us", at_capture=True) == 1_000 + 150 - 40_000
+    assert model.adjustment_us("processing_unix_us", at_capture=False) == 1_000 + 150
+    assert model.adjustment_us("monotonic_us", at_capture=True) == 0
+    assert model.adjustment_us("monotonic_us", at_capture=False) == 0
+
+
+def test_from_args_reads_the_command_line_units():
+    args = SimpleNamespace(clock_offset_ms=-1.5, clock_drift_ppm=2.0, pipeline_delay_ms=30.0)
+    model = emu.ClockModel.from_args(args, monotonic_ns=lambda: 42)
+    assert (model.offset_us, model.drift_ppm, model.pipeline_delay_us, model.started_ns) == (
+        -1_500,
+        2.0,
+        30_000,
+        42,
+    )
+
+
+async def _publish_one(token_file, monkeypatch, sensor, clock, *extra):
+    """Publishes one frame of a track at a frozen host time of 5 s Unix and returns the captured call."""
+    name = f"t{sensor}"
+    args = emu.parse_args(argv(token_file, f"--add-stream=sensor={sensor},livekit={name}", *extra))
+    args.width, args.height = 4, 4
+    monkeypatch.setattr(emu, "user_timestamp_us", lambda _basis: 5_000_000)
+    stop = asyncio.Event()
+    source = FakeSource(stop, limit=1)
+    await emu.publish_stream(
+        source, emu.StreamSpec(sensor, name), args, stop, emu.Counters({name: 0}), lambda: 7_000_000, clock
+    )
+    return source.calls[0]
+
+
+async def test_tracks_sharing_one_model_get_equal_stamps_and_keep_their_identity(token_file, monkeypatch):
+    clock = _model([10_000_000_000], offset_us=2_000, drift_ppm=15.0)
+    first = await _publish_one(token_file, monkeypatch, 0, clock)
+    second = await _publish_one(token_file, monkeypatch, 1, clock)
+    expected = 5_000_000 + 2_000 + 150
+    for _, timestamp_us, metadata in (first, second):
+        assert timestamp_us == metadata.user_timestamp == expected
+        assert metadata.frame_id == 1
+        assert int.from_bytes(bytes(metadata.user_data), "little") == 7_000_000
+
+
+async def test_all_zero_model_reproduces_this_hosts_readings(token_file, monkeypatch):
+    model = emu.ClockModel()
+    for basis in ("capture_unix_us", "processing_unix_us", "monotonic_us"):
+        assert model.adjustment_us(basis, at_capture=True) == model.adjustment_us(basis, at_capture=False) == 0
+    _, timestamp_us, metadata = await _publish_one(token_file, monkeypatch, 0, model)
+    assert timestamp_us == metadata.user_timestamp == 5_000_000
