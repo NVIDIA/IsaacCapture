@@ -19,8 +19,11 @@ function CameraTile({
   live,
   stale,
   stats,
+  primary,
 }: {
   camera: PreviewSnapshot["cameras"][number];
+  /** The one camera the layout gives the most room (the operator's main view). */
+  primary: boolean;
   live: boolean;
   /** Operator-facing rate/latency line, or null while nothing trustworthy can be shown
    * (no fresh sample): the tile then shows the name alone rather than a misleading figure. */
@@ -111,7 +114,7 @@ function CameraTile({
   const budgetExhausted = currentRequestFailed && retryAttempts >= CAMERA_ERROR_RETRY_LIMIT;
 
   return (
-    <figure className={`camera-tile ${stale ? "tone-warning" : ""}`}>
+    <figure className={`camera-tile${primary ? " camera-tile--primary" : ""} ${stale ? "tone-warning" : ""}`}>
       {src !== undefined ? (
         <img key={camera.url} src={src} alt={camera.name} onLoad={handleLoad} onError={handleError} />
       ) : (
@@ -179,11 +182,14 @@ export function CameraGrid({
     );
   }
   const elapsedSinceReceipt = receivedAtMonotonic === null ? 0 : performance.now() - receivedAtMonotonic;
+  // The head camera is the operator's main view when there is one by that name; otherwise the first camera is.
+  const headIndex = cameras.findIndex((cam) => /head/i.test(cam.name));
+  const primaryIndex = headIndex === -1 ? 0 : headIndex;
   return (
     <section className="camera-grid">
       <h2 className="group-label">Cameras</h2>
-      <div className="camera-grid-items">
-        {cameras.map((cam) => {
+      <div className={`camera-grid-items camera-grid-items--n${Math.min(cameras.length, 4)}`}>
+        {cameras.map((cam, index) => {
           const effectiveAge = cam.age_ms === null ? null : cam.age_ms + elapsedSinceReceipt;
           // "Never had a sample" (sequence/age_ms both null) is a distinct,
           // unalarming initial state -- it must not count as stale, or
@@ -209,6 +215,7 @@ export function CameraGrid({
             <CameraTile
               key={`${snapshot?.backend_instance_id}-${cam.name}`}
               camera={cam}
+              primary={index === primaryIndex}
               live={live}
               stale={stale}
               stats={stats}

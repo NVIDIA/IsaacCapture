@@ -155,9 +155,9 @@ function makePose(pose: PoseData): XRPose {
       { x: pose.ox, y: pose.oy, z: pose.oz, w: pose.ow }
     ),
     emulatedPosition: true,
-    linearVelocity: null,
-    angularVelocity: null,
-  } as unknown as XRPose;
+    linearVelocity: undefined,
+    angularVelocity: undefined,
+  } as XRPose;
 }
 
 function makeJointPose(joint: Exclude<SerializedJoint, null>): XRJointPose {

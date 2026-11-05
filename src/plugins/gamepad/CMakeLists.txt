@@ -32,6 +32,9 @@ endforeach()
 isaac_teleop_third_party_scope_begin()
 FetchContent_MakeAvailable(SDL3)
 isaac_teleop_third_party_scope_end()
+# SDL3 always precompiles SDL_internal.h, and ccache refuses every compile that uses a
+# precompiled header unless its sloppiness is relaxed, so none of SDL3 would be cached.
+set_target_properties(SDL3-static PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 
 # app/ also stages the plugin with its manifest into the Python package.
 set(GAMEPAD_PLUGIN_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/plugin.yaml")
