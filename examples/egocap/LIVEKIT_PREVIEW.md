@@ -116,3 +116,29 @@ uv run python tools/livekit_orin_emulator.py \
 a capture time and is not recorded. `capture_unix_us` (the default) is honest here because the emulator is the
 camera: it stamps the frame when it generates it. `monotonic_us` sends the publisher's monotonic clock, also not
 recordable.
+
+## 6. The whole stack on one machine, with the emulator
+
+This runs everything except the Orin on one machine, against a local LiveKit server in development mode (key
+`devkey`, secret `secret`). Each command runs in its own terminal, from `examples/egocap/`.
+
+```bash
+livekit-server --dev --bind 127.0.0.1                    # signalling on ws://127.0.0.1:7880
+
+# pub.token: a token for room sensing-preview, identity orin-sensing, allowed to publish (lk token create, or any
+# LiveKit token tool, signed with devkey/secret)
+uv run python tools/livekit_orin_emulator.py --livekit-url=ws://127.0.0.1:7880 --livekit-token-file=pub.token \
+  --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right \
+  --width=640 --height=480 --fps=15 --timestamp-basis=capture_unix_us
+
+uv run capture-server --mock --livekit-streams streams.yaml
+LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret uv run uvicorn egocap_web.app:app --app-dir backend --port 8000
+```
+
+`streams.yaml` names the room, the publisher and both tracks, with `width: 640`, `height: 480`, `fps: 15` and
+`timestamp_basis: capture_unix_us` (section 2). Open `http://127.0.0.1:8000/`: both tiles show live video, and
+Record saves a take with the two cameras next to the mock tracking. A take recorded this way came out KEPT, with 91
+frames per camera over 6 s at the configured size and rate and increasing capture times.
+
+This exercises the PC side only. It does not test the Jetson encoder, the sender's pacing, or clock agreement
+between two machines.
