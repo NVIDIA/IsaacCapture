@@ -97,12 +97,23 @@ endif()
 # The Argus backend captures NV12 into DMA-BUFs the hardware encoder reads. It needs the Argus headers from the
 # Multimedia API and libnvargus; none of this is built or run by default.
 option(SENSING_WITH_ARGUS "Build the Argus capture backend (not built or run by the author)" OFF)
+# Argus normally runs through nvargus-daemon, and its client library is libnvargus_socketclient. The single-process
+# libnvargus does not connect to the daemon, so it is an explicit choice.
+option(SENSING_ARGUS_SINGLE_PROCESS "Link single-process libnvargus instead of the nvargus-daemon client" OFF)
 if(SENSING_WITH_ARGUS)
-    find_path(ARGUS_INCLUDE_DIR Argus/Argus.h HINTS "${JETSON_MMAPI_DIR}/argus/include")
-    find_library(ARGUS_LIBRARY NAMES nvargus PATHS ${_tegra_lib_dirs})
-    if(NOT ARGUS_INCLUDE_DIR OR NOT ARGUS_LIBRARY)
-        message(FATAL_ERROR "SENSING_WITH_ARGUS needs the Argus headers (<jetson_multimedia_api>/argus/include) and libnvargus.")
+    if(SENSING_ARGUS_SINGLE_PROCESS)
+        set(_argus_lib_name nvargus)
+    else()
+        set(_argus_lib_name nvargus_socketclient)
     endif()
+    find_path(ARGUS_INCLUDE_DIR Argus/Argus.h HINTS "${JETSON_MMAPI_DIR}/argus/include")
+    find_library(ARGUS_LIBRARY NAMES ${_argus_lib_name} PATHS ${_tegra_lib_dirs})
+    if(NOT ARGUS_INCLUDE_DIR OR NOT ARGUS_LIBRARY)
+        message(FATAL_ERROR
+            "SENSING_WITH_ARGUS needs the Argus headers (<jetson_multimedia_api>/argus/include) and lib${_argus_lib_name}.")
+    endif()
+    message(STATUS "SENSING plugin: Argus=${ARGUS_INCLUDE_DIR} (${ARGUS_LIBRARY})")
+endif()
     message(STATUS "SENSING plugin: Argus=${ARGUS_INCLUDE_DIR}")
 endif()
 
