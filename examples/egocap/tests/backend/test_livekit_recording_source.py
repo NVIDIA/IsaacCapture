@@ -446,6 +446,7 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
             "mapping_current_at_stop": False,
         },
         "tracking_time": "host_poll",
+        "tracking_semantics": lrec._TRACKING_SEMANTICS,
     }
     assert json.loads(json.dumps(evidence)) == evidence
 

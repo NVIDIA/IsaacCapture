@@ -53,7 +53,8 @@ backend's sensor timestamp through one anchor pair (the source clock and `CLOCK_
 refreshed once a second, never per frame): SIPL's capture counter as ticks of the ARM generic counter at its
 `CNTFRQ` rate, Argus's sensor timestamp as `CLOCK_MONOTONIC_RAW` nanoseconds. Both units are assumptions, so every
 frame is checked: a capture time later than the frame's ready time, or more than 2 s before it, fails the stream
-rather than being published. None of this has run on an Orin; the first run shows whether the assumed units hold, and
+rather than being published. The plausibility check only catches gross errors, so this option is not a qualified capture basis for
+synchronized recording until the target sensor's clock, event and encoder correlation are verified. None of this has run on an Orin; the first run shows whether the assumed units hold, and
 real alignment still needs the evidence below. The sender's only capture-event clock is the SIPL frame capture counter (`frameCaptureTSC`), which NVIDIA's public SIPL documentation describes as
 raw ARM generic-timer ticks, not nanoseconds (the sender carries it as `capture_tsc`, an unscaled value). The deployed
 Orin's SIPL headers are not available here, so nothing about its units or event is verified. The evidence required,

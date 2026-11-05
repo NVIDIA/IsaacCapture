@@ -54,6 +54,15 @@ BUDGET_ENV = "EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"
 _DEFAULT_BUDGET_MS = 5.0
 
 
+# What each tracking source's saved time means today; none is a physical acquisition time.
+_TRACKING_SEMANTICS: dict[str, str] = {
+    "recorded_time": "the host's poll time for every tracking source",
+    "controllers": "device value is the pose-evaluation time (a runtime-predicted XrTime), not an acquisition time",
+    "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
+    "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
+}
+
+
 def uncertainty_budget_ns() -> int:
     """The largest clock-mapping uncertainty a take may be recorded with, from the environment or the default."""
     raw = os.environ.get(BUDGET_ENV)
@@ -442,6 +451,7 @@ class LiveKitRecordingSource:
             },
             # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
             "tracking_time": "host_poll",
+            "tracking_semantics": _TRACKING_SEMANTICS,
         }
 
     async def stop(self) -> None:
