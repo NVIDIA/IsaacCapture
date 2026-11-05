@@ -184,7 +184,7 @@ public:
         metadata.frame_id = frame.frame_id;
         std::vector<uint8_t> tsc(8);
         for (int i = 0; i < 8; ++i)
-            tsc[i] = static_cast<uint8_t>((frame.capture_tsc_ns >> (8 * i)) & 0xFF);
+            tsc[i] = static_cast<uint8_t>((frame.capture_tsc >> (8 * i)) & 0xFF);
         metadata.user_data = std::move(tsc);
         out.metadata = std::move(metadata);
 
