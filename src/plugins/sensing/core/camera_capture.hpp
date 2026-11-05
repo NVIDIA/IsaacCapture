@@ -127,7 +127,8 @@ public:
 
     virtual const std::vector<CameraInfo>& cameras() const = 0;
     virtual void start() = 0;
-    /// Stops capture. Frames already handed out stay valid until their leases are released.
+    /// Stops capture. Leased frames already handed out stay valid until their leases are released; borrowed frames
+    /// (see CudaRgbaPixels) are invalid once capture stops.
     virtual void stop() = 0;
     /// The newest frame of `camera_id` not yet taken, or nullopt when none has arrived. Never blocks.
     virtual std::optional<CaptureFrame> acquire_latest(uint32_t camera_id) = 0;
