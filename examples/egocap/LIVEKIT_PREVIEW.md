@@ -50,8 +50,11 @@ not from fitting measurements:
 `SENSING_TSC_PROBE=1` prints the capture counter beside the host clocks twice a second, off by default, as separate
 uncalibrated samples. The counter's units are unconfirmed, so they must not be subtracted, fitted or used as a mapping.
 
-**Not yet exercised on the Orin.** The publisher, the browser's acceptance of its H.264 profile and the end-to-end
-latency have not been run or measured. Report those as untested until someone has run them.
+**Exercised once on an Orin.** The author ran the publisher on an AGX Orin with two SHW5G cameras (2560x1984, 30 fps,
+H.264) into a LiveKit server on the Orin, and a PC browser showed the video. Over the run each track published about
+2,100 frames with none replaced and one capture missed on one sensor. This was a single short run on dev keys and plain
+`ws://`, not a qualification. Still unmeasured or unverified: end-to-end latency, behaviour when the encoder drops a
+frame, and real sensor-to-tracking alignment. Recording from the real Orin stays refused.
 
 ## 1. LiveKit server (on the PC or the LAN)
 
