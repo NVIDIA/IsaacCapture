@@ -27,8 +27,3 @@ only-include = ["python/isaaccapture_examples/manus_calibration"]
 
 [tool.hatch.build.targets.wheel]
 sources = ["python"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-# Run from a source tree without installing the example.
-pythonpath = ["python"]

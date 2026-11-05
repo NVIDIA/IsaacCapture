@@ -97,10 +97,11 @@ so the operator can save them to the machine the browser runs on. Loading a file
 ## Tests
 
 ```bash
-cd examples/manus_calibration
-python3 -m pip install pytest
-PYTHONPATH=python python3 -m pytest
+cd tests/python/examples/manus_calibration
+uv run --extra dev pytest
 ```
+
+CTest runs the same suite as `manus_calibration_*` (label `manus_calibration`).
 
 The tests drive the adapter, controller and HTTP server against a scripted stand-in for the worker, so
 they establish the supervision, storage, ownership and web-safety logic, not that the SDK produces a

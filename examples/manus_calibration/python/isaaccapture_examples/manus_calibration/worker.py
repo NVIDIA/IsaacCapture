@@ -18,6 +18,7 @@ import asyncio
 import collections
 import contextlib
 import logging
+import os
 import secrets
 import socket
 import subprocess
@@ -99,7 +100,8 @@ class CalibrationWorker:
         confirm_timeout_s: float = 30.0,
         finish_timeout_s: float = 60.0,
     ) -> None:
-        self.executable = Path(executable)
+        # Absolute, so a bare "./worker" is not re-read as a PATH lookup when the process is spawned.
+        self.executable = Path(os.path.abspath(executable))
         # The plain folder the worker writes its .mcal files into.
         self.out_dir = Path(out_dir)
         self.discovery_timeout_s = discovery_timeout_s
@@ -436,7 +438,7 @@ class CalibrationAttempt:
             self._ready.set()
         elif isinstance(event, proto.Ready):
             raise proto.ProtocolError("ready sent twice")
-        elif not self._start_sent:
+        elif not self._start_sent and not self._is_idle_cancel_result(event):
             raise proto.ProtocolError(
                 f"{type(event).__name__} before the attempt was started"
             )
@@ -461,6 +463,15 @@ class CalibrationAttempt:
             self._result = event
             self._result_seen.set()
         self._notify(event)
+
+    def _is_idle_cancel_result(self, event: proto.WorkerEvent) -> bool:
+        """True for the clean result an idle worker sends when we cancelled it before ``start``."""
+        return (
+            self._user_cancel
+            and isinstance(event, proto.Result)
+            and event.attempt is None
+            and event.outcome is proto.Outcome.CANCELLED
+        )
 
     def _on_prompt(self, prompt: proto.Prompt) -> None:
         if self._prompt is not None and self._accepted_token != self._prompt.token:

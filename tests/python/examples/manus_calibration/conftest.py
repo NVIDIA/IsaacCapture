@@ -9,6 +9,13 @@ import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from repo_paths import repo_root  # noqa: E402
+
+sys.path.insert(0, str(repo_root() / "examples" / "manus_calibration" / "python"))
+
 from isaaccapture_examples.manus_calibration import protocol as proto
 from isaaccapture_examples.manus_calibration.worker import (
     AttemptState,

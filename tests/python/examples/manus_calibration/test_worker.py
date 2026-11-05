@@ -611,6 +611,27 @@ def test_cancel_while_waiting_for_ready_is_cancelled_and_the_worker_reaped(
     run(scenario())
 
 
+def test_an_idle_workers_cancelled_result_is_accepted_only_after_a_user_cancel(
+    make_worker,
+):
+    result = proto.Result(attempt=None, outcome=proto.Outcome.CANCELLED)
+
+    async def scenario():
+        # The window is between the worker's ready and our start command; drive the state directly.
+        r = Run(make_worker)
+        r.attempt._ready.set()
+        with pytest.raises(proto.ProtocolError):
+            r.attempt._handle(result)
+        r.attempt._user_cancel = True
+        r.attempt._handle(result)
+        assert r.attempt._result is result
+        other = proto.Result(attempt=None, outcome=proto.Outcome.FAILED)
+        with pytest.raises(proto.ProtocolError):
+            r.attempt._handle(other)
+
+    run(scenario())
+
+
 def test_cancel_before_start_never_launches_a_worker(make_worker, commands_log):
     async def scenario():
         r = Run(make_worker)
@@ -711,6 +732,27 @@ def test_a_worker_that_exits_before_ready_fails_with_its_exit_code(make_worker):
         assert outcome.exit_code == 3 and "3" in outcome.message
 
     run(scenario())
+
+
+def test_a_relative_worker_path_is_spawned_by_path_not_looked_up_on_PATH(
+    tmp_path, monkeypatch
+):
+    script = tmp_path / "relative-worker"
+    script.write_text("#!/bin/sh\nexit 3\n")
+    script.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "/nonexistent")
+
+    async def scenario():
+        attempt = CalibrationWorker(
+            Path("./relative-worker"), tmp_path / "calibrations"
+        ).new_attempt()
+        await attempt.start(LEFT)
+        return await attempt.outcome()
+
+    outcome = run(scenario())
+    # It ran (exited 3 before ready) instead of failing to spawn.
+    assert outcome.error.code != "spawn_failed" and outcome.exit_code == 3
 
 
 def test_a_missing_or_non_executable_worker_fails_cleanly(tmp_path):
