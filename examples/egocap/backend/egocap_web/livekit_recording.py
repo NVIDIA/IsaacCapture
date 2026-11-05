@@ -387,7 +387,10 @@ class LiveKitRecordingSource:
         clock_sync = None if receiver is None else receiver.clock_sync
         if clock_sync is None:
             return None
-        mappings = clock_sync.estimator.history[-_MAX_EVIDENCE_MAPPINGS:]
+        # The estimator re-reports one exchange with a growing age allowance while no newer one arrives; keep the
+        # first report of each exchange.
+        unique = {(m.epoch, m.accepted_at_ns): m for m in reversed(clock_sync.estimator.history)}
+        mappings = sorted(unique.values(), key=lambda m: (m.accepted_at_ns, m.epoch))[-_MAX_EVIDENCE_MAPPINGS:]
         return {
             "clock_mapping": {
                 "method": "four_timestamp_exchange",

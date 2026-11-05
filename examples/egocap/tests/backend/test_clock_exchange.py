@@ -10,7 +10,7 @@ import dataclasses
 
 import pytest
 
-from egocap_web.clock_exchange import ClockEstimator, Exchange
+from egocap_web.clock_exchange import _MAX_HISTORY, ClockEstimator, Exchange
 
 MS = 1_000_000
 S = 1_000_000_000
@@ -347,3 +347,17 @@ def test_reset_clears_newest_exchange_time_until_the_next_exchange() -> None:
     nxt = make_exchange(2 * S, offset=MS)
     estimator.add(nxt)
     assert estimator.mapping(nxt.t4) is not None
+
+
+def test_history_keeps_only_the_newest_mappings_however_many_are_adopted() -> None:
+    estimator = ClockEstimator()
+    total = 300
+    # Each exchange has a shorter round trip than the last, so every one is adopted as a new best mapping.
+    exchanges = [
+        make_exchange(S + i * MS, forward=200_000 - 300 * i, back=200_000 - 300 * i) for i in range(total)
+    ]
+    for exchange in exchanges:
+        assert estimator.add(exchange) is None
+
+    assert len(estimator.history) == _MAX_HISTORY
+    assert [m.accepted_at_ns for m in estimator.history] == [e.t4 for e in exchanges[-_MAX_HISTORY:]]
