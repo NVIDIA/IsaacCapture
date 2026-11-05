@@ -118,11 +118,12 @@ class FakeSource:
 @pytest.fixture
 def fake_rtc(monkeypatch):
     """Replaces the SDK with recorders so no server is needed."""
-    log = SimpleNamespace(published=[], unpublished=[], disconnected=False, sources=[], stop=None)
+    log = SimpleNamespace(published=[], options=[], unpublished=[], disconnected=False, sources=[], stop=None)
 
     class Participant:
         async def publish_track(self, track, options):
             log.published.append(track)
+            log.options.append(options)
             return SimpleNamespace(sid=f"sid-{track[0]}")
 
         async def unpublish_track(self, sid):
@@ -150,6 +151,7 @@ def fake_rtc(monkeypatch):
         VideoBufferType=SimpleNamespace(RGBA=1),
         TrackPublishOptions=lambda **kw: kw,
         TrackSource=SimpleNamespace(SOURCE_CAMERA=2),
+        FrameMetadataFeature=SimpleNamespace(FMF_USER_TIMESTAMP=1, FMF_FRAME_ID=2, FMF_USER_DATA=3),
         FrameMetadata=emu.rtc.FrameMetadata,
     )
     monkeypatch.setattr(emu, "rtc", fake)
@@ -172,6 +174,21 @@ async def test_run_publishes_paces_and_shuts_down_cleanly(token_file, fake_rtc):
     # Cleanup happened: unpublished, closed, disconnected.
     assert fake_rtc.unpublished == ["sid-a", "sid-b"]
     assert all(s.closed for s in fake_rtc.sources) and fake_rtc.disconnected
+
+
+async def test_every_track_requests_all_frame_metadata_features(token_file, fake_rtc):
+    args = emu.parse_args(
+        argv(token_file, "--add-stream=sensor=0,livekit=a", "--add-stream=sensor=1,livekit=b", "--fps=200")
+    )
+    args.width, args.height = 48, 16
+    stop = asyncio.Event()
+    fake_rtc.stop = stop
+    await asyncio.wait_for(emu.run(args, stop), timeout=5)
+    features = emu.rtc.FrameMetadataFeature
+    wanted = [features.FMF_USER_TIMESTAMP, features.FMF_FRAME_ID, features.FMF_USER_DATA]
+    assert len(fake_rtc.options) == 2
+    assert all(o["frame_metadata_features"] == wanted for o in fake_rtc.options)
+    assert all(o["source"] == emu.rtc.TrackSource.SOURCE_CAMERA for o in fake_rtc.options)
 
 
 async def test_publish_stream_is_paced_by_fps(token_file, fake_rtc):
