@@ -31,7 +31,10 @@ capture time is mapped. The recorder joins the room itself (it needs the same `L
 recorder converts the publisher's Unix time to this machine's monotonic clock and applies one coarse check: a frame
 that is more than 2 s old on arrival, or stamped in the future, ends the take. That catches gross clock disagreement
 only; it does not prove the two machines' clocks agree to milliseconds. A step of this PC's own clock during a take is
-detected (the take then fails); a step on the Orin is not. Alignment
+detected at the next pair refresh (about a second later, and only if it exceeds the larger of 5 ms and four times
+the pair's bracket uncertainty), and the take then fails: frames mapped between the step and its detection, and any
+smaller offset change, are not caught, so the take's timing claim cannot be stronger than that. A step on the Orin is
+not detected. Alignment
 with tracking also assumes the backend and CaptureServer share one machine's clock. A take that passes is not
 thereby proven aligned.
 
