@@ -64,7 +64,8 @@ class ClockMapping:
     epoch: int
     offset_ns: int
     rtt_ns: int
-    #: Half the round trip: the largest error that unknown path asymmetry alone can cause.
+    #: Half the round trip, plus the drift allowed over the exchange's age: the error unknown path asymmetry and
+    #: clock rate difference can cause.
     uncertainty_ns: int
     #: Local time at which the exchange behind this mapping completed.
     accepted_at_ns: int
@@ -127,9 +128,10 @@ class ClockEstimator:
             candidate = self._mapping_of(exchange)
         else:
             self._recent.append(exchange)
-            # On equal round trips the newest wins, so a steady link keeps its mapping fresh.
-            best = min(self._recent, key=lambda e: (e.rtt_ns, -e.t4))
-            candidate = self._mapping_of(best)
+            # The exchange with the smallest uncertainty now: half its round trip plus the drift its age could have
+            # added. A low round trip beats a fresher one only while its age stays cheaper; the newest wins ties.
+            best = min(self._recent, key=lambda e: (self._uncertainty_ns(e, exchange.t4), -e.t4))
+            candidate = self._mapping_of(best, exchange.t4)
         if candidate != previous:
             self._current = candidate
             self.history.append(candidate)
@@ -142,12 +144,16 @@ class ClockEstimator:
             return None
         return current
 
-    def _mapping_of(self, exchange: Exchange) -> ClockMapping:
+    def _uncertainty_ns(self, exchange: Exchange, now_ns: int) -> int:
+        """Half the round trip plus the offset drift the exchange's age allows at the allowed relative rate."""
+        return exchange.rtt_ns // 2 + int(self._drift_allowance * max(0, now_ns - exchange.t4))
+
+    def _mapping_of(self, exchange: Exchange, now_ns: int | None = None) -> ClockMapping:
         return ClockMapping(
             epoch=self._epoch,
             offset_ns=exchange.offset_ns,
             rtt_ns=exchange.rtt_ns,
-            uncertainty_ns=exchange.rtt_ns // 2,
+            uncertainty_ns=self._uncertainty_ns(exchange, exchange.t4 if now_ns is None else now_ns),
             accepted_at_ns=exchange.t4,
         )
 
