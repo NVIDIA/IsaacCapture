@@ -36,6 +36,9 @@ struct LiveKitConfig
     uint32_t scale_div = 1;
     /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again.
     uint32_t bitrate_bps = 8'000'000;
+    /// Publish each frame's sensor capture event on CLOCK_MONOTONIC (the recordable timestamp basis). Off, frames
+    /// carry processing-time Unix stamps, which the recorder refuses.
+    bool publish_capture_time = false;
 };
 
 struct SensingConfig

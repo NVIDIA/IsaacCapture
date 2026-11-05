@@ -549,6 +549,7 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         if (metadata)
         {
             frame.sensor_time = metadata->getSensorTimestamp();
+            frame.sensor_domain = SensorTimeDomain::MonotonicRawNs;
             frame.sequence = metadata->getCaptureId();
         }
         else
