@@ -16,3 +16,7 @@ endif()
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
+
+if(TARGET jmex_plugin_core)
+    add_subdirectory(jmex)
+endif()
