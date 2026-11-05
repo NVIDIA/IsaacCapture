@@ -43,7 +43,7 @@ SIPL drivers.
 
 The application is **`camera_plugin_sensing`**. On the Orin it does one job: capture the GMSL cameras with SIPL,
 encode H.264 on the hardware encoder, and publish one LiveKit video track per camera. Everything else (CaptureServer,
-the egocap backend, recording, the browser) runs on the PC; see `examples/egocap/LIVEKIT_PREVIEW.md`.
+the egocap backend, recording, the browser) runs on the PC.
 
 Prerequisites: an AGX Orin on JetPack 7.2.1 / L4T R39.2.1 with the SENSING drivers installed and the cameras
 working, CUDA, CMake, and network access to the LiveKit server.
@@ -74,5 +74,4 @@ option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform
 samples. The counter's units are unconfirmed, so do not subtract or fit them.
 
 Status: built and run on an AGX Orin by the author (both sensors, 2560x1984 at 30 fps, H.264; not reproduced in CI). If a build or run fails, fix the
-failure at the file it names. `examples/egocap/LIVEKIT_PREVIEW.md` section 4 covers the PC side, and what recording from this
-publisher still needs.
+failure at the file it names.
