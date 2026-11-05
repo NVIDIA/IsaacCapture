@@ -175,7 +175,7 @@ export function CameraGrid({
   }
 
   // Direct LiveKit tiles sit beside the CaptureServer ones; they have their own connection and readiness.
-  const livekit = useLiveKitPreview();
+  const livekit = useLiveKitPreview(snapshot?.started?.livekit_streams ?? []);
   const cameras = snapshot?.cameras ?? [];
   const livekitShown = livekit.tiles.length > 0 || livekit.phase === "error";
   if (cameras.length === 0 && !livekitShown) {

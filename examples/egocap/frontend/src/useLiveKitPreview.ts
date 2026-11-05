@@ -3,23 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * One LiveKit room connection for every preview tile.
+ * One LiveKit room connection for every offered video stream.
  *
- * Connects once the backend says a preview is configured, picks each configured track out of the camera host's
- * participant (whether it was published before we joined or after), and lets the SDK handle ordinary network
- * reconnects. Only a full disconnect starts a new attempt, with a freshly fetched token.
+ * CaptureServer says which streams exist; this connects to their room only to receive the video. It picks each
+ * stream's track out of the camera host's participant (whether published before we joined or after), and lets the
+ * SDK handle ordinary network reconnects. Only a full disconnect starts a new attempt, with a fresh token.
  */
 
 import { useEffect, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
 import type { RemoteParticipant, RemoteTrack } from "livekit-client";
-import { fetchLiveKitPreview, LiveKitPreviewHttpError, LiveKitPreviewParseError } from "./livekitPreview";
-import type { LiveKitPreviewConfig } from "./livekitPreview";
+import type { LiveKitStream } from "./captureProtocol";
+import { fetchLiveKitToken } from "./livekitPreview";
 
 /** Delay before a new attempt after a failed connect or a full disconnect. */
 const RETRY_DELAY_MS = 3000;
 
-export type LiveKitPhase = "loading" | "unconfigured" | "connecting" | "connected" | "reconnecting" | "error";
+export type LiveKitPhase = "idle" | "connecting" | "connected" | "reconnecting" | "error";
 
 export interface LiveKitTile {
   name: string;
@@ -29,25 +29,36 @@ export interface LiveKitTile {
 
 export interface LiveKitPreviewState {
   phase: LiveKitPhase;
-  /** Why the preview is unavailable, when ``phase`` is "error". */
+  /** Why video is unavailable, when ``phase`` is "error". */
   message: string | null;
-  /** One entry per configured track, in configuration order; empty until the configuration is known. */
+  /** One entry per offered stream, in the order offered; empty when nothing is offered. */
   tiles: LiveKitTile[];
 }
 
-const INITIAL: LiveKitPreviewState = { phase: "loading", message: null, tiles: [] };
+const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [] };
 
-/** The configured tiles with the given subscribed tracks filled in by track name. */
-function tilesFor(config: LiveKitPreviewConfig, tracks: Map<string, RemoteTrack>): LiveKitTile[] {
-  return config.tracks.map((t) => ({ name: t.name, track: tracks.get(t.track) ?? null }));
+/** The offered streams with the given subscribed tracks filled in by track name. */
+function tilesFor(streams: LiveKitStream[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
+  return streams.map((s) => ({ name: s.name, track: tracks.get(s.track) ?? null }));
 }
 
-/** Connects to the configured LiveKit room for the lifetime of the calling component. */
-export function useLiveKitPreview(): LiveKitPreviewState {
-  const [state, setState] = useState<LiveKitPreviewState>(INITIAL);
+/**
+ * Receives the offered LiveKit streams for the lifetime of the calling component. All streams of one session
+ * share a room and publisher, so the first stream names the connection.
+ */
+export function useLiveKitPreview(streams: LiveKitStream[]): LiveKitPreviewState {
+  const [state, setState] = useState<LiveKitPreviewState>(IDLE);
+  // A new session offering the same streams must not reconnect, so the effect depends on content, not identity.
+  const key = JSON.stringify(streams);
 
   useEffect(() => {
-    // `cancelled` ends every in-flight attempt and pending retry when the component unmounts.
+    const offered: LiveKitStream[] = JSON.parse(key);
+    if (offered.length === 0) {
+      setState(IDLE);
+      return;
+    }
+    const { url, room: roomName, publisher } = offered[0];
+    // `cancelled` ends every in-flight attempt and pending retry when the streams change or the component unmounts.
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let room: Room | null = null;
@@ -61,42 +72,32 @@ export function useLiveKitPreview(): LiveKitPreviewState {
       }, RETRY_DELAY_MS);
     }
 
-    function fail(message: string, config: LiveKitPreviewConfig | null): void {
+    function fail(message: string): void {
       if (cancelled) return;
-      setState({ phase: "error", message, tiles: config === null ? [] : tilesFor(config, new Map()) });
+      setState({ phase: "error", message, tiles: tilesFor(offered, new Map()) });
       scheduleRetry();
     }
 
     async function attempt(): Promise<void> {
-      let config: LiveKitPreviewConfig | null;
+      const tracks = new Map<string, RemoteTrack>();
+      const publish = (phase: LiveKitPhase): void => {
+        if (!cancelled) setState({ phase, message: null, tiles: tilesFor(offered, tracks) });
+      };
+      publish("connecting");
+      let token: string;
       try {
         // A fresh token for every attempt: the previous one may have expired while we were disconnected.
-        config = await fetchLiveKitPreview(controller.signal);
+        token = await fetchLiveKitToken(roomName, controller.signal);
       } catch (error) {
-        if (cancelled) return;
-        // Say why the preview is unavailable, including when the backend could not be reached at all: staying
-        // silent would make a configured station look like one with no cameras. The retry continues either way.
-        const reason =
-          error instanceof LiveKitPreviewHttpError || error instanceof LiveKitPreviewParseError
-            ? error.message
-            : "Cannot reach the backend";
-        fail(reason, null);
+        // Say why video is unavailable, including when the backend could not be reached at all.
+        if (!cancelled) fail(error instanceof Error && error.name !== "TypeError" ? error.message : "Cannot reach the backend");
         return;
       }
       if (cancelled) return;
-      if (config === null) {
-        setState({ phase: "unconfigured", message: null, tiles: [] });
-        return;
-      }
-      const active = config;
-      const tracks = new Map<string, RemoteTrack>();
-      const publish = (phase: LiveKitPhase): void => {
-        if (!cancelled) setState({ phase, message: null, tiles: tilesFor(active, tracks) });
-      };
 
-      /** Records the camera host's configured video tracks that are already subscribed. */
+      /** Records the camera host's offered video tracks that are already subscribed. */
       const adopt = (participant: RemoteParticipant): void => {
-        if (participant.identity !== active.publisher) return;
+        if (participant.identity !== publisher) return;
         for (const publication of participant.trackPublications.values()) {
           if (publication.kind === Track.Kind.Video && publication.track) {
             tracks.set(publication.trackName, publication.track);
@@ -108,7 +109,7 @@ export function useLiveKitPreview(): LiveKitPreviewState {
       room = next;
       next
         .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-          if (participant.identity !== active.publisher || track.kind !== Track.Kind.Video) return;
+          if (participant.identity !== publisher || track.kind !== Track.Kind.Video) return;
           tracks.set(publication.trackName, track);
           publish("connected");
         })
@@ -118,7 +119,7 @@ export function useLiveKitPreview(): LiveKitPreviewState {
           publish("connected");
         })
         .on(RoomEvent.ParticipantDisconnected, (participant) => {
-          if (participant.identity !== active.publisher) return;
+          if (participant.identity !== publisher) return;
           tracks.clear();
           publish("connected");
         })
@@ -131,14 +132,13 @@ export function useLiveKitPreview(): LiveKitPreviewState {
         .on(RoomEvent.Disconnected, () => {
           // Not a reconnect: the SDK gave up or the server closed the room. Start over with a new token.
           tracks.clear();
-          fail("Disconnected from the LiveKit room", active);
+          fail("Disconnected from the LiveKit room");
         });
 
-      publish("connecting");
       try {
-        await next.connect(active.url, active.token);
+        await next.connect(url, token);
       } catch (error) {
-        if (!cancelled) fail(error instanceof Error ? error.message : String(error), active);
+        if (!cancelled) fail(error instanceof Error ? error.message : String(error));
         return;
       }
       if (cancelled) {
@@ -160,7 +160,7 @@ export function useLiveKitPreview(): LiveKitPreviewState {
       void room?.disconnect();
       room = null;
     };
-  }, []);
+  }, [key]);
 
   return state;
 }

@@ -339,11 +339,38 @@ function parseStreamDescriptor(value: unknown, field: string): StreamDescriptor 
   };
 }
 
+/** One LiveKit video stream CaptureServer offers: where it is published, not frames CaptureServer sends. */
+export interface LiveKitStream {
+  stream_id: string;
+  /** Operator-facing tile label. */
+  name: string;
+  url: string;
+  room: string;
+  /** Participant identity of the camera host; a track name is only unique within one participant. */
+  publisher: string;
+  track: string;
+}
+
 export interface CaptureStarted {
   session_id: string;
   running: boolean;
   mode: CaptureModeValue;
   streams: StreamDescriptor[];
+  /** Empty when the server offers none, or predates the field. */
+  livekit_streams: LiveKitStream[];
+}
+
+/** Validates one `capture.started.livekit_streams` entry; only the fields a consumer needs to find the video. */
+function parseLiveKitStream(value: unknown, field: string): LiveKitStream {
+  if (!isObject(value)) throw new CapturePreviewParseError(`${field} must be an object`);
+  return {
+    stream_id: expectString(value.stream_id, `${field}.stream_id`),
+    name: expectString(value.name, `${field}.name`),
+    url: expectString(value.url, `${field}.url`),
+    room: expectString(value.room, `${field}.room`),
+    publisher: expectString(value.publisher, `${field}.publisher`),
+    track: expectString(value.track, `${field}.track`),
+  };
 }
 
 /** Validates the `capture.started` snapshot member. */
@@ -353,11 +380,17 @@ function parseCaptureStarted(value: unknown): CaptureStarted {
   if (!Array.isArray(streamsRaw)) {
     throw new CapturePreviewParseError("capture.started.streams must be an array");
   }
+  // A backend that predates the field omits it: nothing offered, not an error.
+  const livekitRaw = value.livekit_streams ?? [];
+  if (!Array.isArray(livekitRaw)) {
+    throw new CapturePreviewParseError("capture.started.livekit_streams must be an array");
+  }
   return {
     session_id: expectString(value.session_id, "capture.started.session_id"),
     running: expectBoolean(value.running, "capture.started.running"),
     mode: expectEnum(CaptureMode, value.mode, "capture.started.mode"),
     streams: streamsRaw.map((s, i) => parseStreamDescriptor(s, `capture.started.streams[${i}]`)),
+    livekit_streams: livekitRaw.map((s, i) => parseLiveKitStream(s, `capture.started.livekit_streams[${i}]`)),
   };
 }
 

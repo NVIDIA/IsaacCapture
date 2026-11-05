@@ -3,65 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Wire shape of GET /api/livekit-preview: where the camera host publishes and a viewer token.
+ * The credential for the LiveKit video CaptureServer offers.
  *
- * These cameras are display-only. They come straight from LiveKit to the browser and are neither
- * requested from CaptureServer nor recorded.
+ * Which streams exist (URL, room, publisher, tracks) comes from CaptureServer in the session snapshot. This
+ * only fetches the viewer token, so a backend without signing keys can still list the streams.
  */
 
-export interface LiveKitPreviewTrack {
-  /** Operator-facing tile label. */
-  name: string;
-  /** The published video track this tile shows. */
-  track: string;
-}
+/** The backend answered, but did not issue a token (e.g. 503: signing credentials missing). */
+export class LiveKitTokenHttpError extends Error {}
 
-export interface LiveKitPreviewConfig {
-  url: string;
-  room: string;
-  /** Participant identity of the camera host; a track name is only unique within one participant. */
-  publisher: string;
-  token: string;
-  tracks: LiveKitPreviewTrack[];
-}
+/** The backend's answer was not the expected `{token}` body. */
+export class LiveKitTokenParseError extends Error {}
 
-export class LiveKitPreviewParseError extends Error {}
-
-/** The backend answered, but not with a usable preview configuration (e.g. 503: signing credentials missing). */
-export class LiveKitPreviewHttpError extends Error {}
-
-function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value === "") {
-    throw new LiveKitPreviewParseError(`${field} must be a nonempty string`);
-  }
-  return value;
-}
-
-/** Validates a parsed GET /api/livekit-preview body; anything else is a protocol error, never a partial config. */
-export function parseLiveKitPreview(body: unknown): LiveKitPreviewConfig {
-  if (typeof body !== "object" || body === null) throw new LiveKitPreviewParseError("body must be an object");
-  const raw = body as Record<string, unknown>;
-  if (!Array.isArray(raw.tracks) || raw.tracks.length === 0) {
-    throw new LiveKitPreviewParseError("tracks must be a nonempty array");
-  }
-  const tracks = raw.tracks.map((item, i) => {
-    if (typeof item !== "object" || item === null) throw new LiveKitPreviewParseError(`tracks[${i}] must be an object`);
-    const entry = item as Record<string, unknown>;
-    return { name: requireString(entry.name, `tracks[${i}].name`), track: requireString(entry.track, `tracks[${i}].track`) };
-  });
-  return {
-    url: requireString(raw.url, "url"),
-    room: requireString(raw.room, "room"),
-    publisher: requireString(raw.publisher, "publisher"),
-    token: requireString(raw.token, "token"),
-    tracks,
-  };
-}
-
-/** Fetches the preview config, or null when this station has no LiveKit preview configured (HTTP 404). */
-export async function fetchLiveKitPreview(signal?: AbortSignal): Promise<LiveKitPreviewConfig | null> {
-  const response = await fetch("/api/livekit-preview", { signal });
-  if (response.status === 404) return null;
+/** Fetches a fresh subscribe-only token for `room`; throws LiveKitTokenHttpError with the backend's reason. */
+export async function fetchLiveKitToken(room: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(`/api/livekit-token?room=${encodeURIComponent(room)}`, { signal });
   if (!response.ok) {
     // The backend's own reason (e.g. missing signing credentials) is the useful part for the operator.
     let detail = `HTTP ${response.status}`;
@@ -71,7 +27,11 @@ export async function fetchLiveKitPreview(signal?: AbortSignal): Promise<LiveKit
     } catch {
       // Keep the status-only message.
     }
-    throw new LiveKitPreviewHttpError(detail);
+    throw new LiveKitTokenHttpError(detail);
   }
-  return parseLiveKitPreview(await response.json());
+  const body = (await response.json()) as { token?: unknown };
+  if (typeof body.token !== "string" || body.token === "") {
+    throw new LiveKitTokenParseError("token must be a nonempty string");
+  }
+  return body.token;
 }

@@ -28,6 +28,7 @@ of this module's dataclasses -- e.g. building a ``BeginRequest`` or a
 
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -147,6 +148,13 @@ class ClockDomain(IntEnum):
 
 class TimeUnit(IntEnum):
     NANOSECONDS = 1
+
+
+class LiveKitTimestampBasis(IntEnum):
+    """What a LiveKit frame's ``user_timestamp_us`` means: the publisher host's monotonic clock in
+    microseconds, read when the frame is published. Not sensor exposure time and not this host's clock."""
+
+    PUBLISHER_MONOTONIC_US = 1
 
 
 class SampleTimeSemantics(IntEnum):
@@ -845,6 +853,116 @@ def camera_stream_descriptor(camera: CameraStreamConfig) -> CameraStream:
         orientation=ImageOrientation(rotation_degrees=camera.rotation_degrees, mirrored=camera.mirrored),
         intrinsics=camera.intrinsics,
     )
+
+
+# ---------------------------------------------------------------------------
+# LiveKit stream descriptors. Separate from the tracking/camera ``streams``
+# above: these are not frames CaptureServer produces. Video goes straight from
+# the publisher to each consumer through a LiveKit room; the descriptor only says
+# where to find it and what it contains.
+# ---------------------------------------------------------------------------
+
+_MAX_LIVEKIT_STREAMS = 8
+_MAX_LIVEKIT_TEXT_LEN = 512
+
+
+def _require_text(value: Any, context: str) -> str:
+    """A nonempty bounded string field."""
+    if not isinstance(value, str) or not value or len(value) > _MAX_LIVEKIT_TEXT_LEN:
+        raise ProtocolError(f"{context} must be a nonempty string of at most {_MAX_LIVEKIT_TEXT_LEN} characters")
+    return value
+
+
+def _optional_positive_int(value: Any, context: str) -> int | None:
+    """A positive integer, or None when the value is not known."""
+    if value is None:
+        return None
+    if type(value) is not int or value <= 0:
+        raise ProtocolError(f"{context} must be a positive integer or null")
+    return value
+
+
+@dataclass(frozen=True)
+class LiveKitStream:
+    """One video stream offered through a LiveKit room.
+
+    ``width``/``height``/``fps`` are the configured values, or None when not known; a consumer learns the
+    actual values from the video itself. Offering a stream does not mean frames are arriving.
+    """
+
+    stream_id: str
+    name: str
+    url: str
+    room: str
+    publisher: str
+    track: str
+    timestamp_basis: LiveKitTimestampBasis = LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "stream_id": self.stream_id,
+            "name": self.name,
+            "url": self.url,
+            "room": self.room,
+            "publisher": self.publisher,
+            "track": self.track,
+            "timestamp_basis": int(self.timestamp_basis),
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> LiveKitStream:
+        keys = {
+            "stream_id", "name", "url", "room", "publisher", "track", "timestamp_basis", "width", "height", "fps",
+        }  # fmt: skip
+        _require_keys(data, keys, "a LiveKit stream descriptor")
+        url = _require_text(data.get("url"), "LiveKit stream.url")
+        if not url.startswith(("ws://", "wss://")):
+            raise ProtocolError("LiveKit stream.url must start with ws:// or wss://")
+        fps = data.get("fps")
+        # NaN and infinity pass an ordinary `<= 0` check but are not valid JSON numbers, so require a finite value.
+        if fps is not None and (
+            isinstance(fps, bool) or not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0
+        ):
+            raise ProtocolError("LiveKit stream.fps must be a finite positive number or null")
+        return cls(
+            stream_id=_require_text(data.get("stream_id"), "LiveKit stream.stream_id"),
+            name=_require_text(data.get("name"), "LiveKit stream.name"),
+            url=url,
+            room=_require_text(data.get("room"), "LiveKit stream.room"),
+            publisher=_require_text(data.get("publisher"), "LiveKit stream.publisher"),
+            track=_require_text(data.get("track"), "LiveKit stream.track"),
+            timestamp_basis=_require_int_enum(
+                data.get("timestamp_basis"), LiveKitTimestampBasis, "LiveKit stream.timestamp_basis"
+            ),
+            width=_optional_positive_int(data.get("width"), "LiveKit stream.width"),
+            height=_optional_positive_int(data.get("height"), "LiveKit stream.height"),
+            fps=None if fps is None else float(fps),
+        )
+
+
+def parse_livekit_streams(raw: Any) -> tuple[LiveKitStream, ...]:
+    """A ``livekit_streams`` list. Absent means none are offered (a server without the field)."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > _MAX_LIVEKIT_STREAMS:
+        raise ProtocolError(
+            f"SessionInit.livekit_streams must be a list of at most {_MAX_LIVEKIT_STREAMS} entries"
+        )
+    streams = tuple(LiveKitStream.from_json(s) for s in raw)
+    for label, values in (
+        ("stream_id", [s.stream_id for s in streams]),
+        ("name", [s.name for s in streams]),
+        ("publisher/track", [(s.publisher, s.track) for s in streams]),
+    ):
+        if len(values) != len(set(values)):
+            raise ProtocolError(f"SessionInit.livekit_streams has a duplicate {label}")
+    return streams
 
 
 # ---------------------------------------------------------------------------
@@ -1550,6 +1668,7 @@ class SessionInit:
     effective_config: CaptureConfiguration
     clock: CaptureClock
     streams: tuple[TrackingStream | CameraStream, ...]
+    livekit_streams: tuple[LiveKitStream, ...] = ()
     type: MessageType = dataclass_field(default=MessageType.SESSION_INIT, init=False)
     version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
 
@@ -1562,13 +1681,14 @@ class SessionInit:
             "effective_config": self.effective_config.to_json(),
             "clock": self.clock.to_json(),
             "streams": [s.to_json() for s in self.streams],
+            "livekit_streams": [s.to_json() for s in self.livekit_streams],
         }
 
     @classmethod
     def from_json(cls, data: Any) -> SessionInit:
         _require_keys(
             data,
-            {"type", "version", "session_id", "mode", "effective_config", "clock", "streams"},
+            {"type", "version", "session_id", "mode", "effective_config", "clock", "streams", "livekit_streams"},
             "SessionInit",
         )
         _require_message_type(data, MessageType.SESSION_INIT)
@@ -1598,6 +1718,7 @@ class SessionInit:
             effective_config=CaptureConfiguration.from_json(data.get("effective_config")),
             clock=CaptureClock.from_json(data.get("clock")),
             streams=streams,
+            livekit_streams=parse_livekit_streams(data.get("livekit_streams")),
         )
 
 
@@ -1607,6 +1728,7 @@ def session_init_event(
     mode: CaptureMode,
     begin: BeginRequest,
     streams: list[TrackingStream | CameraStream],
+    livekit_streams: tuple[LiveKitStream, ...] = (),
 ) -> SessionInit:
     return SessionInit(
         session_id=session_id,
@@ -1614,6 +1736,7 @@ def session_init_event(
         effective_config=effective_config(begin),
         clock=_capture_clock(),
         streams=tuple(streams),
+        livekit_streams=livekit_streams,
     )
 
 

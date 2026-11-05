@@ -128,6 +128,8 @@ class CaptureStarted:
     effective_config: p.CaptureConfiguration
     clock: p.CaptureClock
     streams: tuple[FrameDescription | p.CameraStream, ...]
+    #: LiveKit video the server offers (where to find it, not frames it sends); empty from a server without any.
+    livekit_streams: tuple[p.LiveKitStream, ...] = ()
 
 
 def _to_client_started(wire: p.SessionInit) -> CaptureStarted:
@@ -138,6 +140,7 @@ def _to_client_started(wire: p.SessionInit) -> CaptureStarted:
         effective_config=wire.effective_config,
         clock=wire.clock,
         streams=wire.streams,
+        livekit_streams=wire.livekit_streams,
     )
 
 

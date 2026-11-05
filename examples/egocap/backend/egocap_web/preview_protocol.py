@@ -115,6 +115,8 @@ def _capture_started_to_json(started: CaptureStarted) -> dict:
         "effective_config": started.effective_config.to_json(),
         "clock": started.clock.to_json(),
         "streams": [s.to_json() for s in started.streams],
+        # Where the offered LiveKit video is published; the video itself never passes through the backend.
+        "livekit_streams": [s.to_json() for s in started.livekit_streams],
     }
 
 

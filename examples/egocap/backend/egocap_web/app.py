@@ -301,9 +301,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the WHOLE Begin, not just that one camera, which also takes tracking preview down with it.
     if resolved_station is not None:
         config = replace(config, cameras=resolved_station.cameras)
-    # Direct LiveKit preview is independent of CaptureServer: it only tells the browser where the
-    # room is, so an invalid or absent station YAML simply leaves it unconfigured (404 from its route).
-    app.state.livekit_preview = resolved_station.livekit_preview if resolved_station is not None else None
     # task_text seeds the committed next-task instruction. operator seeds ONLY a prefill
     # default for the frontend's entry field (via recording_command.py's snapshot
     # "default_operator") -- start_episode's own operator parameter always replaces

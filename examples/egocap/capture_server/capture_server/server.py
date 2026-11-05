@@ -40,11 +40,13 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import json
 import signal
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
 import websockets
@@ -160,6 +162,9 @@ class ServerConfig:
     # prints the mode's default (the mock's SYNTHETIC-data warning, nothing for live); replay sets it so
     # recorded data is never announced as synthetic.
     data_note: str | None = None
+    # LiveKit video offered to clients in SessionInit. Video never passes through this server; the list only says
+    # where each stream is published.
+    livekit_streams: tuple[p.LiveKitStream, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject one physical camera assigned to more than one logical name."""
@@ -557,8 +562,10 @@ class _Session:
         mode: p.CaptureMode,
         outbox: _Outbox,
         owner_ws: ServerConnection,
+        livekit_streams: tuple[p.LiveKitStream, ...] = (),
     ) -> None:
         self.session_id = begin.session_id
+        self._livekit_streams = livekit_streams
         self.begin = begin
         # Which owner connection started this session -- a NEW owner
         # connecting later (because the old one disconnected while this
@@ -766,7 +773,13 @@ class _Session:
         if tracking_stream is not None:
             streams.insert(0, tracking_stream)
 
-        init = p.session_init_event(session_id=self.session_id, mode=self._mode, begin=self.begin, streams=streams)
+        init = p.session_init_event(
+            session_id=self.session_id,
+            mode=self._mode,
+            begin=self.begin,
+            streams=streams,
+            livekit_streams=self._livekit_streams,
+        )
         self.init_event = init  # cached for CaptureServer._handle_begin's replay path
         # The shared connection Outbox/writer is already running (started
         # once in CaptureServer._handle_connection, for the whole
@@ -1524,6 +1537,7 @@ class CaptureServer:
             self._mode,
             self._outbox,
             ws,
+            livekit_streams=self.config.livekit_streams,
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
@@ -1611,6 +1625,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="SOCKET_PATH",
         help="live station: read GMSL camera frames from the camera receiver's local frame feed at this Unix "
         "socket (tracking still comes from IsaacCapture via ISAAC_ROOT); cameras are named with --gmsl-camera",
+    )
+    parser.add_argument(
+        "--livekit-streams",
+        type=Path,
+        metavar="FILE",
+        help="YAML file naming the LiveKit video streams to offer clients in SessionInit (see livekit_streams.py)",
     )
     parser.add_argument(
         "--gmsl-camera",
@@ -1793,6 +1813,10 @@ async def _run_cli(args: argparse.Namespace) -> int:
             source_factory = build_source_factory(
                 config, scenario=args.scenario, seed=args.seed, faults=frozenset(args.fault)
             )
+        if args.livekit_streams is not None:
+            from .livekit_streams import load_livekit_streams
+
+            config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
     except (ValueError, NotImplementedError, OSError, RuntimeError) as exc:
         # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError; an
         # unreachable or malformed frame feed a FeedError (RuntimeError).
