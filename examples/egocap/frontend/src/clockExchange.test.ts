@@ -106,6 +106,71 @@ describe("ClockEstimator", () => {
     expect(est.mapping(2n * MS + 5_000n * MS + 1n)).toBeNull();
   });
 
+  it("keeps an early low-round-trip exchange only while its age costs less than the round-trip saving", () => {
+    // Early exchange rtt 2.2 ms vs later rtt 10 ms: the saving of 3.9 ms is spent by 200 ppm after about 19.5 s.
+    const est = new ClockEstimator(0n, 250n * MS, 5_000n * MS, 64);
+    const best = exchange(1000n * MS, 100n, MS, 1_200_000n);
+    est.add(best);
+    for (let i = 1; i <= 30; i++) {
+      const e = exchange(1000n * MS + BigInt(i) * 1000n * MS, 100n, 5n * MS, 5n * MS);
+      est.add(e);
+      const m = est.mapping(e.t4)!;
+      expect(m).not.toBeNull();
+      if (i <= 19) {
+        expect(m.acceptedAtNs).toBe(best.t4);
+        expect(m.rttNs).toBe(2_200_000n);
+      } else {
+        expect(m.acceptedAtNs).toBe(e.t4);
+        expect(m.uncertaintyNs).toBe(5n * MS);
+      }
+    }
+  });
+
+  it("does not let a high-round-trip outlier replace a better exchange, and ages the uncertainty", () => {
+    const est = new ClockEstimator();
+    const good = exchange(1000n * MS, 10n * MS, MS, MS);
+    est.add(good);
+    const slow = exchange(2000n * MS, 10n * MS, 20n * MS, 20n * MS);
+    est.add(slow);
+    const m = est.mapping(slow.t4)!;
+    expect(m.acceptedAtNs).toBe(good.t4);
+    expect(m.rttNs).toBe(2n * MS);
+    expect(m.uncertaintyNs).toBe(MS + ((slow.t4 - good.t4) * 200n) / 1_000_000n);
+  });
+
+  it("includes the age of the chosen exchange in the uncertainty", () => {
+    const est = new ClockEstimator();
+    const old = exchange(1000n * MS, 0n, MS, MS);
+    est.add(old);
+    const fresh = exchange(11_000n * MS, 0n, 5n * MS, 5n * MS);
+    est.add(fresh);
+    const m = est.mapping(fresh.t4)!;
+    expect(m.acceptedAtNs).toBe(old.t4);
+    expect(m.uncertaintyNs).toBe(MS + ((fresh.t4 - old.t4) * 200n) / 1_000_000n);
+  });
+
+  it("picks the newest exchange when uncertainties tie", () => {
+    // Same round trip and (via a window of one older exchange) the same age cost cannot tie, so tie at age zero:
+    // two exchanges completing at the same local time.
+    const est = new ClockEstimator();
+    const a: Exchange = { t1: 1000n * MS, t2: 1000n * MS + 2n * MS, t3: 1000n * MS + 2n * MS, t4: 1000n * MS + 4n * MS };
+    const b: Exchange = { t1: 1002n * MS, t2: 1002n * MS + 1_000n + 2n * MS, t3: 1002n * MS + 1_000n + 2n * MS, t4: 1000n * MS + 4n * MS };
+    est.add(a);
+    est.add(b);
+    expect(est.mapping(a.t4)!.offsetNs).toBe(offsetNs(b));
+  });
+
+  it("does not grow the uncertainty with age while fresh exchanges of the same round trip keep arriving", () => {
+    const est = new ClockEstimator();
+    for (let i = 1; i <= 30; i++) {
+      const e = exchange(BigInt(i) * 1000n * MS, MS, 2n * MS, 2n * MS);
+      est.add(e);
+      const m = est.mapping(e.t4)!;
+      expect(m.acceptedAtNs).toBe(e.t4);
+      expect(m.uncertaintyNs).toBe(2n * MS);
+    }
+  });
+
   it("adds the timer resolution to the uncertainty", () => {
     const est = new ClockEstimator(100n * MS);
     est.add(exchange(0n, 0n, 5n * MS, 5n * MS));
