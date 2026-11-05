@@ -99,7 +99,14 @@ def main() -> int:
     if SCENARIO.get("idle_cancel_result"):
         # Like the real worker: SIGTERM before `start` reports a cancelled result with no attempt id.
         def report_cancelled(*_):
-            channel.send({"type": "result", "attempt": None, "outcome": "cancelled", "released": True})
+            channel.send(
+                {
+                    "type": "result",
+                    "attempt": None,
+                    "outcome": "cancelled",
+                    "released": True,
+                }
+            )
             os._exit(0)
 
         signal.signal(signal.SIGTERM, report_cancelled)
