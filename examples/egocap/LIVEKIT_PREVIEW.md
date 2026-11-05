@@ -22,38 +22,43 @@ PC:   CaptureServer (--livekit-streams: where the streams are) -> egocap backend
 ```
 
 **Recording.** A LiveKit stream is saved with a take only when its entry gives `width`, `height` and `fps` and
-declares `timestamp_basis: capture_unix_us`, meaning the publisher stamps each frame with the mapped capture time of
-the sensor event. If any offered stream does not qualify, recording is refused with that stream's name (remove it
-from the streams file, or make it recordable); preview is unaffected. The native Orin sender stamps
-`processing_unix_us` (host time after capture and conversion), so with it recording is refused until the sensor's
-capture time is mapped. The recorder joins the room itself (it needs the same `LIVEKIT_API_KEY` and
-`LIVEKIT_API_SECRET`) and checks each stream's first frame against the configured size before a take starts. The
-recorder converts the publisher's Unix time to this machine's monotonic clock and applies one coarse check: a frame
-that is more than 2 s old on arrival, or stamped in the future, ends the take. That catches gross clock disagreement
-only; it does not prove the two machines' clocks agree to milliseconds. A step of this PC's own clock during a take is
-detected at the next pair refresh (about a second later, and only if it exceeds the larger of 5 ms and four times
-the pair's bracket uncertainty), and the take then fails: frames mapped between the step and its detection, and any
-smaller offset change, are not caught, so the take's timing claim cannot be stronger than that. A step on the Orin is
-not detected. Alignment
-with tracking also assumes the backend and CaptureServer share one machine's clock. A take that passes is not
-thereby proven aligned.
+declares `timestamp_basis: capture_monotonic_us`: the publisher stamps each frame with the sensor's capture event on
+the publisher's own monotonic clock. If any offered stream does not qualify, recording is refused with that stream's
+name (remove it from the streams file, or make it recordable); preview is unaffected. The native Orin sender
+declares processing time, so with it recording is refused until the sensor's capture time is mapped.
 
-**What recording from the real Orin still needs.** The native sender must publish `capture_unix_us`, the Unix time
-of the sensor's capture event. Its only capture-event clock is the SIPL frame capture counter (`frameCaptureTSC`),
-which NVIDIA's public SIPL documentation describes as raw ARM generic-timer ticks, not nanoseconds (the sender carries it
-as `capture_tsc`, an unscaled value). The deployed Orin's SIPL headers are not available
-here, so nothing about its units or event is verified. The evidence required, from a supported platform API and
-not from fitting measurements:
+There is one way to place the publisher's clock on this PC's, the four-timestamp exchange CloudXR uses. The recorder
+joins the room itself (it needs the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`), and once a second sends the
+publisher a small request as a LiveKit data message on topic `isaaccapture.clock-sync`: little-endian `Q`, a
+sequence number and `t1` (this PC's monotonic ns); the publisher answers `R`, the sequence, `t1`, `t2` (its monotonic
+ns on receipt) and `t3` (its monotonic ns when replying); the recorder stamps `t4` on the reply. The round trip with
+the publisher's processing removed is `(t4 - t1) - (t3 - t2)` and the offset is `((t2 - t1) + (t3 - t4)) / 2`. The
+offset assumes both directions took equally long, so the mapping's uncertainty is half the round trip and nothing
+smaller is claimed. The best recent exchange is used; a mapping is withheld when its last exchange is more than 5 s
+old; and a new exchange that disagrees with the current mapping by more than the two uncertainties plus a 200 ppm
+drift allowance is a discontinuity. A take cannot start until the publisher has answered at least once, and ends if
+the mapping goes missing, goes stale or jumps; frames already recorded keep the mapping they were made under, and
+the mapping epochs are kept in memory (`ClockEstimator.history`) but not yet saved with the take. The recorder
+also applies one coarse check: a frame more than 2 s old on arrival, or stamped in the future, ends the take. A take
+that passes is not thereby proven aligned with tracking, which also assumes the backend and CaptureServer share one
+machine's clock. Browser display latency is not shown: it needs the same exchange between the PC and the browser and
+an exact match of the displayed frame to its capture stamp, neither of which exists yet.
+
+**What recording from the real Orin still needs.** The native sender must answer the clock-sync requests with its own
+monotonic clock and publish `capture_monotonic_us`, the sensor's capture event on that clock. Its only capture-event
+clock is the SIPL frame capture counter (`frameCaptureTSC`), which NVIDIA's public SIPL documentation describes as
+raw ARM generic-timer ticks, not nanoseconds (the sender carries it as `capture_tsc`, an unscaled value). The deployed
+Orin's SIPL headers are not available here, so nothing about its units or event is verified. The evidence required,
+from a supported platform API and not from fitting measurements:
 
 1. The counter's definition, units and event (which instant of the frame it marks) from the SIPL image-metadata
    documentation of the deployed release, and the TSC's definition and rate in the L4T documentation of the
    deployed JetPack. Record the exact header, SDK and L4T versions.
-2. A contemporaneous counter and host-clock reading from a supported API, so that a counter value can be placed on
-   `CLOCK_REALTIME` through one offset that is re-measured at a low rate, never per frame. Convert in the sender and
-   publish that time with the `capture_unix_us` basis, keeping the raw counter in the frame's user data.
-3. A time service between the Orin and the PC with the residual offset measured, and a physical event seen by both
-   the camera and a tracking device as the test of real alignment. The recorder's frame-age check only catches gross
-   disagreement.
+2. A contemporaneous counter and monotonic-clock reading from a supported API, so that a counter value can be placed
+   on `CLOCK_MONOTONIC` through one offset that is re-measured at a low rate, never per frame. Convert in the sender
+   and publish that time with the `capture_monotonic_us` basis, keeping the raw counter in the frame's user data.
+3. A physical event seen by both the camera and a tracking device as the test of real alignment, with the residual
+   offset, drift and jitter measured. The frame-age check only catches gross disagreement.
 
 `SENSING_TSC_PROBE=1` prints the capture counter beside the host clocks twice a second, off by default, as separate
 uncalibrated samples. The counter's units are unconfirmed, so they must not be subtracted, fitted or used as a mapping.
@@ -145,13 +150,15 @@ sender's pacing.
 uv run python tools/livekit_orin_emulator.py \
   --livekit-url=wss://LIVEKIT_HOST --livekit-token-file=join.token \
   --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right \
-  --width=1280 --height=720 --fps=30 --timestamp-basis=capture_unix_us
+  --width=1280 --height=720 --fps=30 --timestamp-basis=capture_monotonic_us
 ```
 
-`--timestamp-basis=processing_unix_us` declares what the current native sender sends: processing time, which is not
-a capture time and is not recorded. `capture_unix_us` (the default) is honest here because the emulator is the
-camera: it stamps the frame when it generates it. `monotonic_us` sends the publisher's monotonic clock, also not
-recordable.
+`--timestamp-basis=capture_monotonic_us` (the default) is the recordable basis and is honest here because the emulator
+is the camera: it stamps the frame on its own emulated monotonic clock when it generates it, and answers the PC's
+clock-sync requests with that same clock. `--monotonic-offset-s`, `--clock-drift-ppm` and `--pipeline-delay-ms` give
+that clock a different boot time, a slow drift and a capture-to-publish delay, so the mapping has something real to
+find. `processing_unix_us` declares what the current native sender sends (processing time, not recorded);
+`capture_unix_us` and `monotonic_us` exist for tests of refusal and are not recordable.
 
 ## 6. The whole stack on one machine, with the emulator
 
@@ -165,14 +172,14 @@ livekit-server --dev --bind 127.0.0.1                    # signalling on ws://12
 # LiveKit token tool, signed with devkey/secret)
 uv run python tools/livekit_orin_emulator.py --livekit-url=ws://127.0.0.1:7880 --livekit-token-file=pub.token \
   --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right \
-  --width=640 --height=480 --fps=15 --timestamp-basis=capture_unix_us
+  --width=640 --height=480 --fps=15 --timestamp-basis=capture_monotonic_us
 
 uv run capture-server --mock --livekit-streams streams.yaml
 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret uv run uvicorn egocap_web.app:app --app-dir backend --port 8000
 ```
 
 `streams.yaml` names the room, the publisher and both tracks, with `width: 640`, `height: 480`, `fps: 15` and
-`timestamp_basis: capture_unix_us` (section 2). Open `http://127.0.0.1:8000/`: both tiles show live video, and
+`timestamp_basis: capture_monotonic_us` (section 2). Open `http://127.0.0.1:8000/`: both tiles show live video, and
 Record saves a take with the two cameras next to the mock tracking. A take recorded this way came out KEPT, with 91
 frames per camera over 6 s at the configured size and rate and increasing capture times.
 
