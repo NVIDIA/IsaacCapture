@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { LiveKitCameraTile } from "./LiveKitCameraTile";
+import { LiveKitCameraTile, displayedFps } from "./LiveKitCameraTile";
 import { fakeTrack } from "./livekitTestDoubles";
 
-let frameCallbacks: Array<() => void> = [];
+let frameCallbacks: Array<(now: number, metadata: { presentedFrames: number }) => void> = [];
+let presentedTotal = 0;
 
 beforeEach(() => {
   vi.useFakeTimers();
   frameCallbacks = [];
+  presentedTotal = 0;
   // jsdom has no requestVideoFrameCallback; this one lets a test present frames by hand.
-  (HTMLVideoElement.prototype as any).requestVideoFrameCallback = function (cb: () => void) {
+  (HTMLVideoElement.prototype as any).requestVideoFrameCallback = function (cb: (typeof frameCallbacks)[number]) {
     frameCallbacks.push(cb);
     return frameCallbacks.length;
   };
@@ -23,10 +25,12 @@ afterEach(() => {
   delete (HTMLVideoElement.prototype as any).cancelVideoFrameCallback;
 });
 
-function presentFrame(): void {
+/** Presents `frames` frames at once: the browser's cumulative presentedFrames grows by that much. */
+function presentFrame(frames = 1): void {
+  presentedTotal += frames;
   const cbs = frameCallbacks;
   frameCallbacks = [];
-  act(() => cbs.forEach((cb) => cb()));
+  act(() => cbs.forEach((cb) => cb(0, { presentedFrames: presentedTotal })));
 }
 
 describe("LiveKitCameraTile placeholders", () => {
@@ -126,5 +130,72 @@ describe("LiveKitCameraTile track wiring and labels", () => {
     expect(screen.queryByText(/Preview only/)).toBeNull();
     expect(document.querySelector(".camera-preview-badge")).toBeNull();
     expect(document.querySelector(".camera-tile--primary")).not.toBeNull();
+  });
+});
+
+describe("displayedFps", () => {
+  it("is frames per second over the window", () => {
+    expect(displayedFps({ presented: 10, at: 0 }, 40, 1000)).toBe(30);
+  });
+
+  it("returns null when the counter went backwards", () => {
+    expect(displayedFps({ presented: 40, at: 0 }, 10, 1000)).toBeNull();
+  });
+
+  it("returns null for a non-positive interval", () => {
+    expect(displayedFps({ presented: 0, at: 1000 }, 5, 1000)).toBeNull();
+    expect(displayedFps({ presented: 0, at: 1000 }, 5, 500)).toBeNull();
+  });
+});
+
+describe("LiveKitCameraTile FPS label", () => {
+  function renderTile() {
+    return render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+  }
+
+  it("shows the presented-frame delta per second after two windows", () => {
+    renderTile();
+    presentFrame(0);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".camera-stats")).toBeNull(); // first window only sets the baseline
+    presentFrame(30);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".camera-stats")?.textContent).toBe("30.0 FPS");
+  });
+
+  it("shows 0 FPS when no frame arrives for more than three seconds", () => {
+    renderTile();
+    presentFrame();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(document.querySelector(".camera-stats")?.textContent).toBe("0 FPS");
+  });
+
+  it("shows paused while the document is hidden", () => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    try {
+      renderTile();
+      presentFrame();
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(document.querySelector(".camera-stats")?.textContent).toBe("paused");
+    } finally {
+      delete (document as any).hidden;
+    }
+  });
+
+  it("shows FPS unavailable without requestVideoFrameCallback", () => {
+    delete (HTMLVideoElement.prototype as any).requestVideoFrameCallback;
+    renderTile();
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.querySelector(".camera-stats")?.textContent).toBe("FPS unavailable");
   });
 });
