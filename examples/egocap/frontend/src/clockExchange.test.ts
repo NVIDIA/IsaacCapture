@@ -209,3 +209,59 @@ describe("clock-sync messages", () => {
     expect(decodeReply(wrong)).toBeNull();
   });
 });
+
+describe("ClockEstimator aging at read", () => {
+  const SEC = 1_000_000_000n;
+  const RES = 100_000n; // a 0.1 ms browser timer
+
+  /** One 10 ms round trip completing at t4 = 11 s. */
+  function seeded(resolution = RES): { est: ClockEstimator; e: Exchange } {
+    const est = new ClockEstimator(resolution);
+    const e = exchange(10n * SEC, 500n * MS, 5n * MS, 5n * MS);
+    expect(est.add(e)).toBeNull();
+    return { est, e };
+  }
+
+  it("grows with time while no new exchange arrives", () => {
+    const { est, e } = seeded();
+    const at = (s: bigint) => est.mapping(e.t4 + s * SEC)!.uncertaintyNs;
+    expect(at(1n)).toBeGreaterThan(at(0n));
+    expect(at(3n)).toBeGreaterThan(at(1n));
+    expect(at(4n)).toBeGreaterThan(at(3n));
+  });
+
+  it("equals half the round trip plus 200 ppm of the age plus the timer resolution", () => {
+    const { est, e } = seeded();
+    expect(est.mapping(e.t4)!.uncertaintyNs).toBe(5n * MS + RES);
+    const age = 4n * SEC;
+    expect(est.mapping(e.t4 + age)!.uncertaintyNs).toBe(5n * MS + (age * 200n) / 1_000_000n + RES);
+    // Recomputed, not accumulated: reading at an earlier time again gives the earlier figure back.
+    expect(est.mapping(e.t4 + 1n * SEC)!.uncertaintyNs).toBe(5n * MS + (1n * SEC * 200n) / 1_000_000n + RES);
+  });
+
+  it("keeps the same offset and epoch while aging", () => {
+    const { est, e } = seeded();
+    const fresh = est.mapping(e.t4)!;
+    const aged = est.mapping(e.t4 + 3n * SEC)!;
+    expect(aged.offsetNs).toBe(fresh.offsetNs);
+    expect(aged.epoch).toBe(fresh.epoch);
+    expect(aged.acceptedAtNs).toBe(fresh.acceptedAtNs);
+  });
+
+  it("is null once no exchange has arrived within the stale limit", () => {
+    const { est, e } = seeded();
+    expect(est.mapping(e.t4 + 5n * SEC)).not.toBeNull();
+    expect(est.mapping(e.t4 + 5n * SEC + 1n)).toBeNull();
+  });
+
+  it("drops back to the exchange figure when a new exchange arrives", () => {
+    const { est, e } = seeded();
+    const stale = est.mapping(e.t4 + 4n * SEC)!.uncertaintyNs;
+    const next = exchange(e.t4 + 4n * SEC, 500n * MS, 5n * MS, 5n * MS);
+    expect(est.add(next)).toBeNull();
+    const fresh = est.mapping(next.t4)!;
+    expect(fresh.uncertaintyNs).toBe(5n * MS + RES);
+    expect(fresh.uncertaintyNs).toBeLessThan(stale);
+    expect(fresh.acceptedAtNs).toBe(next.t4);
+  });
+});
