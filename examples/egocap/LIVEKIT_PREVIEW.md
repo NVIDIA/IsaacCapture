@@ -92,3 +92,19 @@ connection is down; the page reconnects on its own.
 | Tiles never leave "Connecting" | The `url` is reachable from the browser; `wss://` certificate trusted; signalling and media ports open. |
 | Connected, tile stays "Waiting for camera" | The publisher's token room and identity match `room` and `publisher`; `livekit=` names match `track`. |
 | "Waiting for video" or black picture | The browser may not support the encoder's H.264 profile; check the browser console. |
+
+## 5. No Orin: the emulator
+
+`tools/livekit_orin_emulator.py` publishes test-pattern tracks with the same per-frame metadata (`user_timestamp`,
+`frame_id`, 8-byte little-endian capture counter) in place of the Orin. It uses the SDK's software encoder, so it
+exercises the PC side and the metadata contract but not the Jetson hardware encoder, its H.264 profile or the real
+sender's pacing.
+
+```bash
+uv run python tools/livekit_orin_emulator.py \
+  --livekit-url=wss://LIVEKIT_HOST --livekit-token-file=join.token \
+  --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right \
+  --width=1280 --height=720 --fps=30 --timestamp-basis=unix_us
+```
+
+Use `--timestamp-basis=monotonic_us` to send what the current native sender sends (not recordable).
