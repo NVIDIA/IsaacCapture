@@ -60,6 +60,9 @@ export interface RecordingPanelProps {
   /** Clears the entered control token -- disables this tab's future
    * commands until a new one is entered. */
   clearControlToken: () => void;
+  /** Told whenever this panel's own interaction phase changes (including the in-flight "stopping"/"starting" ones the
+   * backend's snapshot does not show until the command finishes), so the page can mirror it in its status bar. */
+  onPhaseChange?: (phase: RecordingPhase) => void;
 }
 
 const NO_CONTROL_TOKEN_REASON = "Enter the recording control token before using recording controls";
@@ -100,7 +103,7 @@ const PHASE_BADGE_VARIANT: Record<RecordingPhase, "idle" | "recording" | "busy" 
 };
 
 /** Formats a millisecond duration as `m:ss` for the elapsed-time display. */
-function formatElapsed(ms: number): string {
+export function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -122,8 +125,12 @@ export function RecordingPanel({
   controlToken,
   setControlToken,
   clearControlToken,
+  onPhaseChange,
 }: RecordingPanelProps) {
   const [ui, dispatch] = useReducer(recordingUiReducer, INITIAL_RECORDING_UI_STATE);
+  useEffect(() => {
+    onPhaseChange?.(ui.phase);
+  }, [ui.phase, onPhaseChange]);
   const [operatorDraft, setOperatorDraft] = useState(operatorToken ?? "");
   const [controlDraft, setControlDraft] = useState(controlToken ?? "");
   // controlToken can become null from outside a local Clear click too (a

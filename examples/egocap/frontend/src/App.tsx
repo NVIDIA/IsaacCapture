@@ -1,10 +1,9 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";
 import {
   CaptureMode,
   CaptureStatusType,
-  DeviceState,
   ProviderState,
   deviceStateLabel,
   providerStateLabel,
@@ -18,9 +17,21 @@ import {
 } from "./captureStatus";
 import { CaptureTree } from "./CaptureTree";
 import { CameraGrid } from "./CameraGrid";
+import { OperatorBar } from "./OperatorBar";
+import { SidebarResizer } from "./SidebarResizer";
+import {
+  SIDEBAR_DEFAULT_PX,
+  SIDEBAR_MIN_PX,
+  clampSidebarWidth,
+  loadSidebarWidth,
+  maxSidebarWidth,
+  saveSidebarWidth,
+} from "./sidebarWidth";
+import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
 import { buildRecordingActions } from "./recordingActions";
+import type { RecordingPhase } from "./recordingUiReducer";
 
 /** Feed health is derived from ConnectionPhase rather than a separate
  * polling freshness signal, since the connection hook owns delivery
@@ -74,8 +85,6 @@ function snapshotToLegacyStatus(snapshot: PreviewSnapshot): CaptureStatusRespons
     status: terminal ? (snapshot.stopped?.status ?? null) : (snapshot.status?.status ?? null),
   };
 }
-
-type Tone = "neutral" | "positive" | "warning" | "critical";
 
 interface Presentation {
   headline: string;
@@ -175,24 +184,6 @@ function toneClass(tone: Tone): string {
   return `tone-${tone}`;
 }
 
-// Keyed directly off DeviceState's own numeric values, not its label text --
-// cameras and tracking devices both use DeviceState, so one table covers both.
-const DEVICE_TONE: Partial<Record<number, Tone>> = {
-  [DeviceState.CONNECTED]: "positive",
-  [DeviceState.FAILED]: "critical",
-  [DeviceState.DISCONNECTED]: "critical",
-  [DeviceState.UNAVAILABLE]: "critical",
-  [DeviceState.DEGRADED]: "warning",
-  [DeviceState.INITIALIZING]: "warning",
-  [DeviceState.UNKNOWN]: "warning",
-  [DeviceState.DISABLED]: "neutral",
-};
-
-/** The semantic tone for a tracking device or camera's DeviceState. */
-function deviceTone(status: DeviceStatus["status"] | CameraStatus["status"]): Tone {
-  return DEVICE_TONE[status] ?? "neutral";
-}
-
 // DeviceState and ProviderState are different enums that happen to share
 // some numeric values (e.g. ProviderState.AVAILABLE=2 == DeviceState.UNKNOWN=2)
 // -- kept as a separate table, never looked up through DEVICE_TONE.
@@ -278,15 +269,6 @@ function StaleOrErrorBanner({
       )}
     </p>
   );
-}
-
-/** Downgrades a positive ("current and healthy") tone to neutral when the
- * data behind it is retained rather than live -- the same rule the status
- * strip applies, now applied consistently to every row/entry that renders
- * a tone, not just the headline. Non-positive tones (warning/critical) are
- * left alone: a real fault is still worth flagging even in retained data. */
-function retainedTone(tone: Tone, live: boolean): Tone {
-  return !live && tone === "positive" ? "neutral" : tone;
 }
 
 /** One tracking device or camera row in the session/provider details
@@ -459,35 +441,63 @@ export default function App() {
   const response = snapshot === null ? null : snapshotToLegacyStatus(snapshot);
   const presentation = derivePresentation(response, phase === "connected");
   const recordingActions = buildRecordingActions(sendRecordingCommand);
+  // A live take frames the cameras in red, so the state reads from across the room; never from a stale feed.
+  const recording = presentation.live && recordingSnapshot?.episodePhase === "RECORDING";
+  const [panelPhase, setPanelPhase] = useState<RecordingPhase>("idle");
+  // The side panel is always showing: the 3D view above the raw data. Its width is the operator's to choose by
+  // dragging the divider; the cameras, status bar and controls take whatever it leaves. The choice is remembered.
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(loadSidebarWidth(), window.innerWidth));
+  const [resizing, setResizing] = useState(false);
+  // The latest clamped width, readable from event handlers without a stale closure (a drag end must save the final value).
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const applyWidth = (requested: number, persist: boolean) => {
+    const next = clampSidebarWidth(requested, window.innerWidth);
+    sidebarWidthRef.current = next;
+    setSidebarWidth(next);
+    // Only a choice the operator made is remembered; a window refit must not overwrite their preference.
+    if (persist) saveSidebarWidth(next);
+  };
+  useEffect(() => {
+    // A smaller window can no longer fit the remembered width, and the main column must keep its minimum.
+    const refit = () => applyWidth(sidebarWidthRef.current, false);
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, []);
+  const unavailable = response === null && feedHealth === "unavailable";
 
   return (
-    <div className="app-shell">
+    <div className="app-shell app-shell--operator">
       <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} />
-      <main className="app-main">
-        {response === null && feedHealth === "unavailable" ? (
-          <section className="unavailable-panel">
-            <p>Status updates unavailable{diagnostic !== null ? `: ${diagnostic}` : "."}</p>
-            <button type="button" className="refresh-button" onClick={retry}>
-              Retry
-            </button>
-          </section>
-        ) : (
-          <>
-            <StatusLine response={response} presentation={presentation} />
-            <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
-            {/* One shared workspace: the existing generic capture display
-                and the Ego Capture UI recording panel are always-present siblings,
-                never an alternate page/tab. */}
-            <div className="app-workspace">
-              <div className="app-capture-column">
-                <CaptureTree
-                  trackingSample={presentation.live ? trackingSample : null}
-                  diagnostic={snapshot?.tracking?.diagnostic ?? null}
-                />
+      <div
+        className={`op-body${resizing ? " op-body--resizing" : ""}`}
+        style={{ "--op-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      >
+        <main className="app-main op-main">
+          {unavailable ? (
+            <section className="unavailable-panel">
+              <p>Status updates unavailable{diagnostic !== null ? `: ${diagnostic}` : "."}</p>
+              <button type="button" className="refresh-button" onClick={retry}>
+                Retry
+              </button>
+            </section>
+          ) : (
+            <>
+              <OperatorBar
+                response={response}
+                live={presentation.live}
+                recordingSnapshot={recordingSnapshot}
+                recordingSnapshotReceivedAtMonotonic={recordingSnapshotReceivedAtMonotonic}
+                operatorName={operatorToken}
+                hasControlToken={controlToken !== null}
+                pendingPhase={panelPhase}
+              />
+              <StatusLine response={response} presentation={presentation} />
+              <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
+              {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
+              <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>
                 <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} />
-                <SessionDetails response={response} live={presentation.live} freshnessLabel={presentation.freshnessLabel} />
               </div>
-              <div className="app-side-column">
+              <div className="op-dock">
                 <RecordingPanel
                   recordingSnapshot={recordingSnapshot}
                   recordingSnapshotReceivedAtMonotonic={recordingSnapshotReceivedAtMonotonic}
@@ -498,16 +508,44 @@ export default function App() {
                   controlToken={controlToken}
                   setControlToken={setControlToken}
                   clearControlToken={clearControlToken}
+                  onPhaseChange={setPanelPhase}
                 />
+              </div>
+            </>
+          )}
+        </main>
+        {!unavailable && (
+          <>
+            <SidebarResizer
+              width={sidebarWidth}
+              min={SIDEBAR_MIN_PX}
+              max={maxSidebarWidth(window.innerWidth)}
+              // Pointer moves during a drag are saved once, at drag end; a key press outside a drag is saved at once.
+              onResize={(width) => applyWidth(width, !resizing)}
+              onReset={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+              onDragChange={(dragging) => {
+                setResizing(dragging);
+                if (!dragging) saveSidebarWidth(sidebarWidthRef.current);
+              }}
+            />
+            <aside className="op-sidebar" aria-label="3D view and details">
+              <section className="op-panel op-panel--3d" aria-label="3D view">
                 <PoseViserPanel
                   visualization={snapshot?.visualization ?? null}
                   backendInstanceId={snapshot?.backend_instance_id ?? null}
                 />
-              </div>
-            </div>
+              </section>
+              <section className="op-panel op-panel--details" aria-label="Details">
+                <CaptureTree
+                  trackingSample={presentation.live ? trackingSample : null}
+                  diagnostic={snapshot?.tracking?.diagnostic ?? null}
+                />
+                <SessionDetails response={response} live={presentation.live} freshnessLabel={presentation.freshnessLabel} />
+              </section>
+            </aside>
           </>
         )}
-      </main>
+      </div>
     </div>
   );
 }

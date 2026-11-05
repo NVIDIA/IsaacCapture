@@ -63,6 +63,36 @@ when it isn't. Snapshots arrive about once a second, so a per-frame jitter figur
 cannot be derived here and is deliberately not shown; measure jitter on the backend
 or with a direct `/stream{id}` client instead.
 
+## Operator layout
+
+The page is built for an operator mid-take: the cameras fill it, and everything else is either a glance or one click away.
+
+- **Status bar (top).** A large recording indicator (`READY`, `REC` with the live take timer, `STOPPING`, `SAVING`, `SET UP`,
+  `NOT READY`, `RECOVERY`, `NO FEED`), the task in large type, the saved count, the last take's outcome (kept / rejected /
+  discarded, duration, issue count on hover), and one chip per tracking device and camera. Chips with a problem are listed
+  first and say why; a healthy chip is just its name. The bar is read-only and derived from the backend's recording snapshot
+  and capture status (`OperatorBar.tsx`, `deviceHealth.ts`).
+- `READY` is claimed only when the backend would admit a take **and** this browser has an operator name and the control token;
+  until then it says `SET UP` and what is missing. A command in flight shows at once (`STOPPING` while a take is written),
+  because the backend's own phase only changes when the command finishes. A stale feed shows `NO FEED`, never a retained
+  `REC`.
+- **Camera stage (middle).** It takes every pixel the bar above and the dock below leave. The head camera (the one named
+  `head*`, otherwise the first) takes the left two-thirds and the others stack on the right; each tile carries its name and
+  measured / advertised Hz and latency on the picture. A live take puts a red frame around the stage.
+- **Control dock (bottom).** Record / Stop-Save / Discard are large; an unset operator or control-token field leads the dock,
+  and once set shrinks to a quiet line. The dock hides the recording panel's own header, status line and last-result line,
+  since the bar above shows them.
+- **Side panel (right).** Always showing: the 3D tracking view on top and the raw tracking tables and session details beneath
+  it (Details scrolls inside itself, so neither is pushed off the screen). **Drag the divider** between it and the main column
+  to choose its width -- pulling left widens the panel and narrows the cameras, status bar and controls, and the other way
+  round. The divider also works from the keyboard (focus it, then Left / Right arrows, Shift for bigger steps, Home / End for
+  the limits) and double-click resets it. The width is clamped between 400 px and 1000 px and never leaves the main column
+  under 560 px; it is remembered in this browser (`localStorage`, silently the default if storage is blocked). The status
+  bar rearranges itself by the main column's width (chips drop to their own row when it is narrow). On a window under 900 px
+  there is no room for two columns, so the panel goes below the page and the divider is hidden.
+- The 3D view's iframe is never narrower than 640 px: Viser switches to a layout that hides its scene at 576 px and below, and
+  crashes its own page when resized across that breakpoint.
+
 ## Status presentation
 
 `derivePresentation` (`frontend/src/App.tsx`) is the single source every
@@ -157,6 +187,14 @@ EGOCAP_VISER_ENABLED=0 uv run uvicorn egocap_web.app:app --app-dir backend --por
   provision that directory with the application. The view's `diagnostic` always says which device's models it is
   showing (`models: Pico 4 Ultra`), so a stand-in is never mistaken for the real hardware.
 - The hands are drawn from the reported tracking-space joints as they arrive; controller models follow the grip pose.
+  Each glove keeps its side colour (blue left, orange right) and shades every finger from a dark knuckle to a pale
+  tip, so finger direction and curl read at a glance. Tracking space is `session_floor`, so the view draws a floor slab
+  and grid at y = 0 (1 m sections, 0.25 m cells) and small axes at the tracking origin.
+- The **Normal / Large / Full screen** buttons above the view change its size. Normal is inline in the column, Large
+  is a centred pop-up over a dimmed page, and Full screen fills the window. Close with the Close / Exit full screen
+  button, by clicking outside the pop-up, or with Escape (Escape typed inside the iframe never reaches the page, so use
+  the button after clicking into the view). Changing size never reloads the iframe, so the orbit camera is kept, and
+  the size is not remembered across page loads.
 - Viser draws its own control strip down the right edge of its page and 0.2.x cannot hide it, so the page makes the
   iframe wider and crops that strip (see `.pose-viser-viewport` in `src/styles.css`). The cropped controls can still be
   reached by keyboard from inside the iframe. Reset view reloads the iframe, which returns the camera to the default
