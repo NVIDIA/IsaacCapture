@@ -44,6 +44,8 @@ _MAX_SILENCE_S = 5.0
 _JOIN_TIMEOUT_S = 15.0
 #: How long leaving the room may take before teardown moves on and lets the leave finish in the background.
 _LEAVE_TIMEOUT_S = 10.0
+#: Most mappings recorded as a take's timing evidence, the newest ones; the estimator may have adopted more.
+_MAX_EVIDENCE_MAPPINGS = 64
 
 
 def is_loopback_url(url: str) -> bool:
@@ -374,6 +376,41 @@ class LiveKitRecordingSource:
             self._receiver, self._streams, ingress, source_names, on_failure=on_failure
         )
         self._feed.start()
+
+    def timing_evidence(self) -> dict[str, Any] | None:
+        """The clock mappings this take's video was placed on the PC's clock with, for the take's attributes.
+
+        None when there is no clock sync (nothing LiveKit was recorded). Read before ``stop()``, which leaves the
+        room.
+        """
+        receiver = self._receiver
+        clock_sync = None if receiver is None else receiver.clock_sync
+        if clock_sync is None:
+            return None
+        mappings = clock_sync.estimator.history[-_MAX_EVIDENCE_MAPPINGS:]
+        return {
+            "clock_mapping": {
+                "method": "four_timestamp_exchange",
+                "local_clock": "pc_monotonic",
+                "remote_clock": "publisher_monotonic",
+                "streams": [{"name": s.name, "timestamp_basis": s.timestamp_basis.name} for s in self._streams],
+                "mappings": [
+                    {
+                        "epoch": m.epoch,
+                        "offset_ns": m.offset_ns,
+                        "rtt_ns": m.rtt_ns,
+                        "uncertainty_ns": m.uncertainty_ns,
+                        "accepted_at_ns": m.accepted_at_ns,
+                    }
+                    for m in mappings
+                ],
+                "discontinuity": clock_sync.discontinuity,
+                "exchanges_rejected": clock_sync.rejected,
+                "mapping_current_at_stop": clock_sync.mapping() is not None,
+            },
+            # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
+            "tracking_time": "host_poll",
+        }
 
     async def stop(self) -> None:
         """Stop feeding and leave the room. Safe to call at any point, including after a failed prepare."""

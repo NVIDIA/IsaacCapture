@@ -29,6 +29,8 @@ DEFAULT_STALE_AFTER_NS = 5_000_000_000
 DEFAULT_WINDOW = 8
 #: Relative clock rate difference tolerated between two mappings before their offsets are judged discontinuous.
 DEFAULT_DRIFT_ALLOWANCE = 200e-6
+#: Adopted mappings kept as evidence; the newest are the ones a take can be recorded under.
+_MAX_HISTORY = 256
 
 
 @dataclass(frozen=True)
@@ -96,7 +98,7 @@ class ClockEstimator:
         #: about how old the best exchange in the window is.
         self._newest_ns: int | None = None
         #: Every mapping adopted, oldest first, so a take can record the epochs and quality it was made under.
-        self.history: list[ClockMapping] = []
+        self.history: list[ClockMapping] = []  # trimmed to the newest _MAX_HISTORY
         #: Set, and left set, when a new best mapping disagrees with the last by more than their uncertainties and
         #: the allowed drift explain: mappings before it stay as they were, and a take spanning it is not aligned.
         self.discontinuity = False
@@ -135,6 +137,7 @@ class ClockEstimator:
         if candidate != previous:
             self._current = candidate
             self.history.append(candidate)
+            del self.history[:-_MAX_HISTORY]
         return None
 
     def mapping(self, now_ns: int) -> ClockMapping | None:
