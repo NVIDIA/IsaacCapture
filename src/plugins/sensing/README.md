@@ -15,6 +15,7 @@ That guide owns the operating instructions; this README maps the source tree.
 
 - [`scripts/`](scripts/): host setup, validation, diagnostics, the Bash
   compatibility Docker launcher, and `setup_orin_crosscompile.py` for building on a PC. Each entry point exposes `--help`.
+  `scripts/deploy_orin.py` builds the producer on an Orin from this checkout and runs it as a systemd service.
 - [`docker/`](docker/): example image, image-side group configuration, and
   host-side container setup.
 - [`configs/`](configs/): the platform configuration and its provenance.
