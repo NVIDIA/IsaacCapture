@@ -140,10 +140,10 @@ def confirm(channel: Channel, attempt: str, token: str, step: dict) -> None:
             channel.send({"type": "step_progress", "attempt": attempt, "token": token, "elapsed_s": elapsed})
 
 
-def export(channel: Channel, attempt: str, staging: str, side: str) -> dict:
+def export(channel: Channel, attempt: str, out_dir: str, side: str) -> dict:
     data = (b"MCAL-" + side.encode()) * 64
     name = f"{attempt}_{side}.mcal"
-    path = os.path.join(staging, name)
+    path = os.path.join(out_dir, name)
     with open(path + ".part", "wb") as handle:
         handle.write(data)
     os.rename(path + ".part", path)
@@ -189,7 +189,7 @@ def run(channel: Channel, start: dict) -> int:
                     }
                 )
                 return 1
-        exported.append(export(channel, attempt, start["staging_dir"], side))
+        exported.append(export(channel, attempt, start["out_dir"], side))
     channel.status("saving", gloves)
     files = [{k: e[k] for k in ("side", "file", "bytes", "sha256")} for e in exported]
     channel.send(
