@@ -324,6 +324,8 @@ bool JetsonEncoder::submit_dmabuf(int dmabuf_fd, int64_t timestamp_ns, FrameLeas
     const uint32_t index = v4l2_buf.index;
     m_impl->dma_leases[index].reset();
 
+    // Unverified contract: the output plane is configured NV12M (two planes) but only plane 0's fd is set, as the
+    // repository's Argus example does for the single-fd NvBufSurface Argus fills. Not run here; confirm on the target.
     auto& input = *m_impl->dma_inputs[index];
     input.planes[0].fd = dmabuf_fd;
     input.planes[0].bytesused = 1;

@@ -10,7 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 Implemented but never built or run (no Argus SDK or Argus camera available): `core/argus_capture.*` (Argus buffer
 streams into NvBufSurface DMA-BUFs), the encoder's DMA-BUF input mode (`JetsonEncoder::submit_dmabuf`), the output's
 leased-frame path, optional builds (`SENSING_WITH_SIPL`, `SENSING_WITH_ARGUS`) and `--camera-backend`/`--argus-mode`.
-Not done: dynamically loaded backend modules, a verified per-frame correlation (below), and every measurement.
+Unresolved contract (a blocker for Argus behaviour, not tested): the encoder's output plane is NV12M while the
+single-fd Argus surface fills only plane 0's fd, as the repository's Argus example does; confirm the plane contract on
+the target. Not done: dynamically loaded backend modules, a verified per-frame correlation (below), and every measurement.
 
 ## Goal
 
