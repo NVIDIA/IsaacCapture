@@ -183,11 +183,11 @@ async def publish_stream(
     frame_id = 0
     while not stop.is_set():
         frame_id += 1
-        # The raw capture counter is taken first, as the sensor would stamp it before encoding.
+        # Both stamps are taken together, before the frame is synthesized, as a camera stamps at capture.
         capture_ns = capture_clock()
+        timestamp_us = user_timestamp_us(args.timestamp_basis)
         pixels = make_pattern(args.width, args.height, spec.sensor, frame_id)
         frame = rtc.VideoFrame(args.width, args.height, rtc.VideoBufferType.RGBA, pixels.tobytes())
-        timestamp_us = user_timestamp_us(args.timestamp_basis)
         source.capture_frame(
             frame,
             timestamp_us=timestamp_us,
