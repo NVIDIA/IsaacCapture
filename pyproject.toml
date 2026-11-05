@@ -68,6 +68,8 @@ desktop-mirror = [
 ]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
+    # dex-retargeting imports six without declaring it; python-dateutil>=4 no longer pulls it in.
+    "six>=1.16",
     "scipy>=1.15.0",
     "pyyaml>=6.0.3",
     "torch>=2.7.0",
