@@ -76,9 +76,9 @@ struct FrameView
     /// CLOCK_MONOTONIC, stamped at YUV->RGBA conversion. Round-trips through
     /// the encoder, so it is what identifies a unit on the way back out.
     uint64_t timestamp_ns = 0;
-    /// CLOCK_REALTIME (Unix time) read at the same instant as timestamp_ns. Published as the frame's
-    /// application timestamp so a consumer on another host can place the frame on its own clock; it is
-    /// only as accurate as the two hosts' clock synchronisation, and it is not exposure time.
+    /// CLOCK_REALTIME (Unix time) read at the same instant as timestamp_ns: processing time, after capture and
+    /// conversion, so later than the capture event. Published as the frame's application timestamp; it is
+    /// only as accurate as the two hosts' clock synchronisation and is not a capture time.
     uint64_t unix_ns = 0;
     /// Capture time on the TSC timebase, shared by every sensor on the rig.
     /// This is what makes the two eyes pairable; a host clock is not.
