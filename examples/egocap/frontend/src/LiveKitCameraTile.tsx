@@ -67,7 +67,8 @@ export function LiveKitCameraTile({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
   // Cumulative presented-frame count of the newest frame callback, and the count at the start of the window.
-  const presentedRef = useRef<number | null>(null);
+  // The newest frame callback's cumulative presented-frame count and that frame's own presentation time (ms).
+  const presentedRef = useRef<{ presented: number; at: number } | null>(null);
   const baselineRef = useRef<{ presented: number; at: number } | null>(null);
   // Which fields this browser's frame callback reports (it varies by browser), to read off for the latency work.
   const frameFieldsRef = useRef<string>("");
@@ -112,8 +113,8 @@ export function LiveKitCameraTile({
     };
     const watchFrames = (): void => {
       if (stopped) return;
-      callbackId = element.requestVideoFrameCallback((_now, metadata) => {
-        presentedRef.current = metadata.presentedFrames;
+      callbackId = element.requestVideoFrameCallback((now, metadata) => {
+        presentedRef.current = { presented: metadata.presentedFrames, at: metadata.presentationTime ?? now };
         frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
         // The publisher's stamp for exactly this frame, by its RTP timestamp, against its expected display time.
         const rtp = (metadata as { rtpTimestamp?: number }).rtpTimestamp;
@@ -142,7 +143,7 @@ export function LiveKitCameraTile({
       if (isStale) setStale(true);
       if (frameFieldsRef.current !== "") setFrameFields(frameFieldsRef.current);
       // Displayed rate: the change in the browser's own presented-frame count over the window, not a callback tally.
-      const presented = presentedRef.current;
+      const latest = presentedRef.current;
       // The window's latency samples are summarized once and cleared; only those made under the clock mapping's
       // current epoch count, so a window spanning a discontinuity has no figure.
       const samples = latencySamplesRef.current;
@@ -162,11 +163,13 @@ export function LiveKitCameraTile({
         baselineRef.current = null;
         setFpsLabel("0 fps");
         setLatencyLabel(NO_LATENCY);
-      } else if (presented !== null) {
+      } else if (latest !== null) {
         setLatencyLabel(latencyText);
+        // Both ends of the window are frames the browser presented, so a late timer tick cannot skew the rate; a
+        // counter reset gives no figure and the new count becomes the baseline.
         const previous = baselineRef.current;
-        baselineRef.current = { presented, at: now };
-        const fps = previous === null ? null : displayedFps(previous, presented, now);
+        baselineRef.current = latest;
+        const fps = previous === null || latest.at <= previous.at ? null : displayedFps(previous, latest.presented, latest.at);
         if (fps !== null) setFpsLabel(`${fps.toFixed(0)} fps`);
       }
     }, FPS_WINDOW_MS);

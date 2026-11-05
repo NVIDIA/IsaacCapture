@@ -95,12 +95,15 @@ export class ClockEstimator {
     } else {
       this.recent.push(exchange);
       if (this.recent.length > this.window) this.recent.shift();
-      // Lowest round trip wins; the newest on a tie, so a steady link stays fresh.
+      // The exchange with the smallest uncertainty now: half its round trip plus the drift its age could have
+      // added; the newest wins ties.
       let best = this.recent[0];
       for (const e of this.recent) {
-        if (rttNs(e) < rttNs(best) || (rttNs(e) === rttNs(best) && e.t4 > best.t4)) best = e;
+        const u = this.uncertaintyOf(e, exchange.t4);
+        const bu = this.uncertaintyOf(best, exchange.t4);
+        if (u < bu || (u === bu && e.t4 > best.t4)) best = e;
       }
-      candidate = this.mappingOf(best);
+      candidate = this.mappingOf(best, exchange.t4);
     }
     this.current = candidate;
     return null;
@@ -113,12 +116,18 @@ export class ClockEstimator {
     return current;
   }
 
-  private mappingOf(e: Exchange): ClockMapping {
+  /** Half the round trip, the drift its age allows, and this browser's timer resolution. */
+  private uncertaintyOf(e: Exchange, nowNs: bigint): bigint {
+    const age = nowNs > e.t4 ? nowNs - e.t4 : 0n;
+    return rttNs(e) / 2n + (age * DEFAULT_DRIFT_ALLOWANCE_PPM) / 1_000_000n + this.timerResolutionNs;
+  }
+
+  private mappingOf(e: Exchange, nowNs: bigint = e.t4): ClockMapping {
     return {
       epoch: this.epoch,
       offsetNs: offsetNs(e),
       rttNs: rttNs(e),
-      uncertaintyNs: rttNs(e) / 2n + this.timerResolutionNs,
+      uncertaintyNs: this.uncertaintyOf(e, nowNs),
       acceptedAtNs: e.t4,
     };
   }

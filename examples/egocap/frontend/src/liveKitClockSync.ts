@@ -22,27 +22,12 @@ export function browserNowNs(): bigint {
 }
 
 /**
- * The smallest step this browser's timer takes, in ns. Browsers coarsen performance.now(), and that is an error
- * source in every exchange. When no step is seen within a short window the timer is coarser than the window
- * allows measuring, and a deliberately large resolution is reported instead of a flattering small one.
+ * A conservative bound on this browser's timer resolution, in ns. Browsers coarsen performance.now() (1 ms by
+ * default in Firefox, more with fingerprinting resistance, 0.1 ms or finer in others), and that is an error source
+ * in every exchange. It is a declared bound, not a measurement: measuring it would mean spinning on the UI thread.
+ * A browser coarser than this under-reports the uncertainty.
  */
-export function measureTimerResolutionNs(now: () => number = () => performance.now()): bigint {
-  const windowMs = 30;
-  const start = now();
-  let last = start;
-  let best = Number.POSITIVE_INFINITY;
-  let steps = 0;
-  // Bounded by iterations as well as time, so a clock that never advances cannot hang the caller.
-  for (let i = 0; i < 2_000_000 && steps < 5 && now() - start < windowMs; i += 1) {
-    const t = now();
-    if (t !== last) {
-      best = Math.min(best, t - last);
-      last = t;
-      steps += 1;
-    }
-  }
-  return steps >= 2 ? BigInt(Math.round(best * 1e6)) : 100_000_000n;
-}
+export const ASSUMED_TIMER_RESOLUTION_NS = 1_000_000n;
 
 export class LiveKitClockSync {
   readonly estimator: ClockEstimator;
@@ -54,7 +39,7 @@ export class LiveKitClockSync {
     private readonly room: Room,
     private readonly publisher: string,
     private readonly nowNs: () => bigint = browserNowNs,
-    timerResolutionNs: bigint = measureTimerResolutionNs(),
+    timerResolutionNs: bigint = ASSUMED_TIMER_RESOLUTION_NS,
   ) {
     this.estimator = new ClockEstimator(timerResolutionNs);
   }
