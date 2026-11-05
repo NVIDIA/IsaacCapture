@@ -3,7 +3,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { LiveKitCameraTile, displayedFps } from "./LiveKitCameraTile";
 import { fakeTrack } from "./livekitTestDoubles";
 
-type FrameMetadata = { presentedFrames: number; captureTime?: number; expectedDisplayTime?: number };
+type FrameMetadata = { presentedFrames: number; [field: string]: number };
 let frameCallbacks: Array<(now: number, metadata: FrameMetadata) => void> = [];
 let presentedTotal = 0;
 
@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 /** Presents `frames` frames at once: the browser's cumulative presentedFrames grows by that much. */
-function presentFrame(frames = 1, times: { captureTime?: number; expectedDisplayTime?: number } = {}): void {
+function presentFrame(frames = 1, times: Record<string, number> = {}): void {
   presentedTotal += frames;
   const cbs = frameCallbacks;
   frameCallbacks = [];
@@ -289,6 +289,29 @@ describe("LiveKitCameraTile latency", () => {
     });
     expect(statsTexts()).toContain("latency unavailable");
     expect(statsTexts().some((t) => /\bms\b/.test(t))).toBe(false);
+  });
+
+  it("lists the sorted frame-callback fields in the latency tooltip", () => {
+    renderTile();
+    presentFrame(1, { rtpTimestamp: 1, expectedDisplayTime: 2 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    presentFrame(30, { rtpTimestamp: 1, expectedDisplayTime: 2 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    const span = document.querySelectorAll(".camera-stats")[1];
+    expect(span.getAttribute("title")).toContain("reports: expectedDisplayTime, presentedFrames, rtpTimestamp.");
+  });
+
+  it("has no reports text in the tooltip before any frame", () => {
+    renderTile();
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    const span = document.querySelectorAll(".camera-stats")[1];
+    expect(span?.getAttribute("title") ?? "").not.toContain("reports:");
   });
 
   it("keeps the fixed latency span beside 0 FPS for a stale stream", () => {
