@@ -237,7 +237,7 @@ requires-dist = [
     { name = "depthai", marker = "extra == 'oak'", specifier = "==3.6.1" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'" },
-    { name = "isaaccapture-manus-calibration", directory = "../../src/plugins/manus/calibration/python" },
+    { name = "isaaccapture-manus-calibration", directory = "../../src/plugins/manus_calibration/python" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "opencv-python", specifier = "==4.12.0.88" },
@@ -414,7 +414,7 @@ wheels = [
 [[package]]
 name = "isaaccapture-manus-calibration"
 version = "0.0.0"
-source = { directory = "../../src/plugins/manus/calibration/python" }
+source = { directory = "../../src/plugins/manus_calibration/python" }
 
 [[package]]
 name = "jsonschema"

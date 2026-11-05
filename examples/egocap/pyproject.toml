@@ -145,4 +145,4 @@ members = []
 [tool.uv.sources]
 # Installed (not editable) from the checkout, so a deployed CaptureServer never needs the checkout's
 # examples/ or src/ trees at run time.
-isaaccapture-manus-calibration = { path = "../../src/plugins/manus/calibration/python" }
+isaaccapture-manus-calibration = { path = "../../src/plugins/manus_calibration/python" }

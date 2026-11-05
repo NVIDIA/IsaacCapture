@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 CaptureServer can run the Manus SDK's glove calibration on its host, on the same WebSocket connection as
 capture, and write the resulting MCAL files into the server's MCAL directory. The SDK work happens in the separate `manus_glove_calibrator` process (see
-`src/plugins/manus/calibration/README.md`); CaptureServer supervises it and stores its output.
+`src/plugins/manus_calibration/README.md`); CaptureServer supervises it and stores its output.
 
 This is vendor glove calibration only. It needs no camera, OpenXR session or capture session.
 
