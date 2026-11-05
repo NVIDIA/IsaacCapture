@@ -23,10 +23,11 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as capture_protocol
-from capture_server.client import CaptureFrame
+from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.recording_adapter import (
     RecordingAdapterError,
     RecordingIngress,
+    _raw_item_bytes,
     build_manus_glove_fields,
     build_pico_controller_fields,
     button_pressed,
@@ -583,3 +584,69 @@ def test_queue_bytes_bounds_the_queue_by_size_not_count():
 def test_queue_bytes_must_be_positive():
     with pytest.raises(ValueError):
         RecordingIngress(queue_capacity=1, queue_bytes=0, submit=lambda s: None)
+
+
+# --- raw item sizing -----------------------------------------------------------
+
+
+class _DecodedFrame:
+    """Anything with an ``image`` ndarray, as livekit_recording.MappedFrame has."""
+
+    def __init__(self, image: np.ndarray) -> None:
+        self.image = image
+
+
+def test_raw_item_bytes_sizes_a_decoded_frame_by_its_pixels():
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((10, 20, 3), dtype=np.uint8))) == 600  # type: ignore[arg-type]
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((2, 2), dtype=np.uint16))) == 8  # type: ignore[arg-type]
+
+
+def test_raw_item_bytes_keeps_sizing_the_existing_types():
+    jpeg = CameraImage(
+        session_id="s", stream_id=1, sequence=0, capture_time_ns=0, receive_time_ns=0, name="c", jpeg=b"j" * 123
+    )
+    frame = CaptureFrame(
+        session_id="s",
+        description=None,
+        stream_id=0,
+        sequence=0,
+        capture_time_ns=0,
+        receive_time_ns=0,
+        payload=b"x" * 77,
+    )
+    assert _raw_item_bytes(jpeg) == 123
+    assert _raw_item_bytes(frame) == 77
+
+
+def test_decoded_frame_larger_than_the_byte_budget_overflows_the_ingress():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        small = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))  # 300 bytes
+        big = _DecodedFrame(np.zeros((20, 20, 3), dtype=np.uint8))  # 1200 bytes, over the budget on its own
+        assert ingress.offer(big) is False  # type: ignore[arg-type]
+        assert "byte budget" in ingress.failure
+        # A failed ingress admits nothing more, even a frame that would have fit.
+        assert ingress.offer(small) is False  # type: ignore[arg-type]
+
+    asyncio.run(run())
+
+
+def test_decoded_frames_within_the_budget_are_queued():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        frame = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))
+        assert [ingress.offer(frame) for _ in range(3)] == [True, True, True]  # type: ignore[arg-type]
+        assert ingress.offer(frame) is False  # type: ignore[arg-type]  # 1200 > 1000
+        assert ingress.failure is not None
+
+    asyncio.run(run())

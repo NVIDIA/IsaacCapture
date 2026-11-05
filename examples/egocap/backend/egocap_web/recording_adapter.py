@@ -352,7 +352,11 @@ RawItem = CaptureFrame | CameraImage
 
 
 def _raw_item_bytes(raw_item: RawItem) -> int:
-    """The memory one queued raw item pins: the compressed JPEG or the raw tracking blob."""
+    """The memory one queued raw item pins: the compressed JPEG, the raw tracking blob or a decoded frame."""
+    image = getattr(raw_item, "image", None)
+    if image is not None:
+        # A decoded LiveKit frame (livekit_recording.MappedFrame) pins its pixels, not a compressed payload.
+        return image.nbytes
     return len(raw_item.jpeg) if isinstance(raw_item, CameraImage) else len(raw_item.payload)
 
 
