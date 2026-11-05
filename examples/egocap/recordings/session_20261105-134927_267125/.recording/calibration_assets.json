@@ -1,7 +1,0 @@
-{
-  "head_camera_extrinsics.json": null,
-  "head_camera_intrinsics.json": null,
-  "left_wrist_camera_intrinsics.json": null,
-  "right_wrist_camera_intrinsics.json": null,
-  "wrist_calibration_offsets.json": null
-}
