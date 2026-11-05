@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "inc/sensing_core/sipl_camera.hpp"
+#include "camera_capture.hpp"
 
 #include <sensing_livekit/video_track_sink.hpp>
 
@@ -79,8 +79,9 @@ public:
     LiveKitVideoOutput(const LiveKitVideoOutput&) = delete;
     LiveKitVideoOutput& operator=(const LiveKitVideoOutput&) = delete;
 
-    /// Never blocks on the network. A view older than the publication rate allows is skipped.
-    void submit(const FrameView& view);
+    /// Never blocks on the network. A frame sooner than the publication rate allows is skipped. Only borrowed
+    /// CUDA RGBA pixels are accepted for now; they are copied out before this returns.
+    void submit(const CaptureFrame& frame);
 
     LiveKitOutputStats stats() const;
 

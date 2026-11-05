@@ -38,14 +38,16 @@ struct CameraInfo
     double fps = 0.0;
 };
 
-/// RGBA8 in GPU memory, as the SIPL backend converts it.
+/// RGBA8 in GPU memory, as the SIPL backend converts it. Borrowed: the backend recycles the buffer, so a consumer
+/// copies it out before its next acquire_latest() for the same camera, and the frame's lease is empty.
 struct CudaRgbaPixels
 {
     uintptr_t device_ptr = 0;
     size_t pitch_bytes = 0;
 };
 
-/// NV12 in a DMA-BUF, as an Argus buffer stream produces it. The plane layout is what the encoder must accept.
+/// NV12 in a DMA-BUF, as an Argus buffer stream produces it. Leased: valid until the frame's lease is released.
+/// The plane layout is what the encoder must accept.
 struct DmaBufNv12Pixels
 {
     int fd = -1;
@@ -93,8 +95,9 @@ private:
     std::function<void()> m_release;
 };
 
-/// One captured frame. The pixels stay valid until `lease` is destroyed or reset; a consumer that needs them
-/// longer (an encoder holding an input buffer) keeps the lease.
+/// One captured frame. Pixels that are leased stay valid until `lease` is destroyed or reset, so a consumer that
+/// needs them longer (an encoder holding an input buffer) keeps the lease; borrowed pixels (see CudaRgbaPixels)
+/// are valid only until the next acquire_latest() for the same camera.
 struct CaptureFrame
 {
     uint32_t camera_id = 0;
