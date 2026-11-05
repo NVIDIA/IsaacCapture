@@ -30,9 +30,13 @@ from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
-#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly, and a
-#: step of the Unix clock is caught within this interval.
+#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly; a step of
+#: the Unix clock is simply reflected in the offset at the next measurement, not detected.
 _PAIR_MAX_AGE_S = 1.0
+#: A frame older than this when it arrives, or stamped further than the lead below in the future, means the
+#: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
+_MAX_FRAME_AGE_S = 2.0
+_MAX_FRAME_LEAD_S = 0.05
 #: Readings per pair; the one read in the shortest span is the most trustworthy.
 _PAIR_ATTEMPTS = 3
 
@@ -77,6 +81,26 @@ class UnixClockMap:
         assert best is not None
         self._offset_s = best[1]
         self._measured_at_ns = self._monotonic_ns()
+
+
+def unrecordable_reason(started: Any) -> str | None:
+    """Why a started session's LiveKit streams cannot all be recorded, naming the first that cannot; else None.
+
+    A stream that cannot be recorded is never left out of a take silently: recording is refused until it is
+    removed from the streams file or made recordable.
+    """
+    if started is None:
+        return None
+    for stream in started.streams:
+        if not isinstance(stream, p.LiveKitCameraStream):
+            continue
+        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
+            return (
+                f"LiveKit stream {stream.name!r}: its timestamps are not a capture time, so it cannot be recorded"
+            )
+        if None in (stream.width, stream.height, stream.fps):
+            return f"LiveKit stream {stream.name!r}: width, height and fps must be configured to record it"
+    return None
 
 
 class LiveKitRecordingFeed:
@@ -150,12 +174,20 @@ class LiveKitRecordingFeed:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
                 return
             capture_time = self._clock_map.monotonic_seconds(frame.user_timestamp_us)
+            receive_time = frame.receive_time_ns / 1e9
+            age = receive_time - capture_time
+            if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
+                # A coarse validity check: a capture time far from this host's clock is not a capture time here.
+                self._fail(
+                    f"{stream.name}: the publisher's clock disagrees with this host's (frame age {age:+.3f} s)"
+                )
+                return
             sample = VideoSample(
                 source=source,
                 image=frame.image,
                 pixel_format=PixelFormat.RGB8,
                 capture_time=capture_time,
-                receive_time=frame.receive_time_ns / 1e9,
+                receive_time=receive_time,
             )
             if not self._ingress.offer(sample):
                 # The ingress refuses once it has failed or stopped; it reports its own reason.
