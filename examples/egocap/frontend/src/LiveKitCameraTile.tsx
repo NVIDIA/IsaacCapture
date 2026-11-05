@@ -50,6 +50,9 @@ export function LiveKitCameraTile({
   // Cumulative presented-frame count of the newest frame callback, and the count at the start of the window.
   const presentedRef = useRef<number | null>(null);
   const baselineRef = useRef<{ presented: number; at: number } | null>(null);
+  // Which fields this browser's frame callback reports (it varies by browser), to read off for the latency work.
+  const frameFieldsRef = useRef<string>("");
+  const [frameFields, setFrameFields] = useState<string>("");
   const [fpsLabel, setFpsLabel] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
   const [stale, setStale] = useState(false);
@@ -85,6 +88,7 @@ export function LiveKitCameraTile({
       if (stopped) return;
       callbackId = element.requestVideoFrameCallback((_now, metadata) => {
         presentedRef.current = metadata.presentedFrames;
+        frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
         markFrame();
         watchFrames();
       });
@@ -98,6 +102,7 @@ export function LiveKitCameraTile({
       const last = lastFrameAtRef.current;
       const isStale = last !== null && now - last > FRAME_STALE_AFTER_MS;
       if (isStale) setStale(true);
+      if (frameFieldsRef.current !== "") setFrameFields(frameFieldsRef.current);
       // Displayed rate: the change in the browser's own presented-frame count over the window, not a callback tally.
       const presented = presentedRef.current;
       if (!hasFrameCallback) {
@@ -145,7 +150,9 @@ export function LiveKitCameraTile({
         {fpsLabel !== null && (
           <span
             className="camera-stats"
-            title="No qualified capture time is associated with the displayed frame yet, so no latency is shown"
+            title={`No qualified capture time is associated with the displayed frame yet, so no latency is shown.${
+              frameFields === "" ? "" : ` This browser's frame callback reports: ${frameFields}.`
+            }`}
           >
             latency unavailable
           </span>
