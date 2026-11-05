@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <cuda.h>
 #include <cudaEGL.h>
 #include <cuda_runtime.h>
@@ -848,6 +849,29 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
             // host clock, which carries this sensor's own queueing jitter.
             const auto& meta = nvm->GetImageData();
             const uint64_t capture_tsc_ns = meta.frameCaptureTSC;
+            // SENSING_TSC_PROBE=1 logs, twice a second, the capture TSC beside the host clocks read at dequeue. Run on
+            // the device, a difference to CLOCK_MONOTONIC_RAW that stays constant over minutes (apart from a small
+            // jitter) is what a TSC-to-host mapping would be built on; nothing here assumes one.
+            if (std::getenv("SENSING_TSC_PROBE") != nullptr)
+            {
+                static thread_local uint64_t tsc_probe_n = 0;
+                if ((tsc_probe_n++ % 30) == 0)
+                {
+                    const auto clock_ns = [](clockid_t id)
+                    {
+                        timespec ts{};
+                        clock_gettime(id, &ts);
+                        return static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
+                    };
+                    const int64_t raw_ns = clock_ns(CLOCK_MONOTONIC_RAW);
+                    const int64_t mono_ns = clock_ns(CLOCK_MONOTONIC);
+                    const int64_t real_ns = clock_ns(CLOCK_REALTIME);
+                    std::cerr << "[tsc] sensor " << sensor.info.id << " tsc_ns=" << capture_tsc_ns
+                              << " monotonic_raw_ns=" << raw_ns << " monotonic_ns=" << mono_ns
+                              << " realtime_ns=" << real_ns
+                              << " raw_minus_tsc_ns=" << (raw_ns - static_cast<int64_t>(capture_tsc_ns)) << std::endl;
+                }
+            }
             // SENSING_AE_PROBE=1 logs the sensor's exposure and gain once a
             // second. AE failures are invisible in the frame rate and hard to
             // judge by eye, and this is the only place the numbers surface.
