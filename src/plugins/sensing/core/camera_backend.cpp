@@ -57,7 +57,7 @@ CameraBackend select_camera_backend(CameraBackend requested, const std::vector<B
         if (probe == probes.end())
             throw std::runtime_error(std::string("--camera-backend=") + camera_backend_name(requested) +
                                      ": this build does not include that backend");
-        if (!probe->matches)
+        if (!probe->available || !probe->matches)
             throw std::runtime_error(std::string("--camera-backend=") + camera_backend_name(requested) + ": " +
                                      describe(*probe));
         return requested;
@@ -66,7 +66,7 @@ CameraBackend select_camera_backend(CameraBackend requested, const std::vector<B
     std::vector<CameraBackend> matching;
     for (const auto& probe : probes)
     {
-        if (probe.matches)
+        if (probe.available && probe.matches)
             matching.push_back(probe.backend);
     }
     if (matching.size() == 1)

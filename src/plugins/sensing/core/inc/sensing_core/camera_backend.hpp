@@ -23,7 +23,7 @@ struct BackendProbe
     CameraBackend backend = CameraBackend::Sipl;
     /// The backend is built in and its SDK loaded; false means it cannot run here at all.
     bool available = false;
-    /// The backend is available and found the configured cameras.
+    /// The backend found the configured cameras. Counts only when `available` is also true.
     bool matches = false;
     /// Why not, for the message when this backend was wanted: a missing library, no device, a bad configuration.
     std::string detail;
