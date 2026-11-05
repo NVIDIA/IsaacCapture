@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Direct LiveKit camera preview: the station's room/track mapping, a subscribe-only token, and one endpoint.
+"""Viewer tokens for the LiveKit video CaptureServer offers.
 
-The camera host publishes already-encoded H.264 into a LiveKit room. The browser subscribes to those tracks
-itself, so the backend never decodes, re-encodes or relays video and does not take part in recording. This module
-only tells the browser where the room is and hands it a short-lived token that can subscribe and nothing else.
+CaptureServer says where the video is (URL, room, publisher, tracks) in the session's ``livekit_streams``. This
+module only issues the credential a consumer needs to join that room and subscribe, so a missing signing key can
+stop video but never hides the stream list. The backend does not decode or relay video.
 
 ``LIVEKIT_API_KEY`` and ``LIVEKIT_API_SECRET`` belong to the LiveKit server and are read from the backend's
-environment only; they never appear in the station YAML, a response or a log line.
+environment only; they never appear in a response or a log line.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ import json
 import os
 import secrets
 import time
-from dataclasses import dataclass
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -34,27 +33,6 @@ TOKEN_TTL_S = 3600
 router = APIRouter()
 
 
-@dataclass(frozen=True)
-class LiveKitTrack:
-    """One camera tile: the operator-facing ``name`` and the published video track ``track`` it shows."""
-
-    name: str
-    track: str
-
-
-@dataclass(frozen=True)
-class LiveKitPreview:
-    """Where the camera host publishes: signalling ``url``, ``room``, ``publisher`` identity and its tracks.
-
-    A track name is only unique within one participant, so the browser selects by publisher plus track.
-    """
-
-    url: str
-    room: str
-    publisher: str
-    tracks: tuple[LiveKitTrack, ...]
-
-
 def _b64url(data: bytes) -> str:
     """URL-safe base64 without padding, as JWT segments require."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -65,7 +43,7 @@ def subscriber_token(*, api_key: str, api_secret: str, room: str, now: int, ttl_
     header = {"alg": "HS256", "typ": "JWT"}
     claims = {
         "iss": api_key,
-        # Each browser gets its own identity: LiveKit disconnects an existing participant that reuses one.
+        # Each consumer gets its own identity: LiveKit disconnects an existing participant that reuses one.
         "sub": f"egocap-viewer-{secrets.token_hex(4)}",
         "nbf": now,
         "exp": now + ttl_s,
@@ -85,30 +63,24 @@ def subscriber_token(*, api_key: str, api_secret: str, room: str, now: int, ttl_
     return f"{signing_input}.{_b64url(signature)}"
 
 
-@router.get("/api/livekit-preview")
-async def get_livekit_preview(request: Request) -> JSONResponse:
-    """The room, tracks and a fresh subscribe-only token for the browser, or why preview is unavailable.
+@router.get("/api/livekit-token")
+async def get_livekit_token(request: Request, room: str = "") -> JSONResponse:
+    """A fresh subscribe-only token for ``room``, which must be one the current session offers.
 
     Like the camera preview routes this is unauthenticated: anyone who can reach the backend can watch the
-    cameras, which is why the token cannot publish.
+    cameras, which is why the token cannot publish and is only issued for rooms CaptureServer offers.
     """
     headers = {"Cache-Control": "no-store"}
-    preview: LiveKitPreview | None = request.app.state.livekit_preview
-    # Not configured is a normal state for a station that previews through CaptureServer instead.
-    if preview is None:
-        return JSONResponse({"detail": "LiveKit preview is not configured"}, status_code=404, headers=headers)
+    started = request.app.state.monitor.native.started
+    offered = {s.room for s in started.livekit_streams} if started is not None else set()
+    # A token for an arbitrary room would let a caller probe or join rooms this station never advertised.
+    if room not in offered:
+        return JSONResponse({"detail": "room is not offered by CaptureServer"}, status_code=404, headers=headers)
     api_key = os.environ.get(API_KEY_ENV, "")
     api_secret = os.environ.get(API_SECRET_ENV, "")
-    # Configured but unable to sign: say what to set, without echoing any value.
+    # Offered but unable to sign: say what to set, without echoing any value.
     if not api_key or not api_secret:
         detail = f"{API_KEY_ENV} and {API_SECRET_ENV} must be set for the backend"
         return JSONResponse({"detail": detail}, status_code=503, headers=headers)
-    token = subscriber_token(api_key=api_key, api_secret=api_secret, room=preview.room, now=int(time.time()))
-    body = {
-        "url": preview.url,
-        "room": preview.room,
-        "publisher": preview.publisher,
-        "token": token,
-        "tracks": [{"name": t.name, "track": t.track} for t in preview.tracks],
-    }
-    return JSONResponse(body, headers=headers)
+    token = subscriber_token(api_key=api_key, api_secret=api_secret, room=room, now=int(time.time()))
+    return JSONResponse({"token": token}, headers=headers)
