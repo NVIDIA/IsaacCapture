@@ -1,0 +1,75 @@
+{
+  "cameraConfigs": [
+    {
+      "name": "MOCK_S56C_2_SHF3L",
+      "cameraModules": [
+        {
+          "name": "S56C_HEAD",
+          "linkIndex": 0,
+          "transportIndex": 1
+        },
+        {
+          "name": "SHF3L_LEFT",
+          "linkIndex": 1,
+          "transportIndex": 1
+        },
+        {
+          "name": "SHF3L_RIGHT",
+          "linkIndex": 2,
+          "transportIndex": 1
+        }
+      ]
+    },
+    {
+      "name": "S56C_HEAD",
+      "sensorInfo": [
+        {
+          "virtualChannels": [
+            {
+              "width": 2560,
+              "height": 1984,
+              "fps": 30.0
+            }
+          ]
+        },
+        {
+          "virtualChannels": [
+            {
+              "width": 2560,
+              "height": 1984,
+              "fps": 30.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SHF3L_LEFT",
+      "sensorInfo": [
+        {
+          "virtualChannels": [
+            {
+              "width": 1920,
+              "height": 1536,
+              "fps": 30.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SHF3L_RIGHT",
+      "sensorInfo": [
+        {
+          "virtualChannels": [
+            {
+              "width": 1920,
+              "height": 1536,
+              "fps": 30.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
