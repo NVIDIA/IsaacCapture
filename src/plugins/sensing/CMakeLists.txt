@@ -111,8 +111,6 @@ if(SENSING_WITH_ARGUS)
     endif()
     message(STATUS "SENSING plugin: Argus=${ARGUS_INCLUDE_DIR} (${ARGUS_LIBRARY})")
 endif()
-    message(STATUS "SENSING plugin: Argus=${ARGUS_INCLUDE_DIR}")
-endif()
 
 # ==============================================================================
 # Jetson V4L2 encoder
