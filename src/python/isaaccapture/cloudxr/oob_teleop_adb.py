@@ -396,7 +396,10 @@ def assert_headset_awake(
                 check=False,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+            # Actual power-state polling, rather than a key event, decides strict readiness.
+            log.debug(
+                "ADB wake request failed; continuing wakefulness polling", exc_info=True
+            )
 
     log.debug(
         "Headset appears asleep (wakefulness=%s). Put it on or cover the "

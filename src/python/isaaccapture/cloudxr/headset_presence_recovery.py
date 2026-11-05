@@ -19,6 +19,8 @@ _SENSOR = "stk_stk3x1x_prox Proximity Sensor Wakeup"
 
 @dataclass(frozen=True)
 class PresenceObservation:
+    """Presence and power state from one selected-headset probe."""
+
     presence: str
     wakefulness: str
     supported: bool = True
@@ -141,6 +143,7 @@ class PresenceRecovery:
         }
 
     async def observe(self) -> PresenceObservation:
+        """Probe current PICO wear/power state, or mark other vendors unsupported."""
         # Check identity on each probe: a reboot/reconnect cannot inherit capability.
         vendor = await self.command(
             self.serial, ["shell", "getprop", "ro.product.manufacturer"]
@@ -247,6 +250,7 @@ class PresenceRecovery:
             return min(10.0, 2.0 ** min(self.failures - 1, 4))
 
     async def run(self) -> None:
+        """Poll until the owning lifecycle cancels this worker."""
         while True:
             delay = await self.step()
             await asyncio.sleep(delay)
