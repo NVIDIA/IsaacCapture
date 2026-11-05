@@ -4,10 +4,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { LiveKitCameraTile, displayedFps } from "./LiveKitCameraTile";
+import { LiveKitCameraTile, displayedFps, latencySummary } from "./LiveKitCameraTile";
 import { fakeTrack } from "./livekitTestDoubles";
 
-let frameCallbacks: Array<(now: number, metadata: { presentedFrames: number }) => void> = [];
+type FrameMetadata = { presentedFrames: number; captureTime?: number; expectedDisplayTime?: number };
+let frameCallbacks: Array<(now: number, metadata: FrameMetadata) => void> = [];
 let presentedTotal = 0;
 
 beforeEach(() => {
@@ -30,11 +31,11 @@ afterEach(() => {
 });
 
 /** Presents `frames` frames at once: the browser's cumulative presentedFrames grows by that much. */
-function presentFrame(frames = 1): void {
+function presentFrame(frames = 1, times: { captureTime?: number; expectedDisplayTime?: number } = {}): void {
   presentedTotal += frames;
   const cbs = frameCallbacks;
   frameCallbacks = [];
-  act(() => cbs.forEach((cb) => cb(0, { presentedFrames: presentedTotal })));
+  act(() => cbs.forEach((cb) => cb(0, { presentedFrames: presentedTotal, ...times })));
 }
 
 describe("LiveKitCameraTile placeholders", () => {
@@ -163,7 +164,7 @@ describe("LiveKitCameraTile FPS label", () => {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(document.querySelector(".camera-stats")).toBeNull(); // first window only sets the baseline
+    expect(document.body.textContent).not.toMatch(/FPS/); // first window only sets the baseline
     presentFrame(30);
     act(() => {
       vi.advanceTimersByTime(1000);
@@ -201,5 +202,71 @@ describe("LiveKitCameraTile FPS label", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(document.querySelector(".camera-stats")?.textContent).toBe("FPS unavailable");
+  });
+});
+
+describe("latencySummary", () => {
+  it("is null for no samples", () => {
+    expect(latencySummary([])).toBeNull();
+  });
+
+  it("takes the median of a small set", () => {
+    expect(latencySummary([30, 10, 20])?.median).toBe(20);
+  });
+
+  it("puts p95 within the top 5 of 100 samples", () => {
+    const samples = Array.from({ length: 100 }, (_, i) => i + 1);
+    expect(latencySummary(samples)!.p95).toBeGreaterThanOrEqual(96);
+  });
+});
+
+describe("LiveKitCameraTile latency label", () => {
+  function renderTile() {
+    return render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+  }
+  const statsTexts = (): string[] => Array.from(document.querySelectorAll(".camera-stats")).map((e) => e.textContent ?? "");
+
+  it("shows median and p95 of expectedDisplayTime - captureTime after a window", () => {
+    renderTile();
+    for (let i = 0; i < 3; i++) presentFrame(1, { captureTime: 1000 + i, expectedDisplayTime: 1070 + i });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("70 ms (p95 70)");
+  });
+
+  it("shows latency unavailable when frames carry no captureTime", () => {
+    renderTile();
+    presentFrame(1);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("latency unavailable");
+  });
+
+  it("shows no latency label for a stale stream", () => {
+    renderTile();
+    presentFrame(1, { captureTime: 1000, expectedDisplayTime: 1070 });
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(statsTexts()).toEqual(["0 FPS"]);
+  });
+
+  it("ignores negative and non-finite latency samples", () => {
+    renderTile();
+    presentFrame(1, { captureTime: 1100, expectedDisplayTime: 1000 });
+    presentFrame(1, { captureTime: 1000, expectedDisplayTime: NaN });
+    presentFrame(1, { captureTime: 1000, expectedDisplayTime: Infinity });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("latency unavailable");
+    presentFrame(1, { captureTime: 1000, expectedDisplayTime: 1040 });
+    presentFrame(1, { captureTime: 1100, expectedDisplayTime: 1000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("40 ms (p95 40)");
   });
 });
