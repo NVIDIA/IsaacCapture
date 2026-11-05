@@ -270,3 +270,52 @@ describe("LiveKitCameraTile latency label", () => {
     expect(statsTexts()).toContain("40 ms (p95 40)");
   });
 });
+
+describe("LiveKitCameraTile backend latency", () => {
+  const PC = {
+    basis: "SENSOR_CAPTURE_UNIX_US",
+    summary: { median_ms: 52.4, p95_ms: 80.6, samples: 30 },
+    note: "",
+  };
+  const statsTexts = (): string[] =>
+    Array.from(document.querySelectorAll(".camera-stats")).map(
+      (e) => e.textContent ?? "",
+    );
+  const tile = () => (
+    <LiveKitCameraTile
+      name="Head"
+      track={fakeTrack()}
+      phase="connected"
+      primary={false}
+      pcLatency={PC}
+    />
+  );
+
+  it("shows the backend figure when the browser has no latency", () => {
+    render(tile());
+    presentFrame(1);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("52 ms (p95 81) to PC");
+  });
+
+  it("prefers the browser's own figure", () => {
+    render(tile());
+    presentFrame(1, { captureTime: 1000, expectedDisplayTime: 1070 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(statsTexts()).toContain("70 ms (p95 70)");
+    expect(statsTexts().some((t) => t.includes("to PC"))).toBe(false);
+  });
+
+  it("shows nothing about latency for a stale stream", () => {
+    render(tile());
+    presentFrame(1);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(statsTexts()).toEqual(["0 FPS"]);
+  });
+});
