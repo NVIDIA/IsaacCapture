@@ -4,10 +4,13 @@
 
 """Feeds received LiveKit camera frames into a take's recording ingress.
 
-A frame is recorded only when its timestamp is a capture time (``SENSOR_CAPTURE_UNIX_US``), which can then be put
-on this machine's monotonic clock, the same clock the tracking samples use. A stream stamped with the publisher's
-monotonic clock or with its processing time is not a capture time, so the feed stops with that reason instead of
-recording a guessed one. Arrival time is never used as capture time.
+A frame is recorded only when its timestamp is a capture event on the publisher's monotonic clock
+(``SENSOR_CAPTURE_MONOTONIC_US``). It is placed on this machine's monotonic clock, the one the tracking samples
+use, through the mapping the receiver's clock-sync client builds from four-timestamp exchanges with the same
+publisher. There is one path: a stream with any other basis, a missing or stale mapping, or a mapping that jumped
+during the take stops the feed with that reason instead of recording a guessed time. Arrival time is never used as
+capture time. A mapping carries its uncertainty (half the exchange round trip), not an accuracy claim about the
+sensor.
 
 Tracking times come from CaptureServer's monotonic clock, which agrees with this process's only when both run on
 one machine, so recording LiveKit video is refused unless CaptureServer's URL is a loopback address.
@@ -19,7 +22,6 @@ import asyncio
 import contextlib
 import ipaddress
 import logging
-import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
@@ -32,81 +34,16 @@ from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
-#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly (a slewing
-#: clock moves them well under a millisecond per second), so a larger change between two measurements is a step.
-_PAIR_MAX_AGE_S = 1.0
-#: An offset change below this is measurement noise or slew; above it, and above a few times the bracket's own
-#: uncertainty, the Unix clock stepped and the take's capture times can no longer be trusted.
-_STEP_FLOOR_S = 0.005
-_STEP_UNCERTAINTY_FACTOR = 4
 #: A frame older than this when it arrives, or stamped further than the lead below in the future, means the
 #: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
 _MAX_FRAME_AGE_S = 2.0
 _MAX_FRAME_LEAD_S = 0.05
 #: How long a published stream may send nothing before the take ends. Normal frame gaps are tens of milliseconds.
 _MAX_SILENCE_S = 5.0
-#: Readings per pair; the one read in the shortest span is the most trustworthy.
-_PAIR_ATTEMPTS = 3
 #: How long the room join may take before the take's start is refused.
 _JOIN_TIMEOUT_S = 15.0
 #: How long leaving the room may take before teardown moves on and lets the leave finish in the background.
 _LEAVE_TIMEOUT_S = 10.0
-
-
-class UnixClockMap:
-    """Converts Unix-time microseconds to this process's monotonic seconds, from a recently measured pair.
-
-    The pair is two clock readings taken back to back and refreshed about once a second, from the consumer's
-    thread and never from an SDK callback. It converts on this machine only and says nothing about whether the
-    publisher's clock agrees with this one. It keeps the uncertainty of its pair (half the bracketing span) and
-    flags a discontinuity of the Unix clock between two measurements (a heuristic, not proof of a step or of an
-    accuracy bound): `step_detected` stays set, because samples already mapped are never remapped with a newer
-    offset, and a map covers one take. Frames mapped between a step and its detection are already recorded with the
-    old offset.
-    """
-
-    step_detected = False
-    uncertainty_s: float | None = None
-
-    def __init__(
-        self,
-        *,
-        monotonic_ns: Callable[[], int] = time.monotonic_ns,
-        unix_ns: Callable[[], int] = time.time_ns,
-    ) -> None:
-        self._monotonic_ns = monotonic_ns
-        self._unix_ns = unix_ns
-        self._offset_s = 0.0
-        self._measured_at_ns: int | None = None
-
-    def monotonic_seconds(self, unix_us: int) -> float:
-        """The monotonic-clock time, in seconds, of the Unix time ``unix_us`` (microseconds)."""
-        now = self._monotonic_ns()
-        if self._measured_at_ns is None or now - self._measured_at_ns > _PAIR_MAX_AGE_S * 1e9:
-            self._measure()
-        return unix_us / 1e6 + self._offset_s
-
-    def _measure(self) -> None:
-        """Take the pair read in the shortest span: the Unix reading is taken between two monotonic ones."""
-        best: tuple[int, float] | None = None
-        for _ in range(_PAIR_ATTEMPTS):
-            before = self._monotonic_ns()
-            unix = self._unix_ns()
-            after = self._monotonic_ns()
-            span = after - before
-            if best is None or span < best[0]:
-                # The Unix reading happened somewhere in [before, after]; its midpoint is the best estimate.
-                best = (span, ((before + after) / 2 - unix) / 1e9)
-        assert best is not None
-        span_ns, offset_s = best
-        uncertainty_s = span_ns / 2e9
-        if self._measured_at_ns is not None:
-            bound_s = max(_STEP_FLOOR_S, _STEP_UNCERTAINTY_FACTOR * max(uncertainty_s, self.uncertainty_s or 0.0))
-            if abs(offset_s - self._offset_s) > bound_s:
-                self.step_detected = True
-        self._offset_s = offset_s
-        self.uncertainty_s = uncertainty_s
-        self._measured_at_ns = self._monotonic_ns()
 
 
 def is_loopback_url(url: str) -> bool:
@@ -140,9 +77,10 @@ def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> 
                 f"LiveKit stream {stream.name!r}: recording needs CaptureServer on this machine "
                 f"(its clock must match tracking's), but it is at {capture_server_url!r}"
             )
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
+        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US:
             return (
-                f"LiveKit stream {stream.name!r}: its timestamps are not a capture time, so it cannot be recorded"
+                f"LiveKit stream {stream.name!r}: its timestamps are not a capture event on the publisher's "
+                "monotonic clock, so it cannot be recorded"
             )
         if None in (stream.width, stream.height, stream.fps):
             return f"LiveKit stream {stream.name!r}: width, height and fps must be configured to record it"
@@ -163,7 +101,6 @@ class LiveKitRecordingFeed:
         ingress: RecordingIngress,
         source_names: Mapping[int, str],
         *,
-        clock_map: UnixClockMap | None = None,
         on_failure: Callable[[str], None] | None = None,
     ) -> None:
         missing = [s.name for s in streams if s.stream_id not in source_names]
@@ -173,7 +110,11 @@ class LiveKitRecordingFeed:
         self._streams = {s.stream_id: s for s in streams}
         self._ingress = ingress
         self._source_names = dict(source_names)
-        self._clock_map = clock_map or UnixClockMap()
+        # The receiver was started with clock sync, so its client maps the publisher's clock onto this one.
+        clock_sync = receiver.clock_sync
+        if clock_sync is None:
+            raise ValueError("the receiver has no clock-sync client; start it with clock_sync=True")
+        self._clock = clock_sync
         self._on_failure = on_failure
         self._tasks: list[asyncio.Task[None]] = []
         self.failure: str | None = None
@@ -223,11 +164,9 @@ class LiveKitRecordingFeed:
         """Feed one stream until the take fails or the feed is stopped."""
         stream = self._streams[stream_id]
         source = self._source_names[stream_id]
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
+        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US:
             # Checked before any frame arrives: this stream cannot become recordable by waiting.
-            self._fail(
-                f"{stream.name}: its timestamps are not a capture time, so it cannot be aligned with tracking"
-            )
+            self._fail(f"{stream.name}: its timestamps are not a capture event on the publisher's monotonic clock")
             return
         while self.failure is None:
             try:
@@ -258,13 +197,18 @@ class LiveKitRecordingFeed:
             if frame.user_timestamp_us is None:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
                 return
-            capture_time = self._clock_map.monotonic_seconds(frame.user_timestamp_us)
-            if self._clock_map.step_detected:
-                # Frames already recorded keep their mapping; none after the step is recorded with a guessed one.
+            # A mapping that jumped during the take, or went missing or stale, ends it: frames already recorded
+            # keep the mapping they were made under, and none after is recorded with a guessed one.
+            if self._clock.discontinuity:
+                self._fail(f"{stream.name}: the publisher's clock mapping jumped during the take")
+                return
+            mapping = self._clock.mapping()
+            if mapping is None:
                 self._fail(
-                    f"{stream.name}: this host's clock stepped during the take, so capture times are untrustworthy"
+                    f"{stream.name}: no current clock mapping from the publisher (its clock-sync replies stopped)"
                 )
                 return
+            capture_time = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
             receive_time = frame.receive_time_ns / 1e9
             age = receive_time - capture_time
             if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
@@ -298,7 +242,7 @@ def recordable_livekit_streams(started: Any) -> tuple[p.LiveKitCameraStream, ...
         s
         for s in started.streams
         if isinstance(s, p.LiveKitCameraStream)
-        and s.timestamp_basis is p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+        and s.timestamp_basis is p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
         and None not in (s.width, s.height, s.fps)
     )
 
@@ -340,7 +284,7 @@ class LiveKitRecordingSource:
         self._streams = tuple(self._recordable_streams())
         if not self._streams:
             return
-        receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room))
+        receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room), clock_sync=True)
         self._receiver = receiver
         try:
             await self._join(receiver)
@@ -355,6 +299,7 @@ class LiveKitRecordingSource:
                         f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "
                         f"expected {stream.width}x{stream.height}"
                     )
+            await self._wait_for_mapping(receiver)
         except asyncio.TimeoutError as exc:
             await self.stop()
             raise RuntimeError("a LiveKit stream sent no frame before the recording could start") from exc
@@ -406,6 +351,17 @@ class LiveKitRecordingSource:
                 logger.warning("%s failed: %s", what, finished.exception())
 
         task.add_done_callback(_done)
+
+    async def _wait_for_mapping(self, receiver: LiveKitFrameReceiver) -> None:
+        """Wait for the publisher's first clock mapping; without one its capture times cannot be placed."""
+        clock_sync = receiver.clock_sync
+        deadline = asyncio.get_running_loop().time() + self._first_frame_timeout_s
+        while clock_sync is None or clock_sync.mapping() is None:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError(
+                    "the publisher did not answer clock-sync requests, so its capture times cannot be used"
+                )
+            await asyncio.sleep(0.05)
 
     def start(self, ingress: RecordingIngress, on_failure: Callable[[str], None]) -> None:
         """Begin feeding the take's ingress with frames acquired from now on."""
