@@ -21,14 +21,17 @@ class LiveKitVideoOutput;
 /**
  * @brief Multi-sensor SENSING camera publisher.
  *
- * One SiplCamera owns every sensor, because INvSIPLCamera::GetInstance() is process-wide -- there is no
- * per-sensor capture object to hold. Each update() polls every sensor's latest-frame mailbox and hands a new
+ * One CameraCapture owns every camera of the rig (SIPL's camera object is process-wide, so there is no
+ * per-camera capture object to hold). Each update() polls every sensor's latest-frame mailbox and hands a new
  * frame to that sensor's LiveKit track. Geometry is per sensor and comes from the platform config.
  */
 class SensingCamera
 {
 public:
-    SensingCamera(const SensingConfig& config, const std::vector<StreamConfig>& streams);
+    /// `camera` is the opened backend; its camera ids are what StreamConfig::sensor_id names.
+    SensingCamera(const SensingConfig& config,
+                  std::unique_ptr<CameraCapture> camera,
+                  const std::vector<StreamConfig>& streams);
     ~SensingCamera();
 
     SensingCamera(const SensingCamera&) = delete;

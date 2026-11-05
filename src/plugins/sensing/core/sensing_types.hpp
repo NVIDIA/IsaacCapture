@@ -58,6 +58,9 @@ struct SensingConfig
     /// ISP0 buffers per sensor, ~6 MB each at 2560x1984 NV12.
     uint32_t isp0_buffers = 6;
 
+    /// Argus only: the sensor mode index applied to every camera.
+    uint32_t argus_sensor_mode = 0;
+
     LiveKitConfig livekit;
 };
 
