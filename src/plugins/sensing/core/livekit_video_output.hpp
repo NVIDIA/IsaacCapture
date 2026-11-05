@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "camera_capture.hpp"
+#include "inc/sensing_core/camera_capture.hpp"
 
 #include <sensing_livekit/video_track_sink.hpp>
 

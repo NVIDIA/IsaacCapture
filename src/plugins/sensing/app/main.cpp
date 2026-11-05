@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <sensing_core/camera_backend.hpp>
 #include <sensing_core/sensing_camera.hpp>
 #include <sensing_core/sipl_camera.hpp>
 
@@ -124,6 +125,8 @@ static void print_usage(const char* program_name)
               << "Streams (repeat for each sensor):\n"
               << "  --add-stream=sensor=N,livekit=NAME   SIPL pipeline index N, published as track NAME\n"
               << "  --list-sensors                       print the pipelines, then exit\n"
+              << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
+              << "                                       only sipl is built in\n"
               << "\n"
               << "Platform:\n"
               << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
@@ -164,6 +167,7 @@ try
     std::map<uint32_t, StreamConfig> stream_map;
     std::string livekit_token_file;
     bool list_sensors = false;
+    CameraBackend requested_backend = CameraBackend::Auto;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -199,6 +203,16 @@ try
         else if (arg == "--list-sensors")
         {
             list_sensors = true;
+        }
+        else if (arg.find("--camera-backend=") == 0)
+        {
+            const auto parsed = parse_camera_backend(arg.substr(17));
+            if (!parsed)
+            {
+                std::cerr << "Error: --camera-backend must be auto, argus or sipl." << std::endl;
+                return 1;
+            }
+            requested_backend = *parsed;
         }
         else if (arg.find("--livekit-url=") == 0)
         {
@@ -269,8 +283,26 @@ try
     // Query is hardware-free -- it only parses the driver database and the JSON -- so --list-sensors
     // works on a rig whose cameras are unplugged, and the poll interval below can be derived before
     // anything is opened.
-    const auto sensors = SiplCamera::query(
-        camera_config.platform_config_json, camera_config.platform_config_name, camera_config.link_masks);
+    // Only SIPL is built in, so it is the only probe. Its query parses the configuration; it does not prove
+    // that the cameras are present, so a matching rig is a configuration that names sensors.
+    std::vector<SensorInfo> sensors;
+    BackendProbe sipl_probe;
+    sipl_probe.backend = CameraBackend::Sipl;
+    sipl_probe.available = true;
+    try
+    {
+        sensors = SiplCamera::query(
+            camera_config.platform_config_json, camera_config.platform_config_name, camera_config.link_masks);
+        sipl_probe.matches = !sensors.empty();
+        if (!sipl_probe.matches)
+            sipl_probe.detail = "the platform configuration names no sensors";
+    }
+    catch (const std::exception& e)
+    {
+        sipl_probe.detail = e.what();
+    }
+    const CameraBackend backend = select_camera_backend(requested_backend, { sipl_probe });
+    std::cout << "Camera backend: " << camera_backend_name(backend) << std::endl;
 
     if (list_sensors)
     {

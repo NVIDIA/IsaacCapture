@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "camera_capture.hpp"
+#include "inc/sensing_core/camera_capture.hpp"
 #include "sipl_camera.hpp"
 
 #include <memory>

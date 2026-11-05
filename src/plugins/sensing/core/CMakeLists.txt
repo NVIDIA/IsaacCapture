@@ -6,11 +6,14 @@ add_library(sensing_core STATIC
     sensing_camera.cpp
     sipl_camera.cpp
     sipl_capture.cpp
+    camera_backend.cpp
     jetson_encoder.cpp
     livekit_video_output.cpp
     yuv_to_rgba.cu
     rgba_to_nv12.cu
     rgba_box_downscale.cu
+    inc/sensing_core/camera_backend.hpp
+    inc/sensing_core/camera_capture.hpp
     inc/sensing_core/sensing_camera.hpp
     inc/sensing_core/sensing_types.hpp
     inc/sensing_core/sipl_camera.hpp
