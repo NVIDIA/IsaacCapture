@@ -44,7 +44,7 @@ endif()
 if(BUILD_PLUGIN_SHARPA_AVATAR)
     add_subdirectory(sharpa_avatar)
 endif()
-# Gated: Jetson only -- SIPL and the Tegra NVENC entry point are L4T-only.
+# Gated: the Jetson backend needs SIPL and the Tegra NVENC entry point (L4T only); the mock runs anywhere with CUDA.
 if(BUILD_PLUGIN_SENSING)
     add_subdirectory(sensing)
 endif()
