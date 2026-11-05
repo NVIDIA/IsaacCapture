@@ -3,16 +3,22 @@
 
 #include "inc/sensing_livekit/livekit_session.hpp"
 
+#include "inc/sensing_livekit/clock_sync.hpp"
+
 #include <livekit/encoded_video_source.h>
 #include <livekit/livekit.h>
 #include <log_bridge/logger.hpp>
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <future>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -68,10 +74,77 @@ struct LiveKitSessionImpl : livekit::RoomDelegate
 {
     ~LiveKitSessionImpl() override
     {
+        stop_clock_sync();
         // The members below are destroyed before the room: stop callbacks reaching them, then leave the
         // room while the SDK is still up (its reference is released after the room).
         room.setDelegate(nullptr);
         room.disconnect();
+    }
+
+    // A clock-sync request from the PC or the web page. t2 is read first, before anything else runs; the reply is
+    // sent from a small thread so this SDK callback never waits on a send, and t3 is written just before it.
+    void onUserPacketReceived(livekit::Room&, const livekit::UserDataPacketEvent& event) override
+    {
+        const std::int64_t t2 = monotonic_ns();
+        if (event.topic != kClockSyncTopic || event.participant == nullptr)
+            return;
+        const auto request = parse_clock_sync_request(event.data);
+        if (!request)
+            return;
+        {
+            std::lock_guard<std::mutex> lock(sync_mutex);
+            // Bounded: a flood drops the oldest request, whose requester would discard a late reply anyway.
+            if (sync_queue.size() >= kMaxPendingSync)
+                sync_queue.pop_front();
+            sync_queue.push_back({ event.participant->identity(), *request, t2 });
+        }
+        sync_wake.notify_one();
+    }
+
+    void start_clock_sync()
+    {
+        sync_thread = std::thread([this] { run_clock_sync(); });
+    }
+
+    void stop_clock_sync()
+    {
+        {
+            std::lock_guard<std::mutex> lock(sync_mutex);
+            sync_stopping = true;
+        }
+        sync_wake.notify_all();
+        if (sync_thread.joinable())
+            sync_thread.join();
+    }
+
+    void run_clock_sync()
+    {
+        for (;;)
+        {
+            PendingSync pending;
+            {
+                std::unique_lock<std::mutex> lock(sync_mutex);
+                sync_wake.wait(lock, [this] { return sync_stopping || !sync_queue.empty(); });
+                if (sync_stopping)
+                    return;
+                pending = std::move(sync_queue.front());
+                sync_queue.pop_front();
+            }
+            auto reply = build_clock_sync_reply(pending.request, pending.t2, 0);
+            try
+            {
+                const auto local = room.localParticipant().lock();
+                if (!local)
+                    continue;
+                // t3 as late as possible: nothing but the call follows it.
+                set_clock_sync_reply_t3(reply, monotonic_ns());
+                local->publishData(reply, false, { pending.identity }, kClockSyncTopic);
+            }
+            catch (const std::exception& e)
+            {
+                logger->warn("clock-sync reply failed: {}", e.what());
+            }
+        }
     }
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent& event) override
@@ -101,6 +174,19 @@ struct LiveKitSessionImpl : livekit::RoomDelegate
             logger->error("{}", message);
         }
     }
+
+    struct PendingSync
+    {
+        std::string identity;
+        ClockSyncRequest request;
+        std::int64_t t2 = 0;
+    };
+    static constexpr std::size_t kMaxPendingSync = 16;
+    std::mutex sync_mutex;
+    std::condition_variable sync_wake;
+    std::deque<PendingSync> sync_queue;
+    bool sync_stopping = false;
+    std::thread sync_thread;
 
     // Declared before the room, so destroyed after it.
     LiveKitSdkReference sdk;
@@ -280,6 +366,7 @@ std::unique_ptr<LiveKitSession> LiveKitSession::connect(const std::string& url, 
                                  " (check the URL, that the server is reachable and that the token is valid)");
     }
     impl->logger->info("Joined LiveKit room at {}", url);
+    impl->start_clock_sync();
     return std::unique_ptr<LiveKitSession>(new LiveKitSession(std::move(impl)));
 }
 
