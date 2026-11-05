@@ -438,9 +438,20 @@ describe("LiveKitCameraTile measured latency", () => {
     expect(statsTexts()[1]).toBe("– ms latency");
   });
 
-  it("is unavailable when the basis is not the capture event, even with stamps", () => {
+  it("is available for the publisher's frame-ready monotonic basis", () => {
     const track = stampedTrack();
     renderWith(track, { mapping: () => mappingOf() }, 1);
+    presentFrame(1);
+    windows(1);
+    presentFrame(1, frame);
+    windows(1);
+    expect(statsTexts()[1]).toBe("72 ms latency");
+    expect(track.lookupFrameMetadata).toHaveBeenCalledWith({ rtpTimestamp: 42 });
+  });
+
+  it("is unavailable when the basis is not a monotonic one, even with stamps", () => {
+    const track = stampedTrack();
+    renderWith(track, { mapping: () => mappingOf() }, 2);
     presentFrame(1, frame);
     windows(1);
     presentFrame(1, frame); // a frame in the second window, so it has an FPS figure beside the latency

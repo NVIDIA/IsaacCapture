@@ -93,5 +93,5 @@ CMake searches for them when the `-D` variables are not given:
   `Jetson_SIPL_API_R<release>_aarch64.tbz2` package published with the L4T release). Searched in
   `/usr/src/jetson_sipl_api`, `/opt/nvidia/jetson_sipl_api` and `$SIPL_API_DIR`.
 
-Human to fill in: download and unpacking steps for both trees belong in the user guide; they are not stated
-anywhere else in this repository.
+The steps to download and unpack both trees are not documented in this repository yet; the user guide is the
+place for them.

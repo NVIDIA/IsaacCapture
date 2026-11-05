@@ -4,13 +4,15 @@
 
 """Feeds received LiveKit camera frames into a take's recording ingress.
 
-A frame is recorded only when its timestamp is a capture event on the publisher's monotonic clock
-(``SENSOR_CAPTURE_MONOTONIC_US``). It is placed on this machine's monotonic clock, the one the tracking samples
-use, through the mapping the receiver's clock-sync client builds from four-timestamp exchanges with the same
-publisher. There is one path: a stream with any other basis, a missing or stale mapping, or a mapping that jumped
-during the take stops the feed with that reason instead of recording a guessed time. Arrival time is never used as
-capture time. A mapping carries its uncertainty (half the exchange round trip), not an accuracy claim about the
-sensor.
+A frame is recorded only when its timestamp is on the publisher's monotonic clock: the time the frame was ready
+to encode (``PUBLISHER_MONOTONIC_US``) or the sensor's capture event (``SENSOR_CAPTURE_MONOTONIC_US``). The
+saved time means whichever the stream declares; frame-ready time is later than capture by the publisher's
+capture and conversion delay, and neither is proof of physical alignment with tracking. It is placed on this
+machine's monotonic clock, the one the tracking samples use, through the mapping the receiver's clock-sync
+client builds from four-timestamp exchanges with the same publisher. There is one path: a stream with any other
+basis, a missing or stale mapping, or a mapping that jumped during the take stops the feed with that reason
+instead of recording a guessed time. Arrival time is never used as capture time. A mapping carries its
+uncertainty (half the exchange round trip), not an accuracy claim about the sensor.
 
 Tracking times come from CaptureServer's monotonic clock, which agrees with this process's only when both run on
 one machine, so recording LiveKit video is refused unless CaptureServer's URL is a loopback address.
@@ -48,6 +50,12 @@ _LEAVE_TIMEOUT_S = 10.0
 #: Most mappings recorded as a take's timing evidence, the newest ones; the estimator may have adopted more.
 _MAX_EVIDENCE_MAPPINGS = 64
 
+# The bases recorded, and what each one's time means in the saved take.
+_RECORDABLE_BASES: dict[p.LiveKitTimestampBasis, str] = {
+    p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: "frame_ready",
+    p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: "sensor_capture",
+}
+
 BUDGET_ENV = "EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"
 # A frame at 30 fps is 33 ms; a mapping uncertain by more than a few ms would blur which camera frame matches a
 # tracking sample. This default is a policy choice, not a measurement; set the environment variable to change it.
@@ -57,7 +65,7 @@ _DEFAULT_BUDGET_MS = 5.0
 # What each tracking source's saved time means today; none is a physical acquisition time.
 _TRACKING_SEMANTICS: dict[str, str] = {
     "recorded_time": "the host's poll time for every tracking source",
-    "controllers": "device value is the pose-evaluation time (a runtime-predicted XrTime), not an acquisition time",
+    "controllers": "device value is the pose-evaluation time (a predicted XrTime), not an acquisition time",
     "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
     "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
 }
@@ -108,10 +116,10 @@ def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> 
                 f"LiveKit stream {stream.name!r}: recording needs CaptureServer on this machine "
                 f"(its clock must match tracking's), but it is at {capture_server_url!r}"
             )
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US:
+        if stream.timestamp_basis not in _RECORDABLE_BASES:
             return (
-                f"LiveKit stream {stream.name!r}: its timestamps are not a capture event on the publisher's "
-                "monotonic clock, so it cannot be recorded"
+                f"LiveKit stream {stream.name!r}: its timestamps are not on the publisher's monotonic clock, "
+                "so it cannot be recorded"
             )
         if None in (stream.width, stream.height, stream.fps):
             return f"LiveKit stream {stream.name!r}: width, height and fps must be configured to record it"
@@ -197,9 +205,9 @@ class LiveKitRecordingFeed:
         """Feed one stream until the take fails or the feed is stopped."""
         stream = self._streams[stream_id]
         source = self._source_names[stream_id]
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US:
+        if stream.timestamp_basis not in _RECORDABLE_BASES:
             # Checked before any frame arrives: this stream cannot become recordable by waiting.
-            self._fail(f"{stream.name}: its timestamps are not a capture event on the publisher's monotonic clock")
+            self._fail(f"{stream.name}: its timestamps are not on the publisher's monotonic clock")
             return
         while self.failure is None:
             try:
@@ -281,7 +289,7 @@ def recordable_livekit_streams(started: Any) -> tuple[p.LiveKitCameraStream, ...
         s
         for s in started.streams
         if isinstance(s, p.LiveKitCameraStream)
-        and s.timestamp_basis is p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
+        and s.timestamp_basis in _RECORDABLE_BASES
         and None not in (s.width, s.height, s.fps)
     )
 
@@ -433,7 +441,14 @@ class LiveKitRecordingSource:
                 "method": "four_timestamp_exchange",
                 "local_clock": "pc_monotonic",
                 "remote_clock": "publisher_monotonic",
-                "streams": [{"name": s.name, "timestamp_basis": s.timestamp_basis.name} for s in self._streams],
+                "streams": [
+                    {
+                        "name": s.name,
+                        "timestamp_basis": s.timestamp_basis.name,
+                        "time_meaning": _RECORDABLE_BASES[s.timestamp_basis],
+                    }
+                    for s in self._streams
+                ],
                 "mappings": [
                     {
                         "epoch": m.epoch,
