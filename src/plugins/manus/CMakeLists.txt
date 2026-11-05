@@ -73,6 +73,12 @@ if(MANUS_SHOULD_BUILD)
   endif()
 endif()
 
+# The calibration engine and wire format need no Manus SDK, so they build, and their tests run, without it.
+# POSIX file and process calls make it Linux-only.
+if(UNIX AND NOT APPLE)
+  add_subdirectory(calibration/core)
+endif()
+
 if(NOT MANUS_SHOULD_BUILD)
   message(STATUS "Skipping Manus plugin build: ${MANUS_SKIP_REASON}")
   add_custom_target(manus_plugin_core COMMAND ${CMAKE_COMMAND} -E echo "Skipping manus_plugin_core: ${MANUS_SKIP_REASON}")
