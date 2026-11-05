@@ -205,7 +205,9 @@ foreach(_notice LICENSE NOTICE)
             DOWNLOAD_NO_EXTRACT TRUE
         )
         FetchContent_MakeAvailable(livekit_sdk_${_notice})
-        set(_found "${livekit_sdk_${_notice}_SOURCE_DIR}/${_notice}")
+        # FetchContent publishes <lowercased name>_SOURCE_DIR.
+        string(TOLOWER "${_notice}" _notice_lower)
+        set(_found "${livekit_sdk_${_notice_lower}_SOURCE_DIR}/${_notice}")
     endif()
     set(SENSING_LIVEKIT_${_notice}_FILE "${_found}" CACHE INTERNAL "")
 endforeach()
