@@ -1587,14 +1587,22 @@ jobs:
             --data-urlencode "repos=${ARTIFACTORY_REPO}" \
             "${ARTIFACTORY_URL%/}/api/search/artifact")"
 
-          result_count="$(jq '.results | length' <<< "${search_json}")"
+          # Name searches also return .whl.metadata sidecars; require the exact wheel in this repository.
+          wheel_results="$(jq --arg wheel_name "${wheel_name}" \
+            --arg storage_prefix "${ARTIFACTORY_URL%/}/api/storage/${ARTIFACTORY_REPO}/" '
+              .results
+              | if type != "array" then error("Artifactory results must be an array") else . end
+              | map(select(.uri | startswith($storage_prefix) and endswith("/" + $wheel_name)
+                  and (contains("?") | not) and (contains("#") | not)))
+            ' <<< "${search_json}")"
+          result_count="$(jq 'length' <<< "${wheel_results}")"
           if [[ "${result_count}" -ne 1 ]]; then
             echo "Expected exactly 1 Artifactory search result for ${wheel_name}, but got ${result_count}"
             echo "${search_json}"
             exit 1
           fi
 
-          storage_uri="$(jq -r '.results[0].uri // empty' <<< "${search_json}")"
+          storage_uri="$(jq -r '.[0].uri // empty' <<< "${wheel_results}")"
           if [[ -z "${storage_uri}" ]]; then
             echo "Unable to resolve storage URI for ${wheel_name}"
             echo "${search_json}"
