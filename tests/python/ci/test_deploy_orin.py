@@ -53,6 +53,7 @@ class LoadConfigTests(TempDirTestCase):
 
     def valid(self, **override):
         config = {
+            "mode": "livekit",
             "livekit_url": "wss://lk.example.org",
             "token_file": "/etc/isaaccapture/join.token",
             "args": [STREAM],
@@ -68,21 +69,55 @@ class LoadConfigTests(TempDirTestCase):
         with self.assertRaises(DeployError):
             self.load(self.valid(extra=1))
 
-    def test_rejects_only_one_of_url_and_token_file(self):
+    def test_livekit_mode_needs_both_url_and_token_file(self):
         for key in ("livekit_url", "token_file"):
             config = self.valid()
             del config[key]
             with (
                 self.subTest(only_missing=key),
-                self.assertRaisesRegex(DeployError, "go together"),
+                self.assertRaisesRegex(DeployError, "needs livekit_url and token_file"),
             ):
                 self.load(config)
+
+    def test_mode_defaults_to_direct_and_direct_is_accepted(self):
+        for config in ({"args": [STREAM]}, {"mode": "direct", "args": [STREAM]}):
+            with self.subTest(config=config):
+                self.assertEqual(self.load(config), config)
+
+    def test_direct_mode_forbids_livekit_settings(self):
+        extras = (
+            {"livekit_url": "wss://x"},
+            {"token_file": "/t"},
+            {"livekit_url": "wss://x", "token_file": "/t"},
+        )
+        for extra in extras:
+            for mode in ({}, {"mode": "direct"}):
+                with (
+                    self.subTest(extra=extra, mode=mode),
+                    self.assertRaisesRegex(DeployError, "belong to"),
+                ):
+                    self.load({"args": [STREAM], **mode, **extra})
+
+    def test_livekit_mode_without_any_livekit_settings_is_rejected(self):
+        with self.assertRaisesRegex(DeployError, "needs livekit_url"):
+            self.load({"mode": "livekit", "args": [STREAM]})
+
+    def test_mode_must_be_one_of_the_known_modes(self):
+        for mode in ("LiveKit", "", "both", None, 3):
+            with (
+                self.subTest(mode=mode),
+                self.assertRaisesRegex(DeployError, "must be one of direct, livekit"),
+            ):
+                self.load({"mode": mode, "args": [STREAM]})
+
+    def test_mode_is_an_allowed_config_key(self):
+        self.assertIn("mode", deploy_orin.CONFIG_KEYS)
 
     def test_accepts_config_with_only_args(self):
         config = {"args": [STREAM]}
         self.assertEqual(self.load(config), config)
 
-    def test_args_are_still_required_without_livekit(self):
+    def test_args_are_still_required_in_direct_mode(self):
         with self.assertRaisesRegex(DeployError, "add-stream"):
             self.load({})
 
@@ -149,6 +184,7 @@ class UnitRenderTests(unittest.TestCase):
 
     def test_render_unit(self):
         config = {
+            "mode": "livekit",
             "livekit_url": "wss://lk.example.org",
             "token_file": "/etc/t oken",
             "args": [STREAM, "--name=100%", "--x=$Y"],
@@ -167,8 +203,13 @@ class UnitRenderTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=/opt/ic/current/plugins/sensing_camera", text)
         self.assertIsNone(re.search(r"@[A-Z_]+@", text))
 
-    def test_render_unit_without_livekit_args(self):
-        text = deploy_orin.render_unit({"args": [STREAM]}, "/opt/ic", "bob", "video")
+    def test_render_unit_direct_mode_has_no_livekit_args(self):
+        for config in ({"args": [STREAM]}, {"mode": "direct", "args": [STREAM]}):
+            with self.subTest(config=config):
+                self.assert_direct_unit(config)
+
+    def assert_direct_unit(self, config):
+        text = deploy_orin.render_unit(config, "/opt/ic", "bob", "video")
         exec_start = next(ln for ln in text.splitlines() if ln.startswith("ExecStart="))
         self.assertEqual(
             exec_start,
@@ -329,7 +370,12 @@ class FakeOrin:
                 *extra,
             ]
         )
-        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+        config = {
+            "mode": "livekit",
+            "livekit_url": "wss://x",
+            "token_file": "/t",
+            "args": [STREAM],
+        }
         with mock.patch.object(deploy_orin, "repo_root", return_value=root):
             deploy_orin.run_deploy(args, config, self.target)
 
@@ -398,28 +444,65 @@ class DeployOrderTests(TempDirTestCase):
         build = next(v for k, v in orin.events if k == "ssh" and " build " in v)
         self.assertTrue(build.endswith(" --cmake-arg=-DA=1 --cmake-arg='-DB=a b'"))
 
-    def test_activate_command_line_without_livekit_appends_no_livekit(self):
+    def activate_command(self, config):
         root, _ = git_repo(self, {"src/a.cpp": "a\n"})
         orin = FakeOrin()
         args = deploy_orin.parser().parse_args(["u@orin", "--config", "orin.json"])
-        config = {"args": [STREAM]}
         with mock.patch.object(deploy_orin, "repo_root", return_value=root):
             deploy_orin.run_deploy(args, config, orin.target)
         (activate,), _ = orin.target.sudo.call_args
-        self.assertTrue((activate + " ").count(" --no-livekit ") == 1)
+        return activate
+
+    def activate_options(self, config):
+        activate = self.activate_command(config)
+        return activate[activate.index(" --sensors=") :]
+
+    def test_activate_command_direct_two_sensors(self):
+        config = {
+            "args": [
+                "--add-stream=sensor=0,direct=10.0.0.1:5000",
+                "--add-stream=sensor=1,direct=10.0.0.1:5001",
+            ]
+        }
+        self.assertEqual(
+            self.activate_options(config),
+            " --sensors=0,1 --direct-sensors=0,1 --mode=direct",
+        )
+
+    def test_activate_command_only_streams_with_a_direct_key_are_direct_sensors(self):
+        config = {
+            "args": [
+                "--add-stream=sensor=0,direct=10.0.0.1:5000",
+                "--add-stream=sensor=1,livekit=right",
+            ]
+        }
+        self.assertEqual(
+            self.activate_options(config),
+            " --sensors=0,1 --direct-sensors=0 --mode=direct",
+        )
+
+    def test_activate_command_with_no_direct_stream_has_an_empty_direct_list(self):
+        self.assertEqual(
+            self.activate_options({"args": [STREAM]}),
+            " --sensors=0 --direct-sensors= --mode=direct",
+        )
+
+    def test_activate_command_livekit_mode(self):
+        config = {
+            "mode": "livekit",
+            "livekit_url": "wss://x",
+            "token_file": "/t",
+            "args": [STREAM],
+        }
+        activate = self.activate_command(config)
+        self.assertIn(" --sensors=0 --direct-sensors= --mode=livekit", activate)
+        self.assertNotIn("--no-livekit", activate)
 
     def test_activate_command_line_uses_the_module_constants(self):
-        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
-        orin = FakeOrin()
-        args = deploy_orin.parser().parse_args(["u@orin", "--config", "orin.json"])
-        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
-        with mock.patch.object(deploy_orin, "repo_root", return_value=root):
-            deploy_orin.run_deploy(args, config, orin.target)
-        (activate,), _ = orin.target.sudo.call_args
+        activate = self.activate_command({"args": [STREAM]})
         self.assertIn(" activate ", activate)
         self.assertIn("--prefix /opt/isaaccapture", activate)
         self.assertIn("--ready-timeout 60", activate)
-        self.assertIn("--sensors 0 ", activate + " ")
         self.assertNotIn("--no-livekit", activate)
         self.assertEqual(
             (
@@ -445,7 +528,14 @@ class DeployOrderTests(TempDirTestCase):
     def test_deploy_closes_target_on_failure(self):
         config = self.tmp / "orin.json"
         config.write_text(
-            json.dumps({"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]})
+            json.dumps(
+                {
+                    "mode": "livekit",
+                    "livekit_url": "wss://x",
+                    "token_file": "/t",
+                    "args": [STREAM],
+                }
+            )
         )
         args = deploy_orin.parser().parse_args(["u@orin", "--config", str(config)])
         target = mock.Mock()
@@ -548,12 +638,6 @@ class OpenSourceTests(TempDirTestCase):
 
 
 class SyncTests(TempDirTestCase):
-    def test_file_group(self):
-        for name in ("CMakeLists.txt", "src/a.cpp", "cmake/x.cmake", "tests/t.py", "examples/egocap/x"):  # fmt: skip
-            self.assertEqual(deploy_orin.file_group(name), "source", name)
-        for name in ("deps/lib/x.c", "README.md", "examples/other/x", "docs/CMakeLists.txt"):  # fmt: skip
-            self.assertEqual(deploy_orin.file_group(name), "bulk", name)
-
     def test_tracked_files_include_edits_not_untracked(self):
         root, _ = git_repo(self, {"a.txt": "1\n", "sub/b.txt": "2\n"})
         (root / "a.txt").write_text("edited\n")
@@ -576,40 +660,28 @@ class SyncTests(TempDirTestCase):
             entries["run.sh"], deploy_orin.sha256_file(root / "run.sh") + "x"
         )
 
-    def test_group_digest_is_stable_and_tracks_changes(self):
-        entries = {"src/a": "h1-", "src/b": "h2-", "README.md": "h3-"}
-        reordered = {"README.md": "h3-", "src/b": "h2-", "src/a": "h1-"}
-        digest = deploy_orin.group_digest
-        self.assertEqual(digest(entries, "source"), digest(reordered, "source"))
-        for changed in ({"src/a": "h9-"}, {"src/a": "h1x"}, {"src/c": "h4-"}):
-            self.assertNotEqual(
-                digest(entries, "source"), digest({**entries, **changed}, "source")
-            )
-        self.assertEqual(
-            digest(entries, "bulk"), digest({**entries, "src/a": "h9-"}, "bulk")
-        )
-
     def test_diff_identical_sends_nothing(self):
         entries = {"src/a": "1-", "README.md": "2-"}
         self.assertEqual(deploy_orin.diff_manifests(entries, dict(entries)), ([], []))
 
-    def test_diff_changed_new_and_removed_per_group(self):
+    def test_diff_changed_new_and_removed(self):
         local = {"src/a": "1-", "src/new": "n-", "src/same": "s-", "README.md": "r2-", "doc": "d-"}  # fmt: skip
         remote = {"src/a": "0-", "src/same": "s-", "src/gone": "g-", "README.md": "r1-", "doc": "d-", "old.txt": "o-"}  # fmt: skip
         send, removed = deploy_orin.diff_manifests(local, remote)
         self.assertEqual(send, ["README.md", "src/a", "src/new"])
         self.assertEqual(removed, ["old.txt", "src/gone"])
 
-    def test_diff_skips_a_group_with_equal_digest_without_comparing_files(self):
-        local = {"src/a": "1-", "README.md": "r2-"}
-        remote = {"src/a": "0-", "README.md": "r1-"}
+    def test_diff_is_per_file_whatever_the_path(self):
+        local = {"src/a": "1x", "src/b": "2-", "deps/x": "3-", "z": "4-"}
+        remote = {"src/a": "1-", "src/b": "2-", "deps/x": "9-", "gone/y": "5-"}
+        self.assertEqual(
+            deploy_orin.diff_manifests(local, remote),
+            (["deps/x", "src/a", "z"], ["gone/y"]),
+        )
 
-        def fake_digest(entries, group):
-            return "same" if group == "source" else repr(sorted(entries.items()))
-
-        with mock.patch.object(deploy_orin, "group_digest", fake_digest):
-            send, removed = deploy_orin.diff_manifests(local, remote)
-        self.assertEqual((send, removed), (["README.md"], []))
+    def test_grouping_helpers_are_gone(self):
+        for name in ("GROUPS", "VOLATILE_PREFIXES", "file_group", "group_digest"):
+            self.assertFalse(hasattr(deploy_orin, name), name)
 
     def test_diff_against_empty_remote_sends_everything(self):
         local = {"src/a": "1-", "README.md": "2-"}
@@ -737,13 +809,20 @@ class ApplyTests(TempDirTestCase):
         parsed = deploy_orin.remote_parser().parse_args(base + ["--sensors", "0,1"])
         self.assertEqual(parsed.sensors, "0,1")
 
-    def test_remote_parser_activate_no_livekit_flag(self):
+    def test_remote_parser_activate_mode_and_direct_sensors(self):
         base = ["activate"]
         for name in ("archive", "prefix", "release", "unit", "owner"):
             base += [f"--{name}", "x"]
-        self.assertFalse(deploy_orin.remote_parser().parse_args(base).no_livekit)
-        parsed = deploy_orin.remote_parser().parse_args(base + ["--no-livekit"])
-        self.assertTrue(parsed.no_livekit)
+        parsed = deploy_orin.remote_parser().parse_args(base)
+        self.assertEqual((parsed.mode, parsed.direct_sensors), ("direct", ""))
+        parsed = deploy_orin.remote_parser().parse_args(
+            base + ["--mode=livekit", "--direct-sensors=0,1"]
+        )
+        self.assertEqual((parsed.mode, parsed.direct_sensors), ("livekit", "0,1"))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            deploy_orin.remote_parser().parse_args(base + ["--mode=both"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            deploy_orin.remote_parser().parse_args(base + ["--no-livekit"])
 
 
 class ActivateTests(TempDirTestCase):
@@ -803,7 +882,8 @@ class ActivateTests(TempDirTestCase):
         timeout=60,
         replace_unmanaged=False,
         sensors="",
-        no_livekit=False,
+        mode="livekit",
+        direct_sensors="",
     ):
         deploy_orin.remote_activate(
             argparse.Namespace(
@@ -814,7 +894,8 @@ class ActivateTests(TempDirTestCase):
                 owner="bob",
                 ready_timeout=timeout,
                 sensors=sensors,
-                no_livekit=no_livekit,
+                mode=mode,
+                direct_sensors=direct_sensors,
                 replace_unmanaged=replace_unmanaged,
             )
         )
@@ -877,9 +958,39 @@ class ActivateTests(TempDirTestCase):
             self.activate(self.make_archive(), replace_unmanaged=True)
         kill.assert_not_called()
 
-    def test_no_livekit_activation_is_ready_on_frames_without_a_join(self):
-        self.journal = "sensor 0: 150 frames | encoded 150, dropped 0\n"
-        self.activate(self.make_archive(), sensors="0", no_livekit=True)
+    def test_direct_activation_prints_ready_lines_and_up(self):
+        self.journal = (
+            "Capturing.\nsensor 0: 150 frames | direct: h:1 connected\n"
+            "sensor 1: 9 frames | encoded 9\n"
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.activate(
+                self.make_archive(),
+                sensors="0,1",
+                mode="direct",
+                direct_sensors="0",
+            )
+        text = out.getvalue()
+        self.assertIn("sensor 0: capturing and connected to its destination", text)
+        self.assertIn("sensor 1: capturing (no direct destination configured)", text)
+        self.assertIn("producer is up (release r1)", text)
+
+    def test_direct_activation_not_connected_fails(self):
+        self.journal = (
+            "Capturing.\nsensor 0: 5 frames | direct: h:1 NOT connected (x)\n"
+        )
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(DeployError, "NOT connected"),
+        ):
+            self.activate(
+                self.make_archive(),
+                sensors="0",
+                mode="direct",
+                direct_sensors="0",
+                timeout=1,
+            )
 
     def test_livekit_activation_still_needs_the_join(self):
         self.journal = "sensor 0: 150 frames | livekit 5 published\n"
@@ -907,7 +1018,7 @@ class ActivateTests(TempDirTestCase):
         with mock.patch.object(deploy_orin.time, "monotonic", lambda: next(ticks)):
             with mock.patch.object(deploy_orin, "print", create=True):
                 with self.assertRaisesRegex(DeployError, "did not become ready"):
-                    self.activate(self.make_archive(), timeout=25)
+                    self.activate(self.make_archive(), sensors="0", timeout=25)
         self.assertEqual(self.events[-1], ("start", "releases/r1"))
 
 
@@ -1430,7 +1541,12 @@ class StageProducerTests(TempDirTestCase):
         )
 
     def test_unit_sets_ld_library_path_to_the_release_directory(self):
-        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+        config = {
+            "mode": "livekit",
+            "livekit_url": "wss://x",
+            "token_file": "/t",
+            "args": [STREAM],
+        }
         text = deploy_orin.render_unit(config, "/opt/ic", "bob", "video")
         self.assertIn(
             "Environment=LD_LIBRARY_PATH=/opt/ic/current/plugins/sensing_camera",
@@ -1463,10 +1579,203 @@ class ConfiguredSensorsTests(unittest.TestCase):
         self.assertEqual(deploy_orin.configured_sensors({}), [])
 
 
+class ConfiguredStreamsTests(unittest.TestCase):
+    def streams(self, *args):
+        return deploy_orin.configured_streams({"args": list(args)})
+
+    def test_direct_key_with_a_value_marks_a_direct_stream(self):
+        self.assertEqual(
+            self.streams(
+                "--add-stream=sensor=0,direct=10.0.0.1:5000",
+                "--add-stream=sensor=1,livekit=right",
+                "--add-stream=livekit=a,direct=h:1,sensor=2",
+            ),
+            [(0, True), (1, False), (2, True)],
+        )
+
+    def test_direct_as_the_first_key_is_a_direct_stream(self):
+        self.assertEqual(self.streams("--add-stream=direct=h:1,sensor=2"), [(2, True)])
+
+    def test_empty_direct_value_before_another_key_is_not_a_destination(self):
+        self.assertEqual(
+            self.streams("--add-stream=sensor=1,direct=,livekit=a"), [(1, False)]
+        )
+
+    def test_empty_direct_value_at_the_end_is_not_a_destination(self):
+        self.assertEqual(self.streams("--add-stream=sensor=0,direct="), [(0, False)])
+
+    def test_direct_inside_another_key_is_not_a_direct_key(self):
+        self.assertEqual(
+            self.streams("--add-stream=sensor=0,indirect=x,livekit=direct=y"),
+            [(0, False)],
+        )
+
+    def test_ignores_other_arguments_and_streams_without_a_sensor(self):
+        self.assertEqual(
+            self.streams("--verbose", "--add-stream=direct=h:1", "--other=sensor=3"),
+            [],
+        )
+        self.assertEqual(deploy_orin.configured_streams({}), [])
+
+    def test_configured_sensors_derives_from_the_streams(self):
+        config = {"args": ["--add-stream=sensor=4,direct=h:1", STREAM]}
+        self.assertEqual(deploy_orin.configured_sensors(config), [4, 0])
+
+
+DIRECT_OK = "direct: 10.0.0.1:5000 connected"
+
+
+class CurrentSessionTests(unittest.TestCase):
+    def test_text_after_the_last_marker(self):
+        log = "a Capturing. b Capturing. c"
+        self.assertEqual(deploy_orin.current_session(log, "direct"), " c")
+        log = "x Joined LiveKit room r1 y Joined LiveKit room r2 z"
+        self.assertEqual(deploy_orin.current_session(log, "livekit"), " r2 z")
+
+    def test_absent_marker_is_empty_and_markers_are_per_mode(self):
+        self.assertEqual(
+            deploy_orin.current_session("sensor 0: 5 frames", "direct"), ""
+        )
+        self.assertEqual(deploy_orin.current_session("Capturing.\n", "livekit"), "")
+        self.assertEqual(
+            deploy_orin.current_session("Joined LiveKit room r\n", "direct"), ""
+        )
+
+
+class ReadinessFunctionTests(unittest.TestCase):
+    def check(self, log, sensors, direct=(), mode="direct"):
+        return deploy_orin.readiness(log, mode, sensors, list(direct))
+
+    def test_no_marker_is_one_problem_per_mode(self):
+        ready, problems = self.check("sensor 0: 5 frames\n", [0])
+        self.assertEqual(ready, [])
+        self.assertEqual(problems, ["the producer has not reported capturing yet"])
+        _, problems = self.check("livekit 5 published\n", [0], mode="livekit")
+        self.assertEqual(
+            problems, ["the producer has not reported joined a LiveKit room yet"]
+        )
+
+    def test_connected_direct_sensor_is_ready(self):
+        log = f"Capturing.\nsensor 0: 30 frames | {DIRECT_OK}\n"
+        self.assertEqual(
+            self.check(log, [0], [0]),
+            (["sensor 0: capturing and connected to its destination"], []),
+        )
+
+    def test_restart_inside_the_unit_discards_the_earlier_attempt(self):
+        log = (
+            f"Capturing.\nsensor 0: 30 frames | {DIRECT_OK}\n"
+            "Capturing.\nsensor 1: 30 frames | " + DIRECT_OK + "\n"
+        )
+        ready, problems = self.check(log, [0, 1], [0, 1])
+        self.assertEqual(
+            ready, ["sensor 1: capturing and connected to its destination"]
+        )
+        self.assertEqual(problems, ["sensor 0: no frames captured"])
+
+    def test_not_connected_is_a_problem_even_with_frames(self):
+        log = (
+            "Capturing.\nsensor 0: 30 frames | direct: 10.0.0.1:5000 NOT connected "
+            "(cannot connect to 10.0.0.1:5000)\n"
+        )
+        ready, problems = self.check(log, [0], [0])
+        self.assertEqual(ready, [])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("sensor 0", problems[0])
+        self.assertIn("NOT connected (cannot connect to 10.0.0.1:5000)", problems[0])
+
+    def test_configured_direct_sensor_with_no_direct_text_is_a_problem(self):
+        _, problems = self.check(
+            "Capturing.\nsensor 0: 30 frames | encoded 30\n", [0], [0]
+        )
+        self.assertEqual(
+            problems, ["sensor 0: capturing but its direct link is not connected"]
+        )
+
+    def test_sensor_without_a_destination_is_capture_only(self):
+        log = "Capturing.\nsensor 0: 30 frames | encoded 30\n"
+        self.assertEqual(
+            self.check(log, [0], []),
+            (["sensor 0: capturing (no direct destination configured)"], []),
+        )
+
+    def test_destinationless_sensor_ignores_a_not_connected_text(self):
+        log = "Capturing.\nsensor 0: 30 frames | direct: h:1 NOT connected (x)\n"
+        ready, problems = self.check(log, [0], [])
+        self.assertEqual(problems, [])
+        self.assertEqual(len(ready), 1)
+
+    def test_latest_line_wins_connected_then_not_connected(self):
+        log = (
+            f"Capturing.\nsensor 0: 10 frames | {DIRECT_OK}\n"
+            "sensor 0: 20 frames | direct: 10.0.0.1:5000 NOT connected (link lost)\n"
+        )
+        ready, problems = self.check(log, [0], [0])
+        self.assertEqual(ready, [])
+        self.assertIn("link lost", problems[0])
+
+    def test_latest_line_wins_not_connected_then_connected(self):
+        log = (
+            "Capturing.\nsensor 0: 10 frames | direct: h:1 NOT connected (x)\n"
+            f"sensor 0: 20 frames | {DIRECT_OK}\n"
+        )
+        ready, problems = self.check(log, [0], [0])
+        self.assertEqual(problems, [])
+        self.assertEqual(len(ready), 1)
+
+    def test_latest_zero_frames_line_is_a_problem(self):
+        log = "Capturing.\nsensor 0: 10 frames\nsensor 0: 0 frames\n"
+        self.assertEqual(self.check(log, [0])[1], ["sensor 0: no frames captured"])
+
+    def test_zero_frames_with_a_later_digit_on_the_line(self):
+        log = "Capturing.\nsensor 0: 0 frames | encoded 5, dropped 7\n"
+        self.assertEqual(self.check(log, [0])[1], ["sensor 0: no frames captured"])
+
+    def test_sensor_one_is_not_confused_with_sensor_ten(self):
+        log = f"Capturing.\nsensor 10: 30 frames | {DIRECT_OK}\n"
+        ready, problems = self.check(log, [1, 10], [1, 10])
+        self.assertEqual(problems, ["sensor 1: no frames captured"])
+        self.assertEqual(len(ready), 1)
+        self.assertIn("sensor 10", ready[0])
+
+    def test_livekit_mode_latest_published_count_decides(self):
+        log = (
+            "Joined LiveKit room r\n"
+            "sensor 0: 30 fps | livekit 12 published\n"
+            "sensor 1: 30 fps | livekit 0 published\n"
+            "sensor 10: 30 fps | livekit 5 published\n"
+        )
+        ready, problems = self.check(log, [0, 1], mode="livekit")
+        self.assertEqual(ready, ["sensor 0: publishing to LiveKit"])
+        self.assertEqual(problems, ["sensor 1: not publishing to LiveKit"])
+
+    def test_livekit_mode_latest_line_wins_and_restart_resets(self):
+        log = (
+            "Joined LiveKit room r\nsensor 0: x | livekit 5 published\n"
+            "sensor 0: x | livekit 0 published\n"
+        )
+        self.assertEqual(len(self.check(log, [0], mode="livekit")[1]), 1)
+        log = (
+            "Joined LiveKit room r\nsensor 0: x | livekit 5 published\n"
+            "Joined LiveKit room r2\n"
+        )
+        self.assertEqual(len(self.check(log, [0], mode="livekit")[1]), 1)
+
+    def test_livekit_mode_ignores_direct_markers(self):
+        log = "Capturing.\nsensor 0: 5 frames | " + DIRECT_OK + "\n"
+        self.assertEqual(
+            self.check(log, [0], [0], mode="livekit")[1],
+            ["the producer has not reported joined a LiveKit room yet"],
+        )
+
+
 class ReadinessTests(TempDirTestCase):
     JOINED = "Joined LiveKit room r\n"
+    CAPTURING = "Capturing.\n"
 
-    def run_wait(self, journal, sensors, active=True, timeout=10, livekit=True):
+    def run_wait(
+        self, journal, sensors, active=True, timeout=10, mode="livekit", direct=None
+    ):
         def fake_run(cmd, **kwargs):
             return completed(0 if active else 3)
 
@@ -1489,13 +1798,90 @@ class ReadinessTests(TempDirTestCase):
             contextlib.redirect_stderr(stderr),
         ):
             try:
-                deploy_orin.wait_ready(
-                    "2026-01-01 00:00:00", timeout, sensors, livekit=livekit
+                return deploy_orin.wait_ready(
+                    "2026-01-01 00:00:00",
+                    timeout,
+                    sensors,
+                    mode=mode,
+                    direct_sensors=direct,
                 )
             finally:
                 self.stderr = stderr.getvalue()
 
-    def test_one_of_two_sensors_publishing_names_the_other(self):
+    def test_direct_is_the_default_mode(self):
+        journal = f"Capturing.\nsensor 0: 3 frames | {DIRECT_OK}\n"
+        self.assertEqual(deploy_orin.wait_ready.__defaults__[0:1], ("direct",))
+        with (
+            mock.patch.object(deploy_orin, "tail", lambda cmd: journal),
+            mock.patch.object(
+                deploy_orin.subprocess, "run", lambda *a, **k: completed(0)
+            ),
+        ):
+            ready = deploy_orin.wait_ready("t", 10, [0], direct_sensors=[0])
+        self.assertEqual(
+            ready, ["sensor 0: capturing and connected to its destination"]
+        )
+
+    def test_direct_returns_one_line_per_sensor(self):
+        journal = (
+            self.CAPTURING
+            + f"sensor 0: 150 frames | {DIRECT_OK}\n"
+            + "sensor 1: 10 frames | encoded 10\n"
+        )
+        self.assertEqual(
+            self.run_wait(journal, [0, 1], mode="direct", direct=[0]),
+            [
+                "sensor 0: capturing and connected to its destination",
+                "sensor 1: capturing (no direct destination configured)",
+            ],
+        )
+
+    def test_direct_restart_inside_the_unit_is_not_ready_for_sensor_zero(self):
+        journal = (
+            f"Capturing.\nsensor 0: 30 frames | {DIRECT_OK}\n"
+            f"Capturing.\nsensor 1: 30 frames | {DIRECT_OK}\n"
+        )
+        with self.assertRaises(DeployError) as ctx:
+            self.run_wait(journal, [0, 1], mode="direct", direct=[0, 1])
+        message = str(ctx.exception)
+        self.assertIn("sensor 0: no frames captured", message)
+        self.assertNotIn("sensor 1:", message)
+
+    def test_direct_not_connected_fails_naming_the_reason(self):
+        journal = (
+            self.CAPTURING
+            + "sensor 0: 30 frames | direct: h:1 NOT connected (cannot connect to h:1)\n"
+        )
+        with self.assertRaisesRegex(
+            DeployError,
+            r"did not become ready; sensor 0: capturing but h:1 NOT connected",
+        ):
+            self.run_wait(journal, [0], mode="direct", direct=[0])
+        self.assertIn("sensor 0", self.stderr)
+
+    def test_direct_no_marker_names_the_missing_capture_report(self):
+        with self.assertRaisesRegex(DeployError, "has not reported capturing yet"):
+            self.run_wait("sensor 0: 5 frames\n", [0], mode="direct")
+
+    def test_direct_sensor_with_zero_frames_is_named(self):
+        journal = self.CAPTURING + "sensor 0: 150 frames\nsensor 1: 0 frames\n"
+        with self.assertRaises(DeployError) as ctx:
+            self.run_wait(journal, [0, 1], mode="direct")
+        self.assertIn("sensor 1: no frames captured", str(ctx.exception))
+        self.assertNotIn("sensor 0:", str(ctx.exception))
+
+    def test_livekit_both_sensors_publishing_returns_lines(self):
+        journal = (
+            self.JOINED
+            + "sensor 0: 30 fps | livekit 12 published\n"
+            + "sensor 1: 30 fps | livekit 3 published\n"
+        )
+        self.assertEqual(
+            self.run_wait(journal, [0, 1]),
+            ["sensor 0: publishing to LiveKit", "sensor 1: publishing to LiveKit"],
+        )
+
+    def test_livekit_one_of_two_sensors_names_the_other(self):
         journal = (
             self.JOINED
             + "sensor 0: 30 fps | livekit 12 published\n"
@@ -1504,71 +1890,31 @@ class ReadinessTests(TempDirTestCase):
         with self.assertRaises(DeployError) as ctx:
             self.run_wait(journal, [0, 1])
         message = str(ctx.exception)
-        self.assertIn("sensors not publishing: 1", message)
-        self.assertNotIn("publishing: 0", message)
+        self.assertIn("sensor 1: not publishing to LiveKit", message)
+        self.assertNotIn("sensor 0:", message)
 
-    def test_both_sensors_publishing_returns(self):
-        journal = (
-            self.JOINED
-            + "sensor 0: 30 fps | livekit 12 published\n"
-            + "sensor 1: 30 fps | livekit 3 published\n"
-        )
-        self.run_wait(journal, [0, 1])
-
-    def test_sensor_number_does_not_match_a_longer_number(self):
+    def test_livekit_sensor_number_does_not_match_a_longer_number(self):
         journal = self.JOINED + "sensor 10: 30 fps | livekit 5 published\n"
-        with self.assertRaisesRegex(DeployError, "sensors not publishing: 1"):
+        with self.assertRaisesRegex(DeployError, "sensor 1: not publishing"):
             self.run_wait(journal, [1])
 
-    def test_without_livekit_every_sensor_with_frames_is_ready(self):
-        journal = (
-            "sensor 0: 150 frames | encoded 150, dropped 0\n"
-            "sensor 1: 10 frames | encoded 10, dropped 0\n"
-        )
-        self.run_wait(journal, [0, 1], livekit=False)
-
-    def test_without_livekit_a_sensor_with_zero_frames_is_named(self):
-        journal = "sensor 0: 150 frames | encoded 150\nsensor 1: 0 frames | encoded 0\n"
-        with self.assertRaises(DeployError) as ctx:
-            self.run_wait(journal, [0, 1], livekit=False)
-        self.assertIn("sensors not publishing: 1", str(ctx.exception))
-        self.assertNotIn("publishing: 0", str(ctx.exception))
-
-    def test_without_livekit_sensor_number_is_not_confused_with_a_longer_one(self):
-        journal = "sensor 0: 5 frames\nsensor 10: 10 frames\n"
-        with self.assertRaisesRegex(DeployError, "sensors not publishing: 1;"):
-            self.run_wait(journal, [0, 1], livekit=False)
-        self.run_wait("sensor 1: 10 frames\n", [1], livekit=False)
-
-    def test_without_livekit_a_zero_frames_line_with_a_later_count_digit(self):
-        with self.assertRaises(DeployError):
-            self.run_wait("sensor 0: 0 frames\n", [0], livekit=False)
-
-    def test_with_livekit_frames_alone_are_not_readiness(self):
+    def test_livekit_frames_alone_are_not_readiness(self):
         with self.assertRaises(DeployError):
             self.run_wait(self.JOINED + "sensor 0: 150 frames\n", [0])
 
-    def test_requires_joining_the_room(self):
-        with self.assertRaises(DeployError):
+    def test_livekit_requires_joining_the_room(self):
+        with self.assertRaisesRegex(DeployError, "joined a LiveKit room"):
             self.run_wait("sensor 0: x | livekit 5 published\n", [0])
-
-    def test_no_sensors_any_publishing_counts(self):
-        self.run_wait(self.JOINED + "stats livekit 7 published\n", [])
-
-    def test_no_sensors_nothing_publishing_fails_without_a_sensor_list(self):
-        with self.assertRaises(DeployError) as ctx:
-            self.run_wait(self.JOINED + "livekit 0 published\n", [])
-        self.assertNotIn("sensors not publishing", str(ctx.exception))
 
     def test_inactive_service_stops_waiting_and_reports(self):
         ticks_used = []
         with mock.patch.object(deploy_orin.time, "sleep", ticks_used.append):
             with self.assertRaises(DeployError):
-                self.run_wait(self.JOINED + "livekit 5 published\n", [], active=False)
+                self.run_wait(self.JOINED + "livekit 5 published\n", [0], active=False)
         self.assertEqual(ticks_used, [])
 
-    def test_inactive_service_lists_every_sensor_missing(self):
-        with self.assertRaisesRegex(DeployError, "sensors not publishing: 0, 1"):
+    def test_inactive_service_reports_the_producer_never_reported(self):
+        with self.assertRaisesRegex(DeployError, "has not reported"):
             self.run_wait("sensor 0: x | livekit 5 published\n", [0, 1], active=False)
 
     def test_inactive_service_never_fetches_for_the_loop(self):
