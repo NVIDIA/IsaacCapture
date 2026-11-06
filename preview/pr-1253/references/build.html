@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=0017f0b3" />
     <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,8 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -474,6 +476,8 @@
 │   ├── teleop_session_manager/ # Teleop session manager (Python)
 │   ├── cloudxr/                # CloudXR runtime helper (Python)
 │   └── python/                 # Python wheel packaging (when BUILD_PYTHON_BINDINGS=ON)
+├── src/python/isaaccapture/
+│   └── ovxr_session_manager/   # OVXR session ownership and presentation
 ├── src/plugins/                # Built when BUILD_PLUGINS=ON
 │   ├── plugin_utils/
 │   ├── controller_synthetic_hands/
@@ -481,6 +485,8 @@
 │   ├── manus/
 │   ├── oak/                    # When BUILD_PLUGIN_OAK_CAMERA=ON
 |   └── haptikos/
+├── tests/python/core/
+│   └── ovxr_session_manager/   # OVXR session and presentation tests
 └── examples/
     ├── oxr/                    # OpenXR examples (C++ and Python)
     ├── retargeting/
@@ -497,8 +503,8 @@
 </section>
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
-<p>After building, activate a virtual environment with the build’s Python version (step 4 of
-<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> shows how), then install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or
+<p>After building, activate a virtual environment with the build’s Python version
+(<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a> shows how), then install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or
 <code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code>
 file):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># The pin keeps a newer release on the index from winning over the local build.</span>
@@ -506,7 +512,7 @@ file):</p>
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 
 <span class="c1"># or</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--force-reinstall
 </pre></div>
 </div>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
@@ -762,7 +768,7 @@ in <a class="reference internal" href="../development/build_from_source/index.ht
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 06, 2026.
       <br/>
     
   </p>
