@@ -275,7 +275,7 @@ devices:
 
   - id: agilink-omniglove
     name: AgiLink OmniGlove
-    url: https://github.com/AgibotTech/agilink_omniglove_sdk
+    url: https://www.agilink-ai.com
     group: peripheral
     modes: High-fidelity hand tracking
     since: main
