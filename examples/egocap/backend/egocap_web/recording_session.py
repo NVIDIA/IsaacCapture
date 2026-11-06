@@ -182,7 +182,7 @@ class RecordingSessionCoordinator:
         config_factory: Callable[[], ServiceConfig],
         *,
         queue_capacity: int,
-        queue_bytes: int | None = None,
+        queue_bytes: int | Callable[[], int] | None = None,
         readiness_check: ReadinessCheck,
         initial_context: TaskContext | None = None,
         livekit_source: LiveKitRecordingSource | None = None,
@@ -457,9 +457,10 @@ class RecordingSessionCoordinator:
                 await service.discard_episode(episode.episode_id)
             raise CoordinatorBusyError("start was superseded before activation")
         episode_id = episode.episode_id
+        # A callable is resolved per take: LiveKit frame sizes are known only once the session has started.
         ingress = RecordingIngress(
             queue_capacity=self._queue_capacity,
-            queue_bytes=self._queue_bytes,
+            queue_bytes=self._queue_bytes() if callable(self._queue_bytes) else self._queue_bytes,
             submit=partial(service.submit_sample, episode_id),
             on_failure=lambda message: self._schedule_failure_settlement(service, episode_id, message),
         )

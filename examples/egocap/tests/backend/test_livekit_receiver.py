@@ -134,7 +134,8 @@ def fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 async def receiver():
-    rx = lr.LiveKitFrameReceiver([camera(1, "left"), camera(2, "right")], TOKEN)
+    # Deeper than the default queues so these tests exercise accounting, not the memory-budget-sized back-pressure.
+    rx = lr.LiveKitFrameReceiver([camera(1, "left"), camera(2, "right")], TOKEN, queue_frames=8)
     await rx.start()
     yield rx
     await rx.stop()
@@ -207,7 +208,7 @@ async def test_start_adopts_tracks_published_before_joining(monkeypatch):
         left.push(event(7, frame_id=1))
         assert (await asyncio.wait_for(rx.next_frame(1), 1)).frame_id == 1
         stream = FakeVideoStream.instances[0]
-        assert stream.capacity == lr._SDK_QUEUE_FRAMES and stream.format == "rgb24"
+        assert stream.capacity == lr.SDK_QUEUE_FRAMES and stream.format == "rgb24"
     finally:
         await rx.stop()
 
@@ -575,7 +576,7 @@ async def test_cancelling_a_waiter_leaves_no_helper_tasks(receiver):
     await settle()
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await waiter
+        _ = await waiter
     await settle()
     assert _only_test_tasks() == baseline
 
@@ -633,3 +634,28 @@ async def test_clear_queued_drops_every_queued_frame(receiver):
     assert receiver.pending(1) > 0
     receiver.clear_queued()
     assert receiver.pending(1) == receiver.pending(2) == 0
+
+
+# ---- reader failure ----
+
+
+async def test_a_failing_reader_marks_its_stream_lost_and_logs(receiver, caplog):
+    track = subscribe(receiver, "left")
+    bad = event(1, frame_id=1)
+    bad.frame.height = 99  # the buffer no longer matches the stated size
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    track.push(bad)
+    assert await asyncio.wait_for(waiter, 1) is None
+    assert not receiver.counters[1].subscribed
+    assert "reader for stream 1 failed" in caplog.text
+    assert FakeVideoStream.instances[0].closed == 1
+
+
+async def test_a_failing_reader_leaves_the_other_stream_running(receiver):
+    left, right = subscribe(receiver, "left"), subscribe(receiver, "right")
+    bad = event(1)
+    bad.frame.width = 99
+    left.push(bad)
+    right.push(event(5, frame_id=1))
+    assert (await asyncio.wait_for(receiver.next_frame(2), 1)).image[0, 0, 0] == 5
+    assert receiver.counters[2].subscribed and not receiver.counters[1].subscribed

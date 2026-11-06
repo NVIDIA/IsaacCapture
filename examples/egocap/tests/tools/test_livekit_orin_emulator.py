@@ -213,7 +213,7 @@ async def test_stats_print_until_stopped(capsys, monkeypatch):
     task = asyncio.create_task(emu.report_stats(stop, counters))
     await asyncio.sleep(0.05)
     stop.set()
-    await task
+    _ = await task
     assert "a=3" in capsys.readouterr().out
 
 

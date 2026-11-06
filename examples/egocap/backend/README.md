@@ -51,7 +51,7 @@ Everything else is an environment variable:
 | --- | --- | --- |
 | `EGOCAP_STATION_CONFIG` | unset (development default) | Path to the deployment station YAML described above. |
 | `EGOCAP_CAPTURE_SERVER_URL` | `ws://127.0.0.1:8082` | Where to connect for tracking/camera data. |
-| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | unset | The LiveKit server's key pair, used only to sign viewer tokens for `GET /api/livekit-token`. |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | unset | The LiveKit server's key pair. The backend signs two subscribe-only tokens with it: viewer tokens for `GET /api/livekit-token`, and the recorder's own token. LiveKit recording will not start without both variables; see [`LIVEKIT_PREVIEW.md`](../LIVEKIT_PREVIEW.md). |
 | `EGOCAP_TASK_FILES_DIR` | the shipped `data/taskfiles/` | Which task-catalog directory the task-file API serves. |
 | `EGOCAP_RECORDINGS_ENABLED` | off | Turns on the recordings browser's routes. |
 | `EGOCAP_ALLOWED_ORIGINS` | none (same-origin only) | Comma-separated extra origins allowed to open `WS /api/session` — needed when the frontend is hosted separately or behind a reverse proxy. |

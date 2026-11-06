@@ -96,6 +96,9 @@ class FakeReceiver:
 
     instances: list[FakeReceiver] = []
     start_error: Exception | None = None
+    #: When set, ``start``/``stop`` wait on it, so a test can stall the join or the leave.
+    start_gate: asyncio.Event | None = None
+    stop_gate: asyncio.Event | None = None
 
     def __init__(self, streams, token):
         self.streams, self.token = list(streams), token
@@ -106,12 +109,16 @@ class FakeReceiver:
 
     async def start(self):
         self.events.append("start")
+        if FakeReceiver.start_gate is not None:
+            await FakeReceiver.start_gate.wait()
         if FakeReceiver.start_error is not None:
             raise FakeReceiver.start_error
 
     async def stop(self):
-        self.stops += 1
         self.events.append("stop")
+        if FakeReceiver.stop_gate is not None:
+            await FakeReceiver.stop_gate.wait()
+        self.stops += 1
 
     async def next_frame_or_lost(self, stream_id):
         return await self.queues[stream_id].get()
@@ -136,13 +143,17 @@ class FakeIngress:
 def fake_receiver(monkeypatch):
     FakeReceiver.instances = []
     FakeReceiver.start_error = None
+    FakeReceiver.start_gate = FakeReceiver.stop_gate = None
     monkeypatch.setattr(lrec, "LiveKitFrameReceiver", FakeReceiver)
 
 
-def make_source(streams, *, timeout=1.0, tokens=None):
+def make_source(streams, *, timeout=1.0, tokens=None, **kwargs):
     tokens = tokens if tokens is not None else []
     return LiveKitRecordingSource(
-        lambda: streams, lambda room: tokens.append(room) or f"token-{room}", first_frame_timeout_s=timeout
+        lambda: streams,
+        lambda room: tokens.append(room) or f"token-{room}",
+        first_frame_timeout_s=timeout,
+        **kwargs,
     )
 
 
@@ -157,7 +168,7 @@ async def prepare_with_frames(source, streams, **frame_kw):
     while not FakeReceiver.instances:
         await asyncio.sleep(0)
     preload(streams, **frame_kw)
-    await task
+    _ = await task
 
 
 async def test_prepare_with_no_recordable_stream_does_nothing():
@@ -197,7 +208,7 @@ async def test_a_lost_track_fails_naming_the_stream_and_leaves_the_room():
         await asyncio.sleep(0)
     FakeReceiver.instances[0].queues[16].put_nowait(None)
     with pytest.raises(RuntimeError, match="cam16: the LiveKit track was lost"):
-        await task
+        _ = await task
     assert FakeReceiver.instances[0].stops == 1
 
 
@@ -224,7 +235,7 @@ async def test_cancelling_prepare_leaves_the_room():
     await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert FakeReceiver.instances[0].stops == 1
 
 
@@ -268,3 +279,51 @@ async def test_stop_is_idempotent_and_safe_before_prepare():
     await source.stop()
     await source.stop()
     assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_stalled_leave_does_not_block_teardown_and_finishes_in_the_background():
+    streams = [livekit_stream(16)]
+    source = make_source(streams, leave_timeout_s=0.01)
+    await prepare_with_frames(source, streams)
+    FakeReceiver.stop_gate = asyncio.Event()
+    await asyncio.wait_for(source.stop(), 1)
+    receiver = FakeReceiver.instances[0]
+    assert receiver.stops == 0
+    FakeReceiver.stop_gate.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert receiver.stops == 1
+
+
+async def test_a_late_join_fails_the_start_without_cancelling_it_and_leaves_once_it_ends():
+    FakeReceiver.start_gate = asyncio.Event()
+    source = make_source([livekit_stream(16)], join_timeout_s=0.01)
+    with pytest.raises(RuntimeError, match="joining the LiveKit room took longer"):
+        await source.prepare()
+    receiver = FakeReceiver.instances[0]
+    # The join is still running and has not been cancelled or disconnected underneath.
+    assert receiver.events == ["start"]
+    FakeReceiver.start_gate.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert receiver.events == ["start", "stop"]
+    await source.stop()
+    assert receiver.stops == 1
+
+
+async def test_cancelling_prepare_during_the_join_does_not_cancel_the_join():
+    FakeReceiver.start_gate = asyncio.Event()
+    source = make_source([livekit_stream(16)])
+    task = asyncio.ensure_future(source.prepare())
+    while not FakeReceiver.instances:
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        _ = await task
+    receiver = FakeReceiver.instances[0]
+    assert receiver.events == ["start"]
+    FakeReceiver.start_gate.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert receiver.events == ["start", "stop"]
