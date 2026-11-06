@@ -18,7 +18,7 @@ add_custom_command(TARGET camera_plugin_sensing POST_BUILD
 )
 
 # Everything below is the `producer` install component: `cmake --install <build> --component producer` stages
-# exactly what scripts/deploy-orin.sh packages for an Orin.
+# exactly what scripts/deploy_orin.py packages for an Orin.
 install(TARGETS camera_plugin_sensing
     RUNTIME DESTINATION plugins/sensing_camera
     COMPONENT producer

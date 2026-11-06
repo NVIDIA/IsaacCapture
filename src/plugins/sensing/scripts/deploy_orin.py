@@ -5,7 +5,7 @@
 
 Run on the desktop:
 
-    deploy_orin.py user@orin --backend sipl --config orin.json
+    deploy_orin.py user@orin --config orin.json
 
 The config is JSON with the producer's own options, nothing else:
 
@@ -522,9 +522,7 @@ def deploy_source(
     helper = f"{cache}/deploy_orin.py"
     target.put(Path(__file__).resolve(), helper)
     remote = f"python3 {helper} remote"
-    target.ssh(
-        f"{remote} preflight --backend {args.backend} --sdk-root {shlex.quote(args.sdk_root)}"
-    )
+    target.ssh(f"{remote} preflight --sdk-root {shlex.quote(args.sdk_root)}")
 
     with tempfile.TemporaryDirectory() as tmp:
         step(3, "Compare the source with the Orin's and upload what differs")
@@ -566,12 +564,12 @@ def deploy_source(
             f"{cache}/producer-{release}.tar.gz",
         )
         target.ssh(
-            f"{remote} build --src {src} --backend {args.backend} --stage {stage} --jobs {args.jobs} "
+            f"{remote} build --src {src} --stage {stage} --jobs {args.jobs} "
             f"--sdk-root {shlex.quote(args.sdk_root)}"
+            + "".join(f" --cmake-arg={shlex.quote(a)}" for a in args.cmake_arg)
         )
         manifest = {
             **meta,
-            "backend": args.backend,
             "release": release,
             "arch": "aarch64",
             "config": args.config,
@@ -612,7 +610,10 @@ def tail(cmd: list[str]) -> str:
 
 
 def sdk_dirs(sdk_root: str) -> tuple[Path, Path]:
-    """The Multimedia API and SIPL header trees: under --sdk-root when given, else the system locations."""
+    """The Multimedia API and SIPL header trees: under --sdk-root when given, else the system locations.
+
+    Only where the headers live is decided here; whether a given source tree needs them is its own CMake's concern.
+    """
     base = Path(sdk_root) / "usr/src" if sdk_root else Path("/usr/src")
     return base / "jetson_multimedia_api", base / "jetson_sipl_api"
 
@@ -652,48 +653,44 @@ def remote_preflight(args: argparse.Namespace) -> None:
     stat = os.statvfs(Path.home())
     if stat.f_bavail * stat.f_frsize < 4 << 30:
         raise DeployError("less than 4 GB free in the home directory")
-    mmapi, sipl_api = sdk_dirs(args.sdk_root)
+    mmapi, _ = sdk_dirs(args.sdk_root)
     if not mmapi.is_dir():
         raise DeployError(
             f"the Jetson Multimedia API is missing at {mmapi}; run src/plugins/sensing/scripts/setup.sh "
             "or pass --sdk-root"
         )
-    if args.backend == "sipl" and not sipl_api.is_dir():
-        raise DeployError(
-            f"SIPL headers not found at {sipl_api}; run src/plugins/sensing/scripts/setup.sh or pass --sdk-root"
-        )
-    if args.backend == "argus" and not (mmapi / "argus").is_dir():
-        raise DeployError(f"Argus headers not found under {mmapi}/argus")
-    print(f"  preflight ok for backend {args.backend}")
+    print("  preflight ok")
 
 
 def remote_build(args: argparse.Namespace) -> None:
     """Configure and build only the producer, then stage its install component.
 
-    The build directory persists between deployments and is discarded when the toolchain, L4T release or backend
-    changes.
+    The build directory persists between deployments and is discarded when the toolchain, L4T release, source
+    path or CMake arguments change.
     """
     cache = Path(os.path.expanduser(CACHE))
-    build_dir = cache / f"build-{args.backend}"
+    build_dir = cache / "build"
     stamp = "|".join(
         [
             Path("/etc/nv_tegra_release").read_text().splitlines()[0],
             tail(["cmake", "--version"]).splitlines()[0],
             tail(["g++", "-dumpfullversion"]),
             args.src,
+            *args.cmake_arg,
         ]
     )
     stamp_file = build_dir / ".stamp"
     if not stamp_file.exists() or stamp_file.read_text() != stamp:
-        print("  new toolchain, release or backend: clean build directory")
+        print(
+            "  new toolchain, release, source or CMake arguments: clean build directory"
+        )
         run(["rm", "-rf", str(build_dir)])
         build_dir.mkdir(parents=True)
         stamp_file.write_text(stamp)
-    sipl, argus = ("ON", "OFF") if args.backend == "sipl" else ("OFF", "ON")
     mmapi, sipl_api = sdk_dirs(args.sdk_root)
     env = {**os.environ, "PATH": build_path()}
     sdk_flags = [f"-DJETSON_MMAPI_DIR={mmapi}"]
-    if args.backend == "sipl":
+    if sipl_api.is_dir():
         sdk_flags.append(f"-DSIPL_API_DIR={sipl_api}")
     # The CUDA driver library is not on the default link path on L4T, and is dropped by --as-needed.
     gpu_libcuda = Path("/opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1")
@@ -712,8 +709,6 @@ def remote_build(args: argparse.Namespace) -> None:
             "-DCMAKE_BUILD_TYPE=Release",
             "-DCMAKE_CUDA_ARCHITECTURES=87",
             "-DBUILD_PLUGIN_SENSING=ON",
-            f"-DSENSING_WITH_SIPL={sipl}",
-            f"-DSENSING_WITH_ARGUS={argus}",
             "-DBUILD_TESTING=OFF",
             "-DBUILD_EXAMPLES=OFF",
             "-DBUILD_PYTHON_BINDINGS=OFF",
@@ -722,6 +717,8 @@ def remote_build(args: argparse.Namespace) -> None:
             "-DCMAKE_CXX_FLAGS=-I/usr/local/cuda/include",
             *sdk_flags,
             *link_flags,
+            # Options only some source trees define (a capture backend, say) go last so they can override.
+            *args.cmake_arg,
         ],
         env=env,
     )
@@ -941,7 +938,6 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "target", help=f"host or user@host of the Orin (a bare host uses ${USER_ENV})"
     )
-    ap.add_argument("--backend", choices=("sipl", "argus"), required=True)
     ap.add_argument("--config", required=True, help="producer options (JSON)")
     ap.add_argument("--prefix", default="/opt/isaaccapture")
     ap.add_argument(
@@ -976,6 +972,13 @@ def parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="deploy this branch's committed files (from --source, or this checkout), ignoring the working tree",
     )
+    ap.add_argument(
+        "--cmake-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="extra CMake argument for the producer build, repeatable (for options only some source trees have)",
+    )
     ap.add_argument("--no-activate", action="store_true", help="build and package only")
     ap.add_argument(
         "--fetch-archive",
@@ -989,11 +992,10 @@ def remote_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="deploy_orin.py remote")
     sub = ap.add_subparsers(dest="step", required=True)
     pre = sub.add_parser("preflight")
-    pre.add_argument("--backend", required=True)
     pre.add_argument("--sdk-root", default="")
     build = sub.add_parser("build")
     build.add_argument("--src", required=True)
-    build.add_argument("--backend", required=True)
+    build.add_argument("--cmake-arg", action="append", default=[])
     build.add_argument("--stage", required=True)
     build.add_argument("--jobs", type=int, default=2)
     build.add_argument("--sdk-root", default="")
