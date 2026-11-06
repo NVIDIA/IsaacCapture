@@ -35,6 +35,9 @@ struct LiveKitOutputConfig
     /// IDR period in frames; 0 defers to the encoder's default.
     uint32_t gop = 0;
     bool full_range = false;
+    /// Also send every encoded unit to the PC video stage at this address (host:port); empty disables it.
+    std::string direct_host;
+    uint16_t direct_port = 0;
     /// What each frame's application timestamp is. SensorCaptureMonotonic fails the output on a frame whose sensor
     /// time cannot be placed on CLOCK_MONOTONIC.
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;

@@ -18,6 +18,10 @@ namespace sensing
 /// One captured sensor and the LiveKit track that carries it.
 struct StreamConfig
 {
+    /// Also send every encoded unit of this stream to the PC video stage at host:port (AVS1 over TCP, beside the
+    /// LiveKit track); empty disables it. Each stream needs its own port on the PC.
+    std::string direct_host;
+    uint16_t direct_port = 0;
     /// SIPL pipeline index, validated against the platform config at startup.
     uint32_t sensor_id = 0;
     /// Name of the LiveKit camera track carrying this sensor.

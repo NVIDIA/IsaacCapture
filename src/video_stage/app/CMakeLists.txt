@@ -5,7 +5,10 @@
 # NVENC and hands the access units to a sink.
 add_executable(video_stage_worker
     main.cpp
+    control_channel.cpp
+    livekit_output.cpp
     pipeline.cpp
+    stream_worker.cpp
     tcp_receiver.cpp
 )
 
@@ -14,4 +17,5 @@ target_link_libraries(video_stage_worker
         video_stage::core
         video_stage::codec
         video_stage::wire
+        sensing::livekit
 )

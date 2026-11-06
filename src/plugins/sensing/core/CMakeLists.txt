@@ -9,6 +9,7 @@ add_library(sensing_core STATIC
     capture_factory.cpp
     jetson_encoder.cpp
     livekit_video_output.cpp
+    direct_sender.cpp
     rgba_to_nv12.cu
     rgba_box_downscale.cu
     ${JETSON_MMAPI_SOURCES}
@@ -56,6 +57,7 @@ target_compile_options(sensing_core PRIVATE
 target_link_libraries(sensing_core
     PUBLIC
         sensing::livekit
+        video_stage::wire
     PRIVATE
         CUDA::cudart
         CUDA::cuda_driver

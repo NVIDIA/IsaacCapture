@@ -72,6 +72,15 @@ static StreamConfig parse_stream_arg(const std::string& arg)
         {
             cfg.livekit_track = val;
         }
+        else if (key == "direct")
+        {
+            // HOST:PORT of this stream's PC video-stage port; the producer connects and reconnects.
+            const auto colon = val.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 == val.size())
+                throw std::runtime_error("--add-stream direct= must be HOST:PORT");
+            cfg.direct_host = val.substr(0, colon);
+            cfg.direct_port = static_cast<uint16_t>(std::stoul(val.substr(colon + 1)));
+        }
         else
         {
             throw std::runtime_error("Unknown key in --add-stream: '" + key + "'");
@@ -131,7 +140,9 @@ static void print_usage(const char* program_name)
         << "sent as it is.\n"
         << "\n"
         << "Streams (repeat for each sensor):\n"
-        << "  --add-stream=sensor=N,livekit=NAME   camera N (SIPL pipeline or Argus device index), published as track NAME\n"
+        << "  --add-stream=sensor=N,livekit=NAME[,direct=HOST:PORT]\n"
+        << "                                       camera N (SIPL pipeline or Argus device index), published as track NAME;\n"
+        << "                                       direct= also sends each encoded unit to the PC video stage (wired LAN)\n"
         << "  --list-sensors                       print the cameras, then exit\n"
         << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
         << "                                       (a backend must also be built in)\n"

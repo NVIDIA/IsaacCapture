@@ -64,6 +64,9 @@ public:
     /// The next free input surface, or nullopt-equivalent `false` when all are in flight.
     bool acquire(Surface& out);
 
+    /// Give back a surface acquired but not encoded (an error path). Idempotent, and encode() releases its own.
+    void release(const Surface& surface);
+
     /// Encode the picture written to `surface` after `stream` has completed the work that wrote it, and release the
     /// surface. `key` comes back on the packet. `force_idr` makes this picture an IDR with parameter sets.
     /// Throws std::runtime_error on an encoder error.

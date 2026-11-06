@@ -16,6 +16,19 @@
 namespace video_stage
 {
 
+/// What a decoded stream looks like: its size and its quantisation range. A change of either at a sequence header
+/// recreates the decoder and is reported to the consumer.
+struct StreamFormat
+{
+    Geometry geometry;
+    ColorInfo color;
+
+    bool operator==(const StreamFormat& other) const
+    {
+        return geometry == other.geometry && color.full_range == other.color.full_range;
+    }
+};
+
 /// A decoded picture in device memory, still mapped to the decoder's output surface. Keep the lease until the work
 /// that reads `view` has completed; releasing it returns the surface to the decoder. `key` is the value given with
 /// the access unit that produced the picture.
@@ -41,7 +54,7 @@ class NvdecDecoder
 {
 public:
     using FrameCallback = std::function<void(DecodedFrame&&)>;
-    using FormatCallback = std::function<void(const Geometry&)>;
+    using FormatCallback = std::function<void(const StreamFormat&)>;
 
     /// `stream` is the CUDA stream the decoded surfaces are made ready on; work enqueued on it afterwards is ordered
     /// after the decode.
