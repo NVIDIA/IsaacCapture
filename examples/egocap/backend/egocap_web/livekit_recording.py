@@ -201,6 +201,17 @@ class LiveKitRecordingFeed:
             if self._on_failure is not None:
                 self._on_failure(reason)
 
+    def _clock_problem(self) -> str:
+        """What is wrong with the publisher's clock mapping right now, as a suffix for a failure reason (or "")."""
+        if self._clock.discontinuity:
+            return "; the publisher's clock mapping jumped"
+        mapping = self._clock.mapping()
+        if mapping is None:
+            return "; no current clock mapping from the publisher (its clock-sync replies stopped)"
+        if mapping.uncertainty_ns > self._max_uncertainty_ns:
+            return f"; the clock mapping is uncertain by {mapping.uncertainty_ns / 1e6:.2f} ms, over the budget"
+        return ""
+
     async def _run(self, stream_id: int) -> None:
         """Feed one stream until the take fails or the feed is stopped."""
         stream = self._streams[stream_id]
@@ -213,9 +224,11 @@ class LiveKitRecordingFeed:
             try:
                 frame = await self._receiver.next_frame_or_lost(stream_id, timeout=_MAX_SILENCE_S)
             except asyncio.TimeoutError:
-                # A track can stay published and send nothing; a take must not wait on it forever.
+                # A track can stay published and send nothing; a take must not wait on it forever. With no frame
+                # to carry the check, the clock mapping is judged here too, so a dead publisher says that it is.
                 self._fail(
                     f"{stream.name}: no frame for {_MAX_SILENCE_S:.0f} s although the track is still published"
+                    + self._clock_problem()
                 )
                 return
             if frame is None:
