@@ -27,6 +27,13 @@ enum class CameraBackend
     Sipl,
 };
 
+/// Which pixel representation a backend's frames use; fixed per backend, so the encoder input can be chosen once.
+enum class PixelKind
+{
+    CudaRgba,
+    DmaBufNv12,
+};
+
 /// One camera as a backend reports it. `id` is the backend's own index (a SIPL pipeline index, an Argus device
 /// index); the two are unrelated, so configuration names cameras by logical stream, not by id.
 struct CameraInfo
@@ -36,6 +43,7 @@ struct CameraInfo
     uint32_t width = 0;
     uint32_t height = 0;
     double fps = 0.0;
+    PixelKind pixels = PixelKind::CudaRgba;
 };
 
 /// RGBA8 in GPU memory, as the SIPL backend converts it. Borrowed: the backend recycles the buffer, so a consumer
@@ -46,15 +54,13 @@ struct CudaRgbaPixels
     size_t pitch_bytes = 0;
 };
 
-/// NV12 in a DMA-BUF, as an Argus buffer stream produces it. Leased: valid until the frame's lease is released.
-/// Contract: the producer has finished writing when the frame is returned, and the surface is pitch-linear NV12 with
-/// the pitches and offsets below. A backend that cannot deliver that (block-linear, or still being written) must
-/// convert or wait before returning, not describe it here for the encoder to guess.
+/// NV12 in a DMA-BUF allocated through NvBufSurface, as an Argus buffer stream writes it. Leased: valid until the
+/// frame's lease is released. The surface layout (block-linear or pitch-linear) is whatever the allocation chose and
+/// is understood only by the Jetson hardware encoder, which takes the fd directly; no CPU or CUDA consumer may
+/// assume a layout. The producer has finished writing when the frame is returned.
 struct DmaBufNv12Pixels
 {
     int fd = -1;
-    uint32_t pitch_bytes[2] = { 0, 0 };
-    uint32_t offset_bytes[2] = { 0, 0 };
 };
 
 /// Returns a frame's buffer to its backend when destroyed or reset. Move-only: exactly one holder owns the buffer,
