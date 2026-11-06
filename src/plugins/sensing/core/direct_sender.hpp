@@ -67,7 +67,7 @@ private:
     void run();
     void control_loop(int fd);
     void run_control(int fd);
-    bool connect_once(int& fd);
+    bool connect_once(int& fd, std::string& why);
     bool control_alive() const
     {
         return !m_control_ended.load();
