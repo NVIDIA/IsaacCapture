@@ -22,12 +22,14 @@ add_library(sensing_control STATIC
     control_handler.cpp
     control_server.cpp
     producer_supervisor.cpp
+    driver_log_capture.cpp
     inc/sensing_control/websocket.hpp
     inc/sensing_control/producer_status.hpp
     inc/sensing_control/camera_fault.hpp
     inc/sensing_control/control_handler.hpp
     inc/sensing_control/control_server.hpp
     inc/sensing_control/producer_supervisor.hpp
+    inc/sensing_control/driver_log_capture.hpp
 )
 add_library(sensing::control ALIAS sensing_control)
 

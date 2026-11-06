@@ -45,6 +45,8 @@ struct StreamStatus
     std::string direct_host;
     std::uint16_t direct_port = 0;
     bool direct_connected = false;
+    /// Why the direct link is not up (for example "cannot connect to 192.168.1.5:5600: Connection refused").
+    std::string direct_error;
     std::uint64_t frames = 0;
     std::uint64_t published = 0;
 };

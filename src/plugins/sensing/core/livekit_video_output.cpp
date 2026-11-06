@@ -632,7 +632,7 @@ void LiveKitVideoOutput::set_direct_target(const std::string& host, uint16_t por
 
 DirectLinkStatus LiveKitVideoOutput::direct_status() const
 {
-    return { m_impl->direct->host(), m_impl->direct->port(), m_impl->direct->connected() };
+    return { m_impl->direct->host(), m_impl->direct->port(), m_impl->direct->connected(), m_impl->direct->last_error() };
 }
 
 std::string LiveKitVideoOutput::describe()

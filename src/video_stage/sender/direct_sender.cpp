@@ -112,6 +112,7 @@ void DirectSender::set_target(const std::string& host, uint16_t port)
         m_has_target = !host.empty();
         ++m_target_generation;
     }
+    set_error({});
     {
         // Whatever waits was meant for the old destination, and the new one needs a keyframe first.
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -128,6 +129,18 @@ void DirectSender::set_target(const std::string& host, uint16_t port)
                 ::shutdown(fd, SHUT_RDWR);
     }
     m_wake.notify_all();
+}
+
+std::string DirectSender::last_error() const
+{
+    std::lock_guard<std::mutex> lock(m_error_mutex);
+    return m_last_error;
+}
+
+void DirectSender::set_error(const std::string& error)
+{
+    std::lock_guard<std::mutex> lock(m_error_mutex);
+    m_last_error = error;
 }
 
 std::string DirectSender::host() const
@@ -405,6 +418,7 @@ void DirectSender::run()
                     logged_failure = true;
                     last_failure_log = now;
                 }
+                set_error("cannot connect to " + host + ":" + std::to_string(port) + ": " + why);
                 close_connection();
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_wake.wait_for(lock, std::chrono::seconds(1), [this] { return m_stop; });
@@ -413,6 +427,7 @@ void DirectSender::run()
             logged_failure = false;
             connected_generation = generation;
             m_connected = true;
+            set_error({});
             logger()->info("connected to {}:{}", host, port);
             control = std::thread(&DirectSender::control_loop, this, control_fd);
             // The PC needs a keyframe first: drop anything queued before the connection and ask for one.
@@ -433,6 +448,9 @@ void DirectSender::run()
             {
                 if (!control_alive())
                 {
+                    // Only if this is still the destination: a retarget cuts the old connection on purpose.
+                    if (m_target_generation.load() == generation)
+                        set_error(host + ":" + std::to_string(port) + " closed the control connection");
                     logger()->warn("{}:{} closed the control connection; reconnecting", host, port);
                     lock.unlock();
                     close_connection();
@@ -455,7 +473,10 @@ void DirectSender::run()
             continue;
         }
         if (m_target_generation.load() == generation)
+        {
             logger()->warn("send to {}:{} failed; reconnecting", host, port);
+            set_error("sending to " + host + ":" + std::to_string(port) + " failed");
+        }
         close_connection();
     }
     close_connection();

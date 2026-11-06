@@ -77,6 +77,8 @@ struct SupervisorConfig
     std::chrono::milliseconds poll_interval{ 15 };
     /// How often the figures in the status are refreshed from the running session.
     std::chrono::milliseconds status_interval{ 1000 };
+    /// A running session whose stream delivers no new frame for this long is failed and restarted. Zero disables it.
+    std::chrono::milliseconds stall_timeout{ 5000 };
 };
 
 /**
@@ -105,12 +107,24 @@ public:
 private:
     void sleep_unless_stopped(std::chrono::milliseconds duration, const std::function<bool()>& stop) const;
     void announce(ProducerState state, std::optional<Fault> fault);
+    /// Compare the session's figures with the last ones: report new direct-link errors, and return a description of a
+    /// stalled stream (empty when every stream is delivering).
+    std::string watch(const std::vector<StreamStatus>& streams, std::chrono::steady_clock::time_point now);
 
     ProducerStatus& m_status;
     std::vector<StreamStatus> m_configured;
     SessionFactory m_factory;
     std::function<void(const std::string&)> m_publish;
     SupervisorConfig m_config;
+
+    /// Per stream: the last frame count seen, when it last changed, and the direct-link error last reported.
+    struct Watch
+    {
+        std::uint64_t frames = 0;
+        std::chrono::steady_clock::time_point changed;
+        std::string direct_error;
+    };
+    std::map<std::string, Watch> m_watch; ///< main thread only
 
     std::mutex m_mutex; ///< guards m_session and m_targets
     std::unique_ptr<CameraSession> m_session;

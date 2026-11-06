@@ -53,7 +53,8 @@ std::string status_json(const StatusSnapshot& snapshot)
             { "sensor", stream.sensor_id },
             { "direct", Json{ { "host", stream.direct_host },
                               { "port", stream.direct_port },
-                              { "connected", stream.direct_connected } } },
+                              { "connected", stream.direct_connected },
+                              { "error", stream.direct_error } } },
             { "frames", stream.frames },
             { "published", stream.published },
         });

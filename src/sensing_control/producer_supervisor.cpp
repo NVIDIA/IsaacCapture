@@ -56,6 +56,40 @@ void ProducerSupervisor::announce(ProducerState state, std::optional<Fault> faul
     }
 }
 
+std::string ProducerSupervisor::watch(const std::vector<StreamStatus>& streams, std::chrono::steady_clock::time_point now)
+{
+    std::string stalled;
+    for (const auto& stream : streams)
+    {
+        auto& entry = m_watch[stream.track];
+        if (stream.frames != entry.frames)
+        {
+            entry.frames = stream.frames;
+            entry.changed = now;
+        }
+        else if (m_config.stall_timeout.count() > 0 && now - entry.changed >= m_config.stall_timeout)
+        {
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - entry.changed).count();
+            stalled += (stalled.empty() ? "" : "; ") + std::string("no frame for ") + std::to_string(seconds) +
+                       " s from sensor " + std::to_string(stream.sensor_id) + " (stream " + stream.track + ")";
+        }
+
+        // A direct link that cannot reach the PC is reported once per distinct reason, not every second.
+        if (stream.direct_error != entry.direct_error)
+        {
+            entry.direct_error = stream.direct_error;
+            if (!stream.direct_error.empty() && m_publish)
+            {
+                m_publish(error_event(
+                    { "direct_link_failed", "Stream " + stream.track + ": " + stream.direct_error +
+                                                ". Check that the PC worker is running and listening on that port, "
+                                                "and that the address is the PC's (set it with set_direct_target)." }));
+            }
+        }
+    }
+    return stalled;
+}
+
 void ProducerSupervisor::sleep_unless_stopped(std::chrono::milliseconds duration, const std::function<bool()>& stop) const
 {
     const auto until = std::chrono::steady_clock::now() + duration;
@@ -104,8 +138,10 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
         {
             // The factory explains the failures it understands; anything else is read as a camera failure.
             const auto* explained = dynamic_cast<const StartupFailure*>(&e);
-            Fault fault = explained ? explained->fault() : diagnose_camera_failure(e.what());
-            const ProducerState state = explained ? explained->state() : ProducerState::CameraFault;
+            const Diagnosis diagnosis =
+                explained ? Diagnosis{ explained->fault(), explained->state() } : diagnose_failure(e.what());
+            Fault fault = diagnosis.fault;
+            const ProducerState state = diagnosis.state;
             if (!last_fault || last_fault->message != fault.message)
                 announce(state, fault);
             last_fault = std::move(fault);
@@ -121,6 +157,12 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
         announce(ProducerState::Streaming, std::nullopt);
 
         std::optional<Fault> failure;
+        ProducerState failure_state = ProducerState::Error;
+        m_watch.clear();
+        for (const auto& stream : m_configured)
+        {
+            m_watch[stream.track].changed = std::chrono::steady_clock::now();
+        }
         auto next_status = std::chrono::steady_clock::now();
         while (!stop() && !failure)
         {
@@ -142,13 +184,26 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
                             stream.direct_port = found->second.port;
                         }
                     }
+                    const std::string stalled = watch(streams, std::chrono::steady_clock::now());
                     m_status.set_streams(std::move(streams));
+                    if (!stalled.empty())
+                        throw std::runtime_error(stalled);
                 }
             }
             catch (const std::exception& e)
             {
-                failure = Fault{ "stream_failed", std::string("The stream stopped: ") + e.what() +
-                                                      " The producer restarts it automatically." };
+                failure_state = ProducerState::Error;
+                Diagnosis diagnosis = diagnose_failure(e.what());
+                if (diagnosis.fault.code == "startup_failed")
+                {
+                    // A session that was running and failed for an unrecognised reason did not "fail to start".
+                    diagnosis = { { "stream_failed", std::string("The stream stopped. The producer restarts it "
+                                                                 "automatically. (") +
+                                                         e.what() + ")" },
+                                  ProducerState::Error };
+                }
+                failure = diagnosis.fault;
+                failure_state = diagnosis.state;
             }
             if (!failure)
                 std::this_thread::sleep_for(m_config.poll_interval);
@@ -171,7 +226,7 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
         }
         if (failure)
         {
-            announce(ProducerState::Error, failure);
+            announce(failure_state, failure);
             last_fault.reset();
             sleep_unless_stopped(m_config.retry_interval, stop);
         }

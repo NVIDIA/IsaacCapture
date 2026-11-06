@@ -149,6 +149,7 @@ public:
             entry.direct_host = stream->sender->host();
             entry.direct_port = stream->sender->port();
             entry.direct_connected = stream->sender->connected();
+            entry.direct_error = stream->sender->last_error();
             out.push_back(std::move(entry));
         }
         return out;

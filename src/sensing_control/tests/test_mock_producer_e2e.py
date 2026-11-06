@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 import orin_control  # noqa: E402
 
 LEFT_PORT, RIGHT_PORT = 5730, 5731
+CLOSED_PORT = 5799  # nothing listens here
 
 
 def _binary(env: str, default: str) -> Path:
@@ -352,6 +353,72 @@ class MockProducerEndToEnd(unittest.TestCase):
         )
         self.assertEqual(bad.returncode, 1)
         self.assertIn("unknown_stream", bad.stderr)
+
+    def test_6_unreachable_target_reports_the_error(self) -> None:
+        status = self.wait_streaming()
+        # Every stream carries the key, empty while nothing is wrong.
+        for stream in status["streams"]:
+            self.assertIn("error", stream["direct"])
+        self.assertEqual(self.stream_of(status, "sensing-right")["direct"]["error"], "")
+
+        watcher = self.connect()
+        reply = self.set_target("sensing-left", "127.0.0.1", CLOSED_PORT)
+        self.assertTrue(reply["ok"], reply)
+        self.assertIn(
+            "error", self.stream_of(reply["status"], "sensing-left")["direct"]
+        )
+
+        # The first error to appear after the retarget must already name the new destination.
+        wanted = f"cannot connect to 127.0.0.1:{CLOSED_PORT}"
+
+        def error_text() -> str | None:
+            error = self.stream_of(self.status(), "sensing-left")["direct"]["error"]
+            return error or None
+
+        error = _wait(error_text, 15)
+        self.assertIsNotNone(
+            error, "direct.error never appeared:\n" + self.log("producer.log")
+        )
+        self.assertTrue(error.startswith(wanted), error)
+        direct = self.stream_of(self.status(), "sensing-left")["direct"]
+        self.assertFalse(direct["connected"])
+        self.assertEqual((direct["host"], direct["port"]), ("127.0.0.1", CLOSED_PORT))
+        # The other stream is unaffected.
+        self.assertEqual(
+            self.stream_of(self.status(), "sensing-right")["direct"]["error"], ""
+        )
+        # The failure is also pushed once to connected clients as an error event.
+        events = []
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                message = watcher.receive(timeout=1.0)
+            except (TimeoutError, OSError):
+                continue
+            if message.get("event") == "error":
+                events.append(message)
+                if message["error"]["code"] == "direct_link_failed":
+                    break
+        watcher._sock.close()
+        direct_events = [
+            e for e in events if e["error"]["code"] == "direct_link_failed"
+        ]
+        self.assertEqual(len(direct_events), 1, events)
+        self.assertIn("sensing-left", direct_events[0]["error"]["message"])
+        self.assertIn("cannot connect to", direct_events[0]["error"]["message"])
+
+        # Turning the link off clears the error.
+        self.assertTrue(self.set_target("sensing-left", "")["ok"])
+        self.assertTrue(
+            _wait(
+                lambda: (
+                    self.stream_of(self.status(), "sensing-left")["direct"]["error"]
+                    == ""
+                ),
+                5,
+            ),
+            "the error was not cleared",
+        )
 
     def test_9_producer_stops_on_sigint(self) -> None:
         self.producer.send_signal(signal.SIGINT)

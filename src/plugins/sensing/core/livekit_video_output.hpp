@@ -49,6 +49,7 @@ struct DirectLinkStatus
     std::string host;
     uint16_t port = 0;
     bool connected = false;
+    std::string error;
 };
 
 struct LiveKitOutputStats
