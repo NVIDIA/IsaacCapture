@@ -26,9 +26,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
+from . import mcal_catalog
 from . import protocol as p
 from .acquisition import Acquisition, DepthAIAdapter, IsaacCaptureAdapter, TrackingSelection
 from .server import ServerConfig, StationCamera
@@ -58,8 +60,29 @@ def _group_selected(begin: p.BeginRequest, source_type: p.SourceType) -> bool:
     return source_type in begin.tracking.sources
 
 
+def _calibration_path(name: str | None, directory: Path | None, *, real_hardware: bool = False) -> str | None:
+    """The host path of a selected MCAL file; the name itself where no folder exists to resolve it.
+
+    The server has already checked the name against the folder before this runs. Without a folder (the mock
+    and replay setups, which never reach real hardware) the name is kept as an inert marker; real hardware
+    refuses it, because the plugin would throw on a relative path and both hands would be lost.
+    """
+    if name is None:
+        return None
+    if directory is None:
+        if real_hardware:
+            raise ValueError(f"calibration file {name!r} was selected but no calibration directory is configured")
+        return name
+    return str(mcal_catalog.resolve(directory, name))
+
+
 def _tracking_adapter(
-    begin: p.BeginRequest, *, sdk: ModuleType, session_factory: Callable[[Any], Any]
+    begin: p.BeginRequest,
+    *,
+    sdk: ModuleType,
+    session_factory: Callable[[Any], Any],
+    calibration_dir: Path | None = None,
+    real_hardware: bool = False,
 ) -> IsaacCaptureAdapter | None:
     """The IsaacCapture adapter for the requested tracking outputs, or None when none are requested.
 
@@ -80,6 +103,16 @@ def _tracking_adapter(
         hand_right=_group_selected(begin, p.SourceType.HANDS),
         manus_enabled=manus_plugin_request is not None,
         manus_required=manus_plugin_request.required if manus_plugin_request is not None else False,
+        manus_left_calibration=_calibration_path(
+            manus_plugin_request.left_calibration if manus_plugin_request is not None else None,
+            calibration_dir,
+            real_hardware=real_hardware,
+        ),
+        manus_right_calibration=_calibration_path(
+            manus_plugin_request.right_calibration if manus_plugin_request is not None else None,
+            calibration_dir,
+            real_hardware=real_hardware,
+        ),
     )
     return IsaacCaptureAdapter(
         sdk=sdk, session_factory=session_factory, selection=selection, rate_hz=begin.tracking.rate_hz
@@ -183,7 +216,17 @@ def build_real_source_factory(config: ServerConfig) -> SourceFactory:
         from .acquisition.isaac_sdk import load_isaac_capture
 
         sdk = load_isaac_capture() if begin.tracking.sources else None
-        tracking = _tracking_adapter(begin, sdk=sdk, session_factory=sdk.TeleopSession) if sdk else None
+        tracking = (
+            _tracking_adapter(
+                begin,
+                sdk=sdk,
+                session_factory=sdk.TeleopSession,
+                calibration_dir=config.manus_calibration_dir,
+                real_hardware=True,
+            )
+            if sdk
+            else None
+        )
         return Acquisition(tracking=tracking, cameras=_real_camera_adapters(config, cameras))
 
     source_factory.mock = False  # type: ignore[attr-defined]
@@ -280,6 +323,7 @@ def build_gmsl_source_factory(
     stations: dict[str, StationCamera],
     *,
     slot_mapper: SlotMapper | None = None,
+    calibration_dir: Path | None = None,
 ) -> SourceFactory:
     """The live-station source factory: real IsaacCapture tracking (from ``$ISAAC_ROOT``, only when a session
     requests tracking) plus GMSL cameras read from the receiver's frame feed.
@@ -297,7 +341,17 @@ def build_gmsl_source_factory(
         from .acquisition.isaac_sdk import load_isaac_capture
 
         sdk = load_isaac_capture() if begin.tracking.sources else None
-        tracking = _tracking_adapter(begin, sdk=sdk, session_factory=sdk.TeleopSession) if sdk else None
+        tracking = (
+            _tracking_adapter(
+                begin,
+                sdk=sdk,
+                session_factory=sdk.TeleopSession,
+                calibration_dir=calibration_dir,
+                real_hardware=True,
+            )
+            if sdk
+            else None
+        )
         if not requested:
             return Acquisition(tracking=tracking, cameras=())
         for camera in requested:

@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-manus-calibration"
+version = "0.0.0"  # Internal library - not versioned
+description = "Supervisor, wire protocol and MCAL storage for the Manus glove calibration worker"
+requires-python = ">=3.11"
+# Standard library only, so any UI or server can use it without the Manus SDK.
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["isaaccapture_manus_calibration"]
