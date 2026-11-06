@@ -76,7 +76,8 @@ inline std::vector<std::uint8_t> build_clock_sync_reply(const ClockSyncRequest& 
     return reply;
 }
 
-/// The requester's half of the same exchange, for a peer that sends requests (the PC video stage over its control link).
+/// The requester's half of the same exchange, for a peer that sends requests (the PC video stage over its control
+/// link).
 inline std::vector<std::uint8_t> build_clock_sync_request(const ClockSyncRequest& request)
 {
     std::vector<std::uint8_t> out(kClockSyncRequestSize);
