@@ -62,7 +62,8 @@ submission have separate evidence. A pending item below is not a pass.
 - Official archive: `omniglove_2026-11-06_173720-hand.pass.zip`, 8,752,908 bytes;
   SHA-256 `b28807100069aaf5d9daf09b777115b1e7b0962dc77764d5bb6058e9b4609d02`.
   Archive integrity and all four original input hashes were verified. The
-  archive and original inputs remain outside Git. Form submission is pending.
+  archive and original inputs remain outside Git. The operator submitted the
+  CTS form for PR #1445 on 2026-11-06 and provided its response confirmation.
 
 ## Tested wrist installation offsets
 
@@ -199,8 +200,8 @@ worker iteration.
       continuity/axis checks and operator-confirmed physical alignment.
 - [x] Package with `package_cts.py`; take, verdict, archive size and SHA-256
       are recorded above and in the PR.
-- [ ] Upload via https://forms.gle/hLqAhNkae4bhAUX79, associating the archive
-      with the PR. Keep the archive outside Git.
+- [x] Submit via https://forms.gle/hLqAhNkae4bhAUX79 for PR #1445;
+      the operator provided the successful response confirmation.
 - [ ] Resolve upstream CI and reviewer feedback.
 
 Optical and Auto wrist modes remain unqualified by the controller take.
