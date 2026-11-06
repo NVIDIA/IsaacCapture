@@ -79,7 +79,7 @@ def decode_to_bgr(pixels: np.ndarray, stream: StreamInfo) -> np.ndarray:
 
 
 class MessageQueue:
-    """The nonblocking ``tryGet()`` queue the adapter polls; each poll asks the pipeline for the newest frame."""
+    """The nonblocking ``tryGet()`` queue the adapter polls; each poll takes the oldest pending frame."""
 
     def __init__(self, *, fill: Any = None) -> None:
         self._fill = fill
@@ -87,7 +87,7 @@ class MessageQueue:
         self._blocking = False
 
     def setMaxSize(self, max_size: int) -> None:
-        """Accepted for API shape; at most one frame is ever pending here by construction."""
+        """Accepted for API shape; the pipeline bounds the pending frames itself (``QUEUE_DEPTH``)."""
 
     def setBlocking(self, blocking: bool) -> None:
         """Record the requested policy; ``tryGet`` is nonblocking regardless."""
@@ -102,7 +102,7 @@ class MessageQueue:
         return not self._closed and self._fill is not None
 
     def tryGet(self) -> EncodedFrame | None:
-        """The newest unserved frame, or None when nothing new has been announced."""
+        """The oldest pending frame, or None when none is pending."""
         if self._closed or self._fill is None:
             return None
         return self._fill()

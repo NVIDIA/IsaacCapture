@@ -26,3 +26,29 @@ async def real_mock_server(unused_tcp_port: int) -> AsyncIterator[str]:
         yield f"ws://127.0.0.1:{unused_tcp_port}"
     finally:
         await stop_capture_server(server)
+
+
+@pytest.fixture
+async def make_station(tmp_path, monkeypatch, unused_tcp_port_factory):
+    """Starts a CaptureServer with the fake calibration worker; every station is stopped on teardown."""
+    from tests.capture_server.calibration_helpers import start_station, stop_station
+
+    stations = []
+
+    async def make(*, scenario=None, calibration=True, config=None):
+        station = await start_station(
+            tmp_path,
+            monkeypatch,
+            unused_tcp_port_factory(),
+            scenario=scenario,
+            calibration=calibration,
+            config=config,
+        )
+        stations.append(station)
+        return station
+
+    try:
+        yield make
+    finally:
+        for station in stations:
+            await stop_station(station)

@@ -50,7 +50,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import IntEnum
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
+from urllib.parse import urlsplit
 
 import numpy as np
 import websockets
@@ -67,7 +68,11 @@ FrameDescription = p.TrackingStream
 FieldDescriptor = p.FieldDescriptor
 
 __all__ = [
+    "CalibrationEndedError",
+    "CalibrationStopped",
     "CaptureClient",
+    "DeviceQueryError",
+    "ManusPluginConfig",
     "CaptureFrame",
     "CaptureStarted",
     "CaptureStatus",
@@ -86,6 +91,8 @@ Callback = Callable[[T], "None | Awaitable[None]"]
 _DEFAULT_RATE_HZ = 60.0
 _ACCEPT_TIMEOUT_S = 10.0
 _STOP_TIMEOUT_S = 10.0
+# A device query is one short exchange; the server bounds its own scan well inside this.
+_QUERY_TIMEOUT_S = 20.0
 _CLOSE_TIMEOUT_S = 2.0
 # The documented transport ceiling is a complete JPEG (2 MiB) plus the
 # 32-byte binary header; websockets' own default max_size (~1 MiB) would
@@ -290,6 +297,77 @@ class CaptureStopped:
     streams: tuple[p.StreamCounters, ...] | None
 
 
+@dataclass(frozen=True)
+class ManusPluginConfig:
+    """The Manus plugin and, optionally, MCAL files to load for each glove.
+
+    The names are bare ``.mcal`` basenames of files in the server's managed MCAL folder, as listed by
+    :meth:`CaptureClient.query_devices`; they are never paths on this machine. A name only selects a file:
+    whether the glove accepted it is reported by the plugin's own per-hand status.
+    """
+
+    left_calibration: str | None = None
+    right_calibration: str | None = None
+    plugin: ClassVar[p.PluginType] = p.PluginType.MANUS
+
+    def __post_init__(self) -> None:
+        """Reject names the protocol cannot carry, and one file chosen for both hands."""
+        for name in (self.left_calibration, self.right_calibration):
+            if name is not None and not p.is_mcal_name(name):
+                raise ValueError(f"calibration file must be an .mcal basename, got {name!r}")
+        if self.left_calibration is not None and self.left_calibration == self.right_calibration:
+            raise ValueError("left_calibration and right_calibration must name different files")
+
+
+class DeviceQueryError(Exception):
+    """The device list could not be retrieved (transport, timeout, protocol, or a server without the query).
+
+    Never reported as an empty list: an answer with no MCAL files is a READY entry with none.
+    """
+
+
+class CalibrationEndedError(Exception):
+    """A pending calibration confirmation was released because the calibration ended first."""
+
+
+@dataclass(frozen=True)
+class CalibrationStopped:
+    """The client's calibration completion value.
+
+    A non-None ``reason`` confirms the server's terminal message. ``None`` means the connection or protocol
+    failed before one arrived: the server-side outcome is unknown, no files are offered, and the gloves may
+    still be in use until the server reports otherwise.
+    """
+
+    session_id: str
+    reason: p.CalibrationStopReason | None
+    result: p.CalibrationResult | None
+    error_message: str | None
+
+
+@dataclass
+class _CalibrationAttempt:
+    """All state of one ``start_calibration`` call, owned by its supervisor task."""
+
+    session_id: str
+    sides: tuple[p.HandSide, ...]
+    callbacks: dict[str, Callback[Any] | None]
+    ws: Any = None
+    stop_requested: asyncio.Event = dataclass_field(default_factory=asyncio.Event)
+    # Set when on_started has been attempted, or the attempt failed before acceptance.
+    ready: asyncio.Event = dataclass_field(default_factory=asyncio.Event)
+    accepted: bool = False
+    # Set once the attempt is finalizing, before its pending confirmations are failed, so none can register after.
+    ended: bool = False
+    start_exception: BaseException | None = None
+    events: asyncio.Queue[tuple[str, Any] | None] = dataclass_field(default_factory=asyncio.Queue)
+    pending: dict[str, asyncio.Future[None]] = dataclass_field(default_factory=dict)
+    accepted_tokens: set[str] = dataclass_field(default_factory=set)
+    stop_sent: bool = False
+    callback_error: BaseException | None = None
+    task: asyncio.Task[None] | None = None
+
+
 def _is_awaitable(value: Any) -> bool:
     return inspect.isawaitable(value)
 
@@ -364,20 +442,21 @@ class CaptureClient:
             raise ValueError("CaptureClient url must be a nonempty ws:// or wss:// string")
         self._url = url
         self._attempt: _Attempt | None = None
+        self._calibration: _CalibrationAttempt | None = None
 
     async def start(
         self,
         *,
         sources: Sequence[p.SourceType],
         cameras: Sequence[p.CameraSelection] = (),
-        plugins: Sequence[p.PluginType] = (),
+        plugins: Sequence[p.PluginType | ManusPluginConfig] = (),
         on_started: Callback[CaptureStarted] | None = None,
         on_status: Callback[CaptureStatus] | None = None,
         on_capture_frame: Callback[CaptureFrame] | None = None,
         on_capture_image: Callback[CameraImage] | None = None,
         on_stopped: Callback[CaptureStopped] | None = None,
     ) -> None:
-        if self._attempt is not None:
+        if self._attempt is not None or self._calibration is not None:
             raise RuntimeError(
                 "CaptureClient.start called while an attempt is active; the active attempt continues"
             )
@@ -433,6 +512,251 @@ class CaptureClient:
         if attempt is None:
             return  # idle, or the previous attempt already finished
         attempt.stop_requested.set()  # idempotent: a no-op if already set
+
+    # -- calibration -------------------------------------------------------
+
+    async def start_calibration(
+        self,
+        *,
+        sides: Sequence[p.HandSide],
+        on_started: Callback[p.CalibrationStarted] | None = None,
+        on_status: Callback[p.CalibrationStatus] | None = None,
+        on_stopped: Callback[CalibrationStopped] | None = None,
+    ) -> None:
+        """Start a Manus glove calibration on the server; returns once the server accepts it.
+
+        Acceptance does not mean the gloves are connected or the calibration finished. Every accepted
+        attempt ends with exactly one ``on_stopped`` call, including after a lost connection (then with
+        ``reason=None``). A rejected start raises :class:`RequestRejectedError` and calls no callback. Callbacks
+        run one at a time on this loop; never wait inside one for a later callback.
+        """
+        if self._attempt is not None or self._calibration is not None:
+            raise RuntimeError(
+                "CaptureClient.start_calibration called while an attempt is active; the active attempt continues"
+            )
+        try:
+            request = p.StartCalibrationRequest(session_id=str(uuid.uuid4()), sides=tuple(sides))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"invalid CaptureClient.start_calibration arguments: {exc}") from exc
+        callbacks = {"on_started": on_started, "on_status": on_status, "on_stopped": on_stopped}
+        for name, value in callbacks.items():
+            if value is not None and not callable(value):
+                raise ValueError(f"CaptureClient.start_calibration {name} must be callable or None")
+        attempt = _CalibrationAttempt(session_id=request.session_id, sides=request.sides, callbacks=callbacks)
+        self._calibration = attempt
+        attempt.task = asyncio.ensure_future(self._run_calibration(attempt, request))
+        try:
+            await attempt.ready.wait()
+        except asyncio.CancelledError:
+            # Same contract as start(): signal a stop, let the supervisor tidy up, never cancel it.
+            attempt.stop_requested.set()
+            if not attempt.accepted and attempt.task is not None:
+                await asyncio.wait({attempt.task}, timeout=_ACCEPT_TIMEOUT_S)
+            raise
+        if attempt.start_exception is not None:
+            raise attempt.start_exception
+
+    async def confirm_calibration_step(self, *, step_token: str) -> None:
+        """Start the step offered under ``step_token``; returns once the worker accepted it.
+
+        Acceptance means the SDK accepted starting the step, not that the step or calibration finished. A
+        repeat of an accepted token returns at once and never starts another step. A stale or unoffered token
+        raises :class:`RequestRejectedError` and leaves the attempt unchanged; if the calibration ends first,
+        :class:`CalibrationEndedError` is raised.
+        """
+        attempt = self._calibration
+        if attempt is None or not attempt.accepted:
+            raise RuntimeError("no accepted calibration is active")
+        if not isinstance(step_token, str) or not step_token:
+            raise ValueError("step_token must be a nonempty string")
+        if step_token in attempt.accepted_tokens:
+            return
+        future = attempt.pending.get(step_token)
+        if future is None:
+            # Finalizing may already have failed the pending confirmations; a new one would never be resolved.
+            if attempt.ended:
+                raise CalibrationEndedError("the calibration ended before the step was accepted")
+            future = asyncio.get_running_loop().create_future()
+            attempt.pending[step_token] = future
+            request = p.ConfirmCalibrationStepRequest(session_id=attempt.session_id, step_token=step_token)
+            await self._send_calibration(attempt, request.to_json())
+            # The send can yield while the attempt ends; finalizing then no longer sees this future.
+            if attempt.ended and not future.done():
+                attempt.pending.pop(step_token, None)
+                future.set_exception(CalibrationEndedError("the calibration ended before the step was accepted"))
+        # Shielded: a cancelled caller must not cancel the future a retry (or the reader) still uses.
+        await asyncio.shield(future)
+
+    async def stop_calibration(self) -> None:
+        """Ask the server to cancel the active calibration. Idempotent; wait for ``on_stopped`` for the result."""
+        attempt = self._calibration
+        if attempt is None:
+            return
+        attempt.stop_requested.set()
+        if attempt.accepted and not attempt.stop_sent:
+            attempt.stop_sent = True
+            await self._send_calibration(
+                attempt, p.StopCalibrationRequest(session_id=attempt.session_id).to_json()
+            )
+
+    async def _send_calibration(self, attempt: _CalibrationAttempt, data: dict[str, Any]) -> None:
+        """Send one request; a dead transport is reported by the reader as an unconfirmed ending."""
+        ws = attempt.ws
+        if ws is None:
+            return
+        try:
+            await asyncio.wait_for(ws.send(_to_json_text(data)), timeout=_STOP_TIMEOUT_S)
+        except (ConnectionClosed, OSError, asyncio.TimeoutError):
+            pass  # the reader reports a dead transport as an unconfirmed ending; nothing to add here
+
+    async def _run_calibration(self, attempt: _CalibrationAttempt, request: p.StartCalibrationRequest) -> None:
+        """The sole owner of one calibration attempt, from connect through finalization."""
+        try:
+            started = await self._calibration_handshake(attempt, request)
+        except (Exception, asyncio.CancelledError) as exc:  # reported through start_exception, not raised here
+            await self._close_calibration_ws(attempt)
+            attempt.start_exception = (
+                StoppedBeforeAcceptedError(str(exc)) if isinstance(exc, _StopWonRace) else exc
+            )
+            attempt.ready.set()
+            self._calibration = None
+            return
+        attempt.accepted = True
+        dispatcher = asyncio.ensure_future(self._dispatch_calibration(attempt))
+        attempt.events.put_nowait(("on_started", started))
+        terminal: p.CalibrationStopped | None = None
+        diagnostic: BaseException | None = None
+        try:
+            if attempt.stop_requested.is_set():
+                await self.stop_calibration()
+            terminal = await self._read_calibration(attempt)
+        except (Exception, asyncio.CancelledError) as exc:  # becomes the unconfirmed ending's diagnostic
+            diagnostic = exc
+        finally:
+            stopped = self._calibration_stopped(attempt, terminal, diagnostic)
+            attempt.ended = True
+            for future in attempt.pending.values():
+                if not future.done():
+                    future.set_exception(
+                        CalibrationEndedError("the calibration ended before the step was accepted")
+                    )
+            attempt.pending.clear()
+            # The connection is closed and the client idle before on_stopped runs, so a caller (including the
+            # callback itself) can start the next attempt at once: the server frees its owner slot only when
+            # this connection is gone.
+            await self._close_calibration_ws(attempt)
+            if self._calibration is attempt:
+                self._calibration = None
+            attempt.events.put_nowait(("on_stopped", stopped))
+            attempt.events.put_nowait(None)
+            await asyncio.gather(dispatcher, return_exceptions=True)
+
+    async def _calibration_handshake(
+        self, attempt: _CalibrationAttempt, request: p.StartCalibrationRequest
+    ) -> p.CalibrationStarted:
+        """Connect, send StartCalibration, and wait for acceptance or rejection."""
+        attempt.ws = await self._race(
+            websockets.connect(self._url, compression=None, max_size=_MAX_MESSAGE_BYTES),
+            attempt.stop_requested,
+            _ACCEPT_TIMEOUT_S,
+        )
+        await self._race(
+            attempt.ws.send(_to_json_text(request.to_json())), attempt.stop_requested, _ACCEPT_TIMEOUT_S
+        )
+        raw = await self._race(attempt.ws.recv(), attempt.stop_requested, _ACCEPT_TIMEOUT_S)
+        if isinstance(raw, bytes):
+            raise p.ProtocolError("received a binary message before CalibrationStarted")
+        event = p.parse_server_message(_from_json_text(raw))
+        if isinstance(event, p.RequestRejected):
+            raise RequestRejectedError(event.session_id, event.reason, event.error_message)
+        if not isinstance(event, p.CalibrationStarted) or event.session_id != attempt.session_id:
+            raise p.ProtocolError(f"expected CalibrationStarted first, got {type(event).__name__}")
+        if event.sides != attempt.sides:
+            raise p.ProtocolError("CalibrationStarted names different sides than requested")
+        return event
+
+    async def _read_calibration(self, attempt: _CalibrationAttempt) -> p.CalibrationStopped | None:
+        """Read until the server's terminal message; None when the transport ended without one."""
+        while True:
+            try:
+                raw = await attempt.ws.recv()
+            except ConnectionClosed:
+                return None
+            if isinstance(raw, bytes):
+                raise p.ProtocolError("received a binary message during a calibration")
+            event = p.parse_server_message(_from_json_text(raw))
+            if event.session_id != attempt.session_id:
+                raise p.ProtocolError(f"received a message for session {event.session_id!r}, expected another")
+            if isinstance(event, p.CalibrationStopped):
+                return event
+            if isinstance(event, p.CalibrationStatus):
+                attempt.events.put_nowait(("on_status", event))
+            elif isinstance(event, p.CalibrationStepAccepted):
+                attempt.accepted_tokens.add(event.step_token)
+                future = attempt.pending.pop(event.step_token, None)
+                if future is not None and not future.done():
+                    future.set_result(None)
+            elif isinstance(event, p.RequestRejected):
+                self._calibration_rejected(attempt, event)
+            elif not isinstance(event, p.CalibrationStarted):
+                raise p.ProtocolError(f"unexpected {type(event).__name__} during a calibration")
+
+    @staticmethod
+    def _calibration_rejected(attempt: _CalibrationAttempt, event: p.RequestRejected) -> None:
+        """A refused confirmation fails its caller; the attempt itself continues unchanged."""
+        if event.request_type != p.MessageType.CONFIRM_CALIBRATION_STEP:
+            return
+        error = RequestRejectedError(event.session_id, event.reason, event.error_message)
+        tokens = [event.step_token] if event.step_token is not None else list(attempt.pending)
+        for token in tokens:
+            future = attempt.pending.pop(token, None)
+            if future is not None and not future.done():
+                future.set_exception(error)
+
+    async def _dispatch_calibration(self, attempt: _CalibrationAttempt) -> None:
+        """Deliver callbacks one at a time, in order, apart from the reader so a callback can await a confirm."""
+        while True:
+            item = await attempt.events.get()
+            if item is None:
+                return
+            name, value = item
+            try:
+                await _invoke(attempt.callbacks[name], value)
+            except (Exception, asyncio.CancelledError) as exc:
+                if name == "on_stopped":
+                    # Reported to the loop, never repeated: there is no later callback to carry it.
+                    asyncio.get_running_loop().call_exception_handler(
+                        {"message": "on_stopped callback raised", "exception": exc}
+                    )
+                elif attempt.callback_error is None:
+                    # A failing callback cancels the calibration; the terminal value carries the diagnostic.
+                    attempt.callback_error = exc
+                    attempt.stop_requested.set()
+                    await self.stop_calibration()
+            finally:
+                if name == "on_started":
+                    attempt.ready.set()
+
+    @staticmethod
+    def _calibration_stopped(
+        attempt: _CalibrationAttempt, terminal: p.CalibrationStopped | None, diagnostic: BaseException | None
+    ) -> CalibrationStopped:
+        """The server's terminal message, or an honest unconfirmed value; files only from a confirmed COMPLETED."""
+        notes = [f"a callback raised: {attempt.callback_error!r}"] if attempt.callback_error is not None else []
+        if terminal is not None:
+            message = "; ".join(([terminal.error_message] if terminal.error_message else []) + notes) or None
+            return CalibrationStopped(attempt.session_id, terminal.reason, terminal.result, message)
+        why = f"protocol error: {diagnostic}" if diagnostic is not None else "the connection ended"
+        message = "; ".join([f"{why}; the server's outcome is unknown", *notes])
+        return CalibrationStopped(attempt.session_id, None, None, message)
+
+    async def _close_calibration_ws(self, attempt: _CalibrationAttempt) -> None:
+        ws, attempt.ws = attempt.ws, None
+        if ws is not None:
+            try:
+                await asyncio.wait_for(ws.close(), timeout=_CLOSE_TIMEOUT_S)
+            except (Exception, asyncio.CancelledError):  # best-effort cleanup, must never raise or hang
+                pass
 
     # -- the supervisor ----------------------------------------------------
 
@@ -733,6 +1057,42 @@ class CaptureClient:
         finally:
             self._attempt = None
 
+    async def query_devices(self) -> tuple[p.DeviceEntry, ...]:
+        """List the devices the server offers, without taking the control connection.
+
+        Uses its own short-lived connection to the server's read-only ``/query`` route, so it works before
+        capture and while capturing (including from a callback), and needs no glove or session. The Manus
+        entry lists the MCAL files a :class:`ManusPluginConfig` can select. Concurrent calls are independent.
+        Raises :class:`DeviceQueryError` when no answer is obtained, including when the server is too old to
+        know the query.
+        """
+        # The query route is at the root path of the same listener; a station URL with a path prefix is not
+        # supported.
+        url = urlsplit(self._url)._replace(path="/query", query="", fragment="").geturl()
+        request = p.QueryDevicesRequest(request_id=f"devices-{uuid.uuid4()}")
+        try:
+            async with asyncio.timeout(_QUERY_TIMEOUT_S):
+                async with websockets.connect(url, compression=None, max_size=_MAX_MESSAGE_BYTES) as ws:
+                    await ws.send(_to_json_text(request.to_json()))
+                    raw = await ws.recv()
+        except ConnectionClosed as exc:
+            code = exc.rcvd.code if exc.rcvd is not None else None
+            raise DeviceQueryError(
+                f"the server closed the device query (close code {code}); it may not support device queries"
+            ) from None
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
+            raise DeviceQueryError(f"the device query failed: {str(exc) or type(exc).__name__}") from None
+        if isinstance(raw, bytes):
+            raise DeviceQueryError("the server answered the device query with a binary message")
+        try:
+            reply = p.DevicesReply.from_json(_from_json_text(raw))
+        except p.ProtocolError as exc:
+            raise DeviceQueryError(f"the server's device reply was invalid: {exc}") from None
+        # A reply for another request is never accepted as this query's answer.
+        if reply.request_id != request.request_id:
+            raise DeviceQueryError("the server's reply does not answer this device query")
+        return reply.devices
+
     # -- message/result construction ---------------------------------------
 
     def _build_begin_request(
@@ -740,11 +1100,20 @@ class CaptureClient:
         *,
         sources: Sequence[p.SourceType],
         cameras: Sequence[p.CameraSelection],
-        plugins: Sequence[p.PluginType],
+        plugins: Sequence[p.PluginType | ManusPluginConfig],
     ) -> p.BeginRequest:
         try:
             tracking = p.TrackingConfig(sources=tuple(sources), rate_hz=_DEFAULT_RATE_HZ)
-            plugin_requests = tuple(p.PluginRequest(plugin=plugin) for plugin in plugins)
+            plugin_requests = tuple(
+                p.PluginRequest(
+                    plugin=plugin.plugin,
+                    left_calibration=plugin.left_calibration,
+                    right_calibration=plugin.right_calibration,
+                )
+                if isinstance(plugin, ManusPluginConfig)
+                else p.PluginRequest(plugin=plugin)
+                for plugin in plugins
+            )
             camera_requests = tuple(p.CameraRequest(name=c["name"], type=c["type"]) for c in cameras)
             return p.BeginRequest(
                 tracking=tracking,

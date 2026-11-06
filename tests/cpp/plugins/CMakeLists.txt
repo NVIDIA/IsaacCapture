@@ -20,3 +20,8 @@ endif()
 if(BUILD_PLUGIN_REALHAND_FFG_GLOVE)
     add_subdirectory(realhand_ffg_glove)
 endif()
+
+# Defined on Linux whether or not the Manus SDK is present (see src/plugins/manus_calibration/CMakeLists.txt).
+if(TARGET manus_calibration_core)
+    add_subdirectory(manus_calibration)
+endif()
