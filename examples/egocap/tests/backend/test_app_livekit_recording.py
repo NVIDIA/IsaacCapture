@@ -130,7 +130,7 @@ FULL_WIDTH, FULL_HEIGHT = 2560, 1984
 
 
 def _full_size_streams(count):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     return [_full(16 + i, capture) for i in range(count)]
 
 
@@ -223,7 +223,7 @@ def test_without_livekit_streams_the_ingress_budget_is_the_jpeg_allowance():
 
 
 def test_readiness_refuses_livekit_recording_when_capture_server_is_remote(accepted_tracking):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     check = app_module._recording_readiness_check(
         _ready_monitor([_stream(16, capture)]), None, "ws://10.0.0.5:8082"
     )
@@ -232,7 +232,7 @@ def test_readiness_refuses_livekit_recording_when_capture_server_is_remote(accep
 
 
 def test_readiness_accepts_livekit_recording_with_a_loopback_capture_server(accepted_tracking):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     check = app_module._recording_readiness_check(
         _ready_monitor([_stream(16, capture)]), None, "ws://127.0.0.1:8082"
     )
