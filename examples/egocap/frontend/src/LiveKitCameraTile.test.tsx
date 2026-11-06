@@ -498,4 +498,56 @@ describe("LiveKitCameraTile measured latency", () => {
       delete (document as any).hidden;
     }
   });
+
+  const rerenderWith = (rerender: (ui: any) => void, track: any, clock: { mapping: () => any } | null, basis: number) =>
+    rerender(<LiveKitCameraTile name="Head" track={track} phase="connected" primary={false} clock={clock as any} basis={basis} />);
+
+  it("picks up a clock that arrives after the track, on the same track object", () => {
+    const track = stampedTrack();
+    const { rerender } = renderWith(track, null);
+    presentFrame(1, frame);
+    windows(1);
+    presentFrame(1, frame);
+    windows(1);
+    expect(statsTexts()[1]).toBe("– ms latency");
+    rerenderWith(rerender, track, { mapping: () => mappingOf() }, 4);
+    presentFrame(1, frame);
+    windows(1);
+    expect(statsTexts()[1]).toBe("72 ms latency");
+  });
+
+  it("starts and stops taking samples when the basis changes, without re-attaching the track", () => {
+    const clock = { mapping: () => mappingOf() };
+    const track = stampedTrack();
+    const { rerender } = renderWith(track, clock, 2);
+    presentFrame(1, frame);
+    expect(track.lookupFrameMetadata).not.toHaveBeenCalled();
+    windows(1);
+    rerenderWith(rerender, track, clock, 4);
+    presentFrame(1, frame);
+    expect(track.lookupFrameMetadata).toHaveBeenCalledTimes(1);
+    windows(1);
+    expect(statsTexts()[1]).toBe("72 ms latency");
+    rerenderWith(rerender, track, clock, 2);
+    presentFrame(1, frame);
+    expect(track.lookupFrameMetadata).toHaveBeenCalledTimes(1);
+    windows(1);
+    expect(statsTexts()[1]).toBe("– ms latency");
+  });
+
+  it("does not re-run the frame effect when the clock or basis changes", () => {
+    const track = stampedTrack();
+    const { rerender, container } = renderWith(track, null, 2);
+    const video = container.querySelector("video")!;
+    expect(frameCallbacks).toHaveLength(1);
+    rerenderWith(rerender, track, { mapping: () => mappingOf() }, 4);
+    rerenderWith(rerender, track, { mapping: () => mappingOf(2) }, 1);
+    expect(frameCallbacks).toHaveLength(1);
+    expect((HTMLVideoElement.prototype as any).cancelVideoFrameCallback).not.toHaveBeenCalled();
+    expect(track.attach).toHaveBeenCalledTimes(1);
+    expect(track.detach).not.toHaveBeenCalled();
+    expect(container.querySelector("video")).toBe(video);
+    presentFrame(1, frame);
+    expect(frameCallbacks).toHaveLength(1);
+  });
 });
