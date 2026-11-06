@@ -23,11 +23,23 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
-from livekit import rtc
 
 from capture_server import protocol as p
 
+try:
+    from livekit import rtc
+except ImportError:  # the optional "livekit" extra is not installed
+    rtc = None
+
 logger = logging.getLogger("isaaccapture.egocap.livekit_receiver")
+
+LIVEKIT_MISSING = "receiving LiveKit video needs the livekit package: install the egocap 'livekit' extra"
+
+
+def livekit_available() -> bool:
+    """Whether the optional ``livekit`` package is installed, so LiveKit video can be received."""
+    return rtc is not None
+
 
 #: Frames a stream may hold between the SDK and the consumer before further frames are dropped and counted.
 #: Decoded frames are megabytes each, so the queues are short and sized into the recorder's memory budget.
@@ -83,6 +95,9 @@ class LiveKitFrameReceiver:
         *,
         queue_frames: int = DEFAULT_QUEUE_FRAMES,
     ) -> None:
+        # The package is optional; fail here with the fix rather than later with an AttributeError.
+        if rtc is None:
+            raise RuntimeError(LIVEKIT_MISSING)
         if not streams:
             raise ValueError("at least one LiveKit camera stream is required")
         if len({(s.url, s.room, s.publisher) for s in streams}) != 1:

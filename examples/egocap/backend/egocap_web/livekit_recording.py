@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from capture_server import protocol as p
 from recording_service import PixelFormat, VideoSample
 
-from .livekit_receiver import LiveKitFrameReceiver
+from .livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
 from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
@@ -112,6 +112,9 @@ def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> 
     for stream in started.streams:
         if not isinstance(stream, p.LiveKitCameraStream):
             continue
+        # Without the optional package no LiveKit stream can be received, so say so before anything else.
+        if not livekit_available():
+            return f"LiveKit stream {stream.name!r}: {LIVEKIT_MISSING}"
         if capture_server_url is not None and not is_loopback_url(capture_server_url):
             return (
                 f"LiveKit stream {stream.name!r}: recording needs CaptureServer on this machine "

@@ -39,17 +39,22 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "viser==0.2.23",             # the 3D tracking view, on by default and embedded by iframe
                                  # (backend/egocap_web/viser_scene.py); EGOCAP_VISER_ENABLED=0 turns it off.
-    "livekit==1.1.20",           # receives the offered LiveKit camera video for recording
-                                 # (backend/egocap_web/livekit_receiver.py); the browser uses livekit-client.
 ]
 
 [project.optional-dependencies]
 dev = [
+    "egocap[livekit]",           # the LiveKit tests and emulator need it
     "pytest>=7.4.0",
     "pytest-asyncio",
     "pytest-cov",
     "ruff",
     "httpx",
+]
+livekit = [
+    # Receives the offered LiveKit camera video for recording (backend/egocap_web/livekit_receiver.py) and
+    # runs the Orin emulator. Without it the backend still starts; LiveKit streams just cannot be recorded.
+    # The browser preview uses livekit-client and does not need this.
+    "livekit==1.1.20",
 ]
 oak = [
     "depthai==3.6.1",
