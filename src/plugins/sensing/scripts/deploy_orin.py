@@ -9,9 +9,7 @@ Run on the desktop:
 
 The config is JSON with the producer's own options, nothing else:
 
-    {"livekit_url": "wss://livekit.example.org",
-     "token_file": "/etc/isaaccapture/join.token",
-     "args": ["--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
+    {"args": ["--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
 
 The token file stays on the Orin, outside the release; only its path is passed. Nothing is built, stopped or
 replaced until the target passes its checks. A build or transfer failure leaves the running producer alone.
@@ -110,18 +108,30 @@ def sha256_file(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def configured_sensors(config: dict) -> list[int]:
+    """The sensor numbers the config asks the producer to publish, from its --add-stream=sensor=N,... arguments."""
+    sensors = []
+    for arg in config.get("args", []):
+        if arg.startswith("--add-stream="):
+            match = re.search(r"(?:^|,|=)sensor=(\d+)", arg)
+            if match:
+                sensors.append(int(match.group(1)))
+    return sensors
+
+
 def load_config(path: Path) -> dict:
     try:
         config = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
         raise DeployError(f"cannot read the config {path}: {exc}") from exc
-    if (
-        not isinstance(config, dict)
-        or set(config) - CONFIG_KEYS
-        or not {"livekit_url", "token_file"} <= set(config)
-    ):
+    if not isinstance(config, dict) or set(config) - CONFIG_KEYS:
         raise DeployError(
-            f"{path}: expected an object with livekit_url, token_file and optional args only"
+            f"{path}: expected an object with args and, optionally, livekit_url and token_file"
+        )
+    if ("livekit_url" in config) != ("token_file" in config):
+        raise DeployError(
+            f"{path}: livekit_url and token_file go together; leave both out for a producer that sends only over "
+            "its direct links"
         )
     args = config.get("args", [])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
@@ -134,14 +144,18 @@ def load_config(path: Path) -> dict:
         raise DeployError(
             f"{path}: args needs at least one --add-stream=sensor=N,livekit=NAME"
         )
-    if not all(
-        isinstance(config[k], str) and config[k] for k in ("livekit_url", "token_file")
-    ):
-        raise DeployError(
-            f"{path}: livekit_url and token_file must be non-empty strings"
-        )
-    if not config["token_file"].startswith("/"):
-        raise DeployError(f"{path}: token_file must be an absolute path on the Orin")
+    if "token_file" in config:
+        if not all(
+            isinstance(config[k], str) and config[k]
+            for k in ("livekit_url", "token_file")
+        ):
+            raise DeployError(
+                f"{path}: livekit_url and token_file must be non-empty strings"
+            )
+        if not config["token_file"].startswith("/"):
+            raise DeployError(
+                f"{path}: token_file must be an absolute path on the Orin"
+            )
     return config
 
 
@@ -159,8 +173,14 @@ def systemd_quote(arg: str) -> str:
 def render_unit(config: dict, prefix: str, user: str, groups: str) -> str:
     words = [
         f"{prefix}/current/{BIN_REL}",
-        f"--livekit-url={config['livekit_url']}",
-        f"--livekit-token-file={config['token_file']}",
+        *(
+            [
+                f"--livekit-url={config['livekit_url']}",
+                f"--livekit-token-file={config['token_file']}",
+            ]
+            if "livekit_url" in config
+            else []
+        ),
         *config.get("args", []),
     ]
     exec_start = " ".join(systemd_quote(w) for w in words)
@@ -508,7 +528,7 @@ def deploy_source(
 
     step(2, f"Preflight on {target.host}")
     cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
-    if not target.readable(config["token_file"]):
+    if "token_file" in config and not target.readable(config["token_file"]):
         raise DeployError(
             f"the token file {config['token_file']} is not readable on the Orin"
         )
@@ -582,7 +602,9 @@ def deploy_source(
     step(5, "Install and replace the running producer (needs sudo on the Orin)")
     activate = (
         f"{remote} activate --archive {archive} --prefix {PREFIX} --release {release} "
-        f"--unit {cache}/{SERVICE} --owner {user} --ready-timeout {READY_TIMEOUT_S}"
+        f"--unit {cache}/{SERVICE} --owner {user} --ready-timeout {READY_TIMEOUT_S} "
+        f"--sensors {','.join(str(n) for n in configured_sensors(config))}"
+        + ("" if "livekit_url" in config else " --no-livekit")
         + (" --replace-unmanaged" if args.replace_unmanaged else "")
     )
     target.sudo(activate)
@@ -701,12 +723,13 @@ def stage_producer(build_dir: Path, stage: Path) -> None:
         name, _, rest = line.strip().partition(" => ")
         if name.startswith("liblivekit") and rest and not rest.startswith("not found"):
             shutil.copy2(rest.split(" (")[0], out / name)
-    if not list(out.glob("liblivekit*.so*")):
-        raise DeployError("no LiveKit runtime library was resolved for the producer")
-    notices = out / "licenses" / "livekit-sdk"
-    notices.mkdir(parents=True)
-    for name in ("LICENSE", "NOTICE"):
-        shutil.copy2(livekit_notice(build_dir, name), notices / name)
+    # A producer that sends only over its direct links links no LiveKit; one that does carries its libraries and the
+    # SDK's licence files.
+    if list(out.glob("liblivekit*.so*")):
+        notices = out / "licenses" / "livekit-sdk"
+        notices.mkdir(parents=True)
+        for name in ("LICENSE", "NOTICE"):
+            shutil.copy2(livekit_notice(build_dir, name), notices / name)
     # Everything must resolve from the release or the system: a library found only in the build tree would vanish
     # with the next clean build.
     env = {**os.environ, "LD_LIBRARY_PATH": str(out)}
@@ -939,17 +962,94 @@ def remote_activate(args: argparse.Namespace) -> None:
     os.replace(staging_link, link)
     since = time.strftime("%Y-%m-%d %H:%M:%S")
     run(["systemctl", "start", SERVICE])
-    wait_ready(since, args.ready_timeout)
+    wait_ready(
+        since,
+        args.ready_timeout,
+        [int(n) for n in args.sensors.split(",") if n],
+        livekit=not args.no_livekit,
+    )
     print(f"  producer is publishing (release {args.release})")
 
 
-def wait_ready(since: str, timeout: int) -> None:
-    """Ready means the producer joined the room and has published frames, as its own log says.
+# The capture driver logs its own INFO and DEBUG lines at severity 5 and 6; they bury the lines that explain a failure.
+DRIVER_NOISE = re.compile(r"Severity [56] :")
 
-    The two patterns come from the LiveKit session's join message and the periodic stats line in
-    sensing_camera.cpp; a pid alone is not readiness.
+
+def failure_report(since: str, sensors: list[int]) -> str:
+    """What to read when the producer did not become ready.
+
+    The service's state, how much of its log is driver chatter, the first and last real lines of what remains, the
+    producer's own fault lines, which sensors never published, and where the complete log was saved.
     """
+    state = tail(
+        [
+            "systemctl",
+            "show",
+            SERVICE,
+            "-p",
+            "ActiveState",
+            "-p",
+            "SubState",
+            "-p",
+            "Result",
+        ]
+        + ["-p", "ExecMainStatus", "-p", "NRestarts"]
+    ).replace("\n", ", ")
+    log = tail(
+        ["journalctl", "-u", SERVICE, "--since", since, "--no-pager", "-o", "cat"]
+    )
+    saved = Path(os.path.expanduser(CACHE)) / "last-start-failure.log"
+    saved.parent.mkdir(parents=True, exist_ok=True)
+    saved.write_text(log + "\n")
+    lines = log.splitlines()
+    quiet = [ln for ln in lines if not DRIVER_NOISE.search(ln)]
+    faults = [
+        ln
+        for ln in quiet
+        if re.search(
+            r"camera_|startup_failed|stream_failed|publish_failed|check each camera|driver log:",
+            ln,
+        )
+    ]
+    out = [
+        f"service: {state}",
+        f"log: {len(lines)} lines since the start, {len(lines) - len(quiet)} of them driver INFO/DEBUG; "
+        f"complete log saved on the Orin at {saved}",
+    ]
+    if sensors:
+        out.append(f"sensors expected to publish: {', '.join(map(str, sensors))}")
+    if faults:
+        out.append("producer fault lines:")
+        out += [f"  {ln}" for ln in faults[:8]]
+    out.append("first lines (driver chatter removed):")
+    first, rest = quiet[:15], quiet[15:]
+    out += [f"  {ln}" for ln in first]
+    last = rest[-15:]
+    if last:
+        hidden = len(rest) - len(last)
+        out.append(
+            f"last lines ({hidden} not shown between):"
+            if hidden
+            else "remaining lines:"
+        )
+        out += [f"  {ln}" for ln in last]
+    return "\n".join(out)
+
+
+def wait_ready(
+    since: str, timeout: int, sensors: list[int], livekit: bool = True
+) -> None:
+    """Ready means the producer joined the room and every configured sensor has published frames.
+
+    The patterns come from the LiveKit session's join message and the per-sensor stats line in
+    sensing_camera.cpp ("sensor N: ... | livekit M published"); a pid alone is not readiness, and one publishing
+    camera does not make a two-camera rig ready. With no sensors known, any publishing sensor counts. A producer
+    without LiveKit (direct links only) never joins a room or prints "published": there every configured sensor
+    must be capturing ("sensor N: M frames", M >= 1).
+    """
+    progress = r"livekit [1-9][0-9]* published" if livekit else r"[1-9][0-9]* frames"
     deadline = time.monotonic() + timeout
+    log = ""
     while time.monotonic() < deadline:
         if (
             subprocess.run(
@@ -961,17 +1061,22 @@ def wait_ready(since: str, timeout: int) -> None:
         log = tail(
             ["journalctl", "-u", SERVICE, "--since", since, "--no-pager", "-o", "cat"]
         )
-        if "Joined LiveKit room" in log and re.search(
-            r"livekit [1-9][0-9]* published", log
-        ):
+        publishing = [
+            re.search(rf"sensor {n}: [^\n]*{progress}", log) for n in sensors
+        ] or [re.search(progress, log)]
+        if (not livekit or "Joined LiveKit room" in log) and all(publishing):
             return
         time.sleep(2)
-    print(
-        tail(["journalctl", "-u", SERVICE, "--since", since, "--no-pager", "-n", "40"]),
-        file=sys.stderr,
+    print(failure_report(since, sensors), file=sys.stderr)
+    # Judged on the log the last check saw, so the error names what that check found missing.
+    missing = [
+        n for n in sensors if not re.search(rf"sensor {n}: [^\n]*{progress}", log)
+    ]
+    detail = (
+        f"; sensors not publishing: {', '.join(map(str, missing))}" if missing else ""
     )
     raise DeployError(
-        f"the producer did not become ready; logs: journalctl -u {SERVICE}"
+        f"the producer did not become ready{detail}; logs: journalctl -u {SERVICE}"
     )
 
 
@@ -1043,6 +1148,8 @@ def remote_parser() -> argparse.ArgumentParser:
     for name in ("archive", "prefix", "release", "unit", "owner"):
         act.add_argument(f"--{name}", required=True)
     act.add_argument("--ready-timeout", type=int, default=60)
+    act.add_argument("--sensors", default="")
+    act.add_argument("--no-livekit", action="store_true")
     act.add_argument("--replace-unmanaged", action="store_true")
     return ap
 
