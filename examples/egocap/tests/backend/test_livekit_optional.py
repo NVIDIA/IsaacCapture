@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import egocap_web
 from capture_server import protocol as p
 from egocap_web import livekit_receiver as original_receiver
 from egocap_web import livekit_recording as lrec
@@ -30,7 +29,7 @@ def without_livekit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, "livekit", None)  # makes ``from livekit import rtc`` raise ImportError
     monkeypatch.delitem(sys.modules, "egocap_web.livekit_receiver")
     # The import below rebinds this package attribute; restore it so later tests see the original module.
-    monkeypatch.setattr(egocap_web, "livekit_receiver", original_receiver)
+    monkeypatch.setattr("egocap_web.livekit_receiver", original_receiver)
     return importlib.import_module("egocap_web.livekit_receiver")
 
 
