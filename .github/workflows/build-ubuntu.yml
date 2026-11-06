@@ -209,6 +209,8 @@ jobs:
         key: ${{ steps.ccache.outputs.cache-primary-key }}
 
     - name: Run All Tests
+      env:
+        WUJI_TELEMETRY_DISABLE: "1"
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
 
     - name: Generate coverage report
@@ -1052,6 +1054,7 @@ jobs:
             --network host \
             -v /tmp:/tmp \
             -e PYTHONUNBUFFERED=1 \
+            -e WUJI_TELEMETRY_DISABLE=1 \
             --entrypoint bash teleop_ros2_ref:${{ env.ROS_DISTRO }} -c \
             "source /usr/local/bin/teleop-env-setup && exec uv run --no-sync python -m isaaccapture_examples.teleop_ros2 --ros-args -p mode:=$mode -p hand_retargeter:=$hand_retargeter -p hand_tracking_provider:=$hand_tracking_provider -p mcap_replay_path:=$REPLAY_MCAP" >/dev/null
 
@@ -1170,6 +1173,7 @@ jobs:
           -e TELEOP_WEB_CLIENT_STATIC_DIR=/opt/webxr_client \
           -e PYTHONUNBUFFERED=1 \
           -e ACCEPT_CLOUDXR_EULA=Y \
+          -e WUJI_TELEMETRY_DISABLE=1 \
           --entrypoint bash "$IMAGE" -c \
           "source /usr/local/bin/teleop-env-setup && exec uv run --no-sync python -m isaaccapture_examples.teleop_ros2 --ros-args -p mode:=$MODE -p hand_retargeter:=$HAND_RETARGETER -p hand_tracking_provider:=$HAND_TRACKING_PROVIDER -p cloudxr_accept_eula:=true" >/dev/null
 
