@@ -186,7 +186,7 @@ class ServerConfig:
     livekit_streams: tuple[p.LiveKitCameraStream, ...] = ()
 
     def __post_init__(self) -> None:
-        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject duplicate physical cameras and unusable LiveKit streams."""
         # Resolved here, at construction, so no later request re-resolves it on the event loop.
         if self.manus_calibration_dir is not None:
             self.manus_calibration_dir = self.manus_calibration_dir.resolve()
@@ -201,6 +201,15 @@ class ServerConfig:
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
             if duplicates:
                 raise ValueError(f"physical camera(s) assigned to more than one logical name: {duplicates}")
+        # Fail at construction, not when a client first parses SessionInit.
+        try:
+            p.check_livekit_streams(self.livekit_streams)
+        except p.ProtocolError as exc:
+            raise ValueError(f"ServerConfig.livekit_streams: {exc}") from exc
+        jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
+        clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
+        if clashes:
+            raise ValueError(f"LiveKit stream name(s) equal to a camera name: {clashes}")
 
 
 @dataclass

@@ -22,7 +22,7 @@ from capture_server import protocol as p
 from capture_server.__main__ import main
 from capture_server.client import CaptureClient, _StreamRegistry
 from capture_server.livekit_streams import load_livekit_streams
-from capture_server.server import ServerConfig
+from capture_server.server import ServerConfig, StationCamera
 from tests.support.capture_server import poll_until, start_capture_server, stop_capture_server
 
 
@@ -172,7 +172,7 @@ def test_livekit_camera_stream_treats_missing_optional_dimensions_as_unknown():
 
 
 def test_livekit_camera_stream_accepts_ws_and_wss():
-    assert _stream(url="ws://10.0.0.5:7880").url == "ws://10.0.0.5:7880"
+    assert _stream(url="ws://192.0.2.5:7880").url == "ws://192.0.2.5:7880"
     assert _stream(url="wss://lk").url == "wss://lk"
 
 
@@ -227,8 +227,26 @@ def test_livekit_name_may_not_collide_with_a_jpeg_camera_name():
         p.check_livekit_streams([camera, _stream()])
 
 
-def test_same_track_name_from_different_publishers_is_allowed():
-    p.check_livekit_streams([_stream(), _stream(stream_id=17, name="b", publisher="other-host")])
+@pytest.mark.parametrize(
+    "different",
+    [{"publisher": "other-host"}, {"room": "other-room"}, {"url": "wss://other.example"}],
+)
+def test_livekit_streams_must_share_one_url_room_and_publisher(different):
+    with pytest.raises(p.ProtocolError, match="same url, room and publisher"):
+        p.check_livekit_streams([_stream(), _stream(stream_id=17, name="b", track="u", **different)])
+
+
+def test_server_config_rejects_livekit_streams_in_several_rooms():
+    other = _stream(stream_id=17, name="b", track="u", room="other-room")
+    with pytest.raises(ValueError, match="same url, room and publisher"):
+        ServerConfig(livekit_streams=(_stream(), other))
+
+
+@pytest.mark.parametrize("field", ["cameras", "known_cameras"])
+def test_server_config_rejects_a_livekit_name_equal_to_a_camera_name(field):
+    value = {"Head left": StationCamera(device_id="dev")} if field == "cameras" else ("Head left",)
+    with pytest.raises(ValueError, match="equal to a camera name"):
+        ServerConfig(livekit_streams=(_stream(),), **{field: value})
 
 
 # ---------------------------------------------------------------------------

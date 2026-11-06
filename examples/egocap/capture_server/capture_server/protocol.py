@@ -1020,14 +1020,17 @@ class LiveKitCameraStream:
 
 
 def check_livekit_streams(streams: Any) -> None:
-    """Reject a registry whose LiveKit entries are too many or ambiguous.
+    """Reject a registry whose LiveKit entries are too many, ambiguous, or spread over several rooms.
 
+    Consumers join one room as one publisher, so every entry must share the same url, room and publisher.
     Names are checked against the JPEG cameras too: one camera name must mean one stream. Stream ids are unique
     across the whole registry already (checked by the caller).
     """
     livekit = [s for s in streams if isinstance(s, LiveKitCameraStream)]
     if len(livekit) > _MAX_LIVEKIT_STREAMS:
         raise ProtocolError(f"at most {_MAX_LIVEKIT_STREAMS} LiveKit camera streams may be offered")
+    if len({(s.url, s.room, s.publisher) for s in livekit}) > 1:
+        raise ProtocolError("LiveKit camera streams must all use the same url, room and publisher")
     other_names = {s.name for s in streams if isinstance(s, CameraStream)}
     names = [s.name for s in livekit]
     if len(names) != len(set(names)) or other_names & set(names):
