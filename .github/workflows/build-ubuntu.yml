@@ -1127,14 +1127,19 @@ jobs:
             --data-urlencode "repos=${ARTIFACTORY_REPO}" \
             "${ARTIFACTORY_URL%/}/api/search/artifact")"
 
-          result_count="$(jq '.results | length' <<< "${search_json}")"
+          # The name search also matches the PEP 658 "<wheel>.metadata" file
+          # Artifactory generates on upload; keep only the wheel itself.
+          matches_json="$(jq --arg suffix "/${wheel_name}" \
+            '[(.results // [])[] | select(.uri | endswith($suffix))]' <<< "${search_json}")"
+
+          result_count="$(jq 'length' <<< "${matches_json}")"
           if [[ "${result_count}" -ne 1 ]]; then
             echo "Expected exactly 1 Artifactory search result for ${wheel_name}, but got ${result_count}"
             echo "${search_json}"
             exit 1
           fi
 
-          storage_uri="$(jq -r '.results[0].uri // empty' <<< "${search_json}")"
+          storage_uri="$(jq -r '.[0].uri // empty' <<< "${matches_json}")"
           if [[ -z "${storage_uri}" ]]; then
             echo "Unable to resolve storage URI for ${wheel_name}"
             echo "${search_json}"
