@@ -73,8 +73,23 @@ struct ArgusCapture::Impl
         std::vector<std::unique_ptr<CaptureBuffer>> pool;
     };
 
+    // An initialised EGL display is released by this member whether construction completes or throws: a destructor
+    // that never runs for a failed constructor cannot be the only place that calls eglTerminate.
+    struct EglDisplay
+    {
+        EGLDisplay handle = EGL_NO_DISPLAY;
+        EglDisplay() = default;
+        EglDisplay(const EglDisplay&) = delete;
+        EglDisplay& operator=(const EglDisplay&) = delete;
+        ~EglDisplay()
+        {
+            if (handle != EGL_NO_DISPLAY)
+                eglTerminate(handle);
+        }
+    };
+
     Argus::UniqueObj<Argus::CameraProvider> provider;
-    EGLDisplay display = EGL_NO_DISPLAY;
+    EglDisplay egl;
     std::vector<std::unique_ptr<Camera>> cameras;
     std::vector<CameraInfo> infos;
     std::map<uint32_t, Camera*> by_id;
@@ -87,8 +102,8 @@ struct ArgusCapture::Impl
         if (!provider_iface)
             throw std::runtime_error("Argus: no camera provider (is nvargus-daemon running?)");
 
-        display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (display == EGL_NO_DISPLAY || !eglInitialize(display, nullptr, nullptr))
+        egl.handle = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+        if (egl.handle == EGL_NO_DISPLAY || !eglInitialize(egl.handle, nullptr, nullptr))
             throw std::runtime_error("Argus: EGL display initialisation failed");
 
         std::vector<Argus::CameraDevice*> devices;
@@ -127,8 +142,7 @@ struct ArgusCapture::Impl
         }
         cameras.clear();
         provider.reset();
-        if (display != EGL_NO_DISPLAY)
-            eglTerminate(display);
+        // `egl` terminates the display when the members are destroyed, after the Argus objects above.
     }
 
     static Argus::SensorMode* sensor_mode(Argus::CameraDevice* device, uint32_t index)
@@ -169,7 +183,7 @@ struct ArgusCapture::Impl
         auto* egl_iface = Argus::interface_cast<Argus::IEGLImageBufferSettings>(egl_settings);
         if (!egl_iface)
             throw std::runtime_error("Argus: createBufferSettings failed");
-        check(egl_iface->setEGLDisplay(display), "setEGLDisplay");
+        check(egl_iface->setEGLDisplay(egl.handle), "setEGLDisplay");
 
         for (uint32_t i = 0; i < buffer_count; ++i)
             camera.pool.push_back(make_buffer(camera, egl_settings.get(), egl_iface));
