@@ -208,7 +208,7 @@ async def test_run_starts_the_attempt_with_the_requested_worker_sides():
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     worker.attempts[0].finish(_outcome(OutcomeKind.CANCELLED))
-    await worker_attempt_ready
+    _ = await worker_attempt_ready
     assert worker.attempts[0].started_with == (LEFT, RIGHT)
 
 
@@ -388,7 +388,7 @@ async def test_request_stop_cancels_the_attempt_once():
     session.request_stop(p.StopReason.OWNER_DISCONNECTED)
     session.request_stop(p.StopReason.SERVER_SHUTDOWN)
     session.request_stop()
-    await run
+    _ = await run
     assert worker.attempts[0].cancel_calls == 1
     assert session.terminal.reason is p.CalibrationStopReason.CANCELLED
 
@@ -414,7 +414,7 @@ async def test_the_connection_dying_cancels_the_attempt():
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     outbox.on_fatal("control queue overflow")
-    await run
+    _ = await run
     assert worker.attempts[0].cancel_calls == 1
 
 

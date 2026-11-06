@@ -607,13 +607,13 @@ class CaptureClient:
         try:
             await asyncio.wait_for(ws.send(_to_json_text(data)), timeout=_STOP_TIMEOUT_S)
         except (ConnectionClosed, OSError, asyncio.TimeoutError):
-            pass
+            pass  # the reader reports a dead transport as an unconfirmed ending; nothing to add here
 
     async def _run_calibration(self, attempt: _CalibrationAttempt, request: p.StartCalibrationRequest) -> None:
         """The sole owner of one calibration attempt, from connect through finalization."""
         try:
             started = await self._calibration_handshake(attempt, request)
-        except BaseException as exc:  # noqa: BLE001 -- reported through start_exception, not raised here
+        except (Exception, asyncio.CancelledError) as exc:  # reported through start_exception, not raised here
             await self._close_calibration_ws(attempt)
             attempt.start_exception = (
                 StoppedBeforeAcceptedError(str(exc)) if isinstance(exc, _StopWonRace) else exc
@@ -630,7 +630,7 @@ class CaptureClient:
             if attempt.stop_requested.is_set():
                 await self.stop_calibration()
             terminal = await self._read_calibration(attempt)
-        except BaseException as exc:  # noqa: BLE001 -- becomes the unconfirmed ending's diagnostic
+        except (Exception, asyncio.CancelledError) as exc:  # becomes the unconfirmed ending's diagnostic
             diagnostic = exc
         finally:
             stopped = self._calibration_stopped(attempt, terminal, diagnostic)

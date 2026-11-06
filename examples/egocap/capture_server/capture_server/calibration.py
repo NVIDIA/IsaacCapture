@@ -85,13 +85,17 @@ class _Outbox(Protocol):
 
     closed: bool
 
-    def bind_session(self, stream_ids: list[int], *, on_sent: Any, on_fatal: Any) -> None: ...
+    def bind_session(self, stream_ids: list[int], *, on_sent: Any, on_fatal: Any) -> None:
+        """Attach this session's streams and its sent and fatal-error callbacks."""
 
-    def publish_control(self, data: dict[str, Any]) -> bool: ...
+    def publish_control(self, data: dict[str, Any]) -> bool:
+        """Queue one control message; False when the writer can no longer take it."""
 
-    def publish_status(self, data: dict[str, Any]) -> None: ...
+    def publish_status(self, data: dict[str, Any]) -> None:
+        """Queue one status message, replacing an older unsent one."""
 
-    async def quiesce(self) -> None: ...
+    async def quiesce(self) -> None:
+        """Wait until everything queued so far has been sent."""
 
 
 class ConfirmRefused(Exception):
