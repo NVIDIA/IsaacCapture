@@ -26,7 +26,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from livekit import rtc
+
+try:
+    from livekit import rtc
+except ImportError as exc:  # the optional "livekit" extra is not installed
+    raise SystemExit("the emulator needs the livekit package: install the egocap 'livekit' extra") from exc
 
 #: Seconds between periodic stats lines.
 STATS_INTERVAL_S = 5.0

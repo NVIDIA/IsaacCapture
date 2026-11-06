@@ -62,6 +62,12 @@ Everything else is an environment variable:
 | `EGOCAP_TRUSTED_HOSTNAMES` | unset (dev default) | Comma-separated hostnames trusted for the same-origin fallback on `WS /api/session`. Leaving this unset derives the expected origin from the request's own `Host` header, which is fine for local development but not a safe default for a deployment reachable from an untrusted network. |
 | `EGOCAP_VISER_ENABLED` and related `EGOCAP_VISER_*` | on | The embedded 3D tracking view; see [`frontend/README.md`](../frontend/README.md). |
 
+## Optional LiveKit support
+
+Recording LiveKit camera video needs the `livekit` extra (`uv sync --extra livekit`). Without it the backend
+starts normally and the browser preview works; only recording a LiveKit stream is refused, with a message that
+names the extra. See [`LIVEKIT_PREVIEW.md`](../LIVEKIT_PREVIEW.md).
+
 ## Development
 
 ```bash

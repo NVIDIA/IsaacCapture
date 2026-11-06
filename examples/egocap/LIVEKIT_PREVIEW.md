@@ -10,6 +10,10 @@ Camera video can reach the PC through a LiveKit room instead of through CaptureS
 says where the video is; the browser (preview) and the backend (recording) each join the room themselves.
 The publisher is the Orin's sender, or `tools/livekit_orin_emulator.py` when no Orin is available.
 
+Recording LiveKit video and running the emulator need the optional `livekit` package: `uv sync --extra livekit`
+(included in `--extra dev`). Without it the backend still starts and the browser preview works, but the Record
+button is blocked for LiveKit streams with a message naming the extra.
+
 Run every command from `examples/egocap`.
 
 ## 1. Describe the streams
