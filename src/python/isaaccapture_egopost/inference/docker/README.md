@@ -85,8 +85,13 @@ inference/docker/egohand_inference.sh run \
     --hand_detector_weight /path/to/rtdetr.onnx \
     --input                /path/to/clip.mp4 \
     --intrinsics_json      /path/to/intrinsics.json \
+    --perspective_cropping \
     --out                  outputs/inference
 ```
+
+`--perspective_cropping` is recommended for all cameras (see the
+[main README](../../README.md#camera-input-formats)); perspective cropping is
+disabled when this flag is omitted, for both host and Docker runs.
 
 `--image`, `--input`, and `--intrinsics_json` are required by this wrapper
 (fails immediately, before touching Docker, if any is missing).
