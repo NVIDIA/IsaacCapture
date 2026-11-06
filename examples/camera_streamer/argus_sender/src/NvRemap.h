@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -18,7 +18,7 @@ namespace argus_sender
 // Precomputed NV12 lookup-table remap.
 //
 // Loads the RMAP binaries emitted by
-// robotics/hardware_sdk/camera/calib/gen_remap_maps.py (little-endian
+// remaps/generate_example.py (little-endian
 // header struct(<4sIIf) = [magic "RMAP", dest width u32, dest height u32,
 // balance f32], then map_x[H*W] and map_y[H*W] float32 row-major: the SOURCE
 // pixel each destination pixel samples, cv2.remap CV_32FC1 semantics).

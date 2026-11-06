@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -183,11 +183,9 @@ bool parseStream(const YAML::Node& node, size_t index, StreamConfig* stream, std
     std::ostringstream pathBuilder;
     pathBuilder << "streams[" << index << "]";
     const std::string path = pathBuilder.str();
-    const std::set<std::string> allowed = { "id", "type", "cameras", "capture", "output", "receiver" };
+    const std::set<std::string> allowed = { "id", "type", "cameras", "capture", "output" };
     if (!rejectUnknown(node, allowed, path, error))
         return false;
-    if (node["receiver"] && !node["receiver"].IsMap())
-        return fail(error, path + ".receiver must be a mapping");
     if (!node["id"] || !node["type"] || !node["cameras"] || !node["output"])
     {
         return fail(error, path + " requires id, type, cameras, and output");
@@ -304,8 +302,7 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
     try
     {
         const YAML::Node root = YAML::LoadFile(path);
-        const std::set<std::string> rootAllowed = { "version", "network",  "runtime", "alignment",
-                                                    "streams", "receiver", "ipc" };
+        const std::set<std::string> rootAllowed = { "version", "network", "runtime", "alignment", "streams" };
         if (!rejectUnknown(root, rootAllowed, "config", error))
             return false;
         if (!readUint32(root, "version", "config", &config->version, error))

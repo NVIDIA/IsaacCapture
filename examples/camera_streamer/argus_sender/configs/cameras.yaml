@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 1
+
+network:
+  bind: 0.0.0.0
+  port: 5000
+  reconnect_ms: 1000
+  dump_wire: ""
+
+runtime:
+  frames: 0
+  kpi: true
+  log_interval_s: 5
+  bench_encode: false
+
+alignment:
+  warmup_frames: 60
+  interval_frames: 60
+
+streams:
+  - id: head
+    type: stereo
+    cameras:
+      - device: 0
+        mode: 0
+      - device: 1
+        mode: 0
+    output:
+      fps: 60
+      codec: hevc
+      rotation: 180
+      resize_mode: strict
+      bitrate_mbps: 50
+      gop: 300
+  # Example wrist maps: 1280x992 source, 1280x960 lookup grid,
+  # then 2x box-downsampled to 640x480. Replace with your calibration.
+  # Paths resolve relative to this config, independent of the working directory.
+  - id: wrist1
+    type: mono
+    capture:
+      mode: fifo
+      fifo_length: 3
+    cameras:
+      - {device: 4, mode: 0}
+    output:
+      fps: 60
+      codec: raw_nv12
+      width: 640
+      height: 480
+      resize_mode: strict
+      rotation: 0
+      remap:
+        file: ../remaps/cam4.remap
+        capture_width: 1280
+        capture_height: 992
+  - id: wrist2
+    type: mono
+    capture:
+      mode: fifo
+      fifo_length: 3
+    cameras:
+      - {device: 5, mode: 0}
+    output:
+      fps: 60
+      codec: raw_nv12
+      width: 640
+      height: 480
+      resize_mode: strict
+      rotation: 0
+      remap:
+        file: ../remaps/cam5.remap
+        capture_width: 1280
+        capture_height: 992
