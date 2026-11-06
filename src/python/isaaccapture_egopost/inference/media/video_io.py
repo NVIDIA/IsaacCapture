@@ -10,9 +10,24 @@ Backend imports are lazy so importing this API never probes a video or GPU.
 from importlib import import_module
 from pathlib import Path
 
+from .errors import (
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
+)
 from .runtime_profile import get_runtime_profile
 
 FPS_FALLBACK = 30.0
+
+__all__ = [
+    "FPS_FALLBACK",
+    "UnsupportedVideoCodecError",
+    "VideoDecodeError",
+    "VideoDecoderUnavailableError",
+    "find_videos",
+    "get_video_meta",
+    "read_video_frames_batched",
+]
 
 
 def find_videos(input_path: Path) -> list[Path]:

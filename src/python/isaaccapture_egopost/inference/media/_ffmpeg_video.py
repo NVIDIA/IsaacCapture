@@ -18,6 +18,12 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .errors import (
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
+)
+
 H264_GPU_REQUIRED_MESSAGE = (
     "A GPU is required for H.264-encoded inputs because H.264 is decoded with the "
     "approved hardware decoder. Deploy on a GPU or provide a VP9- or MPEG-4 Part 2-encoded "
@@ -31,18 +37,6 @@ _CODEC_NAME_ALIASES = {
 
 # Maximum time to wait for FFmpeg to exit after its decoded-frame stream reaches EOF.
 DECODE_TIMEOUT_SECS = 60
-
-
-class UnsupportedVideoCodecError(ValueError):
-    """Raised when a video does not use an approved input codec."""
-
-
-class VideoDecoderUnavailableError(RuntimeError):
-    """Raised when no approved decoder can decode a supported stream."""
-
-
-class VideoDecodeError(RuntimeError):
-    """Raised when probing or streaming a supported video fails."""
 
 
 @dataclass(frozen=True)
