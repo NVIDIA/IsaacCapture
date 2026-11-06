@@ -74,11 +74,9 @@ and calibration evidence, see [VALIDATION.md](VALIDATION.md).
 ## Validation status
 
 The API probe and hand-conversion contract test run during installation.
-The controller-wrist hardware take `omniglove_2026-11-06_110404` passed hand CTS
-(39 pass, zero fail). It was recorded before the plugin was committed, so it
-is development evidence; formal submission needs a take from the pushed final
-commit. A separate take, `omniglove_2026-11-06_150705`, verified both hands'
-functional OpenXR hot-unplug/recovery while the other hand remained active.
+Controller-wrist hardware qualification passed hand CTS (39 pass, zero fail)
+from a clean, pushed commit. Both hands' functional OpenXR hot-unplug/recovery
+was verified while the other hand remained active.
 See [VALIDATION.md](VALIDATION.md) for the evidence and remaining steps.
 
 ## Formal recording and packaging

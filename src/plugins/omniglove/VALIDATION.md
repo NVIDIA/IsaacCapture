@@ -22,7 +22,7 @@ submission have separate evidence. A pending item below is not a pass.
 | Wrist source qualified | `controller` |
 | Headset / controller model | PICO 4 Ultra / PICO 4 controllers, operator-confirmed; original take has no model fields |
 
-## Hardware CTS evidence
+## Development hardware CTS evidence
 
 - Take: `omniglove_2026-11-06_110404`, recorded at 11:04:04 UTC+08:00.
 - Verdict: **PASS**; 18,678 hand records, 39 passing checks, zero failures.
@@ -36,29 +36,61 @@ submission have separate evidence. A pending item below is not a pass.
 - Raw MCAP, label sidecar, provenance and recorder log stay together outside
   Git. The submission archive uses the official CTS bundle builder and adds
   `report.json`, `report.txt`, per-input hashes and checker provenance.
-- Manual replay review and final-commit recording remain pending. The report
-  establishes automated checks; it does not establish the operator's replay review.
+- This take remains development evidence. Formal qualification uses the clean
+  recording below; the original provenance is retained.
+
+## Formal hardware CTS evidence
+
+- Take: `omniglove_2026-11-06_173720`, using PICO 4 Ultra / PICO 4 controllers.
+- Captured and checked commit: `445cd3e1fc59aa327e120c2fb2514ea042189c57`,
+  pushed before recording, with capture and checker `dirty=false`.
+- Verdict: **PASS**, 39 passing checks, zero failures, and one expected optional
+  joint geometry check with insufficient data. All 11 action windows have data.
+- Left/right each have 9,307 records and 9,306 active records. The only absent
+  poses are at startup; no action window loses hand data.
+- Fist straightness: left 0.581668, right 0.589687 (limit 0.600000).
+- Table tilt, opening/closing windows: left 1.561° / 1.453°,
+  right 5.078° / 5.392° (limit 10°).
+- Roll fingertip excursion: right 10.784 mm, left 14.634 mm (limit 30 mm).
+- Installed plugin SHA-256:
+  `04e27c2300aca915b188925bb40050e5f082ccbfb9ec768e31a9d6ab2ebfe073`.
+- The official viewer was visually sampled across all 11 action windows,
+  including multiple samples of each roll. Samples show the expected poses;
+  full-record continuity checks pass. Physical alignment was accepted by the
+  operator after the on-site review instructions; this is operator confirmation,
+  not an independent optical measurement.
+- Official archive: `omniglove_2026-11-06_173720-hand.pass.zip`, 8,752,908 bytes;
+  SHA-256 `b28807100069aaf5d9daf09b777115b1e7b0962dc77764d5bb6058e9b4609d02`.
+  Archive integrity and all four original input hashes were verified. The
+  archive and original inputs remain outside Git. Form submission is pending.
 
 ## Tested wrist installation offsets
 
-The independent successful take used these exact fixed transforms. Values
+The formal successful take used these exact fixed transforms. Values
 are metres and quaternion `qx,qy,qz,qw` in controller aim coordinates.
 They apply to the tested mount, not every OmniGlove installation.
 
 ```bash
 export OMNIGLOVE_WRIST_SOURCE=controller
 export OMNIGLOVE_AIM_TO_WRIST_LEFT="0.044351775,-0.022869715,0.071703646,-0.122489204,-0.165170245,0.646336332,0.734822789"
-export OMNIGLOVE_AIM_TO_WRIST_RIGHT="-0.044435690,-0.021819216,0.082681299,-0.130124469,0.161913518,-0.661683797,0.720434721"
+export OMNIGLOVE_AIM_TO_WRIST_RIGHT="-0.044435690,-0.021819216,0.082681299,-0.158978409,0.193265088,-0.616438139,0.746577854"
 ```
 
 The final left offset was estimated from the physical CTS action constraints
 in `omniglove_2026-11-06_104642`: table level and fingertip contact/roll, using
 held-out time blocks and excluding the final flat-hand window from fitting.
 The original take's offline reprojection passed 36 checks with zero failures;
-the new independent take above then passed 39 checks. Only a fixed wrist
+the independent development take `110404` then passed 39 checks. Only a fixed wrist
 installation transform was adjusted. Original recordings, labels, finger
 geometry and checker thresholds were not changed. This was geometric mount
 calibration; it was not a simultaneous optical-wrist measurement.
+
+The right mount rotation was subsequently corrected by 7.727777° using table
+normal and fingertip-contact constraints from takes `164904`, `165355` and
+`170455`. Final flat windows and alternating 0.5-second blocks were excluded
+from fitting; take `163816` was an independent holdout. Left offsets and right
+translation stayed unchanged. Offline checks introduced no new failures, and
+the independent formal take above passed with the applied right rotation.
 
 For a new mount, obtain a trusted wrist reference and compute
 `T_aim_to_wrist = inverse(T_world_aim) * T_world_wrist` over multiple poses.
@@ -81,8 +113,9 @@ OpenXR injector deactivation/recreation or long-term headset tracking.
 ## OpenXR hot-unplug/recovery evidence
 
 Take `omniglove_2026-11-06_150705` was recorded at pushed commit
-`97c62090a97c5376cf8264ff8b90acd8f72a237d`, with `repo_dirty=false`, the same
-controller offsets, PICO 4 Ultra and PICO 4 controllers. The complete MCAP
+`97c62090a97c5376cf8264ff8b90acd8f72a237d`, with `repo_dirty=false`, the baseline
+controller offsets before the right rotation correction, PICO 4 Ultra and PICO 4
+controllers. The complete MCAP
 contains 6,747 hand records per side over 81.94 seconds.
 
 Both hands became inactive downstream and recovered in the same process run:
@@ -154,17 +187,18 @@ worker iteration.
       pre-commit verified against the final source.
 - [x] Commit the plugin with the operator's Git identity and DCO sign-off.
 - [x] Push to AgibotTech/IsaacCapture and open integration PR #1445.
-- [ ] Record from that pushed commit with a clean checkout and unchanged CTS:
+- [x] Record from the pushed commit with a clean checkout and unchanged CTS;
+      formal PASS take `173720` above. The recording command is:
 
 ```bash
 ./src/plugins/omniglove/record_cts.sh --wrist-config /path/to/mount.env \
     --no-launch-cloudxr-runtime --note "headset=PICO 4 Ultra; controller=PICO 4 controllers"
 ```
 
-- [ ] Review the new take in `hand_cts.panel`; verify handedness, axes,
-      continuity and the physical wrist/finger alignment.
-- [ ] Package with the viewer or `package_cts.py`; quote take, verdict, archive
-      size and SHA-256 prefix in the PR.
+- [x] Review action-window samples in `hand_cts.panel`, with full-record
+      continuity/axis checks and operator-confirmed physical alignment.
+- [x] Package with `package_cts.py`; take, verdict, archive size and SHA-256
+      are recorded above and in the PR.
 - [ ] Upload via https://forms.gle/hLqAhNkae4bhAUX79, associating the archive
       with the PR. Keep the archive outside Git.
 - [ ] Resolve upstream CI and reviewer feedback.
