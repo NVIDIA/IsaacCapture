@@ -39,43 +39,43 @@ before replacing it; do not hand-edit the board wiring. Its CSI ports, I2C
 buses, deserializer addresses, GPIOs, and link modes must match the installed
 SIPL drivers.
 
-## Orin: build and run the LiveKit publisher
+## Orin: build and run the camera producer
 
 The application is **`camera_plugin_sensing`**. On the Orin it does one job: capture the GMSL cameras with SIPL,
-encode H.264 on the hardware encoder, and publish one LiveKit video track per camera. Everything else (CaptureServer,
-the egocap backend, recording, the browser) runs on the PC.
+encode H.264 on the hardware encoder, and send each camera's video over TCP to the PC video stage
+(`src/video_stage`), which publishes it to LiveKit. The producer has no LiveKit client of its own. Everything else
+(CaptureServer, the egocap backend, recording, the browser) runs on the PC.
 
 Prerequisites: an AGX Orin on JetPack 7.2.1 / L4T R39.2.1 with the SENSING drivers installed and the cameras
-working, CUDA, CMake, and network access to the LiveKit server.
+working, CUDA, CMake, and a network path to the PC running `video_stage_worker`.
 
 ```bash
 # 1. Once: vendor drivers (see scripts/setup.sh --help). The Multimedia API and SIPL header trees are
 #    separate prerequisites that setup.sh does not fetch; CMake looks for them as described below.
 src/plugins/sensing/scripts/setup.sh
-# 2. Build. The LiveKit SDK v1.12.4 prebuilt is downloaded and hash-checked; use -DLIVEKIT_SDK_DIR=... for a local
-#    copy (it needs LICENSE and NOTICE files in that directory, or -DLIVEKIT_SDK_LICENSE_FILE / -DLIVEKIT_SDK_NOTICE_FILE).
-# The viewer, examples, tests and Python bindings are not needed (the viewer needs libxkbcommon-dev).
+# 2. Build. The viewer, examples, tests and Python bindings are not needed (the viewer needs libxkbcommon-dev).
 # SIPL_API_DIR and JETSON_MMAPI_DIR point at the unpacked SIPL and Multimedia API trees.
 cmake -B build -DBUILD_PLUGIN_SENSING=ON -DBUILD_VIZ=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF \
   -DBUILD_PYTHON_BINDINGS=OFF -DSIPL_API_DIR=... -DJETSON_MMAPI_DIR=...
 cmake --build build --target camera_plugin_sensing -j
 # 3. Check the cameras are visible.
 build/src/plugins/sensing/app/camera_plugin_sensing --list-sensors
-# 4. Publish. The token file is a LiveKit token for the room and publisher identity named in the PC's streams file.
+# 4. Stream. Each direct= is the port the PC worker listens on for that camera (video_stage_worker --stream=PORT:TRACK).
 build/src/plugins/sensing/app/camera_plugin_sensing \
-  --livekit-url=ws://LIVEKIT_HOST:7880 --livekit-token-file=join.token \
-  --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right
+  --add-stream=sensor=0,name=sensing-left,direct=PC_HOST:5600 \
+  --add-stream=sensor=1,name=sensing-right,direct=PC_HOST:5601
 ```
 
-The `livekit=` names must equal the `track` names in the PC's streams file. Stop with Ctrl-C. `--help` lists every
-option (`--livekit-fps`, `--livekit-bitrate`, `--livekit-scale-div`, `--platform-config`, `--link-masks`).
+The stream `name` is what the PC and the management channel call a camera; the PC worker's `--stream=PORT:TRACK`
+decides the LiveKit track name. Stop with Ctrl-C. `--help` lists every option (`--fps`, `--bitrate`, `--scale-div`,
+`--platform-config`, `--link-masks`).
 `--camera-backend=auto|sipl|argus` selects the capture backend once at startup: an explicit choice must match or fail
 with its own reason, and `auto` picks the only matching backend (with several it names the override instead of
 guessing). SIPL is built by default (`-DSENSING_WITH_SIPL=OFF` for an Argus-only rig). The Argus backend
 (`-DSENSING_WITH_ARGUS=ON`, Argus device index with `--add-stream=sensor=N,...`, `--argus-mode=K`) captures NV12 into
 DMA-BUFs that the hardware encoder reads without a copy. **The Argus code has never been built or run: there is no
 Argus SDK or Argus camera available to the author.** Argus DMA-BUF input cannot be combined with
-`--livekit-scale-div` above 1.
+`--scale-div` above 1.
 
 ## Management channel and camera faults
 

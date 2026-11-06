@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ==============================================================================
-# SENSING Camera Plugin: Jetson SIPL capture, hardware H.264 encode, LiveKit publication
+# SENSING Camera Plugin: Jetson SIPL capture, hardware H.264 encode, direct streaming to the PC video stage
 # ==============================================================================
-# Two leaf targets besides the LiveKit wrapper, one per directory (cmake/cmake-structure.md rule 1):
-#   (src/livekit_publisher  sensing_livekit -- the LiveKit SDK behind a small interface, shared)
+# Two leaf targets, one per directory (cmake/cmake-structure.md rule 1):
 #   core/     sensing_core          -- SIPL capture, encoder, conversion, track output
 #   app/      camera_plugin_sensing
 #
@@ -175,8 +174,6 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 # No libnvjpeg here on purpose: on R39 libnvbufsurface has no libjpeg
 # dependency at all (readelf -d lists only EGL, cuda, dl, pthread, rt, c), and
 # the tegra lib dir ships no libnvjpeg to link against.
-
-# The LiveKit SDK and the publisher library come from src/livekit_publisher (shared with the video stage).
 
 # ==============================================================================
 # Targets

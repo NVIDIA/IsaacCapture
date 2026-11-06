@@ -27,16 +27,3 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../configs/"
     DESTINATION plugins/sensing_camera/configs
     COMPONENT producer
 )
-
-# The plugin links the LiveKit runtime, whose RUNPATH points into the build tree; ship it beside the
-# binary, where INSTALL_RPATH=$ORIGIN (and liblivekit.so's own $ORIGIN) finds it.
-install(FILES
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit.so"
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
-    DESTINATION plugins/sensing_camera
-    COMPONENT producer
-)
-install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
-    DESTINATION plugins/sensing_camera/licenses/livekit-sdk
-    COMPONENT producer
-)

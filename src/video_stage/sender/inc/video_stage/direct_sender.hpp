@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <sensing_livekit/video_track_sink.hpp>
+#include <video_stage/encoded_video_frame.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -19,6 +19,8 @@ namespace plugins
 {
 namespace sensing
 {
+
+using video_stage::EncodedVideoFrame;
 
 struct DirectSenderConfig
 {

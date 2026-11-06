@@ -6,7 +6,7 @@
 #include <arpa/inet.h>
 #include <log_bridge/logger.hpp>
 #include <netinet/tcp.h>
-#include <sensing_livekit/clock_sync.hpp>
+#include <video_stage/clock_sync.hpp>
 #include <sys/socket.h>
 #include <video_stage/avs1.hpp>
 

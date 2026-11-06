@@ -20,8 +20,8 @@ namespace
 
 bool looks_like_failure(const std::string& line)
 {
-    static const char* const kWords[] = { "ERROR", "error",        "fail",         "Fail",         "timeout",
-                                          "NACK",  "OPEN_CIRCUIT", "CIRCUIT_OPEN", "DES_LOCK_ERR", "CAMERA_DETECT" };
+    static const char* const kWords[] = { "ERROR",        "error",        "fail",         "Fail",         "timeout",
+                                          "OPEN_CIRCUIT", "CIRCUIT_OPEN", "DES_LOCK_ERR", "CAMERA_DETECT" };
     return std::any_of(
         std::begin(kWords), std::end(kWords), [&](const char* word) { return line.find(word) != std::string::npos; });
 }

@@ -47,12 +47,6 @@ constexpr Signature kSignatures[] = {
     { "CAMERA_DETECT", "camera_not_detected", kCamera,
       "A camera was not detected. It is unpowered or its GMSL cable is not connected. Check its power cable and that "
       "its GMSL cable is seated at both ends." },
-    { "CAMI2C_ERROR_BUS_NACK", "camera_not_responding", kCamera,
-      "A camera did not answer on its control bus. It is unpowered or its GMSL cable is not connected. Check its power "
-      "cable and that its GMSL cable is seated at both ends." },
-    { "I2C: NACK", "camera_not_responding", kCamera,
-      "A camera did not answer on its control bus. It is unpowered or its GMSL cable is not connected. Check its power "
-      "cable and that its GMSL cable is seated at both ends." },
     { "Parse failed after", "camera_not_responding", kCamera,
       "A camera stopped answering while it was being set up. It is unpowered or its GMSL cable is not connected. Check "
       "its power cable and that its GMSL cable is seated at both ends." },

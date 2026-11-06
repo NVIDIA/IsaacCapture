@@ -43,8 +43,6 @@ const std::vector<Expectation>& expectations()
         { "deserializer lock timeout on link 1", "camera_link_not_locked", kCamera },
         { "DES_LOCK_ERR reported", "camera_link_not_locked", kCamera },
         { "CAMERA_DETECT failed for module 2", "camera_not_detected", kCamera },
-        { "CAMI2C_ERROR_BUS_NACK on 0x1a", "camera_not_responding", kCamera },
-        { "I2C: NACK from address 0x36", "camera_not_responding", kCamera },
         { "Parse failed after 3 retries", "camera_not_responding", kCamera },
         { "Init returned SIPLStatus 8", "camera_partly_started", kCamera },
         { "sensor control write failure on sensor 3", "camera_control_bus_failed", kCamera },
@@ -128,10 +126,23 @@ TEST_CASE("the first matching signature wins", "[camera_fault]")
     CHECK(diagnose_failure("link lock failed, SIPLStatus 10").fault.code == "camera_link_not_locked");
     // A LiveKit text naming the room beats the generic LiveKit entry.
     CHECK(diagnose_failure("LiveKit: cannot join the room").fault.code == "livekit_unreachable");
+    // A driver NACK line attached to a LiveKit failure does not change the mapping.
+    CHECK(diagnose_failure("LiveKit: cannot join the room; I2C: NACK ... errno=121").fault.code ==
+          "livekit_unreachable");
     // "Argus:" alone is the last Argus entry, not the first.
     CHECK(diagnose_failure("Argus: no camera provider").fault.code == "camera_service_down");
     // Camera signatures are listed before the generic CUDA one.
     CHECK(diagnose_failure("unsupported CUDA EGL frame type 3").state == ProducerState::CameraFault);
+}
+
+TEST_CASE("an I2C NACK alone is not a signature", "[camera_fault]")
+{
+    // The driver prints NACK lines on healthy starts too.
+    for (const char* text : { "I2C: NACK", "CAMI2C_ERROR_BUS_NACK on 0x1a", "I2C: NACK from address 0x36 errno=121" })
+    {
+        INFO(text);
+        CHECK(diagnose_failure(text).fault.code == "startup_failed");
+    }
 }
 
 TEST_CASE("an unknown failure is a startup_failed camera fault with the original text", "[camera_fault]")

@@ -87,6 +87,7 @@ target_include_directories(sensing_livekit
 target_link_libraries(sensing_livekit
     PUBLIC
         log_bridge::log_bridge_core
+        video_stage::wire
     PRIVATE
         LiveKit::livekit
 )

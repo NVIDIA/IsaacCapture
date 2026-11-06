@@ -18,7 +18,6 @@ target_include_directories(video_stage_sender
 
 target_link_libraries(video_stage_sender
     PUBLIC
-        sensing::livekit
         video_stage::wire
         log_bridge::log_bridge_core
 )
