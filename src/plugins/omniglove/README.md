@@ -18,18 +18,27 @@ Install the host USB rule once, outside a container:
 ```
 
 Then build the plugin. The installer uses a sibling
-`../agilink_omniglove_sdk` checkout when present. Otherwise it clones the
-current SDK from GitHub into `.sdk/`, or fast-forwards that managed checkout on
-later runs.
+`../agilink_omniglove_sdk` checkout when present. Otherwise it creates a managed
+checkout in `.sdk/`, pinned to SDK commit
+`a2f899cd45c51ae01c9bbca9b893e4afba41c0d7`. Repeated installs reuse that commit
+without following upstream branch updates. A managed checkout with local
+changes is rejected before fetching or switching commits.
 
 ```bash
 ./src/plugins/omniglove/install.sh
 ```
 
-Set `OMNIGLOVE_SDK_ROOT` or pass `--sdk-root` to use another SDK checkout. The
-installer verifies that checkout with its own `SHA256SUMS`; it does not reset
-the SDK to a historical tag. The SDK package configuration selects its shared
-library, so a changed ABI version number alone is not a build blocker. Missing
+Set `OMNIGLOVE_SDK_ROOT` or pass `--sdk-root` to use another local SDK checkout;
+local checkouts are not updated or reset. Set `OMNIGLOVE_SDK_REF` or pass
+`--sdk-ref REF` to select a different managed SDK commit, tag, or branch,
+bypassing sibling checkout discovery. Root and ref overrides cannot be combined.
+Tags and branches are fetched on each install; use a full commit SHA for a
+reproducible override.
+
+The installer verifies SDK files against that checkout's `SHA256SUMS` to detect
+corruption; this does not authenticate a user-selected SDK. The SDK package
+configuration selects its shared library, so a changed ABI version number
+alone is not a build blocker. Missing
 or changed required C APIs fail the compile/link compatibility probe. At
 runtime, a header/library ABI mismatch is rejected before device discovery.
 

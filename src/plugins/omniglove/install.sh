@@ -6,6 +6,7 @@ set -euo pipefail
 
 build_dir=""
 sdk_root="${OMNIGLOVE_SDK_ROOT:-}"
+sdk_ref="${OMNIGLOVE_SDK_REF:-}"
 isaac_root=""
 
 while [[ $# -gt 0 ]]; do
@@ -18,12 +19,19 @@ while [[ $# -gt 0 ]]; do
             sdk_root="${2:?--sdk-root requires a path}"
             shift 2
             ;;
+        --sdk-ref)
+            sdk_ref="${2:?--sdk-ref requires a commit, tag, or branch}"
+            shift 2
+            ;;
         -h | --help)
             cat <<EOF
-Usage: $(basename "$0") [--build-dir PATH] [--sdk-root PATH] [ISAAC_CAPTURE_ROOT]
+Usage: $(basename "$0") [--build-dir PATH] [--sdk-root PATH | --sdk-ref REF] [ISAAC_CAPTURE_ROOT]
 
-Uses the current local OmniGlove SDK checkout, or updates a managed checkout,
+Uses a local OmniGlove SDK checkout, or a pinned managed checkout,
 then verifies it and builds and installs the Isaac Capture plugin.
+--sdk-ref (OMNIGLOVE_SDK_REF) selects a managed SDK commit, tag, or branch
+and bypasses sibling checkout discovery. It cannot be combined with
+--sdk-root (OMNIGLOVE_SDK_ROOT), which uses a local checkout unchanged.
 EOF
             exit 0
             ;;
@@ -42,6 +50,11 @@ EOF
     esac
 done
 
+if [[ -n "$sdk_root" && -n "$sdk_ref" ]]; then
+    echo "error: SDK root and managed SDK ref cannot be supplied together" >&2
+    exit 1
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 isaac_root="${isaac_root:-$(cd "$script_dir/../../.." && pwd)}"
 build_dir="${build_dir:-$isaac_root/build}"
@@ -50,20 +63,36 @@ if [[ "$build_dir" != /* ]]; then
 fi
 
 workspace_sdk="$isaac_root/../agilink_omniglove_sdk"
-if [[ -z "$sdk_root" ]] && [[ -d "$workspace_sdk/.git" ]]; then
+if [[ -z "$sdk_root" && -z "$sdk_ref" ]] && [[ -e "$workspace_sdk/.git" ]]; then
     sdk_root="$workspace_sdk"
 fi
 
 if [[ -z "$sdk_root" ]]; then
     sdk_root="$script_dir/.sdk/agilink_omniglove_sdk"
-    if [[ -d "$sdk_root/.git" ]]; then
-        echo "==> Updating managed OmniGlove SDK checkout"
-        git -C "$sdk_root" pull --ff-only
-    else
-        echo "==> Cloning latest OmniGlove SDK release repository"
+    # Pin managed dependencies: their own SHA256SUMS detects corruption, not
+    # authenticity. An upstream branch update must not silently change the SDK.
+    sdk_ref="${sdk_ref:-a2f899cd45c51ae01c9bbca9b893e4afba41c0d7}"
+    if [[ ! -e "$sdk_root/.git" ]]; then
+        if [[ -e "$sdk_root" ]]; then
+            echo "error: managed SDK path exists but is not a Git checkout: $sdk_root" >&2
+            exit 1
+        fi
         mkdir -p "$(dirname "$sdk_root")"
-        git clone --depth 1 https://github.com/AgibotTech/agilink_omniglove_sdk.git "$sdk_root"
+        git init --quiet "$sdk_root"
+        git -C "$sdk_root" remote add origin https://github.com/AgibotTech/agilink_omniglove_sdk.git
     fi
+    if [[ -n "$(git -C "$sdk_root" status --porcelain)" ]]; then
+        echo "error: managed SDK checkout has local changes; preserve them before installing: $sdk_root" >&2
+        exit 1
+    fi
+    if [[ "$sdk_ref" =~ ^[0-9a-fA-F]{40}$ ]] && git -C "$sdk_root" cat-file -e "$sdk_ref^{commit}" 2>/dev/null; then
+        sdk_commit="$(git -C "$sdk_root" rev-parse "$sdk_ref^{commit}")"
+    else
+        git -C "$sdk_root" fetch --depth 1 -- origin "$sdk_ref"
+        sdk_commit="$(git -C "$sdk_root" rev-parse 'FETCH_HEAD^{commit}')"
+    fi
+    echo "==> Using managed OmniGlove SDK $sdk_ref ($sdk_commit)"
+    git -C "$sdk_root" checkout --detach "$sdk_commit" --
 fi
 
 sdk_root="$(cd "$sdk_root" && pwd)"
@@ -98,7 +127,7 @@ done
 # library here. CMake and the compatibility probe reject missing required APIs.
 
 sdk_commit="unknown"
-if [[ -d "$sdk_root/.git" ]]; then
+if [[ -e "$sdk_root/.git" ]]; then
     sdk_commit="$(git -C "$sdk_root" rev-parse HEAD)"
 fi
 

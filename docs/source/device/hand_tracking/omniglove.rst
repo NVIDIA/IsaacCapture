@@ -53,10 +53,18 @@ Install the USB rule on the host, then build in the Isaac Capture checkout:
 
 The build script uses a sibling ``agilink_omniglove_sdk`` checkout when one is
 available. Set ``OMNIGLOVE_SDK_ROOT`` or pass ``--sdk-root`` for a different
-checkout. Otherwise it creates and updates a managed checkout. It validates
-that SDK against its ``SHA256SUMS``, runs the API probe and conversion tests,
-and installs the executable, manifest, runtime libraries and license notices
-under ``install/plugins/omniglove``.
+local checkout, which is not updated or reset. Otherwise it creates a managed
+checkout pinned to SDK commit
+``a2f899cd45c51ae01c9bbca9b893e4afba41c0d7``. Set ``OMNIGLOVE_SDK_REF`` or pass
+``--sdk-ref REF`` to select another managed commit, tag, or branch and bypass
+sibling discovery. Root and ref overrides cannot be combined. Tags and branches
+are fetched on each install; use a full commit SHA for reproducibility. Managed
+checkouts with local changes are rejected before fetching or switching commits.
+
+The script validates SDK files against that checkout's ``SHA256SUMS`` to detect
+corruption; this does not authenticate a user-selected SDK. It runs the API
+probe and conversion tests, and installs the executable, manifest, runtime
+libraries and license notices under ``install/plugins/omniglove``.
 
 For an existing Python 3.12 build used by CTS:
 
