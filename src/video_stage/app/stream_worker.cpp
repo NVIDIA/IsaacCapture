@@ -7,6 +7,7 @@
 #include "tcp_receiver.hpp"
 
 #include <video_stage/avs1.hpp>
+#include <video_stage/h264_sps.hpp>
 
 #include <condition_variable>
 #include <cstdio>
@@ -107,6 +108,13 @@ private:
     bool m_closed = false;
 };
 
+// What a stream without a GPU pipeline reports for the pipeline's own stages: nothing.
+const PipelineStats& no_pipeline_stats()
+{
+    static const PipelineStats empty;
+    return empty;
+}
+
 void print_stage(std::ostream& out, const char* name, const DurationStats& s)
 {
     char line[160];
@@ -119,12 +127,12 @@ void print_stage(std::ostream& out, const char* name, const DurationStats& s)
 
 struct StreamWorker::Impl
 {
-    CudaContext& context;
+    CudaContext* context;
     StreamSpec spec;
     StreamSettings settings;
     SharedLiveKit* livekit;
 
-    SineWarp operation;
+    std::unique_ptr<SineWarp> operation; ///< null for Operation::None
     std::unique_ptr<TcpReceiver> receiver;
     std::atomic<ControlChannel*> active_control{ nullptr };
     std::unique_ptr<PacketSink> sink;
@@ -142,10 +150,19 @@ struct StreamWorker::Impl
     std::atomic<uint64_t> clock_rejected{ 0 };
     std::atomic<uint64_t> clock_discontinuities{ 0 };
     DurationStats backlog_bytes;
+    // Pass-through state (Operation::None): the picture size from the last sequence header, and a count.
+    Geometry passthrough_geometry;
+    std::atomic<uint64_t> passthrough_records{ 0 };
 
-    Impl(CudaContext& ctx, const StreamSpec& s, const StreamSettings& st, SharedLiveKit* lk)
-        : context(ctx), spec(s), settings(st), livekit(lk), operation(st.warp)
+    Impl(CudaContext* ctx, const StreamSpec& s, const StreamSettings& st, SharedLiveKit* lk)
+        : context(ctx), spec(s), settings(st), livekit(lk)
     {
+        if (settings.operation == Operation::SineWarp)
+        {
+            if (context == nullptr)
+                throw std::runtime_error("the sine warp needs a GPU context");
+            operation = std::make_unique<SineWarp>(settings.warp);
+        }
         if (livekit != nullptr)
         {
             LiveKitOutputConfig out = settings.livekit;
@@ -159,8 +176,11 @@ struct StreamWorker::Impl
                 },
                 [this]
                 {
+                    // A subscriber needs a keyframe: ask this stage's encoder, or, with nothing in between, the Orin's.
                     if (pipeline)
                         pipeline->request_idr();
+                    else
+                        receiver->request_keyframe();
                 });
             livekit_output = output.get();
             sink = std::move(output);
@@ -169,8 +189,34 @@ struct StreamWorker::Impl
         {
             sink = std::make_unique<FileSink>(spec.file);
         }
-        pipeline = std::make_unique<Pipeline>(context, operation, *sink, settings.pipeline);
+        if (operation)
+            pipeline = std::make_unique<Pipeline>(*context, *operation, *sink, settings.pipeline);
         receiver = std::make_unique<TcpReceiver>(spec.port);
+    }
+
+    // Operation::None: the access unit goes to the sink untouched. The picture size comes from the stream's own
+    // sequence header; nothing is published before the first one.
+    void forward(const avs1::Record& record, int64_t arrived_ns)
+    {
+        const bool keyframe = avs1::contains_idr(record.payload, record.payload_size);
+        if (keyframe)
+        {
+            if (const auto sps = h264::parse_sps(record.payload, record.payload_size))
+                passthrough_geometry = Geometry{ sps->width, sps->height };
+        }
+        if (passthrough_geometry.width == 0)
+            return;
+        FrameMeta meta;
+        meta.frame_number = record.sample.frame_number;
+        meta.source_timestamp_ns = record.sample.frame_timestamp_ns;
+        meta.received_ns = arrived_ns;
+        const uint64_t index = passthrough_records.fetch_add(1);
+        meta.key = index;
+        EncodedPacket packet;
+        packet.data.assign(record.payload, record.payload + record.payload_size);
+        packet.keyframe = keyframe;
+        packet.key = index;
+        sink->write(packet, meta, passthrough_geometry);
     }
 
     // Runs one Orin session to its end. Intake and processing are separate threads, so reading from the socket never
@@ -234,7 +280,10 @@ struct StreamWorker::Impl
                 const auto record = avs1::parse(item.bytes.data(), item.bytes.size(), error);
                 if (!record)
                     throw std::runtime_error("bad AVS1 record: " + error);
-                pipeline->process(*record, item.arrived_ns);
+                if (pipeline)
+                    pipeline->process(*record, item.arrived_ns);
+                else
+                    forward(*record, item.arrived_ns);
             }
         }
         catch (const std::exception& e)
@@ -265,7 +314,8 @@ struct StreamWorker::Impl
                     // over.
                     if (livekit_output)
                         livekit_output->end_session();
-                    pipeline->reset_session();
+                    if (pipeline)
+                        pipeline->reset_session();
                     epoch_base += 1'000'000;
                     ControlChannel control(*receiver, epoch_base + 1);
                     active_control = &control;
@@ -292,7 +342,7 @@ struct StreamWorker::Impl
     }
 };
 
-StreamWorker::StreamWorker(CudaContext& context,
+StreamWorker::StreamWorker(CudaContext* context,
                            const StreamSpec& spec,
                            const StreamSettings& settings,
                            SharedLiveKit* livekit)
@@ -328,7 +378,7 @@ bool StreamWorker::join()
 void StreamWorker::print_live(std::ostream& out) const
 {
     const Impl& d = *m_impl;
-    const PipelineStats& s = d.pipeline->stats();
+    const PipelineStats& s = d.pipeline ? d.pipeline->stats() : no_pipeline_stats();
     char line[512];
     int n = std::snprintf(
         line, sizeof(line),
@@ -359,14 +409,15 @@ void StreamWorker::print_live(std::ostream& out) const
 void StreamWorker::print_summary(std::ostream& out) const
 {
     const Impl& d = *m_impl;
-    const PipelineStats& s = d.pipeline->stats();
+    const PipelineStats& s = d.pipeline ? d.pipeline->stats() : no_pipeline_stats();
     char line[256];
     std::snprintf(
         line, sizeof(line),
         "stream %u: sessions %llu, records %llu, pictures %llu, dropped (no surface) %llu, gaps %llu, metadata lost %llu\n"
         "  overflows %llu, records discarded %llu, clock exchanges %llu (rejected %llu, discontinuities %llu)\n",
         static_cast<unsigned>(d.spec.port), static_cast<unsigned long long>(d.sessions.load()),
-        static_cast<unsigned long long>(s.records), static_cast<unsigned long long>(s.pictures),
+        static_cast<unsigned long long>(d.pipeline ? s.records : d.passthrough_records.load()),
+        static_cast<unsigned long long>(d.pipeline ? s.pictures : d.passthrough_records.load()),
         static_cast<unsigned long long>(s.dropped_no_surface), static_cast<unsigned long long>(s.gaps),
         static_cast<unsigned long long>(s.metadata_lost), static_cast<unsigned long long>(d.overflows.load()),
         static_cast<unsigned long long>(d.discarded.load()), static_cast<unsigned long long>(d.clock_exchanges.load()),

@@ -34,10 +34,12 @@ void usage(const char* program)
     std::cout
         << "Usage: " << program << " --stream=PORT:TRACK ... --livekit-url=URL --livekit-token-file=PATH\n"
         << "       " << program << " --stream=PORT:file=PATH.h264 ...\n"
-        << "       [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--stats-interval=S] [--once]\n"
+        << "       [--operation=none|sine-warp] [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--stats-interval=S] [--once]\n"
         << "One --stream per camera. Each listens on PORT for the Orin's direct connection (AVS1 H.264 records plus a\n"
-        << "control link), decodes on NVDEC, applies the example sine warp, re-encodes on NVENC, and publishes the access\n"
-        << "units as LiveKit track TRACK (all tracks under one participant) or writes them to a file. Serves one Orin\n"
+        << "control link) and publishes the access units as LiveKit track TRACK (all tracks under one participant) or\n"
+        << "writes them to a file. By default (--operation=none) the Orin's access units are forwarded untouched, with no\n"
+        << "decode, encode or GPU. --operation=sine-warp decodes on NVDEC, applies the example sine warp and re-encodes on\n"
+        << "NVENC, as a test of the GPU stage. Serves one Orin\n"
         << "session after another unless --once. Prints per-stage percentiles at the end.\n";
 }
 
@@ -89,6 +91,19 @@ try
             stats_interval_s = std::stoi(arg.substr(17));
         else if (arg == "--once")
             settings.once = true;
+        else if (arg.rfind("--operation=", 0) == 0)
+        {
+            const std::string name = arg.substr(12);
+            if (name == "none")
+                settings.operation = Operation::None;
+            else if (name == "sine-warp")
+                settings.operation = Operation::SineWarp;
+            else
+            {
+                std::cerr << "--operation must be none or sine-warp\n";
+                return 1;
+            }
+        }
         else if (arg.rfind("--amplitude=", 0) == 0)
             settings.warp.amplitude_px = std::stof(arg.substr(12));
         else if (arg.rfind("--bitrate=", 0) == 0)
@@ -120,8 +135,13 @@ try
         return 1;
     }
 
-    CudaContext context;
-    std::cout << "GPU: " << context.device_name() << "\n";
+    // Only an operation that uses the GPU needs a CUDA context; the default forwards the Orin's access units untouched.
+    std::unique_ptr<CudaContext> context;
+    if (settings.operation != Operation::None)
+    {
+        context = std::make_unique<CudaContext>();
+        std::cout << "GPU: " << context->device_name() << "\n";
+    }
     // One LiveKit participant for every stream, as the Orin producer joins once for all its cameras.
     std::unique_ptr<SharedLiveKit> livekit;
     if (any_livekit)
@@ -130,7 +150,7 @@ try
     std::vector<std::unique_ptr<StreamWorker>> workers;
     for (const StreamSpec& spec : specs)
         workers.push_back(
-            std::make_unique<StreamWorker>(context, spec, settings, spec.file.empty() ? livekit.get() : nullptr));
+            std::make_unique<StreamWorker>(context.get(), spec, settings, spec.file.empty() ? livekit.get() : nullptr));
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
