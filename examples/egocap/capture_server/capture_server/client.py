@@ -755,7 +755,7 @@ class CaptureClient:
         if ws is not None:
             try:
                 await asyncio.wait_for(ws.close(), timeout=_CLOSE_TIMEOUT_S)
-            except BaseException:  # noqa: BLE001 -- best-effort cleanup, must never raise or hang
+            except (Exception, asyncio.CancelledError):  # best-effort cleanup, must never raise or hang
                 pass
 
     # -- the supervisor ----------------------------------------------------
