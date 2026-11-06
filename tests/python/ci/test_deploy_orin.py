@@ -208,10 +208,9 @@ class PasswordTests(unittest.TestCase):
             target.ssh("true")
             target.sudo("python3 x remote activate --owner bob")
             target.put(Path("/tmp/a"), "/r/a")
-            target.get("/r/a", Path("/tmp/a"))
             askpass_text = Path(target._env["SSH_ASKPASS"]).read_text()
             target.close()
-        self.assertGreater(len(calls), 7)
+        self.assertGreater(len(calls), 6)
         for cmd, _ in calls:
             self.assertFalse([w for w in cmd if self.PASSWORD in w], cmd)
         _, sudo_kwargs = next(
@@ -377,6 +376,38 @@ class DeployOrderTests(TempDirTestCase):
         orin.run(root, "--cmake-arg=-DA=1", "--cmake-arg=-DB=a b")
         build = next(v for k, v in orin.events if k == "ssh" and " build " in v)
         self.assertTrue(build.endswith(" --cmake-arg=-DA=1 --cmake-arg='-DB=a b'"))
+
+    def test_activate_command_line_uses_the_module_constants(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        args = deploy_orin.parser().parse_args(["u@orin", "--config", "orin.json"])
+        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+        with mock.patch.object(deploy_orin, "repo_root", return_value=root):
+            deploy_orin.run_deploy(args, config, orin.target)
+        (activate,), _ = orin.target.sudo.call_args
+        self.assertIn(" activate ", activate)
+        self.assertIn("--prefix /opt/isaaccapture", activate)
+        self.assertIn("--ready-timeout 60", activate)
+        self.assertEqual(
+            (
+                deploy_orin.PREFIX,
+                deploy_orin.SERVICE_GROUPS,
+                deploy_orin.READY_TIMEOUT_S,
+            ),
+            ("/opt/isaaccapture", "video", 60),
+        )
+
+    def test_unit_is_rendered_with_prefix_and_service_groups(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        with mock.patch.object(
+            deploy_orin, "render_unit", return_value="unit\n"
+        ) as render:
+            orin.run(root)
+        _, prefix, _, groups = render.call_args.args
+        self.assertEqual(
+            (prefix, groups), (deploy_orin.PREFIX, deploy_orin.SERVICE_GROUPS)
+        )
 
     def test_deploy_closes_target_on_failure(self):
         config = self.tmp / "orin.json"
@@ -858,7 +889,7 @@ class ProgressTests(unittest.TestCase):
             ):
                 self.assertEqual(deploy_orin.Target._scp_quiet(), expected)
 
-    def test_put_and_get_pass_quiet_flag_to_scp(self):
+    def test_put_passes_quiet_flag_to_scp(self):
         target = make_target(self)
         with (
             mock.patch.object(deploy_orin.sys, "stdout", FakeStdout(False)),
@@ -867,7 +898,7 @@ class ProgressTests(unittest.TestCase):
             ) as run,
         ):
             target.put(Path("/tmp/a"), "/r/a")
-            target.get("/r/a", Path("/tmp/a"))
+        self.assertEqual(len(run.call_args_list), 1)
         for call in run.call_args_list:
             self.assertEqual(call.args[0][0], "scp")
             self.assertIn("-q", call.args[0])
@@ -949,6 +980,20 @@ class SdkDirsTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 deploy_orin.remote_parser().parse_args(
                     ["preflight", "--backend", "sipl"]
+                )
+
+    def test_removed_local_options_are_rejected(self):
+        for flag in ("--prefix", "--service-groups", "--ready-timeout"):
+            with self.subTest(flag=flag):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        deploy_orin.parser().parse_args(
+                            ["u@orin", "--config", "c", flag, "1"]
+                        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                deploy_orin.parser().parse_args(
+                    ["u@orin", "--config", "c", "--fetch-archive"]
                 )
 
     def test_cmake_arg_is_repeatable_and_defaults_empty(self):
@@ -1040,8 +1085,6 @@ class RemoteBuildTests(TempDirTestCase):
         sipl=True,
     ):
         stage = self.tmp / "stage"
-        (stage / deploy_orin.BIN_REL).parent.mkdir(parents=True, exist_ok=True)
-        (stage / deploy_orin.BIN_REL).write_text("bin")
         args = argparse.Namespace(
             src=src,
             cmake_arg=list(cmake_arg),
@@ -1071,6 +1114,7 @@ class RemoteBuildTests(TempDirTestCase):
             mock.patch.object(deploy_orin, "CACHE", str(self.tmp / "cache")),
             mock.patch.object(deploy_orin, "run", fake_run),
             mock.patch.object(deploy_orin, "tail", return_value="x"),
+            mock.patch.object(deploy_orin, "stage_producer") as self.stage_producer,
             mock.patch.object(Path, "exists", fake_exists),
             mock.patch.object(Path, "is_dir", return_value=sipl),
             mock.patch.object(Path, "read_text", fake_read_text),
@@ -1104,6 +1148,15 @@ class RemoteBuildTests(TempDirTestCase):
         self.assertTrue(self.cleaned(self.build(src="/cache/src-abc123")))
         self.assertFalse(self.cleaned(self.build(src="/cache/src-abc123")))
 
+    def test_release_is_staged_from_the_build_tree_not_cmake_install(self):
+        calls = self.build()
+        self.assertEqual(
+            self.stage_producer.call_args.args,
+            (self.tmp / "cache/build", self.tmp / "stage"),
+        )
+        self.assertFalse([c for c, _ in calls if "--install" in c])
+        self.assertFalse([a for c, _ in calls for a in c if "component" in a])
+
     def test_build_step_also_gets_the_cuda_path(self):
         calls = self.build()
         cmd, kwargs = next(c for c in calls if c[0][:2] == ["cmake", "--build"])
@@ -1135,6 +1188,173 @@ class RemoteBuildTests(TempDirTestCase):
         present, _ = self.configure(self.build(libcuda=True))
         self.assertIn(
             f"-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-as-needed {self.LIBCUDA}", present
+        )
+
+
+LIB_LINE = "\tliblivekit_ffi.so => {} (0x0000ffff)"
+
+
+class CacheValueTests(TempDirTestCase):
+    def test_reads_typed_entries_and_ignores_prefix_lookalikes(self):
+        (self.tmp / "CMakeCache.txt").write_text(
+            "// comment\nFOO_BAR:STRING=wrong\nFOO:PATH=/a=b\nEMPTY:STRING=\n"
+        )
+        self.assertEqual(deploy_orin.cache_value(self.tmp, "FOO"), "/a=b")
+        self.assertEqual(deploy_orin.cache_value(self.tmp, "EMPTY"), "")
+        self.assertEqual(deploy_orin.cache_value(self.tmp, "ABSENT"), "")
+
+
+class StageProducerTests(TempDirTestCase):
+    """stage_producer on a fabricated build tree, with both ldd runs faked."""
+
+    def setUp(self):
+        super().setUp()
+        self.build = self.tmp / "build"
+        self.stage = self.tmp / "stage"
+        self.plugin = self.build / "src/plugins/sensing/app"
+        (self.plugin / "configs").mkdir(parents=True)
+        (self.plugin / "configs/platform.json").write_text("{}")
+        (self.plugin / "camera_plugin_sensing").write_text("bin")
+        self.libdir = self.build / "_deps/sdk/lib"
+        self.libdir.mkdir(parents=True)
+        (self.libdir / "liblivekit_ffi.so").write_text("lib")
+        self.cache = ""
+        self.build_ldd = LIB_LINE.format(self.libdir / "liblivekit_ffi.so")
+        self.release_ldd = "\tlibc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x1)"
+        self.licenses = self.tmp / "lic"
+        self.licenses.mkdir()
+        (self.licenses / "LICENSE").write_text("license")
+        (self.licenses / "NOTICE").write_text("notice")
+
+    def stage_it(self, cache=None):
+        """Run stage_producer; cache defaults to recording both licence files."""
+        if cache is None:
+            cache = (
+                f"SENSING_LIVEKIT_LICENSE_FILE:FILEPATH={self.licenses}/LICENSE\n"
+                f"SENSING_LIVEKIT_NOTICE_FILE:FILEPATH={self.licenses}/NOTICE\n"
+            )
+        (self.build / "CMakeCache.txt").write_text(cache)
+        runs = []
+
+        def fake_run(cmd, **kwargs):
+            runs.append((list(cmd), kwargs))
+            return completed(0, stdout=self.release_ldd)
+
+        with (
+            mock.patch.object(deploy_orin, "tail", return_value=self.build_ldd),
+            mock.patch.object(deploy_orin.subprocess, "run", fake_run),
+        ):
+            deploy_orin.stage_producer(self.build, self.stage)
+        return runs
+
+    def test_happy_path_stages_binary_configs_libs_and_licences(self):
+        runs = self.stage_it()
+        out = self.stage / "plugins/sensing_camera"
+        self.assertEqual((self.stage / deploy_orin.BIN_REL).read_text(), "bin")
+        self.assertTrue((out / "configs/platform.json").is_file())
+        self.assertEqual((out / "liblivekit_ffi.so").read_text(), "lib")
+        self.assertEqual((out / "licenses/livekit-sdk/LICENSE").read_text(), "license")
+        self.assertEqual((out / "licenses/livekit-sdk/NOTICE").read_text(), "notice")
+        cmd, kwargs = runs[-1]
+        self.assertEqual(cmd, ["ldd", str(self.stage / deploy_orin.BIN_REL)])
+        self.assertEqual(kwargs["env"]["LD_LIBRARY_PATH"], str(out))
+
+    def test_ldd_not_found_for_a_livekit_library_is_not_copied(self):
+        self.build_ldd = "\tliblivekit_ffi.so => not found"
+        with self.assertRaisesRegex(DeployError, "no LiveKit runtime library"):
+            self.stage_it()
+
+    def test_no_binary_is_an_error(self):
+        (self.plugin / "camera_plugin_sensing").unlink()
+        with self.assertRaisesRegex(DeployError, "found 0"):
+            self.stage_it()
+
+    def test_a_directory_with_the_binary_name_is_not_a_binary(self):
+        (self.plugin / "camera_plugin_sensing").unlink()
+        (self.build / "camera_plugin_sensing").mkdir()
+        with self.assertRaisesRegex(DeployError, "found 0"):
+            self.stage_it()
+
+    def test_two_binaries_is_an_error(self):
+        other = self.build / "other"
+        other.mkdir()
+        (other / "camera_plugin_sensing").write_text("bin2")
+        with self.assertRaisesRegex(DeployError, "found 2"):
+            self.stage_it()
+
+    def test_missing_configs_dir_is_an_error(self):
+        shutil.rmtree(self.plugin / "configs")
+        with self.assertRaisesRegex(DeployError, "platform configs"):
+            self.stage_it()
+
+    def test_no_livekit_library_resolved_is_an_error(self):
+        self.build_ldd = "\tlibc.so.6 => /lib/libc.so.6 (0x1)"
+        with self.assertRaisesRegex(DeployError, "no LiveKit runtime library"):
+            self.stage_it()
+
+    def test_missing_licence_is_an_error(self):
+        for name in ("LICENSE", "NOTICE"):
+            (self.licenses / name).unlink()
+            with self.subTest(missing=name), self.assertRaisesRegex(DeployError, name):
+                self.stage_it()
+            (self.licenses / name).write_text("x")
+            shutil.rmtree(self.stage)
+
+    def test_library_still_resolved_from_the_build_tree_is_an_error(self):
+        self.release_ldd = LIB_LINE.format(self.libdir / "liblivekit_ffi.so")
+        with self.assertRaisesRegex(DeployError, "from the build tree"):
+            self.stage_it()
+
+    def test_unresolved_library_is_an_error(self):
+        self.release_ldd = "\tlibfoo.so.1 => not found"
+        with self.assertRaisesRegex(DeployError, "unresolved shared libraries"):
+            self.stage_it()
+
+    def test_licence_found_via_the_cache_entry(self):
+        self.stage_it()
+        self.assertEqual(
+            deploy_orin.livekit_notice(self.build, "LICENSE"), self.licenses / "LICENSE"
+        )
+
+    def test_licence_found_in_the_fetchcontent_directory(self):
+        for name in ("LICENSE", "NOTICE"):
+            fetched = self.build / "_deps" / f"livekit_sdk_{name.lower()}-src"
+            fetched.mkdir(parents=True)
+            (fetched / name).write_text(f"fetched {name}")
+        self.stage_it(cache="")
+        notices = self.stage / "plugins/sensing_camera/licenses/livekit-sdk"
+        self.assertEqual((notices / "LICENSE").read_text(), "fetched LICENSE")
+        self.assertEqual((notices / "NOTICE").read_text(), "fetched NOTICE")
+
+    def test_licence_found_in_or_beside_a_local_sdk_directory(self):
+        sdk = self.tmp / "sdk-root/install"
+        sdk.mkdir(parents=True)
+        cache = f"LIVEKIT_SDK_DIR:PATH={sdk}\n"
+        (sdk / "LICENSE").write_text("in sdk")
+        (sdk.parent / "NOTICE").write_text("beside sdk")
+        self.stage_it(cache=cache)
+        notices = self.stage / "plugins/sensing_camera/licenses/livekit-sdk"
+        self.assertEqual((notices / "LICENSE").read_text(), "in sdk")
+        self.assertEqual((notices / "NOTICE").read_text(), "beside sdk")
+
+    def test_cache_entry_wins_over_the_other_locations(self):
+        fetched = self.build / "_deps/livekit_sdk_license-src"
+        fetched.mkdir(parents=True)
+        (fetched / "LICENSE").write_text("fetched")
+        self.stage_it()
+        self.assertEqual(
+            (
+                self.stage / "plugins/sensing_camera/licenses/livekit-sdk/LICENSE"
+            ).read_text(),
+            "license",
+        )
+
+    def test_unit_sets_ld_library_path_to_the_release_directory(self):
+        config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
+        text = deploy_orin.render_unit(config, "/opt/ic", "bob", "video")
+        self.assertIn(
+            "Environment=LD_LIBRARY_PATH=/opt/ic/current/plugins/sensing_camera",
+            text.splitlines(),
         )
 
 

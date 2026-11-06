@@ -12,6 +12,8 @@ Type=simple
 User=@SERVICE_USER@
 SupplementaryGroups=@SERVICE_GROUPS@
 WorkingDirectory=@PREFIX@/current/plugins/sensing_camera
+# The release carries its own LiveKit libraries; they must win over the build-tree path the binary was linked with.
+Environment=LD_LIBRARY_PATH=@PREFIX@/current/plugins/sensing_camera
 ExecStart=@EXEC_START@
 # The producer stops on SIGINT; systemd ends anything left in this cgroup after the timeout.
 KillSignal=SIGINT
