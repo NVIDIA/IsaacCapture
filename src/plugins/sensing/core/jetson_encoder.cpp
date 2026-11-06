@@ -219,6 +219,11 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
     // join mid-stream, and the max-performance clock preset.
     check(enc->setNumBFrames(0), "setNumBFrames");
     check(enc->setInsertSpsPpsAtIdrEnabled(true), "setInsertSpsPpsAtIdrEnabled");
+    // Without a VUI the SPS carries no reorder/buffering limits, so a receiver's decoder (NVDEC) holds back about a
+    // dozen pictures. Non-fatal: a stream without it is valid, only slower to display.
+    if (enc->setInsertVuiEnabled(true) < 0)
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
+            ->warn("setInsertVuiEnabled failed; the SPS will have no VUI");
     check(enc->setMaxPerfMode(1), "setMaxPerfMode");
     // A separate control from the max-performance clocks: it trades quality for encoder throughput.
     // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
