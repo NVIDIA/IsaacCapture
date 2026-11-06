@@ -49,6 +49,10 @@ Orin producer --DATA (AVS1 records, H.264)--> PC worker: NVDEC -> GpuOperation -
               <--CTRL (keyframe requests, clock exchange)--
 ```
 
+By default the worker does no processing: `--operation=none` forwards the Orin's encoded access units to LiveKit untouched,
+with no decode, encode or GPU, for the lowest latency and no quality loss. `--operation=sine-warp` turns on the GPU
+stage below (decode, the example warp, re-encode); it is a test of the stage and the template for the rectification.
+
 `video_stage_worker` serves one Orin camera per `--stream=PORT:TRACK`; all tracks are published under one LiveKit
 participant, as the Orin producer does for its cameras. The recorder and the web page subscribe to the processed tracks
 exactly as they subscribe to the Orin's own, so they are unchanged.
@@ -87,7 +91,7 @@ livekit:
 video_stage_worker --stream=5600:processed-left --stream=5601:processed-right \
   --livekit-url=ws://127.0.0.1:7880 --livekit-token-file=worker.token
 # a file sink instead of LiveKit, to check a run:
-video_stage_worker --stream=5600:file=out.h264 --once
+video_stage_worker --stream=5600:file=out.h264 --once --operation=sine-warp
 ```
 
 `tests/tools/mock_orin_sender.py` stands in for the Orin: it mirrors the producer's direct sender (connection and hello order,

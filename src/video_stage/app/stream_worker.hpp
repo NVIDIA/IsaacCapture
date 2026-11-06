@@ -28,8 +28,20 @@ struct StreamSpec
     std::string file;
 };
 
+/// What happens to each picture between the Orin and LiveKit.
+enum class Operation
+{
+    /// Nothing: the Orin's encoded access units go to LiveKit as they are. No decode, no encode, no GPU; the lowest
+    /// latency and no quality loss. The default.
+    None,
+    /// Decode on NVDEC, apply the example sine-wave warp, re-encode on NVENC. For testing the GPU stage and as the
+    /// template for the fisheye rectification.
+    SineWarp,
+};
+
 struct StreamSettings
 {
+    Operation operation = Operation::None;
     PipelineConfig pipeline;
     SineWarpParams warp;
     LiveKitOutputConfig livekit;
@@ -39,13 +51,14 @@ struct StreamSettings
 /**
  * @brief One stream's thread: accept an Orin session, run it to its end, accept the next.
  *
- * Owns that stream's receiver, control channel, pipeline and output. Streams share the CUDA context and, when
- * publishing, one LiveKit participant, and otherwise run independently so one camera's trouble stays its own.
+ * Owns that stream's receiver, control channel, optional GPU pipeline and output. Streams share the CUDA context and,
+ * when publishing, one LiveKit participant, and otherwise run independently so one camera's trouble stays its own.
  */
 class StreamWorker
 {
 public:
-    StreamWorker(CudaContext& context, const StreamSpec& spec, const StreamSettings& settings, SharedLiveKit* livekit);
+    /// `context` is needed only for an operation that uses the GPU (null for Operation::None).
+    StreamWorker(CudaContext* context, const StreamSpec& spec, const StreamSettings& settings, SharedLiveKit* livekit);
     ~StreamWorker();
 
     StreamWorker(const StreamWorker&) = delete;
