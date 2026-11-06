@@ -2166,6 +2166,19 @@ public:
             summary.capture_health = core::OrbbecEgoCaptureHealth_Incomplete;
             summary.reason = final_error;
         }
+        if (summary.capture_health == core::OrbbecEgoCaptureHealth_Healthy)
+        {
+            for (const auto& [stream, stats] : stats_)
+            {
+                if (stats.sequence_gaps == 0)
+                    continue;
+                if (!summary.reason.empty())
+                    summary.reason += "; ";
+                summary.reason += std::string(core::EnumNameOrbbecEgoCameraStream(stream)) +
+                                  " sequence gaps: " + std::to_string(stats.sequence_gaps);
+                summary.capture_health = core::OrbbecEgoCaptureHealth_Warning;
+            }
+        }
         const auto now = core::os_monotonic_now_ns();
         summary.dropped_video_frame_sets = dropped_video_frame_sets;
         summary.is_final = direct;
