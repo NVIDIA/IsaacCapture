@@ -58,6 +58,8 @@ public:
     bool join();
 
     void print_summary(std::ostream& out) const;
+    /// One compact line of the current percentiles; safe to call while the stream runs.
+    void print_live(std::ostream& out) const;
 
 private:
     struct Impl;

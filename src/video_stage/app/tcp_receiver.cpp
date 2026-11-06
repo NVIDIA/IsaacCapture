@@ -96,6 +96,14 @@ void TcpReceiver::accept_session()
             throw std::runtime_error(std::string("TcpReceiver: accept failed: ") + std::strerror(errno));
         const int one = 1;
         ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        // Notice a link that died (Wi-Fi roam, unplugged cable) in seconds, as the sender does.
+        ::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+        const int idle = 5, interval = 2, count = 3;
+        ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+        ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+        ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+        const unsigned user_timeout_ms = 5000;
+        ::setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout_ms, sizeof(user_timeout_ms));
         // A peer that connects and never finishes its hello must not hold the worker: bound the wait, and let a stop
         // reach this socket through m_pending.
         timeval timeout{ 2, 0 };

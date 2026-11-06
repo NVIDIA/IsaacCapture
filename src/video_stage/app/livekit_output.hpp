@@ -8,6 +8,7 @@
 
 #include <sensing_livekit/livekit_session.hpp>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -95,6 +96,20 @@ public:
     {
         return m_over_budget;
     }
+    /// Orin frame-ready to arrival at this PC (Orin encode, its queue and the link), per published frame.
+    const DurationStats& uplink_ns() const
+    {
+        return m_uplink_ns;
+    }
+    /// Orin frame-ready to the moment this worker hands the frame to LiveKit: everything before the SFU and the page.
+    const DurationStats& source_to_publish_ns() const
+    {
+        return m_source_to_publish_ns;
+    }
+    int64_t upstream_uncertainty_ns() const
+    {
+        return m_upstream_uncertainty_ns.load();
+    }
 
 private:
     void break_publication(); ///< unpublish; the next keyframe publishes a fresh track
@@ -113,6 +128,9 @@ private:
     uint64_t m_refused = 0;
     uint64_t m_republished = 0;
     uint64_t m_over_budget = 0;
+    DurationStats m_uplink_ns;
+    DurationStats m_source_to_publish_ns;
+    std::atomic<int64_t> m_upstream_uncertainty_ns{ 0 };
 };
 
 } // namespace video_stage

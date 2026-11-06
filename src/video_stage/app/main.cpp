@@ -34,7 +34,7 @@ void usage(const char* program)
     std::cout
         << "Usage: " << program << " --stream=PORT:TRACK ... --livekit-url=URL --livekit-token-file=PATH\n"
         << "       " << program << " --stream=PORT:file=PATH.h264 ...\n"
-        << "       [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--once]\n"
+        << "       [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--stats-interval=S] [--once]\n"
         << "One --stream per camera. Each listens on PORT for the Orin's direct connection (AVS1 H.264 records plus a\n"
         << "control link), decodes on NVDEC, applies the example sine warp, re-encodes on NVENC, and publishes the access\n"
         << "units as LiveKit track TRACK (all tracks under one participant) or writes them to a file. Serves one Orin\n"
@@ -75,6 +75,7 @@ try
     std::string livekit_url;
     std::string token_file;
     StreamSettings settings;
+    int stats_interval_s = 5;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -84,6 +85,8 @@ try
             livekit_url = arg.substr(14);
         else if (arg.rfind("--livekit-token-file=", 0) == 0)
             token_file = arg.substr(21);
+        else if (arg.rfind("--stats-interval=", 0) == 0)
+            stats_interval_s = std::stoi(arg.substr(17));
         else if (arg == "--once")
             settings.once = true;
         else if (arg.rfind("--amplitude=", 0) == 0)
@@ -139,8 +142,18 @@ try
     std::thread waiter(
         [&]
         {
+            auto next_stats = std::chrono::steady_clock::now() + std::chrono::seconds(stats_interval_s);
             while (!g_stop && !finished)
+            {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (stats_interval_s > 0 && std::chrono::steady_clock::now() >= next_stats)
+                {
+                    next_stats += std::chrono::seconds(stats_interval_s);
+                    for (const auto& w : workers)
+                        w->print_live(std::cout);
+                    std::cout.flush();
+                }
+            }
             if (g_stop)
             {
                 for (auto& w : workers)
