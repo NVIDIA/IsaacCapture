@@ -17,15 +17,11 @@ add_custom_command(TARGET camera_plugin_sensing POST_BUILD
     COMMENT "Staging SIPL platform configs beside camera_plugin_sensing"
 )
 
-# Everything below is the `producer` install component: `cmake --install <build> --component producer` stages
-# exactly what scripts/deploy_orin.py packages for an Orin.
 install(TARGETS camera_plugin_sensing
     RUNTIME DESTINATION plugins/sensing_camera
-    COMPONENT producer
 )
 install(DIRECTORY "${SENSING_CONFIGS_DIR}/"
     DESTINATION plugins/sensing_camera/configs
-    COMPONENT producer
 )
 
 # The plugin links the LiveKit runtime, whose RUNPATH points into the build tree; ship it beside the
@@ -34,11 +30,9 @@ install(FILES
     "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit.so"
     "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
     DESTINATION plugins/sensing_camera
-    COMPONENT producer
 )
 install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
     DESTINATION plugins/sensing_camera/licenses/livekit-sdk
-    COMPONENT producer
 )
 # The vendored encoder classes are compiled into the binary, so their license text ships with it.
 install(FILES "${SENSING_MMAPI_VENDORED_DIR}/LICENSE"

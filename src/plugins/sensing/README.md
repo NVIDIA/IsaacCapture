@@ -81,9 +81,8 @@ python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --config orin.j
   the script; `--branch NAME` deploys that branch's committed files from it, ignoring the working tree. Without them
   the script deploys its own checkout, local edits included.
 - `--replace-unmanaged` stops a `camera_plugin_sensing` that someone started by hand (its exact PIDs are shown);
-  without it the deployment refuses and changes nothing. `--no-activate` builds and packages only, `--fetch-archive
-  DIR` copies the package back, `--jobs N` bounds compile jobs, `--prefix DIR` changes the install root
-  (default `/opt/isaaccapture`).
+  without it the deployment refuses and changes nothing. `--no-activate` builds and packages only, and `--jobs N`
+  bounds compile jobs. The release is installed under `/opt/isaaccapture`.
 - The script checks the ssh connection first, then preflights the Orin, uploads only the source files that differ
   from what the Orin already holds, builds, installs a versioned release, replaces the running producer and waits for
   it to join the room and publish frames. Steps are numbered and the upload and packing show progress. The sudo steps

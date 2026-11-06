@@ -44,6 +44,9 @@ UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
 CONFIG_KEYS = {"livekit_url", "token_file", "args"}
 # The producer's connection options come from the config's own fields, not from `args`.
+PREFIX = "/opt/isaaccapture"
+SERVICE_GROUPS = "video"  # device access for the cameras
+READY_TIMEOUT_S = 60
 RESERVED_ARGS = ("--livekit-url", "--livekit-token-file")
 
 
@@ -418,15 +421,6 @@ class Target:
         ):
             raise DeployError(f"copying {local.name} to {self.host} failed")
 
-    def get(self, remote: str, local: Path) -> None:
-        if (
-            self._run(
-                "scp", [*self._scp_quiet(), f"{self.host}:{remote}", str(local)]
-            ).returncode
-            != 0
-        ):
-            raise DeployError(f"copying {remote} from {self.host} failed")
-
     def close(self) -> None:
         self._run("ssh", ["-O", "exit", self.host], capture_output=True)
         shutil.rmtree(self._dir, ignore_errors=True)
@@ -510,7 +504,7 @@ def deploy_source(
     step(1, f"Connecting to {target.host}")
     target.validate_connection()
     user = args.service_user or target.capture("id -un")
-    unit = render_unit(config, args.prefix, user, args.service_groups)
+    unit = render_unit(config, PREFIX, user, SERVICE_GROUPS)
 
     step(2, f"Preflight on {target.host}")
     cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
@@ -578,10 +572,6 @@ def deploy_source(
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
         target.put(manifest_path, f"{stage}/MANIFEST.json")
         target.ssh(f"{remote} package --stage {stage} --archive {archive}")
-        if args.fetch_archive:
-            Path(args.fetch_archive).mkdir(parents=True, exist_ok=True)
-            target.get(archive, Path(args.fetch_archive) / Path(archive).name)
-
         unit_path = Path(tmp) / SERVICE
         unit_path.write_text(unit)
         target.put(unit_path, f"{cache}/{SERVICE}")
@@ -591,8 +581,8 @@ def deploy_source(
         return
     step(5, "Install and replace the running producer (needs sudo on the Orin)")
     activate = (
-        f"{remote} activate --archive {archive} --prefix {args.prefix} --release {release} "
-        f"--unit {cache}/{SERVICE} --owner {user} --ready-timeout {args.ready_timeout}"
+        f"{remote} activate --archive {archive} --prefix {PREFIX} --release {release} "
+        f"--unit {cache}/{SERVICE} --owner {user} --ready-timeout {READY_TIMEOUT_S}"
         + (" --replace-unmanaged" if args.replace_unmanaged else "")
     )
     target.sudo(activate)
@@ -662,8 +652,84 @@ def remote_preflight(args: argparse.Namespace) -> None:
     print("  preflight ok")
 
 
+def cache_value(build_dir: Path, name: str) -> str:
+    """One entry of the build's CMakeCache.txt, or empty."""
+    for line in (build_dir / "CMakeCache.txt").read_text().splitlines():
+        if line.startswith(f"{name}:"):
+            return line.split("=", 1)[1]
+    return ""
+
+
+def livekit_notice(build_dir: Path, name: str) -> Path:
+    """The LiveKit SDK's LICENSE or NOTICE: where the build recorded it, else where the fetch or a local SDK put it."""
+    sdk = cache_value(build_dir, "LIVEKIT_SDK_DIR")
+    candidates = [
+        cache_value(build_dir, f"SENSING_LIVEKIT_{name}_FILE"),
+        str(build_dir / "_deps" / f"livekit_sdk_{name.lower()}-src" / name),
+        f"{sdk}/{name}" if sdk else "",
+        f"{sdk}/../{name}" if sdk else "",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    raise DeployError(f"the LiveKit SDK's {name} file was not found for the release")
+
+
+def stage_producer(build_dir: Path, stage: Path) -> None:
+    """Assemble the release from the build tree itself, so it does not depend on the source's install rules.
+
+    The release is the binary, the SIPL platform configs the build puts beside it, the LiveKit runtime libraries
+    the binary resolves, and the LiveKit licence files. The service sets LD_LIBRARY_PATH to the release directory,
+    so the copied libraries win over the build tree's RUNPATH.
+    """
+    binaries = [p for p in build_dir.rglob("camera_plugin_sensing") if p.is_file()]
+    if len(binaries) != 1:
+        raise DeployError(
+            f"expected one camera_plugin_sensing in the build, found {len(binaries)}"
+        )
+    built = binaries[0]
+    out = stage / Path(BIN_REL).parent
+    out.mkdir(parents=True)
+    binary = stage / BIN_REL
+    shutil.copy2(built, binary)
+    configs = built.parent / "configs"
+    if not configs.is_dir():
+        raise DeployError(f"the build staged no platform configs beside {built}")
+    shutil.copytree(configs, out / "configs")
+    # The libraries are found by name among what the binary resolves in the build, not by the SDK's layout.
+    for line in tail(["ldd", str(built)]).splitlines():
+        name, _, rest = line.strip().partition(" => ")
+        if name.startswith("liblivekit") and rest and not rest.startswith("not found"):
+            shutil.copy2(rest.split(" (")[0], out / name)
+    if not list(out.glob("liblivekit*.so*")):
+        raise DeployError("no LiveKit runtime library was resolved for the producer")
+    notices = out / "licenses" / "livekit-sdk"
+    notices.mkdir(parents=True)
+    for name in ("LICENSE", "NOTICE"):
+        shutil.copy2(livekit_notice(build_dir, name), notices / name)
+    # Everything must resolve from the release or the system: a library found only in the build tree would vanish
+    # with the next clean build.
+    env = {**os.environ, "LD_LIBRARY_PATH": str(out)}
+    resolved = subprocess.run(
+        ["ldd", str(binary)], capture_output=True, text=True, check=False, env=env
+    )
+    listing = (resolved.stdout + resolved.stderr).splitlines()
+    missing = [ln for ln in listing if "not found" in ln]
+    if missing:
+        raise DeployError(
+            "the producer has unresolved shared libraries on this target:\n"
+            + "\n".join(missing)
+        )
+    in_build = [ln for ln in listing if str(build_dir) in ln]
+    if in_build:
+        raise DeployError(
+            "the producer still resolves libraries from the build tree:\n"
+            + "\n".join(in_build)
+        )
+
+
 def remote_build(args: argparse.Namespace) -> None:
-    """Configure and build only the producer, then stage its install component.
+    """Configure and build only the producer, then stage the release from the build tree.
 
     The build directory persists between deployments and is discarded when the toolchain, L4T release, source
     path or CMake arguments change.
@@ -735,29 +801,8 @@ def remote_build(args: argparse.Namespace) -> None:
         env=env,
     )
     run(["rm", "-rf", args.stage])
-    run(
-        [
-            "cmake",
-            "--install",
-            str(build_dir),
-            "--component",
-            "producer",
-            "--prefix",
-            args.stage,
-        ]
-    )
     stage = Path(args.stage)
-    binary = stage / BIN_REL
-    if not binary.exists():
-        raise DeployError(f"the staged tree has no {BIN_REL}")
-    missing = [
-        ln for ln in tail(["ldd", str(binary)]).splitlines() if "not found" in ln
-    ]
-    if missing:
-        raise DeployError(
-            "the producer has unresolved shared libraries on this target:\n"
-            + "\n".join(missing)
-        )
+    stage_producer(build_dir, stage)
     print(f"  staged {sum(1 for p in stage.rglob('*') if p.is_file())} files")
 
 
@@ -939,19 +984,12 @@ def parser() -> argparse.ArgumentParser:
         "target", help=f"host or user@host of the Orin (a bare host uses ${USER_ENV})"
     )
     ap.add_argument("--config", required=True, help="producer options (JSON)")
-    ap.add_argument("--prefix", default="/opt/isaaccapture")
     ap.add_argument(
         "--jobs", type=int, default=2, help="parallel compile jobs on the Orin"
     )
     ap.add_argument(
         "--service-user", help="account the service runs as (default: the ssh user)"
     )
-    ap.add_argument(
-        "--service-groups",
-        default="video",
-        help="supplementary groups for device access",
-    )
-    ap.add_argument("--ready-timeout", type=int, default=60)
     ap.add_argument(
         "--sdk-root",
         default="",
@@ -980,11 +1018,6 @@ def parser() -> argparse.ArgumentParser:
         help="extra CMake argument for the producer build, repeatable (for options only some source trees have)",
     )
     ap.add_argument("--no-activate", action="store_true", help="build and package only")
-    ap.add_argument(
-        "--fetch-archive",
-        metavar="DIR",
-        help="also copy the package back to this directory",
-    )
     return ap
 
 
