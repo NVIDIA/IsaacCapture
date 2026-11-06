@@ -10,6 +10,7 @@ import type { PreviewSnapshot } from "./captureProtocol";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(sequence: string | null, ageMs: number | null, fps = 60): PreviewSnapshot {

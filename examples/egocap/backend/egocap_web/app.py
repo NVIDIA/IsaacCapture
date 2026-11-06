@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -35,6 +35,10 @@ from recording_service import (
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
+from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
+from .livekit_preview import router as livekit_preview_router
+from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
+from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams, unrecordable_reason
 from .preview_routes import router as preview_router
 from .recording_adapter import (
     MANUS_GLOVE_SPEC,
@@ -67,7 +71,9 @@ _DEFAULT_TASK_FILE_ROOT = Path(__file__).resolve().parents[2] / "data" / "taskfi
 # independently, each of these would look individually reasonable while
 # still summing to far more memory than intended -- see
 # _recording_config_factory below for how the decoded-queue capacity is
-# derived from what's left after the raw side's own reservation.
+# derived from what's left after the raw side's own reservation. The
+# LiveKit streams' own ingress share and receiver queues are added on top
+# per take (they scale with the stream geometry), not carved out of this.
 _RECORDING_QUEUE_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
 
 # RecordingIngress's own raw-item queue, per take -- items queued here are
@@ -76,14 +82,37 @@ _RECORDING_QUEUE_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
 # blob (a typical camera frame is a few hundred KB, so this holds seconds
 # of 60 Hz tracking plus two or three 30 fps cameras, where an 8-slot count
 # held ~50 ms). _INGRESS_QUEUE_CAPACITY is only a safety cap on item count.
-# The reservation adds one MAX_CAMERA_JPEG_BYTES for the raw item held live
-# in the executor during conversion (capture_preview.py's own cap, not a
-# locally-assumed "typical" size). Fixed at coordinator-construction time,
-# before any camera is necessarily known, so unlike the decoded queue below
-# it cannot be sized from real resolution.
+# The reservation adds one raw item held live in the executor during
+# conversion: MAX_CAMERA_JPEG_BYTES (capture_preview.py's own cap), or a
+# LiveKit stream's decoded frame when that is larger.
 _INGRESS_QUEUE_BYTES = 64 * 1024 * 1024
 _INGRESS_QUEUE_CAPACITY = 4096
-_INGRESS_RESERVED_BYTES = _INGRESS_QUEUE_BYTES + MAX_CAMERA_JPEG_BYTES
+# LiveKit frames are decoded RGB (megabytes each, ~15 MB at 2560x1984), so
+# the JPEG allowance above holds only a few and a short consumer stall would
+# fail the take. Each recordable stream therefore adds this many of its own
+# frames to the ingress queue, and the receiver's queues (see
+# livekit_receiver.RECEIVER_FRAMES_PER_STREAM) are added to the total budget.
+_LIVEKIT_INGRESS_FRAMES_PER_STREAM = 6
+
+
+def _livekit_frame_bytes(started: Any) -> list[int]:
+    """Decoded RGB size of one frame of each LiveKit stream a take would record."""
+    return [s.width * s.height * 3 for s in recordable_livekit_streams(started)]
+
+
+def _livekit_ingress_bytes(started: Any) -> int:
+    """Extra raw-ingress bytes the recordable LiveKit streams need."""
+    return sum(_livekit_frame_bytes(started)) * _LIVEKIT_INGRESS_FRAMES_PER_STREAM
+
+
+def _livekit_receiver_bytes(started: Any) -> int:
+    """Worst-case bytes the LiveKit receiver's own queues pin for the recordable streams."""
+    return sum(_livekit_frame_bytes(started)) * RECEIVER_FRAMES_PER_STREAM
+
+
+def _ingress_queue_bytes(started: Any) -> int:
+    """The raw-ingress byte bound of a take: the JPEG/tracking allowance plus the LiveKit frames' share."""
+    return _INGRESS_QUEUE_BYTES + _livekit_ingress_bytes(started)
 
 
 def _recording_output_root(station_data_dir: Path | None = None) -> Path:
@@ -118,6 +147,14 @@ def _station_calibration_assets() -> tuple[CalibrationAsset, ...]:
     )
 
 
+def _recorder_livekit_token(room: str) -> str:
+    """A subscribe-only token for the recorder's own LiveKit connection, signed with the backend's key pair."""
+    api_key, api_secret = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
+    if not api_key or not api_secret:
+        raise RuntimeError(f"{API_KEY_ENV} and {API_SECRET_ENV} must be set to record LiveKit video")
+    return subscriber_token(api_key=api_key, api_secret=api_secret, room=room, now=int(time.time()))
+
+
 def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str | None, output_root: Path):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -135,6 +172,10 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
         video_sources = tuple(
             VideoSourceSpec(cam.name, cam.width, cam.height, cam.fps, intrinsics=False)
             for cam in monitor.camera_descriptors
+        ) + tuple(
+            # LiveKit cameras with a capture-time stamp and a configured size are recorded like any camera.
+            VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
+            for s in recordable_livekit_streams(monitor.native.started)
         )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
@@ -159,9 +200,19 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
             # one in the real service's own writer (the sample it has
             # already dequeued and is actively encoding). Genuinely bounds
             # the combined worst case at _RECORDING_QUEUE_MEMORY_BUDGET_BYTES.
-            decoded_queue_budget = (
-                _RECORDING_QUEUE_MEMORY_BUDGET_BYTES - _INGRESS_RESERVED_BYTES - 2 * largest_decoded_frame_bytes
+            started = monitor.native.started
+            # The live raw item is a JPEG, or a LiveKit stream's decoded frame when that is larger.
+            live_item_bytes = max([MAX_CAMERA_JPEG_BYTES, *_livekit_frame_bytes(started)])
+            # Owned storage, each counted once: the raw ingress queue, the LiveKit receivers' own frame queues, and
+            # the one live item. The budget is the base plus the LiveKit ingress allowance plus the receiver
+            # allowance, so the receiver queues are taken out of it here and what remains is the decoded queue.
+            reserved = _ingress_queue_bytes(started) + _livekit_receiver_bytes(started) + live_item_bytes
+            total = (
+                _RECORDING_QUEUE_MEMORY_BUDGET_BYTES
+                + _livekit_ingress_bytes(started)
+                + _livekit_receiver_bytes(started)
             )
+            decoded_queue_budget = total - reserved - 2 * largest_decoded_frame_bytes
             capacity = decoded_queue_budget // largest_decoded_frame_bytes
             if capacity < 1:
                 # A silent floor here would claim a cap that doesn't
@@ -188,7 +239,11 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
 _READINESS_STALE_SECONDS = 2.0
 
 
-def _recording_readiness_check(monitor: CaptureStatusMonitor, station_config_error: str | None = None):
+def _recording_readiness_check(
+    monitor: CaptureStatusMonitor,
+    station_config_error: str | None = None,
+    capture_server_url: str | None = None,
+):
     """Real backend-local capture facts, injected into the coordinator --
     it never imports CaptureStatusMonitor/CaptureClient itself (see
     recording_session.py's own module docstring). Checked at start_episode
@@ -203,6 +258,8 @@ def _recording_readiness_check(monitor: CaptureStatusMonitor, station_config_err
     decode, capture running, and a tracking/camera sample actually
     received within the staleness window -- not merely "ever arrived
     once."
+
+    ``capture_server_url`` lets LiveKit recording be refused when CaptureServer is not on this machine.
 
     ``station_config_error``, when set, unconditionally blocks new recording
     admission with that reason -- a configured-but-invalid station YAML
@@ -224,8 +281,14 @@ def _recording_readiness_check(monitor: CaptureStatusMonitor, station_config_err
         tracking = monitor.preview.tracking()
         if tracking is None or (now - tracking.received_monotonic) > _READINESS_STALE_SECONDS:
             return False, "tracking source is stale or has no sample yet"
+        # An offered LiveKit stream that cannot be recorded blocks recording by name, never silently dropped.
+        blocked = unrecordable_reason(monitor.native.started, capture_server_url)
+        if blocked is not None:
+            return False, blocked
         cameras = monitor.camera_descriptors
-        if not cameras:
+        # A recordable LiveKit stream is a camera too; its liveness is checked when the take prepares and
+        # while it records, not by a preview sample here.
+        if not cameras and not recordable_livekit_streams(monitor.native.started):
             return False, "no camera selected"
         for cam in cameras:
             slot = monitor.preview.camera(cam.name)
@@ -320,12 +383,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     recording_output_root = _recording_output_root(resolved_station.data_dir if resolved_station else None)
     app.state.recording_output_root = recording_output_root
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
+    livekit_source = LiveKitRecordingSource(
+        lambda: recordable_livekit_streams(monitor.native.started), _recorder_livekit_token
+    )
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(monitor, config.station_label, recording_output_root),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
-        queue_bytes=_INGRESS_QUEUE_BYTES,
-        readiness_check=_recording_readiness_check(monitor, station_config_error),
+        queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
+        readiness_check=_recording_readiness_check(monitor, station_config_error, config.capture_server_url),
         initial_context=initial_context,
+        livekit_source=livekit_source,
     )
     monitor.set_recording(coordinator)
     await monitor.start()
@@ -376,6 +443,7 @@ def _optional_visualization(monitor: CaptureStatusMonitor) -> VisualizationScene
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(preview_router)
+app.include_router(livekit_preview_router)
 app.include_router(task_file_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
