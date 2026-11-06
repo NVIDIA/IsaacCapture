@@ -196,13 +196,13 @@ def publisher(tmp_path):
         pub.close()
 
 
-def wait_until(predicate, timeout_s: float = 2.0) -> None:
+def wait_until(predicate, timeout_s: float = 2.0, describe=None) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if predicate():
             return
         time.sleep(0.01)
-    raise AssertionError("condition not met in time")
+    raise AssertionError("condition not met in time" + (f": {describe()}" if describe is not None else ""))
 
 
 def test_probe_returns_the_subscribed_catalog(publisher):
@@ -291,16 +291,18 @@ def test_pipeline_serves_each_announced_frame_once_downscaled_as_jpeg(publisher)
             assert queue.tryGet() is None  # nothing announced yet
             seq = publisher.publish("cam0", {"sensor_timestamp_ns": 5_000_000_000})
             wait_until(lambda: feed.latest("cam0") is not None)
+            # Announced is not encoded: wait for the encoder thread before the single poll.
+            wait_until(lambda: bool(pipeline._pending))
             frame = queue.tryGet()
             assert frame is not None and frame.getSequenceNum() == seq
             assert (frame.getWidth(), frame.getHeight()) == (32, 24)
             assert frame.getTimestamp() == pytest.approx(5.0)
             decoded = cv2.imdecode(np.frombuffer(frame.getData(), np.uint8), cv2.IMREAD_COLOR)
             assert decoded.shape == (24, 32, 3)
-            # The same frame is never served twice; a newer one is. The encoder thread may serve an older frame
-            # before the newest is encoded, so poll until the newest arrives rather than assuming it is first.
+            # The same frame is never served twice. Pending frames are served oldest first, so the middle frame
+            # comes out first whenever the encoder picked it up; either way the newest is served last.
             assert queue.tryGet() is None
-            publisher.publish("cam0")
+            middle = publisher.publish("cam0")
             newest = publisher.publish("cam0")
             served: list[int] = []
 
@@ -310,8 +312,8 @@ def test_pipeline_serves_each_announced_frame_once_downscaled_as_jpeg(publisher)
                     served.append(frame.getSequenceNum())
                 return bool(served) and served[-1] == newest
 
-            wait_until(newest_served)
-            assert served == sorted(set(served))  # increasing, and no frame twice
+            wait_until(newest_served, describe=lambda: f"served {served}, expected {newest} last")
+            assert served in ([middle, newest], [newest])
             assert queue.tryGet() is None
     finally:
         feed.close()
