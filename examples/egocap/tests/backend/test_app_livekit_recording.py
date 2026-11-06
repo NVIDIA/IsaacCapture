@@ -178,11 +178,34 @@ def test_config_factory_with_two_full_size_streams_fits_its_total_budget(tmp_pat
     )
     held = (
         app_module._ingress_queue_bytes(started)
+        + app_module._livekit_receiver_bytes(started)
         + max(app_module.MAX_CAMERA_JPEG_BYTES, frame_bytes)
         + (config.queue_capacity + 2) * frame_bytes
     )
     assert config.queue_capacity >= 1
     assert held <= total
+
+
+def test_owned_bytes_of_two_full_size_streams_never_exceed_the_allowances(tmp_path):
+    started = SimpleNamespace(streams=_full_size_streams(2))
+    monitor = SimpleNamespace(camera_descriptors=(), native=SimpleNamespace(started=started))
+    config = app_module._recording_config_factory(monitor, None, tmp_path)()
+    frame_bytes = FULL_WIDTH * FULL_HEIGHT * 3
+    owned = (
+        app_module._ingress_queue_bytes(started)
+        + app_module._livekit_receiver_bytes(started)
+        + max(app_module.MAX_CAMERA_JPEG_BYTES, frame_bytes)
+        + 2 * frame_bytes
+        + config.queue_capacity * frame_bytes
+    )
+    allowed = (
+        app_module._RECORDING_QUEUE_MEMORY_BUDGET_BYTES
+        + app_module._livekit_ingress_bytes(started)
+        + app_module._livekit_receiver_bytes(started)
+    )
+    assert owned <= allowed
+    # The capacity is the largest that fits: one more decoded frame would exceed the allowance.
+    assert owned + frame_bytes > allowed
 
 
 def test_receiver_queues_are_part_of_the_livekit_budget():

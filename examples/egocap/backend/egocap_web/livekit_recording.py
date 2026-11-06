@@ -39,6 +39,8 @@ _PAIR_MAX_AGE_S = 1.0
 #: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
 _MAX_FRAME_AGE_S = 2.0
 _MAX_FRAME_LEAD_S = 0.05
+#: How long a published stream may send nothing before the take ends. Normal frame gaps are tens of milliseconds.
+_MAX_SILENCE_S = 5.0
 #: Readings per pair; the one read in the shortest span is the most trustworthy.
 _PAIR_ATTEMPTS = 3
 #: How long the room join may take before the take's start is refused.
@@ -157,9 +159,28 @@ class LiveKitRecordingFeed:
         self._on_failure = on_failure
         self._tasks: list[asyncio.Task[None]] = []
         self.failure: str | None = None
+        self._baseline: dict[int, tuple[int, int]] = {}
+
+    def loss(self) -> dict[str, dict[str, int]]:
+        """What the receiver lost on the way to this take, per stream name (counted since the take began)."""
+        out: dict[str, dict[str, int]] = {}
+        for stream_id, stream in self._streams.items():
+            counters = self._receiver.counters[stream_id]
+            overflow, changes = self._baseline.get(stream_id, (0, 0))
+            out[stream.name] = {
+                "received": counters.received,
+                "queue_overflow": counters.queue_overflow - overflow,
+                "publication_changes": counters.publication_changes - changes,
+                "missing_frames": counters.missing_frames,
+                "frame_id_resets": counters.frame_id_resets,
+            }
+        return out
 
     def start(self) -> None:
         """Begin feeding; one task per stream so a slow stream never delays another."""
+        for stream_id in self._streams:
+            counters = self._receiver.counters[stream_id]
+            self._baseline[stream_id] = (counters.queue_overflow, counters.publication_changes)
         loop = asyncio.get_running_loop()
         self._tasks = [loop.create_task(self._run(stream_id)) for stream_id in self._streams]
 
@@ -191,10 +212,30 @@ class LiveKitRecordingFeed:
             )
             return
         while self.failure is None:
-            frame = await self._receiver.next_frame_or_lost(stream_id)
+            try:
+                frame = await self._receiver.next_frame_or_lost(stream_id, timeout=_MAX_SILENCE_S)
+            except asyncio.TimeoutError:
+                # A track can stay published and send nothing; a take must not wait on it forever.
+                self._fail(
+                    f"{stream.name}: no frame for {_MAX_SILENCE_S:.0f} s although the track is still published"
+                )
+                return
             if frame is None:
                 # Whatever was queued has been taken; the camera is gone, and a recorded source must not vanish.
                 self._fail(f"{stream.name}: the LiveKit track was lost")
+                return
+            # What the receiver lost since this take began: video that was not recorded must not look like video
+            # that was, so a gap or a replaced publication ends the take with its reason.
+            counters = self._receiver.counters[stream_id]
+            overflow, changes = self._baseline[stream_id]
+            if counters.queue_overflow > overflow:
+                self._fail(
+                    f"{stream.name}: the recorder fell behind and dropped "
+                    f"{counters.queue_overflow - overflow} frame(s)"
+                )
+                return
+            if counters.publication_changes > changes:
+                self._fail(f"{stream.name}: the camera's publication was replaced during the take")
                 return
             if frame.user_timestamp_us is None:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")

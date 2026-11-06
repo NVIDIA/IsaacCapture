@@ -203,7 +203,10 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
             started = monitor.native.started
             # The live raw item is a JPEG, or a LiveKit stream's decoded frame when that is larger.
             live_item_bytes = max([MAX_CAMERA_JPEG_BYTES, *_livekit_frame_bytes(started)])
-            reserved = _ingress_queue_bytes(started) + live_item_bytes
+            # Owned storage, each counted once: the raw ingress queue, the LiveKit receivers' own frame queues, and
+            # the one live item. The budget is the base plus the LiveKit ingress allowance plus the receiver
+            # allowance, so the receiver queues are taken out of it here and what remains is the decoded queue.
+            reserved = _ingress_queue_bytes(started) + _livekit_receiver_bytes(started) + live_item_bytes
             total = (
                 _RECORDING_QUEUE_MEMORY_BUDGET_BYTES
                 + _livekit_ingress_bytes(started)

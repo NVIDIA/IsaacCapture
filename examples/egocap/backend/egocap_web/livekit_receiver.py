@@ -80,6 +80,11 @@ class StreamCounters:
     missing_frames: int = 0
     #: Times the publisher's frame id went backwards or repeated: a restarted publisher.
     frame_id_resets: int = 0
+    #: Times the stream's publication was replaced: a discontinuity, since the new one is a different source epoch.
+    publication_changes: int = 0
+    #: The smallest step between consecutive frame ids seen. A publisher that paces its stream below the capture
+    #: rate numbers frames in steps (2, 4, 6...), which is not loss; only a deviation from this step is.
+    id_step: int | None = field(default=None, repr=False)
     #: Whether the stream's track is currently subscribed.
     subscribed: bool = False
     last_frame_id: int | None = field(default=None, repr=False)
@@ -115,6 +120,8 @@ class LiveKitFrameReceiver:
         # waiting forever; cleared when the track is subscribed again.
         self._lost = {s.stream_id: asyncio.Event() for s in streams}
         self._readers: dict[int, asyncio.Task[None]] = {}
+        # The id of the track each stream is currently read from, so an event about a replaced track is recognised.
+        self._active: dict[int, str] = {}
         # Set once the room connection is lost for good; the SDK's own reconnects do not set it.
         self.failed = asyncio.Event()
 
@@ -122,14 +129,18 @@ class LiveKitFrameReceiver:
         """Connect and begin receiving; frames of tracks published before or after joining are both picked up."""
         room = rtc.Room()
         self._room = room
+        room.on("track_published", self._on_track_published)
         room.on("track_subscribed", self._on_track_subscribed)
         room.on("track_unsubscribed", self._on_track_unsubscribed)
         room.on("participant_disconnected", self._on_participant_disconnected)
         room.on("disconnected", self._on_disconnected)
-        _ = await room.connect(self._url, self._token)
-        # Tracks published before we joined arrive here rather than through track_subscribed.
+        # Nothing is subscribed automatically: only the offered tracks are, so unrelated tracks in the room cost no
+        # media work here.
+        _ = await room.connect(self._url, self._token, rtc.RoomOptions(auto_subscribe=False))
+        # Tracks published before we joined arrive here rather than through track_published.
         for participant in room.remote_participants.values():
             for publication in participant.track_publications.values():
+                self._subscribe_if_offered(participant, publication)
                 if publication.track is not None:
                     self._attach(participant, publication.track, publication.name)
 
@@ -151,11 +162,12 @@ class LiveKitFrameReceiver:
         """The oldest queued frame of ``stream_id``, waiting for one if none is queued."""
         return await self._queues[stream_id].get()
 
-    async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+    async def next_frame_or_lost(self, stream_id: int, timeout: float | None = None) -> ReceivedFrame | None:
         """The oldest queued frame of ``stream_id``, or None once its track is lost and nothing is queued.
 
         Frames already queued when the track goes away are still returned first, so a consumer drains what
-        arrived before it learns of the loss.
+        arrived before it learns of the loss. With ``timeout`` set, raises ``asyncio.TimeoutError`` when neither a
+        frame nor a loss arrives in that many seconds: a track that stays published but sends nothing is not lost.
         """
         queue = self._queues[stream_id]
         if not queue.empty():
@@ -163,7 +175,9 @@ class LiveKitFrameReceiver:
         get = asyncio.ensure_future(queue.get())
         lost = asyncio.ensure_future(self._lost[stream_id].wait())
         try:
-            await asyncio.wait({get, lost}, return_when=asyncio.FIRST_COMPLETED)
+            done, _pending = await asyncio.wait({get, lost}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                raise asyncio.TimeoutError
             # A frame that arrived together with the loss is still a frame the consumer is owed.
             return get.result() if get.done() else None
         finally:
@@ -181,15 +195,38 @@ class LiveKitFrameReceiver:
         """How many frames of ``stream_id`` are queued for the consumer."""
         return self._queues[stream_id].qsize()
 
+    def _subscribe_if_offered(
+        self, participant: rtc.RemoteParticipant, publication: rtc.RemoteTrackPublication
+    ) -> None:
+        """Subscribe to ``publication`` if it is an offered stream's track from the offered publisher."""
+        if (
+            participant.identity == self._publisher
+            and publication.name in self._by_track
+            and publication.kind == rtc.TrackKind.KIND_VIDEO
+        ):
+            publication.set_subscribed(True)
+
+    def _on_track_published(
+        self, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
+    ) -> None:
+        self._subscribe_if_offered(participant, publication)
+
     def _attach(self, participant: rtc.RemoteParticipant, track: rtc.Track, name: str) -> None:
         """Start reading ``track`` if it is one of the offered streams, from the offered publisher."""
         stream = self._by_track.get(name)
         if participant.identity != self._publisher or stream is None or track.kind != rtc.TrackKind.KIND_VIDEO:
             return
-        # A republished track replaces the old reader; its frames must not interleave with the new ones.
+        # A republished track replaces the old reader; its frames must not interleave with the new ones, so what
+        # the old one queued is dropped, and the replacement is counted as a discontinuity the consumer can see.
         previous = self._readers.pop(stream.stream_id, None)
         if previous is not None:
             previous.cancel()
+        if previous is not None or self._active.get(stream.stream_id, track.sid) != track.sid:
+            self.counters[stream.stream_id].publication_changes += 1
+            queue = self._queues[stream.stream_id]
+            while not queue.empty():
+                queue.get_nowait()
+        self._active[stream.stream_id] = track.sid
         self.counters[stream.stream_id].subscribed = True
         self._lost[stream.stream_id].clear()
         # A new publication restarts the publisher's numbering, so a jump from the old track is not a loss.
@@ -203,6 +240,7 @@ class LiveKitFrameReceiver:
         task = self._readers.pop(stream_id, None)
         if task is not None:
             task.cancel()
+        self._active.pop(stream_id, None)
         self._mark_lost(stream_id)
 
     def _mark_lost(self, stream_id: int) -> None:
@@ -219,8 +257,12 @@ class LiveKitFrameReceiver:
         self, track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
     ) -> None:
         stream = self._by_track.get(publication.name)
-        if stream is not None and participant.identity == self._publisher:
-            self._detach(stream.stream_id)
+        if stream is None or participant.identity != self._publisher:
+            return
+        # An unsubscribe of a track that has since been replaced says nothing about the current one.
+        if self._active.get(stream.stream_id) != track.sid:
+            return
+        self._detach(stream.stream_id)
 
     def _on_participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
         if participant.identity == self._publisher:
@@ -264,6 +306,10 @@ class LiveKitFrameReceiver:
                 except asyncio.QueueFull:
                     # Never block the reader or skip silently: the consumer is behind, and the loss is counted.
                     counters.queue_overflow += 1
+            # The SDK ended the stream normally: nothing more will arrive, and a consumer must not wait for it.
+            if self._readers.get(stream_id) is this_task:
+                self._readers.pop(stream_id)
+                self._mark_lost(stream_id)
         except Exception:
             # A dead reader would leave the consumer waiting forever; marking the stream lost lets the take settle.
             # Only the reader still registered for the stream may do so: a replaced one is already superseded.
@@ -285,6 +331,9 @@ class LiveKitFrameReceiver:
             if frame_id <= last:
                 # The publisher restarted its numbering: a new run, not a loss.
                 counters.frame_id_resets += 1
-            elif frame_id > last + 1:
-                counters.missing_frames += frame_id - last - 1
+            else:
+                step = frame_id - last
+                counters.id_step = step if counters.id_step is None else min(counters.id_step, step)
+                # A publisher that paces its stream steps its ids by a constant; only a bigger jump is loss.
+                counters.missing_frames += max(0, round(step / counters.id_step) - 1)
         counters.last_frame_id = frame_id

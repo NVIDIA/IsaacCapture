@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import time
 from types import SimpleNamespace
 
@@ -26,8 +27,11 @@ TOKEN = "tok"
 class FakeTrack:
     """A remote video track; the test feeds its events through ``push``."""
 
+    _sids = itertools.count(1)
+
     def __init__(self, kind: str = "video") -> None:
         self.kind = kind
+        self.sid = f"TR_{next(FakeTrack._sids)}"
         self.events: asyncio.Queue = asyncio.Queue()
 
     def push(self, event: object) -> None:
@@ -48,7 +52,10 @@ class FakeVideoStream:
         return self
 
     async def __anext__(self) -> object:
-        return await self.track.events.get()
+        item = await self.track.events.get()
+        if item is StopAsyncIteration:
+            raise StopAsyncIteration
+        return item
 
     async def aclose(self) -> None:
         self.closed += 1
@@ -60,14 +67,16 @@ class FakeRoom:
     def __init__(self) -> None:
         self.handlers: dict[str, object] = {}
         self.connected_with: tuple[str, str] | None = None
+        self.connect_options: object = None
         self.disconnects = 0
         self.remote_participants: dict[str, object] = {}
 
     def on(self, name: str, handler: object) -> None:
         self.handlers[name] = handler
 
-    async def connect(self, url: str, token: str) -> None:
+    async def connect(self, url: str, token: str, options: object = None) -> None:
         self.connected_with = (url, token)
+        self.connect_options = options
 
     async def disconnect(self) -> None:
         self.disconnects += 1
@@ -79,6 +88,7 @@ class FakeRoom:
 FAKE_RTC = SimpleNamespace(
     Room=FakeRoom,
     VideoStream=FakeVideoStream,
+    RoomOptions=lambda **fields: SimpleNamespace(**fields),
     TrackKind=SimpleNamespace(KIND_VIDEO="video"),
     VideoBufferType=SimpleNamespace(RGB24="rgb24"),
 )
@@ -88,8 +98,10 @@ def participant(identity: str = PUBLISHER, publications: dict | None = None) -> 
     return SimpleNamespace(identity=identity, track_publications=publications or {})
 
 
-def publication(name: str, track: FakeTrack | None) -> SimpleNamespace:
-    return SimpleNamespace(name=name, track=track)
+def publication(name: str, track: FakeTrack | None, kind: str = "video") -> SimpleNamespace:
+    """A remote publication; ``subscribed_calls`` records each ``set_subscribed`` the receiver makes."""
+    calls: list[bool] = []
+    return SimpleNamespace(name=name, track=track, kind=kind, subscribed_calls=calls, set_subscribed=calls.append)
 
 
 def event(
@@ -521,12 +533,15 @@ async def test_room_disconnect_marks_a_never_attached_stream_lost(receiver):
     assert await asyncio.wait_for(waiter, 1) is None
 
 
-async def test_unsubscribe_of_a_never_attached_stream_marks_it_lost(receiver):
+async def test_unsubscribe_of_a_never_attached_track_is_ignored(receiver):
+    # Only the active track's unsubscribe is a loss; one for a track that was never read says nothing.
     track = FakeTrack()
     waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
     await settle()
     _unsubscribe(receiver, track)
-    assert await asyncio.wait_for(waiter, 1) is None
+    await settle()
+    assert not waiter.done()
+    waiter.cancel()
 
 
 async def test_publisher_leaving_marks_a_never_attached_stream_lost(receiver):
@@ -659,3 +674,180 @@ async def test_a_failing_reader_leaves_the_other_stream_running(receiver):
     right.push(event(5, frame_id=1))
     assert (await asyncio.wait_for(receiver.next_frame(2), 1)).image[0, 0, 0] == 5
     assert receiver.counters[2].subscribed and not receiver.counters[1].subscribed
+
+
+# ---- selective subscription ----
+
+
+def _prejoined_rtc(monkeypatch, participants: dict):
+    class Prejoined(FakeRoom):
+        def __init__(self) -> None:
+            super().__init__()
+            self.remote_participants = participants
+
+    monkeypatch.setattr(lr, "rtc", SimpleNamespace(**{**vars(FAKE_RTC), "Room": Prejoined}))
+
+
+async def test_connect_disables_auto_subscribe(receiver):
+    assert room_of(receiver).connect_options.auto_subscribe is False
+
+
+async def test_only_the_offered_publication_is_subscribed_among_existing_ones(monkeypatch):
+    offered = publication("left", None)
+    unrelated = publication("depth", None)
+    audio = publication("left", None, kind="audio")
+    foreign = publication("left", None)
+    _prejoined_rtc(
+        monkeypatch,
+        {
+            "a": participant(PUBLISHER, {"1": offered, "2": unrelated, "3": audio}),
+            "b": participant("intruder", {"4": foreign}),
+        },
+    )
+    rx = lr.LiveKitFrameReceiver([camera(1, "left")], TOKEN)
+    await rx.start()
+    try:
+        assert offered.subscribed_calls == [True]
+        assert unrelated.subscribed_calls == [] and audio.subscribed_calls == [] and foreign.subscribed_calls == []
+    finally:
+        await rx.stop()
+
+
+async def test_a_later_publication_is_subscribed_only_when_offered(receiver):
+    room = room_of(receiver)
+    offered = publication("right", None)
+    unrelated = publication("depth", None)
+    foreign = publication("right", None)
+    audio = publication("right", None, kind="audio")
+    room.emit("track_published", offered, participant())
+    room.emit("track_published", unrelated, participant())
+    room.emit("track_published", foreign, participant("intruder"))
+    room.emit("track_published", audio, participant())
+    assert offered.subscribed_calls == [True]
+    assert unrelated.subscribed_calls == foreign.subscribed_calls == audio.subscribed_calls == []
+
+
+# ---- replacement and stale events ----
+
+
+async def test_stale_unsubscribe_after_replacement_does_not_detach_the_replacement(receiver):
+    old = subscribe(receiver)
+    new = subscribe(receiver)
+    await settle()
+    reader = receiver._readers[1]
+    _unsubscribe(receiver, old)
+    await settle()
+    assert receiver.counters[1].subscribed and receiver._readers[1] is reader and not reader.done()
+    new.push(event(1, frame_id=1))
+    assert (await asyncio.wait_for(receiver.next_frame_or_lost(1), 1)).frame_id == 1
+
+
+async def test_unsubscribe_of_the_active_track_still_detaches(receiver):
+    subscribe(receiver)
+    new = subscribe(receiver)
+    await settle()
+    _unsubscribe(receiver, new)
+    await settle()
+    assert not receiver.counters[1].subscribed and 1 not in receiver._readers and 1 not in receiver._active
+
+
+async def test_replacement_counts_a_publication_change_and_drops_the_old_queue(receiver):
+    old = subscribe(receiver)
+    assert receiver.counters[1].publication_changes == 0  # the first attach is not a change
+    for fid in (1, 2, 3):
+        old.push(event(frame_id=fid))
+    await settle()
+    assert receiver.pending(1) == 3
+    subscribe(receiver)
+    assert receiver.counters[1].publication_changes == 1
+    assert receiver.pending(1) == 0
+    assert receiver.counters[1].received == 3
+
+
+async def test_a_different_sid_without_a_reader_is_a_change_too(receiver):
+    track = subscribe(receiver)
+    reader = receiver._readers.pop(1)
+    reader.cancel()
+    other = FakeTrack()
+    room_of(receiver).emit("track_subscribed", other, publication("left", other), participant())
+    assert receiver.counters[1].publication_changes == 1
+    assert receiver._active[1] == other.sid != track.sid
+
+
+async def test_reattaching_after_a_detach_is_not_a_publication_change(receiver):
+    track = subscribe(receiver)
+    _unsubscribe(receiver, track)
+    subscribe(receiver)
+    assert receiver.counters[1].publication_changes == 0
+
+
+# ---- the SDK stream ending ----
+
+
+async def test_a_normally_ended_reader_marks_the_stream_lost_and_wakes_a_waiter(receiver):
+    track = subscribe(receiver)
+    track.push(event(1, frame_id=1))
+    await settle()
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    assert (await asyncio.wait_for(waiter, 1)).frame_id == 1
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    await settle()
+    assert not waiter.done()
+    track.push(StopAsyncIteration)  # the fake stream raises it from __anext__
+    assert await asyncio.wait_for(waiter, 1) is None
+    assert 1 not in receiver._readers
+
+
+async def test_next_frame_or_lost_times_out_when_nothing_arrives(receiver):
+    subscribe(receiver)
+    await settle()
+    baseline = _only_test_tasks()
+    with pytest.raises(asyncio.TimeoutError):
+        await receiver.next_frame_or_lost(1, timeout=0.01)
+    await settle()
+    assert _only_test_tasks() == baseline
+
+
+async def test_timeout_does_not_fire_when_a_frame_arrives_in_time(receiver):
+    track = subscribe(receiver)
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1, timeout=1))
+    await settle()
+    track.push(event(1, frame_id=1))
+    assert (await asyncio.wait_for(waiter, 1)).frame_id == 1
+
+
+# ---- frame-id stride ----
+
+
+async def _ids(rx, ids):
+    track = subscribe(rx)
+    for fid in ids:
+        track.push(event(frame_id=fid))
+    await _drain(rx, len(ids))
+    return rx.counters[1]
+
+
+async def test_a_constant_stride_of_two_is_not_loss(receiver):
+    counters = await _ids(receiver, (2, 4, 6, 8))
+    assert counters.missing_frames == 0 and counters.id_step == 2
+
+
+async def test_one_dropped_frame_at_stride_two_is_one_missing(receiver):
+    counters = await _ids(receiver, (2, 4, 6, 10, 12))
+    assert counters.missing_frames == 1
+
+
+async def test_a_gap_of_three_at_stride_one_is_two_missing(receiver):
+    counters = await _ids(receiver, (1, 2, 5))
+    assert counters.missing_frames == 2 and counters.id_step == 1
+
+
+async def test_a_reset_is_counted_and_not_loss_with_a_stride(receiver):
+    counters = await _ids(receiver, (10, 12, 14, 2, 4))
+    assert counters.frame_id_resets == 1 and counters.missing_frames == 0
+
+
+async def test_the_step_is_learned_from_the_smallest_delta(receiver):
+    # A first gap of two steps looks like stride 4 until a smaller step is seen; later gaps use the smaller one.
+    counters = await _ids(receiver, (4, 8, 10, 12))
+    assert counters.id_step == 2 and counters.missing_frames == 0
