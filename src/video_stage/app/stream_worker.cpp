@@ -325,6 +325,32 @@ bool StreamWorker::join()
     return m_impl->ok.load();
 }
 
+void StreamWorker::print_live(std::ostream& out) const
+{
+    const Impl& d = *m_impl;
+    const PipelineStats& s = d.pipeline->stats();
+    char line[512];
+    int n = std::snprintf(
+        line, sizeof(line),
+        "[%u] queue age p50 %.1f p99 %.1f ms | backlog p99 %lld B | decode+warp+encode p50 %.1f p99 %.1f ms",
+        static_cast<unsigned>(d.spec.port), s.queue_age_ns.percentile(50) / 1e6, s.queue_age_ns.percentile(99) / 1e6,
+        static_cast<long long>(d.backlog_bytes.percentile(99)),
+        (s.decode_ns.percentile(50) + s.process_encode_ns.percentile(50)) / 1e6,
+        (s.decode_ns.percentile(99) + s.process_encode_ns.percentile(99)) / 1e6);
+    if (d.livekit_output && n > 0 && n < static_cast<int>(sizeof(line)))
+    {
+        std::snprintf(
+            line + n, sizeof(line) - static_cast<size_t>(n),
+            " | Orin->PC p50 %.1f p99 %.1f ms | Orin->publish p50 %.1f p99 %.1f ms | mapping +-%.1f ms | published %llu",
+            d.livekit_output->uplink_ns().percentile(50) / 1e6, d.livekit_output->uplink_ns().percentile(99) / 1e6,
+            d.livekit_output->source_to_publish_ns().percentile(50) / 1e6,
+            d.livekit_output->source_to_publish_ns().percentile(99) / 1e6,
+            d.livekit_output->upstream_uncertainty_ns() / 1e6,
+            static_cast<unsigned long long>(d.livekit_output->published()));
+    }
+    out << line << "\n";
+}
+
 void StreamWorker::print_summary(std::ostream& out) const
 {
     const Impl& d = *m_impl;
@@ -357,6 +383,11 @@ void StreamWorker::print_summary(std::ostream& out) const
                   static_cast<long long>(d.backlog_bytes.percentile(50)),
                   static_cast<long long>(d.backlog_bytes.percentile(99)));
     out << line;
+    if (d.livekit_output)
+    {
+        print_stage(out, "Orin -> PC arrival", d.livekit_output->uplink_ns());
+        print_stage(out, "Orin -> publish", d.livekit_output->source_to_publish_ns());
+    }
     print_stage(out, "queue age", s.queue_age_ns);
     print_stage(out, "decode", s.decode_ns);
     print_stage(out, "warp + encode", s.process_encode_ns);

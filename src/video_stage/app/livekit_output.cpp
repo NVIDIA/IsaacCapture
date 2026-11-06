@@ -118,6 +118,10 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
     if (m_track->submit(frame))
     {
         ++m_published;
+        const int64_t now_ns = monotonic_ns();
+        m_uplink_ns.add(meta.received_ns - pc_ns);
+        m_source_to_publish_ns.add(now_ns - pc_ns);
+        m_upstream_uncertainty_ns = upstream->mapping.uncertainty_ns;
         return;
     }
     // The SDK refused the frame, which can break the reference chain: continue from a keyframe.

@@ -6,6 +6,7 @@
 #include <sensing_livekit/video_track_sink.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -29,6 +30,10 @@ struct DirectSenderConfig
     /// Encoded bytes allowed to wait for the network. A frame that does not fit is dropped, and so is everything after
     /// it up to the next keyframe, because those frames reference it.
     std::size_t max_queued_bytes = 16U << 20;
+    /// A unit that has waited this long for the network is stale. On a slow or lossy link (Wi-Fi, a congested switch) a
+    /// backlog is worse than a gap: when the oldest queued unit is older than this, the whole queue is dropped and the
+    /// stream resumes at the next keyframe, so the PC never receives video that is already late.
+    std::chrono::milliseconds max_queue_age{ 250 };
 };
 
 /**
@@ -68,6 +73,8 @@ private:
     void control_loop(int fd);
     void run_control(int fd);
     bool connect_once(int& fd, std::string& why);
+    /// Drops every queued unit and waits for a keyframe, asking the encoder for one. Caller holds m_mutex.
+    void flush_stale_locked();
     bool control_alive() const
     {
         return !m_control_ended.load();
@@ -77,7 +84,12 @@ private:
     std::thread m_thread;
     std::mutex m_mutex;
     std::condition_variable m_wake;
-    std::deque<std::vector<uint8_t>> m_queue;
+    struct Queued
+    {
+        std::vector<uint8_t> bytes;
+        std::chrono::steady_clock::time_point enqueued;
+    };
+    std::deque<Queued> m_queue;
     std::size_t m_queued_bytes = 0;
     bool m_need_keyframe = true; ///< guarded by m_mutex
     bool m_stop = false; ///< guarded by m_mutex

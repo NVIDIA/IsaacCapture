@@ -83,9 +83,20 @@ DirectSender::~DirectSender()
         m_thread.join();
 }
 
+void DirectSender::flush_stale_locked()
+{
+    m_dropped += m_queue.size();
+    m_queue.clear();
+    m_queued_bytes = 0;
+    m_need_keyframe = true;
+    m_keyframe_requested = true;
+}
+
 void DirectSender::submit(const EncodedVideoFrame& frame)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_queue.empty() && std::chrono::steady_clock::now() - m_queue.front().enqueued > m_config.max_queue_age)
+        flush_stale_locked();
     if (m_need_keyframe)
     {
         if (!frame.keyframe)
@@ -111,7 +122,7 @@ void DirectSender::submit(const EncodedVideoFrame& frame)
     std::vector<uint8_t> record;
     video_stage::avs1::encode(sample, frame.data, frame.size, record);
     m_queued_bytes += record.size();
-    m_queue.push_back(std::move(record));
+    m_queue.push_back({ std::move(record), std::chrono::steady_clock::now() });
     m_wake.notify_one();
 }
 
@@ -148,8 +159,20 @@ bool DirectSender::connect_once(int& fd, std::string& why)
     ::freeaddrinfo(found);
     if (fd < 0)
         return false;
+    // The link may be wired or Wi-Fi, so make it behave under both: send small packets at once, keep the kernel's send
+    // buffer small so a backlog stays in our queue (where its age is bounded) instead of hiding in the kernel, and
+    // notice a dead link in seconds, not minutes.
     const int one = 1;
     ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    const int send_buffer = 256 * 1024;
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
+    ::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+    const int idle = 5, interval = 2, count = 3;
+    ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+    ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+    const unsigned user_timeout_ms = 5000;
+    ::setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout_ms, sizeof(user_timeout_ms));
     return true;
 }
 
@@ -269,7 +292,13 @@ void DirectSender::run()
                 }
                 continue;
             }
-            record = std::move(m_queue.front());
+            if (std::chrono::steady_clock::now() - m_queue.front().enqueued > m_config.max_queue_age)
+            {
+                // The link could not keep up: what waits is already late, so drop it rather than send it.
+                flush_stale_locked();
+                continue;
+            }
+            record = std::move(m_queue.front().bytes);
             m_queue.pop_front();
             m_queued_bytes -= record.size();
         }
