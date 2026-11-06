@@ -103,9 +103,43 @@ def test_missing_gpu_exits_with_runtime_code(monkeypatch, capsys):
     script.check_gpu_visible("cpu")
 
 
-def test_unreadable_video_exits_with_runtime_code(capsys):
+class _FakeCapture:
+    """Stands in for ``cv2.VideoCapture``; ``read()`` reports ``frame_ok``."""
+
+    def __init__(self, frame_ok: bool):
+        self.frame_ok = frame_ok
+        self.released = False
+
+    def read(self):
+        return self.frame_ok, None
+
+    def release(self):
+        self.released = True
+
+
+def _patch_capture(monkeypatch, frame_ok: bool) -> _FakeCapture:
+    cap = _FakeCapture(frame_ok)
+    monkeypatch.setattr(script.cv2, "VideoCapture", lambda _path: cap)
+    return cap
+
+
+def test_unreadable_video_exits_with_runtime_code(monkeypatch, capsys):
+    cap = _patch_capture(monkeypatch, frame_ok=True)
     with pytest.raises(SystemExit) as exc:
         script.check_video_decodable("clip.mp4", {"width": 0, "height": 0})
     assert exc.value.code == script.EXIT_RUNTIME_ERROR
     assert "Cannot read video clip.mp4" in capsys.readouterr().err
+    assert not cap.released  # a 0x0 video is rejected without opening it
     script.check_video_decodable("clip.mp4", {"width": 640, "height": 480})
+    assert cap.released
+
+
+def test_video_with_size_but_no_readable_frame_exits_with_runtime_code(
+    monkeypatch, capsys
+):
+    cap = _patch_capture(monkeypatch, frame_ok=False)
+    with pytest.raises(SystemExit) as exc:
+        script.check_video_decodable("clip.mp4", {"width": 640, "height": 480})
+    assert exc.value.code == script.EXIT_RUNTIME_ERROR
+    assert "Cannot read video clip.mp4" in capsys.readouterr().err
+    assert cap.released
