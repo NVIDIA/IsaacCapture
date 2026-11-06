@@ -61,29 +61,32 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
     if (m_track && m_track->take_feedback().keyframe_requested)
         m_request_idr();
 
+    // Video keeps flowing whatever the timing quality: a viewer that loses the picture every time the link's clock
+    // mapping wobbles is worse than one that sees video without a latency figure. What a frame may claim about time
+    // depends on the mapping: a qualified one carries the Orin's capture time on this PC's clock; otherwise the frame
+    // carries no timestamp, and a consumer that needs one (a recording) says so instead of using a guessed time.
     const auto upstream = m_mapping();
+    bool qualified = false;
     if (!upstream)
-    {
         ++m_unmapped;
-        break_publication();
-        return;
-    }
-    if (upstream->mapping.uncertainty_ns > m_config.max_upstream_uncertainty_ns)
-    {
+    else if (upstream->mapping.uncertainty_ns > m_config.max_upstream_uncertainty_ns)
         ++m_over_budget;
-        break_publication();
-        return;
-    }
+    else
+        qualified = true;
+
     // This milestone publishes one fixed picture size: a change is refused rather than reconfiguring the track.
     if (m_track && !(geometry == m_track_geometry))
         throw std::runtime_error("the stream's picture size changed; publishing a different size is not supported");
     // The Orin's clock jumped: end this publication so consumers see a break instead of a silent offset change.
-    if (m_track && upstream->epoch != m_epoch)
+    if (upstream)
     {
-        ++m_republished;
-        break_publication();
+        if (m_track && upstream->epoch != m_epoch)
+        {
+            ++m_republished;
+            break_publication();
+        }
+        m_epoch = upstream->epoch;
     }
-    m_epoch = upstream->epoch;
 
     if (m_awaiting_keyframe && !packet.keyframe)
     {
@@ -108,13 +111,15 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
     }
     m_awaiting_keyframe = false;
 
-    const int64_t pc_ns = upstream->mapping.to_local_ns(static_cast<int64_t>(meta.source_timestamp_ns));
+    // Without a qualified mapping the transport timestamp is the arrival time here and the frame has no capture time.
+    const int64_t pc_ns =
+        qualified ? upstream->mapping.to_local_ns(static_cast<int64_t>(meta.source_timestamp_ns)) : meta.received_ns;
     sensing::EncodedVideoFrame frame;
     frame.data = packet.data.data();
     frame.size = packet.data.size();
     frame.keyframe = packet.keyframe;
     frame.timestamp_us = static_cast<uint64_t>(pc_ns / 1000);
-    frame.user_timestamp_us = frame.timestamp_us;
+    frame.user_timestamp_us = qualified ? frame.timestamp_us : 0;
     frame.frame_id = static_cast<uint32_t>(meta.frame_number);
     const int64_t submit_start_ns = monotonic_ns();
     const bool accepted = m_track->submit(frame);
@@ -124,9 +129,12 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
         ++m_published;
         m_intake_to_write_ns.add(write_start_ns - meta.received_ns);
         m_submit_ns.add(now_ns - submit_start_ns);
-        m_uplink_ns.add(meta.received_ns - pc_ns);
-        m_source_to_publish_ns.add(now_ns - pc_ns);
-        m_upstream_uncertainty_ns = upstream->mapping.uncertainty_ns;
+        if (qualified)
+        {
+            m_uplink_ns.add(meta.received_ns - pc_ns);
+            m_source_to_publish_ns.add(now_ns - pc_ns);
+            m_upstream_uncertainty_ns = upstream->mapping.uncertainty_ns;
+        }
         return;
     }
     // The SDK refused the frame, which can break the reference chain: continue from a keyframe.

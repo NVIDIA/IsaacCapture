@@ -64,10 +64,11 @@ exactly as they subscribe to the Orin's own, so they are unchanged.
 - **Control link.** A second connection from the Orin carries the PC's keyframe requests and a four-timestamp clock
   exchange (the same bytes the recorder uses over LiveKit). The worker converts each Orin frame-ready stamp onto its own
   monotonic clock before publishing, and answers the recorder's and the page's clock sync with that clock, so they map one
-  clock. Frames are withheld while the Orin-to-PC mapping is missing or less certain than
-  `--max-upstream-uncertainty-ms` (5 by default); when the Orin's clock jumps, the track is unpublished and published again
-  at the next keyframe. The uncertainty the recorder and the page report covers only the worker-to-them leg: it excludes
-  the Orin-to-PC mapping, which this budget bounds.
+  clock. Video is never withheld because of timing: while the Orin-to-PC mapping is missing or less certain than
+  `--max-upstream-uncertainty-ms` (5 by default) the frames are still published, without a capture timestamp, so the page keeps
+  its last picture and shows no latency figure, and a recording that needs a timestamp stops and says so. When the Orin's
+  clock jumps, the track is unpublished and published again at the next keyframe. The uncertainty the recorder and the page
+  report covers only the worker-to-them leg: it excludes the Orin-to-PC mapping, which this budget bounds.
 - **Fixed geometry.** A stream's picture size is fixed for the run; a change ends the stream with an error.
 - **Identity.** Each picture carries a key through NVDEC and NVENC, and the source frame number and stamp are looked up by
   that key, so metadata follows its own frame through loss. A stage that cannot keep up discards its queued records and

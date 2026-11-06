@@ -426,13 +426,15 @@ void StreamWorker::print_summary(std::ostream& out) const
     out << line;
     if (d.livekit_output)
     {
-        std::snprintf(line, sizeof(line),
-                      "  published %llu, unmapped %llu, over budget %llu, refused %llu, republished %llu\n",
-                      static_cast<unsigned long long>(d.livekit_output->published()),
-                      static_cast<unsigned long long>(d.livekit_output->unmapped()),
-                      static_cast<unsigned long long>(d.livekit_output->over_budget()),
-                      static_cast<unsigned long long>(d.livekit_output->refused()),
-                      static_cast<unsigned long long>(d.livekit_output->republished()));
+        std::snprintf(
+            line, sizeof(line),
+            "  published %llu (frames sent without a capture time: unmapped %llu, over budget %llu), refused %llu, "
+            "republished %llu\n",
+            static_cast<unsigned long long>(d.livekit_output->published()),
+            static_cast<unsigned long long>(d.livekit_output->unmapped()),
+            static_cast<unsigned long long>(d.livekit_output->over_budget()),
+            static_cast<unsigned long long>(d.livekit_output->refused()),
+            static_cast<unsigned long long>(d.livekit_output->republished()));
         out << line;
     }
     std::snprintf(line, sizeof(line), "  socket backlog         p50 %lld B  p99 %lld B\n",
