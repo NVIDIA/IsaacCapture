@@ -24,6 +24,7 @@ from capture_server.client import (
     CaptureClient,
     RequestRejectedError,
     StoppedBeforeAcceptedError,
+    _CalibrationAttempt,
 )
 from tests.capture_server.calibration_helpers import BOTH, LEFT, RIGHT, CalibrationRun
 from tests.support.capture_server import poll_until
@@ -705,3 +706,15 @@ async def test_the_real_client_and_server_complete_a_calibration_end_to_end(make
     assert sorted(f.filename for f in ending.result.files) == sorted(
         path.name for path in station.directory.glob("*.mcal")
     )
+
+
+async def test_a_confirm_registered_while_the_attempt_finalizes_ends_instead_of_hanging():
+    client = CaptureClient("ws://127.0.0.1:1")
+    attempt = _CalibrationAttempt(session_id="s-1", sides=(p.HandSide.LEFT,), callbacks={})
+    attempt.accepted = True
+    attempt.ended = True
+    client._calibration = attempt
+    with pytest.raises(CalibrationEndedError):
+        await asyncio.wait_for(client.confirm_calibration_step(step_token="t-1"), 1)
+    # Nothing was registered for finalization to leave unresolved.
+    assert attempt.pending == {}

@@ -297,6 +297,23 @@ def test_a_second_start_while_active_is_a_conflict(make_worker):
     asyncio.run(scenario())
 
 
+def test_a_start_after_shutdown_begins_is_refused(make_worker, commands_log):
+    async def scenario():
+        async with serving(make_worker, WAITING) as (server, _store):
+            port = server.port
+            owner = await Sse.open(port, CLIENT_A)
+            await owner.event()
+            # Set at the top of aclose(): from then on no attempt may begin.
+            server._closing = True
+            refused = await api(port, "/api/start", CLIENT_A, {"sides": ["left"]})
+            assert refused.status == 409
+            assert "shutting down" in refused.json()["error"]
+            assert commands(commands_log) == []
+            owner.close()
+
+    asyncio.run(scenario())
+
+
 def test_confirm_and_cancel_with_nothing_active_are_conflicts(make_worker):
     async def scenario():
         async with serving(make_worker) as (server, _store):

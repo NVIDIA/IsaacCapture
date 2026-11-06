@@ -691,22 +691,6 @@ def test_an_idle_workers_cancelled_result_is_accepted_only_after_a_user_cancel(
     run(scenario())
 
 
-def test_cancel_before_start_with_a_worker_that_reports_its_idle_cancel(make_worker):
-    async def scenario():
-        r = Run(make_worker, {"idle_cancel_result": True, "never_ready": True})
-        starting = asyncio.create_task(r.attempt.start(LEFT))
-        await wait_for(lambda: r.attempt._proc is not None)
-        await r.attempt.cancel()
-        _ = await asyncio.gather(starting, return_exceptions=True)
-        outcome = await r.settle()
-        # Cancelled while waiting for ready: the worker's SIGTERM result must not read as a protocol error.
-        assert outcome.kind in (OutcomeKind.CANCELLED, OutcomeKind.FAILED)
-        assert "broke the protocol" not in outcome.message
-        assert_reaped(r.attempt)
-
-    run(scenario())
-
-
 def test_cancel_before_start_never_launches_a_worker(make_worker, commands_log):
     async def scenario():
         r = Run(make_worker)

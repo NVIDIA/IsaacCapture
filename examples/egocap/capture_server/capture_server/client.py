@@ -357,6 +357,8 @@ class _CalibrationAttempt:
     # Set when on_started has been attempted, or the attempt failed before acceptance.
     ready: asyncio.Event = dataclass_field(default_factory=asyncio.Event)
     accepted: bool = False
+    # Set once the attempt is finalizing, before its pending confirmations are failed, so none can register after.
+    ended: bool = False
     start_exception: BaseException | None = None
     events: asyncio.Queue[tuple[str, Any] | None] = dataclass_field(default_factory=asyncio.Queue)
     pending: dict[str, asyncio.Future[None]] = dataclass_field(default_factory=dict)
@@ -571,10 +573,17 @@ class CaptureClient:
             return
         future = attempt.pending.get(step_token)
         if future is None:
+            # Finalizing may already have failed the pending confirmations; a new one would never be resolved.
+            if attempt.ended:
+                raise CalibrationEndedError("the calibration ended before the step was accepted")
             future = asyncio.get_running_loop().create_future()
             attempt.pending[step_token] = future
             request = p.ConfirmCalibrationStepRequest(session_id=attempt.session_id, step_token=step_token)
             await self._send_calibration(attempt, request.to_json())
+            # The send can yield while the attempt ends; finalizing then no longer sees this future.
+            if attempt.ended and not future.done():
+                attempt.pending.pop(step_token, None)
+                future.set_exception(CalibrationEndedError("the calibration ended before the step was accepted"))
         # Shielded: a cancelled caller must not cancel the future a retry (or the reader) still uses.
         await asyncio.shield(future)
 
@@ -625,6 +634,7 @@ class CaptureClient:
             diagnostic = exc
         finally:
             stopped = self._calibration_stopped(attempt, terminal, diagnostic)
+            attempt.ended = True
             for future in attempt.pending.values():
                 if not future.done():
                     future.set_exception(

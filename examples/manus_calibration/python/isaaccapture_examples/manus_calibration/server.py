@@ -112,6 +112,8 @@ class PageServer:
         self._requested_port = port
         self._controller = CalibrationController(worker, self._on_change)
         self._tabs: dict[str, _Tab] = {}
+        # Set when shutdown begins, so no attempt can start after the active one has been cancelled.
+        self._closing = False
         # Strong references: the loop keeps only weak ones, and a dropped task would skip the cancel.
         self._background: set[asyncio.Task[None]] = set()
         self._server: asyncio.Server | None = None
@@ -145,6 +147,8 @@ class PageServer:
 
     async def aclose(self) -> None:
         """Cancel any active attempt, wait for the worker to settle, then stop listening."""
+        # Refuse new starts first, so none can begin after the cancel below.
+        self._closing = True
         await self._controller.aclose()
         if self._server is not None:
             self._server.close()
@@ -306,6 +310,8 @@ class PageServer:
                 tab = self._tabs.get(client)
                 if tab is None or tab.connections == 0:
                     raise _BadRequest(409, "the page's event stream is not connected")
+                if self._closing:
+                    raise _BadRequest(409, "the server is shutting down")
                 await self._controller.start(client, _sides_of(data))
             elif request.path == "/api/confirm":
                 token = data.get("token")
