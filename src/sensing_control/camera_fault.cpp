@@ -139,22 +139,8 @@ constexpr Signature kSignatures[] = {
       "the L4T installation." },
     { "JetsonEncoder", "encoder_error", kOther,
       "The hardware video encoder reported an error. Another process may be holding the encoder; if it persists, "
-      "reduce --livekit-bitrate or the stream count." },
+      "reduce --bitrate or the stream count." },
 
-    // --- Publishing ---------------------------------------------------------------------------------------------
-    { "cannot join the room", "livekit_unreachable", kOther,
-      "The producer cannot join the LiveKit room. Check that the LiveKit server address (--livekit-url) is reachable "
-      "from the Orin, the server is running, and the token in --livekit-token-file is valid and not expired." },
-    { "cannot publish track", "livekit_publish_failed", kOther,
-      "The LiveKit server refused a video track. Check that the token allows publishing and the track names are "
-      "unique." },
-    { "no local participant", "livekit_publish_failed", kOther,
-      "The LiveKit session has no participant to publish from. Check the token in --livekit-token-file." },
-    { "LiveKit", "livekit_error", kOther,
-      "The LiveKit connection failed. Check the PC's address, the server and the network between the Orin and the "
-      "PC." },
-    { "bitrate must be", "config_invalid", kOther, "A setting is out of range. Check --livekit-bitrate." },
-    { "must divide", "config_invalid", kOther, "A setting is out of range. Check --livekit-scale-div." },
     { "bad_alloc", "out_of_memory", kOther,
       "The producer ran out of memory. Close other programs on the Orin or reduce the number of streams." },
     { "Permission denied", "permission_denied", kOther,

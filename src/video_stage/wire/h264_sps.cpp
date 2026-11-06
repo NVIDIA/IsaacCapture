@@ -181,8 +181,8 @@ void skip_hrd(BitReader& r)
 struct Parsed
 {
     SpsInfo info;
-    std::vector<uint8_t> rbsp;      // the SPS RBSP, header byte first
-    size_t vui_flag_pos = 0;        // bit position of vui_parameters_present_flag
+    std::vector<uint8_t> rbsp; // the SPS RBSP, header byte first
+    size_t vui_flag_pos = 0; // bit position of vui_parameters_present_flag
     size_t restriction_flag_pos = 0; // bit position of bitstream_restriction_flag (valid when vui_present)
 };
 
@@ -272,8 +272,10 @@ std::optional<Parsed> parse_rbsp(std::vector<uint8_t> rbsp)
         }
         if (r.bit())
         {
-            r.ue();
-            r.ue();
+            // chroma_loc_info_present_flag: the vertical sample positions of the chroma samples (H.264 Table E-1)
+            s.chroma_loc_present = true;
+            s.chroma_loc_top = r.ue();
+            s.chroma_loc_bottom = r.ue();
         }
         if (r.bit())
         {
@@ -332,8 +334,8 @@ bool find_nal(const uint8_t* d, size_t n, int type, size_t& begin, size_t& end, 
 std::string SpsInfo::describe() const
 {
     std::string s = "H.264 profile " + std::to_string(profile_idc) + " level " + std::to_string(level_idc) + ", " +
-                    std::to_string(width) + "x" + std::to_string(height) + ", refs " + std::to_string(max_num_ref_frames) +
-                    ", poc type " + std::to_string(pic_order_cnt_type);
+                    std::to_string(width) + "x" + std::to_string(height) + ", refs " +
+                    std::to_string(max_num_ref_frames) + ", poc type " + std::to_string(pic_order_cnt_type);
     if (bitstream_restriction)
         s += ", bitstream_restriction: reorder " + std::to_string(max_num_reorder_frames) + ", dpb " +
              std::to_string(max_dec_frame_buffering);
@@ -372,19 +374,19 @@ std::optional<std::vector<uint8_t>> declare_no_reordering(const uint8_t* annexb,
         // Minimal VUI: nothing present except bitstream_restriction.
         for (int i = 0; i < 8; ++i)
             w.bit(0); // aspect ratio, overscan, video signal, chroma loc, timing, nal hrd, vcl hrd, pic_struct
-        w.bit(1);     // bitstream_restriction_flag
+        w.bit(1); // bitstream_restriction_flag
     }
     else
     {
         w.copy(rbsp, 0, parsed->restriction_flag_pos);
         w.bit(1); // bitstream_restriction_flag
     }
-    w.bit(1);   // motion_vectors_over_pic_boundaries_flag
-    w.ue(0);    // max_bytes_per_pic_denom
-    w.ue(1);    // max_bits_per_mb_denom
-    w.ue(15);   // log2_max_mv_length_horizontal
-    w.ue(15);   // log2_max_mv_length_vertical
-    w.ue(0);    // max_num_reorder_frames
+    w.bit(1); // motion_vectors_over_pic_boundaries_flag
+    w.ue(0); // max_bytes_per_pic_denom
+    w.ue(1); // max_bits_per_mb_denom
+    w.ue(15); // log2_max_mv_length_horizontal
+    w.ue(15); // log2_max_mv_length_vertical
+    w.ue(0); // max_num_reorder_frames
     w.ue(std::max<uint32_t>(info.max_num_ref_frames, 1)); // max_dec_frame_buffering
     const std::vector<uint8_t> new_rbsp = w.finish();
     const std::vector<uint8_t> payload = escape(new_rbsp);

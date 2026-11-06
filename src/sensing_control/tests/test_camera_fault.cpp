@@ -77,12 +77,6 @@ const std::vector<Expectation>& expectations()
         { "CUDA error 700 in cudaMemcpy", "gpu_error", kError },
         { "createVideoEncoder failed", "encoder_unavailable", kError },
         { "JetsonEncoder: dequeue timed out", "encoder_error", kError },
-        { "LiveKit: cannot join the room", "livekit_unreachable", kError },
-        { "LiveKit: cannot publish track sensing-left", "livekit_publish_failed", kError },
-        { "LiveKit: no local participant", "livekit_publish_failed", kError },
-        { "LiveKit: disconnected", "livekit_error", kError },
-        { "bitrate must be positive", "config_invalid", kError },
-        { "scale must divide the frame size", "config_invalid", kError },
         { "std::bad_alloc", "out_of_memory", kError },
         { "open /dev/video0: Permission denied", "permission_denied", kError },
         { "open /dev/foo: No such file or directory", "file_missing", kError },
@@ -124,11 +118,11 @@ TEST_CASE("the first matching signature wins", "[camera_fault]")
     CHECK(diagnose_failure("Init failed with SIPLStatus 10; OPEN_CIRCUIT").fault.code == "camera_power_missing");
     CHECK(diagnose_failure("SIPLStatus 10 CIRCUIT_OPEN_DISCONNECTION").fault.code == "camera_power_missing");
     CHECK(diagnose_failure("link lock failed, SIPLStatus 10").fault.code == "camera_link_not_locked");
-    // A LiveKit text naming the room beats the generic LiveKit entry.
-    CHECK(diagnose_failure("LiveKit: cannot join the room").fault.code == "livekit_unreachable");
-    // A driver NACK line attached to a LiveKit failure does not change the mapping.
-    CHECK(diagnose_failure("LiveKit: cannot join the room; I2C: NACK ... errno=121").fault.code ==
-          "livekit_unreachable");
+    // A driver NACK line attached to an otherwise unknown failure does not change the mapping.
+    CHECK(diagnose_failure("something unknown; I2C: NACK ... errno=121").fault.code == "startup_failed");
+    // The camera signature still wins when it is mentioned beside a publishing word.
+    CHECK(diagnose_failure("Init failed with SIPLStatus 10; LiveKit: cannot join the room").fault.code ==
+          "camera_start_failed");
     // "Argus:" alone is the last Argus entry, not the first.
     CHECK(diagnose_failure("Argus: no camera provider").fault.code == "camera_service_down");
     // Camera signatures are listed before the generic CUDA one.
@@ -143,6 +137,33 @@ TEST_CASE("an I2C NACK alone is not a signature", "[camera_fault]")
         INFO(text);
         CHECK(diagnose_failure(text).fault.code == "startup_failed");
     }
+}
+
+TEST_CASE("no signature mentions LiveKit any more", "[camera_fault]")
+{
+    // The Orin streams over its direct links only, so LiveKit texts are not diagnosed specially.
+    for (const char* text : { "LiveKit: cannot join the room", "LiveKit: cannot publish track sensing-left",
+                              "LiveKit: no local participant", "LiveKit: disconnected" })
+    {
+        INFO(text);
+        const auto d = diagnose_failure(text);
+        CHECK(d.fault.code == "startup_failed");
+        CHECK(d.state == ProducerState::CameraFault);
+        CHECK_FALSE(contains(d.fault.message, "livekit-url"));
+        CHECK_FALSE(contains(d.fault.message, "livekit-token"));
+        CHECK_FALSE(contains(d.fault.message, "--livekit"));
+        CHECK(ends_with(d.fault.message, std::string("(") + text + ")"));
+    }
+}
+
+TEST_CASE("the signature advice names no retired --livekit flag", "[camera_fault]")
+{
+    for (const auto& e : expectations())
+    {
+        INFO(e.text);
+        CHECK_FALSE(contains(diagnose_failure(e.text).fault.message, "--livekit"));
+    }
+    CHECK(contains(diagnose_failure("JetsonEncoder: dequeue timed out").fault.message, "--bitrate"));
 }
 
 TEST_CASE("an unknown failure is a startup_failed camera fault with the original text", "[camera_fault]")

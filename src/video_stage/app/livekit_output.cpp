@@ -3,6 +3,7 @@
 
 #include "livekit_output.hpp"
 
+#include <iostream>
 #include <stdexcept>
 
 namespace video_stage
@@ -58,8 +59,21 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
         throw std::runtime_error("LiveKit room lost: " + m_livekit.failure());
 
     // A subscriber's keyframe or rate request reaches the encoder through the pipeline.
-    if (m_track && m_track->take_feedback().keyframe_requested)
-        m_request_idr();
+    if (m_track)
+    {
+        const auto feedback = m_track->take_feedback();
+        if (feedback.keyframe_requested)
+            m_request_idr();
+        // This worker runs at the rate its source encodes; it does not adapt it to downstream congestion. Say so once
+        // instead of silently discarding the request.
+        if (feedback.target_bitrate_bps && !m_rate_feedback_noted)
+        {
+            m_rate_feedback_noted = true;
+            std::cerr << "stream " << m_config.track_name << ": downstream asked for "
+                      << *feedback.target_bitrate_bps / 1000
+                      << " kbit/s; this worker forwards its source's rate and does not adapt it" << std::endl;
+        }
+    }
 
     // Video keeps flowing whatever the timing quality: a viewer that loses the picture every time the link's clock
     // mapping wobbles is worse than one that sees video without a latency figure. What a frame may claim about time

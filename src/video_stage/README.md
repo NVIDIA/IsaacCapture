@@ -69,6 +69,8 @@ exactly as they subscribe to the Orin's own, so they are unchanged.
   its last picture and shows no latency figure, and a recording that needs a timestamp stops and says so. When the Orin's
   clock jumps, the track is unpublished and published again at the next keyframe. The uncertainty the recorder and the page
   report covers only the worker-to-them leg: it excludes the Orin-to-PC mapping, which this budget bounds.
+- **Fixed rate.** The worker publishes what its source encodes (or what it encodes itself in GPU mode) at that rate; a
+  downstream bitrate request is logged once and not acted on. The Orin producer adapts its own bitrate to its direct link.
 - **Fixed geometry.** A stream's picture size is fixed for the run; a change ends the stream with an error.
 - **Identity.** Each picture carries a key through NVDEC and NVENC, and the source frame number and stamp are looked up by
   that key, so metadata follows its own frame through loss. A stage that cannot keep up discards its queued records and

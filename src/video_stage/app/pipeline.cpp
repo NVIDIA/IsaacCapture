@@ -63,6 +63,29 @@ struct Pipeline::Impl
             [this](const StreamFormat& f) { on_format(f); });
     }
 
+    // A new source session: nothing the previous one left in the codec may reach the new one. The decoder is rebuilt
+    // (its parser and any pictures it still holds are dropped with it), the encoder is released so the new session's
+    // first sequence header creates a matching one that opens with an IDR, and the identity ring forgets every key.
+    void reset_session()
+    {
+        context.make_current();
+        cudaStreamSynchronize(stream);
+        decoder.reset();
+        encoder.reset();
+        decoder = std::make_unique<NvdecDecoder>(
+            context, stream, [this](DecodedFrame&& f) { on_frame(std::move(f)); },
+            [this](const StreamFormat& f) { on_format(f); });
+        meta.fill(FrameMeta{});
+        next_key = 0;
+        input_geometry = Geometry{};
+        output_geometry = Geometry{};
+        last_sps.clear();
+        have_previous_frame = false;
+        previous_frame = 0;
+        need_idr = true;
+        idr_requested = false;
+    }
+
     ~Impl()
     {
         decoder.reset();
@@ -176,6 +199,12 @@ void Pipeline::process(const avs1::Record& record, int64_t received_ns)
     std::vector<uint8_t> rewritten;
     if (const auto sps = h264::parse_sps(payload, payload_size))
     {
+        // The operation samples chroma at the default siting; a stream that declares another would be warped with
+        // its colour misplaced, so it is refused here rather than processed.
+        if (sps->chroma_loc_present && (sps->chroma_loc_top != 0 || sps->chroma_loc_bottom != 0))
+            throw std::runtime_error("the stream declares chroma sample locations (" +
+                                     std::to_string(sps->chroma_loc_top) + ", " +
+                                     std::to_string(sps->chroma_loc_bottom) + "); only the default siting is supported");
         const std::string described = sps->describe();
         if (described != p.last_sps)
         {
@@ -199,8 +228,7 @@ void Pipeline::process(const avs1::Record& record, int64_t received_ns)
 
 void Pipeline::reset_session()
 {
-    m_impl->have_previous_frame = false;
-    m_impl->need_idr = true;
+    m_impl->reset_session();
 }
 
 void Pipeline::request_idr()

@@ -8,6 +8,7 @@
 #include <sensing_control/websocket.hpp>
 #include <sys/socket.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -107,7 +108,31 @@ public:
         return out;
     }
 
+    /// Sends as much as the peer accepts; false once the peer has closed or stopped reading for `timeout_ms`.
+    bool try_send_raw(const std::string& bytes, int timeout_ms = 3000)
+    {
+        std::size_t done = 0;
+        while (done < bytes.size())
+        {
+            pollfd pfd{ m_fd, POLLOUT, 0 };
+            if (::poll(&pfd, 1, timeout_ms) <= 0)
+                return false;
+            const ssize_t n = ::send(m_fd, bytes.data() + done, bytes.size() - done, MSG_NOSIGNAL | MSG_DONTWAIT);
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+                continue;
+            if (n <= 0)
+                return false;
+            done += static_cast<std::size_t>(n);
+        }
+        return true;
+    }
+
     void send_frame(std::uint8_t opcode, const std::string& payload, bool fin = true, bool masked = true)
+    {
+        send_raw(build_frame(opcode, payload, fin, masked));
+    }
+
+    static std::string build_frame(std::uint8_t opcode, const std::string& payload, bool fin = true, bool masked = true)
     {
         const unsigned char mask[4] = { 1, 2, 3, 4 };
         std::string out;
@@ -133,7 +158,7 @@ public:
             out.append(reinterpret_cast<const char*>(mask), 4);
         for (std::size_t i = 0; i < payload.size(); ++i)
             out.push_back(static_cast<char>(masked ? (static_cast<unsigned char>(payload[i]) ^ mask[i % 4]) : payload[i]));
-        send_raw(out);
+        return out;
     }
 
     /// The next server frame, or nullopt on EOF/timeout.
@@ -583,4 +608,157 @@ TEST_CASE("a client that never reads is cut off instead of buffered for", "[cont
             std::this_thread::sleep_for(10ms);
     }
     CHECK(wait_clients(*server, 0));
+}
+
+TEST_CASE("an orphan continuation frame closes the connection with 1002", "[control_server][fragmentation]")
+{
+    auto server = make_server();
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    client.send_frame(ws::kContinuation, "tail", /*fin=*/true);
+    CHECK(client.read_close_code() == 1002);
+    CHECK(client.peer_closes());
+    CHECK(wait_clients(*server, 0));
+}
+
+TEST_CASE("a new text frame inside an unfinished message closes the connection with 1002",
+          "[control_server][fragmentation]")
+{
+    auto server = make_server();
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    client.send_frame(ws::kText, "he", /*fin=*/false);
+    client.send_frame(ws::kText, "other", /*fin=*/true);
+    CHECK(client.read_close_code() == 1002);
+    CHECK(client.peer_closes());
+}
+
+TEST_CASE("a continuation after a finished message is an orphan", "[control_server][fragmentation]")
+{
+    auto server = make_server();
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    client.send_frame(ws::kText, "one");
+    const auto reply = client.read_frame();
+    REQUIRE(reply);
+    CHECK(reply->payload == "echo:one");
+    client.send_frame(ws::kContinuation, "x");
+    CHECK(client.read_close_code() == 1002);
+}
+
+TEST_CASE("fragmented messages work back to back, with a ping between fragments", "[control_server][fragmentation]")
+{
+    auto server = make_server();
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    for (int round = 0; round < 2; ++round)
+    {
+        client.send_frame(ws::kText, "ab", /*fin=*/false);
+        client.send_frame(ws::kPing, "p");
+        client.send_frame(ws::kContinuation, "cd", /*fin=*/true);
+        const auto pong = client.read_frame();
+        REQUIRE(pong);
+        CHECK(pong->opcode == ws::kPong);
+        const auto reply = client.read_frame();
+        REQUIRE(reply);
+        CHECK(reply->payload == "echo:abcd");
+    }
+}
+
+TEST_CASE("garbage beyond the message limit is cut off and the server stays responsive", "[control_server][limits]")
+{
+    ControlServerConfig c = config();
+    c.max_message_bytes = 1024;
+    auto server = make_server(c);
+
+    RawClient flooder(server->port());
+    REQUIRE(flooder.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    RawClient other(server->port());
+    REQUIRE(other.handshake().rfind("HTTP/1.1 101", 0) == 0);
+
+    // A masked text frame header declaring 1000 bytes, then far more than limit plus headroom of filler without a
+    // complete valid frame boundary.
+    std::string flood = std::string("\x81\xFE\x03\xE8", 4) + std::string(4, '\0') + std::string(256 * 1024, 'a');
+    const bool all_sent = flooder.try_send_raw(flood);
+    INFO("all_sent=" << all_sent);
+    // Either the connection is closed (with or without a close frame) or the sender is held back; never served.
+    // The leading valid frame may be answered; the filler after it ends in a close, not in service.
+    std::optional<ServerFrame> frame;
+    bool closed_by_frame = false;
+    while ((frame = flooder.read_frame(3000)))
+    {
+        if (frame->opcode == ws::kClose)
+        {
+            closed_by_frame = true;
+            break;
+        }
+        CHECK(frame->opcode == ws::kText);
+    }
+    INFO("closed_by_frame=" << closed_by_frame);
+    CHECK(flooder.peer_closes(3000));
+
+    other.send_frame(ws::kText, "still here");
+    const auto reply = other.read_frame();
+    REQUIRE(reply);
+    CHECK(reply->payload == "echo:still here");
+    CHECK(wait_clients(*server, 1));
+}
+
+TEST_CASE("handshake garbage without a terminator is limited and others are served", "[control_server][limits]")
+{
+    auto server = make_server();
+    RawClient flooder(server->port());
+    flooder.try_send_raw(std::string(256 * 1024, 'g'));
+    CHECK(flooder.read_head().rfind("HTTP/1.1 400", 0) == 0);
+
+    RawClient other(server->port());
+    REQUIRE(other.handshake().rfind("HTTP/1.1 101", 0) == 0);
+}
+
+TEST_CASE("pipelined requests in one write are all answered", "[control_server][limits]")
+{
+    auto server = make_server();
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+
+    // More than the 16 frames a client may have handled per poll round: the rest follow on later rounds.
+    constexpr int kRequests = 40;
+    std::string burst;
+    for (int i = 0; i < kRequests; ++i)
+        burst += RawClient::build_frame(ws::kText, std::to_string(i));
+    client.send_raw(burst);
+
+    const auto begin = std::chrono::steady_clock::now();
+    for (int i = 0; i < kRequests; ++i)
+    {
+        const auto frame = client.read_frame(2000);
+        REQUIRE(frame);
+        CHECK(frame->payload == "echo:" + std::to_string(i));
+    }
+    CHECK(std::chrono::steady_clock::now() - begin < 2s);
+}
+
+TEST_CASE("a client that pipelines requests with large replies and never reads is cut off", "[control_server][limits]")
+{
+    ControlServerConfig c = config();
+    auto server = make_server(c);
+    RawClient client(server->port());
+    REQUIRE(client.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    RawClient other(server->port());
+    REQUIRE(other.handshake().rfind("HTTP/1.1 101", 0) == 0);
+    REQUIRE(wait_clients(*server, 2));
+
+    // Each echo is about 60 KiB; the client never reads, so the replies pile up past the output cap.
+    const std::string request = RawClient::build_frame(ws::kText, std::string(60 * 1024, 'r'));
+    for (int i = 0; i < 200; ++i)
+    {
+        if (!client.try_send_raw(request, 500))
+            break;
+    }
+    CHECK(wait_clients(*server, 1));
+
+    other.send_frame(ws::kText, "alive");
+    const auto reply = other.read_frame();
+    REQUIRE(reply);
+    CHECK(reply->payload == "echo:alive");
 }

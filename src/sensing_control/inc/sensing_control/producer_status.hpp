@@ -23,7 +23,7 @@ enum class ProducerState
     Streaming,
     /// The cameras could not be started; the producer retries and says why.
     CameraFault,
-    /// Another failure (for example the LiveKit room was lost); the producer retries.
+    /// Another failure (for example the encoder or a stalled stream); the producer retries.
     Error,
     Stopping,
 };

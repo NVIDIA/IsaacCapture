@@ -35,8 +35,6 @@ enum class TimestampBasis
     FrameReadyMonotonic,
     /// The sensor's capture event converted to CLOCK_MONOTONIC (`capture_monotonic_us`); unverified on hardware.
     SensorCaptureMonotonic,
-    /// CLOCK_REALTIME when the frame finished conversion (`processing_unix_us`); not recordable.
-    ProcessingUnix,
 };
 
 struct EncodeConfig

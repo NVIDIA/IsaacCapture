@@ -23,11 +23,16 @@ struct SpsInfo
     uint32_t chroma_format_idc = 1;
     uint32_t pic_order_cnt_type = 0;
     uint32_t max_num_ref_frames = 0;
-    uint32_t width = 0;  ///< coded width in luma pixels
+    uint32_t width = 0; ///< coded width in luma pixels
     uint32_t height = 0; ///< coded height in luma pixels
     bool frame_mbs_only = true;
     bool vui_present = false;
     bool full_range = false;
+    /// The stream states where its chroma samples sit (vertical offsets, 0 = the default left/co-sited siting that
+    /// the example operation assumes). Absent means the default.
+    bool chroma_loc_present = false;
+    uint32_t chroma_loc_top = 0;
+    uint32_t chroma_loc_bottom = 0;
     bool bitstream_restriction = false;
     /// Valid when bitstream_restriction is set: how many pictures may precede one in decode order and follow it in
     /// display order, and how many a decoder must hold.

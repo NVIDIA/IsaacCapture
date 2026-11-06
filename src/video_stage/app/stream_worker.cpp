@@ -316,6 +316,7 @@ struct StreamWorker::Impl
                         livekit_output->end_session();
                     if (pipeline)
                         pipeline->reset_session();
+                    passthrough_geometry = Geometry{};
                     epoch_base += 1'000'000;
                     ControlChannel control(*receiver, epoch_base + 1);
                     active_control = &control;
@@ -416,10 +417,10 @@ void StreamWorker::print_summary(std::ostream& out) const
         "stream %u: sessions %llu, records %llu, pictures %llu, dropped (no surface) %llu, gaps %llu, metadata lost %llu\n"
         "  overflows %llu, records discarded %llu, clock exchanges %llu (rejected %llu, discontinuities %llu)\n",
         static_cast<unsigned>(d.spec.port), static_cast<unsigned long long>(d.sessions.load()),
-        static_cast<unsigned long long>(d.pipeline ? s.records : d.passthrough_records.load()),
-        static_cast<unsigned long long>(d.pipeline ? s.pictures : d.passthrough_records.load()),
-        static_cast<unsigned long long>(s.dropped_no_surface), static_cast<unsigned long long>(s.gaps),
-        static_cast<unsigned long long>(s.metadata_lost), static_cast<unsigned long long>(d.overflows.load()),
+        static_cast<unsigned long long>(d.pipeline ? s.records.load() : d.passthrough_records.load()),
+        static_cast<unsigned long long>(d.pipeline ? s.pictures.load() : d.passthrough_records.load()),
+        static_cast<unsigned long long>(s.dropped_no_surface.load()), static_cast<unsigned long long>(s.gaps.load()),
+        static_cast<unsigned long long>(s.metadata_lost.load()), static_cast<unsigned long long>(d.overflows.load()),
         static_cast<unsigned long long>(d.discarded.load()), static_cast<unsigned long long>(d.clock_exchanges.load()),
         static_cast<unsigned long long>(d.clock_rejected.load()),
         static_cast<unsigned long long>(d.clock_discontinuities.load()));

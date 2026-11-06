@@ -37,7 +37,11 @@ std::shared_ptr<spdlog::logger> logger()
 }
 
 constexpr std::size_t kMaxHandshakeBytes = 8 * 1024;
+/// Room beyond one maximum message for the frame header, the mask and a following control frame.
+constexpr std::size_t kFrameHeadroom = 4096;
 constexpr std::size_t kMaxOutputBytes = 1 << 20;
+/// Frames handled per client per poll round, so one chatty peer cannot hold the server thread.
+constexpr int kMaxFramesPerRound = 16;
 constexpr auto kHandshakeTimeout = std::chrono::seconds(5);
 
 void set_non_blocking(int fd)
@@ -71,6 +75,7 @@ struct ControlServer::Client
     std::string input;
     std::string output;
     std::string message; ///< a fragmented text message being assembled
+    bool fragmenting = false; ///< a text message was started without its final fragment
     std::string peer;
     std::chrono::steady_clock::time_point accepted = std::chrono::steady_clock::now();
 };
@@ -221,8 +226,13 @@ void ControlServer::run()
 
             if (!dead && (events & (POLLIN | POLLHUP)))
             {
+                // Read only what the protocol could still accept: the rest waits in the kernel (TCP backpressure) until
+                // the frames already buffered are handled. A peer that streams without end therefore cannot grow this
+                // buffer or keep the thread here.
+                const std::size_t input_cap =
+                    client.open ? m_config.max_message_bytes + kFrameHeadroom : kMaxHandshakeBytes + 1;
                 char buffer[4096];
-                while (true)
+                while (client.input.size() < input_cap)
                 {
                     const ssize_t n = ::recv(client.fd, buffer, sizeof(buffer), 0);
                     if (n > 0)
@@ -275,8 +285,13 @@ void ControlServer::run()
                 }
             }
 
-            while (!dead && client.open && !client.closing)
+            for (int handled = 0; !dead && client.open && !client.closing && handled < kMaxFramesPerRound; ++handled)
             {
+                if (client.output.size() > kMaxOutputBytes)
+                {
+                    dead = true; // a client that does not read its replies is cut off rather than buffered for
+                    break;
+                }
                 const auto parsed = websocket::parse_frame(client.input, m_config.max_message_bytes);
                 if (parsed.status == websocket::ParseStatus::NeedMore)
                     break;
@@ -299,7 +314,18 @@ void ControlServer::run()
                 }
                 else if (frame.opcode == websocket::kText || frame.opcode == websocket::kContinuation)
                 {
+                    const bool continuation = frame.opcode == websocket::kContinuation;
+                    // A message is one text frame, or a text frame without FIN followed by continuations ending
+                    // with FIN. Anything else (an orphan continuation, a new message inside an unfinished one) is a
+                    // protocol error.
+                    if (continuation != client.fragmenting)
+                    {
+                        client.output += websocket::encode_close(1002, "bad fragmentation");
+                        client.closing = true;
+                        continue;
+                    }
                     client.message += frame.payload;
+                    client.fragmenting = !frame.fin;
                     if (client.message.size() > m_config.max_message_bytes)
                     {
                         client.output += websocket::encode_close(1009, "message too big");
