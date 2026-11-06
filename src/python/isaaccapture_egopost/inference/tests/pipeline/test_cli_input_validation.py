@@ -47,6 +47,8 @@ def test_missing_input_is_not_reported_as_empty_folder(monkeypatch, tmp_path, ca
             str(tmp_path / "absent.mp4"),
             "--output_dir",
             str(tmp_path / "out"),
+            "--device",
+            "cpu",  # main() checks for a GPU first; CI runners have none
         ],
     )
     with pytest.raises(SystemExit) as exc:
