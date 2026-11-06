@@ -8,6 +8,7 @@
 #include <sensing_control/camera_fault.hpp>
 #include <sensing_control/control_handler.hpp>
 #include <sensing_control/control_server.hpp>
+#include <sensing_control/driver_log_capture.hpp>
 #include <sensing_control/producer_supervisor.hpp>
 
 #ifdef SENSING_HAS_SIPL
@@ -256,6 +257,7 @@ public:
             entry.direct_host = figures.direct.host;
             entry.direct_port = figures.direct.port;
             entry.direct_connected = figures.direct.connected;
+            entry.direct_error = figures.direct.error;
             out.push_back(std::move(entry));
         }
         return out;
@@ -607,24 +609,21 @@ try
                 stream.direct_port = found->second.port;
             }
         }
-        std::unique_ptr<CameraCapture> capture;
+        // The camera driver explains a failure only in its own log lines, so they are collected while the cameras
+        // start and attached to the failure; the fault table reads them (an open circuit, a lock timeout, an I2C NACK).
+        DriverLogCapture driver_log;
         try
         {
-            capture = make_capture(backend, camera_config, camera_ids);
+            auto capture = make_capture(backend, camera_config, camera_ids);
+            auto session = std::make_unique<ProducerSession>(camera_config, std::move(capture), streams);
+            driver_log.finish();
+            return session;
         }
         catch (const std::exception& e)
         {
-            throw StartupFailure(diagnose_camera_failure(e.what()), ProducerState::CameraFault);
-        }
-        try
-        {
-            return std::make_unique<ProducerSession>(camera_config, std::move(capture), streams);
-        }
-        catch (const std::exception& e)
-        {
-            throw StartupFailure({ "publish_failed", std::string("Could not start publishing: ") + e.what() +
-                                                         " The producer retries automatically." },
-                                 ProducerState::Error);
+            const std::string lines = driver_log.finish();
+            throw std::runtime_error(lines.empty() ? std::string(e.what()) :
+                                                     std::string(e.what()) + " | driver log: " + lines);
         }
     };
 

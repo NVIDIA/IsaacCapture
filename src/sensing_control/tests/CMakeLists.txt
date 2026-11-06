@@ -4,6 +4,7 @@
 add_executable(sensing_control_tests
     test_websocket.cpp
     test_camera_fault.cpp
+    test_driver_log_capture.cpp
     test_producer_status.cpp
     test_control_handler.cpp
     test_producer_supervisor.cpp

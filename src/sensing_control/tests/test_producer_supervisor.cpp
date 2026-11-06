@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -36,6 +37,10 @@ struct World
     int flushes = 0;
     std::vector<std::tuple<std::string, std::string, std::uint16_t>> retargets;
     std::vector<std::string> published;
+    std::string update_failure = "room lost"; ///< the text a throwing update() carries
+    std::uint64_t frames = 5; ///< what every stream reports
+    bool advance_frames = false; ///< every streams() call adds a frame
+    std::map<std::string, std::string> direct_errors; ///< per track
 };
 
 class FakeSession : public CameraSession
@@ -49,7 +54,7 @@ public:
         std::lock_guard<std::mutex> lock(m_world.mutex);
         ++m_world.update_calls;
         if (m_world.throw_update_after >= 0 && ++m_updates > m_world.throw_update_after)
-            throw std::runtime_error("room lost");
+            throw std::runtime_error(m_world.update_failure);
     }
     void flush() override
     {
@@ -58,12 +63,18 @@ public:
     }
     std::vector<StreamStatus> streams() const override
     {
+        std::lock_guard<std::mutex> lock(m_world.mutex);
         std::vector<StreamStatus> out;
         for (const auto& target : m_targets)
         {
             StreamStatus s;
             s.track = target.first;
-            s.frames = 5;
+            if (m_world.advance_frames)
+                ++m_world.frames;
+            s.frames = m_world.frames;
+            const auto error = m_world.direct_errors.find(target.first);
+            if (error != m_world.direct_errors.end())
+                s.direct_error = error->second;
             // Deliberately stale: the supervisor reports the operator's targets, not the session's.
             s.direct_host = "stale";
             out.push_back(s);
@@ -84,9 +95,13 @@ private:
 
 struct Harness
 {
-    explicit Harness(std::vector<StreamStatus> configured = default_streams(), bool with_publish = true) : status("rel")
+    explicit Harness(std::vector<StreamStatus> configured = default_streams(),
+                     bool with_publish = true,
+                     std::chrono::milliseconds stall_timeout = 0ms)
+        : status("rel")
     {
         SupervisorConfig config;
+        config.stall_timeout = stall_timeout;
         config.retry_interval = 100ms;
         config.poll_interval = 2ms;
         config.status_interval = 20ms;
@@ -223,7 +238,7 @@ TEST_CASE("a different failure message is announced again", "[supervisor]")
         h.world.factory_failure = "brand new problem";
     }
     REQUIRE(h.wait_for([&] { return h.count_events("error") == 2; }));
-    CHECK(h.status.snapshot().fault->code == "camera_error");
+    CHECK(h.status.snapshot().fault->code == "startup_failed");
     h.stop_and_join();
 }
 
@@ -262,13 +277,14 @@ TEST_CASE("update() throwing reports Error and the session is restarted", "[supe
 {
     Harness h;
     h.world.throw_update_after = 3;
+    h.world.update_failure = "LiveKit: room lost";
     h.start();
 
-    REQUIRE(h.wait_for([&] { return h.count_events("error", "stream_failed") >= 1; }));
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "livekit_error") >= 1; }));
     REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Error); }));
     const auto s = h.status.snapshot();
     REQUIRE(s.fault.has_value());
-    CHECK(s.fault->code == "stream_failed");
+    CHECK(s.fault->code == "livekit_error");
     CHECK(s.fault->message.find("room lost") != std::string::npos);
 
     // After the retry interval a fresh session starts and streams again.
@@ -276,6 +292,23 @@ TEST_CASE("update() throwing reports Error and the session is restarted", "[supe
     REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming) || h.state_is(ProducerState::Error); }));
     h.stop_and_join();
     CHECK(h.world.flushes >= 1);
+}
+
+TEST_CASE("an unrecognised update() failure is reported as stream_failed with its text", "[supervisor]")
+{
+    Harness h;
+    h.world.throw_update_after = 3;
+    h.world.update_failure = "something odd";
+    h.start();
+
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "stream_failed") >= 1; }));
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Error); }));
+    const auto s = h.status.snapshot();
+    REQUIRE(s.fault.has_value());
+    CHECK(s.fault->code == "stream_failed");
+    CHECK(s.fault->message.find("something odd") != std::string::npos);
+    CHECK(h.count_events("error", "startup_failed") == 0);
+    h.stop_and_join();
 }
 
 TEST_CASE("a restarted session keeps targets set at runtime", "[supervisor]")
@@ -392,5 +425,167 @@ TEST_CASE("an empty publish callback is allowed", "[supervisor]")
     h.start();
     REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
     CHECK(h.supervisor->set_direct_target("a", "h", 1).ok);
+    h.stop_and_join();
+}
+
+TEST_CASE("a factory failure is diagnosed and sets the state from the diagnosis", "[supervisor]")
+{
+    SECTION("a publishing failure is an Error")
+    {
+        Harness h;
+        h.world.fail_factory_until_call = 1000;
+        h.world.factory_failure = "LiveKit: cannot join the room";
+        h.start();
+        REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Error); }));
+        const auto s = h.status.snapshot();
+        REQUIRE(s.fault.has_value());
+        CHECK(s.fault->code == "livekit_unreachable");
+        CHECK(s.fault->message.find("LiveKit: cannot join the room") != std::string::npos);
+        CHECK(h.count_events("error", "livekit_unreachable") == 1);
+        h.stop_and_join();
+    }
+    SECTION("a driver line about an open circuit is a CameraFault")
+    {
+        Harness h;
+        h.world.fail_factory_until_call = 1000;
+        h.world.factory_failure = "INvSIPLCamera::Init failed with SIPLStatus 10 [Severity 2 : OPEN_CIRCUIT]";
+        h.start();
+        REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::CameraFault); }));
+        const auto s = h.status.snapshot();
+        REQUIRE(s.fault.has_value());
+        CHECK(s.fault->code == "camera_power_missing");
+        h.stop_and_join();
+    }
+}
+
+TEST_CASE("a stream whose frames stop is failed and the session restarted", "[supervisor][stall]")
+{
+    Harness h(Harness::default_streams(), true, 300ms);
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
+    // The fake session's frame count never moves, so the watchdog fires.
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "camera_no_frames") >= 1; }));
+    {
+        const auto s = h.status.snapshot();
+        // The text names the stall; camera_fault.cpp files "no frame for" under CameraFault.
+        if (s.fault.has_value() && s.fault->code == "camera_no_frames")
+        {
+            CHECK(s.fault->message.find("no frame for") != std::string::npos);
+            CHECK(s.fault->message.find("(stream ") != std::string::npos);
+            CHECK(s.fault->message.find("from sensor") != std::string::npos);
+        }
+    }
+    REQUIRE(h.wait_for([&] { return h.world.sessions_created >= 2; }));
+    h.stop_and_join();
+    CHECK(h.world.flushes >= 1);
+}
+
+TEST_CASE("the stall state and text are those of the diagnosis", "[supervisor][stall]")
+{
+    Harness h(Harness::default_streams(), true, 300ms);
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "camera_no_frames") >= 1; }));
+    const auto event = [&]
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        for (const auto& text : h.world.published)
+        {
+            const auto j = Json::parse(text);
+            if (j["event"] == "error" && j["error"]["code"] == "camera_no_frames")
+                return j;
+        }
+        return Json();
+    }();
+    CHECK(event["error"]["message"].get<std::string>().find("no frame for") != std::string::npos);
+    h.stop_and_join();
+}
+
+TEST_CASE("frames that keep advancing are not a stall", "[supervisor][stall]")
+{
+    Harness h(Harness::default_streams(), true, 300ms);
+    h.world.advance_frames = true;
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
+    std::this_thread::sleep_for(1200ms);
+    CHECK(h.state_is(ProducerState::Streaming));
+    CHECK(h.count_events("error") == 0);
+    h.stop_and_join();
+    CHECK(h.world.sessions_created == 1);
+}
+
+TEST_CASE("a stall timeout of zero disables the watchdog", "[supervisor][stall]")
+{
+    Harness h(Harness::default_streams(), true, 0ms);
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
+    std::this_thread::sleep_for(1200ms); // frames never move
+    CHECK(h.state_is(ProducerState::Streaming));
+    CHECK(h.count_events("error") == 0);
+    h.stop_and_join();
+    CHECK(h.world.sessions_created == 1);
+}
+
+TEST_CASE("a direct-link error is published once per distinct reason", "[supervisor][direct_error]")
+{
+    Harness h;
+    h.world.advance_frames = true;
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
+    CHECK(h.count_events("error", "direct_link_failed") == 0);
+
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        h.world.direct_errors["a"] = "cannot connect to 10.0.0.5:5600: Connection refused";
+    }
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "direct_link_failed") == 1; }));
+    // Many status refreshes later, still one.
+    std::this_thread::sleep_for(300ms);
+    CHECK(h.count_events("error", "direct_link_failed") == 1);
+
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        h.world.direct_errors["a"] = "10.0.0.5:5600 closed the control connection";
+    }
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "direct_link_failed") == 2; }));
+
+    // Clearing publishes nothing.
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        h.world.direct_errors["a"] = "";
+    }
+    std::this_thread::sleep_for(300ms);
+    CHECK(h.count_events("error", "direct_link_failed") == 2);
+
+    // The same reason coming back after it cleared is a new occurrence.
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        h.world.direct_errors["a"] = "10.0.0.5:5600 closed the control connection";
+    }
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "direct_link_failed") == 3; }));
+
+    // It names the stream and the reason, and does not change the producer state.
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        const auto j = Json::parse(h.world.published.back());
+        const auto message = j["error"]["message"].get<std::string>();
+        CHECK(message.find("Stream a: ") != std::string::npos);
+        CHECK(message.find("closed the control connection") != std::string::npos);
+    }
+    CHECK(h.state_is(ProducerState::Streaming));
+    h.stop_and_join();
+}
+
+TEST_CASE("direct-link errors of different streams are independent", "[supervisor][direct_error]")
+{
+    Harness h;
+    h.world.advance_frames = true;
+    h.start();
+    REQUIRE(h.wait_for([&] { return h.state_is(ProducerState::Streaming); }));
+    {
+        std::lock_guard<std::mutex> lock(h.world.mutex);
+        h.world.direct_errors["a"] = "same reason";
+        h.world.direct_errors["b"] = "same reason";
+    }
+    REQUIRE(h.wait_for([&] { return h.count_events("error", "direct_link_failed") == 2; }));
     h.stop_and_join();
 }

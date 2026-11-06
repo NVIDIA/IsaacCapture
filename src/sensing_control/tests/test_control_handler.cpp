@@ -88,6 +88,25 @@ TEST_CASE("get_status reports the state, release and streams", "[control_handler
     CHECK(status["streams"][0]["direct"]["connected"] == false);
 }
 
+TEST_CASE("get_status reports why a direct link is down", "[control_handler]")
+{
+    Fixture f;
+    StreamStatus left;
+    left.track = "sensing-left";
+    left.direct_host = "10.0.0.5";
+    left.direct_port = 5600;
+    left.direct_error = "cannot connect to 10.0.0.5:5600: Connection refused";
+    StreamStatus right;
+    right.track = "sensing-right";
+    f.status.set_streams({ left, right });
+    const auto status = f.call({ { "type", "get_status" } })["status"];
+    CHECK(status["streams"][0]["direct"]["error"] == "cannot connect to 10.0.0.5:5600: Connection refused");
+    CHECK(status["streams"][0]["direct"]["connected"] == false);
+    // A link with no error still carries the key, empty.
+    REQUIRE(status["streams"][1]["direct"].contains("error"));
+    CHECK(status["streams"][1]["direct"]["error"] == "");
+}
+
 TEST_CASE("the status has no fault key when healthy", "[control_handler]")
 {
     Fixture f;

@@ -451,3 +451,98 @@ TEST_CASE("retargeting away from a connect that never completes is prompt", "[di
     for (const int fd : clients)
         ::close(fd);
 }
+
+namespace
+{
+
+/// A loopback port nothing listens on: bound once to learn a free number, then released.
+std::uint16_t closed_port()
+{
+    const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    REQUIRE(::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    socklen_t len = sizeof(addr);
+    ::getsockname(s, reinterpret_cast<sockaddr*>(&addr), &len);
+    ::close(s);
+    return ntohs(addr.sin_port);
+}
+
+bool starts_with(const std::string& text, const std::string& prefix)
+{
+    return text.compare(0, prefix.size(), prefix) == 0;
+}
+
+} // namespace
+
+TEST_CASE("a connect to a closed port is reported by last_error", "[direct_sender_target][last_error]")
+{
+    const auto port = closed_port();
+    DirectSender sender(config_for("127.0.0.1", port));
+    REQUIRE(wait_for([&] { return !sender.last_error().empty(); }));
+    const auto error = sender.last_error();
+    CHECK(starts_with(error, "cannot connect to 127.0.0.1:" + std::to_string(port) + ": "));
+    CHECK_FALSE(sender.connected());
+}
+
+TEST_CASE("a successful connection leaves last_error empty", "[direct_sender_target][last_error]")
+{
+    Peer a;
+    DirectSender sender(config_for("127.0.0.1", a.port()));
+    REQUIRE(a.accept_pair());
+    REQUIRE(wait_for([&] { return sender.connected(); }));
+    CHECK(sender.last_error().empty());
+}
+
+TEST_CASE("set_target to a reachable peer clears a connect error", "[direct_sender_target][last_error]")
+{
+    Peer a;
+    DirectSender sender(config_for("127.0.0.1", closed_port()));
+    REQUIRE(wait_for([&] { return !sender.last_error().empty(); }));
+
+    sender.set_target("127.0.0.1", a.port());
+    REQUIRE(a.accept_pair());
+    REQUIRE(wait_for([&] { return sender.connected(); }));
+    CHECK(sender.last_error().empty());
+}
+
+TEST_CASE("set_target to an empty host clears last_error and it stays clear", "[direct_sender_target][last_error]")
+{
+    DirectSender sender(config_for("127.0.0.1", closed_port()));
+    REQUIRE(wait_for([&] { return !sender.last_error().empty(); }));
+
+    sender.set_target("", 0);
+    CHECK(sender.last_error().empty());
+    std::this_thread::sleep_for(300ms);
+    CHECK(sender.last_error().empty());
+}
+
+TEST_CASE("set_target to another closed port reports the new destination", "[direct_sender_target][last_error]")
+{
+    DirectSender sender(config_for("127.0.0.1", closed_port()));
+    REQUIRE(wait_for([&] { return !sender.last_error().empty(); }));
+
+    const auto second = closed_port();
+    sender.set_target("127.0.0.1", second);
+    REQUIRE(wait_for(
+        [&] { return starts_with(sender.last_error(), "cannot connect to 127.0.0.1:" + std::to_string(second)); }));
+}
+
+TEST_CASE("a retarget away from a peer that then closes leaves no stale control error",
+          "[direct_sender_target][last_error]")
+{
+    Peer a;
+    Peer b;
+    DirectSender sender(config_for("127.0.0.1", a.port()));
+    REQUIRE(a.accept_pair());
+    REQUIRE(wait_for([&] { return sender.connected(); }));
+
+    sender.set_target("127.0.0.1", b.port());
+    a.close_connections();
+    REQUIRE(b.accept_pair());
+    REQUIRE(wait_for([&] { return sender.connected(); }));
+    std::this_thread::sleep_for(500ms);
+    CHECK(sender.last_error().find("closed the control connection") == std::string::npos);
+    CHECK(sender.last_error().empty());
+}
