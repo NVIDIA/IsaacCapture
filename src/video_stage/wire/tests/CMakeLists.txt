@@ -6,6 +6,7 @@ add_executable(video_stage_wire_tests
     test_clock_exchange.cpp
     test_clock_sync.cpp
     test_encoded_video_frame.cpp
+    test_frame_correlator.cpp
     test_h264_access_units.cpp
     test_h264_sps.cpp
 )

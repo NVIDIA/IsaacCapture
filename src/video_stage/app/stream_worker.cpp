@@ -429,9 +429,10 @@ void StreamWorker::print_summary(std::ostream& out) const
     {
         std::snprintf(
             line, sizeof(line),
-            "  published %llu (frames sent without a capture time: unmapped %llu, over budget %llu), refused %llu, "
-            "republished %llu\n",
+            "  published %llu (frames sent without a capture time: no source stamp %llu, unmapped %llu, over budget "
+            "%llu), refused %llu, republished %llu\n",
             static_cast<unsigned long long>(d.livekit_output->published()),
+            static_cast<unsigned long long>(d.livekit_output->no_source_stamp()),
             static_cast<unsigned long long>(d.livekit_output->unmapped()),
             static_cast<unsigned long long>(d.livekit_output->over_budget()),
             static_cast<unsigned long long>(d.livekit_output->refused()),

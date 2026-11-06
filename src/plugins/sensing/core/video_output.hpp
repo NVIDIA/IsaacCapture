@@ -38,6 +38,7 @@ struct VideoOutputConfig
     /// What each frame's application timestamp is. SensorCaptureMonotonic fails the output on a frame whose sensor
     /// time cannot be placed on CLOCK_MONOTONIC.
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
+    FrameCorrelation correlation = FrameCorrelation::Stamp;
 };
 
 /// Where this stream's encoded video also goes (the PC video stage), and whether that link is up.
@@ -58,6 +59,9 @@ struct VideoOutputStats
     uint64_t published = 0; ///< Encoded units handed to the direct link (not proof the PC received them).
     uint64_t encoder_busy = 0; ///< Snapshots the encoder had no input buffer for, dropped before encoding.
     uint64_t keyframes_requested = 0; ///< Keyframes the PC asked for.
+    uint64_t matched = 0; ///< Units matched to their capture by the stamp the encoder returned.
+    uint64_t unmatched = 0; ///< Units whose returned stamp matched no submitted frame: sent without a capture time.
+    uint64_t encoder_dropped = 0; ///< Submitted frames the encoder never returned a unit for.
 };
 
 /**
