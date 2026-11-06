@@ -58,7 +58,6 @@ struct VideoOutput::Impl
         uint8_t* ptr = nullptr;
         size_t pitch = 0;
         uint64_t timestamp_ns = 0;
-        uint64_t unix_ns = 0;
         uint64_t capture_monotonic_ns = 0;
         uint64_t capture_tsc = 0;
         uint64_t sequence = 0;
@@ -255,7 +254,6 @@ struct VideoOutput::Impl
             check_cuda(cudaStreamSynchronize(snapshot_stream), "snapshot sync");
 
             slot.timestamp_ns = frame.monotonic_ns;
-            slot.unix_ns = frame.unix_ns;
             slot.capture_monotonic_ns = frame.capture_monotonic_ns;
             slot.capture_tsc = frame.sensor_time;
             slot.sequence = frame.sequence;
@@ -412,7 +410,7 @@ struct VideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc,
-                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns, slot.unix_ns));
+                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns));
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
@@ -436,7 +434,7 @@ struct VideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time,
-                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns, frame.unix_ns));
+                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns));
     }
 
     /// Polling thread: the frame's capture event on CLOCK_MONOTONIC. The sensor clock's anchor is built from the
@@ -465,7 +463,7 @@ struct VideoOutput::Impl
     }
 
     /// The application timestamp published with a frame, in microseconds.
-    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns, uint64_t unix_ns) const
+    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns) const
     {
         switch (config.timestamp_basis)
         {
@@ -473,16 +471,14 @@ struct VideoOutput::Impl
             return ready_monotonic_ns / 1000;
         case TimestampBasis::SensorCaptureMonotonic:
             return capture_monotonic_ns / 1000;
-        case TimestampBasis::ProcessingUnix:
-            return unix_ns / 1000;
         }
         throw std::logic_error("unknown timestamp basis");
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
-    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t unix_us)
+    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t stamp_us)
     {
-        in_encoder.push_back({ sequence, capture_tsc, unix_us });
+        in_encoder.push_back({ sequence, capture_tsc, stamp_us });
         // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
         // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
         // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
@@ -512,7 +508,7 @@ struct VideoOutput::Impl
         frame.timestamp_us = static_cast<uint64_t>(stamp_us);
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
-        frame.user_timestamp_us = meta.unix_us;
+        frame.user_timestamp_us = meta.stamp_us;
         // The direct link keeps its own queue and keyframe bookkeeping and never blocks this thread.
         direct->submit(frame);
         ++published;
@@ -528,8 +524,8 @@ struct VideoOutput::Impl
     {
         uint32_t sequence = 0;
         uint64_t capture_tsc = 0;
-        /// The frame's application timestamp: capture time when publishing it, else processing-time Unix.
-        uint64_t unix_us = 0;
+        /// The frame's application timestamp in microseconds, on the sender's monotonic clock (see TimestampBasis).
+        uint64_t stamp_us = 0;
     };
 
     std::unique_ptr<JetsonEncoder> encoder;

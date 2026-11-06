@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 using video_stage::h264::declare_no_reordering;
@@ -227,4 +228,126 @@ TEST_CASE("no SPS or a damaged SPS yields nullopt", "[Sps]")
     const Case& c = cases()[0];
     std::vector<uint8_t> truncated(c.sps->begin(), c.sps->begin() + 8);
     CHECK_FALSE(declare_no_reordering(truncated.data(), truncated.size()));
+}
+
+namespace
+{
+struct BitWriter
+{
+    std::vector<uint8_t> bytes;
+    int used = 8;
+    void bit(unsigned v)
+    {
+        if (used == 8)
+        {
+            bytes.push_back(0);
+            used = 0;
+        }
+        bytes.back() = static_cast<uint8_t>(bytes.back() | ((v & 1u) << (7 - used)));
+        ++used;
+    }
+    void bits(unsigned v, int n)
+    {
+        for (int i = n - 1; i >= 0; --i)
+            bit((v >> i) & 1u);
+    }
+    void ue(unsigned v)
+    {
+        const unsigned x = v + 1;
+        int len = 0;
+        while ((x >> len) > 1)
+            ++len;
+        bits(0, len);
+        bits(x, len + 1);
+    }
+};
+
+/// A baseline-profile 1280x720 SPS whose VUI carries only the chroma location field. `chroma_loc` is null for none.
+std::vector<uint8_t> synthetic_sps(const std::pair<unsigned, unsigned>* chroma_loc)
+{
+    BitWriter w;
+    w.bits(66, 8); // profile_idc
+    w.bits(0, 8); // constraint flags
+    w.bits(31, 8); // level_idc
+    w.ue(0); // seq_parameter_set_id
+    w.ue(0); // log2_max_frame_num_minus4
+    w.ue(2); // pic_order_cnt_type
+    w.ue(1); // max_num_ref_frames
+    w.bit(0); // gaps_in_frame_num_value_allowed_flag
+    w.ue(79); // pic_width_in_mbs_minus1
+    w.ue(44); // pic_height_in_map_units_minus1
+    w.bit(1); // frame_mbs_only_flag
+    w.bit(1); // direct_8x8_inference_flag
+    w.bit(0); // frame_cropping_flag
+    w.bit(1); // vui_parameters_present_flag
+    w.bit(0); // aspect_ratio_info_present_flag
+    w.bit(0); // overscan_info_present_flag
+    w.bit(0); // video_signal_type_present_flag
+    if (chroma_loc)
+    {
+        w.bit(1);
+        w.ue(chroma_loc->first);
+        w.ue(chroma_loc->second);
+    }
+    else
+    {
+        w.bit(0);
+    }
+    w.bit(0); // timing_info_present_flag
+    w.bit(0); // nal_hrd_parameters_present_flag
+    w.bit(0); // vcl_hrd_parameters_present_flag
+    w.bit(0); // pic_struct_present_flag
+    w.bit(0); // bitstream_restriction_flag
+    w.bit(1); // rbsp_stop_one_bit
+    std::vector<uint8_t> out = { 0, 0, 0, 1, 0x67 };
+    out.insert(out.end(), w.bytes.begin(), w.bytes.end());
+    return out;
+}
+} // namespace
+
+TEST_CASE("chroma sample locations parse into chroma_loc_*", "[Sps]")
+{
+    const std::pair<unsigned, unsigned> zero{ 0, 0 };
+    const std::pair<unsigned, unsigned> one{ 1, 1 };
+    const std::pair<unsigned, unsigned> mixed{ 2, 5 };
+
+    SECTION("absent")
+    {
+        const auto au = synthetic_sps(nullptr);
+        const auto info = parse_sps(au.data(), au.size());
+        REQUIRE(info);
+        CHECK(info->width == 1280);
+        CHECK(info->height == 720);
+        CHECK(info->vui_present);
+        CHECK_FALSE(info->chroma_loc_present);
+        CHECK(info->chroma_loc_top == 0);
+        CHECK(info->chroma_loc_bottom == 0);
+    }
+    SECTION("present with (0, 0)")
+    {
+        const auto au = synthetic_sps(&zero);
+        const auto info = parse_sps(au.data(), au.size());
+        REQUIRE(info);
+        CHECK(info->chroma_loc_present);
+        CHECK(info->chroma_loc_top == 0);
+        CHECK(info->chroma_loc_bottom == 0);
+    }
+    SECTION("present with (1, 1)")
+    {
+        const auto au = synthetic_sps(&one);
+        const auto info = parse_sps(au.data(), au.size());
+        REQUIRE(info);
+        CHECK(info->chroma_loc_present);
+        CHECK(info->chroma_loc_top == 1);
+        CHECK(info->chroma_loc_bottom == 1);
+        CHECK(info->width == 1280);
+    }
+    SECTION("distinct top and bottom values")
+    {
+        const auto au = synthetic_sps(&mixed);
+        const auto info = parse_sps(au.data(), au.size());
+        REQUIRE(info);
+        CHECK(info->chroma_loc_top == 2);
+        CHECK(info->chroma_loc_bottom == 5);
+    }
 }

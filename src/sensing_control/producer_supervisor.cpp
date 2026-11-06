@@ -99,18 +99,32 @@ void ProducerSupervisor::sleep_unless_stopped(std::chrono::milliseconds duration
 
 ActionResult ProducerSupervisor::set_direct_target(const std::string& track, const std::string& host, std::uint16_t port)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // Only records the request: the thread that owns the session applies it (see apply_pending).
     if (!m_status.set_direct_target(track, host, port))
         return { false, "unknown_stream", "no stream named \"" + track + "\"" };
-    m_targets[track] = { host, host.empty() ? std::uint16_t(0) : port };
-    // A live session retargets now; otherwise the target is used when the cameras come up.
-    if (m_session)
-        m_session->set_direct_target(track, host, port);
+    {
+        std::lock_guard<std::mutex> lock(m_targets_mutex);
+        m_targets[track] = { host, host.empty() ? std::uint16_t(0) : port };
+        m_pending.insert(track);
+    }
     logger()->info(
-        "stream {} now sends to {}", track, host.empty() ? std::string("nowhere") : host + ":" + std::to_string(port));
+        "stream {} will send to {}", track, host.empty() ? std::string("nowhere") : host + ":" + std::to_string(port));
     if (m_publish)
         m_publish(state_event(m_status.snapshot()));
     return {};
+}
+
+void ProducerSupervisor::apply_pending(CameraSession& session)
+{
+    DirectTargets changed;
+    {
+        std::lock_guard<std::mutex> lock(m_targets_mutex);
+        for (const auto& track : m_pending)
+            changed[track] = m_targets[track];
+        m_pending.clear();
+    }
+    for (const auto& [track, target] : changed)
+        session.set_direct_target(track, target.host, target.port);
 }
 
 void ProducerSupervisor::run(const std::function<bool()>& stop)
@@ -127,8 +141,10 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
         std::unique_ptr<CameraSession> session;
         DirectTargets targets;
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            // The session is built with everything chosen so far; only later changes are pending.
+            std::lock_guard<std::mutex> lock(m_targets_mutex);
             targets = m_targets;
+            m_pending.clear();
         }
         try
         {
@@ -149,10 +165,6 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
             continue;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_session = std::move(session);
-        }
         last_fault.reset();
         announce(ProducerState::Streaming, std::nullopt);
 
@@ -168,22 +180,14 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
         {
             try
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_session->update();
+                // A change that arrived while the cameras were starting is applied before the first update.
+                apply_pending(*session);
+                session->update();
                 if (std::chrono::steady_clock::now() >= next_status)
                 {
                     next_status += m_config.status_interval;
-                    auto streams = m_session->streams();
-                    // The session reports the live figures; the targets are the ones the operator last chose.
-                    for (auto& stream : streams)
-                    {
-                        const auto found = m_targets.find(stream.track);
-                        if (found != m_targets.end())
-                        {
-                            stream.direct_host = found->second.host;
-                            stream.direct_port = found->second.port;
-                        }
-                    }
+                    // The session's own figures, including where each stream really sends.
+                    auto streams = session->streams();
                     const std::string stalled = watch(streams, std::chrono::steady_clock::now());
                     m_status.set_streams(std::move(streams));
                     if (!stalled.empty())
@@ -209,21 +213,15 @@ void ProducerSupervisor::run(const std::function<bool()>& stop)
                 std::this_thread::sleep_for(m_config.poll_interval);
         }
 
+        try
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_session)
-            {
-                try
-                {
-                    m_session->flush();
-                }
-                catch (const std::exception& e)
-                {
-                    logger()->warn("flush on shutdown failed: {}", e.what());
-                }
-                m_session.reset();
-            }
+            session->flush();
         }
+        catch (const std::exception& e)
+        {
+            logger()->warn("flush on shutdown failed: {}", e.what());
+        }
+        session.reset();
         if (failure)
         {
             announce(failure_state, failure);

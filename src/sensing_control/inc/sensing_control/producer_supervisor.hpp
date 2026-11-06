@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -22,7 +23,8 @@ namespace plugins
 namespace sensing
 {
 
-/// Where a stream's encoded video goes in addition to LiveKit; chosen at runtime over the management channel.
+/// Where a stream's encoded video goes (the PC video stage); chosen at startup or at runtime over the management
+/// channel.
 struct DirectTarget
 {
     std::string host;
@@ -85,9 +87,12 @@ struct SupervisorConfig
  * @brief Keeps the producer running and reporting.
  *
  * A camera that cannot be started (no power, no link) is a state to report and retry, not a reason to exit: the
- * management channel stays up, says why in plain words, and the stream comes back when the cable is fixed. Direct
- * targets set over the channel are remembered here, so a restarted session keeps them. Implements the channel's
- * actions; they are safe to call from the channel's thread.
+ * management channel stays up, says why in plain words, and the stream comes back when the cable is fixed.
+ *
+ * One thread, the one in run(), owns the session: it creates, updates, retargets, flushes and destroys it. The
+ * channel's thread only records what was asked (set_direct_target) and run() applies it between updates, so a slow
+ * camera start never blocks a command and a command never races a session that is being built or torn down. Direct
+ * targets are remembered, so a restarted session starts with the latest.
  */
 class ProducerSupervisor : public ControlActions
 {
@@ -126,9 +131,12 @@ private:
     };
     std::map<std::string, Watch> m_watch; ///< main thread only
 
-    std::mutex m_mutex; ///< guards m_session and m_targets
-    std::unique_ptr<CameraSession> m_session;
-    DirectTargets m_targets;
+    /// Applies the targets that changed since the session was built, on the owning thread.
+    void apply_pending(CameraSession& session);
+
+    std::mutex m_targets_mutex; ///< guards m_targets and m_pending
+    DirectTargets m_targets; ///< what the operator last chose, by track
+    std::set<std::string> m_pending; ///< tracks whose target changed since the running session last heard of it
 };
 
 } // namespace sensing

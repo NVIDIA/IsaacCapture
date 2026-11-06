@@ -78,23 +78,23 @@ public:
 
     uint64_t published() const
     {
-        return m_published;
+        return m_published.load();
     }
     uint64_t unmapped() const
     {
-        return m_unmapped;
+        return m_unmapped.load();
     }
     uint64_t refused() const
     {
-        return m_refused;
+        return m_refused.load();
     }
     uint64_t republished() const
     {
-        return m_republished;
+        return m_republished.load();
     }
     uint64_t over_budget() const
     {
-        return m_over_budget;
+        return m_over_budget.load();
     }
     /// Orin frame-ready to arrival at this PC (Orin encode, its queue and the link), per published frame.
     const DurationStats& uplink_ns() const
@@ -134,11 +134,13 @@ private:
     uint64_t m_epoch = 0;
     bool m_awaiting_keyframe = true;
     bool m_idr_requested_for_gap = false;
-    uint64_t m_published = 0;
-    uint64_t m_unmapped = 0;
-    uint64_t m_refused = 0;
-    uint64_t m_republished = 0;
-    uint64_t m_over_budget = 0;
+    bool m_rate_feedback_noted = false;
+    // Counted on the output's thread and read by the statistics thread.
+    std::atomic<uint64_t> m_published{ 0 };
+    std::atomic<uint64_t> m_unmapped{ 0 };
+    std::atomic<uint64_t> m_refused{ 0 };
+    std::atomic<uint64_t> m_republished{ 0 };
+    std::atomic<uint64_t> m_over_budget{ 0 };
     DurationStats m_intake_to_write_ns;
     DurationStats m_submit_ns;
     DurationStats m_uplink_ns;

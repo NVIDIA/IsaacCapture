@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -24,7 +23,8 @@ public:
 
     /// Blocks until the sender has opened both connections, each announced by a 4-byte hello: "DATA" carries the
     /// records and "CTRL" the small control messages (keyframe requests and the clock exchange). TCP_NODELAY on both.
-    /// Any earlier session is closed.
+    /// Any earlier session is closed: call this only after shutdown_session() and after the threads that read or
+    /// write the earlier session have stopped, since they use a copy of its descriptors.
     void accept_session();
 
     /// Ends a blocked accept_session() (it then throws or returns without a session) and stops accepting.
@@ -49,10 +49,16 @@ public:
     bool read_record(std::vector<uint8_t>& record);
 
 private:
+    /// The session descriptors have one owner at a time: this lock covers publishing a new one, retiring the old and
+    /// shutting them down from another thread. Blocking reads and writes happen outside it, on a copy.
+    int connection_fd() const;
+    int control_fd() const;
+
     int m_listen = -1;
-    int m_connection = -1; ///< DATA
-    int m_control = -1; ///< CTRL
-    std::atomic<int> m_pending{ -1 }; ///< an accepted socket whose hello is being read, visible to shutdown
+    mutable std::mutex m_fd_mutex;
+    int m_connection = -1; ///< DATA; guarded by m_fd_mutex
+    int m_control = -1; ///< CTRL; guarded by m_fd_mutex
+    int m_pending = -1; ///< an accepted socket whose hello is being read, visible to shutdown; guarded by m_fd_mutex
     std::mutex m_control_send;
 };
 

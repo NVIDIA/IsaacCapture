@@ -71,6 +71,18 @@ TcpReceiver::TcpReceiver(uint16_t port)
     }
 }
 
+int TcpReceiver::connection_fd() const
+{
+    std::lock_guard<std::mutex> lock(m_fd_mutex);
+    return m_connection;
+}
+
+int TcpReceiver::control_fd() const
+{
+    std::lock_guard<std::mutex> lock(m_fd_mutex);
+    return m_control;
+}
+
 TcpReceiver::~TcpReceiver()
 {
     if (m_connection >= 0)
@@ -83,12 +95,18 @@ TcpReceiver::~TcpReceiver()
 
 void TcpReceiver::accept_session()
 {
-    for (int* fd : { &m_connection, &m_control })
     {
-        if (*fd >= 0)
-            ::close(*fd);
-        *fd = -1;
+        // Retire the earlier session under the lock a concurrent shutdown_session() takes, so it never sees a
+        // descriptor that is being closed.
+        std::lock_guard<std::mutex> lock(m_fd_mutex);
+        for (int* fd : { &m_connection, &m_control })
+        {
+            if (*fd >= 0)
+                ::close(*fd);
+            *fd = -1;
+        }
     }
+    // Only this thread publishes descriptors, so it may read them here without the lock.
     while (m_connection < 0 || m_control < 0)
     {
         const int fd = ::accept(m_listen, nullptr, nullptr);
@@ -108,7 +126,10 @@ void TcpReceiver::accept_session()
         // reach this socket through m_pending.
         timeval timeout{ 2, 0 };
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        m_pending = fd;
+        {
+            std::lock_guard<std::mutex> lock(m_fd_mutex);
+            m_pending = fd;
+        }
         uint8_t hello[4];
         bool have_hello = false;
         try
@@ -119,15 +140,19 @@ void TcpReceiver::accept_session()
         {
             have_hello = false;
         }
-        m_pending = -1;
         timeval none{ 0, 0 };
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &none, sizeof(none));
-        if (have_hello && std::memcmp(hello, "DATA", 4) == 0 && m_connection < 0)
-            m_connection = fd;
-        else if (have_hello && std::memcmp(hello, "CTRL", 4) == 0 && m_control < 0)
-            m_control = fd;
-        else
-            ::close(fd); // no hello, an unknown one, or a duplicate
+        {
+            // Hand the socket over (or close it) in the same critical section that stops advertising it as pending.
+            std::lock_guard<std::mutex> lock(m_fd_mutex);
+            m_pending = -1;
+            if (have_hello && std::memcmp(hello, "DATA", 4) == 0 && m_connection < 0)
+                m_connection = fd;
+            else if (have_hello && std::memcmp(hello, "CTRL", 4) == 0 && m_control < 0)
+                m_control = fd;
+            else
+                ::close(fd); // no hello, an unknown one, or a duplicate
+        }
     }
 }
 
@@ -135,16 +160,16 @@ void TcpReceiver::stop_listening()
 {
     if (m_listen >= 0)
         ::shutdown(m_listen, SHUT_RDWR); // makes a blocked accept() fail
-    const int pending = m_pending.load();
-    if (pending >= 0)
-        ::shutdown(pending, SHUT_RDWR); // and a hello being read
+    std::lock_guard<std::mutex> lock(m_fd_mutex);
+    if (m_pending >= 0)
+        ::shutdown(m_pending, SHUT_RDWR); // and a hello being read
 }
 
 void TcpReceiver::shutdown_session()
 {
-    const int pending = m_pending.load();
-    if (pending >= 0)
-        ::shutdown(pending, SHUT_RDWR);
+    std::lock_guard<std::mutex> lock(m_fd_mutex);
+    if (m_pending >= 0)
+        ::shutdown(m_pending, SHUT_RDWR);
     for (const int fd : { m_connection, m_control })
     {
         if (fd >= 0)
@@ -155,10 +180,11 @@ void TcpReceiver::shutdown_session()
 bool TcpReceiver::send_control(const uint8_t* data, size_t size)
 {
     std::lock_guard<std::mutex> lock(m_control_send);
+    const int fd = control_fd();
     size_t done = 0;
     while (done < size)
     {
-        const ssize_t n = ::send(m_control, data + done, size - done, MSG_NOSIGNAL);
+        const ssize_t n = ::send(fd, data + done, size - done, MSG_NOSIGNAL);
         if (n < 0)
         {
             if (errno == EINTR)
@@ -174,7 +200,7 @@ bool TcpReceiver::recv_control(uint8_t* out, size_t size)
 {
     try
     {
-        return read_exact(m_control, out, size, true);
+        return read_exact(control_fd(), out, size, true);
     }
     catch (const std::exception&)
     {
@@ -185,7 +211,8 @@ bool TcpReceiver::recv_control(uint8_t* out, size_t size)
 size_t TcpReceiver::pending_bytes() const
 {
     int pending = 0;
-    if (m_connection < 0 || ::ioctl(m_connection, FIONREAD, &pending) < 0)
+    const int fd = connection_fd();
+    if (fd < 0 || ::ioctl(fd, FIONREAD, &pending) < 0)
         return 0;
     return static_cast<size_t>(pending);
 }
@@ -199,14 +226,15 @@ void TcpReceiver::request_keyframe()
 
 bool TcpReceiver::read_record(std::vector<uint8_t>& record)
 {
+    const int fd = connection_fd();
     uint8_t prefix[4];
-    if (!read_exact(m_connection, prefix, 4, true))
+    if (!read_exact(fd, prefix, 4, true))
         return false;
     const uint32_t length = avs1::read_length(prefix);
     if (length == 0 || length > avs1::kMaxRecordBytes)
         throw std::runtime_error("TcpReceiver: invalid record length " + std::to_string(length));
     record.resize(length);
-    read_exact(m_connection, record.data(), length, false);
+    read_exact(fd, record.data(), length, false);
     return true;
 }
 

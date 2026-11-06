@@ -170,7 +170,7 @@ static void print_usage(const char* program_name)
         << "  --timestamp-basis=B       what each frame's timestamp is: monotonic_us (default) is this host's\n"
         << "                            monotonic clock when the frame was ready to encode; capture_monotonic_us\n"
         << "                            (UNVERIFIED on hardware) is the sensor's capture event on that clock and fails\n"
-        << "                            the stream if it cannot be placed; processing_unix_us is Unix processing time.\n"
+        << "                            the stream if it cannot be placed. The direct link carries this clock only.\n"
         << "                            The streams file on the PC must declare the same basis.\n"
         << "  --bitrate=N               target bitrate of each stream's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
@@ -365,12 +365,11 @@ try
                 camera_config.encode.timestamp_basis = TimestampBasis::FrameReadyMonotonic;
             else if (basis == "capture_monotonic_us")
                 camera_config.encode.timestamp_basis = TimestampBasis::SensorCaptureMonotonic;
-            else if (basis == "processing_unix_us")
-                camera_config.encode.timestamp_basis = TimestampBasis::ProcessingUnix;
             else
             {
-                std::cerr << "Error: --timestamp-basis must be monotonic_us, capture_monotonic_us or processing_unix_us."
-                          << std::endl;
+                std::cerr
+                    << "Error: --timestamp-basis must be monotonic_us or capture_monotonic_us: the direct link carries the sender's monotonic clock only."
+                    << std::endl;
                 return 1;
             }
         }
@@ -612,17 +611,21 @@ try
         }
     };
 
-    std::unique_ptr<ControlServer> server;
-    const auto publish = [&server](const std::string& text)
+    // Destruction runs in reverse declaration order, so the server (declared last) is stopped and joined while the
+    // handler, supervisor and status its thread calls into still exist, on return and on exception alike.
+    // `channel` is what the supervisor publishes through; it is set once the server exists.
+    ControlServer* channel = nullptr;
+    const auto publish = [&channel](const std::string& text)
     {
-        if (server)
-            server->broadcast(text);
+        if (channel != nullptr)
+            channel->broadcast(text);
     };
     SupervisorConfig supervisor_config;
     supervisor_config.retry_interval = std::chrono::seconds(std::max<uint32_t>(retry_seconds, 1));
     supervisor_config.poll_interval = std::chrono::milliseconds(static_cast<int64_t>(500.0 / fastest_fps));
     ProducerSupervisor supervisor(status, configured, factory, publish, supervisor_config);
     ControlHandler handler(status, supervisor);
+    std::unique_ptr<ControlServer> server;
 
     if (control_token_file.empty())
     {
@@ -633,6 +636,7 @@ try
         control_config.token = read_secret_file(control_token_file);
         server = std::make_unique<ControlServer>(
             control_config, [&handler](const std::string& text) { return handler.handle(text); });
+        channel = server.get();
         std::cout << "Management channel: listening on " << control_config.bind_address << ":" << server->port()
                   << std::endl;
     }
@@ -641,6 +645,7 @@ try
     std::cout << "Running. Press Ctrl+C to stop." << std::endl;
 
     supervisor.run([] { return g_stop_requested.load(std::memory_order_relaxed); });
+    channel = nullptr; // nothing publishes once the run has ended
 
     std::cout << "------------------------------------------------------------" << std::endl;
     std::cout << "Plugin stopped" << std::endl;
