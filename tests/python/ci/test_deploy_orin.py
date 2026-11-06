@@ -113,6 +113,36 @@ class LoadConfigTests(TempDirTestCase):
     def test_mode_is_an_allowed_config_key(self):
         self.assertIn("mode", deploy_orin.CONFIG_KEYS)
 
+    def test_env_is_an_allowed_config_key(self):
+        self.assertIn("env", deploy_orin.CONFIG_KEYS)
+
+    def test_accepts_env(self):
+        config = self.valid(env={"FOO": "bar baz", "_X1": ""})
+        self.assertEqual(self.load(config), config)
+
+    def test_rejects_bad_env(self):
+        bad = [
+            {"1X": "v"},
+            {"A-B": "v"},
+            {"": "v"},
+            {"FOO": 1},
+            {"FOO": None},
+            {"FOO": "a\nb"},
+            {"LD_LIBRARY_PATH": "/x"},
+            ["FOO=bar"],
+            "FOO=bar",
+            None,
+        ]
+        for env in bad:
+            with self.subTest(env=env), self.assertRaises(DeployError):
+                self.load(self.valid(env=env))
+
+    def test_bad_env_message(self):
+        with self.assertRaisesRegex(
+            DeployError, "env must map variable names to single-line string values"
+        ):
+            self.load(self.valid(env={"A-B": "v"}))
+
     def test_accepts_config_with_only_args(self):
         config = {"args": [STREAM]}
         self.assertEqual(self.load(config), config)
@@ -202,6 +232,45 @@ class UnitRenderTests(unittest.TestCase):
         self.assertIn("SupplementaryGroups=video", text)
         self.assertIn("WorkingDirectory=/opt/ic/current/plugins/sensing_camera", text)
         self.assertIsNone(re.search(r"@[A-Z_]+@", text))
+
+    def test_render_unit_env_lines_follow_ld_library_path_in_order(self):
+        config = {"args": [STREAM], "env": {"ZED": "1", "ALPHA": "two"}}
+        lines = deploy_orin.render_unit(config, "/opt/ic", "bob", "video").splitlines()
+        i = next(
+            n
+            for n, ln in enumerate(lines)
+            if ln.startswith("Environment=LD_LIBRARY_PATH=")
+        )
+        self.assertEqual(
+            lines[i + 1 : i + 3], ["Environment=ZED=1", "Environment=ALPHA=two"]
+        )
+        self.assertTrue(lines[i + 3].startswith("ExecStart="))
+
+    def test_render_unit_without_env_adds_no_environment_lines(self):
+        for config in ({"args": [STREAM]}, {"args": [STREAM], "env": {}}):
+            with self.subTest(config=config):
+                text = deploy_orin.render_unit(config, "/opt/ic", "bob", "video")
+                env_lines = [
+                    ln for ln in text.splitlines() if ln.startswith("Environment=")
+                ]
+                self.assertEqual(len(env_lines), 1)
+                self.assertTrue(env_lines[0].startswith("Environment=LD_LIBRARY_PATH="))
+                self.assertNotIn("@ENVIRONMENT@", text)
+                self.assertIsNone(re.search(r"@[A-Z_]+@", text))
+
+    def test_render_unit_env_values_are_quoted(self):
+        env = {"A": "x y", "B": 'q"q', "C": "100%", "D": "$HOME", "E": ""}
+        config = {"args": [STREAM], "env": env}
+        text = deploy_orin.render_unit(config, "/opt/ic", "bob", "video")
+        lines = text.splitlines()
+        for name, value in env.items():
+            self.assertIn(
+                f"Environment={deploy_orin.systemd_quote(f'{name}={value}')}", lines
+            )
+        self.assertIn('Environment="A=x y"', lines)
+        self.assertIn('Environment="B=q\\"q"', lines)
+        self.assertIn("Environment=C=100%%", lines)
+        self.assertIn("Environment=D=$$HOME", lines)
 
     def test_render_unit_direct_mode_has_no_livekit_args(self):
         for config in ({"args": [STREAM]}, {"mode": "direct", "args": [STREAM]}):
