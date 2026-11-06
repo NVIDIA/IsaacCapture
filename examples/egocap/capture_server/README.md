@@ -88,6 +88,12 @@ a degraded camera. There is no automatic reconnection: retry by starting a new s
 If a release times out the server refuses further sessions (`BUSY`) until it is
 restarted, because a timeout does not prove the device was released.
 
+## Manus calibration
+
+CaptureServer can calibrate Manus gloves on its host and keep the MCAL files in a managed directory for
+later capture. See [`CALIBRATION.md`](CALIBRATION.md) for setup, the `CaptureClient` calibration API, the
+wire messages.
+
 ## Validation status
 
 Implemented and exercised on a Pico 4 Ultra and an OAK-D-W through the normal server

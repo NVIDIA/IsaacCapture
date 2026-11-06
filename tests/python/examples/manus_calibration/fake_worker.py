@@ -7,8 +7,7 @@ Behavior comes from the JSON object in ``FAKE_WORKER_SCENARIO``; ``FAKE_WORKER_L
 that receives one line per command the fake reads, so tests can count what reached the worker.
 A step may set ``"continuous": true`` with ``"estimated": SECONDS`` (and ``"time": 0``) to model the SDK's
 continuous step, which is a hold-paced prompt that carries an estimated duration.
-``reject_start`` refuses the start command and stays idle; ``idle_cancel_result`` makes SIGTERM before ``start``
-report a cancelled result with no attempt id.
+``reject_start`` refuses the start command and stays idle.
 Hang scenarios keep the process alive and silent (``ignore_term`` makes it survive SIGTERM too):
 ``hang_after_start``, ``hang_after_discovering``, ``hang_on_confirm`` and ``hang_after_last_accept``.
 ``chatty_discovery`` and ``chatty_finish`` (seconds) keep emitting status events while the worker is busy.
@@ -97,20 +96,6 @@ def main() -> int:
     if SCENARIO.get("term_exits_zero"):
         # A worker that shuts down "cleanly" when terminated, so its exit code alone looks like success.
         signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
-    if SCENARIO.get("idle_cancel_result"):
-        # Like the real worker: SIGTERM before `start` reports a cancelled result with no attempt id.
-        def report_cancelled(*_):
-            channel.send(
-                {
-                    "type": "result",
-                    "attempt": None,
-                    "outcome": "cancelled",
-                    "released": True,
-                }
-            )
-            os._exit(0)
-
-        signal.signal(signal.SIGTERM, report_cancelled)
     if SCENARIO.get("never_ready"):
         time.sleep(60)
         return 0
