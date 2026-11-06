@@ -90,9 +90,6 @@ is worn. Controller mode uses controller aim poses and per-hand installation
 offsets. Auto mode allows both sources; validate each source and the transition
 before using it.
 
-The successful hardware CTS on 2026-11-06 used **controller** mode. Optical and
-Auto modes have not been qualified by that take.
-
 Rigidly attach each controller using its final mount. From simultaneous
 controller aim and trusted wrist poses, calculate:
 
@@ -149,13 +146,10 @@ commands or hand ``JointStateOutput`` data and defines no vendor hand schema.
 Validation and CTS
 ------------------
 
-The 2026-11-06 controller-wrist take passed the hand CTS with 39 checks passing
-and no failures. The optional-joint geometry check was unanswered because
-those joints are not supplied. USB/SDK discovery, two-hand 125 Hz streaming,
-five-minute streaming stability and SDK reconnect also have hardware evidence.
-OpenXR hot-unplug/recovery and a recording from the pushed final plugin commit
-remain separate acceptance steps. See the :code-file:`validation record
-<src/plugins/omniglove/VALIDATION.md>` for evidence and pending items.
+.. Keep dated take results and acceptance status in the plugin validation record.
+
+See the :code-file:`validation record <src/plugins/omniglove/VALIDATION.md>`
+for hardware test evidence and acceptance status.
 
 Follow :doc:`/conformance/setup` to prepare CTS. From a clean plugin commit
 already pushed to the integration PR, load the mount configuration and record:
