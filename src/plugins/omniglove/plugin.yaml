@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+name: omniglove_plugin
+description: "AgiLink OmniGlove hand tracking"
+command: "./omniglove_plugin"
+version: "1.0.0"
+devices:
+  - path: "/hand/left"
+    type: "hand_tracker"
+    description: "Left OmniGlove"
+  - path: "/hand/right"
+    type: "hand_tracker"
+    description: "Right OmniGlove"
