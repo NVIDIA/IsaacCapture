@@ -9,8 +9,7 @@
 #   core/     sensing_core          -- SIPL capture, encoder, conversion, track output
 #   app/      camera_plugin_sensing
 #
-# Prerequisites:
-#   src/plugins/sensing/scripts/setup.sh    # fetches the Multimedia API, locates jetson_sipl_api
+# Prerequisites: the Jetson Multimedia API and SIPL header trees (see the dependency checks below).
 #
 # Configure with:
 #   cmake -B build -DBUILD_PLUGIN_SENSING=ON
@@ -96,7 +95,6 @@ endif()
 if(NOT JETSON_MMAPI_DIR)
     find_path(JETSON_MMAPI_DIR include/NvVideoEncoder.h
         PATHS "/usr/src/jetson_multimedia_api"
-              "$ENV{HOME}/Sensing/jetson_multimedia_api"
     )
 endif()
 if(NOT JETSON_MMAPI_DIR)
@@ -155,7 +153,9 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 # ==============================================================================
 # Each selected sensor is published as a LiveKit camera track. The SDK is a prebuilt package (headers and shared libraries), pinned to a
 # release and checked against its hash; point LIVEKIT_SDK_DIR at an unpacked copy to use another.
+set(_livekit_local ON)
 if(NOT LIVEKIT_SDK_DIR)
+    set(_livekit_local OFF)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         set(_livekit_arch "arm64")
         set(_livekit_hash "e3a97f71943c0bf9fa4ebd70927ca2906b31dcd6c14b42312b1225b4b868e4ad")
@@ -174,21 +174,40 @@ if(NOT LIVEKIT_SDK_DIR)
     FetchContent_MakeAvailable(livekit_sdk)
     set(LIVEKIT_SDK_DIR "${livekit_sdk_SOURCE_DIR}")
 endif()
-# The package ships no licence files: install the SDK's own, pinned to the same release.
+# The package ships no licence files. The pinned download supplies the SDK's own; a local SDK uses
+# LICENSE/NOTICE from its directory, or LIVEKIT_SDK_LICENSE_FILE / LIVEKIT_SDK_NOTICE_FILE, and needs no network.
 foreach(_notice LICENSE NOTICE)
-    if(_notice STREQUAL "LICENSE")
-        set(_notice_hash "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b")
+    set(_override "${LIVEKIT_SDK_${_notice}_FILE}")
+    if(_override)
+        set(_found "${_override}")
+    elseif(_livekit_local)
+        set(_found "")
+        foreach(_candidate "${LIVEKIT_SDK_DIR}/${_notice}" "${LIVEKIT_SDK_DIR}/../${_notice}")
+            if(NOT _found AND EXISTS "${_candidate}")
+                set(_found "${_candidate}")
+            endif()
+        endforeach()
+        if(NOT _found)
+            message(FATAL_ERROR
+                "LIVEKIT_SDK_DIR is set but ${_notice} was not found in it. Put the SDK's ${_notice} file there "
+                "or pass -DLIVEKIT_SDK_${_notice}_FILE=/path/to/${_notice}.")
+        endif()
     else()
-        set(_notice_hash "6d0f7c5e0deb284362296c5da110dd353831da2e67ca77cb5abc051b951b0fac")
+        if(_notice STREQUAL "LICENSE")
+            set(_notice_hash "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b")
+        else()
+            set(_notice_hash "6d0f7c5e0deb284362296c5da110dd353831da2e67ca77cb5abc051b951b0fac")
+        endif()
+        FetchContent_Declare(
+            livekit_sdk_${_notice}
+            URL https://raw.githubusercontent.com/livekit/client-sdk-cpp/v1.12.4/${_notice}
+            URL_HASH SHA256=${_notice_hash}
+            DOWNLOAD_NO_EXTRACT TRUE
+        )
+        FetchContent_MakeAvailable(livekit_sdk_${_notice})
+        set(_found "${livekit_sdk_${_notice}_SOURCE_DIR}/${_notice}")
     endif()
-    FetchContent_Declare(
-        livekit_sdk_${_notice}
-        URL https://raw.githubusercontent.com/livekit/client-sdk-cpp/v1.12.4/${_notice}
-        URL_HASH SHA256=${_notice_hash}
-        DOWNLOAD_NO_EXTRACT TRUE
-    )
-    FetchContent_MakeAvailable(livekit_sdk_${_notice})
-    set(SENSING_LIVEKIT_${_notice}_FILE "${livekit_sdk_${_notice}_SOURCE_DIR}/${_notice}" CACHE INTERNAL "")
+    set(SENSING_LIVEKIT_${_notice}_FILE "${_found}" CACHE INTERNAL "")
 endforeach()
 find_package(LiveKit CONFIG REQUIRED PATHS "${LIVEKIT_SDK_DIR}" NO_DEFAULT_PATH)
 message(STATUS "SENSING plugin: LiveKit SDK=${LIVEKIT_SDK_DIR}")

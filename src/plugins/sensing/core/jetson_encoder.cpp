@@ -240,8 +240,7 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     v4l2_buf.m.planes[0].bytesused = buffer->planes[0].bytesused;
     v4l2_buf.m.planes[1].bytesused = buffer->planes[1].bytesused;
 
-    // Microsecond granularity is all a timeval carries; that is well below the
-    // frame interval and keeps each unit attributed to its own capture.
+    // Microsecond granularity is all a timeval carries, well below the frame interval.
     v4l2_buf.timestamp.tv_sec = static_cast<time_t>(timestamp_ns / 1000000000LL);
     v4l2_buf.timestamp.tv_usec = static_cast<suseconds_t>((timestamp_ns % 1000000000LL) / 1000LL);
 

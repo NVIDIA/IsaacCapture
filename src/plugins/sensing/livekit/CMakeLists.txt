@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The LiveKit SDK behind a small interface: join a room, publish a video track, submit NV12 frames.
+# The LiveKit SDK behind a small interface: join a room, publish a video track, submit H.264 access units.
 # No LiveKit type appears in an installed header, and nothing here touches CUDA.
 add_library(sensing_livekit STATIC
     livekit_session.cpp
