@@ -78,7 +78,37 @@ The 2026-11-01 handover records:
 These historical results establish the USB/SDK layer. They do not establish
 OpenXR injector deactivation/recreation or long-term headset tracking.
 
-## OpenXR hot-unplug/recovery procedure — pending
+## OpenXR hot-unplug/recovery evidence
+
+Take `omniglove_2026-11-06_150705` was recorded at pushed commit
+`97c62090a97c5376cf8264ff8b90acd8f72a237d`, with `repo_dirty=false`, the same
+controller offsets, PICO 4 Ultra and PICO 4 controllers. The complete MCAP
+contains 6,747 hand records per side over 81.94 seconds.
+
+Both hands became inactive downstream and recovered in the same process run:
+
+| Inactive hand | Downstream inactive interval | Other hand during that interval | Recovery generation |
+| --- | --- | --- | --- |
+| Left | 22.53 s | Right: 1,875/1,875 records with 21 valid joints; max record gap 14.55 ms | 1→3 |
+| Right, main interval | 25.50 s | Left: 2,096/2,096 records with 21 valid joints; max record gap 15.38 ms | 3→5 |
+
+The other hand's wrist-relative fingertip displacement reached 100.79 mm
+during the left interval and 125.54 mm during the right interval, establishing
+changing finger data. Both recovered hands also continued updating.
+The operator waited before reconnecting; inactive interval lengths include
+that wait and do not measure latency after reinsertion.
+
+An additional right-hand inactive interval lasted 0.18 s before the main
+interval, with generation 1→3 on recovery. Its physical cause is unknown;
+the left hand remained active throughout. This event is retained in the evidence.
+
+Functional hot-unplug/recovery is verified. Exact 200 ms cutoff and reinsertion
+latency were not measured because SDK sample and physical unplug/reinsert
+timestamps are absent. Downstream inactivity is encoded by an absent
+`HandPoseRecord.data` payload, not a separate `is_active` field.
+The take has no action labels and is separate from formal CTS evidence.
+
+## OpenXR hot-unplug/recovery procedure
 
 Keep the final wrist configuration and both gloves connected, connect the
 headset, and start a session consuming the two standard hand collections.
@@ -118,7 +148,8 @@ worker iteration.
 ## Final submission checklist
 
 - [x] Confirm headset and controller models: PICO 4 Ultra / PICO 4 controllers.
-- [ ] OpenXR hot-unplug/recovery evidence for both hands.
+- [x] Functional OpenXR hot-unplug/recovery evidence for both hands; timing
+      measurement limits and the extra right-hand transition recorded above.
 - [x] Software build, conversion/ABI tests, C++ format, strict docs and full
       pre-commit verified against the final source.
 - [x] Commit the plugin with the operator's Git identity and DCO sign-off.
