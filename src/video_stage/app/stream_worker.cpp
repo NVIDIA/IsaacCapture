@@ -332,11 +332,13 @@ void StreamWorker::print_live(std::ostream& out) const
     char line[512];
     int n = std::snprintf(
         line, sizeof(line),
-        "[%u] queue age p50 %.1f p99 %.1f ms | backlog p99 %lld B | decode+warp+encode p50 %.1f p99 %.1f ms",
+        "[%u] queue age p50 %.1f p99 %.1f ms | backlog p99 %lld B | decoder lag p50 %lld p99 %lld frames | "
+        "submit->picture p50 %.1f p99 %.1f ms | warp+encode p50 %.1f p99 %.1f ms",
         static_cast<unsigned>(d.spec.port), s.queue_age_ns.percentile(50) / 1e6, s.queue_age_ns.percentile(99) / 1e6,
-        static_cast<long long>(d.backlog_bytes.percentile(99)),
-        (s.decode_ns.percentile(50) + s.process_encode_ns.percentile(50)) / 1e6,
-        (s.decode_ns.percentile(99) + s.process_encode_ns.percentile(99)) / 1e6);
+        static_cast<long long>(d.backlog_bytes.percentile(99)), static_cast<long long>(s.decode_lag.percentile(50)),
+        static_cast<long long>(s.decode_lag.percentile(99)), s.decode_ns.percentile(50) / 1e6,
+        s.decode_ns.percentile(99) / 1e6, s.process_encode_ns.percentile(50) / 1e6,
+        s.process_encode_ns.percentile(99) / 1e6);
     if (d.livekit_output && n > 0 && n < static_cast<int>(sizeof(line)))
     {
         std::snprintf(
@@ -392,6 +394,14 @@ void StreamWorker::print_summary(std::ostream& out) const
         print_stage(out, "Orin -> publish", d.livekit_output->source_to_publish_ns());
     }
     print_stage(out, "queue age", s.queue_age_ns);
+    {
+        char lag[160];
+        std::snprintf(lag, sizeof(lag), "  decoder lag (frames)   p50 %lld  p99 %lld  max %lld\n",
+                      static_cast<long long>(s.decode_lag.percentile(50)),
+                      static_cast<long long>(s.decode_lag.percentile(99)),
+                      static_cast<long long>(s.decode_lag.percentile(100)));
+        out << lag;
+    }
     print_stage(out, "decode", s.decode_ns);
     print_stage(out, "warp + encode", s.process_encode_ns);
     print_stage(out, "receive -> output", s.receive_to_output_ns);

@@ -27,6 +27,7 @@ struct FrameMeta
     uint64_t source_timestamp_ns = 0;
     int64_t received_ns = 0; ///< CLOCK_MONOTONIC when the intake finished reading the record
     uint64_t key = ~uint64_t{ 0 }; ///< the key this entry was written for; a mismatch means the entry was overwritten
+    int64_t submitted_ns = 0; ///< when the access unit was handed to the decoder
 };
 
 /// Where finished access units go. Called on the pipeline thread; it must not block.
@@ -39,6 +40,9 @@ public:
 
 struct PipelineConfig
 {
+    /// The source never emits B-frames (the Orin producer's encoder contract). A decoder that cannot see that holds
+    /// back pictures to be safe, so the sequence header is rewritten to declare it.
+    bool source_has_no_b_frames = true;
     uint32_t bitrate_bps = 12'000'000;
     uint32_t idr_period = 30;
     uint32_t fps_numerator = 30;
@@ -52,7 +56,9 @@ struct PipelineStats
     uint64_t gaps = 0; ///< records whose frame number did not increase
     uint64_t metadata_lost = 0; ///< pictures whose metadata entry had been overwritten
     DurationStats queue_age_ns; ///< from intake to the start of processing
-    DurationStats decode_ns;
+    DurationStats decode_ns; ///< from handing an access unit to the decoder to its picture appearing
+    DurationStats decode_lag; ///< records handed to the decoder after this picture's own record, before it appeared
+                              ///< (frames)
     DurationStats process_encode_ns;
     DurationStats receive_to_output_ns;
 };
