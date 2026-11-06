@@ -4,6 +4,7 @@
 """Tests for the Orin deploy script; every subprocess call is mocked or runs against a temp git repo."""
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -302,8 +303,6 @@ class FakeOrin:
         args = deploy_orin.parser().parse_args(
             [
                 "u@orin",
-                "--backend",
-                "sipl",
                 "--config",
                 "orin.json",
                 "--no-activate",
@@ -372,14 +371,19 @@ class DeployOrderTests(TempDirTestCase):
         }
         self.assertEqual(srcs, {f"{CACHE_DIR}/src"})
 
+    def test_cmake_args_are_forwarded_to_the_remote_build_in_order(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.run(root, "--cmake-arg=-DA=1", "--cmake-arg=-DB=a b")
+        build = next(v for k, v in orin.events if k == "ssh" and " build " in v)
+        self.assertTrue(build.endswith(" --cmake-arg=-DA=1 --cmake-arg='-DB=a b'"))
+
     def test_deploy_closes_target_on_failure(self):
         config = self.tmp / "orin.json"
         config.write_text(
             json.dumps({"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]})
         )
-        args = deploy_orin.parser().parse_args(
-            ["u@orin", "--backend", "sipl", "--config", str(config)]
-        )
+        args = deploy_orin.parser().parse_args(["u@orin", "--config", str(config)])
         target = mock.Mock()
         with (
             mock.patch.object(deploy_orin, "Target", return_value=target),
@@ -392,9 +396,7 @@ class DeployOrderTests(TempDirTestCase):
 
 class OpenSourceTests(TempDirTestCase):
     def args(self, *extra):
-        return deploy_orin.parser().parse_args(
-            ["u@orin", "--backend", "sipl", "--config", "c", *extra]
-        )
+        return deploy_orin.parser().parse_args(["u@orin", "--config", "c", *extra])
 
     def repo_with_branch(self):
         root, git = git_repo(
@@ -922,14 +924,12 @@ class SdkDirsTests(unittest.TestCase):
 
     def test_cli_parsers_accept_sdk_root_and_replace_unmanaged(self):
         args = deploy_orin.parser().parse_args(
-            ["u@orin", "--backend", "sipl", "--config", "c", "--sdk-root", "/s"]
+            ["u@orin", "--config", "c", "--sdk-root", "/s"]
         )
         self.assertEqual(args.sdk_root, "/s")
         self.assertFalse(args.replace_unmanaged)
         self.assertEqual(
-            deploy_orin.parser()
-            .parse_args(["h", "--backend", "argus", "--config", "c"])
-            .sdk_root,
+            deploy_orin.parser().parse_args(["h", "--config", "c"]).sdk_root,
             "",
         )
         remote = deploy_orin.remote_parser()
@@ -937,13 +937,34 @@ class SdkDirsTests(unittest.TestCase):
             ("preflight", []),
             ("build", ["--src", "s", "--stage", "t"]),
         ):
-            parsed = remote.parse_args(
-                [step, "--backend", "sipl", "--sdk-root", "/s", *extra]
-            )
+            parsed = remote.parse_args([step, "--sdk-root", "/s", *extra])
             self.assertEqual(parsed.sdk_root, "/s")
 
+    def test_backend_option_is_rejected_everywhere(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                deploy_orin.parser().parse_args(
+                    ["u@orin", "--backend", "sipl", "--config", "c"]
+                )
+            with self.assertRaises(SystemExit):
+                deploy_orin.remote_parser().parse_args(
+                    ["preflight", "--backend", "sipl"]
+                )
+
+    def test_cmake_arg_is_repeatable_and_defaults_empty(self):
+        parser = deploy_orin.parser()
+        self.assertEqual(parser.parse_args(["h", "--config", "c"]).cmake_arg, [])
+        args = parser.parse_args(
+            ["h", "--config", "c", "--cmake-arg=-DA=1", "--cmake-arg=-DB=2"]
+        )
+        self.assertEqual(args.cmake_arg, ["-DA=1", "-DB=2"])
+        remote = deploy_orin.remote_parser().parse_args(
+            ["build", "--src", "s", "--stage", "t", "--cmake-arg=-DA=1"]
+        )
+        self.assertEqual(remote.cmake_arg, ["-DA=1"])
+
     def test_preflight_names_the_sdk_root_path_when_headers_are_missing(self):
-        args = argparse.Namespace(backend="sipl", sdk_root="/nonexistent-sdk")
+        args = argparse.Namespace(sdk_root="/nonexistent-sdk")
         with (
             mock.patch.object(deploy_orin.os, "uname") as uname,
             mock.patch.object(Path, "exists", return_value=True),
@@ -973,7 +994,7 @@ class BuildPathTests(unittest.TestCase):
             seen.append((cmd, kwargs))
             return completed(1 if cmd[0] == "which" and cmd[1] in missing else 0)
 
-        args = argparse.Namespace(backend="sipl", sdk_root="/nonexistent-sdk")
+        args = argparse.Namespace(sdk_root="/nonexistent-sdk")
         with (
             mock.patch.object(deploy_orin.os, "uname") as uname,
             mock.patch.object(Path, "exists", return_value=True),
@@ -1010,14 +1031,20 @@ class RemoteBuildTests(TempDirTestCase):
     EXPECTED_PATH = f"{Path.home()}/.local/bin:/usr/local/cuda/bin:/usr/bin"
 
     def build(
-        self, backend="sipl", sdk_root="", libcuda=False, path="/usr/bin", src="/src"
+        self,
+        sdk_root="",
+        libcuda=False,
+        path="/usr/bin",
+        src="/src",
+        cmake_arg=(),
+        sipl=True,
     ):
         stage = self.tmp / "stage"
         (stage / deploy_orin.BIN_REL).parent.mkdir(parents=True, exist_ok=True)
         (stage / deploy_orin.BIN_REL).write_text("bin")
         args = argparse.Namespace(
             src=src,
-            backend=backend,
+            cmake_arg=list(cmake_arg),
             stage=str(stage),
             jobs=3,
             sdk_root=sdk_root,
@@ -1036,7 +1063,7 @@ class RemoteBuildTests(TempDirTestCase):
 
         def fake_run(cmd, **kwargs):
             calls.append((list(cmd), kwargs))
-            if cmd[:2] == ["rm", "-rf"] and "build-" in cmd[2]:
+            if cmd[:2] == ["rm", "-rf"] and cmd[2].endswith("/build"):
                 shutil.rmtree(cmd[2], ignore_errors=True)
             return completed(0)
 
@@ -1045,6 +1072,7 @@ class RemoteBuildTests(TempDirTestCase):
             mock.patch.object(deploy_orin, "run", fake_run),
             mock.patch.object(deploy_orin, "tail", return_value="x"),
             mock.patch.object(Path, "exists", fake_exists),
+            mock.patch.object(Path, "is_dir", return_value=sipl),
             mock.patch.object(Path, "read_text", fake_read_text),
             mock.patch.dict(os.environ, {"PATH": path}),
         ):
@@ -1054,11 +1082,9 @@ class RemoteBuildTests(TempDirTestCase):
     def configure(self, calls):
         return next(c for c in calls if c[0][:2] == ["cmake", "-S"])
 
-    def test_sipl_configure_flags_and_cuda_path(self):
+    def test_configure_flags_and_cuda_path(self):
         cmd, kwargs = self.configure(self.build(sdk_root="/mnt/sdk"))
         for flag in (
-            "-DSENSING_WITH_SIPL=ON",
-            "-DSENSING_WITH_ARGUS=OFF",
             "-DJETSON_MMAPI_DIR=/mnt/sdk/usr/src/jetson_multimedia_api",
             "-DSIPL_API_DIR=/mnt/sdk/usr/src/jetson_sipl_api",
             "-DENABLE_CLANG_FORMAT_CHECK=OFF",
@@ -1068,7 +1094,9 @@ class RemoteBuildTests(TempDirTestCase):
         self.assertEqual(kwargs["env"]["PATH"], self.EXPECTED_PATH)
 
     def cleaned(self, calls):
-        return [c for c, _ in calls if c[:2] == ["rm", "-rf"] and "build-sipl" in c[2]]
+        return [
+            c for c, _ in calls if c[:2] == ["rm", "-rf"] and c[2].endswith("/build")
+        ]
 
     def test_changed_source_path_cleans_build_dir_but_same_path_keeps_it(self):
         self.assertTrue(self.cleaned(self.build(src="/cache/src")))
@@ -1082,11 +1110,24 @@ class RemoteBuildTests(TempDirTestCase):
         self.assertEqual(kwargs["env"]["PATH"], self.EXPECTED_PATH)
         self.assertIn("camera_plugin_sensing", cmd)
 
-    def test_argus_has_no_sipl_dir(self):
-        cmd, _ = self.configure(self.build(backend="argus"))
-        self.assertIn("-DSENSING_WITH_ARGUS=ON", cmd)
+    def test_sipl_dir_omitted_when_absent(self):
+        cmd, _ = self.configure(self.build(sipl=False))
         self.assertIn("-DJETSON_MMAPI_DIR=/usr/src/jetson_multimedia_api", cmd)
         self.assertFalse([a for a in cmd if a.startswith("-DSIPL_API_DIR")])
+
+    def test_cmake_args_are_appended_last_in_order(self):
+        extra = ["-DENABLE_CLANG_FORMAT_CHECK=ON", "-DX=1"]
+        cmd, _ = self.configure(self.build(cmake_arg=extra, libcuda=True))
+        self.assertEqual(cmd[-2:], extra)
+        self.assertGreater(
+            cmd.index(extra[0]),
+            max(i for i, a in enumerate(cmd) if a.startswith("-DCMAKE_EXE_LINKER")),
+        )
+
+    def test_changed_cmake_args_clean_build_dir(self):
+        self.assertTrue(self.cleaned(self.build(cmake_arg=["-DX=1"])))
+        self.assertFalse(self.cleaned(self.build(cmake_arg=["-DX=1"])))
+        self.assertTrue(self.cleaned(self.build(cmake_arg=["-DX=2"])))
 
     def test_linker_flag_only_when_gpu_libcuda_exists(self):
         absent, _ = self.configure(self.build(libcuda=False))

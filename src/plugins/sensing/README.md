@@ -100,7 +100,7 @@ Write a config naming the producer's own options (the LiveKit token file stays o
 ```json
 {"livekit_url": "ws://127.0.0.1:7880",
  "token_file": "/home/ido/livekit/join.token",
- "args": ["--camera-backend=sipl", "--link-masks=0x0000 0x1100",
+ "args": ["--link-masks=0x0000 0x1100",
           "--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
 ```
 
@@ -110,12 +110,14 @@ password out of the command line and the output:
 ```bash
 export ORIN_USER=ido
 read -rs ORIN_PASSWORD && export ORIN_PASSWORD   # optional; without it ssh and sudo prompt
-python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --backend sipl --config orin.json \
+python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --config orin.json \
   --sdk-root /home/ido/sensing-sdk/root --replace-unmanaged
 ```
 
-- `--backend sipl|argus` selects which capture SDK is built in. `--sdk-root DIR` is the Orin directory holding
-  `usr/src/jetson_multimedia_api` and `usr/src/jetson_sipl_api` when they are not under `/usr/src`.
+- The script has no knowledge of which capture SDK the deployed source uses: that comes from the source's own CMake.
+  `--cmake-arg=ARG` (repeatable, `=` form) passes options only some source trees define, such as a capture backend
+  switch. `--sdk-root DIR` is the Orin directory holding `usr/src/jetson_multimedia_api` and
+  `usr/src/jetson_sipl_api` when they are not under `/usr/src`.
 - `--source DIR` deploys another checkout (for example a git worktree of a feature branch) instead of the one holding
   the script; `--branch NAME` deploys that branch's committed files from it, ignoring the working tree. Without them
   the script deploys its own checkout, local edits included.
