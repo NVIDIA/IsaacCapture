@@ -76,6 +76,37 @@ inline std::vector<std::uint8_t> build_clock_sync_reply(const ClockSyncRequest& 
     return reply;
 }
 
+/// The requester's half of the same exchange, for a peer that sends requests (the PC video stage over its control link).
+inline std::vector<std::uint8_t> build_clock_sync_request(const ClockSyncRequest& request)
+{
+    std::vector<std::uint8_t> out(kClockSyncRequestSize);
+    out[0] = 'Q';
+    put_le(out, 1, request.sequence, 4);
+    put_le(out, 5, static_cast<std::uint64_t>(request.t1), 8);
+    return out;
+}
+
+struct ClockSyncReply
+{
+    std::uint32_t sequence = 0;
+    std::int64_t t1 = 0;
+    std::int64_t t2 = 0;
+    std::int64_t t3 = 0;
+};
+
+/// The reply in `data`, or nullopt for anything that is not exactly a reply.
+inline std::optional<ClockSyncReply> parse_clock_sync_reply(const std::vector<std::uint8_t>& data)
+{
+    if (data.size() != kClockSyncReplySize || data[0] != 'R')
+        return std::nullopt;
+    ClockSyncReply reply;
+    reply.sequence = static_cast<std::uint32_t>(get_le(data, 1, 4));
+    reply.t1 = static_cast<std::int64_t>(get_le(data, 5, 8));
+    reply.t2 = static_cast<std::int64_t>(get_le(data, 13, 8));
+    reply.t3 = static_cast<std::int64_t>(get_le(data, kClockSyncReplyT3Offset, 8));
+    return reply;
+}
+
 /// Writes t3 into an already built reply.
 inline void set_clock_sync_reply_t3(std::vector<std::uint8_t>& reply, std::int64_t t3)
 {

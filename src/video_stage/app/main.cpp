@@ -1,56 +1,69 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "pipeline.hpp"
-#include "tcp_receiver.hpp"
+#include "livekit_output.hpp"
+#include "stream_worker.hpp"
 
-#include <video_stage/avs1.hpp>
 #include <video_stage/cuda_context.hpp>
-#include <video_stage/sine_warp.hpp>
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 using namespace video_stage;
 
 namespace
 {
 
-// Writes the processed access units as one Annex-B stream, so a run can be checked with ffprobe or a player.
-class FileSink final : public PacketSink
-{
-public:
-    explicit FileSink(const std::string& path) : m_out(path, std::ios::binary)
-    {
-        if (!m_out)
-            throw std::runtime_error("cannot open " + path);
-    }
-    void write(const EncodedPacket& packet, const FrameMeta&, const Geometry&) override
-    {
-        m_out.write(reinterpret_cast<const char*>(packet.data.data()), static_cast<std::streamsize>(packet.data.size()));
-    }
+std::atomic<bool> g_stop{ false };
 
-private:
-    std::ofstream m_out;
-};
-
-void print_stage(const char* name, const DurationStats& s)
+void on_signal(int)
 {
-    std::printf("  %-22s n=%zu  p50 %.2f ms  p95 %.2f ms  p99 %.2f ms\n", name, s.count(), s.percentile(50) / 1e6,
-                s.percentile(95) / 1e6, s.percentile(99) / 1e6);
+    g_stop = true;
 }
 
 void usage(const char* program)
 {
     std::cout
-        << "Usage: " << program << " --port=N --output=FILE.h264 [--amplitude=PX] [--bitrate=BPS] [--idr-period=N]\n"
-        << "Listens for one AVS1 (H.264) connection, decodes on NVDEC, applies the example sine warp, re-encodes\n"
-        << "on NVENC and writes the access units to FILE. Prints per-stage timing percentiles at the end.\n";
+        << "Usage: " << program << " --stream=PORT:TRACK ... --livekit-url=URL --livekit-token-file=PATH\n"
+        << "       " << program << " --stream=PORT:file=PATH.h264 ...\n"
+        << "       [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--once]\n"
+        << "One --stream per camera. Each listens on PORT for the Orin's direct connection (AVS1 H.264 records plus a\n"
+        << "control link), decodes on NVDEC, applies the example sine warp, re-encodes on NVENC, and publishes the access\n"
+        << "units as LiveKit track TRACK (all tracks under one participant) or writes them to a file. Serves one Orin\n"
+        << "session after another unless --once. Prints per-stage percentiles at the end.\n";
+}
+
+std::string read_token(const std::string& path)
+{
+    std::ifstream in(path);
+    std::string token;
+    if (!in || !std::getline(in, token) || token.empty())
+        throw std::runtime_error("cannot read a token from " + path);
+    return token;
+}
+
+// "PORT:TRACK" or "PORT:file=PATH".
+StreamSpec parse_stream(const std::string& text)
+{
+    const auto colon = text.find(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 == text.size())
+        throw std::runtime_error("--stream must be PORT:TRACK or PORT:file=PATH, got '" + text + "'");
+    StreamSpec spec;
+    spec.port = static_cast<uint16_t>(std::stoul(text.substr(0, colon)));
+    const std::string rest = text.substr(colon + 1);
+    if (rest.rfind("file=", 0) == 0)
+        spec.file = rest.substr(5);
+    else
+        spec.track = rest;
+    return spec;
 }
 
 } // namespace
@@ -58,63 +71,91 @@ void usage(const char* program)
 int main(int argc, char** argv)
 try
 {
-    uint16_t port = 0;
-    std::string output;
-    SineWarpParams warp;
-    PipelineConfig config;
+    std::vector<StreamSpec> specs;
+    std::string livekit_url;
+    std::string token_file;
+    StreamSettings settings;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
-        if (arg.rfind("--port=", 0) == 0)
-            port = static_cast<uint16_t>(std::stoul(arg.substr(7)));
-        else if (arg.rfind("--output=", 0) == 0)
-            output = arg.substr(9);
+        if (arg.rfind("--stream=", 0) == 0)
+            specs.push_back(parse_stream(arg.substr(9)));
+        else if (arg.rfind("--livekit-url=", 0) == 0)
+            livekit_url = arg.substr(14);
+        else if (arg.rfind("--livekit-token-file=", 0) == 0)
+            token_file = arg.substr(21);
+        else if (arg == "--once")
+            settings.once = true;
         else if (arg.rfind("--amplitude=", 0) == 0)
-            warp.amplitude_px = std::stof(arg.substr(12));
+            settings.warp.amplitude_px = std::stof(arg.substr(12));
         else if (arg.rfind("--bitrate=", 0) == 0)
-            config.bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(10)));
+        {
+            settings.pipeline.bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(10)));
+            settings.livekit.max_bitrate_bps = settings.pipeline.bitrate_bps;
+        }
         else if (arg.rfind("--idr-period=", 0) == 0)
-            config.idr_period = static_cast<uint32_t>(std::stoul(arg.substr(13)));
+            settings.pipeline.idr_period = static_cast<uint32_t>(std::stoul(arg.substr(13)));
+        else if (arg.rfind("--max-upstream-uncertainty-ms=", 0) == 0)
+            settings.livekit.max_upstream_uncertainty_ns = static_cast<int64_t>(std::stod(arg.substr(30)) * 1e6);
         else
         {
             usage(argv[0]);
             return arg == "--help" ? 0 : 1;
         }
     }
-    if (port == 0 || output.empty())
+    if (specs.empty())
     {
         usage(argv[0]);
+        return 1;
+    }
+    bool any_livekit = false;
+    for (const StreamSpec& s : specs)
+        any_livekit = any_livekit || s.file.empty();
+    if (any_livekit && (livekit_url.empty() || token_file.empty()))
+    {
+        std::cerr << "a --stream with a track needs --livekit-url and --livekit-token-file\n";
         return 1;
     }
 
     CudaContext context;
     std::cout << "GPU: " << context.device_name() << "\n";
-    SineWarp operation(warp);
-    FileSink sink(output);
-    Pipeline pipeline(context, operation, sink, config);
-    TcpReceiver receiver(port);
-    std::cout << "listening on port " << port << std::endl;
-    receiver.accept_connection();
+    // One LiveKit participant for every stream, as the Orin producer joins once for all its cameras.
+    std::unique_ptr<SharedLiveKit> livekit;
+    if (any_livekit)
+        livekit = std::make_unique<SharedLiveKit>(livekit_url, read_token(token_file));
 
-    std::vector<uint8_t> bytes;
-    while (receiver.read_record(bytes))
-    {
-        const int64_t received_ns = monotonic_ns();
-        std::string error;
-        const auto record = avs1::parse(bytes.data(), bytes.size(), error);
-        if (!record)
-            throw std::runtime_error("bad AVS1 record: " + error);
-        pipeline.process(*record, received_ns);
-    }
+    std::vector<std::unique_ptr<StreamWorker>> workers;
+    for (const StreamSpec& spec : specs)
+        workers.push_back(
+            std::make_unique<StreamWorker>(context, spec, settings, spec.file.empty() ? livekit.get() : nullptr));
 
-    const PipelineStats& s = pipeline.stats();
-    std::printf("records %llu, pictures %llu, dropped (no surface) %llu, frame-number gaps %llu\n",
-                static_cast<unsigned long long>(s.records), static_cast<unsigned long long>(s.pictures),
-                static_cast<unsigned long long>(s.dropped_no_surface), static_cast<unsigned long long>(s.gaps));
-    print_stage("decode", s.decode_ns);
-    print_stage("warp + encode", s.process_encode_ns);
-    print_stage("receive -> output", s.receive_to_output_ns);
-    return 0;
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    for (auto& w : workers)
+        w->start();
+
+    // With --once the streams end by themselves; otherwise run until interrupted.
+    std::atomic<bool> finished{ false };
+    std::thread waiter(
+        [&]
+        {
+            while (!g_stop && !finished)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (g_stop)
+            {
+                for (auto& w : workers)
+                    w->request_stop();
+            }
+        });
+    bool ok = true;
+    for (auto& w : workers)
+        ok = w->join() && ok;
+    finished = true;
+    waiter.join();
+
+    for (const auto& w : workers)
+        w->print_summary(std::cout);
+    return ok ? 0 : 1;
 }
 catch (const std::exception& e)
 {

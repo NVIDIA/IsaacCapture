@@ -21,7 +21,7 @@ namespace sensing
 namespace
 {
 
-LiveKitOutputConfig make_output_config(const SensingConfig& config, const CameraInfo& sensor)
+LiveKitOutputConfig make_output_config(const SensingConfig& config, const StreamConfig& stream, const CameraInfo& sensor)
 {
     LiveKitOutputConfig output;
     output.source_width = sensor.width;
@@ -35,6 +35,8 @@ LiveKitOutputConfig make_output_config(const SensingConfig& config, const Camera
     output.gop = config.gop;
     output.full_range = config.full_range;
     output.timestamp_basis = config.livekit.timestamp_basis;
+    output.direct_host = stream.direct_host;
+    output.direct_port = stream.direct_port;
     return output;
 }
 
@@ -84,7 +86,7 @@ SensingCamera::SensingCamera(const SensingConfig& config,
     {
         const auto found = std::find_if(
             sensors.begin(), sensors.end(), [&](const CameraInfo& s) { return s.id == stream_config.sensor_id; });
-        const LiveKitOutputConfig output = make_output_config(config, *found);
+        const LiveKitOutputConfig output = make_output_config(config, stream_config, *found);
 
         PublishSpec spec;
         spec.name = stream_config.livekit_track;

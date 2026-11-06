@@ -47,31 +47,46 @@ struct NvencEncoder::Impl
         if (config.geometry.width == 0 || config.geometry.height == 0 || (config.geometry.width % 2) != 0 ||
             (config.geometry.height % 2) != 0)
             throw std::invalid_argument("NvencEncoder: NV12 needs non-zero even dimensions");
-        context.make_current();
-        if (nvenc_load_functions(&nvenc, nullptr) < 0 || nvenc == nullptr)
-            throw std::runtime_error("NvencEncoder: libnvidia-encode is not available");
-        fn.version = NV_ENCODE_API_FUNCTION_LIST_VER;
-        check_nv(nvenc->NvEncodeAPICreateInstance(&fn), "NvEncodeAPICreateInstance");
+        try
+        {
+            context.make_current();
+            if (nvenc_load_functions(&nvenc, nullptr) < 0 || nvenc == nullptr)
+                throw std::runtime_error("NvencEncoder: libnvidia-encode is not available");
+            fn.version = NV_ENCODE_API_FUNCTION_LIST_VER;
+            check_nv(nvenc->NvEncodeAPICreateInstance(&fn), "NvEncodeAPICreateInstance");
 
-        NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS open{};
-        open.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
-        open.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
-        open.device = context.handle();
-        open.apiVersion = NVENCAPI_VERSION;
-        check_nv(fn.nvEncOpenEncodeSessionEx(&open, &encoder), "nvEncOpenEncodeSessionEx");
+            NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS open{};
+            open.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+            open.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
+            open.device = context.handle();
+            open.apiVersion = NVENCAPI_VERSION;
+            check_nv(fn.nvEncOpenEncodeSessionEx(&open, &encoder), "nvEncOpenEncodeSessionEx");
 
-        configure();
-        allocate_surfaces();
+            configure();
+            allocate_surfaces();
 
-        NV_ENC_CREATE_BITSTREAM_BUFFER out{};
-        out.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
-        check_nv(fn.nvEncCreateBitstreamBuffer(encoder, &out), "nvEncCreateBitstreamBuffer");
-        bitstream = out.bitstreamBuffer;
+            NV_ENC_CREATE_BITSTREAM_BUFFER out{};
+            out.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+            check_nv(fn.nvEncCreateBitstreamBuffer(encoder, &out), "nvEncCreateBitstreamBuffer");
+            bitstream = out.bitstreamBuffer;
+        }
+        catch (...)
+        {
+            // A constructor that throws does not run the destructor, so a failure part way releases what exists.
+            shutdown();
+            throw;
+        }
     }
 
     ~Impl()
     {
-        context.make_current();
+        shutdown();
+    }
+
+    // Releases the session, the registered surfaces and the loaded library; safe to call on a partly built object.
+    void shutdown() noexcept
+    {
+        context.make_current_noexcept();
         if (encoder)
         {
             for (Slot& s : slots)
@@ -80,12 +95,16 @@ struct NvencEncoder::Impl
                     fn.nvEncUnregisterResource(encoder, s.registered);
                 if (s.ptr)
                     cuMemFree(s.ptr);
+                s = Slot{};
             }
             if (bitstream)
                 fn.nvEncDestroyBitstreamBuffer(encoder, bitstream);
             fn.nvEncDestroyEncoder(encoder);
+            encoder = nullptr;
+            bitstream = nullptr;
         }
-        nvenc_free_functions(&nvenc);
+        if (nvenc)
+            nvenc_free_functions(&nvenc);
     }
 
     void configure()
@@ -169,6 +188,11 @@ NvencEncoder::NvencEncoder(CudaContext& context, const EncoderConfig& config)
 
 NvencEncoder::~NvencEncoder() = default;
 
+void NvencEncoder::release(const Surface& surface)
+{
+    m_impl->slots.at(surface.slot).in_use = false;
+}
+
 bool NvencEncoder::acquire(Surface& out)
 {
     Impl& e = *m_impl;
@@ -206,6 +230,16 @@ EncodedPacket NvencEncoder::encode(const Surface& surface, cudaStream_t stream, 
         map.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
         map.registeredResource = slot.registered;
         check_nv(e.fn.nvEncMapInputResource(e.encoder, &map), "nvEncMapInputResource");
+        // Unmap on every exit path: a registered surface that stays mapped cannot be reused or freed.
+        struct MapGuard
+        {
+            Impl& impl;
+            NV_ENC_INPUT_PTR mapped;
+            ~MapGuard()
+            {
+                impl.fn.nvEncUnmapInputResource(impl.encoder, mapped);
+            }
+        } map_guard{ e, map.mappedResource };
 
         NV_ENC_PIC_PARAMS pic{};
         pic.version = NV_ENC_PIC_PARAMS_VER;
@@ -219,23 +253,24 @@ EncodedPacket NvencEncoder::encode(const Surface& surface, cudaStream_t stream, 
         pic.inputTimeStamp = key;
         if (force_idr)
             pic.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
-        const NVENCSTATUS status = e.fn.nvEncEncodePicture(e.encoder, &pic);
-        if (status != NV_ENC_SUCCESS)
-        {
-            e.fn.nvEncUnmapInputResource(e.encoder, map.mappedResource);
-            check_nv(status, "nvEncEncodePicture");
-        }
+        check_nv(e.fn.nvEncEncodePicture(e.encoder, &pic), "nvEncEncodePicture");
 
         NV_ENC_LOCK_BITSTREAM lock{};
         lock.version = NV_ENC_LOCK_BITSTREAM_VER;
         lock.outputBitstream = e.bitstream;
         check_nv(e.fn.nvEncLockBitstream(e.encoder, &lock), "nvEncLockBitstream");
+        struct LockGuard
+        {
+            Impl& impl;
+            ~LockGuard()
+            {
+                impl.fn.nvEncUnlockBitstream(impl.encoder, impl.bitstream);
+            }
+        } lock_guard{ e };
         const auto* bytes = static_cast<const uint8_t*>(lock.bitstreamBufferPtr);
         packet.data.assign(bytes, bytes + lock.bitstreamSizeInBytes);
         packet.key = lock.outputTimeStamp;
         packet.keyframe = lock.pictureType == NV_ENC_PIC_TYPE_IDR;
-        e.fn.nvEncUnlockBitstream(e.encoder, e.bitstream);
-        e.fn.nvEncUnmapInputResource(e.encoder, map.mappedResource);
     }
     catch (...)
     {

@@ -3,6 +3,7 @@
 
 #include "livekit_video_output.hpp"
 
+#include "direct_sender.hpp"
 #include "jetson_encoder.hpp"
 #include "rgba_box_downscale.cuh"
 #include "sensor_clock.hpp"
@@ -69,6 +70,16 @@ struct LiveKitVideoOutput::Impl
         if (config.input == PixelKind::DmaBufNv12 && config.scale_div != 1)
             throw std::runtime_error("LiveKit output: DMA-BUF input cannot be reduced (scale_div must be 1)");
         period_ns = 1'000'000'000ull / config.fps;
+        if (!config.direct_host.empty())
+        {
+            DirectSenderConfig direct_config;
+            direct_config.host = config.direct_host;
+            direct_config.port = config.direct_port;
+            direct_config.width = out_width;
+            direct_config.height = out_height;
+            direct_config.fps = config.fps;
+            direct = std::make_unique<DirectSender>(direct_config);
+        }
         if (config.bitrate_bps < kMinBitrateBps)
         {
             throw std::runtime_error("LiveKit output: the bitrate must be at least " + std::to_string(kMinBitrateBps) +
@@ -368,6 +379,8 @@ struct LiveKitVideoOutput::Impl
             pitch = scaled_pitch;
         }
 
+        if (direct && direct->take_keyframe_request())
+            keyframe_wanted = true;
         if (keyframe_wanted)
         {
             encoder->request_keyframe();
@@ -388,6 +401,8 @@ struct LiveKitVideoOutput::Impl
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
     void encode_dma(CaptureFrame& frame)
     {
+        if (direct && direct->take_keyframe_request())
+            keyframe_wanted = true;
         if (keyframe_wanted)
         {
             encoder->request_keyframe();
@@ -469,10 +484,6 @@ struct LiveKitVideoOutput::Impl
         const FrameMeta meta = in_encoder.front();
         in_encoder.pop_front();
 
-        // After a refusal the stream is only usable from its next keyframe.
-        if (awaiting_keyframe && !unit.keyframe)
-            return;
-
         EncodedVideoFrame frame;
         frame.data = unit.data.data();
         frame.size = unit.data.size();
@@ -481,6 +492,14 @@ struct LiveKitVideoOutput::Impl
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
+        // The direct link keeps its own keyframe bookkeeping, so it sees every unit whatever LiveKit refused.
+        if (direct)
+            direct->submit(frame);
+
+        // After a refusal the stream is only usable from its next keyframe.
+        if (awaiting_keyframe && !unit.keyframe)
+            return;
+
         if (sink->submit(frame))
         {
             awaiting_keyframe = false;
@@ -495,6 +514,7 @@ struct LiveKitVideoOutput::Impl
     }
 
     std::unique_ptr<VideoTrackSink> sink;
+    std::unique_ptr<DirectSender> direct; ///< optional second destination: the PC video stage
     LiveKitOutputConfig config;
     uint32_t out_width = 0;
     uint32_t out_height = 0;

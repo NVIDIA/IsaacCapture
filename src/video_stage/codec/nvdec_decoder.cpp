@@ -34,7 +34,7 @@ struct NvdecDecoder::Impl
     CUvideoparser parser = nullptr;
     CUvideodecoder decoder = nullptr;
     CUVIDEOFORMAT format{};
-    Geometry geometry;
+    StreamFormat stream_format;
     uint64_t pictures = 0;
     uint64_t access_units = 0;
     // Set by the callbacks so decode() can surface an error thrown inside the parser's C callbacks.
@@ -99,9 +99,11 @@ struct NvdecDecoder::Impl
             throw std::runtime_error("NvdecDecoder: only 8-bit 4:2:0 H.264 is supported");
         const unsigned width = static_cast<unsigned>(fmt->display_area.right - fmt->display_area.left);
         const unsigned height = static_cast<unsigned>(fmt->display_area.bottom - fmt->display_area.top);
-        const Geometry geo{ width, height };
+        StreamFormat next;
+        next.geometry = Geometry{ width, height };
+        next.color.full_range = fmt->video_signal_description.video_full_range_flag != 0;
         const bool same = decoder != nullptr && format.coded_width == fmt->coded_width &&
-                          format.coded_height == fmt->coded_height && geometry == geo &&
+                          format.coded_height == fmt->coded_height && stream_format == next &&
                           format.min_num_decode_surfaces == fmt->min_num_decode_surfaces;
         if (same)
             return static_cast<int>(format.min_num_decode_surfaces);
@@ -130,9 +132,9 @@ struct NvdecDecoder::Impl
         context.make_current();
         check_cu_v(cvdl->cuvidCreateDecoder(&decoder, &info), "cuvidCreateDecoder");
         format = *fmt;
-        geometry = geo;
+        stream_format = next;
         if (on_format_change)
-            on_format_change(geo);
+            on_format_change(next);
         return static_cast<int>(info.ulNumDecodeSurfaces);
     }
 
@@ -176,13 +178,13 @@ struct NvdecDecoder::Impl
 
         DecodedFrame frame;
         frame.key = static_cast<uint64_t>(disp->timestamp);
-        frame.view.geometry = geometry;
+        frame.view.geometry = stream_format.geometry;
         frame.view.y = reinterpret_cast<uint8_t*>(dptr);
         // The decoder's NV12 output surface holds the chroma plane right after the luma plane, `target height` rows on.
-        frame.view.uv = frame.view.y + static_cast<size_t>(pitch) * geometry.height;
+        frame.view.uv = frame.view.y + static_cast<size_t>(pitch) * stream_format.geometry.height;
         frame.view.y_pitch = pitch;
         frame.view.uv_pitch = pitch;
-        frame.view.color.full_range = format.video_signal_description.video_full_range_flag != 0;
+        frame.view.color = stream_format.color;
         CuvidFunctions* cvdl_copy = cvdl;
         CUvideodecoder dec = decoder;
         frame.lease = std::shared_ptr<void>(reinterpret_cast<void*>(dptr), [cvdl_copy, dec](void* p)

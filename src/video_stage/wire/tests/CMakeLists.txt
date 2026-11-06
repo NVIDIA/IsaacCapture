@@ -3,6 +3,7 @@
 
 add_executable(video_stage_wire_tests
     test_avs1.cpp
+    test_clock_exchange.cpp
 )
 
 target_link_libraries(video_stage_wire_tests PRIVATE video_stage::wire Catch2::Catch2WithMain)

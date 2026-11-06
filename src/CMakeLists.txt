@@ -25,10 +25,20 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
-if(BUILD_PLUGINS)
-    add_subdirectory(plugins)
+# The LiveKit SDK and publisher library, shared by the SENSING plugin and the video stage.
+if(BUILD_PLUGIN_SENSING OR BUILD_VIDEO_STAGE)
+    add_subdirectory(livekit_publisher)
 endif()
 
 if(BUILD_VIDEO_STAGE)
     add_subdirectory(video_stage)
+elseif(BUILD_PLUGIN_SENSING)
+    # The SENSING plugin sends AVS1 records to the video stage and needs only its record codec.
+    add_subdirectory(video_stage/wire)
 endif()
+
+if(BUILD_PLUGINS)
+    add_subdirectory(plugins)
+endif()
+
+

@@ -5,7 +5,7 @@
 # SENSING Camera Plugin: Jetson SIPL capture, hardware H.264 encode, LiveKit publication
 # ==============================================================================
 # Two leaf targets besides the LiveKit wrapper, one per directory (cmake/cmake-structure.md rule 1):
-#   livekit/  sensing_livekit       -- the LiveKit SDK behind a small interface
+#   (src/livekit_publisher  sensing_livekit -- the LiveKit SDK behind a small interface, shared)
 #   core/     sensing_core          -- SIPL capture, encoder, conversion, track output
 #   app/      camera_plugin_sensing
 #
@@ -186,7 +186,6 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 # dependency at all (readelf -d lists only EGL, cuda, dl, pthread, rt, c), and
 # the tegra lib dir ships no libnvjpeg to link against.
 
-# ==============================================================================
 # LiveKit
 # ==============================================================================
 # Each selected sensor is published as a LiveKit camera track. The SDK is a prebuilt package (headers and shared libraries), pinned to a
@@ -269,13 +268,14 @@ message(STATUS "SENSING plugin: LiveKit SDK=${LIVEKIT_SDK_DIR}")
 # Cache, so tests/ (a sibling directory) can find the same SDK.
 set(SENSING_LIVEKIT_SDK_DIR "${LIVEKIT_SDK_DIR}" CACHE INTERNAL "")
 
+=======
+# The LiveKit SDK and the publisher library come from src/livekit_publisher (shared with the video stage).
 
 # ==============================================================================
 # Targets
 # ==============================================================================
 message(STATUS "Building SENSING camera plugin")
 
-add_subdirectory(livekit)
 add_subdirectory(core)
 add_subdirectory(app)
 

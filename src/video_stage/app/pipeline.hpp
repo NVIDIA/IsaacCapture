@@ -25,7 +25,8 @@ struct FrameMeta
 {
     uint64_t frame_number = 0;
     uint64_t source_timestamp_ns = 0;
-    int64_t received_ns = 0; ///< CLOCK_MONOTONIC when the record was complete on this host
+    int64_t received_ns = 0; ///< CLOCK_MONOTONIC when the intake finished reading the record
+    uint64_t key = ~uint64_t{ 0 }; ///< the key this entry was written for; a mismatch means the entry was overwritten
 };
 
 /// Where finished access units go. Called on the pipeline thread; it must not block.
@@ -49,6 +50,8 @@ struct PipelineStats
     uint64_t pictures = 0;
     uint64_t dropped_no_surface = 0;
     uint64_t gaps = 0; ///< records whose frame number did not follow the previous one
+    uint64_t metadata_lost = 0; ///< pictures whose metadata entry had been overwritten
+    DurationStats queue_age_ns; ///< from intake to the start of processing
     DurationStats decode_ns;
     DurationStats process_encode_ns;
     DurationStats receive_to_output_ns;
@@ -69,6 +72,9 @@ public:
 
     /// Process one received record. Throws std::runtime_error on a decoder or encoder failure.
     void process(const avs1::Record& record, int64_t received_ns);
+
+    /// Make the next encoded picture an IDR (a subscriber joined or the receiving side asked). Thread-safe.
+    void request_idr();
 
     const PipelineStats& stats() const;
 

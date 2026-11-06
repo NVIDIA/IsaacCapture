@@ -31,7 +31,7 @@ add_executable(sensing_clock_sync_tests
     test_clock_sync.cpp
 )
 
-target_include_directories(sensing_clock_sync_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../livekit/inc)
+target_include_directories(sensing_clock_sync_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/livekit_publisher/inc)
 
 target_link_libraries(sensing_clock_sync_tests PRIVATE Catch2::Catch2WithMain)
 

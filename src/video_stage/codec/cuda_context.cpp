@@ -37,6 +37,11 @@ CudaContext::~CudaContext()
         cuDevicePrimaryCtxRelease(m_device);
 }
 
+void CudaContext::make_current_noexcept() const noexcept
+{
+    cuCtxSetCurrent(m_context);
+}
+
 void CudaContext::make_current() const
 {
     check_cu(cuCtxSetCurrent(m_context), "cuCtxSetCurrent");

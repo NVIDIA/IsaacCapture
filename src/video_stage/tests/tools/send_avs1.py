@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import socket
 import struct
+import threading
 import time
 
 HEADER = struct.Struct("!4sHHIHHQQQQIIQ")
@@ -46,6 +47,38 @@ def record(au: bytes, sequence: int, frame: int, stamp_ns: int, width: int, heig
     return struct.pack("!I", len(body)) + body
 
 
+def control_loop(ctrl: socket.socket, offset_ns: int, stats: dict) -> None:
+    """Answer each 13-byte 'Q' with a 29-byte 'R' on a clock offset by `offset_ns`; count 'K' keyframe requests."""
+    buf = b""
+    while True:
+        try:
+            first = ctrl.recv(4096)
+        except OSError:
+            return
+        if not first:
+            return
+        t2 = time.monotonic_ns() + offset_ns
+        buf += first
+        while buf:
+            if buf[0:1] == b"K":
+                stats["K"] += 1
+                buf = buf[1:]
+            elif buf[0:1] == b"Q":
+                if len(buf) < 13:
+                    break
+                _, seq, t1 = struct.unpack("<cIq", buf[:13])
+                buf = buf[13:]
+                t3 = time.monotonic_ns() + offset_ns
+                try:
+                    ctrl.sendall(struct.pack("<cIqqq", b"R", seq, t1, t2, t3))
+                except OSError:
+                    return
+                stats["Q"] += 1
+                t2 = time.monotonic_ns() + offset_ns
+            else:
+                buf = buf[1:]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("file", help="H.264 Annex-B file with AUDs")
@@ -55,11 +88,19 @@ def main() -> None:
     ap.add_argument("--height", type=int, required=True)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--loops", type=int, default=1)
+    ap.add_argument("--clock-offset-ms", type=float, default=5000.0, help="simulated boot-time offset of this clock")
     args = ap.parse_args()
 
     aus = split_access_units(open(args.file, "rb").read())
     sock = socket.create_connection((args.host, args.port))
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.sendall(b"DATA")
+    ctrl = socket.create_connection((args.host, args.port))
+    ctrl.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    ctrl.sendall(b"CTRL")
+    stats = {"Q": 0, "K": 0}
+    reader = threading.Thread(target=control_loop, args=(ctrl, int(args.clock_offset_ms * 1e6), stats), daemon=True)
+    reader.start()
     period = 1.0 / args.fps
     frame = 0
     next_send = time.monotonic()
@@ -71,8 +112,16 @@ def main() -> None:
             frame += 1
             sock.sendall(record(au, frame, frame, time.monotonic_ns(), args.width, args.height, args.fps))
             next_send += period
+    sock.shutdown(socket.SHUT_WR)
+    sock.settimeout(30)
+    try:
+        while sock.recv(4096):
+            pass
+    except OSError:
+        pass
     sock.close()
-    print(f"sent {frame} access units")
+    ctrl.close()
+    print(f"sent {frame} access units; answered {stats['Q']} clock requests; {stats['K']} keyframe requests")
 
 
 if __name__ == "__main__":

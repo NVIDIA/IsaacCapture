@@ -29,6 +29,8 @@ public:
     CudaContext& operator=(const CudaContext&) = delete;
 
     void make_current() const;
+    /// For cleanup paths that must not throw: the result is ignored.
+    void make_current_noexcept() const noexcept;
     CUcontext handle() const
     {
         return m_context;
