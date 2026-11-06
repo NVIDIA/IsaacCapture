@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <video_stage/clock_exchange.hpp>
-
 #include <catch2/catch_test_macros.hpp>
+#include <video_stage/clock_exchange.hpp>
 
 #include <cstdlib>
 
@@ -68,9 +67,9 @@ TEST_CASE("malformed and slow exchanges are rejected without changing the mappin
 {
     const Exchange bad[] = {
         make_exchange(S, 0, 200 * MS, 100 * MS), // rtt 300 ms
-        Exchange{ 100, 0, 0, 50 },               // t4 before t1
-        Exchange{ 0, 100, 50, 1000 },            // t3 before t2
-        Exchange{ 0, 0, 900, 800 },              // negative rtt
+        Exchange{ 100, 0, 0, 50 }, // t4 before t1
+        Exchange{ 0, 100, 50, 1000 }, // t3 before t2
+        Exchange{ 0, 0, 900, 800 }, // negative rtt
     };
     for (const Exchange& b : bad)
     {
