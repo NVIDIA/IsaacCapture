@@ -103,43 +103,89 @@ def test_missing_gpu_exits_with_runtime_code(monkeypatch, capsys):
     script.check_gpu_visible("cpu")
 
 
-class _FakeCapture:
-    """Stands in for ``cv2.VideoCapture``; ``read()`` reports ``frame_ok``."""
+def _patch_frames(monkeypatch, *frames):
+    """Make the backend yield ``frames`` batches, tracking whether it is closed."""
+    state = {"closed": False}
 
-    def __init__(self, frame_ok: bool):
-        self.frame_ok = frame_ok
-        self.released = False
+    def fake(_path, _batch_size, _max_frames=None):
+        try:
+            yield from frames
+        finally:
+            state["closed"] = True
 
-    def read(self):
-        return self.frame_ok, None
-
-    def release(self):
-        self.released = True
-
-
-def _patch_capture(monkeypatch, frame_ok: bool) -> _FakeCapture:
-    cap = _FakeCapture(frame_ok)
-    monkeypatch.setattr(script.cv2, "VideoCapture", lambda _path: cap)
-    return cap
+    monkeypatch.setattr(script, "read_video_frames_batched", fake)
+    return state
 
 
 def test_unreadable_video_exits_with_runtime_code(monkeypatch, capsys):
-    cap = _patch_capture(monkeypatch, frame_ok=True)
+    state = _patch_frames(monkeypatch, [(0, object())])
     with pytest.raises(SystemExit) as exc:
         script.check_video_decodable("clip.mp4", {"width": 0, "height": 0})
     assert exc.value.code == script.EXIT_RUNTIME_ERROR
     assert "Cannot read video clip.mp4" in capsys.readouterr().err
-    assert not cap.released  # a 0x0 video is rejected without opening it
+    assert not state["closed"]  # a 0x0 video is rejected without opening it
     script.check_video_decodable("clip.mp4", {"width": 640, "height": 480})
-    assert cap.released
+    assert state["closed"]
 
 
 def test_video_with_size_but_no_readable_frame_exits_with_runtime_code(
     monkeypatch, capsys
 ):
-    cap = _patch_capture(monkeypatch, frame_ok=False)
+    state = _patch_frames(monkeypatch)
     with pytest.raises(SystemExit) as exc:
         script.check_video_decodable("clip.mp4", {"width": 640, "height": 480})
     assert exc.value.code == script.EXIT_RUNTIME_ERROR
     assert "Cannot read video clip.mp4" in capsys.readouterr().err
-    assert cap.released
+    assert state["closed"]
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (
+            script.UnsupportedVideoCodecError("Unsupported video codec 'mjpeg'"),
+            script.EXIT_INVALID_INPUT,
+        ),
+        (
+            script.VideoDecodeError("ffprobe failed for a.mp4: moov atom not found\nx"),
+            script.EXIT_RUNTIME_ERROR,
+        ),
+        (
+            script.VideoDecoderUnavailableError("A GPU is required"),
+            script.EXIT_RUNTIME_ERROR,
+        ),
+    ],
+)
+def test_video_backend_errors_exit_with_one_line(monkeypatch, capsys, error, code):
+    def fail(_path):
+        raise error
+
+    monkeypatch.setattr(script, "get_video_meta", fail)
+    with pytest.raises(SystemExit) as exc:
+        script.probe_video("a.mp4")
+    assert exc.value.code == code
+    err = capsys.readouterr().err
+    assert "a.mp4" in err
+    assert len(err.strip().splitlines()) == 1
+    assert "Traceback" not in err
+
+
+def test_unsupported_codec_found_while_reading_first_frame(monkeypatch, capsys):
+    def fake(_path, _batch_size, _max_frames=None):
+        raise script.UnsupportedVideoCodecError("Unsupported video codec 'vp8'")
+        yield
+
+    monkeypatch.setattr(script, "read_video_frames_batched", fake)
+    monkeypatch.setattr(
+        script, "get_video_meta", lambda _p: {"width": 64, "height": 48}
+    )
+    with pytest.raises(SystemExit) as exc:
+        script.probe_video("a.webm")
+    assert exc.value.code == script.EXIT_INVALID_INPUT
+    assert "vp8" in capsys.readouterr().err
+
+
+def test_script_reads_video_only_through_the_backend():
+    # The release image's OpenCV has no video I/O, so a direct cv2.VideoCapture
+    # would reject every input there.
+    assert "VideoCapture" not in open(script.__file__).read()

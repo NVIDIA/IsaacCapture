@@ -89,6 +89,9 @@ from inference.visualization.overlay import render_clip
 from inference.cli import parse_args as parse_pipeline_args
 from inference.video_io import (
     FPS_FALLBACK,
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
     find_videos,
     get_video_meta,
     read_video_frames_batched,
@@ -192,21 +195,35 @@ def check_gpu_visible(device: str) -> None:
 def check_video_decodable(video_path, video_metadata: dict) -> None:
     """Fail unless the video reports a size and yields a readable first frame.
 
-    OpenCV reports 0x0 for an empty, truncated or unsupported file, and can
-    report a size for a stream whose frames cannot be decoded.
+    A 0x0 size means an empty, truncated or unsupported file; a stream that
+    reports a size can still fail to decode. The first frame is read through
+    the active video backend, which also rejects an unsupported codec here
+    rather than after the model loads.
     """
     decodable = video_metadata["width"] > 0 and video_metadata["height"] > 0
     if decodable:
-        cap = cv2.VideoCapture(str(video_path))
+        frames = read_video_frames_batched(str(video_path), 1, 1)
         try:
-            decodable, _ = cap.read()
+            decodable = next(frames, None) is not None
         finally:
-            cap.release()
+            frames.close()
     if not decodable:
         fail_runtime(
             f"Cannot read video {video_path}: no decodable video stream "
             "(empty, truncated, or unsupported file)"
         )
+
+
+def probe_video(video_path) -> dict:
+    """Return the video's metadata, or exit with one line if it cannot be decoded."""
+    try:
+        metadata = get_video_meta(str(video_path))
+        check_video_decodable(video_path, metadata)
+    except UnsupportedVideoCodecError as exc:
+        reject_input(f"{video_path}: {exc}")
+    except (VideoDecodeError, VideoDecoderUnavailableError) as exc:
+        fail_runtime(f"Cannot read video {video_path}: {str(exc).splitlines()[0]}")
+    return metadata
 
 
 def check_frame_batching(bbox_detector, frame_batch_size) -> None:
@@ -611,8 +628,7 @@ def main():
             with Path(args.intrinsics_json).open() as calibration_file:
                 parsed_calibration = json.load(calibration_file)
         for video_path in videos:
-            video_metadata = get_video_meta(str(video_path))
-            check_video_decodable(video_path, video_metadata)
+            video_metadata = probe_video(video_path)
             source_camera, K_source = resolve_K(
                 video_metadata["width"],
                 video_metadata["height"],
