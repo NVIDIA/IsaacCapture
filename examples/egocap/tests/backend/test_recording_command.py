@@ -22,6 +22,7 @@ import pytest
 
 from egocap.recording.episode_layout import manifest_path
 from egocap_web.recording_command import (
+    MAX_TASK_DETAILS_CHARS,
     RecordingCommandError,
     RecordingContext,
     handle_recording_command,
@@ -116,6 +117,17 @@ def test_set_task_wrong_typed_task_is_rejected():
         parse_recording_command(raw)
 
 
+def test_set_task_wrong_typed_details_is_rejected():
+    raw = {"request_id": "r8b", "action": "set_task", "payload": {"batch_id": "b1", "task": "t", "details": 5}}
+    with pytest.raises(RecordingCommandError):
+        parse_recording_command(raw)
+
+
+def test_set_task_details_are_optional():
+    raw = {"request_id": "r8c", "action": "set_task", "payload": {"batch_id": "b1", "task": "t"}}
+    assert "details" not in parse_recording_command(raw).payload
+
+
 def test_new_batch_accepts_flat_batch_id():
     command = parse_recording_command({"request_id": "r9", "action": "new_batch", "payload": {"batch_id": "b1"}})
     assert command.action == "new_batch"
@@ -145,6 +157,30 @@ async def test_set_task_commits_real_text(tmp_path: Path):
     assert reply["outcome"] == "ok"
     assert reply["reason"] is None
     assert reply["snapshot"]["task_text"] == "Pour water."
+
+
+async def test_set_task_commits_details_and_a_later_set_without_them_clears_them(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    bid = context.batch_id
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": bid, "task": "Pour water.", "details": "Left hand, blue cup."}), context
+    )
+    assert reply["outcome"] == "ok"
+    assert reply["snapshot"]["task_details"] == "Left hand, blue cup."
+    reply = await handle_recording_command(_command("set_task", {"batch_id": bid, "task": "Pour water."}), context)
+    assert reply["snapshot"]["task_details"] == ""
+
+
+async def test_set_task_overlong_details_are_rejected_and_change_nothing(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    bid = context.batch_id
+    too_long = "x" * (MAX_TASK_DETAILS_CHARS + 1)
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": bid, "task": "New task", "details": too_long}), context
+    )
+    assert reply["outcome"] == "rejected"
+    assert str(MAX_TASK_DETAILS_CHARS) in reply["reason"]
+    assert reply["snapshot"]["task_text"] != "New task"
 
 
 async def test_set_task_empty_task_text_is_rejected_as_a_real_outcome_not_a_protocol_error(tmp_path: Path):

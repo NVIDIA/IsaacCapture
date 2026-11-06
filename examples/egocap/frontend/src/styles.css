@@ -896,6 +896,12 @@ below for the narrow/stacked layout). */
   outline-offset: 1px;
 }
 
+/* The details field takes its own row so a long task and long details are both readable while editing. */
+.recording-task-editor-details {
+  flex-basis: 100%;
+  order: 1;
+}
+
 .recording-task-editor-actions {
   display: flex;
   gap: var(--space-2);
@@ -1318,6 +1324,16 @@ below for the narrow/stacked layout). */
 .op-task-text--unset {
   color: var(--warning);
   font-weight: 500;
+}
+
+/* The optional details sit under the task in a quieter weight; one line, full text on hover. */
+.op-task-details {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .op-counts {

@@ -36,6 +36,7 @@ function activeSnapshot(overrides: Partial<RecordingSnapshot> = {}): RecordingSn
     currentEpisodeId: null,
     currentEpisodeElapsedMs: null,
     taskText: "Pour water into the cup.",
+    taskDetails: "",
     defaultOperator: null,
     autoFillOperatorName: false,
     savedCount: 0,
@@ -444,6 +445,61 @@ describe("RecordingPanel", () => {
       />,
     );
     expect(statusText()).toMatch(/^Recording/);
+  });
+
+  it("a timed-out save counts as applied only when the snapshot shows both the task and the details", async () => {
+    const onSetTask = vi.fn().mockRejectedValue(new RecordingCommandUncertainError("timed out waiting for a reply"));
+    const { rerender } = render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
+    fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
+    // Only the details change: the task text in the draft stays what is already committed.
+    fireEvent.change(screen.getByLabelText("Task details (optional)"), { target: { value: "Blue cup" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    expect(statusText()).toMatch(/^Outcome unknown/);
+
+    // The task text matches but the details are still the old ones: the save did not take effect.
+    rerender(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
+    expect(statusText()).toMatch(/^Editing task/);
+    expect((screen.getByLabelText("Task details (optional)") as HTMLInputElement).value).toBe("Blue cup");
+  });
+
+  it("Edit task offers an optional details field and saves it together with the task", async () => {
+    const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    render(
+      <RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot({ taskDetails: "Blue cup" })} actions={{ onSetTask }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
+    // The editor opens on what is committed, details included.
+    const details = screen.getByLabelText("Task details (optional)") as HTMLInputElement;
+    expect(details.value).toBe("Blue cup");
+    fireEvent.change(details, { target: { value: "Left hand, blue cup" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "Pour water into the cup.", "Left hand, blue cup");
+  });
+
+  it("Enter in the details field saves and Escape cancels, like the task field", async () => {
+    const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
+    fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
+    const details = screen.getByLabelText("Task details (optional)");
+    fireEvent.change(details, { target: { value: "notes" } });
+    await act(async () => {
+      fireEvent.keyDown(details, { key: "Enter" });
+    });
+    expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "Pour water into the cup.", "notes");
+    fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
+    fireEvent.keyDown(screen.getByLabelText("Task details (optional)"), { key: "Escape" });
+    expect(screen.queryByLabelText("Task details (optional)")).toBeNull();
+  });
+
+  it("the status line shows committed details only when there are some", () => {
+    const { rerender } = render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{}} />);
+    expect(screen.queryByText(/Details:/)).toBeNull();
+    rerender(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot({ taskDetails: "Blue cup" })} actions={{}} />);
+    expect(screen.getByText("Details: Blue cup")).not.toBeNull();
   });
 
   it("a timed-out task save that did NOT actually take effect returns to editingTask with the draft intact, not silently losing the retry", async () => {

@@ -58,6 +58,9 @@ export interface EpisodeResultSummary {
   durationMs: number;
 }
 
+/** Longest task details the backend accepts (it rejects anything longer). */
+export const MAX_TASK_DETAILS_CHARS = 1000;
+
 /**
  * Authoritative recording facts, published by the backend's RecordingContext
  * over the existing WS. `null` until the first one actually arrives --
@@ -84,6 +87,8 @@ export interface RecordingSnapshot {
    * to observe "recording". */
   currentEpisodeElapsedMs: number | null;
   taskText: string | null;
+  /** Optional free-text details the operator attached to the task; "" when none. */
+  taskDetails: string;
   /** The station's configured default operator name (from the deployment's station
    * YAML), or null when unconfigured -- a PREFILL hint only, applied at most once to
    * the entry field when nothing is already stored for this browser; never itself
@@ -132,7 +137,7 @@ export interface RecordingCommandResult {
  * from mere receipt. There is no `onCloseSession` -- `onNewBatch` replaces
  * it; this component never closes/opens anything. */
 export interface RecordingActions {
-  onSetTask?: (target: RecordingBatchIdentity, taskText: string) => Promise<RecordingCommandResult>;
+  onSetTask?: (target: RecordingBatchIdentity, taskText: string, details: string) => Promise<RecordingCommandResult>;
   onStartEpisode?: (target: RecordingBatchIdentity) => Promise<RecordingCommandResult>;
   onStopEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;
   onDiscardEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;

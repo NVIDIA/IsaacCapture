@@ -147,6 +147,7 @@ export function OperatorBar({
   const chips = deriveHealthChips(response, live);
   const problems = chipsNeedingAttention(chips);
   const task = recordingSnapshot?.taskText ?? "";
+  const details = recordingSnapshot?.taskDetails ?? "";
   const last = recordingSnapshot?.lastResult ?? null;
 
   return (
@@ -165,6 +166,11 @@ export function OperatorBar({
       <div className="op-task">
         <span className="op-kicker">Task</span>
         <p className={`op-task-text${task === "" ? " op-task-text--unset" : ""}`}>{task === "" ? "No task set" : task}</p>
+        {details !== "" && (
+          <p className="op-task-details" title={details}>
+            {details}
+          </p>
+        )}
       </div>
 
       <div className="op-counts">

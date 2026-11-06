@@ -227,9 +227,9 @@ class RecordingService:
         """
         return await self._run(self._open_impl(session_id))
 
-    async def start_episode(self, task: str, operator: str = "") -> EpisodeInfo:
+    async def start_episode(self, task: str, operator: str = "", details: str = "") -> EpisodeInfo:
         """Allocate an episode, open real writers, and return only once samples can be admitted."""
-        return await self._run(self._start_impl(task, operator))
+        return await self._run(self._start_impl(task, operator, details))
 
     def submit_sample(self, episode_id: str, sample: NumericSample | VideoSample) -> SubmissionResult:
         """Validate, copy and enqueue one sample without waiting.
@@ -742,7 +742,7 @@ class RecordingService:
             {"kind": "video", **asdict(s)} for s in cfg.video_sources
         ]
 
-    async def _start_impl(self, task: str, operator: str) -> EpisodeInfo:
+    async def _start_impl(self, task: str, operator: str, details: str) -> EpisodeInfo:
         """Checkpoint a WRITING manifest, then open the real store; enter RECORDING only on success."""
         if self._session is None or self._closing:
             raise StateError("no open session")
@@ -762,6 +762,7 @@ class RecordingService:
             config_digest=_digest(self._config),
             layout_digest=_layout_digest(self._config),
             task=task,
+            task_details=details,
             operator=operator,
             sources=self._source_declarations(),
             pending_path=pending_name,
@@ -1024,6 +1025,8 @@ class RecordingService:
         attributes = {
             "task_description": m.task,
             "instruction_language": m.task,
+            # Free-text context kept apart from task_description, which readers key on.
+            "task_details": m.task_details,
             "operator_name": m.operator,
             "episode_length": max(rows, default=0),
             "episode_duration": m.duration_seconds,

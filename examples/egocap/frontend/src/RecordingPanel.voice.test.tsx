@@ -99,6 +99,7 @@ function activeSnapshot(overrides: Partial<RecordingSnapshot> = {}): RecordingSn
     currentEpisodeId: null,
     currentEpisodeElapsedMs: null,
     taskText: "Pour water into the cup.",
+    taskDetails: "",
     defaultOperator: null,
     autoFillOperatorName: false,
     savedCount: 0,
@@ -275,7 +276,7 @@ describe("RecordingPanel voice commands", () => {
     const recognition = enableVoice();
     await act(async () => recognition.emitFinal("task fold the towel"));
     await act(async () => recognition.emitFinal("save task"));
-    expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "fold the towel");
+    expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "fold the towel", "");
   });
 
   it('"discard" opens the browser\'s native confirm() rather than a second spoken command; declining sends no command', async () => {

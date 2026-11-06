@@ -127,6 +127,7 @@ class TaskContext:
 
     task_text: str
     operator: str = ""
+    task_details: str = ""
 
 
 @dataclass(frozen=True)
@@ -355,7 +356,7 @@ class RecordingSessionCoordinator:
         self._last_issue = None
         return service
 
-    def set_task(self, task_text: str) -> None:
+    def set_task(self, task_text: str, task_details: str = "") -> None:
         """Commits the next-task context -- backend-local state that
         requires no open storage session (and never opens one): only
         ``start_episode`` opens real storage, since freezing output
@@ -373,7 +374,7 @@ class RecordingSessionCoordinator:
             phase = self._service.snapshot().phase
             if phase in (RecordingPhase.STARTING, RecordingPhase.RECORDING):
                 raise CoordinatorBusyError("cannot edit task while recording")
-        self._context = replace(self._context, task_text=task_text)
+        self._context = replace(self._context, task_text=task_text, task_details=task_details)
 
     async def start_episode(self, operator: str = "") -> EpisodeInfo:
         """The one place real storage is opened: requires current
@@ -414,7 +415,9 @@ class RecordingSessionCoordinator:
         ready, _ = self._readiness_check()
         if not ready or self._closing:
             raise CoordinatorBusyError("start was superseded while storage was opening")
-        episode = await service.start_episode(frozen_context.task_text, frozen_context.operator)
+        episode = await service.start_episode(
+            frozen_context.task_text, frozen_context.operator, frozen_context.task_details
+        )
         # Recheck readiness AND the service's own phase after the await:
         # start_episode can succeed at the storage level after something
         # else has already superseded this attempt (a source going stale,
