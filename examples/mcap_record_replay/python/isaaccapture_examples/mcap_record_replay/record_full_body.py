@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Record a live OpenXR full-body tracking session to an MCAP file.
+Record live FullBodyPose or SOMA body tracking to an MCAP file.
 
 ``CloudXRLauncher`` starts the CloudXR runtime and WSS proxy automatically —
 no separate terminal or pre-running headset daemon is needed. The pipeline in
 ``common.py`` wires ``FullBodySource`` and ``ControllersSource``, so
 ``TeleopSession`` records the ``full_body`` and ``controllers`` channels.
+SOMA records raw body payloads without FK; controllers are opt-in.
 
 Usage:
     python -m isaaccapture_examples.mcap_record_replay.record_full_body [duration_seconds] [output.mcap] [--accept-eula]
@@ -18,6 +19,7 @@ See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.ht
 """
 
 import argparse
+import math
 import sys
 import time
 from datetime import datetime
@@ -27,10 +29,17 @@ import numpy as np
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.deviceio import McapRecordingConfig
+from isaaccapture.deviceio import ControllerTracker
 from isaaccapture.retargeting_engine.tensor_types.indices import FullBodyInputIndex
 from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
 
-from .common import BODY_JOINT_NAMES, build_full_body_pipeline
+from .common import (
+    BODY_JOINT_NAMES,
+    add_body_arguments,
+    validate_body_arguments,
+    build_body_pipeline,
+    record_trackers,
+)
 
 
 def main(argv: list[str]) -> int:
@@ -39,8 +48,12 @@ def main(argv: list[str]) -> int:
         "duration", nargs="?", type=float, default=5.0, help="Recording duration (s)"
     )
     parser.add_argument("output", nargs="?", help="Output .mcap path")
+    add_body_arguments(parser)
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args(argv[1:])
+    validate_body_arguments(parser, args)
+    if not math.isfinite(args.duration) or args.duration <= 0:
+        parser.error("duration must be finite and positive")
 
     duration_s: float = args.duration
 
@@ -50,13 +63,31 @@ def main(argv: list[str]) -> int:
     else:
         out_dir = Path.cwd() / "recordings"
         out_dir.mkdir(exist_ok=True)
-        mcap_path = out_dir / f"full_body_{datetime.now():%Y%m%d_%H%M%S}.mcap"
+        prefix = (
+            f"soma_body_{args.soma_body_representation}"
+            if args.body_schema == "soma"
+            else "full_body"
+        )
+        mcap_path = out_dir / f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}.mcap"
 
     print(f"[record] writing {mcap_path} for {duration_s:.1f}s")
 
+    if args.body_schema == "soma":
+        from .soma_body_common import create_tracker
+
+        tracker = create_tracker(
+            args.soma_body_collection_id, args.soma_body_representation
+        )
+        tracker_names = [(tracker, args.soma_body_collection_id)]
+        if args.controllers:
+            tracker_names.append((ControllerTracker(), "controllers"))
+        record_trackers(args, mcap_path, tracker_names)
+        print(f"[record] done: {mcap_path}")
+        return 0
+
     config = TeleopSessionConfig(
         app_name="McapFullBodyRecordExample",
-        pipeline=build_full_body_pipeline(),
+        pipeline=build_body_pipeline(args),
         mcap_config=McapRecordingConfig(str(mcap_path)),
     )
 
