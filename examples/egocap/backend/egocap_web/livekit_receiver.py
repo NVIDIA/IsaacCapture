@@ -30,10 +30,13 @@ from capture_server import protocol as p
 logger = logging.getLogger("isaaccapture.egocap.livekit_receiver")
 
 #: Frames a stream may hold between the SDK and the consumer before further frames are dropped and counted.
-DEFAULT_QUEUE_FRAMES = 8
+#: Decoded frames are megabytes each, so the queues are short and sized into the recorder's memory budget.
+DEFAULT_QUEUE_FRAMES = 2
 #: The SDK keeps only this many undelivered frames per track and drops the oldest silently; its drops show up
 #: as a jump in the publisher's frame id, which is counted below.
-_SDK_QUEUE_FRAMES = 16
+SDK_QUEUE_FRAMES = 2
+#: Frames one stream can pin at once with default queues: both queues plus the one the reader is converting.
+RECEIVER_FRAMES_PER_STREAM = DEFAULT_QUEUE_FRAMES + SDK_QUEUE_FRAMES + 1
 
 
 @dataclass(frozen=True)
@@ -108,7 +111,7 @@ class LiveKitFrameReceiver:
         room.on("track_unsubscribed", self._on_track_unsubscribed)
         room.on("participant_disconnected", self._on_participant_disconnected)
         room.on("disconnected", self._on_disconnected)
-        await room.connect(self._url, self._token)
+        _ = await room.connect(self._url, self._token)
         # Tracks published before we joined arrive here rather than through track_subscribed.
         for participant in room.remote_participants.values():
             for publication in participant.track_publications.values():
@@ -185,6 +188,10 @@ class LiveKitFrameReceiver:
         task = self._readers.pop(stream_id, None)
         if task is not None:
             task.cancel()
+        self._mark_lost(stream_id)
+
+    def _mark_lost(self, stream_id: int) -> None:
+        """Record that ``stream_id`` can deliver no more frames, without cancelling the calling reader task."""
         self.counters[stream_id].subscribed = False
         self._lost[stream_id].set()
 
@@ -215,7 +222,8 @@ class LiveKitFrameReceiver:
     async def _read(self, stream_id: int, track: rtc.Track) -> None:
         """Take frames of one track from the SDK, convert them, and queue them for the consumer."""
         counters = self.counters[stream_id]
-        video = rtc.VideoStream(track, capacity=_SDK_QUEUE_FRAMES, format=rtc.VideoBufferType.RGB24)
+        this_task = asyncio.current_task()
+        video = rtc.VideoStream(track, capacity=SDK_QUEUE_FRAMES, format=rtc.VideoBufferType.RGB24)
         try:
             async for event in video:
                 received_at = time.monotonic_ns()
@@ -241,6 +249,13 @@ class LiveKitFrameReceiver:
                 except asyncio.QueueFull:
                     # Never block the reader or skip silently: the consumer is behind, and the loss is counted.
                     counters.queue_overflow += 1
+        except Exception:
+            # A dead reader would leave the consumer waiting forever; marking the stream lost lets the take settle.
+            # Only the reader still registered for the stream may do so: a replaced one is already superseded.
+            logger.exception("LiveKit reader for stream %d failed", stream_id)
+            if self._readers.get(stream_id) is this_task:
+                self._readers.pop(stream_id)
+                self._mark_lost(stream_id)
         finally:
             await video.aclose()
 

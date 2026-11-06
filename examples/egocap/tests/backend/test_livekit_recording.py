@@ -525,3 +525,20 @@ def test_unrecordable_reason_names_a_stream_missing_geometry(field):
 
 def test_unrecordable_reason_ignores_streams_that_are_not_livekit():
     assert unrecordable_reason(_started(object(), _geometry(16))) is None
+
+
+@pytest.mark.parametrize(
+    "url", ["ws://127.0.0.1:8082", "ws://localhost:8082", "ws://[::1]:8082", "ws://127.0.0.2"]
+)
+def test_unrecordable_reason_accepts_a_loopback_capture_server(url):
+    assert unrecordable_reason(_started(_geometry(16)), url) is None
+
+
+@pytest.mark.parametrize("url", ["ws://192.168.1.20:8082", "ws://capture.lan:8082", "ws://[2001:db8::1]:8082"])
+def test_unrecordable_reason_refuses_a_capture_server_on_another_host(url):
+    reason = unrecordable_reason(_started(_geometry(16)), url)
+    assert reason is not None and "CaptureServer on this machine" in reason and url in reason
+
+
+def test_a_remote_capture_server_does_not_affect_a_session_without_livekit_streams():
+    assert unrecordable_reason(_started(object()), "ws://192.168.1.20:8082") is None

@@ -9,18 +9,20 @@ on this machine's monotonic clock, the same clock the tracking samples use. A st
 monotonic clock or with its processing time is not a capture time, so the feed stops with that reason instead of
 recording a guessed one. Arrival time is never used as capture time.
 
-This assumes the backend runs on the machine whose monotonic clock CaptureServer reports: tracking times come from
-CaptureServer, and the two agree only when both processes share a clock.
+Tracking times come from CaptureServer's monotonic clock, which agrees with this process's only when both run on
+one machine, so recording LiveKit video is refused unless CaptureServer's URL is a loopback address.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+from urllib.parse import urlparse
 
 from capture_server import protocol as p
 from recording_service import PixelFormat, VideoSample
@@ -39,6 +41,10 @@ _MAX_FRAME_AGE_S = 2.0
 _MAX_FRAME_LEAD_S = 0.05
 #: Readings per pair; the one read in the shortest span is the most trustworthy.
 _PAIR_ATTEMPTS = 3
+#: How long the room join may take before the take's start is refused.
+_JOIN_TIMEOUT_S = 15.0
+#: How long leaving the room may take before teardown moves on and lets the leave finish in the background.
+_LEAVE_TIMEOUT_S = 10.0
 
 
 class UnixClockMap:
@@ -83,17 +89,34 @@ class UnixClockMap:
         self._measured_at_ns = self._monotonic_ns()
 
 
-def unrecordable_reason(started: Any) -> str | None:
+def is_loopback_url(url: str) -> bool:
+    """Whether ``url`` names this machine: ``localhost`` or a loopback IP literal."""
+    host = urlparse(url).hostname or ""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> str | None:
     """Why a started session's LiveKit streams cannot all be recorded, naming the first that cannot; else None.
 
     A stream that cannot be recorded is never left out of a take silently: recording is refused until it is
-    removed from the streams file or made recordable.
+    removed from the streams file or made recordable. When ``capture_server_url`` is given and is not a
+    loopback address, every LiveKit stream is refused because the clocks cannot be assumed to be shared.
     """
     if started is None:
         return None
     for stream in started.streams:
         if not isinstance(stream, p.LiveKitCameraStream):
             continue
+        if capture_server_url is not None and not is_loopback_url(capture_server_url):
+            return (
+                f"LiveKit stream {stream.name!r}: recording needs CaptureServer on this machine "
+                f"(its clock must match tracking's), but it is at {capture_server_url!r}"
+            )
         if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
             return (
                 f"LiveKit stream {stream.name!r}: its timestamps are not a capture time, so it cannot be recorded"
@@ -143,7 +166,7 @@ class LiveKitRecordingFeed:
             task.cancel()
         for task in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                _ = await task
         self._tasks = []
 
     def _fail(self, reason: str) -> None:
@@ -226,10 +249,16 @@ class LiveKitRecordingSource:
         make_token: Callable[[str], str],
         *,
         first_frame_timeout_s: float = 10.0,
+        join_timeout_s: float = _JOIN_TIMEOUT_S,
+        leave_timeout_s: float = _LEAVE_TIMEOUT_S,
     ) -> None:
         self._recordable_streams = recordable_streams
         self._make_token = make_token
         self._first_frame_timeout_s = first_frame_timeout_s
+        self._join_timeout_s = join_timeout_s
+        self._leave_timeout_s = leave_timeout_s
+        # Room joins and leaves that outlived their deadline; held so they are not garbage-collected mid-flight.
+        self._background: set[asyncio.Future[None]] = set()
         self._streams: tuple[p.LiveKitCameraStream, ...] = ()
         self._receiver: LiveKitFrameReceiver | None = None
         self._feed: LiveKitRecordingFeed | None = None
@@ -246,7 +275,7 @@ class LiveKitRecordingSource:
         receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room))
         self._receiver = receiver
         try:
-            await receiver.start()
+            await self._join(receiver)
             for stream in self._streams:
                 frame = await asyncio.wait_for(
                     receiver.next_frame_or_lost(stream.stream_id), self._first_frame_timeout_s
@@ -264,6 +293,51 @@ class LiveKitRecordingSource:
         except BaseException:
             await self.stop()
             raise
+
+    async def _join(self, receiver: LiveKitFrameReceiver) -> None:
+        """Run ``receiver.start()`` with a deadline on the wait, never on the join itself.
+
+        Cancelling ``Room.connect`` can strand the SDK's room-event handshake, so a join that is late (or whose
+        caller is cancelled) keeps running and the receiver is retired once it finishes.
+        """
+        join = asyncio.ensure_future(receiver.start())
+        try:
+            _ = await asyncio.wait({join}, timeout=self._join_timeout_s)
+        except BaseException:
+            self._retire_after_join(join, receiver)
+            raise
+        if not join.done():
+            self._retire_after_join(join, receiver)
+            raise RuntimeError(f"joining the LiveKit room took longer than {self._join_timeout_s:g} s")
+        # A join that failed raises here, with the receiver still ours to stop.
+        join.result()
+
+    def _retire_after_join(self, join: asyncio.Future[None], receiver: LiveKitFrameReceiver) -> None:
+        """Hand an unfinished join to a background task that leaves the room as soon as the join ends."""
+        if join.done():
+            return
+        # This source no longer owns the receiver: stop() must not leave a room that is still being joined.
+        self._receiver = None
+        self._background.add(join)
+
+        def _leave(done: asyncio.Future[None]) -> None:
+            self._background.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logger.warning("late LiveKit room join failed: %s", done.exception())
+            self._track(asyncio.ensure_future(receiver.stop()), "leaving the room after a late join")
+
+        join.add_done_callback(_leave)
+
+    def _track(self, task: asyncio.Future[None], what: str) -> None:
+        """Keep a background task referenced until it ends, logging a failure instead of losing it."""
+        self._background.add(task)
+
+        def _done(finished: asyncio.Future[None]) -> None:
+            self._background.discard(finished)
+            if not finished.cancelled() and finished.exception() is not None:
+                logger.warning("%s failed: %s", what, finished.exception())
+
+        task.add_done_callback(_done)
 
     def start(self, ingress: RecordingIngress, on_failure: Callable[[str], None]) -> None:
         """Begin feeding the take's ingress with frames acquired from now on."""
@@ -284,4 +358,11 @@ class LiveKitRecordingSource:
         if feed is not None:
             await feed.stop()
         if receiver is not None:
-            await receiver.stop()
+            # A stalled room leave must not block retiring the take's ingress; it is left to finish on its own.
+            leave = asyncio.ensure_future(receiver.stop())
+            self._track(leave, "leaving the LiveKit room")
+            _ = await asyncio.wait({leave}, timeout=self._leave_timeout_s)
+            if not leave.done():
+                logger.warning(
+                    "leaving the LiveKit room took longer than %g s; continuing teardown", self._leave_timeout_s
+                )
