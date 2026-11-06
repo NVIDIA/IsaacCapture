@@ -59,6 +59,17 @@ public:
     /// True once after a (re)connection or a drop that needs a fresh keyframe.
     bool take_keyframe_request();
 
+    /// Send to host:port from now on (empty host stops sending). Whatever is queued is discarded, the current
+    /// connection is cut, and the new destination starts at a keyframe. Safe to call from any thread.
+    void set_target(const std::string& host, std::uint16_t port);
+    std::string host() const;
+    std::uint16_t port() const;
+    /// Both connections to the current destination are up.
+    bool connected() const
+    {
+        return m_connected.load();
+    }
+
     std::uint64_t sent() const
     {
         return m_sent.load();
@@ -73,7 +84,9 @@ private:
     void control_loop(int fd);
     void run_control(int fd);
     /// Connects without blocking past a stop request; \p slot (0 data, 1 control) publishes the fd to the destructor.
-    bool connect_once(int& fd, int slot, std::string& why);
+    bool connect_once(
+        int& fd, int slot, const std::string& host, std::uint16_t port, std::uint64_t generation, std::string& why);
+    void current_target(std::string& host, std::uint16_t& port, std::uint64_t& generation) const;
     /// Drops every queued unit and waits for a keyframe, asking the encoder for one. Caller holds m_mutex.
     void flush_stale_locked();
     bool control_alive() const
@@ -82,6 +95,12 @@ private:
     }
 
     DirectSenderConfig m_config;
+    mutable std::mutex m_target_mutex;
+    std::string m_host; ///< guarded by m_target_mutex
+    std::uint16_t m_port = 0; ///< guarded by m_target_mutex
+    std::atomic<bool> m_has_target{ false };
+    std::atomic<std::uint64_t> m_target_generation{ 0 };
+    std::atomic<bool> m_connected{ false };
     std::thread m_thread;
     std::mutex m_mutex;
     std::condition_variable m_wake;

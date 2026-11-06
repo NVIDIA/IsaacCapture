@@ -33,8 +33,14 @@ endif()
 if(BUILD_VIDEO_STAGE)
     add_subdirectory(video_stage)
 elseif(BUILD_PLUGIN_SENSING)
-    # The SENSING plugin sends AVS1 records to the video stage and needs only its record codec.
+    # The SENSING plugin sends AVS1 records to the video stage and needs only its record codec and sender.
     add_subdirectory(video_stage/wire)
+    add_subdirectory(video_stage/sender)
+endif()
+
+# The camera producer's management channel, also used by the mock producer.
+if(BUILD_PLUGIN_SENSING OR BUILD_VIDEO_STAGE)
+    add_subdirectory(sensing_control)
 endif()
 
 if(BUILD_PLUGINS)

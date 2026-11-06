@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "direct_sender.hpp"
+#include "inc/video_stage/direct_sender.hpp"
 
 #include <arpa/inet.h>
 #include <log_bridge/logger.hpp>
@@ -69,7 +69,8 @@ bool send_all(int fd, const uint8_t* data, std::size_t size)
 
 } // namespace
 
-DirectSender::DirectSender(const DirectSenderConfig& config) : m_config(config)
+DirectSender::DirectSender(const DirectSenderConfig& config)
+    : m_config(config), m_host(config.host), m_port(config.port), m_has_target(!config.host.empty())
 {
     m_thread = std::thread(&DirectSender::run, this);
 }
@@ -102,8 +103,58 @@ void DirectSender::flush_stale_locked()
     m_keyframe_requested = true;
 }
 
+void DirectSender::set_target(const std::string& host, uint16_t port)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_target_mutex);
+        m_host = host;
+        m_port = host.empty() ? 0 : port;
+        m_has_target = !host.empty();
+        ++m_target_generation;
+    }
+    {
+        // Whatever waits was meant for the old destination, and the new one needs a keyframe first.
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_queue.clear();
+        m_queued_bytes = 0;
+        m_need_keyframe = true;
+        m_keyframe_requested = true;
+    }
+    {
+        // A connect, send or receive in progress is for the old destination: cut it so the worker moves on.
+        std::lock_guard<std::mutex> lock(m_fd_mutex);
+        for (const int fd : m_fds)
+            if (fd >= 0)
+                ::shutdown(fd, SHUT_RDWR);
+    }
+    m_wake.notify_all();
+}
+
+std::string DirectSender::host() const
+{
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    return m_host;
+}
+
+uint16_t DirectSender::port() const
+{
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    return m_port;
+}
+
+void DirectSender::current_target(std::string& host, uint16_t& port, uint64_t& generation) const
+{
+    std::lock_guard<std::mutex> lock(m_target_mutex);
+    host = m_host;
+    port = m_port;
+    generation = m_target_generation;
+}
+
 void DirectSender::submit(const EncodedVideoFrame& frame)
 {
+    // With no destination there is nothing to queue, and nothing to ask the encoder for.
+    if (!m_has_target.load())
+        return;
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_queue.empty() && std::chrono::steady_clock::now() - m_queue.front().enqueued > m_config.max_queue_age)
         flush_stale_locked();
@@ -141,13 +192,14 @@ bool DirectSender::take_keyframe_request()
     return m_keyframe_requested.exchange(false);
 }
 
-bool DirectSender::connect_once(int& fd, int slot, std::string& why)
+bool DirectSender::connect_once(
+    int& fd, int slot, const std::string& host, uint16_t port, uint64_t generation, std::string& why)
 {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* found = nullptr;
-    if (::getaddrinfo(m_config.host.c_str(), std::to_string(m_config.port).c_str(), &hints, &found) != 0)
+    if (::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &found) != 0)
     {
         why = "cannot resolve the address";
         return false;
@@ -176,7 +228,7 @@ bool DirectSender::connect_once(int& fd, int slot, std::string& why)
         {
             // Poll in short slices so a stop request is noticed within 100 ms.
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            while (!m_stopping)
+            while (!m_stopping && m_target_generation.load() == generation)
             {
                 pollfd pfd{ s, POLLOUT, 0 };
                 const int n = ::poll(&pfd, 1, 100);
@@ -207,7 +259,7 @@ bool DirectSender::connect_once(int& fd, int slot, std::string& why)
         {
             why = std::strerror(errno);
         }
-        if (ok && !m_stopping)
+        if (ok && !m_stopping && m_target_generation.load() == generation)
         {
             ::fcntl(s, F_SETFL, ::fcntl(s, F_GETFL, 0) & ~O_NONBLOCK);
             fd = s;
@@ -288,6 +340,7 @@ void DirectSender::run()
     bool logged_failure = false;
     std::chrono::steady_clock::time_point last_failure_log;
     std::thread control;
+    uint64_t connected_generation = 0;
     const auto close_connection = [&]
     {
         if (control_fd >= 0)
@@ -302,6 +355,7 @@ void DirectSender::run()
             ::close(control_fd);
         data_fd = control_fd = -1;
         m_fds[0] = m_fds[1] = -1;
+        m_connected = false;
     };
     while (true)
     {
@@ -310,12 +364,26 @@ void DirectSender::run()
             if (m_stop)
                 break;
         }
+        std::string host;
+        uint16_t port = 0;
+        uint64_t generation = 0;
+        current_target(host, port, generation);
+        if (data_fd >= 0 && generation != connected_generation)
+            close_connection(); // retargeted: leave the old destination
+        if (host.empty())
+        {
+            // No destination: idle until one is set.
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_wake.wait_for(lock, std::chrono::milliseconds(200), [this] { return m_stop; });
+            continue;
+        }
         if (data_fd < 0)
         {
             std::string why = "the hello could not be sent";
-            const bool up =
-                connect_once(data_fd, 0, why) && send_all(data_fd, reinterpret_cast<const uint8_t*>("DATA"), 4) &&
-                connect_once(control_fd, 1, why) && send_all(control_fd, reinterpret_cast<const uint8_t*>("CTRL"), 4);
+            const bool up = connect_once(data_fd, 0, host, port, generation, why) &&
+                            send_all(data_fd, reinterpret_cast<const uint8_t*>("DATA"), 4) &&
+                            connect_once(control_fd, 1, host, port, generation, why) &&
+                            send_all(control_fd, reinterpret_cast<const uint8_t*>("CTRL"), 4);
             if (!up)
             {
                 if (m_stopping)
@@ -323,13 +391,17 @@ void DirectSender::run()
                     close_connection();
                     break;
                 }
+                if (m_target_generation.load() != generation)
+                {
+                    close_connection(); // retargeted while connecting: the failure belongs to the old destination
+                    continue;
+                }
                 // Say so on the first failure and then every 30 s: a producer that cannot reach the PC is otherwise
                 // indistinguishable from one that never tried.
                 const auto now = std::chrono::steady_clock::now();
                 if (!logged_failure || now - last_failure_log >= std::chrono::seconds(30))
                 {
-                    logger()->warn(
-                        "cannot connect to {}:{}: {}; retrying every second", m_config.host, m_config.port, why);
+                    logger()->warn("cannot connect to {}:{}: {}; retrying every second", host, port, why);
                     logged_failure = true;
                     last_failure_log = now;
                 }
@@ -339,7 +411,9 @@ void DirectSender::run()
                 continue;
             }
             logged_failure = false;
-            logger()->info("connected to {}:{}", m_config.host, m_config.port);
+            connected_generation = generation;
+            m_connected = true;
+            logger()->info("connected to {}:{}", host, port);
             control = std::thread(&DirectSender::control_loop, this, control_fd);
             // The PC needs a keyframe first: drop anything queued before the connection and ask for one.
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -359,7 +433,7 @@ void DirectSender::run()
             {
                 if (!control_alive())
                 {
-                    logger()->warn("{}:{} closed the control connection; reconnecting", m_config.host, m_config.port);
+                    logger()->warn("{}:{} closed the control connection; reconnecting", host, port);
                     lock.unlock();
                     close_connection();
                 }
@@ -380,7 +454,8 @@ void DirectSender::run()
             ++m_sent;
             continue;
         }
-        logger()->warn("send to {}:{} failed; reconnecting", m_config.host, m_config.port);
+        if (m_target_generation.load() == generation)
+            logger()->warn("send to {}:{} failed; reconnecting", host, port);
         close_connection();
     }
     close_connection();

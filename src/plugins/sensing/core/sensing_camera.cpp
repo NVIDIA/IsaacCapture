@@ -94,6 +94,7 @@ SensingCamera::SensingCamera(const SensingConfig& config,
 
         Stream stream;
         stream.sensor_id = found->id;
+        stream.track = stream_config.livekit_track;
         stream.livekit = std::make_unique<LiveKitVideoOutput>(m_livekit->publish_video(spec), output);
         m_streams.push_back(std::move(stream));
 
@@ -134,6 +135,35 @@ void SensingCamera::update()
         if (stream.livekit->failed())
             throw std::runtime_error("sensor " + std::to_string(stream.sensor_id) + ": " + stream.livekit->failure());
     }
+}
+
+std::vector<StreamFigures> SensingCamera::figures() const
+{
+    std::vector<StreamFigures> out;
+    for (const auto& stream : m_streams)
+    {
+        StreamFigures figures;
+        figures.track = stream.track;
+        figures.sensor_id = stream.sensor_id;
+        figures.frames = stream.frame_count;
+        figures.published = stream.livekit->stats().published;
+        figures.direct = stream.livekit->direct_status();
+        out.push_back(std::move(figures));
+    }
+    return out;
+}
+
+bool SensingCamera::set_direct_target(const std::string& track, const std::string& host, uint16_t port)
+{
+    for (auto& stream : m_streams)
+    {
+        if (stream.track == track)
+        {
+            stream.livekit->set_direct_target(host, port);
+            return true;
+        }
+    }
+    return false;
 }
 
 void SensingCamera::flush()

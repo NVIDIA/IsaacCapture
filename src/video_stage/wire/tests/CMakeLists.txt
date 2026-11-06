@@ -4,6 +4,7 @@
 add_executable(video_stage_wire_tests
     test_avs1.cpp
     test_clock_exchange.cpp
+    test_h264_access_units.cpp
     test_h264_sps.cpp
 )
 
