@@ -42,12 +42,33 @@ Do not run both stacks against the same cameras.
 | Jetson AGX Orin Developer Kit | Runs L4T R39.2.1 (JetPack 7.2.1) and has its own power supply, which this guide does not cover. |
 | SENSING SG8A board | The GMSL carrier. On this rig it is installed inside the devkit's enclosure at the front edge. Its two quad receptacles and a white 2-pin power connector face out, beside the devkit's three front-panel buttons and LED. |
 | Carrier power supply | A 12 V adapter, plus a black cable with a female DC barrel jack on one end and a white 2-pin connector (red and black wires) on the other. |
-| Cameras | SHW5G modules. Each has one round FAKRA Z coax jack on the rear. |
+| Cameras | SHW5G modules. Each has one coax jack on the rear (the vendor lists an Amphenol FAKRA Z connector). |
 | Camera cables | Two 2 m black coax cables (labelled "2米", Chinese for 2 m), one per camera, each with a teal FAKRA connector and grey strain relief at the camera end. |
 | Breakout harness | One teal quad plug (four coax sockets in a 2x2 block) with two coax cables leading to two single teal FAKRA jacks. |
 
 This guide assumes the SG8A board is already installed in the devkit. Installing or removing it is covered by
 SENSING's hardware manual, not here.
+
+### What the parts look like
+
+![The parts laid out: two cameras on a bracket with their labelled 2 m cables, loose teal connectors, jumper wires with a barrel plug, and the devkit at the lower right](images/setup-parts-overview.jpg)
+
+*The parts laid out. The two cameras sit on a bracket, each with a labelled 2 m cable ending in a teal connector. Loose
+teal connectors and a cable with a barrel plug lie nearby, and the devkit is at the lower right.*
+
+![The breakout harness: two single teal FAKRA jacks and one teal quad plug with four coax sockets](images/setup-harness-connectors.jpg)
+
+*The breakout harness. The two single teal FAKRA jacks each take one camera cable. The teal quad plug, with its four
+coax sockets in a 2x2 block, goes into the carrier.*
+
+![An SHW5G camera in a mounting bracket, seen from the lens end](images/setup-camera-front.jpg)
+
+*An SHW5G camera in a mounting bracket, seen from the lens end.*
+
+![The rear of a camera: one round coax jack recessed in the bracket](images/setup-camera-rear.jpg)
+
+*The rear of the camera: one round coax jack, recessed in the bracket on this rig. The camera cable's teal connector
+mates here.*
 
 ### The connectors, end to end
 
@@ -55,7 +76,7 @@ Every connector in the camera chain is teal, the FAKRA code for Z. Each connecti
 
 | Connection | One side | Other side |
 | --- | --- | --- |
-| Camera to camera cable | The camera's rear FAKRA Z jack | The camera cable's teal FAKRA connector with grey strain relief |
+| Camera to camera cable | The camera's rear coax jack | The camera cable's teal FAKRA connector with grey strain relief |
 | Camera cable to harness | The camera cable's other end | One of the harness's two single teal FAKRA jacks (each a square teal housing with a centre contact; one has a purple tab) |
 | Harness to carrier | The harness's teal quad plug (2x2 sockets) | A black latched quad receptacle on the SG8A (four round coax pins in a 2x2 block) |
 | Carrier power | The carrier's white 2-pin connector | The black power cable, whose barrel jack takes the 12 V adapter's plug |
@@ -105,6 +126,23 @@ SG8A CN1 receptacle (left) ◄── teal quad plug ── harness ─┬─ sin
    adapter's plug.
 5. **Power on.** Plug in the carrier's 12 V supply first, then power on the devkit. This is the order used on this
    rig. Green LEDs light on the board when it is powered.
+
+![The front edge of the devkit: three buttons and an LED, and the SG8A board's two empty quad receptacles, with the white 2-pin power connector at the left edge](images/setup-carrier-front-panel.jpg)
+
+*The carrier end before connecting. The devkit's front edge has three buttons and an LED. The SG8A board's two quad
+receptacles sit beside them, each a latched black housing with four coax pins in a 2x2 block. CN1 is on the left and
+CN2 on the right. The white 2-pin power connector, with red and black wires, is at the left edge.*
+
+![The harness's teal quad plug seated in the left receptacle, with two coax cables leaving it; the right receptacle is empty](images/setup-harness-in-cn1.jpg)
+
+*The connected harness. The teal quad plug is seated in the left receptacle (CN1), with two coax cables leaving it. The
+right receptacle (CN2) stays empty.*
+
+![A side view of the unit showing the SG8A board with its two quad receptacles, its white 2-pin power connector, and jumper wires on a 40-pin header](images/setup-carrier-inside-devkit.jpg)
+
+*A side view of the unit with its side open. The SG8A board sits at the front, with its quad receptacles at the bottom
+and the white 2-pin power connector beside them. The coloured wires on the right are plugged into a 40-pin header; see
+"Not verified" below.*
 
 With this harness in CN1 the two cameras come up as links 2 and 3 (COAX2 and COAX3, which the vendor documents as
 CAM2 and CAM3). The cameras need to be on those contacts; the harness is what puts them there.
