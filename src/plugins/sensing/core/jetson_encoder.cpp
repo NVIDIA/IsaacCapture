@@ -8,6 +8,7 @@
 #include <linux/videodev2.h>
 
 #include <NvVideoEncoder.h>
+#include <cerrno>
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
@@ -56,6 +57,8 @@ struct JetsonEncoder::Impl
     std::mutex mutex;
     std::deque<EncodedUnit> ready;
     bool eos_reached = false;
+    /// Why the capture thread stopped early; guarded by mutex.
+    std::string error;
     bool eos_sent = false; // driving thread only
 
     ~Impl()
@@ -67,13 +70,24 @@ struct JetsonEncoder::Impl
         delete encoder;
     }
 
+    // The capture thread stops after a failure; poll() reports it so the sender does not look healthy.
+    void fail(const char* what)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (error.empty())
+            error = what;
+    }
+
     // Capture-plane dequeue callback; runs on the encoder's own thread.
     static bool capture_dq(struct v4l2_buffer* v4l2_buf, NvBuffer* buffer, NvBuffer* /*shared*/, void* arg)
     {
         auto* self = static_cast<Impl*>(arg);
 
         if (!v4l2_buf)
+        {
+            self->fail("the capture plane returned no buffer");
             return false;
+        }
 
         if (buffer && buffer->planes[0].bytesused > 0)
         {
@@ -99,7 +113,10 @@ struct JetsonEncoder::Impl
         }
 
         if (self->encoder->capture_plane.qBuffer(*v4l2_buf, nullptr) < 0)
+        {
+            self->fail("requeueing a capture buffer failed");
             return false;
+        }
 
         return true;
     }
@@ -217,7 +234,12 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     }
     else if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 0) < 0)
     {
-        return false; // encoder still busy; drop this frame rather than block
+        // The plane logs every failure but EAGAIN, which is the non-blocking "no input buffer free yet": drop this
+        // frame rather than block. Any other errno is the device failing, which poll() reports.
+        const int err = errno;
+        if (err != EAGAIN && err != EINTR)
+            m_impl->fail((std::string("dequeueing an input buffer failed: ") + std::strerror(err)).c_str());
+        return false;
     }
 
     // An input buffer is ours now, so convert: a frame that would be dropped costs no conversion. A
@@ -252,7 +274,11 @@ EncodedUnit JetsonEncoder::poll()
 {
     std::lock_guard<std::mutex> lock(m_impl->mutex);
     if (m_impl->ready.empty())
+    {
+        if (!m_impl->error.empty())
+            throw std::runtime_error("JetsonEncoder: " + m_impl->error);
         return {};
+    }
 
     auto out = std::move(m_impl->ready.front());
     m_impl->ready.pop_front();

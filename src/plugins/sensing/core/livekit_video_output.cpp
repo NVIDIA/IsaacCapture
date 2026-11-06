@@ -16,6 +16,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <variant>
 
 namespace plugins
 {
@@ -146,15 +147,21 @@ struct LiveKitVideoOutput::Impl
     }
 
     // Polling thread.
-    void submit(const FrameView& view)
+    void submit(const CaptureFrame& frame)
     {
+        const auto* rgba = std::get_if<CudaRgbaPixels>(&frame.pixels);
+        if (rgba == nullptr)
+        {
+            fail("LiveKit output: this pixel type has no encoder input yet");
+            return;
+        }
         ++offered;
         if (failed_flag.load())
             return;
 
         // Pace on the capture clock, so poll jitter does not drop a frame that is due. A tenth of a
         // period of slack lets 60 fps capture feed a 30 fps track every second capture.
-        if (have_last && view.timestamp_ns < last_accepted_ns + period_ns * 9 / 10)
+        if (have_last && frame.monotonic_ns < last_accepted_ns + period_ns * 9 / 10)
         {
             ++paced_out;
             return;
@@ -183,16 +190,16 @@ struct LiveKitVideoOutput::Impl
 
             // Complete before returning: the camera may rewrite its slot at the second following poll.
             Slot& slot = slots[target];
-            check_cuda(cudaMemcpy2DAsync(slot.ptr, slot.pitch, reinterpret_cast<const void*>(view.ptr), view.pitch,
-                                         static_cast<size_t>(config.source_width) * 4, config.source_height,
-                                         cudaMemcpyDeviceToDevice, snapshot_stream),
+            check_cuda(cudaMemcpy2DAsync(slot.ptr, slot.pitch, reinterpret_cast<const void*>(rgba->device_ptr),
+                                         rgba->pitch_bytes, static_cast<size_t>(config.source_width) * 4,
+                                         config.source_height, cudaMemcpyDeviceToDevice, snapshot_stream),
                        "snapshot copy");
             check_cuda(cudaStreamSynchronize(snapshot_stream), "snapshot sync");
 
-            slot.timestamp_ns = view.timestamp_ns;
-            slot.unix_ns = view.unix_ns;
-            slot.capture_tsc = view.capture_tsc;
-            slot.sequence = view.sequence;
+            slot.timestamp_ns = frame.monotonic_ns;
+            slot.unix_ns = frame.unix_ns;
+            slot.capture_tsc = frame.sensor_time;
+            slot.sequence = frame.sequence;
             pending = target;
         }
         catch (const std::exception& e)
@@ -202,7 +209,7 @@ struct LiveKitVideoOutput::Impl
         }
         ++snapshots;
         have_last = true;
-        last_accepted_ns = view.timestamp_ns;
+        last_accepted_ns = frame.monotonic_ns;
         wake.notify_one();
     }
 
@@ -315,8 +322,7 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        in_encoder.push_back(
-            { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
+        in_encoder.push_back({ static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
         // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
         // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
         // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
@@ -372,10 +378,9 @@ struct LiveKitVideoOutput::Impl
 
     struct FrameMeta
     {
-        int64_t stamp_us = 0;
         uint32_t sequence = 0;
         uint64_t capture_tsc = 0;
-        /// Unix time of the same instant as stamp_us, for the frame's application timestamp.
+        /// Unix time when the frame was handed over, for the frame's application timestamp.
         uint64_t unix_us = 0;
     };
 
@@ -448,9 +453,9 @@ LiveKitVideoOutput::LiveKitVideoOutput(std::unique_ptr<VideoTrackSink> sink, con
 
 LiveKitVideoOutput::~LiveKitVideoOutput() = default;
 
-void LiveKitVideoOutput::submit(const FrameView& view)
+void LiveKitVideoOutput::submit(const CaptureFrame& frame)
 {
-    m_impl->submit(view);
+    m_impl->submit(frame);
 }
 
 LiveKitOutputStats LiveKitVideoOutput::stats() const

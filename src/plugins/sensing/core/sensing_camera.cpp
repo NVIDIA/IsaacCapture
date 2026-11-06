@@ -4,6 +4,7 @@
 #include "sensing_camera.hpp"
 
 #include "livekit_video_output.hpp"
+#include "sipl_capture.hpp"
 
 #include <sensing_livekit/livekit_session.hpp>
 
@@ -35,7 +36,7 @@ SiplConfig make_sipl_config(const SensingConfig& config)
     return sipl;
 }
 
-LiveKitOutputConfig make_output_config(const SensingConfig& config, const SensorInfo& sensor)
+LiveKitOutputConfig make_output_config(const SensingConfig& config, const CameraInfo& sensor)
 {
     LiveKitOutputConfig output;
     output.source_width = sensor.width;
@@ -57,8 +58,8 @@ SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<Stre
     if (streams.empty())
         throw std::runtime_error("SensingCamera: no streams requested");
 
-    m_camera = std::make_unique<SiplCamera>(make_sipl_config(config));
-    const auto& sensors = m_camera->sensors();
+    m_camera = std::make_unique<SiplCapture>(make_sipl_config(config));
+    const auto& sensors = m_camera->cameras();
 
     // Everything that needs no network is checked first, so a bad name or divisor fails before any
     // connection is made.
@@ -68,7 +69,7 @@ SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<Stre
         if (!tracks.insert(stream_config.livekit_track).second)
             throw std::runtime_error("LiveKit track name '" + stream_config.livekit_track + "' is used twice");
         const auto found = std::find_if(
-            sensors.begin(), sensors.end(), [&](const SensorInfo& s) { return s.id == stream_config.sensor_id; });
+            sensors.begin(), sensors.end(), [&](const CameraInfo& s) { return s.id == stream_config.sensor_id; });
         if (found == sensors.end())
         {
             std::ostringstream oss;
@@ -87,7 +88,7 @@ SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<Stre
     for (const auto& stream_config : streams)
     {
         const auto found = std::find_if(
-            sensors.begin(), sensors.end(), [&](const SensorInfo& s) { return s.id == stream_config.sensor_id; });
+            sensors.begin(), sensors.end(), [&](const CameraInfo& s) { return s.id == stream_config.sensor_id; });
         const LiveKitOutputConfig output = make_output_config(config, *found);
 
         PublishSpec spec;
@@ -123,7 +124,7 @@ void SensingCamera::update()
 
     for (auto& stream : m_streams)
     {
-        auto view = m_camera->latest(stream.sensor_id);
+        auto view = m_camera->acquire_latest(stream.sensor_id);
         if (view.has_value() && (!stream.have_last_sequence || view->sequence != stream.last_sequence))
         {
             if (stream.have_last_sequence && view->sequence > stream.last_sequence + 1)
