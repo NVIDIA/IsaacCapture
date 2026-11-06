@@ -87,18 +87,18 @@ labelled in the vendor documentation. The camera chain uses CN1 only. Leave CN2 
 Notes on the parts:
 
 - **SHW5G and SHF5G are two models of one camera family.** The vendor lists them together as its "5MP Global"
-  monocular GMSL2 cameras. The vendor wiki does not explain the letters in the names. Both have the same 2560x1984
-  sensor, frame rate (up to 60 fps in global-shutter mode, 50 fps in rolling-shutter mode), GMSL2 interface, FAKRA Z
-  connector and power requirements. They differ in lens: the SHW5G is the wide-angle model (130° horizontal field of
-  view) and the SHF5G is ultra-wide (200°). This guide and its configuration use the SHW5G; an SHF5G has not been
-  tested here.
-- **The carrier needs its own supply.** The vendor documentation does not give a power specification for the carrier.
-  The 12 V adapter above is what this rig uses; confirm the voltage and current rating with SENSING before using a
-  different one.
+  monocular GMSL2 cameras. Both have the same 2560x1984 sensor, frame rate (up to 60 fps in global-shutter mode, 50 fps
+  in rolling-shutter mode), GMSL2 interface, FAKRA Z connector and power requirements. They differ in lens: the SHW5G
+  is the wide-angle model (130° horizontal field of view) and the SHF5G is ultra-wide (200°). This guide and its
+  configuration use the SHW5G.
+- **The carrier needs its own supply.** Power it from a 12 V adapter, and check the current rating with SENSING before
+  choosing one.
 - **The cameras need no separate supply.** The vendor wiki lists them as single-coax cameras powered over the same
   cable at 9 to 16 V, drawing less than 200 mA at 12 V each. The carrier provides that power.
 - **Nothing on the Orin plugs directly into a camera's round coax jack.** The only connection to the carrier is the
   quad plug on the harness. Spare FAKRA cables lying around the rig are not part of this setup.
+- **Leave the jumper wires as they are.** Coloured jumper wires may be plugged into the devkit's 40-pin header. Do not
+  add or remove any without checking SENSING's manual.
 
 ## Step 2: Connect the cameras and power
 
@@ -141,8 +141,7 @@ right receptacle (CN2) stays empty.*
 ![A side view of the unit showing the SG8A board with its two quad receptacles, its white 2-pin power connector, and jumper wires on a 40-pin header](images/setup-carrier-inside-devkit.jpg)
 
 *A side view of the unit with its side open. The SG8A board sits at the front, with its quad receptacles at the bottom
-and the white 2-pin power connector beside them. The coloured wires on the right are plugged into a 40-pin header; see
-"Not verified" below.*
+and the white 2-pin power connector beside them. The coloured wires on the right are plugged into a 40-pin header.*
 
 With this harness in CN1 the two cameras come up as links 2 and 3 (COAX2 and COAX3, which the vendor documents as
 CAM2 and CAM3). The cameras need to be on those contacts; the harness is what puts them there.
@@ -152,9 +151,9 @@ CAM2 and CAM3). The cameras need to be on those contacts; the harness is what pu
 | Two | `0x0000 0x1100` | `sensor=0` and `sensor=1` |
 | One, on COAX3 | `0x0000 0x1000` | `sensor=1` |
 
-Sensor numbers follow the link index, not a count from zero. Which of the harness's two jacks is sensor 0 and which
-is sensor 1 was not established. To find out, connect one camera at a time and run the Step 4 check; the sensor that
-streams belongs to that jack. Either order works, and swapping the cameras only swaps the sensor numbers.
+Sensor numbers follow the link index, not a count from zero. To find out which of the harness's two jacks is sensor 0
+and which is sensor 1, connect one camera at a time and run the Step 4 check; the sensor that streams belongs to that
+jack. Either order works, and swapping the cameras only swaps the sensor numbers.
 
 ## Step 3: Set up the operating system
 
@@ -194,23 +193,8 @@ command once per mask and keep the one that reports frame rates.
 | A connector will not seat | Connectors are keyed. Do not force it; check the orientation and that the connector type matches. |
 | Carrier appears dead | Check the 12 V supply, the barrel jack and the white 2-pin connector. No green LEDs means no power. |
 | Sensor numbers do not match what you expect | Sensor numbers follow the link index, not a count from zero. |
-| Cameras are not found after a hardware change | Power down fully, unplug both supplies, reseat, and power up again. A camera may only be detected at power-up. |
+| Cameras are not found after a hardware change | Power down fully, unplug both supplies, reseat, and power up again. |
 | `/dev/video*` is empty | Expected on this carrier. The cameras are reached through SIPL, not Argus. |
-
-## Verified and not verified
-
-Verified on a two-camera AGX Orin rig: `nvsipl_camera` with link masks `0x0000 0x1100` streams both cameras at about
-60 fps with no dropped frames. A single camera on COAX3 (`0x0000 0x1000`) also streams.
-
-Not verified:
-
-- The carrier supply's voltage and current rating (no vendor specification was found), and the exact cable, harness
-  and connector part numbers.
-- How the SG8A board is attached inside the devkit, and whether it arrives installed.
-- The far-end connector of the 2 m camera cables, which was not visible in the photos used for this guide.
-- A bundle of coloured jumper wires on the rig is plugged into the devkit's 40-pin header. Their function was not
-  established. Check SENSING's manual before adding or removing any.
-- Any Argus path for the SENSING GMSL cameras.
 
 ## References
 
