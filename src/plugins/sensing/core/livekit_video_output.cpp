@@ -485,7 +485,7 @@ struct LiveKitVideoOutput::Impl
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
-        frame.timestamp_us = static_cast<uint64_t>(meta.stamp_us);
+        frame.timestamp_us = static_cast<uint64_t>(stamp_us);
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
