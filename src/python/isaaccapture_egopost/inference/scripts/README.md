@@ -166,6 +166,14 @@ pointed at different roots.
 | `--max_seconds` | none (full video) | Limit inference to the first N seconds of each video |
 | `--frame_batch_size` | none (single batch = whole clip) | Stream video in batches of this many frames to limit decoded-image memory. **Disables overlay rendering when set** because batch images are released after inference. Predictions are retained for the complete clip; adaptive smoothing also retains bboxes and cameras and runs once after all batches, before QC and exports. With live RT-DETR `bbox_smoothing: true`, this option is rejected because bbox filtering must finish before cropping. With `bbox_smoothing: false` and `tracking: true`, tracking runs independently within each batch. For whole-clip tracking with bounded decoding memory, generate boxes with `run_hand_detector.py` first and use `saved_bboxes.yaml` for reconstruction. |
 
+## Exit codes
+
+| Code | Description |
+| ---- | ----------- |
+| `0` | Success |
+| `1` | Runtime failure, such as GPU failure, codec failure, and other unexpected errors |
+| `2` | Invalid inputs, such as invalid arguments, input video not found, read-only output folder, invalid camera intrinsics or detector config |
+
 ## Output layout
 
 ```
