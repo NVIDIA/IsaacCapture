@@ -34,6 +34,7 @@ LiveKitOutputConfig make_output_config(const SensingConfig& config, const Camera
     output.input = sensor.pixels;
     output.gop = config.gop;
     output.full_range = config.full_range;
+    output.timestamp_basis = config.livekit.timestamp_basis;
     return output;
 }
 

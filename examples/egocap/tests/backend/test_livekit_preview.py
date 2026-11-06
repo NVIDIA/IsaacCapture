@@ -53,7 +53,7 @@ def test_token_header_is_hs256_jwt():
     assert header == {"alg": "HS256", "typ": "JWT"}
 
 
-def test_token_claims_name_issuer_validity_window_and_subscribe_only_grant():
+def test_token_claims_name_issuer_validity_window_and_data_only_publish_grant():
     _, claims, _, _ = _decode(
         subscriber_token(api_key=KEY, api_secret=SECRET, room="sensing-preview", now=1000, ttl_s=60)
     )
@@ -66,7 +66,7 @@ def test_token_claims_name_issuer_validity_window_and_subscribe_only_grant():
         "roomJoin": True,
         "canSubscribe": True,
         "canPublish": False,
-        "canPublishData": False,
+        "canPublishData": True,
     }
 
 

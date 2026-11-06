@@ -5,6 +5,7 @@
 
 #include "jetson_encoder.hpp"
 #include "rgba_box_downscale.cuh"
+#include "sensor_clock.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <thread>
+#include <time.h>
 #include <variant>
 
 namespace plugins
@@ -50,6 +52,7 @@ struct LiveKitVideoOutput::Impl
         size_t pitch = 0;
         uint64_t timestamp_ns = 0;
         uint64_t unix_ns = 0;
+        uint64_t capture_monotonic_ns = 0;
         uint64_t capture_tsc = 0;
         uint64_t sequence = 0;
     };
@@ -174,6 +177,19 @@ struct LiveKitVideoOutput::Impl
             return;
         }
 
+        if (config.timestamp_basis == TimestampBasis::SensorCaptureMonotonic)
+        {
+            try
+            {
+                frame.capture_monotonic_ns = capture_time_ns(frame);
+            }
+            catch (const std::exception& e)
+            {
+                fail(e.what());
+                return;
+            }
+        }
+
         if (dma)
         {
             const uint64_t accepted_ns = frame.monotonic_ns;
@@ -226,6 +242,7 @@ struct LiveKitVideoOutput::Impl
 
             slot.timestamp_ns = frame.monotonic_ns;
             slot.unix_ns = frame.unix_ns;
+            slot.capture_monotonic_ns = frame.capture_monotonic_ns;
             slot.capture_tsc = frame.sensor_time;
             slot.sequence = frame.sequence;
             pending = target;
@@ -358,7 +375,8 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000);
+        track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc,
+                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns, slot.unix_ns));
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
@@ -375,7 +393,48 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time, frame.unix_ns / 1000);
+        track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time,
+                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns, frame.unix_ns));
+    }
+
+    /// Polling thread: the frame's capture event on CLOCK_MONOTONIC. The sensor clock's anchor is built from the
+    /// first frame's declared domain.
+    uint64_t capture_time_ns(const CaptureFrame& frame)
+    {
+        if (frame.sensor_domain == SensorTimeDomain::None || frame.sensor_time == 0)
+            throw std::runtime_error("LiveKit output: the camera backend reports no sensor timestamp to publish");
+        if (!clock_map)
+        {
+            SensorClockMap::Config map;
+            map.domain = frame.sensor_domain;
+            if (frame.sensor_domain == SensorTimeDomain::GenericCounterTicks)
+                map.counter_hz = read_counter_hz();
+            const bool counter = frame.sensor_domain == SensorTimeDomain::GenericCounterTicks;
+            clock_map.emplace(map, counter ? SensorClockMap::PairReader(read_counter_pair) :
+                                             SensorClockMap::PairReader(read_raw_pair));
+        }
+        struct timespec now
+        {
+        };
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        const int64_t now_ns = static_cast<int64_t>(now.tv_sec) * 1'000'000'000LL + now.tv_nsec;
+        return static_cast<uint64_t>(
+            clock_map->to_monotonic_ns(frame.sensor_time, static_cast<int64_t>(frame.monotonic_ns), now_ns));
+    }
+
+    /// The application timestamp published with a frame, in microseconds.
+    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns, uint64_t unix_ns) const
+    {
+        switch (config.timestamp_basis)
+        {
+        case TimestampBasis::FrameReadyMonotonic:
+            return ready_monotonic_ns / 1000;
+        case TimestampBasis::SensorCaptureMonotonic:
+            return capture_monotonic_ns / 1000;
+        case TimestampBasis::ProcessingUnix:
+            return unix_ns / 1000;
+        }
+        throw std::logic_error("unknown timestamp basis");
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
@@ -412,7 +471,7 @@ struct LiveKitVideoOutput::Impl
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
-        frame.timestamp_us = static_cast<uint64_t>(meta.stamp_us);
+        frame.timestamp_us = static_cast<uint64_t>(stamp_us);
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
@@ -439,7 +498,7 @@ struct LiveKitVideoOutput::Impl
     {
         uint32_t sequence = 0;
         uint64_t capture_tsc = 0;
-        /// Unix time when the frame was handed over, for the frame's application timestamp.
+        /// The frame's application timestamp: capture time when publishing it, else processing-time Unix.
         uint64_t unix_us = 0;
     };
 
@@ -447,6 +506,7 @@ struct LiveKitVideoOutput::Impl
     uint32_t max_bitrate = 0;
 
     // Worker thread only.
+    std::optional<SensorClockMap> clock_map; ///< Polling thread only.
     std::deque<FrameMeta> in_encoder; ///< Submitted to the encoder, no unit back yet.
     bool keyframe_wanted = false;
     bool awaiting_keyframe = false;

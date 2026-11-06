@@ -6,9 +6,12 @@
 #include "rgba_to_nv12.cuh"
 
 #include <linux/videodev2.h>
+#include <log_bridge/logger.hpp>
 
 #include <NvVideoEncoder.h>
+#include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
@@ -46,6 +49,12 @@ struct JetsonEncoder::Impl
 {
     EncoderConfig config;
     NvVideoEncoder* encoder = nullptr;
+
+    // SENSING_ENCODER_TIMESTAMP_PROBE=1 logs the first units' returned stamps beside the last stamp submitted, to
+    // show whether the driver copies the OUTPUT stamp to the unit. Diagnostic only: nothing consumes the result.
+    const bool timestamp_probe = std::getenv("SENSING_ENCODER_TIMESTAMP_PROBE") != nullptr;
+    std::atomic<int64_t> last_submitted_us{ 0 };
+    std::atomic<int> probe_logged{ 0 };
 
     // DMA-BUF input: a wrapper per output buffer carrying the fd the encoder reads, and the lease that keeps the
     // capture buffer alive until the plane returns that index. Members destroy after ~Impl deleted the encoder.
@@ -133,6 +142,12 @@ struct JetsonEncoder::Impl
             unit.timestamp_ns = static_cast<int64_t>(v4l2_buf->timestamp.tv_sec) * 1000000000LL +
                                 static_cast<int64_t>(v4l2_buf->timestamp.tv_usec) * 1000LL;
             unit.keyframe = (v4l2_buf->flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
+            if (self->timestamp_probe && self->probe_logged.fetch_add(1) < 30)
+            {
+                isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
+                    ->info("[ts-probe] unit stamp_us={} last_submitted_us={}", unit.timestamp_ns / 1000,
+                           self->last_submitted_us.load());
+            }
             std::lock_guard<std::mutex> lock(self->mutex);
             self->ready.push_back(std::move(unit));
         }
@@ -300,6 +315,7 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     // Microsecond granularity is all a timeval carries, well below the frame interval.
     v4l2_buf.timestamp.tv_sec = static_cast<time_t>(timestamp_ns / 1000000000LL);
     v4l2_buf.timestamp.tv_usec = static_cast<suseconds_t>((timestamp_ns % 1000000000LL) / 1000LL);
+    m_impl->last_submitted_us.store(timestamp_ns / 1000);
 
     check(enc->output_plane.qBuffer(v4l2_buf, nullptr), "output qBuffer");
     return true;
@@ -332,6 +348,7 @@ bool JetsonEncoder::submit_dmabuf(int dmabuf_fd, int64_t timestamp_ns, FrameLeas
     v4l2_buf.m.planes[0].bytesused = 1;
     v4l2_buf.timestamp.tv_sec = static_cast<time_t>(timestamp_ns / 1000000000LL);
     v4l2_buf.timestamp.tv_usec = static_cast<suseconds_t>((timestamp_ns % 1000000000LL) / 1000LL);
+    m_impl->last_submitted_us.store(timestamp_ns / 1000);
 
     check(m_impl->encoder->output_plane.qBuffer(v4l2_buf, &input), "output qBuffer");
     m_impl->dma_leases[index] = std::move(lease);

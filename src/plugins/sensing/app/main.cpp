@@ -150,6 +150,11 @@ static void print_usage(const char* program_name)
         << "                            participant identity\n"
         << "  --livekit-fps=N           publication rate cap (default: 30)\n"
         << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
+        << "  --timestamp-basis=B       what each frame's timestamp is: monotonic_us (default) is this host's\n"
+        << "                            monotonic clock when the frame was ready to encode; capture_monotonic_us\n"
+        << "                            (UNVERIFIED on hardware) is the sensor's capture event on that clock and fails\n"
+        << "                            the stream if it cannot be placed; processing_unix_us is Unix processing time.\n"
+        << "                            The streams file on the PC must declare the same basis.\n"
         << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
         << "\n"
@@ -238,6 +243,22 @@ try
         else if (arg.find("--livekit-fps=") == 0)
         {
             camera_config.livekit.fps = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+        }
+        else if (arg.find("--timestamp-basis=") == 0)
+        {
+            const std::string basis = arg.substr(18);
+            if (basis == "monotonic_us")
+                camera_config.livekit.timestamp_basis = TimestampBasis::FrameReadyMonotonic;
+            else if (basis == "capture_monotonic_us")
+                camera_config.livekit.timestamp_basis = TimestampBasis::SensorCaptureMonotonic;
+            else if (basis == "processing_unix_us")
+                camera_config.livekit.timestamp_basis = TimestampBasis::ProcessingUnix;
+            else
+            {
+                std::cerr << "Error: --timestamp-basis must be monotonic_us, capture_monotonic_us or processing_unix_us."
+                          << std::endl;
+                return 1;
+            }
         }
         else if (arg.find("--livekit-bitrate=") == 0)
         {

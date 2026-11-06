@@ -17,10 +17,26 @@ vi.mock("livekit-client", async () => {
       Reconnecting: "Reconnecting",
       Reconnected: "Reconnected",
       Disconnected: "Disconnected",
+      DataReceived: "DataReceived",
     },
     Track: { Kind: { Video: "video", Audio: "audio" } },
   };
 });
+
+// The real sync busy-waits on performance.now(), which fake timers freeze.
+const syncs: Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; room: unknown; publisher: string }> = [];
+vi.mock("./liveKitClockSync", () => ({
+  LiveKitClockSync: class {
+    start = vi.fn();
+    stop = vi.fn();
+    constructor(
+      public room: unknown,
+      public publisher: string,
+    ) {
+      syncs.push(this);
+    }
+  },
+}));
 
 import { useLiveKitPreview } from "./useLiveKitPreview";
 
@@ -48,6 +64,7 @@ async function mounted() {
 
 beforeEach(() => {
   FakeRoom.reset();
+  syncs.length = 0;
   vi.useFakeTimers();
 });
 
@@ -66,6 +83,17 @@ describe("useLiveKitPreview", () => {
     expect(result.current.tiles).toEqual([]);
     expect(fetchFn).not.toHaveBeenCalled();
     expect(FakeRoom.instances).toHaveLength(0);
+  });
+
+  it("starts a clock sync against the publisher once connected and stops it on unmount", async () => {
+    stubFetch(ok());
+    const { result, unmount } = await mounted();
+    expect(syncs).toHaveLength(1);
+    expect(syncs[0].publisher).toBe("orin");
+    expect(syncs[0].start).toHaveBeenCalledTimes(1);
+    expect(result.current.clock).toBe(syncs[0]);
+    unmount();
+    expect(syncs[0].stop).toHaveBeenCalledTimes(1);
   });
 
   it("requests a token for the offered room", async () => {
@@ -99,7 +127,7 @@ describe("useLiveKitPreview", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(fetchFn.mock.calls[1][0]).toBe("/api/livekit-token?room=r2");
     expect(FakeRoom.instances[1].connect).toHaveBeenCalledWith("wss://other", "tok");
-    expect(result.current.tiles).toEqual([{ name: "Head left", track: null }]);
+    expect(result.current.tiles).toEqual([{ name: "Head left", basis: 4, track: null }]);
   });
 
   it("goes back to idle and disconnects when the offer disappears", async () => {
@@ -121,8 +149,8 @@ describe("useLiveKitPreview", () => {
     expect(FakeRoom.instances[0].connect).toHaveBeenCalledWith("wss://lk", "tok");
     expect(result.current.phase).toBe("connected");
     expect(result.current.tiles).toEqual([
-      { name: "Head left", track: null },
-      { name: "Head right", track: null },
+      { name: "Head left", basis: 4, track: null },
+      { name: "Head right", basis: 4, track: null },
     ]);
   });
 
@@ -320,8 +348,8 @@ describe("useLiveKitPreview", () => {
     expect(result.current.phase).toBe("error");
     expect(result.current.message).toBe("Cannot reach the backend");
     expect(result.current.tiles).toEqual([
-      { name: "Head left", track: null },
-      { name: "Head right", track: null },
+      { name: "Head left", basis: 4, track: null },
+      { name: "Head right", basis: 4, track: null },
     ]);
     fail = false;
     await act(async () => {

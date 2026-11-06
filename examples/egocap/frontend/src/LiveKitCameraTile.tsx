@@ -8,10 +8,30 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RemoteTrack } from "livekit-client";
+import { latencySample, summarizeLatency } from "./displayLatency";
+import type { LatencySample } from "./displayLatency";
+import { MONOTONIC_TIMESTAMP_BASES } from "./captureProtocol";
+import type { LiveKitClockSync } from "./liveKitClockSync";
 import type { LiveKitPhase } from "./useLiveKitPreview";
 
 /** No decoded frame for this long means the picture is frozen. */
 const FRAME_STALE_AFTER_MS = 3000;
+
+/** Seconds-long windows keep the rate readable and the state updates to once per second. */
+const FPS_WINDOW_MS = 1000;
+/** Recent latency samples kept per window. */
+const MAX_LATENCY_SAMPLES = 240;
+/** Shown in place of a number that is not available. */
+const NO_LATENCY = "– ms latency";
+const NO_FPS = "– fps";
+
+/** The displayed rate for one window from cumulative presented-frame counts; null for an invalid interval. */
+export function displayedFps(previous: { presented: number; at: number }, presented: number, at: number): number | null {
+  const elapsedMs = at - previous.at;
+  const frames = presented - previous.presented;
+  if (elapsedMs <= 0 || frames < 0) return null; // a counter reset or a clock oddity: start a new baseline
+  return (frames * 1000) / elapsedMs;
+}
 
 /** Text shown instead of a picture, or null when a fresh picture is showing. */
 function placeholderFor(phase: LiveKitPhase, track: RemoteTrack | null, hasFrame: boolean, stale: boolean): string | null {
@@ -28,14 +48,38 @@ export function LiveKitCameraTile({
   track,
   phase,
   primary,
+  clock = null,
+  basis = 0,
 }: {
   name: string;
   track: RemoteTrack | null;
   phase: LiveKitPhase;
   primary: boolean;
+  /** Maps the publisher's monotonic clock onto this browser's; latency needs it. */
+  clock?: LiveKitClockSync | null;
+  /** What the stream's frame timestamp means; only a capture event on the publisher's monotonic clock counts. */
+  basis?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // The frame effect runs once per track, but the clock arrives (and the basis can change) after the track does, so
+  // it reads their current values through refs instead of the values it closed over when it started.
+  const clockRef = useRef<LiveKitClockSync | null>(clock ?? null);
+  clockRef.current = clock ?? null;
+  const basisRef = useRef<number>(basis);
+  basisRef.current = basis;
   const lastFrameAtRef = useRef<number | null>(null);
+  // Cumulative presented-frame count of the newest frame callback, and the count at the start of the window.
+  // The newest frame callback's cumulative presented-frame count and that frame's own presentation time (ms).
+  const presentedRef = useRef<{ presented: number; at: number } | null>(null);
+  const baselineRef = useRef<{ presented: number; at: number } | null>(null);
+  // Which fields this browser's frame callback reports (it varies by browser), to read off for the latency work.
+  const frameFieldsRef = useRef<string>("");
+  const [frameFields, setFrameFields] = useState<string>("");
+  // Latency of each presented frame in the current window, and the label shown for the last full window.
+  const latencySamplesRef = useRef<LatencySample[]>([]);
+  const [latencyLabel, setLatencyLabel] = useState<string>(NO_LATENCY);
+  const [latencyDetail, setLatencyDetail] = useState<string>("");
+  const [fpsLabel, setFpsLabel] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
   const [stale, setStale] = useState(false);
 
@@ -43,6 +87,12 @@ export function LiveKitCameraTile({
   useEffect(() => {
     const element = videoRef.current;
     lastFrameAtRef.current = null;
+    presentedRef.current = null;
+    baselineRef.current = null;
+    latencySamplesRef.current = [];
+    setLatencyLabel(NO_LATENCY);
+    setLatencyDetail("");
+    setFpsLabel(null);
     setHasFrame(false);
     setStale(false);
     if (element === null || track === null) return;
@@ -65,7 +115,21 @@ export function LiveKitCameraTile({
     };
     const watchFrames = (): void => {
       if (stopped) return;
-      callbackId = element.requestVideoFrameCallback(() => {
+      callbackId = element.requestVideoFrameCallback((now, metadata) => {
+        presentedRef.current = { presented: metadata.presentedFrames, at: metadata.presentationTime ?? now };
+        frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
+        // The publisher's stamp for exactly this frame, by its RTP timestamp, against its expected display time.
+        const rtp = (metadata as { rtpTimestamp?: number }).rtpTimestamp;
+        if (MONOTONIC_TIMESTAMP_BASES.includes(basisRef.current) && typeof rtp === "number" && "lookupFrameMetadata" in track) {
+          const stamp = (track as { lookupFrameMetadata: (a: { rtpTimestamp: number }) => { userTimestamp: bigint } | undefined })
+            .lookupFrameMetadata({ rtpTimestamp: rtp });
+          const sample = latencySample(metadata.expectedDisplayTime, stamp, clockRef.current?.mapping() ?? null);
+          if (sample !== null) {
+            const samples = latencySamplesRef.current;
+            samples.push(sample);
+            if (samples.length > MAX_LATENCY_SAMPLES) samples.shift();
+          }
+        }
         markFrame();
         watchFrames();
       });
@@ -73,13 +137,59 @@ export function LiveKitCameraTile({
     // requestVideoFrameCallback reports presented frames exactly; without it, playback progress is the fallback.
     if (typeof element.requestVideoFrameCallback === "function") watchFrames();
     else element.addEventListener("timeupdate", markFrame);
+    const hasFrameCallback = typeof element.requestVideoFrameCallback === "function";
     const timer = setInterval(() => {
+      const now = performance.now();
       const last = lastFrameAtRef.current;
-      if (last !== null && performance.now() - last > FRAME_STALE_AFTER_MS) setStale(true);
-    }, 1000);
+      const isStale = last !== null && now - last > FRAME_STALE_AFTER_MS;
+      if (isStale) setStale(true);
+      if (frameFieldsRef.current !== "") setFrameFields(frameFieldsRef.current);
+      // Displayed rate: the change in the browser's own presented-frame count over the window, not a callback tally.
+      const latest = presentedRef.current;
+      // The window's latency samples are summarized once and cleared; only those made under the clock mapping's
+      // current epoch count, so a window spanning a discontinuity has no figure.
+      const samples = latencySamplesRef.current;
+      latencySamplesRef.current = [];
+      const mapping = clockRef.current?.mapping() ?? null;
+      const summary = mapping === null ? null : summarizeLatency(samples, mapping.epoch);
+      const latencyText = summary === null ? NO_LATENCY : `${summary.mean.toFixed(0)} ms latency`;
+      setLatencyDetail(summary === null ? "" : `±${summary.uncertaintyMs.toFixed(1)} ms, 95th percentile ${summary.p95.toFixed(0)} ms`);
+      if (!hasFrameCallback) {
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
+      } else if (document.hidden) {
+        baselineRef.current = null; // a hidden tab's scheduling is not comparable: restart after it returns
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
+      } else if (isStale) {
+        baselineRef.current = null;
+        setFpsLabel("0 fps");
+        setLatencyLabel(NO_LATENCY);
+      } else if (latest !== null) {
+        setLatencyLabel(latencyText);
+        // Both ends of the window are frames the browser presented, so a late timer tick cannot skew the rate; a
+        // counter reset gives no figure and the new count becomes the baseline.
+        const previous = baselineRef.current;
+        baselineRef.current = latest;
+        const fps = previous === null || latest.at <= previous.at ? null : displayedFps(previous, latest.presented, latest.at);
+        if (fps !== null) setFpsLabel(`${fps.toFixed(0)} fps`);
+      }
+    }, FPS_WINDOW_MS);
+    // The timer can be throttled or suspended while the tab is hidden, so the transition itself resets the window:
+    // paused on hide, and a fresh baseline (no figure) for the first window after it returns.
+    const onVisibility = (): void => {
+      baselineRef.current = null;
+      latencySamplesRef.current = [];
+      if (document.hidden) {
+        setFpsLabel(NO_FPS);
+        setLatencyLabel(NO_LATENCY);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stopped = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (callbackId !== null) element.cancelVideoFrameCallback(callbackId);
       element.removeEventListener("timeupdate", markFrame);
     };
@@ -91,7 +201,24 @@ export function LiveKitCameraTile({
       {/* The element stays mounted while a track exists so attach/detach never races a re-created node. */}
       {track !== null && <video ref={videoRef} muted autoPlay playsInline aria-label={name} />}
       {placeholder !== null && <div className="camera-placeholder">{placeholder}</div>}
-      <figcaption>{name}</figcaption>
+      <figcaption>
+        {name}
+        {fpsLabel !== null && <span className="camera-stats">{fpsLabel}</span>}
+        {fpsLabel !== null && (
+          <span
+            className="camera-stats"
+            title={
+              latencyLabel === NO_LATENCY
+                ? `No latency for the displayed frame: it needs the publisher's per-frame capture stamp (matched by RTP timestamp), a current clock mapping to the publisher, and a stream whose timestamp is a capture event on the publisher's monotonic clock.${
+                    frameFields === "" ? "" : ` This browser's frame callback reports: ${frameFields}.`
+                  }`
+                : `Capture event on the publisher's clock to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is half the clock-exchange round trip plus this browser's timer resolution`
+            }
+          >
+            {latencyLabel}
+          </span>
+        )}
+      </figcaption>
     </figure>
   );
 }

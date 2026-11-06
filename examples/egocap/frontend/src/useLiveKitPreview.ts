@@ -15,6 +15,7 @@ import { Room, RoomEvent, Track } from "livekit-client";
 import type { RemoteParticipant, RemoteTrack } from "livekit-client";
 import type { LiveKitStreamDescriptor } from "./captureProtocol";
 import { fetchLiveKitToken } from "./livekitPreview";
+import { LiveKitClockSync } from "./liveKitClockSync";
 
 /** Delay before a new attempt after a failed connect or a full disconnect. */
 const RETRY_DELAY_MS = 3000;
@@ -23,6 +24,8 @@ export type LiveKitPhase = "idle" | "connecting" | "connected" | "reconnecting" 
 
 export interface LiveKitTile {
   name: string;
+  /** What the stream's frame timestamp means (the backend's timestamp basis value). */
+  basis: number;
   /** The subscribed video track, or null while the camera host has not published it. */
   track: RemoteTrack | null;
 }
@@ -33,13 +36,15 @@ export interface LiveKitPreviewState {
   message: string | null;
   /** One entry per offered stream, in the order offered; empty when nothing is offered. */
   tiles: LiveKitTile[];
+  /** Maps the publisher's monotonic clock onto this browser's; null until connected. */
+  clock: LiveKitClockSync | null;
 }
 
-const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [] };
+const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [], clock: null };
 
 /** The offered streams with the given subscribed tracks filled in by track name. */
 function tilesFor(streams: LiveKitStreamDescriptor[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
-  return streams.map((s) => ({ name: s.name, track: tracks.get(s.track) ?? null }));
+  return streams.map((s) => ({ name: s.name, basis: s.timestamp_basis, track: tracks.get(s.track) ?? null }));
 }
 
 /**
@@ -62,6 +67,8 @@ export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPr
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let room: Room | null = null;
+    let clock: LiveKitClockSync | null = null;
+    let worker: Worker | null = null;
     const controller = new AbortController();
 
     function scheduleRetry(): void {
@@ -72,16 +79,24 @@ export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPr
       }, RETRY_DELAY_MS);
     }
 
+    function releaseConnectionResources(): void {
+      clock?.stop();
+      clock = null;
+      worker?.terminate();
+      worker = null;
+    }
+
     function fail(message: string): void {
       if (cancelled) return;
-      setState({ phase: "error", message, tiles: tilesFor(offered, new Map()) });
+      releaseConnectionResources();
+      setState({ phase: "error", message, tiles: tilesFor(offered, new Map()), clock: null });
       scheduleRetry();
     }
 
     async function attempt(): Promise<void> {
       const tracks = new Map<string, RemoteTrack>();
       const publish = (phase: LiveKitPhase): void => {
-        if (!cancelled) setState({ phase, message: null, tiles: tilesFor(offered, tracks) });
+        if (!cancelled) setState({ phase, message: null, tiles: tilesFor(offered, tracks), clock });
       };
       publish("connecting");
       let token: string;
@@ -105,7 +120,13 @@ export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPr
         }
       };
 
-      const next = new Room();
+      // The worker strips the per-frame metadata trailer off encoded video; without one (no Worker support) the
+      // room still works and latency simply stays unavailable.
+      worker =
+        typeof Worker === "undefined"
+          ? null
+          : new Worker(new URL("livekit-client/packet-trailer-worker", import.meta.url), { type: "module" });
+      const next = new Room(worker === null ? undefined : { packetTrailer: { worker } });
       room = next;
       next
         .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
@@ -147,6 +168,8 @@ export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPr
       }
       // Tracks published before we joined arrive here rather than through TrackSubscribed.
       next.remoteParticipants.forEach(adopt);
+      clock = new LiveKitClockSync(next, publisher);
+      clock.start();
       publish("connected");
     }
 
@@ -157,6 +180,7 @@ export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPr
       controller.abort();
       if (retryTimer !== null) clearTimeout(retryTimer);
       // Detaches every track and closes the connection; the Disconnected handler above is a no-op once cancelled.
+      releaseConnectionResources();
       void room?.disconnect();
       room = null;
     };

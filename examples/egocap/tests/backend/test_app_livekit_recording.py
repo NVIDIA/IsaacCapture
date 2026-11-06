@@ -39,7 +39,7 @@ def _monitor(streams):
 
 
 def test_config_factory_declares_and_requires_each_recordable_livekit_stream(tmp_path):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     monitor = _monitor(
         [
             _stream(16, capture),
@@ -96,7 +96,7 @@ def accepted_tracking(monkeypatch):
 
 
 def test_readiness_accepts_recordable_livekit_streams_without_a_jpeg_camera(accepted_tracking):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     check = app_module._recording_readiness_check(_ready_monitor([_stream(16, capture)]), None)
     assert check() == (True, None)
 
@@ -105,20 +105,21 @@ def test_readiness_without_any_stream_says_no_camera(accepted_tracking):
     assert app_module._recording_readiness_check(_ready_monitor([]), None)() == (False, "no camera selected")
 
 
-def test_readiness_names_a_stream_whose_timestamps_are_not_a_capture_time(accepted_tracking):
+def test_readiness_names_a_stream_whose_timestamps_are_not_monotonic(accepted_tracking):
     streams = [
-        _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
+        _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
         _stream(17, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
     ]
     check = app_module._recording_readiness_check(_ready_monitor(streams), None)
     assert check() == (
         False,
-        "LiveKit stream 'cam17': its timestamps are not a capture time, so it cannot be recorded",
+        "LiveKit stream 'cam17': its timestamps are not on the publisher's monotonic clock, "
+        "so it cannot be recorded",
     )
 
 
 def test_readiness_names_a_stream_without_geometry(accepted_tracking):
-    stream = _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US, width=None)
+    stream = _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US, width=None)
     check = app_module._recording_readiness_check(_ready_monitor([stream]), None)
     assert check() == (False, "LiveKit stream 'cam16': width, height and fps must be configured to record it")
 
@@ -129,7 +130,7 @@ FULL_WIDTH, FULL_HEIGHT = 2560, 1984
 
 
 def _full_size_streams(count):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     return [_full(16 + i, capture) for i in range(count)]
 
 
@@ -222,7 +223,7 @@ def test_without_livekit_streams_the_ingress_budget_is_the_jpeg_allowance():
 
 
 def test_readiness_refuses_livekit_recording_when_capture_server_is_remote(accepted_tracking):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     check = app_module._recording_readiness_check(
         _ready_monitor([_stream(16, capture)]), None, "ws://10.0.0.5:8082"
     )
@@ -231,7 +232,7 @@ def test_readiness_refuses_livekit_recording_when_capture_server_is_remote(accep
 
 
 def test_readiness_accepts_livekit_recording_with_a_loopback_capture_server(accepted_tracking):
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     check = app_module._recording_readiness_check(
         _ready_monitor([_stream(16, capture)]), None, "ws://127.0.0.1:8082"
     )

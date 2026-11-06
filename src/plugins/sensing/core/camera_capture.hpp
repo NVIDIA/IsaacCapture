@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "core/sensor_clock.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -120,6 +122,11 @@ struct CaptureFrame
     /// The backend's own sensor timestamp, unscaled and in its own clock domain; never convert it to another
     /// domain here. Zero when the backend reports none.
     uint64_t sensor_time = 0;
+    /// What `sensor_time` counts; the claim is checked at run time by SensorClockMap, not trusted.
+    SensorTimeDomain sensor_domain = SensorTimeDomain::None;
+    /// CLOCK_MONOTONIC ns of the sensor's capture event, set by the LiveKit output when it publishes capture
+    /// time; zero otherwise.
+    uint64_t capture_monotonic_ns = 0;
     std::variant<CudaRgbaPixels, DmaBufNv12Pixels> pixels;
     FrameLease lease;
 };

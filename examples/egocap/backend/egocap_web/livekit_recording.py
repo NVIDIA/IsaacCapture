@@ -4,10 +4,15 @@
 
 """Feeds received LiveKit camera frames into a take's recording ingress.
 
-A frame is recorded only when its timestamp is a capture time (``SENSOR_CAPTURE_UNIX_US``), which can then be put
-on this machine's monotonic clock, the same clock the tracking samples use. A stream stamped with the publisher's
-monotonic clock or with its processing time is not a capture time, so the feed stops with that reason instead of
-recording a guessed one. Arrival time is never used as capture time.
+A frame is recorded only when its timestamp is on the publisher's monotonic clock: the time the frame was ready
+to encode (``PUBLISHER_MONOTONIC_US``) or the sensor's capture event (``SENSOR_CAPTURE_MONOTONIC_US``). The
+saved time means whichever the stream declares; frame-ready time is later than capture by the publisher's
+capture and conversion delay, and neither is proof of physical alignment with tracking. It is placed on this
+machine's monotonic clock, the one the tracking samples use, through the mapping the receiver's clock-sync
+client builds from four-timestamp exchanges with the same publisher. There is one path: a stream with any other
+basis, a missing or stale mapping, or a mapping that jumped during the take stops the feed with that reason
+instead of recording a guessed time. Arrival time is never used as capture time. A mapping carries its
+uncertainty (half the exchange round trip), not an accuracy claim about the sensor.
 
 Tracking times come from CaptureServer's monotonic clock, which agrees with this process's only when both run on
 one machine, so recording LiveKit video is refused unless CaptureServer's URL is a loopback address.
@@ -19,7 +24,7 @@ import asyncio
 import contextlib
 import ipaddress
 import logging
-import time
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlparse
@@ -32,63 +37,52 @@ from .recording_adapter import RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
-#: How long a measured pair of clock readings is reused. Unix and monotonic time only drift apart slowly; a step of
-#: the Unix clock is simply reflected in the offset at the next measurement, not detected.
-_PAIR_MAX_AGE_S = 1.0
 #: A frame older than this when it arrives, or stamped further than the lead below in the future, means the
 #: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
 _MAX_FRAME_AGE_S = 2.0
 _MAX_FRAME_LEAD_S = 0.05
 #: How long a published stream may send nothing before the take ends. Normal frame gaps are tens of milliseconds.
 _MAX_SILENCE_S = 5.0
-#: Readings per pair; the one read in the shortest span is the most trustworthy.
-_PAIR_ATTEMPTS = 3
 #: How long the room join may take before the take's start is refused.
 _JOIN_TIMEOUT_S = 15.0
 #: How long leaving the room may take before teardown moves on and lets the leave finish in the background.
 _LEAVE_TIMEOUT_S = 10.0
+#: Most mappings recorded as a take's timing evidence, the newest ones; the estimator may have adopted more.
+_MAX_EVIDENCE_MAPPINGS = 64
+
+# The bases recorded, and what each one's time means in the saved take.
+_RECORDABLE_BASES: dict[p.LiveKitTimestampBasis, str] = {
+    p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: "frame_ready",
+    p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: "sensor_capture",
+}
+
+BUDGET_ENV = "EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"
+# A frame at 30 fps is 33 ms; a mapping uncertain by more than a few ms would blur which camera frame matches a
+# tracking sample. This default is a policy choice, not a measurement; set the environment variable to change it.
+_DEFAULT_BUDGET_MS = 5.0
 
 
-class UnixClockMap:
-    """Converts Unix-time microseconds to this process's monotonic seconds, from a recently measured pair.
+# What each tracking source's saved time means today; none is a physical acquisition time.
+_TRACKING_SEMANTICS: dict[str, str] = {
+    "recorded_time": "the host's poll time for every tracking source",
+    "controllers": "device value is the pose-evaluation time (a predicted XrTime), not an acquisition time",
+    "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
+    "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
+}
 
-    The pair is two clock readings taken back to back and refreshed about once a second, from the consumer's
-    thread and never from an SDK callback. It converts on this machine only: it does not detect a step of the
-    Unix clock, and says nothing about whether the publisher's clock agrees with this one.
-    """
 
-    def __init__(
-        self,
-        *,
-        monotonic_ns: Callable[[], int] = time.monotonic_ns,
-        unix_ns: Callable[[], int] = time.time_ns,
-    ) -> None:
-        self._monotonic_ns = monotonic_ns
-        self._unix_ns = unix_ns
-        self._offset_s = 0.0
-        self._measured_at_ns: int | None = None
-
-    def monotonic_seconds(self, unix_us: int) -> float:
-        """The monotonic-clock time, in seconds, of the Unix time ``unix_us`` (microseconds)."""
-        now = self._monotonic_ns()
-        if self._measured_at_ns is None or now - self._measured_at_ns > _PAIR_MAX_AGE_S * 1e9:
-            self._measure()
-        return unix_us / 1e6 + self._offset_s
-
-    def _measure(self) -> None:
-        """Take the pair read in the shortest span: the Unix reading is taken between two monotonic ones."""
-        best: tuple[int, float] | None = None
-        for _ in range(_PAIR_ATTEMPTS):
-            before = self._monotonic_ns()
-            unix = self._unix_ns()
-            after = self._monotonic_ns()
-            span = after - before
-            if best is None or span < best[0]:
-                # The Unix reading happened somewhere in [before, after]; its midpoint is the best estimate.
-                best = (span, ((before + after) / 2 - unix) / 1e9)
-        assert best is not None
-        self._offset_s = best[1]
-        self._measured_at_ns = self._monotonic_ns()
+def uncertainty_budget_ns() -> int:
+    """The largest clock-mapping uncertainty a take may be recorded with, from the environment or the default."""
+    raw = os.environ.get(BUDGET_ENV)
+    if raw is None or not raw.strip():
+        return int(_DEFAULT_BUDGET_MS * 1e6)
+    try:
+        ms = float(raw)
+    except ValueError:
+        raise ValueError(f"{BUDGET_ENV} must be a number of milliseconds, got {raw!r}") from None
+    if not ms > 0:
+        raise ValueError(f"{BUDGET_ENV} must be positive, got {raw!r}")
+    return int(ms * 1e6)
 
 
 def is_loopback_url(url: str) -> bool:
@@ -122,9 +116,10 @@ def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> 
                 f"LiveKit stream {stream.name!r}: recording needs CaptureServer on this machine "
                 f"(its clock must match tracking's), but it is at {capture_server_url!r}"
             )
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
+        if stream.timestamp_basis not in _RECORDABLE_BASES:
             return (
-                f"LiveKit stream {stream.name!r}: its timestamps are not a capture time, so it cannot be recorded"
+                f"LiveKit stream {stream.name!r}: its timestamps are not on the publisher's monotonic clock, "
+                "so it cannot be recorded"
             )
         if None in (stream.width, stream.height, stream.fps):
             return f"LiveKit stream {stream.name!r}: width, height and fps must be configured to record it"
@@ -145,8 +140,8 @@ class LiveKitRecordingFeed:
         ingress: RecordingIngress,
         source_names: Mapping[int, str],
         *,
-        clock_map: UnixClockMap | None = None,
         on_failure: Callable[[str], None] | None = None,
+        max_uncertainty_ns: int | None = None,
     ) -> None:
         missing = [s.name for s in streams if s.stream_id not in source_names]
         if missing:
@@ -155,8 +150,13 @@ class LiveKitRecordingFeed:
         self._streams = {s.stream_id: s for s in streams}
         self._ingress = ingress
         self._source_names = dict(source_names)
-        self._clock_map = clock_map or UnixClockMap()
+        # The receiver was started with clock sync, so its client maps the publisher's clock onto this one.
+        clock_sync = receiver.clock_sync
+        if clock_sync is None:
+            raise ValueError("the receiver has no clock-sync client; start it with clock_sync=True")
+        self._clock = clock_sync
         self._on_failure = on_failure
+        self._max_uncertainty_ns = uncertainty_budget_ns() if max_uncertainty_ns is None else max_uncertainty_ns
         self._tasks: list[asyncio.Task[None]] = []
         self.failure: str | None = None
         self._baseline: dict[int, tuple[int, int]] = {}
@@ -201,23 +201,34 @@ class LiveKitRecordingFeed:
             if self._on_failure is not None:
                 self._on_failure(reason)
 
+    def _clock_problem(self) -> str:
+        """What is wrong with the publisher's clock mapping right now, as a suffix for a failure reason (or "")."""
+        if self._clock.discontinuity:
+            return "; the publisher's clock mapping jumped"
+        mapping = self._clock.mapping()
+        if mapping is None:
+            return "; no current clock mapping from the publisher (its clock-sync replies stopped)"
+        if mapping.uncertainty_ns > self._max_uncertainty_ns:
+            return f"; the clock mapping is uncertain by {mapping.uncertainty_ns / 1e6:.2f} ms, over the budget"
+        return ""
+
     async def _run(self, stream_id: int) -> None:
         """Feed one stream until the take fails or the feed is stopped."""
         stream = self._streams[stream_id]
         source = self._source_names[stream_id]
-        if stream.timestamp_basis is not p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US:
+        if stream.timestamp_basis not in _RECORDABLE_BASES:
             # Checked before any frame arrives: this stream cannot become recordable by waiting.
-            self._fail(
-                f"{stream.name}: its timestamps are not a capture time, so it cannot be aligned with tracking"
-            )
+            self._fail(f"{stream.name}: its timestamps are not on the publisher's monotonic clock")
             return
         while self.failure is None:
             try:
                 frame = await self._receiver.next_frame_or_lost(stream_id, timeout=_MAX_SILENCE_S)
             except asyncio.TimeoutError:
-                # A track can stay published and send nothing; a take must not wait on it forever.
+                # A track can stay published and send nothing; a take must not wait on it forever. With no frame
+                # to carry the check, the clock mapping is judged here too, so a dead publisher says that it is.
                 self._fail(
                     f"{stream.name}: no frame for {_MAX_SILENCE_S:.0f} s although the track is still published"
+                    + self._clock_problem()
                 )
                 return
             if frame is None:
@@ -240,7 +251,24 @@ class LiveKitRecordingFeed:
             if frame.user_timestamp_us is None:
                 self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
                 return
-            capture_time = self._clock_map.monotonic_seconds(frame.user_timestamp_us)
+            # A mapping that jumped during the take, or went missing or stale, ends it: frames already recorded
+            # keep the mapping they were made under, and none after is recorded with a guessed one.
+            if self._clock.discontinuity:
+                self._fail(f"{stream.name}: the publisher's clock mapping jumped during the take")
+                return
+            mapping = self._clock.mapping()
+            if mapping is None:
+                self._fail(
+                    f"{stream.name}: no current clock mapping from the publisher (its clock-sync replies stopped)"
+                )
+                return
+            if mapping.uncertainty_ns > self._max_uncertainty_ns:
+                self._fail(
+                    f"{stream.name}: the clock mapping is uncertain by {mapping.uncertainty_ns / 1e6:.2f} ms, "
+                    f"over the {self._max_uncertainty_ns / 1e6:.2f} ms budget ({BUDGET_ENV})"
+                )
+                return
+            capture_time = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
             receive_time = frame.receive_time_ns / 1e9
             age = receive_time - capture_time
             if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
@@ -274,7 +302,7 @@ def recordable_livekit_streams(started: Any) -> tuple[p.LiveKitCameraStream, ...
         s
         for s in started.streams
         if isinstance(s, p.LiveKitCameraStream)
-        and s.timestamp_basis is p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+        and s.timestamp_basis in _RECORDABLE_BASES
         and None not in (s.width, s.height, s.fps)
     )
 
@@ -316,7 +344,7 @@ class LiveKitRecordingSource:
         self._streams = tuple(self._recordable_streams())
         if not self._streams:
             return
-        receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room))
+        receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room), clock_sync=True)
         self._receiver = receiver
         try:
             await self._join(receiver)
@@ -331,6 +359,7 @@ class LiveKitRecordingSource:
                         f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "
                         f"expected {stream.width}x{stream.height}"
                     )
+            await self._wait_for_mapping(receiver)
         except asyncio.TimeoutError as exc:
             await self.stop()
             raise RuntimeError("a LiveKit stream sent no frame before the recording could start") from exc
@@ -383,6 +412,17 @@ class LiveKitRecordingSource:
 
         task.add_done_callback(_done)
 
+    async def _wait_for_mapping(self, receiver: LiveKitFrameReceiver) -> None:
+        """Wait for the publisher's first clock mapping; without one its capture times cannot be placed."""
+        clock_sync = receiver.clock_sync
+        deadline = asyncio.get_running_loop().time() + self._first_frame_timeout_s
+        while clock_sync is None or clock_sync.mapping() is None:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise RuntimeError(
+                    "the publisher did not answer clock-sync requests, so its capture times cannot be used"
+                )
+            await asyncio.sleep(0.05)
+
     def start(self, ingress: RecordingIngress, on_failure: Callable[[str], None]) -> None:
         """Begin feeding the take's ingress with frames acquired from now on."""
         if self._receiver is None:
@@ -394,6 +434,53 @@ class LiveKitRecordingSource:
             self._receiver, self._streams, ingress, source_names, on_failure=on_failure
         )
         self._feed.start()
+
+    def timing_evidence(self) -> dict[str, Any] | None:
+        """The clock mappings this take's video was placed on the PC's clock with, for the take's attributes.
+
+        None when there is no clock sync (nothing LiveKit was recorded). Read before ``stop()``, which leaves the
+        room.
+        """
+        receiver = self._receiver
+        clock_sync = None if receiver is None else receiver.clock_sync
+        if clock_sync is None:
+            return None
+        # The estimator re-reports one exchange with a growing age allowance while no newer one arrives; keep the
+        # first report of each exchange.
+        unique = {(m.epoch, m.accepted_at_ns): m for m in reversed(clock_sync.estimator.history)}
+        mappings = sorted(unique.values(), key=lambda m: (m.accepted_at_ns, m.epoch))[-_MAX_EVIDENCE_MAPPINGS:]
+        return {
+            "clock_mapping": {
+                "method": "four_timestamp_exchange",
+                "local_clock": "pc_monotonic",
+                "remote_clock": "publisher_monotonic",
+                "streams": [
+                    {
+                        "name": s.name,
+                        "timestamp_basis": s.timestamp_basis.name,
+                        "time_meaning": _RECORDABLE_BASES[s.timestamp_basis],
+                    }
+                    for s in self._streams
+                ],
+                "mappings": [
+                    {
+                        "epoch": m.epoch,
+                        "offset_ns": m.offset_ns,
+                        "rtt_ns": m.rtt_ns,
+                        "uncertainty_ns": m.uncertainty_ns,
+                        "accepted_at_ns": m.accepted_at_ns,
+                    }
+                    for m in mappings
+                ],
+                "uncertainty_budget_ns": uncertainty_budget_ns(),
+                "discontinuity": clock_sync.discontinuity,
+                "exchanges_rejected": clock_sync.rejected,
+                "mapping_current_at_stop": clock_sync.mapping() is not None,
+            },
+            # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
+            "tracking_time": "host_poll",
+            "tracking_semantics": _TRACKING_SEMANTICS,
+        }
 
     async def stop(self) -> None:
         """Stop feeding and leave the room. Safe to call at any point, including after a failed prepare."""

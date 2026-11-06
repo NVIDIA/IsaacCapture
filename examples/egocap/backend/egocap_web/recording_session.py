@@ -191,6 +191,8 @@ class RecordingSessionCoordinator:
         # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
         # before the ingress is retired.
         self._livekit_source = livekit_source
+        #: The clock-mapping evidence of the take in progress, gathered when its video source stops.
+        self._timing_evidence: dict[str, Any] | None = None
         self._queue_capacity = queue_capacity
         self._queue_bytes = queue_bytes
         self._readiness_check = readiness_check
@@ -591,6 +593,9 @@ class RecordingSessionCoordinator:
             result = await service.interrupt_episode(episode_id, self._last_issue)
             self._emit_result(result)
             return result
+        if self._timing_evidence is not None:
+            service.set_episode_timing(episode_id, self._timing_evidence)
+            self._timing_evidence = None
         result = await service.stop_episode(episode_id)
         self._emit_result(result)
         return result
@@ -635,6 +640,10 @@ class RecordingSessionCoordinator:
         if ingress is None:
             return _IngressRetirement(settled=True, failure=None)
         if self._livekit_source is not None:
+            # Read before the room is left: the clock mappings the take was recorded under.
+            evidence = self._livekit_source.timing_evidence()
+            if evidence is not None:
+                self._timing_evidence = evidence
             # The producer stops first, so nothing is offered to an ingress that is draining.
             await self._livekit_source.stop()
         settled = await ingress.stop()

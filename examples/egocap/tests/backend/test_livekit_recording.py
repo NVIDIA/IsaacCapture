@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""livekit_recording: Unix-to-monotonic mapping, the per-stream feed."""
+"""livekit_recording: the per-stream feed over the clock-sync mapping."""
 
 from __future__ import annotations
 
@@ -14,135 +14,21 @@ import pytest
 
 from capture_server import protocol as p
 from egocap_web import livekit_recording as lrec
+from egocap_web.clock_exchange import ClockMapping
 from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import (
+    BUDGET_ENV,
     LiveKitRecordingFeed,
-    UnixClockMap,
+    uncertainty_budget_ns,
     unrecordable_reason,
 )
 from egocap_web.recording_adapter import RecordingIngress
 from recording_service import PixelFormat, SubmissionResult, SubmissionStatus, VideoSample
 
-CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
+UNIX_CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
-
-
-class FakeClocks:
-    """Scripted monotonic and Unix clocks; each read pops the next value (the last one repeats)."""
-
-    def __init__(self, monotonic: list[int], unix: list[int]) -> None:
-        self._mono, self._unix = list(monotonic), list(unix)
-        self.mono_reads = 0
-        self.unix_reads = 0
-
-    def monotonic_ns(self) -> int:
-        self.mono_reads += 1
-        return self._mono.pop(0) if len(self._mono) > 1 else self._mono[0]
-
-    def unix_ns(self) -> int:
-        self.unix_reads += 1
-        return self._unix.pop(0) if len(self._unix) > 1 else self._unix[0]
-
-
-def _map(clocks: FakeClocks) -> UnixClockMap:
-    return UnixClockMap(monotonic_ns=clocks.monotonic_ns, unix_ns=clocks.unix_ns)
-
-
-# --- UnixClockMap --------------------------------------------------------------
-
-
-def test_offset_is_midpoint_of_the_bracket_minus_the_unix_reading():
-    # Every attempt brackets a Unix reading of 5000 s between monotonic 100 s and 102 s: midpoint 101 s.
-    clocks = FakeClocks(
-        monotonic=[0] + [100_000_000_000, 102_000_000_000] * 3 + [103_000_000_000],
-        unix=[5_000_000_000_000],
-    )
-    mapper = _map(clocks)
-    assert mapper.monotonic_seconds(5_000_000_000) == pytest.approx(101.0)
-    assert mapper.monotonic_seconds(5_001_000_000) == pytest.approx(102.0)  # offset is reused, 1 s later
-
-
-def test_best_of_three_picks_the_shortest_span():
-    # Spans 4 s, 1 s, 2 s; the 1 s bracket is [20 s, 21 s] around unix 1000 s -> offset 20.5 - 1000.
-    clocks = FakeClocks(
-        monotonic=[
-            0,  # age check
-            0,
-            4_000_000_000,
-            20_000_000_000,
-            21_000_000_000,
-            30_000_000_000,
-            32_000_000_000,
-            32_000_000_000,  # stamp
-        ],
-        unix=[1_000_000_000_000, 1_000_000_000_000, 1_000_000_000_000],
-    )
-    mapper = _map(clocks)
-    assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(20.5)
-
-
-def test_pair_is_reused_within_one_second_without_remeasuring():
-    state = {"mono": 0}
-    reads = {"unix": 0}
-
-    def unix() -> int:
-        reads["unix"] += 1
-        return 100_000_000_000
-
-    mapper = UnixClockMap(monotonic_ns=lambda: state["mono"], unix_ns=unix)
-    assert mapper.monotonic_seconds(100_000_000) == pytest.approx(0.0)  # offset -100 s
-    assert reads["unix"] == 3
-    state["mono"] = 500_000_000
-    assert mapper.monotonic_seconds(101_000_000) == pytest.approx(1.0)
-    state["mono"] = 1_000_000_000  # age exactly 1 s: still reused
-    assert mapper.monotonic_seconds(102_000_000) == pytest.approx(2.0)
-    assert reads["unix"] == 3
-
-
-def test_pair_is_remeasured_after_one_second():
-    state = {"mono": 0, "unix": 1_000_000_000_000}
-    reads = {"unix": 0}
-
-    def mono() -> int:
-        return state["mono"]
-
-    def unix() -> int:
-        reads["unix"] += 1
-        return state["unix"]
-
-    mapper = UnixClockMap(monotonic_ns=mono, unix_ns=unix)
-    assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(0.0)
-    assert reads["unix"] == 3
-    state["mono"] = 1_000_000_001  # just over one second
-    mapper.monotonic_seconds(1_000_000_000)
-    assert reads["unix"] == 6
-
-
-def test_stepped_unix_clock_is_picked_up_at_the_next_refresh():
-    state = {"mono": 0, "unix": 1_000_000_000_000}
-
-    def mono() -> int:
-        return state["mono"]
-
-    def unix() -> int:
-        return state["unix"]
-
-    mapper = UnixClockMap(monotonic_ns=mono, unix_ns=unix)
-    assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(0.0)
-    state["unix"] += 3_000_000_000  # the Unix clock steps forward 3 s
-    state["mono"] = 500_000_000
-    assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(0.0)  # not yet noticed
-    state["mono"] = 2_000_000_000
-    # Unix now reads 1003 s at monotonic 2 s: unix 1000 s is 3 s before that, i.e. -1 s.
-    assert mapper.monotonic_seconds(1_000_000_000) == pytest.approx(-1.0)
-
-
-def test_default_clocks_map_now_to_about_now():
-    import time
-
-    mapped = UnixClockMap().monotonic_seconds(time.time_ns() // 1000)
-    assert mapped == pytest.approx(time.monotonic(), abs=0.05)
 
 
 # --- received frames -----------------------------------------------------------
@@ -152,7 +38,7 @@ def _received(
     stream_id: int = 16, user_ts: int | None = 1_000_000, receive_ns: int | None = None
 ) -> ReceivedFrame:
     if receive_ns is None:
-        # Arrives 0.1 s after capture on FixedMap's clock (capture = user_ts / 1e6 + 10).
+        # Arrives 0.1 s after capture on the fake mapping's clock (capture = user_ts / 1e6 + 10).
         receive_ns = int(((user_ts or 0) / 1e6 + 10.1) * 1e9)
     return ReceivedFrame(
         stream_id=stream_id,
@@ -183,7 +69,8 @@ def _stream(stream_id: int, name: str, basis=CAPTURE) -> p.LiveKitCameraStream:
 class FakeReceiver:
     """Per-stream scripted frames; an exhausted stream blocks like a quiet camera, or reports loss."""
 
-    def __init__(self, frames: dict[int, list[ReceivedFrame]]) -> None:
+    def __init__(self, frames: dict[int, list[ReceivedFrame]], clock_sync=None) -> None:
+        self.clock_sync = clock_sync if clock_sync is not None else FakeClockSync()
         self.frames = {k: list(v) for k, v in frames.items()}
         self.calls: list[int] = []
         self.gates: dict[int, asyncio.Event] = {}
@@ -217,11 +104,21 @@ class FakeIngress:
         return self._answers.pop(0) if self._answers else True
 
 
-class FixedMap(UnixClockMap):
-    """Maps unix microseconds to ``us / 1e6 + 10`` seconds."""
+class FakeClockSync:
+    """Stands in for ClockSyncClient: a fixed mapping of the publisher clock (local = remote + 10 s)."""
 
-    def monotonic_seconds(self, unix_us: int) -> float:
-        return unix_us / 1e6 + 10.0
+    def __init__(self, offset_ns: int = -10_000_000_000, uncertainty_ns: int = 1_000) -> None:
+        self.offset_ns = offset_ns
+        self.uncertainty_ns = uncertainty_ns
+        self.discontinuity = False
+        self.available = True
+
+    def mapping(self) -> ClockMapping | None:
+        if not self.available:
+            return None
+        return ClockMapping(
+            epoch=1, offset_ns=self.offset_ns, rtt_ns=2_000, uncertainty_ns=self.uncertainty_ns, accepted_at_ns=0
+        )
 
 
 async def _settle(times: int = 10) -> None:
@@ -231,7 +128,7 @@ async def _settle(times: int = 10) -> None:
 
 def _feed(receiver, streams, ingress, names=None, **kw) -> LiveKitRecordingFeed:
     names = names if names is not None else {s.stream_id: f"src{s.stream_id}" for s in streams}
-    return LiveKitRecordingFeed(receiver, streams, ingress, names, clock_map=FixedMap(), **kw)
+    return LiveKitRecordingFeed(receiver, streams, ingress, names, **kw)
 
 
 async def test_capture_stream_frames_are_offered_with_source_and_mapped_capture_time():
@@ -248,6 +145,193 @@ async def test_capture_stream_frames_are_offered_with_source_and_mapped_capture_
     assert feed.failure is None
 
 
+class _FlipAfterFirst(FakeReceiver):
+    """Applies ``flip`` to the clock-sync object while the second frame is being served."""
+
+    def __init__(self, frames, clock_sync, flip) -> None:
+        super().__init__(frames, clock_sync)
+        self._flip = flip
+
+    async def next_frame_or_lost(self, stream_id, timeout=None):
+        frame = await super().next_frame_or_lost(stream_id, timeout)
+        if len(self.calls) == 2:
+            self._flip(self.clock_sync)
+        return frame
+
+
+@pytest.mark.parametrize(
+    ("flip", "text"),
+    [
+        (lambda c: setattr(c, "discontinuity", True), "clock mapping jumped"),
+        (lambda c: setattr(c, "available", False), "no current clock mapping"),
+    ],
+)
+async def test_a_jumped_or_missing_mapping_fails_the_take_and_records_no_further_frames(flip, text):
+    reasons: list[str] = []
+    frames = [_received(16, 1_000_000), _received(16, 2_000_000), _received(16, 3_000_000)]
+    ingress = FakeIngress()
+    # The first frame is mapped before the flip and recorded; the second sees the changed mapping.
+    receiver = _FlipAfterFirst({16: frames}, FakeClockSync(), flip)
+    feed = LiveKitRecordingFeed(
+        receiver, [_stream(16, "Head left")], ingress, {16: "head_left"}, on_failure=reasons.append
+    )
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert text in feed.failure
+    assert reasons == [feed.failure]
+    assert [m.capture_time for m in ingress.offered] == [11.0]
+
+
+async def test_mapping_offset_places_capture_time_on_the_local_clock():
+    clock = FakeClockSync(offset_ns=-10_000_000_000)
+    ingress = FakeIngress()
+    feed = _feed(FakeReceiver({16: [_received(16, 1_000_000)]}, clock), [_stream(16, "Head left")], ingress)
+    feed.start()
+    await _settle()
+    clock.offset_ns = -20_000_000_000  # a later mapping applies to later frames only
+    await feed.stop()
+    assert [m.capture_time for m in ingress.offered] == [11.0]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_ns"),
+    [
+        (None, 5_000_000),
+        ("", 5_000_000),
+        ("  ", 5_000_000),
+        ("2", 2_000_000),
+        ("0.5", 500_000),
+        (" 12.5 ", 12_500_000),
+    ],
+)
+def test_uncertainty_budget_defaults_and_overrides(monkeypatch, value, expected_ns):
+    if value is None:
+        monkeypatch.delenv(BUDGET_ENV, raising=False)
+    else:
+        monkeypatch.setenv(BUDGET_ENV, value)
+    assert uncertainty_budget_ns() == expected_ns
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-1", "nan", "-0.5"])
+def test_an_invalid_or_non_positive_budget_is_refused_naming_the_variable(monkeypatch, value):
+    monkeypatch.setenv(BUDGET_ENV, value)
+    with pytest.raises(ValueError, match=BUDGET_ENV):
+        uncertainty_budget_ns()
+
+
+async def test_frames_are_recorded_when_uncertainty_is_within_the_budget():
+    ingress = FakeIngress()
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=3_000_000))
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=3_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    assert len(ingress.offered) == 1
+
+
+async def test_uncertainty_over_the_budget_fails_the_take_naming_the_budget(monkeypatch):
+    monkeypatch.delenv(BUDGET_ENV, raising=False)
+    reasons: list[str] = []
+    ingress = FakeIngress()
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=5_000_001))
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, on_failure=reasons.append)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert BUDGET_ENV in feed.failure
+    assert "5.00 ms budget" in feed.failure
+    assert reasons == [feed.failure]
+    assert ingress.offered == []
+
+
+async def test_the_budget_comes_from_the_environment_when_not_passed(monkeypatch):
+    monkeypatch.setenv(BUDGET_ENV, "1")
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=2_000_000))
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is not None
+    assert "1.00 ms budget" in feed.failure
+
+
+async def test_a_mapping_in_budget_at_the_first_frame_ages_over_budget_when_replies_stop(monkeypatch):
+    """Real estimator and sync client: only time passing, with no new exchange, pushes the take over budget."""
+    from egocap_web.clock_exchange import ClockEstimator, Exchange
+    from egocap_web.livekit_clock_sync import ClockSyncClient
+
+    monkeypatch.delenv(BUDGET_ENV, raising=False)
+    s = 1_000_000_000
+    now = [100 * s]
+    # Stale limit raised so the aged figure, not the staleness rule, is what stops the take.
+    client = ClockSyncClient(
+        None,  # type: ignore[arg-type]  # only mapping() is used; no room is needed
+        "o",
+        monotonic_ns=lambda: now[0],
+        estimator=ClockEstimator(stale_after_ns=600 * s),
+    )
+    remote_offset_ns = 1_000 * s  # the publisher's clock reads this far ahead of ours
+    # A 2 ms round trip: 1 ms uncertainty at the exchange, 5 ms budget.
+    t1 = 99 * s
+    assert (
+        client.estimator.add(
+            Exchange(
+                t1=t1,
+                t2=t1 + 1_000_000 + remote_offset_ns,
+                t3=t1 + 1_000_000 + remote_offset_ns,
+                t4=t1 + 2_000_000,
+            )
+        )
+        is None
+    )
+
+    def frame(capture_local_s: float) -> ReceivedFrame:
+        user_ts_us = round((capture_local_s * s + remote_offset_ns) / 1000)
+        return _received(16, user_ts_us, receive_ns=round((capture_local_s + 0.1) * s))
+
+    class AgingReceiver(FakeReceiver):
+        """Delivers each frame at its own local time: the clock moves, no clock-sync reply arrives."""
+
+        def __init__(self, scripted: list[tuple[int, ReceivedFrame]]) -> None:
+            super().__init__({}, client)
+            self.scripted = scripted
+
+        async def next_frame_or_lost(self, stream_id: int, timeout=None) -> ReceivedFrame | None:
+            if not self.scripted:
+                await asyncio.Event().wait()
+            at_ns, received = self.scripted.pop(0)
+            now[0] = at_ns
+            return received
+
+    first, second, third = frame(100.0), frame(129.9), frame(130.0)
+    receiver = AgingReceiver([(round(100.1 * s), first), (round(130 * s), second), (round(130.1 * s), third)])
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, {16: "head_left"}, max_uncertainty_ns=5_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+
+    assert client.mapping() is not None  # not stale: the budget, not staleness, is what failed
+    assert [m.capture_time for m in ingress.offered] == [pytest.approx(100.0)]  # the earlier frame stays recorded
+    assert feed.failure is not None
+    assert BUDGET_ENV in feed.failure
+    assert "5.00 ms budget" in feed.failure
+    # 1 ms from the round trip plus the default 200 ppm over the 31 s since the exchange.
+    assert "uncertain by 7.20 ms" in feed.failure
+    assert len(receiver.scripted) == 1  # nothing after the failing frame was taken
+
+
+def test_a_receiver_without_clock_sync_is_refused():
+    receiver = FakeReceiver({})
+    receiver.clock_sync = None
+    with pytest.raises(ValueError, match="clock-sync"):
+        LiveKitRecordingFeed(receiver, [_stream(16, "Head left")], FakeIngress(), {16: "a"})
+
+
 async def test_offered_sample_is_rgb8_with_the_frame_image_and_receive_time_in_seconds():
     frame = _received(16, 1_000_000, receive_ns=11_100_000_000)
     ingress = FakeIngress()
@@ -262,6 +346,19 @@ async def test_offered_sample_is_rgb8_with_the_frame_image_and_receive_time_in_s
     assert sample.image is frame.image
     assert sample.capture_time == 11.0
     assert sample.receive_time == pytest.approx(11.1)
+
+
+async def test_publisher_monotonic_stream_is_recorded_through_the_clock_mapping():
+    ingress = FakeIngress()
+    frame = _received(16, 1_000_000, receive_ns=11_100_000_000)
+    feed = _feed(FakeReceiver({16: [frame]}), [_stream(16, "Head left", MONO)], ingress, {16: "head_left"})
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    (sample,) = ingress.offered
+    assert sample.source == "head_left"
+    assert sample.capture_time == 11.0
 
 
 async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
@@ -288,7 +385,7 @@ async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
     assert submitted[0].image is frame.image
 
 
-@pytest.mark.parametrize("basis", [MONO, PROCESSING])
+@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
 async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
     reasons: list[str] = []
     streams = [_stream(16, "Head left", basis)]
@@ -302,9 +399,7 @@ async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
     assert receiver.calls == []  # refused before any frame was taken
     assert feed.failure is not None
     assert "Head left" in feed.failure
-    assert (
-        feed.failure == "Head left: its timestamps are not a capture time, so it cannot be aligned with tracking"
-    )
+    assert feed.failure == "Head left: its timestamps are not on the publisher's monotonic clock"
     assert reasons == [feed.failure]
 
 
@@ -339,7 +434,7 @@ async def test_refusing_ingress_fails_and_stops_that_stream():
 
 async def test_failure_is_reported_once_across_streams():
     reasons: list[str] = []
-    streams = [_stream(16, "Head left", MONO), _stream(17, "Head right", MONO)]
+    streams = [_stream(16, "Head left", PROCESSING), _stream(17, "Head right", PROCESSING)]
     feed = _feed(FakeReceiver({}), streams, FakeIngress(), on_failure=reasons.append)
     feed.start()
     await _settle()
@@ -350,7 +445,7 @@ async def test_failure_is_reported_once_across_streams():
 
 
 async def test_failure_without_a_callback_is_still_stored():
-    feed = _feed(FakeReceiver({}), [_stream(16, "Head left", MONO)], FakeIngress())
+    feed = _feed(FakeReceiver({}), [_stream(16, "Head left", PROCESSING)], FakeIngress())
     feed.start()
     await _settle()
     await feed.stop()
@@ -515,6 +610,94 @@ async def test_silence_fails_the_take_after_the_limit(monkeypatch):
     assert reasons == [feed.failure]
 
 
+class _SilentReceiver(FakeReceiver):
+    async def next_frame_or_lost(self, stream_id, timeout=None):
+        raise asyncio.TimeoutError
+
+
+async def _silent_failure(clock: FakeClockSync) -> str | None:
+    feed = _feed(
+        _SilentReceiver({}, clock), [_stream(16, "Head left")], FakeIngress(), max_uncertainty_ns=5_000_000
+    )
+    feed.start()
+    await _settle()
+    await feed.stop()
+    return feed.failure
+
+
+_SILENCE = "Head left: no frame for 5 s although the track is still published"
+
+
+async def test_silence_with_a_healthy_clock_has_no_clock_suffix():
+    assert await _silent_failure(FakeClockSync()) == _SILENCE
+
+
+async def test_silence_with_a_missing_mapping_names_the_stopped_clock_sync_replies():
+    clock = FakeClockSync()
+    clock.available = False
+    failure = await _silent_failure(clock)
+    assert failure == _SILENCE + "; no current clock mapping from the publisher (its clock-sync replies stopped)"
+
+
+async def test_silence_with_a_clock_discontinuity_names_the_jump():
+    clock = FakeClockSync()
+    clock.discontinuity = True
+    assert await _silent_failure(clock) == _SILENCE + "; the publisher's clock mapping jumped"
+
+
+async def test_silence_with_uncertainty_over_budget_names_the_budget():
+    failure = await _silent_failure(FakeClockSync(uncertainty_ns=5_000_001))
+    assert failure == _SILENCE + "; the clock mapping is uncertain by 5.00 ms, over the budget"
+
+
+async def test_a_discontinuity_flag_wins_over_a_missing_mapping_in_the_silence_suffix():
+    clock = FakeClockSync()
+    clock.discontinuity = True
+    clock.available = False
+    failure = await _silent_failure(clock)
+    assert failure is not None and failure.endswith("the publisher's clock mapping jumped")
+
+
+async def test_overflow_and_publication_change_still_fail_the_take_while_timing_checks_are_active():
+    for field, text in (
+        ("queue_overflow", "the recorder fell behind and dropped 2 frame(s)"),
+        ("publication_changes", "the camera's publication was replaced during the take"),
+    ):
+        receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=4_000_000))
+        receiver.gates[16] = asyncio.Event()
+        ingress = FakeIngress()
+        feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=5_000_000)
+        feed.start()
+        setattr(receiver.counters[16], field, 2 if field == "queue_overflow" else 1)
+        receiver.gates[16].set()
+        await _settle()
+        await feed.stop()
+        assert ingress.offered == []
+        assert feed.failure == f"Head left: {text}"
+
+
+async def test_a_healthy_take_with_stride_two_frame_ids_and_a_valid_mapping_records_every_frame():
+    receiver = FakeReceiver({16: [_received(16, k * 1_000_000) for k in range(1, 6)]})
+    # The receiver accounts frame ids as they arrive; a paced publisher numbers 2, 4, 6... which is not loss.
+    for fid in (2, 4, 6, 8, 10):
+        lr_counters = receiver.counters[16]
+        lrec.LiveKitFrameReceiver._account(lr_counters, fid)
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=5_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    assert [m.capture_time for m in ingress.offered] == [11.0, 12.0, 13.0, 14.0, 15.0]
+    assert feed.loss()["Head left"] == {
+        "received": 5,
+        "queue_overflow": 0,
+        "publication_changes": 0,
+        "missing_frames": 0,
+        "frame_id_resets": 0,
+    }
+
+
 async def test_the_feed_asks_the_receiver_to_time_out_at_the_silence_limit():
     receiver = FakeReceiver({})
     feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
@@ -630,11 +813,24 @@ def test_unrecordable_reason_is_none_when_every_stream_is_recordable():
     assert unrecordable_reason(_started(_geometry(16), _geometry(17))) is None
 
 
-def test_unrecordable_reason_names_a_stream_that_is_not_a_capture_time():
+def test_unrecordable_reason_names_a_stream_that_is_not_monotonic():
     started = _started(_geometry(16), _geometry(17, PROCESSING), _geometry(18, MONO))
     assert (
         unrecordable_reason(started)
-        == "LiveKit stream 'cam17': its timestamps are not a capture time, so it cannot be recorded"
+        == "LiveKit stream 'cam17': its timestamps are not on the publisher's monotonic clock, "
+        "so it cannot be recorded"
+    )
+
+
+def test_publisher_monotonic_stream_is_recordable():
+    assert unrecordable_reason(_started(_geometry(16, MONO), _geometry(17))) is None
+
+
+@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
+def test_non_monotonic_bases_are_still_refused(basis):
+    assert unrecordable_reason(_started(_geometry(16, basis))) == (
+        "LiveKit stream 'cam16': its timestamps are not on the publisher's monotonic clock, "
+        "so it cannot be recorded"
     )
 
 

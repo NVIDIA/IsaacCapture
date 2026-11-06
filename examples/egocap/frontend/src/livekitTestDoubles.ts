@@ -17,6 +17,7 @@ export class FakeRoom {
     if (FakeRoom.connectError !== null) throw FakeRoom.connectError;
   });
   disconnect = vi.fn(async () => {});
+  localParticipant = { publishData: vi.fn(async () => {}) };
   /** Participants already in the room when a new Room is created, i.e. published before we joined. */
   static seed: Array<[string, any]> = [];
   static connectError: Error | null = null;
@@ -28,6 +29,10 @@ export class FakeRoom {
   }
   on(event: string, handler: Handler): this {
     this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
+    return this;
+  }
+  off(event: string, handler: Handler): this {
+    this.handlers.set(event, (this.handlers.get(event) ?? []).filter((h) => h !== handler));
     return this;
   }
   emit(event: string, ...args: any[]): void {
@@ -60,6 +65,6 @@ export function publication(name: string): any {
 }
 
 export const STREAMS: LiveKitStreamDescriptor[] = [
-  { kind: "livekit_camera", stream_id: 16, name: "Head left", url: "wss://lk", room: "r", publisher: "orin", track: "left" },
-  { kind: "livekit_camera", stream_id: 17, name: "Head right", url: "wss://lk", room: "r", publisher: "orin", track: "right" },
+  { kind: "livekit_camera", stream_id: 16, name: "Head left", url: "wss://lk", room: "r", publisher: "orin", track: "left", timestamp_basis: 4 },
+  { kind: "livekit_camera", stream_id: 17, name: "Head right", url: "wss://lk", room: "r", publisher: "orin", track: "right", timestamp_basis: 4 },
 ];
