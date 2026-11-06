@@ -161,6 +161,12 @@ void Pipeline::process(const avs1::Record& record, int64_t received_ns)
     p.decoder->decode(record.payload, record.payload_size, key);
 }
 
+void Pipeline::reset_session()
+{
+    m_impl->have_previous_frame = false;
+    m_impl->need_idr = true;
+}
+
 void Pipeline::request_idr()
 {
     m_impl->idr_requested = true;

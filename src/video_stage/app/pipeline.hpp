@@ -73,6 +73,10 @@ public:
     /// Process one received record. Throws std::runtime_error on a decoder or encoder failure.
     void process(const avs1::Record& record, int64_t received_ns);
 
+    /// A new source session begins: forget the previous one's frame numbering and start the encoder at an IDR. Call
+    /// between sessions, from the thread that calls process().
+    void reset_session();
+
     /// Make the next encoded picture an IDR (a subscriber joined or the receiving side asked). Thread-safe.
     void request_idr();
 

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -51,6 +52,7 @@ private:
     int m_listen = -1;
     int m_connection = -1; ///< DATA
     int m_control = -1; ///< CTRL
+    std::atomic<int> m_pending{ -1 }; ///< an accepted socket whose hello is being read, visible to shutdown
     std::mutex m_control_send;
 };
 

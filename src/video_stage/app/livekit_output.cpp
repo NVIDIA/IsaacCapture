@@ -46,6 +46,11 @@ void LiveKitOutput::break_publication()
     m_idr_requested_for_gap = false;
 }
 
+void LiveKitOutput::end_session()
+{
+    break_publication();
+}
+
 void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, const Geometry& geometry)
 {
     if (m_livekit.failed())

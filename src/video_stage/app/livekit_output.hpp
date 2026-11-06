@@ -71,6 +71,10 @@ public:
 
     void write(const EncodedPacket& packet, const FrameMeta& meta, const Geometry& geometry) override;
 
+    /// The source session ended: unpublish, so a sender restart is never carried through as one continuous take. The
+    /// next session publishes a fresh track at its first keyframe.
+    void end_session();
+
     uint64_t published() const
     {
         return m_published;

@@ -42,6 +42,56 @@ source maps once (on the CPU, uploaded once) and whose `enqueue` launches a kern
 computing the sine. Sample luma at the map position and chroma at the position derived from the same map with the
 siting above. `output_geometry` returns the rectified output size. Nothing else in the stage changes.
 
+## The worker and the data path
+
+```text
+Orin producer --DATA (AVS1 records, H.264)--> PC worker: NVDEC -> GpuOperation -> NVENC --> LiveKit track
+              <--CTRL (keyframe requests, clock exchange)--
+```
+
+`video_stage_worker` serves one Orin camera per `--stream=PORT:TRACK`; all tracks are published under one LiveKit
+participant, as the Orin producer does for its cameras. The recorder and the web page subscribe to the processed tracks
+exactly as they subscribe to the Orin's own, so they are unchanged.
+
+- **Direct input.** The Orin producer connects to each stream's port (`--add-stream=sensor=0,livekit=NAME,direct=HOST:PORT`)
+  and sends every encoded access unit as an AVS1 record over TCP (`wire/`; codec 2 is H.264). It reconnects by itself,
+  starts at a keyframe, and drops frames up to the next keyframe rather than block when the link cannot keep up. Use a
+  wired link.
+- **Control link.** A second connection from the Orin carries the PC's keyframe requests and a four-timestamp clock
+  exchange (the same bytes the recorder uses over LiveKit). The worker converts each Orin frame-ready stamp onto its own
+  monotonic clock before publishing, and answers the recorder's and the page's clock sync with that clock, so they map one
+  clock. Frames are withheld while the Orin-to-PC mapping is missing or less certain than
+  `--max-upstream-uncertainty-ms` (5 by default); when the Orin's clock jumps, the track is unpublished and published again
+  at the next keyframe. The uncertainty the recorder and the page report covers only the worker-to-them leg: it excludes
+  the Orin-to-PC mapping, which this budget bounds.
+- **Fixed geometry.** A stream's picture size is fixed for the run; a change ends the stream with an error.
+- **Identity.** Each picture carries a key through NVDEC and NVENC, and the source frame number and stamp are looked up by
+  that key, so metadata follows its own frame through loss. A stage that cannot keep up discards its queued records and
+  resumes at the next keyframe; it never drops compressed frames one by one.
+
+Declare the processed tracks like any other camera in the CaptureServer streams file, with the worker's participant as the
+publisher and the monotonic basis the worker publishes:
+
+```yaml
+livekit:
+  url: ws://PC_HOST:7880
+  room: sensing-preview
+  publisher: stage-worker          # the identity in the worker's token
+  timestamp_basis: monotonic_us
+  streams:
+    - {name: Head left,  track: processed-left,  width: 2560, height: 1984, fps: 30}
+    - {name: Head right, track: processed-right, width: 2560, height: 1984, fps: 30}
+```
+
+```bash
+video_stage_worker --stream=5600:processed-left --stream=5601:processed-right \
+  --livekit-url=ws://127.0.0.1:7880 --livekit-token-file=worker.token
+# a file sink instead of LiveKit, to check a run:
+video_stage_worker --stream=5600:file=out.h264 --once
+```
+
+`tests/tools/send_avs1.py` stands in for the Orin (an H.264 file with AUD NAL units, sent as the Orin sender would).
+
 ## Build
 
 ```bash

@@ -96,18 +96,30 @@ void TcpReceiver::accept_session()
             throw std::runtime_error(std::string("TcpReceiver: accept failed: ") + std::strerror(errno));
         const int one = 1;
         ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        // A peer that connects and never finishes its hello must not hold the worker: bound the wait, and let a stop
+        // reach this socket through m_pending.
+        timeval timeout{ 2, 0 };
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        m_pending = fd;
         uint8_t hello[4];
-        if (!read_exact(fd, hello, sizeof(hello), true))
+        bool have_hello = false;
+        try
         {
-            ::close(fd);
-            continue;
+            have_hello = read_exact(fd, hello, sizeof(hello), true);
         }
-        if (std::memcmp(hello, "DATA", 4) == 0 && m_connection < 0)
+        catch (const std::exception&)
+        {
+            have_hello = false;
+        }
+        m_pending = -1;
+        timeval none{ 0, 0 };
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &none, sizeof(none));
+        if (have_hello && std::memcmp(hello, "DATA", 4) == 0 && m_connection < 0)
             m_connection = fd;
-        else if (std::memcmp(hello, "CTRL", 4) == 0 && m_control < 0)
+        else if (have_hello && std::memcmp(hello, "CTRL", 4) == 0 && m_control < 0)
             m_control = fd;
         else
-            ::close(fd); // unknown or duplicate connection
+            ::close(fd); // no hello, an unknown one, or a duplicate
     }
 }
 
@@ -115,10 +127,16 @@ void TcpReceiver::stop_listening()
 {
     if (m_listen >= 0)
         ::shutdown(m_listen, SHUT_RDWR); // makes a blocked accept() fail
+    const int pending = m_pending.load();
+    if (pending >= 0)
+        ::shutdown(pending, SHUT_RDWR); // and a hello being read
 }
 
 void TcpReceiver::shutdown_session()
 {
+    const int pending = m_pending.load();
+    if (pending >= 0)
+        ::shutdown(pending, SHUT_RDWR);
     for (const int fd : { m_connection, m_control })
     {
         if (fd >= 0)
