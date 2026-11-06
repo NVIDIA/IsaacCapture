@@ -48,10 +48,10 @@ parameter:
 
 In `controller_teleop`, `hand_retargeter` selects the finger-joint mapping.
 With `hand_tracking_provider:=native`, EE poses and wrist TFs come from XR
-controller aim poses. With `hand_tracking_provider:=manus`, they come from
-controller aim poses with the MANUS controller-to-hand calibration. With
+controller aim poses. With `hand_tracking_provider:=manus` or
 `hand_tracking_provider:=wuji`, they come from the provider-injected OpenXR
-wrists. Controllers continue to provide locomotion and `controller_data`.
+wrists, so the provider plugin owns the controller-to-wrist calibration.
+Controllers continue to provide locomotion and `controller_data`.
 
 The Docker build fetches the pinned official Sharpa Wave URDFs and installs them
 at `/opt/isaaccapture/install/examples/teleop_ros2/assets/urdf/sharpa_standalone/`.
@@ -228,7 +228,7 @@ The `mode` parameter selects the teleoperation scenario and which topics are pub
 
 | Mode | Topics published |
 |------|------------------|
-| `controller_teleop` (default) | `ee_poses`, `root_twist`, `root_pose`, `head_pose`, `finger_joints`, `controller_data`, and `tf`; TriHand uses controller-derived finger joints and EE poses. Explicit Sharpa or Wuji retargeters add `hand`; `native` uses controller aim for EE poses, `manus` applies the MANUS calibration to controller aim, and `wuji` uses provider-injected wrist poses |
+| `controller_teleop` (default) | `ee_poses`, `root_twist`, `root_pose`, `head_pose`, `finger_joints`, `controller_data`, and `tf`; TriHand uses controller-derived finger joints and EE poses. Explicit Sharpa or Wuji retargeters add `hand`; `native` uses controller aim for EE poses, while `manus` and `wuji` use provider-injected wrist poses |
 | `hand_teleop` | `ee_poses` (from hand tracking wrists), `hand` (named left and right joint poses), `finger_joints` (finger joints in joint space), `root_twist`, `root_pose`, `head_pose`, `tf` (from hand tracking wrists and head pose); locomotion comes from the configured foot pedal collection |
 | `controller_raw` | `controller_data` only |
 | `full_body` | `full_body` and `controller_data` |

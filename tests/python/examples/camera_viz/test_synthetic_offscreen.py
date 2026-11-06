@@ -17,7 +17,7 @@ import pytest
 
 import isaaccapture.viz as viz
 
-from sources import build_local_camera
+from isaaccapture_examples.camera_viz.sources import build_local_camera
 
 
 def _gpu_and_cupy_available() -> bool:

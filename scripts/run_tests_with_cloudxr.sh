@@ -24,6 +24,7 @@ set -euo pipefail
 # the ctest configuration in `build-ubuntu.yml` instead, so that they can be
 # run on a runner without GPU support immediately after the build.
 #==============================================================================
+# Scripts in tests/python/xr_runtime/, which the test image copies to /app/tests.
 CXR_PYTHON_GPU_TESTS=(
     "test_package_version.py"
     "test_extensions.py"

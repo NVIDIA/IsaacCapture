@@ -7,12 +7,10 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
 <h1 align="center" style="text-align: center;">EgoHand</h1>
 <p align="center" style="text-align: center;"><em>Monocular 3D Hand Reconstruction from Egocentric Video</em></p>
 <p align="center" style="text-align: center;">
-  <a href="docs/EgoHand.pdf">
-    <img src="https://img.shields.io/badge/Paper-Link-0099cc"
-         alt="Paper: Link">
+  <a href="https://arxiv.org/abs/2610.30293">
+    <img src="https://img.shields.io/badge/arXiv-2610.30293-b31b1b.svg"
+         alt="arXiv: 2610.30293">
   </a>
-  <img src="https://img.shields.io/badge/arXiv-Coming_Soon-b31b1b.svg"
-       alt="arXiv Coming Soon">
   <a href="https://huggingface.co/nvidia/EgoHand-v1">
     <img src="https://img.shields.io/badge/Hugging_Face-EgoHand--v1-ffd21e"
          alt="Hugging Face: EgoHand-v1">
@@ -35,6 +33,15 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
   <a href="docs/showcase/egohand_showcase.mp4"><img src="docs/showcase/egohand_showcase.gif" width="800" alt="EgoHand showcase: a 3-row, 4-column video grid becomes skeleton overlays, a hand close-up, and an orbiting 3D mesh view."></a><br>
 </p>
 </div>
+
+## 📰 News
+
+- **[2026-10-21]** 🚀 **EgoHand v1** is released for monocular 3D hand pose
+  estimation using the [SOMA-Hand representation](https://github.com/NVlabs/SOMA-X).
+  Get started with [pretrained models](https://huggingface.co/nvidia/EgoHand-v1),
+  the [inference example](#example),
+  [fine-tuning EgoHand with GEM-X](https://github.com/NVlabs/GEM-X), and the
+  [paper](https://arxiv.org/abs/2610.30293).
 
 <a id="overview"></a>
 

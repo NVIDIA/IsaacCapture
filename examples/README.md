@@ -10,12 +10,27 @@ your own project — the last of those is the reason for the layout below.
 
 ## Running an example
 
+Build Isaac Capture from source, then set up a venv from the repository root
+exactly as in [step 4 of Build from source][install-step]: create it on the
+build's Python, activate it, and install `isaaccapture` pinned to `X.Y+local`
+with `--reinstall-package isaaccapture`. Rerun that install after every
+rebuild to replace the installed wheel. `uv pip install` finds a repo-root
+`.venv` even when it is inactive and `python` does not, so activate it in every
+terminal you run an example from.
+
 ```bash
 uv pip install -e ./examples/<name>
 python -m isaaccapture_examples.<name>
 ```
 
-Every example runs this way, and its `README.md` gives the exact command.
+Every example runs this way except camera_viz and vehicle_teleop, whose
+wrapper scripts call `.venv/bin/python` inside the example directory; their
+READMEs set up that venv. An example whose `pyproject.toml` points
+`[tool.uv.sources]` at this checkout installs an editable build instead of the
+wheel; [step 4][editable-examples] says how to rebuild it.
+
+[install-step]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package
+[editable-examples]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#build-from-source-editable-examples
 
 An example with one obvious entry point puts it in `__main__.py`, so
 `python -m isaaccapture_examples.<name>` runs it. An example that is several
@@ -82,13 +97,23 @@ the smallest complete one.
 - With hatchling, use `only-include` + `sources`, **not** `packages`:
 
   ```toml
-  [tool.hatch.build.targets.wheel]
+  [tool.hatch.build]
   only-include = ["python/isaaccapture_examples/<name>"]
+
+  [tool.hatch.build.targets.wheel]
   sources = ["python"]
   ```
 
   `packages` keeps only the last path component, so it builds without complaint
-  and produces a wheel rooted at a bare top-level `<name>/`.
+  and produces a wheel rooted at a bare top-level `<name>/`. `only-include`
+  goes in `[tool.hatch.build]` so the sdist gets it too. Without it the sdist
+  takes the whole example directory: tracked media, stray `.mcap` recordings
+  and, in an example with its own `.gitignore` (hatchling reads only the
+  nearest one), `uv.lock` and build trees. Files the code reads from the
+  example root, such as teleop_ros2's `configs/`, are therefore not in the
+  sdist: run such an example from the source tree or the install tree.
+  `sources` stays on the wheel: the sdist must keep the `python/` prefix that
+  the wheel build looks for.
 - Keep `[tool.uv.sources]` last in the file. `install_python_example()` strips
   it from the installed copy by matching up to the next `[`, so a block after it
   loses its comments.

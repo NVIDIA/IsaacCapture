@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=body_tracking/index.html
+
 Body Tracking
 =============
 

@@ -237,6 +237,25 @@ class TestServiceConstruction:
 class TestServiceStop:
     """Tests for CloudXRService.stop()."""
 
+    def test_stop_failure_retains_runtime_and_restores_handlers(self, tmp_path):
+        """Failed drain preserves the owner and allows an ordinary cleanup retry."""
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            service = CloudXRService()
+            failure = RuntimeError("owned runtime did not drain")
+            with (
+                patch.object(service, "_terminate_runtime", side_effect=failure),
+                patch.object(service, "_stop_wss_proxy"),
+                patch.object(service, "_restore_signal_handlers") as restore,
+            ):
+                with pytest.raises(RuntimeError) as caught:
+                    service.stop()
+            assert caught.value is failure
+            restore.assert_called_once_with()
+            assert not service._stopping
+            assert service._runtime_proc is mocks["proc"]
+            mocks["proc"].poll.return_value = 0
+            service.stop()
+
     @_posix_only
     def test_stop_terminates_runtime(self, tmp_path):
         """stop() sends SIGTERM to the runtime process group."""

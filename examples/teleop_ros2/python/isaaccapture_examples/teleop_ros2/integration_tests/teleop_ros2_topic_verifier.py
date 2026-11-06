@@ -146,13 +146,8 @@ def _assert_ee_poses_array(
         raise ValueError("EE pose array contains an invalid entry")
     _assert_nonzero_pose_positions(msg, "EE pose")
 
-    if mode != "controller_teleop" or hand_tracking_provider == "wuji":
+    if mode != "controller_teleop" or hand_tracking_provider in ("manus", "wuji"):
         expected_xy = ((-0.25, 1.10), (0.25, 1.10))
-    elif hand_tracking_provider == "manus":
-        expected_xy = (
-            (-0.1896684528, 1.255536544),
-            (0.2103315472, 1.144463456),
-        )
     else:
         expected_xy = ((-0.20, 1.20), (0.20, 1.20))
     for side, pose, (expected_x, expected_y) in zip(

@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Recording service: submitted samples in, checked and finalized Zarr/MP4 episodes out.
+
+Public API: :class:`RecordingService` configured by :class:`ServiceConfig`. All value types
+are recording-owned; the service reaches storage and quality checking only through
+``egocap.recording``.
+"""
+
+from .models import (
+    CalibrationAsset,
+    CaptureQcConfig,
+    CheckResult,
+    CloseResult,
+    ConfigurationError,
+    Disposition,
+    EpisodeInfo,
+    EpisodeResult,
+    FieldSpec,
+    NumericSample,
+    NumericSourceSpec,
+    Outcome,
+    PendingEpisode,
+    PixelFormat,
+    QcConfig,
+    QcDecision,
+    QualityReport,
+    RecordingError,
+    RecordingPhase,
+    RecordingSnapshot,
+    RoutingConfig,
+    ServiceConfig,
+    SessionInfo,
+    SourceCounts,
+    StateError,
+    SubmissionResult,
+    SubmissionStatus,
+    ValidationError,
+    VideoSample,
+    VideoSourceSpec,
+)
+from .recording_service import RecordingService
+
+__all__ = [
+    "CalibrationAsset",
+    "CaptureQcConfig",
+    "CheckResult",
+    "CloseResult",
+    "ConfigurationError",
+    "Disposition",
+    "EpisodeInfo",
+    "EpisodeResult",
+    "FieldSpec",
+    "NumericSample",
+    "NumericSourceSpec",
+    "Outcome",
+    "PendingEpisode",
+    "PixelFormat",
+    "QcConfig",
+    "QcDecision",
+    "QualityReport",
+    "RecordingError",
+    "RecordingPhase",
+    "RecordingService",
+    "RecordingSnapshot",
+    "RoutingConfig",
+    "ServiceConfig",
+    "SessionInfo",
+    "SourceCounts",
+    "StateError",
+    "SubmissionResult",
+    "SubmissionStatus",
+    "ValidationError",
+    "VideoSample",
+    "VideoSourceSpec",
+]

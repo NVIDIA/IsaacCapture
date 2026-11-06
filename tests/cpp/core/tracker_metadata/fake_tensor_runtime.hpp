@@ -58,7 +58,8 @@ public:
     //! Creates `collection_id` with samples of `sample_size` bytes, as a producer starting up does.
     void create(const std::string& collection_id, uint32_t sample_size)
     {
-        m_collections.push_back(std::make_shared<Collection>(Collection{ collection_id, sample_size }));
+        m_collections.push_back(
+            std::make_shared<Collection>(Collection{ collection_id, sample_size, m_next_collection_id++ }));
         ++m_generation;
     }
 
@@ -96,6 +97,7 @@ private:
     {
         std::string id;
         uint32_t sample_size;
+        XrTensorCollectionIDNV instance_id;
         std::vector<Sample> samples{};
         int64_t next_index = 0;
         bool destroyed = false;
@@ -160,6 +162,7 @@ private:
         properties->data.tensorCount = 1;
         properties->data.totalSampleSize = collection.sample_size;
         properties->sampleBatchStride = collection.sample_size;
+        properties->tensorCollectionId = collection.instance_id;
         return XR_SUCCESS;
     }
 
@@ -231,6 +234,7 @@ private:
     std::vector<std::shared_ptr<Collection>> m_collections;
     std::map<uintptr_t, Listed> m_lists;
     uintptr_t m_next_list = 1;
+    XrTensorCollectionIDNV m_next_collection_id = 1;
     uint64_t m_generation = 1;
 };
 

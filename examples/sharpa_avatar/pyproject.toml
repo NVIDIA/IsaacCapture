@@ -22,8 +22,10 @@ dependencies = [
 
 # `only-include` + `sources`, not `packages`, and no __init__.py above
 # sharpa_avatar -- see the packaging rules in examples/README.md.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/sharpa_avatar"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]
 
 [tool.uv.sources]

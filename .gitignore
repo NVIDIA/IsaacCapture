@@ -7,6 +7,8 @@
 # Node.js
 node_modules/
 package-lock.json
+# Keep the tested Synthetic XR client dependency graph reproducible.
+!deps/cloudxr/webxr_client/package-lock.json
 
 # Build directories
 build/
@@ -63,8 +65,8 @@ project.spdx
 # MuJoCo writes this to the working directory, not next to the model.
 MUJOCO_LOG.TXT
 
-# examples/mcap_record_replay writes here by default (Path.cwd() / "recordings"),
-# and its README has you run from the repo root.
+# Examples and test scripts that record write here by default
+# (Path.cwd() / "recordings"), and their docs have you run from the repo root.
 /recordings/
 
 # Runtime device files injected by MCP server infrastructure
@@ -76,6 +78,9 @@ MUJOCO_LOG.TXT
 
 # Agent session logs (never committed)
 tmp/
+
+# Local unpacked toolchain/dependency trees are not repository inputs.
+.local-deps/
 
 # SO-101 leader-gripper and follower-arm assets, fetched by
 # scripts/fetch-so-arm.sh into the package's assets directory, so only the

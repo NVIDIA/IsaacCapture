@@ -9,9 +9,11 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
@@ -22,6 +24,35 @@ from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
+
+_generated_control_token: str | None = None
+_generated_control_token_lock = threading.Lock()
+
+
+def control_token_is_generated() -> bool:
+    """``True`` when ``CONTROL_TOKEN`` is unset and the hub uses a random token."""
+    return not os.environ.get("CONTROL_TOKEN")
+
+
+def resolve_control_token() -> str:
+    """Return the hub control token: ``CONTROL_TOKEN``, else a per-process random one.
+
+    The hub never runs unauthenticated. Every reader (hub, headset URL, banner)
+    must call this so they agree; it does not modify ``os.environ``.
+    """
+    global _generated_control_token
+    # An empty CONTROL_TOKEN counts as unset: it must never mean "no auth".
+    configured = os.environ.get("CONTROL_TOKEN")
+    if configured:
+        return configured
+    # The proxy runs on a thread, so the lazy generation is lock-guarded to
+    # keep the hub, headset URL and banner on the same token.
+    with _generated_control_token_lock:
+        if _generated_control_token is None:
+            _generated_control_token = secrets.token_urlsafe(32)
+        return _generated_control_token
+
+
 progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.oob-progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
@@ -408,7 +439,8 @@ def client_ui_fields_from_env() -> dict:
 
     Keys match query params the WebXR client reads on page load
     (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
-    ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``immersiveMode``, ``referenceSpace``, ``replayPacing``,
+    ``showRecordingControls``, ``reconnectMaxAttempts``, ``reconnectDelayMs``,
     ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
     Deliberately excludes ``reconnectEnabled`` - OOB never sets it; the client's
     own reconnect loop is opt-in via a URL param the user supplies directly.
@@ -423,6 +455,20 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    # Passed through like codec; the client validates the value.
+    for env_name, key in (
+        ("TELEOP_CLIENT_IMMERSIVE_MODE", "immersiveMode"),
+        ("TELEOP_CLIENT_REFERENCE_SPACE", "referenceSpace"),
+        ("TELEOP_CLIENT_REPLAY_PACING", "replayPacing"),
+    ):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            out[key] = val
+    rc = os.environ.get("TELEOP_CLIENT_SHOW_RECORDING_CONTROLS", "").strip().lower()
+    if rc in ("1", "true", "yes", "on"):
+        out["showRecordingControls"] = True
+    elif rc in ("0", "false", "no", "off"):
+        out["showRecordingControls"] = False
     # reconnectMaxAttempts/reconnectDelayMs are already set above by
     # client_reconnect_config_from_env(), which validates them and raises on bad input - do not
     # re-parse them here with this loop's silent-skip-on-ValueError semantics.
@@ -439,6 +485,11 @@ def client_ui_fields_from_env() -> dict:
         except ValueError:
             continue
     return out
+
+
+def oob_replay_recording_from_env() -> str:
+    """``TELEOP_OOB_RECORDING``: host path or ``latest``, or ``""`` when unset."""
+    return os.environ.get("TELEOP_OOB_RECORDING", "").strip()
 
 
 def teleop_client_route_from_env() -> str:
@@ -474,7 +525,8 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``reconnectEnabled``,
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``immersiveMode``,
+    ``referenceSpace``, ``replayPacing``, ``showRecordingControls``, ``reconnectEnabled``,
     ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
     ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
     the client honours either way, so the headset still lands with the right
@@ -504,6 +556,13 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    for key in ("immersiveMode", "referenceSpace", "replayPacing"):
+        v = cfg.get(key)
+        if v is not None and str(v).strip() != "":
+            params[key] = str(v).strip()
+    v = cfg.get("showRecordingControls")
+    if isinstance(v, bool):
+        params["showRecordingControls"] = "true" if v else "false"
     v = cfg.get("reconnectEnabled")
     if isinstance(v, bool):
         params["reconnectEnabled"] = "true" if v else "false"
@@ -598,7 +657,7 @@ def print_oob_hub_startup_banner(
     port = wss_proxy_port()
     backend_port = usb_backend_port()
     turn_port = usb_turn_port()
-    token = os.environ.get("CONTROL_TOKEN") or None
+    token = resolve_control_token()
 
     if not lan_host:
         lan_host = resolve_lan_host_for_oob() if not usb_local else "127.0.0.1"
@@ -729,11 +788,10 @@ def print_oob_hub_startup_banner(
     )
     print(f"  State:  {primary_base}/api/oob/v1/state")
     print(f"  Config: {primary_base}/api/oob/v1/config?{cfg_q}")
-    if token:
-        print()
-        print(
-            "  CONTROL_TOKEN is set: add ?token=... or header X-Control-Token on OOB HTTP requests."
-        )
+    print()
+    print("  Add header X-Control-Token (or ?token=...) on OOB HTTP requests.")
+    if control_token_is_generated():
+        print(f"  CONTROL_TOKEN was not set; this session's token is: {token}")
     print(bar)
     print()
 

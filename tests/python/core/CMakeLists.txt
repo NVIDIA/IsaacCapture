@@ -4,8 +4,10 @@
 add_subdirectory(schema)
 add_subdirectory(retargeting_engine)
 add_subdirectory(teleop_session_manager)
+add_subdirectory(ovxr_session_manager)
 
 if(BUILD_PYTHON_BINDINGS)
+    add_subdirectory(deviceio_trackers)
     add_subdirectory(cloudxr)
     # Needs `import isaaccapture`, and drives the C++ half through the emitter
     # built under tests/cpp/core/log_bridge.

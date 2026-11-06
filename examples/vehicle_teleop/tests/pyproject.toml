@@ -11,3 +11,7 @@ dev = ["pytest", "numpy", "mcap>=1.2.0", "pyyaml", "pyzmq"]
 
 [tool.pytest.ini_options]
 pythonpath = ["../python"]
+
+# uv reads settings from the nearest [tool.uv], so this empty table keeps the
+# example's pypi.nvidia.com index one directory up out of the test run.
+[tool.uv]

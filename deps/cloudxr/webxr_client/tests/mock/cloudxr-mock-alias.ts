@@ -60,10 +60,12 @@ declare global {
   interface Window {
     __mockCloudXRFail?: (message?: string) => void;
     __mockCloudXRConnectDelayMs?: number;
+    __mockCloudXRVideoFrame?: (frameId: number) => void;
   }
 }
 
 if (typeof window !== 'undefined') {
+  window.__mockCloudXRVideoFrame = frameId => activeSession?.videoFrameReceived(frameId);
   window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage') => {
     activeSession?.triggerFailure({ name: 'StreamingError', message });
   };

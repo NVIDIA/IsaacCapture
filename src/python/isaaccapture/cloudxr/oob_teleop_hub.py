@@ -13,6 +13,7 @@ HTTP API:  ``GET /api/oob/v1/state``, ``GET /api/oob/v1/config``
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import time
@@ -23,6 +24,11 @@ from typing import Any, Literal
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub")
 
 OOB_WS_PATH = "/oob/v1/ws"
+
+# Metrics and status frames are small JSON; anything larger is not a headset.
+# Checked after websockets has received the whole message, so this saves parsing
+# but does not bound receive memory (that needs a transport-level max_size).
+MAX_FRAME_BYTES = 256 * 1024
 
 
 @dataclass
@@ -78,6 +84,15 @@ class OOBControlHub:
                 if not isinstance(raw, str):
                     await self._send_error(ws, "BAD_REQUEST", "Expected text frame")
                     continue
+
+                # Reject before json.loads so an oversized frame costs no parsing.
+                # Characters never outnumber UTF-8 bytes, so the cheap length test
+                # rejects huge frames without encoding them; the encode catches
+                # multi-byte text that is under the limit in characters only.
+                if len(raw) > MAX_FRAME_BYTES or len(raw.encode()) > MAX_FRAME_BYTES:
+                    await self._send_error(ws, "BAD_REQUEST", "Frame too large")
+                    await ws.close(1009, "Frame too large")
+                    return
 
                 try:
                     msg = json.loads(raw)
@@ -213,10 +228,16 @@ class OOBControlHub:
             await asyncio.sleep(poll_seconds)
 
     def check_token(self, token: str | None) -> bool:
-        """Return True if token satisfies the hub's auth requirement."""
-        if not self._token:
-            return True
-        return token == self._token
+        """Return True only if *token* matches the hub's control token.
+
+        Fails closed: a hub built without a token rejects every caller.
+        """
+        # No configured token or a non-string payload value (JSON can carry ints,
+        # lists) is never a match; compare_digest would raise on non-str input.
+        if not self._token or not isinstance(token, str):
+            return False
+        # Constant-time compare so response timing does not leak the token.
+        return hmac.compare_digest(token.encode(), self._token.encode())
 
     async def http_oob_set_config(self, payload: dict) -> tuple[int, dict]:
         """Merge stream config; for OOB HTTP ``GET /api/oob/v1/config``."""
@@ -260,7 +281,7 @@ class OOBControlHub:
 
     async def _handle_register(self, ws: Any, client_id: str, payload: dict) -> bool:
         """Validate and register a headset. Returns True on success."""
-        if self._token and payload.get("token") != self._token:
+        if not self.check_token(payload.get("token")):
             await self._send_error(ws, "UNAUTHORIZED", "Invalid or missing token")
             try:
                 await ws.close(1008, "Unauthorized")

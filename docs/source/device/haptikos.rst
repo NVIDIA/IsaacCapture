@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=hand_tracking/haptikos.html
+
 Haptikos Exoskeletons
 =====================
 

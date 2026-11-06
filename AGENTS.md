@@ -117,9 +117,10 @@ the logging packages.
   **The one exception is a program that imports no `isaaccapture` at all**, and
   is meant to keep it that way: there are no handlers of ours for it to
   duplicate, and reaching for `logging_config` would add the dependency the
-  program exists without. `examples/camera_viz/camera_streamer.py` is the
-  case — a sender-only camera box runs it with no CUDA/Vulkan/OpenXR runtime
-  installed, so `import isaaccapture` would fail outright. Keep the logger
+  program exists without. The camera_viz streamer,
+  `examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_streamer.py`,
+  is the case — a sender-only camera box runs it with no CUDA/Vulkan/OpenXR
+  runtime installed, so `import isaaccapture` would fail outright. Keep the logger
   names under `isaaccapture.` anyway; the naming rule above is a convention,
   not a runtime coupling.
 - **Configure through the public API instead:** `logging_config.set_console_level()`,
@@ -269,6 +270,8 @@ pre-commit install --hook-type commit-msg
 - Format touched Python source with `ruff format` before staging. If the
   pre-commit hook rewrites a file, restage it and rerun the hooks.
 - **REUSE:** files covered by the REUSE hook need **`SPDX-FileCopyrightText`** and **`SPDX-License-Identifier`** in the form the repo already uses (for example the HTML comment block at the top of `README.md` also applies to **`AGENTS.md`** and similar docs).
+- Keep local dependency or toolchain trees outside the repository or ignored:
+  the REUSE `--fix` hook enumerates non-ignored files and can rewrite them.
 - **C++ formatting is enforced by CI, not pre-commit.** The hook set runs `ruff` for Python but does **not** run `clang-format`; CI (`build-ubuntu.yml`) installs **`clang-format-14`** and rejects unformatted C++ as `-Wclang-format-violations`. Before pushing, format touched C++ with the system `clang-format` (match CI's version 14) and verify:
 
   ```bash

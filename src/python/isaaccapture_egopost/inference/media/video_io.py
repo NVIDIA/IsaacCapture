@@ -16,6 +16,7 @@ FPS_FALLBACK = 30.0
 
 
 def find_videos(input_path: Path) -> list[Path]:
+    """Return the input file, or the sorted ``*.mp4`` files in the input folder."""
     if input_path.is_file():
         return [input_path]
     return sorted(input_path.glob("*.mp4"))

@@ -9,6 +9,7 @@
 #include <log_bridge/logger.hpp>
 #include <mcap/tracker_channels.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
+#include <schema/metadata_validation.hpp>
 #include <schema/serialized.hpp>
 
 #include <cstdint>
@@ -63,8 +64,14 @@ public:
      */
     bool update()
     {
+        const auto previous_collection = collection_instance_id();
         std::vector<SampleResult> samples;
         const bool present = read_all_samples(samples);
+        if (collection_instance_id() != previous_collection)
+        {
+            // Recreated collections must confirm their own sample, even without an observed gap.
+            confirmed_ = false;
+        }
         for (auto& sample : samples)
         {
             accept(sample);
@@ -102,6 +109,9 @@ private:
 
         if (!metadata_)
         {
+            // Schema-specific dispatch belongs to the schema layer, not this generic reader.
+            verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data()), collection_id);
+
             const int64_t log_time_ns = sample.timestamp.available_time_local_common_clock();
             metadata_ = Serialized<MetadataT>::adopt(std::move(sample.buffer));
             if (mcap_channels_ != nullptr)

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isaac-camera-streamer-example"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24,<2", "PyYAML>=6", "opencv-python>=4.8"]
+
+[project.optional-dependencies]
+receiver = ["cupy-cuda12x>=13,<14", "pybind11>=2.12", "ninja>=1.11"]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["camera_streamer"]
+package-dir = {camera_streamer = "."}

@@ -213,7 +213,12 @@ class MetadataTest(unittest.TestCase):
     def _context(self, **overrides):
         from templates import enrich_context
 
-        raw = {"name": "tactile", "table": "TactileData", **overrides}
+        raw = {
+            "name": "tactile",
+            "table": "TactileDataArray",
+            "schema": "tactile_array",
+            **overrides,
+        }
         return enrich_context(resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH)))
 
     def test_unset_by_default(self) -> None:
@@ -223,11 +228,13 @@ class MetadataTest(unittest.TestCase):
         from templates import MetadataGenContext
 
         self.assertEqual(
-            self._context(metadata="TactileShape").metadata,
-            MetadataGenContext("TactileShape", "tactile_shape", "tactile_metadata"),
+            self._context(metadata="TactileMetadata").metadata,
+            MetadataGenContext(
+                "TactileMetadata", "tactile_metadata", "tactile_metadata"
+            ),
         )
         self.assertEqual(
-            self._context(metadata="TactileShape", channel="glove").metadata.channel,
+            self._context(metadata="TactileMetadata", channel="glove").metadata.channel,
             "glove_metadata",
         )
 
@@ -241,7 +248,7 @@ class MetadataTest(unittest.TestCase):
         for overrides in (
             {"metadata": ""},
             {"metadata": 1},
-            {"metadata": "TactileShape", "direction": "push"},
+            {"metadata": "TactileMetadata", "direction": "push"},
         ):
             with self.subTest(**overrides), self.assertRaises(ValueError) as ctx:
                 self._context(**overrides)
@@ -255,7 +262,7 @@ class MetadataTest(unittest.TestCase):
             render_for_entry,
         )
 
-        for metadata in (None, "TactileShape"):
+        for metadata in (None, "TactileMetadata"):
             ctx = self._context(**({"metadata": metadata} if metadata else {}))
             files = render_for_entry(ctx)
             for fragment in (

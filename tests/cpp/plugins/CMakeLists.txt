@@ -3,6 +3,10 @@
 
 add_subdirectory(plugin_utils)
 
+if(TARGET avatar_plugin_core)
+    add_subdirectory(sharpa_avatar)
+endif()
+
 # The SpaceMouse and gamepad plugins (and their core libraries) are Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(spacemouse)
@@ -11,4 +15,9 @@ endif()
 
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
+endif()
+
+# Defined on Linux whether or not the Manus SDK is present (see src/plugins/manus_calibration/CMakeLists.txt).
+if(TARGET manus_calibration_core)
+    add_subdirectory(manus_calibration)
 endif()

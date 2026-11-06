@@ -1425,7 +1425,8 @@ _COPYRIGHT_TAG = re.compile(
     re.MULTILINE,
 )
 # Comment markup around a copyright line: `//`, `#`, ` * `, `<!-- ... -->`, `/* ... */`.
-_COMMENT_MARKUP = re.compile(r"^(?:<!--|[/*#\s])+|\s*(?:-->|\*/)\s*$")
+# HTML also ends a comment at `--!>`.
+_COMMENT_MARKUP = re.compile(r"^(?:<!--|[/*#\s])+|\s*(?:--!?>|\*/)\s*$")
 _YEARS = re.compile(r"(copyright|\(c\)|©|\d{4}(\s*-\s*\d{4})?|,|\.)", re.IGNORECASE)
 
 
