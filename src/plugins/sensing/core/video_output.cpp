@@ -7,6 +7,7 @@
 #include "rgba_box_downscale.cuh"
 #include "sensor_clock.hpp"
 
+#include <log_bridge/logger.hpp>
 #include <video_stage/direct_sender.hpp>
 
 #include <algorithm>
@@ -39,6 +40,12 @@ void check_cuda(cudaError_t err, const char* what)
 
 // Congestion control never drives the encoder below this.
 constexpr uint32_t kMinBitrateBps = 100'000;
+/// Forced keyframes (the PC asking, or a dropped link recovering) are at least this far apart.
+constexpr std::chrono::milliseconds kMinIdrInterval{ 1000 };
+/// How often the link is judged, how far the bitrate falls back, and how long it must stay calm before it rises.
+constexpr std::chrono::milliseconds kAdaptInterval{ 1000 };
+constexpr uint32_t kFloorBitrateBps = 1'500'000;
+constexpr uint32_t kCalmBeforeRaise = 5;
 // A target is applied only when it differs from the current one by this fraction, and this long after
 // the last change.
 
@@ -95,6 +102,7 @@ struct VideoOutput::Impl
             encoder_config.width = out_width;
             encoder_config.height = out_height;
             encoder_config.bitrate_bps = config.bitrate_bps;
+            current_bitrate = config.bitrate_bps;
             encoder_config.peak_bitrate_bps = config.peak_bitrate_bps;
             encoder_config.fps = config.fps;
             encoder_config.gop = config.gop;
@@ -324,6 +332,49 @@ struct VideoOutput::Impl
         }
     }
 
+    // A keyframe is several times the size of an ordinary frame. A link that is struggling makes the PC ask for
+    // keyframes over and over, and each one adds to the load that caused the request, so forced keyframes are spaced.
+    bool idr_allowed()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_forced_idr < kMinIdrInterval)
+            return false;
+        last_forced_idr = now;
+        return true;
+    }
+
+    // Worker thread: follow the link. Frames the direct sender had to drop mean the network could not carry the
+    // stream, so lower the bitrate; after a calm stretch raise it again, never above the configured target.
+    void adapt_to_link()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_adapt < kAdaptInterval)
+            return;
+        last_adapt = now;
+        const uint64_t dropped = direct->dropped();
+        const bool congested = dropped != last_dropped;
+        last_dropped = dropped;
+
+        uint32_t target = current_bitrate;
+        if (congested)
+        {
+            calm_intervals = 0;
+            target = std::max<uint32_t>(kFloorBitrateBps, static_cast<uint32_t>(current_bitrate * 0.7));
+        }
+        else if (++calm_intervals >= kCalmBeforeRaise)
+        {
+            calm_intervals = 0;
+            target = std::min<uint32_t>(config.bitrate_bps, static_cast<uint32_t>(current_bitrate * 1.15));
+        }
+        target = std::min(target, config.bitrate_bps);
+        if (target == current_bitrate || !encoder->set_bitrate(target))
+            return;
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.VideoOutput")
+            ->info("link {}: video bitrate {} -> {} kbit/s", congested ? "congested" : "recovering",
+                   current_bitrate / 1000, target / 1000);
+        current_bitrate = target;
+    }
+
     // Worker thread.
     void encode(const Slot& slot)
     {
@@ -346,7 +397,8 @@ struct VideoOutput::Impl
             ++keyframes_requested;
             keyframe_wanted = true;
         }
-        if (keyframe_wanted)
+        adapt_to_link();
+        if (keyframe_wanted && idr_allowed())
         {
             encoder->request_keyframe();
             keyframe_wanted = false;
@@ -371,7 +423,8 @@ struct VideoOutput::Impl
             ++keyframes_requested;
             keyframe_wanted = true;
         }
-        if (keyframe_wanted)
+        adapt_to_link();
+        if (keyframe_wanted && idr_allowed())
         {
             encoder->request_keyframe();
             keyframe_wanted = false;
@@ -485,6 +538,11 @@ struct VideoOutput::Impl
     std::optional<SensorClockMap> clock_map; ///< Polling thread only.
     std::deque<FrameMeta> in_encoder; ///< Submitted to the encoder, no unit back yet.
     bool keyframe_wanted = false;
+    std::chrono::steady_clock::time_point last_forced_idr{};
+    std::chrono::steady_clock::time_point last_adapt = std::chrono::steady_clock::now();
+    uint64_t last_dropped = 0;
+    uint32_t calm_intervals = 0;
+    uint32_t current_bitrate = 0;
 
     Slot slots[2];
     /// DMA-BUF input only: the newest accepted frame, waiting for the worker. Guarded by `mutex`.
