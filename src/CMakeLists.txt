@@ -40,5 +40,3 @@ endif()
 if(BUILD_PLUGINS)
     add_subdirectory(plugins)
 endif()
-
-

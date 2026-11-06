@@ -381,5 +381,121 @@ class DirectSenderTest(unittest.TestCase):
         self.assertAlmostEqual((d - c) / 1e9, 0.1, delta=0.03)
 
 
+class StalledPeer:
+    """Accepts the DATA and CTRL connections, reads the hellos and then never reads again."""
+
+    def __init__(self) -> None:
+        self.server = socket.socket()
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(8)
+        self.port = self.server.getsockname()[1]
+        self.accepted: list[socket.socket] = []
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self) -> None:
+        try:
+            while True:
+                c, _ = self.server.accept()
+                c.recv(4)
+                self.accepted.append(c)
+        except OSError:
+            return
+
+    def close(self) -> None:
+        self.server.close()
+        for c in self.accepted:
+            c.close()
+
+
+class StopTest(unittest.TestCase):
+    def test_stop_returns_promptly_while_a_send_is_blocked_on_a_peer_that_does_not_read(
+        self,
+    ) -> None:
+        peer = StalledPeer()
+        self.addCleanup(peer.close)
+        clock = m.OrinClock(0, 0.0)
+        s = m.DirectSender("127.0.0.1", peer.port, 64, 48, 30, clock, 512 << 20)
+        self.assertTrue(wait_for(lambda: s.connects == 1))
+        big = b"\x00\x00\x00\x01\x65" + b"I" * (1 << 20)
+        s.submit(big, True, 2, 0)
+        for i in range(3, 80):
+            s.submit(big, False, 2 * i, 0)
+        # Loopback buffers hold a few MB; with ~80 MB queued the sender thread is stuck in sendall.
+        time.sleep(0.5)
+        self.assertGreater(len(s._queue), 0)
+        started = time.monotonic()
+        s.stop()
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertFalse(s._thread.is_alive())
+
+    def test_stop_returns_promptly_when_connected_and_idle(self) -> None:
+        peer = StalledPeer()
+        self.addCleanup(peer.close)
+        s = m.DirectSender(
+            "127.0.0.1", peer.port, 64, 48, 30, m.OrinClock(0, 0.0), 1 << 20
+        )
+        self.assertTrue(wait_for(lambda: s.connects == 1))
+        started = time.monotonic()
+        s.stop()
+        self.assertLess(time.monotonic() - started, 2.0)
+
+
+class TwoCameraKeyframeTest(unittest.TestCase):
+    """Runs the mock's main() against two fake workers: a keyframe request from one camera moves only its cursor."""
+
+    UNITS = 200
+    GOP = 40
+
+    def _source(self, path: Path) -> None:
+        data = b""
+        for i in range(self.UNITS):
+            key = i % self.GOP == 0
+            data += START + bytes([0x65 if key else 0x41, 0x80, 0xAA, i])
+        path.write_bytes(data)
+
+    @staticmethod
+    def _indices(records: list[bytes]) -> list[int]:
+        return [r[-1] for r in records]
+
+    def test_a_keyframe_request_on_one_camera_leaves_the_other_cursor_alone(
+        self,
+    ) -> None:
+        a, b = FakeWorker(), FakeWorker()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "s.h264"
+            self._source(src)
+            proc = subprocess.Popen(
+                [sys.executable, str(Path(m.__file__)), "--port", str(a.port),
+                 "--port", str(b.port), "--width", "64", "--height", "48", "--fps", "30",
+                 "--source", str(src), "--duration", "5"],
+                stdout=subprocess.DEVNULL,
+            )  # fmt: skip
+            try:
+                self.assertTrue(
+                    wait_for(
+                        lambda: all(
+                            w.records and len(w.records[0]) >= 8 for w in (a, b)
+                        )
+                    )
+                )
+                before_a = len(a.records[0])
+                a.sessions[0][1].sendall(b"K")
+                self.assertTrue(wait_for(lambda: len(a.records[0]) >= before_a + 10))
+                proc.wait(timeout=15)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+        idx_a, idx_b = self._indices(a.records[0]), self._indices(b.records[0])
+        steps_a = [y - x for x, y in zip(idx_a, idx_a[1:])]
+        steps_b = [y - x for x, y in zip(idx_b, idx_b[1:])]
+        self.assertTrue(any(s > 1 for s in steps_a), f"camera A never jumped: {idx_a}")
+        jump = next(i for i, s in enumerate(steps_a) if s > 1)
+        self.assertEqual(idx_a[jump + 1] % self.GOP, 0)  # it resumed at a keyframe
+        self.assertEqual(set(steps_b), {1}, f"camera B was disturbed: {idx_b}")
+
+
 if __name__ == "__main__":
     unittest.main()

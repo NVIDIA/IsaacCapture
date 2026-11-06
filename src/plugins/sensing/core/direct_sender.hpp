@@ -72,7 +72,8 @@ private:
     void run();
     void control_loop(int fd);
     void run_control(int fd);
-    bool connect_once(int& fd, std::string& why);
+    /// Connects without blocking past a stop request; \p slot (0 data, 1 control) publishes the fd to the destructor.
+    bool connect_once(int& fd, int slot, std::string& why);
     /// Drops every queued unit and waits for a keyframe, asking the encoder for one. Caller holds m_mutex.
     void flush_stale_locked();
     bool control_alive() const
@@ -94,6 +95,9 @@ private:
     bool m_need_keyframe = true; ///< guarded by m_mutex
     bool m_stop = false; ///< guarded by m_mutex
     std::uint64_t m_sequence = 0;
+    std::atomic<bool> m_stopping{ false };
+    std::mutex m_fd_mutex;
+    int m_fds[2] = { -1, -1 }; ///< live sockets, guarded by m_fd_mutex
     std::atomic<bool> m_keyframe_requested{ false };
     std::atomic<bool> m_control_ended{ false };
     std::atomic<std::uint64_t> m_sent{ 0 };
