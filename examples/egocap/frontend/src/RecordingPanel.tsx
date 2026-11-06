@@ -720,7 +720,7 @@ export function RecordingPanel({
             Task: {recordingSnapshot === null ? "—" : recordingSnapshot.taskText || "unset"}
           </span>
           {recordingSnapshot !== null && recordingSnapshot.taskDetails !== "" && (
-            <span className="recording-status-details">Details: {recordingSnapshot.taskDetails}</span>
+            <span className="recording-status-details">Description: {recordingSnapshot.taskDetails}</span>
           )}
         </p>
         {voiceStatus !== "unsupported" && (
@@ -888,19 +888,20 @@ function InlineTaskEditor({
       <input
         type="text"
         className="recording-task-editor-input"
-        aria-label="Task"
+        aria-label="Task name"
+        placeholder="Task name"
         value={draft}
         autoFocus
         disabled={pending}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onEditorKeyDown}
       />
-      {/* Optional context for the take (props, grasp, scene); saved with the task and recorded in the episode metadata. */}
+      {/* Optional free-text description of the task (props, grasp, scene); saved with the task name and recorded in the episode metadata. */}
       <input
         type="text"
         className="recording-task-editor-input recording-task-editor-details"
-        aria-label="Task details (optional)"
-        placeholder="Details (optional)"
+        aria-label="Task description (optional)"
+        placeholder="Describe the task: what to do, props, setup (optional)"
         maxLength={MAX_TASK_DETAILS_CHARS}
         value={detailsDraft}
         disabled={pending}

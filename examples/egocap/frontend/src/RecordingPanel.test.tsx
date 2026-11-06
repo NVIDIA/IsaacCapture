@@ -452,7 +452,7 @@ describe("RecordingPanel", () => {
     const { rerender } = render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
     fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
     // Only the details change: the task text in the draft stays what is already committed.
-    fireEvent.change(screen.getByLabelText("Task details (optional)"), { target: { value: "Blue cup" } });
+    fireEvent.change(screen.getByLabelText("Task description (optional)"), { target: { value: "Blue cup" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
@@ -461,7 +461,7 @@ describe("RecordingPanel", () => {
     // The task text matches but the details are still the old ones: the save did not take effect.
     rerender(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
     expect(statusText()).toMatch(/^Editing task/);
-    expect((screen.getByLabelText("Task details (optional)") as HTMLInputElement).value).toBe("Blue cup");
+    expect((screen.getByLabelText("Task description (optional)") as HTMLInputElement).value).toBe("Blue cup");
   });
 
   it("Edit task offers an optional details field and saves it together with the task", async () => {
@@ -471,7 +471,7 @@ describe("RecordingPanel", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
     // The editor opens on what is committed, details included.
-    const details = screen.getByLabelText("Task details (optional)") as HTMLInputElement;
+    const details = screen.getByLabelText("Task description (optional)") as HTMLInputElement;
     expect(details.value).toBe("Blue cup");
     fireEvent.change(details, { target: { value: "Left hand, blue cup" } });
     await act(async () => {
@@ -484,22 +484,22 @@ describe("RecordingPanel", () => {
     const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
     render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
     fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
-    const details = screen.getByLabelText("Task details (optional)");
+    const details = screen.getByLabelText("Task description (optional)");
     fireEvent.change(details, { target: { value: "notes" } });
     await act(async () => {
       fireEvent.keyDown(details, { key: "Enter" });
     });
     expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "Pour water into the cup.", "notes");
     fireEvent.click(screen.getByRole("button", { name: /edit task \(t\)/i }));
-    fireEvent.keyDown(screen.getByLabelText("Task details (optional)"), { key: "Escape" });
-    expect(screen.queryByLabelText("Task details (optional)")).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText("Task description (optional)"), { key: "Escape" });
+    expect(screen.queryByLabelText("Task description (optional)")).toBeNull();
   });
 
   it("the status line shows committed details only when there are some", () => {
     const { rerender } = render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{}} />);
-    expect(screen.queryByText(/Details:/)).toBeNull();
+    expect(screen.queryByText(/Description:/)).toBeNull();
     rerender(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot({ taskDetails: "Blue cup" })} actions={{}} />);
-    expect(screen.getByText("Details: Blue cup")).not.toBeNull();
+    expect(screen.getByText("Description: Blue cup")).not.toBeNull();
   });
 
   it("a timed-out task save that did NOT actually take effect returns to editingTask with the draft intact, not silently losing the retry", async () => {
