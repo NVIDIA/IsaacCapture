@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,7 +16,7 @@ import pytest
 
 from capture_server import protocol as p
 from egocap_web import livekit_recording as lrec
-from egocap_web.livekit_receiver import ReceivedFrame
+from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
@@ -105,6 +106,7 @@ class FakeReceiver:
         self.queues = {s.stream_id: asyncio.Queue() for s in streams}
         self.events: list[str] = []
         self.stops = 0
+        self.counters = defaultdict(StreamCounters)
         FakeReceiver.instances.append(self)
 
     async def start(self):
@@ -120,7 +122,7 @@ class FakeReceiver:
             await FakeReceiver.stop_gate.wait()
         self.stops += 1
 
-    async def next_frame_or_lost(self, stream_id):
+    async def next_frame_or_lost(self, stream_id, timeout=None):
         return await self.queues[stream_id].get()
 
     def clear_queued(self):

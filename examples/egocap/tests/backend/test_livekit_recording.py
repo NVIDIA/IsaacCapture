@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 
 import numpy as np
 import pytest
 
 from capture_server import protocol as p
-from egocap_web.livekit_receiver import ReceivedFrame
+from egocap_web import livekit_recording as lrec
+from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import (
     LiveKitRecordingFeed,
     UnixClockMap,
@@ -186,9 +188,12 @@ class FakeReceiver:
         self.calls: list[int] = []
         self.gates: dict[int, asyncio.Event] = {}
         self.lost: set[int] = set()
+        self.counters: defaultdict[int, StreamCounters] = defaultdict(StreamCounters)
+        self.timeouts: list[float | None] = []
 
-    async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+    async def next_frame_or_lost(self, stream_id: int, timeout: float | None = None) -> ReceivedFrame | None:
         self.calls.append(stream_id)
+        self.timeouts.append(timeout)
         gate = self.gates.get(stream_id)
         if gate is not None:
             await gate.wait()
@@ -443,6 +448,125 @@ async def test_a_stream_still_waiting_on_its_track_does_not_delay_another_that_i
     await _settle()
     await feed.stop()
     assert feed.failure == "Head left: the LiveKit track was lost"
+
+
+# --- what the receiver lost during the take -----------------------------------
+
+
+async def test_overflow_since_the_take_began_fails_the_take_with_the_count():
+    reasons: list[str] = []
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]})
+    receiver.counters[16].queue_overflow = 4  # before the take: not this take's loss
+    receiver.gates[16] = asyncio.Event()
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, on_failure=reasons.append)
+    feed.start()
+    receiver.counters[16].queue_overflow += 3
+    receiver.gates[16].set()
+    await _settle()
+    await feed.stop()
+    assert ingress.offered == []
+    assert feed.failure == "Head left: the recorder fell behind and dropped 3 frame(s)"
+    assert reasons == [feed.failure]
+
+
+async def test_overflow_before_the_take_is_not_held_against_it():
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]})
+    receiver.counters[16].queue_overflow = 4
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert len(ingress.offered) == 1 and feed.failure is None
+
+
+async def test_a_publication_change_during_the_take_fails_it():
+    receiver = FakeReceiver({16: [_received(16, 1_000_000)]})
+    receiver.gates[16] = asyncio.Event()
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress)
+    feed.start()
+    receiver.counters[16].publication_changes += 1
+    receiver.gates[16].set()
+    await _settle()
+    await feed.stop()
+    assert ingress.offered == []
+    assert feed.failure == "Head left: the camera's publication was replaced during the take"
+
+
+async def test_silence_fails_the_take_after_the_limit(monkeypatch):
+    monkeypatch.setattr(lrec, "_MAX_SILENCE_S", 0.02)
+
+    class Silent(FakeReceiver):
+        async def next_frame_or_lost(self, stream_id, timeout=None):
+            self.timeouts.append(timeout)
+            await asyncio.sleep(timeout)
+            raise asyncio.TimeoutError
+
+    reasons: list[str] = []
+    receiver = Silent({})
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress(), on_failure=reasons.append)
+    feed.start()
+    await asyncio.sleep(0.1)
+    await feed.stop()
+    assert receiver.timeouts == [0.02]
+    assert feed.failure == "Head left: no frame for 0 s although the track is still published"
+    assert reasons == [feed.failure]
+
+
+async def test_the_feed_asks_the_receiver_to_time_out_at_the_silence_limit():
+    receiver = FakeReceiver({})
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert receiver.timeouts == [lrec._MAX_SILENCE_S]
+
+
+async def test_loss_reports_counters_since_the_take_began():
+    receiver = FakeReceiver({})
+    counters = receiver.counters[16]
+    counters.queue_overflow, counters.publication_changes = 2, 1
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
+    feed.start()
+    counters.received, counters.missing_frames, counters.frame_id_resets = 9, 3, 1
+    counters.queue_overflow += 5
+    counters.publication_changes += 2
+    assert feed.loss() == {
+        "Head left": {
+            "received": 9,
+            "queue_overflow": 5,
+            "publication_changes": 2,
+            "missing_frames": 3,
+            "frame_id_resets": 1,
+        }
+    }
+    await feed.stop()
+
+
+def test_loss_before_start_reports_raw_counters():
+    receiver = FakeReceiver({})
+    receiver.counters[16].queue_overflow = 2
+    feed = _feed(receiver, [_stream(16, "Head left")], FakeIngress())
+    assert feed.loss()["Head left"]["queue_overflow"] == 2
+
+
+async def test_a_healthy_take_with_stride_two_ids_records_every_frame_with_no_missing():
+    import egocap_web.livekit_receiver as lr
+
+    frames = [_received(16, 1_000_000 * i) for i in (1, 2, 3, 4)]
+    receiver = FakeReceiver({16: frames})
+    counters = receiver.counters[16]
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress)
+    feed.start()
+    for fid in (2, 4, 6, 8):  # the receiver's own accounting, fed the ids a half-rate publisher numbers
+        lr.LiveKitFrameReceiver._account(counters, fid)
+    await _settle()
+    await feed.stop()
+    assert len(ingress.offered) == 4 and feed.failure is None
+    assert feed.loss()["Head left"]["missing_frames"] == 0
 
 
 # --- frame age window ----------------------------------------------------------
