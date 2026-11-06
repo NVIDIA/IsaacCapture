@@ -21,6 +21,7 @@ The same file runs on the target (`deploy_orin.py remote ...`) from the source s
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -440,8 +441,72 @@ def deploy(args: argparse.Namespace) -> None:
         target.close()
 
 
+def git_toplevel(folder: Path) -> Path:
+    found = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if found.returncode != 0:
+        raise DeployError(f"{folder} is not inside a git checkout")
+    return Path(found.stdout.strip())
+
+
+@contextlib.contextmanager
+def open_source(args: argparse.Namespace):
+    """The source to deploy as (root, files, git state).
+
+    By default the tracked files of the working tree of the checkout holding this script, with local edits. `--source`
+    names another checkout (a worktree, say) to deploy instead. `--branch` deploys that branch's committed files from
+    that checkout, ignoring the working tree, exported to a temporary directory.
+    """
+    repo = git_toplevel(Path(args.source)) if args.source else repo_root()
+    if not args.branch:
+        yield repo, tracked_files(repo), git_state(repo)
+        return
+    found = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{args.branch}^{{commit}}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if found.returncode != 0:
+        raise DeployError(f"branch {args.branch!r} not found in {repo}")
+    revision = found.stdout.strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        export = Path(tmp) / "tree"
+        export.mkdir()
+        archive = subprocess.Popen(
+            ["git", "archive", "--format=tar", revision],
+            cwd=repo,
+            stdout=subprocess.PIPE,
+        )
+        with tarfile.open(fileobj=archive.stdout, mode="r|") as tar:
+            tar.extractall(export, filter="data")
+        if archive.wait() != 0:
+            raise DeployError(f"git archive of {args.branch!r} failed")
+        files = sorted(
+            p.relative_to(export).as_posix() for p in export.rglob("*") if p.is_file()
+        )
+        yield export, files, {"base_revision": revision, "dirty": False}
+
+
 def run_deploy(args: argparse.Namespace, config: dict, target: Target) -> None:
-    root = repo_root()
+    with open_source(args) as (root, files, state):
+        deploy_source(args, config, target, root, files, state)
+
+
+def deploy_source(
+    args: argparse.Namespace,
+    config: dict,
+    target: Target,
+    root: Path,
+    files: list[str],
+    state: dict,
+) -> None:
     step(1, f"Connecting to {target.host}")
     target.validate_connection()
     user = args.service_user or target.capture("id -un")
@@ -463,8 +528,7 @@ def run_deploy(args: argparse.Namespace, config: dict, target: Target) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         step(3, "Compare the source with the Orin's and upload what differs")
-        meta = git_state(root)
-        files = tracked_files(root)
+        meta = dict(state)
         local = hash_files(root, files)
         meta["manifest_sha256"] = hashlib.sha256(
             json.dumps(local, sort_keys=True).encode()
@@ -901,6 +965,16 @@ def parser() -> argparse.ArgumentParser:
         "--replace-unmanaged",
         action="store_true",
         help="stop a camera_plugin_sensing the service does not own (its exact PIDs are shown) instead of refusing",
+    )
+    ap.add_argument(
+        "--source",
+        metavar="DIR",
+        help="deploy this git checkout (a worktree, say) instead of the one holding this script",
+    )
+    ap.add_argument(
+        "--branch",
+        metavar="NAME",
+        help="deploy this branch's committed files (from --source, or this checkout), ignoring the working tree",
     )
     ap.add_argument("--no-activate", action="store_true", help="build and package only")
     ap.add_argument(
