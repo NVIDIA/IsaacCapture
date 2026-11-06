@@ -80,6 +80,11 @@ public:
     {
         return m_published.load();
     }
+    /// Frames the sender sent without a capture time (it could not tie the unit to a capture).
+    uint64_t no_source_stamp() const
+    {
+        return m_no_source_stamp.load();
+    }
     uint64_t unmapped() const
     {
         return m_unmapped.load();
@@ -138,6 +143,7 @@ private:
     // Counted on the output's thread and read by the statistics thread.
     std::atomic<uint64_t> m_published{ 0 };
     std::atomic<uint64_t> m_unmapped{ 0 };
+    std::atomic<uint64_t> m_no_source_stamp{ 0 };
     std::atomic<uint64_t> m_refused{ 0 };
     std::atomic<uint64_t> m_republished{ 0 };
     std::atomic<uint64_t> m_over_budget{ 0 };

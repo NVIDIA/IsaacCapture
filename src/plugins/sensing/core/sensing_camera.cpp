@@ -33,6 +33,7 @@ VideoOutputConfig make_output_config(const SensingConfig& config, const StreamCo
     output.gop = config.gop;
     output.full_range = config.full_range;
     output.timestamp_basis = config.encode.timestamp_basis;
+    output.correlation = config.encode.correlation;
     output.direct_host = stream.direct_host;
     output.direct_port = stream.direct_port;
     return output;
@@ -180,6 +181,9 @@ void SensingCamera::print_stats() const
             std::cout << ", " << s.encoder_busy << " encoder busy";
         if (s.keyframes_requested)
             std::cout << ", " << s.keyframes_requested << " keyframes requested";
+        if (m_config.encode.correlation == FrameCorrelation::Stamp)
+            std::cout << " | stamps matched " << s.matched << ", unmatched " << s.unmatched << ", encoder skipped "
+                      << s.encoder_dropped;
         const DirectLinkStatus direct = stream.output->direct_status();
         if (direct.host.empty())
             std::cout << " | direct: no destination";

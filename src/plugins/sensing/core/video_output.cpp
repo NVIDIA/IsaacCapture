@@ -9,6 +9,7 @@
 
 #include <log_bridge/logger.hpp>
 #include <video_stage/direct_sender.hpp>
+#include <video_stage/frame_correlator.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -63,7 +64,10 @@ struct VideoOutput::Impl
         uint64_t sequence = 0;
     };
 
-    explicit Impl(const VideoOutputConfig& cfg) : config(cfg)
+    explicit Impl(const VideoOutputConfig& cfg)
+        : config(cfg),
+          correlator(cfg.correlation == FrameCorrelation::Stamp ? video_stage::FrameCorrelator::Mode::Stamp :
+                                                                  video_stage::FrameCorrelator::Mode::Fifo)
     {
         validate_geometry(config.source_width, config.source_height, config.scale_div);
         if (config.fps == 0)
@@ -291,7 +295,7 @@ struct VideoOutput::Impl
                     std::unique_lock<std::mutex> lock(mutex);
                     // Frames in the encoder come out a little later: poll for them soon, and otherwise
                     // wake now and then to pick up the receiving side's requests.
-                    const auto wait = in_encoder.empty() ? std::chrono::milliseconds(100) : std::chrono::milliseconds(2);
+                    const auto wait = correlator.empty() ? std::chrono::milliseconds(100) : std::chrono::milliseconds(2);
                     wake.wait_for(lock, wait, [&] { return stopping || pending >= 0 || pending_dma || flush_requested; });
                     if (stopping)
                         return;
@@ -356,7 +360,8 @@ struct VideoOutput::Impl
             return;
         last_adapt = now;
         const uint64_t dropped = direct->dropped();
-        const bool congested = dropped != last_dropped;
+        // Drops while nothing is connected say the destination is absent, not that the network is slow.
+        const bool congested = dropped != last_dropped && direct->connected();
         last_dropped = dropped;
 
         uint32_t target = current_bitrate;
@@ -416,7 +421,7 @@ struct VideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc,
-                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns));
+                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns), stamp_ns);
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
@@ -440,7 +445,8 @@ struct VideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time,
-                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns));
+                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns),
+                        static_cast<int64_t>(frame.monotonic_ns));
     }
 
     /// Polling thread: the frame's capture event on CLOCK_MONOTONIC. The sensor clock's anchor is built from the
@@ -482,15 +488,9 @@ struct VideoOutput::Impl
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
-    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t stamp_us)
+    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t stamp_us, int64_t submitted_ns)
     {
-        in_encoder.push_back({ sequence, capture_tsc, stamp_us });
-        // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
-        // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
-        // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
-        constexpr std::size_t kMaxInFlight = 12;
-        while (in_encoder.size() > kMaxInFlight)
-            in_encoder.pop_front();
+        correlator.submitted({ sequence, capture_tsc, stamp_us, submitted_ns / 1000 });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -498,23 +498,28 @@ struct VideoOutput::Impl
     void publish_unit(const EncodedUnit& unit)
     {
         const int64_t stamp_us = unit.timestamp_ns / 1000;
-        // The Jetson encoder does not return the stamp it was given: it numbers its units from its own frame
-        // rate. It does return one unit per accepted frame in submission order, so units pair with captures
-        // by order; the unit's own stamp is for diagnostics only.
-        if (in_encoder.empty())
+        // Which capture is this unit? See FrameCorrelator: by the stamp the encoder hands back, so a frame it never
+        // returned is detected, and a unit that matches nothing is sent without a capture time instead of an assumed
+        // one. Fifo is an explicit choice for approximate timing only.
+        const auto result = correlator.returned(stamp_us);
+        if (!result)
             throw std::runtime_error("Video output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
                                      std::to_string(stamp_us) + ")");
-        const FrameMeta meta = in_encoder.front();
-        in_encoder.pop_front();
+        const bool identified = result->identified;
+        const video_stage::InFlightFrame& meta = result->frame;
+        encoder_dropped += result->skipped;
+        if (config.correlation == FrameCorrelation::Stamp)
+            ++(identified ? matched : unmatched);
 
         EncodedVideoFrame frame;
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
         frame.timestamp_us = static_cast<uint64_t>(stamp_us);
-        frame.frame_id = meta.sequence;
-        frame.capture_tsc = meta.capture_tsc;
-        frame.user_timestamp_us = meta.stamp_us;
+        // Zero identity and time when the unit could not be tied to a capture: the receiver treats that as unknown.
+        frame.frame_id = identified ? meta.sequence : 0;
+        frame.capture_tsc = identified ? meta.capture_tsc : 0;
+        frame.user_timestamp_us = identified ? meta.stamp_us : 0;
         // The direct link keeps its own queue and keyframe bookkeeping and never blocks this thread.
         direct->submit(frame);
         ++published;
@@ -526,19 +531,12 @@ struct VideoOutput::Impl
     uint32_t out_height = 0;
     uint64_t period_ns = 0;
 
-    struct FrameMeta
-    {
-        uint32_t sequence = 0;
-        uint64_t capture_tsc = 0;
-        /// The frame's application timestamp in microseconds, on the sender's monotonic clock (see TimestampBasis).
-        uint64_t stamp_us = 0;
-    };
 
     std::unique_ptr<JetsonEncoder> encoder;
 
     // Worker thread only.
     std::optional<SensorClockMap> clock_map; ///< Polling thread only.
-    std::deque<FrameMeta> in_encoder; ///< Submitted to the encoder, no unit back yet.
+    video_stage::FrameCorrelator correlator; ///< Submitted to the encoder, no unit back yet.
     bool keyframe_wanted = false;
     std::chrono::steady_clock::time_point last_forced_idr{};
     std::chrono::steady_clock::time_point last_adapt = std::chrono::steady_clock::now();
@@ -573,6 +571,9 @@ struct VideoOutput::Impl
     std::atomic<uint64_t> replaced{ 0 };
     std::atomic<uint64_t> snapshots{ 0 };
     std::atomic<uint64_t> published{ 0 };
+    std::atomic<uint64_t> matched{ 0 };
+    std::atomic<uint64_t> unmatched{ 0 };
+    std::atomic<uint64_t> encoder_dropped{ 0 };
     std::atomic<uint64_t> encoder_busy{ 0 };
     std::atomic<uint64_t> keyframes_requested{ 0 };
 
@@ -618,6 +619,9 @@ VideoOutputStats VideoOutput::stats() const
     s.replaced = m_impl->replaced.load();
     s.snapshots = m_impl->snapshots.load();
     s.published = m_impl->published.load();
+    s.matched = m_impl->matched.load();
+    s.unmatched = m_impl->unmatched.load();
+    s.encoder_dropped = m_impl->encoder_dropped.load();
     s.encoder_busy = m_impl->encoder_busy.load();
     s.keyframes_requested = m_impl->keyframes_requested.load();
     return s;

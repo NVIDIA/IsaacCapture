@@ -43,6 +43,26 @@ void check_cuda(cudaError_t err, const char* what)
         throw std::runtime_error(std::string("JetsonEncoder: ") + what + ": " + cudaGetErrorString(err));
 }
 
+// Asks the driver to return each input buffer's timestamp on its encoded unit. Must precede plane setup.
+bool enable_copy_timestamp(NvVideoEncoder& enc)
+{
+#ifdef V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP
+    struct v4l2_ext_control control;
+    struct v4l2_ext_controls controls;
+    std::memset(&control, 0, sizeof(control));
+    std::memset(&controls, 0, sizeof(controls));
+    control.id = V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP;
+    control.value = 1;
+    controls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
+    controls.count = 1;
+    controls.controls = &control;
+    return enc.setExtControls(controls) >= 0;
+#else
+    (void)enc;
+    return false;
+#endif
+}
+
 } // namespace
 
 struct JetsonEncoder::Impl
@@ -225,6 +245,11 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
         isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
             ->warn("setInsertVuiEnabled failed; the SPS will have no VUI");
     check(enc->setMaxPerfMode(1), "setMaxPerfMode");
+    // Without this the driver numbers units from its own frame clock, so a unit cannot be tied to its capture by
+    // stamp. Non-fatal: the producer then reports unmatched units and sends them without a capture time.
+    if (!enable_copy_timestamp(*enc))
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
+            ->warn("the encoder will not copy input timestamps; encoded units cannot be matched to captures");
     // A separate control from the max-performance clocks: it trades quality for encoder throughput.
     // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
     check(enc->setHWPresetType(V4L2_ENC_HW_PRESET_FAST), "setHWPresetType");

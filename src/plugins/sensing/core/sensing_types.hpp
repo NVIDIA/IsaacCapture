@@ -37,6 +37,18 @@ enum class TimestampBasis
     SensorCaptureMonotonic,
 };
 
+/// How an encoded unit is matched to the capture it came from.
+enum class FrameCorrelation
+{
+    /// By the stamp the encoder hands back with the unit (the stamp it was given with the input). A unit whose stamp
+    /// matches no submitted frame carries no capture timestamp, and inputs the encoder never returned are counted.
+    Stamp,
+    /// By order: the encoder is assumed to return one unit per input, in order. Not verifiable; an input the encoder
+    /// skips shifts every later timestamp. For when the encoder does not return the stamp and approximate timing is
+    /// acceptable (a live preview), never for recording.
+    Fifo,
+};
+
 struct EncodeConfig
 {
     /// Rate cap of the encoded stream, independent of the capture rate.
@@ -47,6 +59,7 @@ struct EncodeConfig
     uint32_t bitrate_bps = 8'000'000;
     /// What each frame's application timestamp is; the receiving side's streams file must declare the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
+    FrameCorrelation correlation = FrameCorrelation::Stamp;
 };
 
 struct SensingConfig

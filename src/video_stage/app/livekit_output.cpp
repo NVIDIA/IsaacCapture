@@ -81,7 +81,9 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
     // carries no timestamp, and a consumer that needs one (a recording) says so instead of using a guessed time.
     const auto upstream = m_mapping();
     bool qualified = false;
-    if (!upstream)
+    if (meta.source_timestamp_ns == 0)
+        ++m_no_source_stamp; // the sender could not tie this unit to a capture: no capture time to map
+    else if (!upstream)
         ++m_unmapped;
     else if (upstream->mapping.uncertainty_ns > m_config.max_upstream_uncertainty_ns)
         ++m_over_budget;

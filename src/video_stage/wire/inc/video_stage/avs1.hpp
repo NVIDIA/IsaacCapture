@@ -20,7 +20,9 @@ namespace avs1
 /// to this use:
 ///  - codec 2 is H.264: one Annex-B access unit per record, with SPS and PPS before every IDR;
 ///  - `frame_number` is the source frame id and `frame_timestamp_ns` carries the source stamp on the sender's own
-///    monotonic clock, the same value the LiveKit track publishes. Neither is a wall-clock time.
+///    monotonic clock, the same value the LiveKit track publishes. Neither is a wall-clock time. A zero stamp and a
+///    zero frame number mean the sender could not tie the unit to a capture: the receiver publishes it without a
+///    capture time.
 constexpr uint16_t kVersion = 1;
 constexpr uint32_t kHeaderBytes = 64;
 constexpr uint32_t kStreamBytes = 40;

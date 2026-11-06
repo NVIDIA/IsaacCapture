@@ -172,6 +172,9 @@ static void print_usage(const char* program_name)
         << "                            (UNVERIFIED on hardware) is the sensor's capture event on that clock and fails\n"
         << "                            the stream if it cannot be placed. The direct link carries this clock only.\n"
         << "                            The streams file on the PC must declare the same basis.\n"
+        << "  --frame-correlation=C     how an encoded unit is matched to its capture: stamp (default) by the stamp the\n"
+        << "                            encoder returns, sending a unit that matches none without a capture time; fifo\n"
+        << "                            assumes one unit per input in order (approximate; not for recording)\n"
         << "  --bitrate=N               target bitrate of each stream's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
         << "\n"
@@ -370,6 +373,19 @@ try
                 std::cerr
                     << "Error: --timestamp-basis must be monotonic_us or capture_monotonic_us: the direct link carries the sender's monotonic clock only."
                     << std::endl;
+                return 1;
+            }
+        }
+        else if (arg.find("--frame-correlation=") == 0)
+        {
+            const std::string how = arg.substr(20);
+            if (how == "stamp")
+                camera_config.encode.correlation = FrameCorrelation::Stamp;
+            else if (how == "fifo")
+                camera_config.encode.correlation = FrameCorrelation::Fifo;
+            else
+            {
+                std::cerr << "Error: --frame-correlation must be stamp or fifo." << std::endl;
                 return 1;
             }
         }
