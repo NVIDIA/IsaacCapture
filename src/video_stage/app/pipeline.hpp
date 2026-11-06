@@ -49,7 +49,7 @@ struct PipelineStats
     uint64_t records = 0;
     uint64_t pictures = 0;
     uint64_t dropped_no_surface = 0;
-    uint64_t gaps = 0; ///< records whose frame number did not follow the previous one
+    uint64_t gaps = 0; ///< records whose frame number did not increase
     uint64_t metadata_lost = 0; ///< pictures whose metadata entry had been overwritten
     DurationStats queue_age_ns; ///< from intake to the start of processing
     DurationStats decode_ns;

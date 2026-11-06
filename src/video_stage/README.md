@@ -90,7 +90,9 @@ video_stage_worker --stream=5600:processed-left --stream=5601:processed-right \
 video_stage_worker --stream=5600:file=out.h264 --once
 ```
 
-`tests/tools/send_avs1.py` stands in for the Orin (an H.264 file with AUD NAL units, sent as the Orin sender would).
+`tests/tools/mock_orin_sender.py` stands in for the Orin: it mirrors the producer's direct sender (connection and hello order,
+retry, keyframe start, bounded queue with drop-to-keyframe, keyframe requests, clock answers on its own offset clock, source
+frame ids that step by 2) and feeds it Jetson-style H.264 (no AUDs, IDR every 5 s, constant bitrate). One `--port` per camera.
 
 ## Build
 
