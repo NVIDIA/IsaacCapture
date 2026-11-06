@@ -23,9 +23,12 @@ import struct
 import time
 from collections.abc import Callable
 
-from livekit import rtc
-
 from .clock_exchange import ClockEstimator, ClockMapping, Exchange
+
+try:
+    from livekit import rtc
+except ImportError:  # the optional "livekit" extra is not installed; annotations only, nothing runs without it
+    rtc = None
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_clock_sync")
 
