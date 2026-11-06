@@ -75,6 +75,9 @@ python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --backend sipl 
 
 - `--backend sipl|argus` selects which capture SDK is built in. `--sdk-root DIR` is the Orin directory holding
   `usr/src/jetson_multimedia_api` and `usr/src/jetson_sipl_api` when they are not under `/usr/src`.
+- `--source DIR` deploys another checkout (for example a git worktree of a feature branch) instead of the one holding
+  the script; `--branch NAME` deploys that branch's committed files from it, ignoring the working tree. Without them
+  the script deploys its own checkout, local edits included.
 - `--replace-unmanaged` stops a `camera_plugin_sensing` that someone started by hand (its exact PIDs are shown);
   without it the deployment refuses and changes nothing. `--no-activate` builds and packages only, `--fetch-archive
   DIR` copies the package back, `--jobs N` bounds compile jobs, `--prefix DIR` changes the install root

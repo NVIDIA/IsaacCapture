@@ -4,6 +4,7 @@
 """Tests for the Orin deploy script; every subprocess call is mocked or runs against a temp git repo."""
 
 import argparse
+import hashlib
 import importlib.util
 import io
 import json
@@ -297,9 +298,17 @@ class FakeOrin:
         if " apply " in cmd:
             self.manifest = self.pending
 
-    def run(self, root):
+    def run(self, root, *extra):
         args = deploy_orin.parser().parse_args(
-            ["u@orin", "--backend", "sipl", "--config", "orin.json", "--no-activate"]
+            [
+                "u@orin",
+                "--backend",
+                "sipl",
+                "--config",
+                "orin.json",
+                "--no-activate",
+                *extra,
+            ]
         )
         config = {"livekit_url": "wss://x", "token_file": "/t", "args": [STREAM]}
         with mock.patch.object(deploy_orin, "repo_root", return_value=root):
@@ -308,10 +317,11 @@ class FakeOrin:
 
 class DeployOrderTests(TempDirTestCase):
     def test_failed_validation_blocks_everything_else(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
         orin = FakeOrin()
         orin.target.validate_connection.side_effect = DeployError("no route")
         with self.assertRaises(DeployError):
-            orin.run(self.tmp)
+            orin.run(root)
         self.assertEqual(orin.target.mock_calls[0][0], "validate_connection")
         self.assertEqual(len(orin.target.mock_calls), 1)
 
@@ -378,6 +388,97 @@ class DeployOrderTests(TempDirTestCase):
             with self.assertRaises(DeployError):
                 deploy_orin.deploy(args)
         target.close.assert_called_once()
+
+
+class OpenSourceTests(TempDirTestCase):
+    def args(self, *extra):
+        return deploy_orin.parser().parse_args(
+            ["u@orin", "--backend", "sipl", "--config", "c", *extra]
+        )
+
+    def repo_with_branch(self):
+        root, git = git_repo(
+            self, {"src/a.cpp": "committed\n", "run.sh": "#!/bin/sh\n"}
+        )
+        (root / "run.sh").chmod(0o755)
+        git("add", "run.sh")
+        git("commit", "-q", "-m", "exec")
+        git("branch", "feature")
+        (root / "src/a.cpp").write_text("edited later\n")
+        (root / "untracked.txt").write_text("x")
+        return root, git
+
+    def test_cli_parses_source_and_branch(self):
+        args = self.args("--source", "/w", "--branch", "feat")
+        self.assertEqual((args.source, args.branch), ("/w", "feat"))
+        args = self.args()
+        self.assertFalse(args.source)
+        self.assertFalse(args.branch)
+
+    def test_default_yields_script_checkout_with_local_edits(self):
+        root, _ = git_repo(self, {"a.txt": "1\n", "b.txt": "2\n"})
+        (root / "a.txt").write_text("edited\n")
+        (root / "untracked.txt").write_text("x")
+        with mock.patch.object(deploy_orin, "repo_root", return_value=root):
+            with deploy_orin.open_source(self.args()) as (src, files, state):
+                self.assertEqual(src, root)
+                self.assertEqual(files, ["a.txt", "b.txt"])
+                self.assertTrue(state["dirty"])
+
+    def test_source_option_uses_another_checkout(self):
+        root, git = git_repo(self, {"a.txt": "1\n"})
+        sub = root / "sub"
+        sub.mkdir()
+        with mock.patch.object(
+            deploy_orin, "repo_root", side_effect=AssertionError("own checkout used")
+        ):
+            with deploy_orin.open_source(self.args("--source", str(sub))) as (
+                src,
+                files,
+                state,
+            ):
+                self.assertEqual(src.resolve(), root.resolve())
+                self.assertEqual(files, ["a.txt"])
+                self.assertEqual(state["base_revision"], git("rev-parse", "HEAD"))
+                self.assertFalse(state["dirty"])
+
+    def test_branch_yields_committed_content_only(self):
+        root, git = self.repo_with_branch()
+        with deploy_orin.open_source(
+            self.args("--source", str(root), "--branch", "feature")
+        ) as (export, files, state):
+            self.assertEqual(files, ["run.sh", "src/a.cpp"])
+            self.assertEqual((export / "src/a.cpp").read_text(), "committed\n")
+            self.assertFalse((export / "untracked.txt").exists())
+            self.assertTrue(os.access(export / "run.sh", os.X_OK))
+            self.assertFalse(os.access(export / "src/a.cpp", os.X_OK))
+            self.assertEqual(
+                state, {"base_revision": git("rev-parse", "feature"), "dirty": False}
+            )
+            kept = export
+        self.assertFalse(kept.exists())
+
+    def test_unknown_branch_and_non_git_source_raise(self):
+        root, _ = git_repo(self, {"a.txt": "1\n"})
+        with self.assertRaisesRegex(DeployError, "not found"):
+            with deploy_orin.open_source(
+                self.args("--source", str(root), "--branch", "nope")
+            ):
+                pass
+        plain = self.tmp / "plain"
+        plain.mkdir()
+        with self.assertRaisesRegex(DeployError, "not inside a git"):
+            with deploy_orin.open_source(self.args("--source", str(plain))):
+                pass
+
+    def test_run_deploy_with_branch_uploads_the_branch_files(self):
+        root, _ = self.repo_with_branch()
+        orin = FakeOrin()
+        orin.run(root, "--source", str(root), "--branch", "feature")
+        self.assertEqual(orin.deltas, [["run.sh", "src/a.cpp"]])
+        self.assertEqual(
+            orin.pending["src/a.cpp"], hashlib.sha256(b"committed\n").hexdigest() + "-"
+        )
 
 
 class SyncTests(TempDirTestCase):
