@@ -120,14 +120,17 @@ bool DirectSender::take_keyframe_request()
     return m_keyframe_requested.exchange(false);
 }
 
-bool DirectSender::connect_once(int& fd)
+bool DirectSender::connect_once(int& fd, std::string& why)
 {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* found = nullptr;
     if (::getaddrinfo(m_config.host.c_str(), std::to_string(m_config.port).c_str(), &hints, &found) != 0)
+    {
+        why = "cannot resolve the address";
         return false;
+    }
     fd = -1;
     for (addrinfo* a = found; a != nullptr; a = a->ai_next)
     {
@@ -139,6 +142,7 @@ bool DirectSender::connect_once(int& fd)
             fd = s;
             break;
         }
+        why = std::strerror(errno);
         ::close(s);
     }
     ::freeaddrinfo(found);
@@ -193,6 +197,8 @@ void DirectSender::run()
 {
     int data_fd = -1;
     int control_fd = -1;
+    bool logged_failure = false;
+    std::chrono::steady_clock::time_point last_failure_log;
     std::thread control;
     const auto close_connection = [&]
     {
@@ -215,16 +221,28 @@ void DirectSender::run()
         }
         if (data_fd < 0)
         {
-            const bool up = connect_once(data_fd) && send_all(data_fd, reinterpret_cast<const uint8_t*>("DATA"), 4) &&
-                            connect_once(control_fd) &&
-                            send_all(control_fd, reinterpret_cast<const uint8_t*>("CTRL"), 4);
+            std::string why = "the hello could not be sent";
+            const bool up =
+                connect_once(data_fd, why) && send_all(data_fd, reinterpret_cast<const uint8_t*>("DATA"), 4) &&
+                connect_once(control_fd, why) && send_all(control_fd, reinterpret_cast<const uint8_t*>("CTRL"), 4);
             if (!up)
             {
+                // Say so on the first failure and then every 30 s: a producer that cannot reach the PC is otherwise
+                // indistinguishable from one that never tried.
+                const auto now = std::chrono::steady_clock::now();
+                if (!logged_failure || now - last_failure_log >= std::chrono::seconds(30))
+                {
+                    logger()->warn(
+                        "cannot connect to {}:{}: {}; retrying every second", m_config.host, m_config.port, why);
+                    logged_failure = true;
+                    last_failure_log = now;
+                }
                 close_connection();
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_wake.wait_for(lock, std::chrono::seconds(1), [this] { return m_stop; });
                 continue;
             }
+            logged_failure = false;
             logger()->info("connected to {}:{}", m_config.host, m_config.port);
             control = std::thread(&DirectSender::control_loop, this, control_fd);
             // The PC needs a keyframe first: drop anything queued before the connection and ask for one.
