@@ -95,6 +95,3 @@ tmp/
 !/examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/follower/follower_arm.xml
 # Wheel SBOM and license evidence written by the collector in scripts/sbom/
 /sbom/
-
-# Agent-only plans and status notes; never checked in.
-/agentPlans/
