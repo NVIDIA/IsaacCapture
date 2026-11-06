@@ -3,10 +3,11 @@
 
 #include "livekit_video_output.hpp"
 
-#include "direct_sender.hpp"
 #include "jetson_encoder.hpp"
 #include "rgba_box_downscale.cuh"
 #include "sensor_clock.hpp"
+
+#include <video_stage/direct_sender.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -70,7 +71,7 @@ struct LiveKitVideoOutput::Impl
         if (config.input == PixelKind::DmaBufNv12 && config.scale_div != 1)
             throw std::runtime_error("LiveKit output: DMA-BUF input cannot be reduced (scale_div must be 1)");
         period_ns = 1'000'000'000ull / config.fps;
-        if (!config.direct_host.empty())
+        // Always present: with no host the sender idles, and a management client can give it one at runtime.
         {
             DirectSenderConfig direct_config;
             direct_config.host = config.direct_host;
@@ -628,6 +629,16 @@ std::string LiveKitVideoOutput::failure() const
 {
     std::lock_guard<std::mutex> lock(m_impl->failure_mutex);
     return m_impl->failure_message;
+}
+
+void LiveKitVideoOutput::set_direct_target(const std::string& host, uint16_t port)
+{
+    m_impl->direct->set_target(host, port);
+}
+
+DirectLinkStatus LiveKitVideoOutput::direct_status() const
+{
+    return { m_impl->direct->host(), m_impl->direct->port(), m_impl->direct->connected() };
 }
 
 std::string LiveKitVideoOutput::describe()

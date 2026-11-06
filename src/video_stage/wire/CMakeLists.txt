@@ -5,6 +5,7 @@
 add_library(video_stage_wire STATIC
     avs1.cpp
     h264_sps.cpp
+    h264_access_units.cpp
 )
 add_library(video_stage::wire ALIAS video_stage_wire)
 

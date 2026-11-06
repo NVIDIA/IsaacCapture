@@ -36,6 +36,7 @@ target_include_directories(video_stage_nv_codec_headers SYSTEM INTERFACE "${nv_c
 
 add_subdirectory(core)
 add_subdirectory(wire)
+add_subdirectory(sender)
 add_subdirectory(codec)
 add_subdirectory(app)
 

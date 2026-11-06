@@ -5,6 +5,11 @@
 #include "core/capture_factory.hpp"
 #include "core/sensing_camera.hpp"
 
+#include <sensing_control/camera_fault.hpp>
+#include <sensing_control/control_handler.hpp>
+#include <sensing_control/control_server.hpp>
+#include <sensing_control/producer_supervisor.hpp>
+
 #ifdef SENSING_HAS_SIPL
 #    include "core/sipl_camera.hpp"
 #endif
@@ -21,6 +26,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -169,6 +175,12 @@ static void print_usage(const char* program_name)
         << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
         << "\n"
+        << "Management channel (a WebSocket server; off unless a token file is given):\n"
+        << "  --control-token-file=PATH file holding the shared secret clients must present\n"
+        << "  --control-port=N          port to listen on (default: 5610)\n"
+        << "  --control-bind=ADDR       IPv4 address to listen on (default: 0.0.0.0)\n"
+        << "  --retry-seconds=N         wait between attempts to start the cameras (default: 5)\n"
+        << "\n"
         << "Other:\n"
         << "  --gpu-id=N          CUDA device index (default: 0)\n"
         << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
@@ -182,6 +194,84 @@ static void print_usage(const char* program_name)
 }
 
 // =============================================================================
+// Producer session and release
+// =============================================================================
+
+/// The release this binary was installed from (".../releases/<id>/..."), or a placeholder when run by hand.
+static std::string release_id()
+{
+    char buffer[PATH_MAX];
+    const ssize_t length = ::readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (length <= 0)
+        return "unknown";
+    const std::string path(buffer, static_cast<size_t>(length));
+    const std::string marker = "/releases/";
+    const auto at = path.find(marker);
+    if (at == std::string::npos)
+        return "unmanaged";
+    const auto start = at + marker.size();
+    return path.substr(start, path.find('/', start) - start);
+}
+
+/// One capture-and-publish pipeline as the supervisor sees it.
+class ProducerSession : public CameraSession
+{
+public:
+    ProducerSession(const SensingConfig& config,
+                    std::unique_ptr<CameraCapture> capture,
+                    const std::vector<StreamConfig>& streams)
+        : m_camera(config, std::move(capture), streams), m_last_stats(std::chrono::steady_clock::now())
+    {
+        std::cout << "------------------------------------------------------------" << std::endl;
+        std::cout << "Capturing." << std::endl;
+    }
+
+    void update() override
+    {
+        m_camera.update();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - m_last_stats >= std::chrono::seconds(5))
+        {
+            m_camera.print_stats();
+            m_last_stats = now;
+        }
+    }
+
+    void flush() override
+    {
+        m_camera.flush();
+        m_camera.print_stats();
+    }
+
+    std::vector<StreamStatus> streams() const override
+    {
+        std::vector<StreamStatus> out;
+        for (const auto& figures : m_camera.figures())
+        {
+            StreamStatus entry;
+            entry.track = figures.track;
+            entry.sensor_id = figures.sensor_id;
+            entry.frames = figures.frames;
+            entry.published = figures.published;
+            entry.direct_host = figures.direct.host;
+            entry.direct_port = figures.direct.port;
+            entry.direct_connected = figures.direct.connected;
+            out.push_back(std::move(entry));
+        }
+        return out;
+    }
+
+    void set_direct_target(const std::string& track, const std::string& host, uint16_t port) override
+    {
+        m_camera.set_direct_target(track, host, port);
+    }
+
+private:
+    SensingCamera m_camera;
+    std::chrono::steady_clock::time_point m_last_stats;
+};
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -191,6 +281,9 @@ try
     SensingConfig camera_config;
     std::map<uint32_t, StreamConfig> stream_map;
     std::string livekit_token_file;
+    ControlServerConfig control_config;
+    std::string control_token_file;
+    uint32_t retry_seconds = 5;
     bool list_sensors = false;
     CameraBackend requested_backend = CameraBackend::Auto;
 
@@ -250,6 +343,25 @@ try
         else if (arg.find("--livekit-token-file=") == 0)
         {
             livekit_token_file = arg.substr(21);
+        }
+        else if (arg.find("--control-token-file=") == 0)
+        {
+            control_token_file = arg.substr(21);
+        }
+        else if (arg.find("--control-port=") == 0)
+        {
+            const unsigned long port = std::stoul(arg.substr(15));
+            if (port < 1 || port > 65535)
+                throw std::runtime_error("--control-port must be from 1 to 65535");
+            control_config.port = static_cast<uint16_t>(port);
+        }
+        else if (arg.find("--control-bind=") == 0)
+        {
+            control_config.bind_address = arg.substr(15);
+        }
+        else if (arg.find("--retry-seconds=") == 0)
+        {
+            retry_seconds = static_cast<uint32_t>(std::stoul(arg.substr(16)));
         }
         else if (arg.find("--livekit-fps=") == 0)
         {
@@ -452,42 +564,101 @@ try
     std::cout << "SENSING Camera Plugin Starting (" << camera_backend_name(backend) << ")" << std::endl;
     std::cout << "============================================================" << std::endl;
 
-    SensingCamera camera(camera_config, make_capture(backend, camera_config, camera_ids), stream_configs);
-
-    std::cout << "------------------------------------------------------------" << std::endl;
-    std::cout << "Running capture loop. Press Ctrl+C to stop." << std::endl;
-
-    constexpr auto stats_interval = std::chrono::seconds(5);
-    auto last_stats_time = std::chrono::steady_clock::now();
+    // A stream naming a sensor that does not exist is a configuration error, not a fault to retry.
+    for (const auto& stream : stream_configs)
+    {
+        const bool known =
+            std::any_of(cameras.begin(), cameras.end(), [&](const CameraInfo& c) { return c.id == stream.sensor_id; });
+        if (!known)
+            throw std::runtime_error("sensor=" + std::to_string(stream.sensor_id) + " is not a camera of '" +
+                                     camera_config.platform_config_name + "'; run --list-sensors");
+    }
 
     // acquire_latest() is non-blocking, so poll at roughly twice the fastest sensor's frame rate rather than
-    // spinning a core flat out. SIPL captures on its own threads and is unaffected; with Argus this loop also
+    // spinning a core flat out. SIPL captures on its own threads and is unaffected; with Argus the polling loop also
     // returns buffers to the camera, so a stalled loop stalls capture.
     double fastest_fps = 30.0;
     for (const auto& c : cameras)
-    {
         fastest_fps = std::max(fastest_fps, c.fps);
-    }
-    const auto poll_interval = std::chrono::microseconds(static_cast<int64_t>(500'000.0 / fastest_fps));
 
-    while (!g_stop_requested.load(std::memory_order_relaxed))
+    ProducerStatus status(release_id());
+    std::vector<StreamStatus> configured;
+    for (const auto& stream : stream_configs)
     {
-        camera.update();
+        StreamStatus entry;
+        entry.track = stream.livekit_track;
+        entry.sensor_id = stream.sensor_id;
+        entry.direct_host = stream.direct_host;
+        entry.direct_port = stream.direct_port;
+        configured.push_back(entry);
+    }
 
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_stats_time >= stats_interval)
+    // The cameras and the room are opened by the factory, again after any failure, so an unplugged camera is a state
+    // to report and retry, not the end of the process.
+    const SessionFactory factory = [&](const DirectTargets& targets) -> std::unique_ptr<CameraSession>
+    {
+        std::vector<StreamConfig> streams = stream_configs;
+        for (auto& stream : streams)
         {
-            camera.print_stats();
-            last_stats_time = now;
+            const auto found = targets.find(stream.livekit_track);
+            if (found != targets.end())
+            {
+                stream.direct_host = found->second.host;
+                stream.direct_port = found->second.port;
+            }
         }
+        std::unique_ptr<CameraCapture> capture;
+        try
+        {
+            capture = make_capture(backend, camera_config, camera_ids);
+        }
+        catch (const std::exception& e)
+        {
+            throw StartupFailure(diagnose_camera_failure(e.what()), ProducerState::CameraFault);
+        }
+        try
+        {
+            return std::make_unique<ProducerSession>(camera_config, std::move(capture), streams);
+        }
+        catch (const std::exception& e)
+        {
+            throw StartupFailure({ "publish_failed", std::string("Could not start publishing: ") + e.what() +
+                                                         " The producer retries automatically." },
+                                 ProducerState::Error);
+        }
+    };
 
-        std::this_thread::sleep_for(poll_interval);
+    std::unique_ptr<ControlServer> server;
+    const auto publish = [&server](const std::string& text)
+    {
+        if (server)
+            server->broadcast(text);
+    };
+    SupervisorConfig supervisor_config;
+    supervisor_config.retry_interval = std::chrono::seconds(std::max<uint32_t>(retry_seconds, 1));
+    supervisor_config.poll_interval = std::chrono::milliseconds(static_cast<int64_t>(500.0 / fastest_fps));
+    ProducerSupervisor supervisor(status, configured, factory, publish, supervisor_config);
+    ControlHandler handler(status, supervisor);
+
+    if (control_token_file.empty())
+    {
+        std::cout << "Management channel: off (give --control-token-file to turn it on)" << std::endl;
+    }
+    else
+    {
+        control_config.token = read_secret_file(control_token_file);
+        server = std::make_unique<ControlServer>(
+            control_config, [&handler](const std::string& text) { return handler.handle(text); });
+        std::cout << "Management channel: listening on " << control_config.bind_address << ":" << server->port()
+                  << std::endl;
     }
 
     std::cout << "------------------------------------------------------------" << std::endl;
-    std::cout << "Shutting down SENSING Camera Plugin..." << std::endl;
-    camera.flush();
-    camera.print_stats();
+    std::cout << "Running. Press Ctrl+C to stop." << std::endl;
+
+    supervisor.run([] { return g_stop_requested.load(std::memory_order_relaxed); });
+
+    std::cout << "------------------------------------------------------------" << std::endl;
     std::cout << "Plugin stopped" << std::endl;
     std::cout << "============================================================" << std::endl;
 

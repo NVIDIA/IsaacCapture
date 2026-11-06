@@ -4,12 +4,11 @@
 // Destroying a DirectSender must be bounded whatever its worker thread is blocked in: a connect that never
 // completes, a send to a peer that does not read, or an idle connection.
 
-#include "core/direct_sender.hpp"
-
 #include <arpa/inet.h>
 #include <catch2/catch_test_macros.hpp>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <video_stage/direct_sender.hpp>
 
 #include <atomic>
 #include <chrono>

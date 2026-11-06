@@ -47,26 +47,3 @@ target_include_directories(sensing_sensor_clock_tests PRIVATE ${CMAKE_CURRENT_SO
 target_link_libraries(sensing_sensor_clock_tests PRIVATE Catch2::Catch2WithMain)
 
 catch_discover_tests(sensing_sensor_clock_tests)
-
-# DirectSender is plain POSIX sockets and threads: compile it directly, as with camera_backend.cpp, so the test links
-# neither sensing_core nor the vendor SDKs.
-add_executable(sensing_direct_sender_tests
-    test_direct_sender.cpp
-    ../core/direct_sender.cpp
-)
-
-# Only the header-only clock-sync and sink types are used, not the LiveKit SDK behind sensing::livekit.
-target_include_directories(sensing_direct_sender_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/..
-        ${PROJECT_SOURCE_DIR}/src/livekit_publisher/inc
-)
-
-target_link_libraries(sensing_direct_sender_tests
-    PRIVATE
-        video_stage::wire
-        log_bridge::log_bridge_core
-        Catch2::Catch2WithMain
-)
-
-catch_discover_tests(sensing_direct_sender_tests)

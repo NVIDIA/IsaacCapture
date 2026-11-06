@@ -43,6 +43,14 @@ struct LiveKitOutputConfig
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
 };
 
+/// Where this stream's encoded video also goes (the PC video stage), and whether that link is up.
+struct DirectLinkStatus
+{
+    std::string host;
+    uint16_t port = 0;
+    bool connected = false;
+};
+
 struct LiveKitOutputStats
 {
     uint64_t offered = 0; ///< Captures handed to submit().
@@ -93,6 +101,10 @@ public:
     void submit(CaptureFrame& frame);
 
     LiveKitOutputStats stats() const;
+
+    /// Send the encoded video to host:port from now on, or stop the direct link when host is empty. Thread-safe.
+    void set_direct_target(const std::string& host, uint16_t port);
+    DirectLinkStatus direct_status() const;
 
     bool failed() const;
     std::string failure() const;

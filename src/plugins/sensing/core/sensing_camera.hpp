@@ -4,10 +4,12 @@
 #pragma once
 
 #include "camera_capture.hpp"
+#include "livekit_video_output.hpp"
 #include "sensing_types.hpp"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace plugins
@@ -16,7 +18,6 @@ namespace sensing
 {
 
 class LiveKitSession;
-class LiveKitVideoOutput;
 
 /**
  * @brief Multi-sensor SENSING camera publisher.
@@ -25,6 +26,16 @@ class LiveKitVideoOutput;
  * per-camera capture object to hold). Each update() polls every sensor's latest frame and hands a new frame
  * to that sensor's LiveKit track. Geometry is per sensor and comes from the capture backend.
  */
+/// Live figures for one stream, for the management channel.
+struct StreamFigures
+{
+    std::string track;
+    uint32_t sensor_id = 0;
+    uint64_t frames = 0;
+    uint64_t published = 0;
+    DirectLinkStatus direct;
+};
+
 class SensingCamera
 {
 public:
@@ -45,6 +56,15 @@ public:
     /** @brief Flush each track's queued frames. */
     void flush();
 
+    /** @brief Per-stream figures. Call from the thread that calls update(). */
+    std::vector<StreamFigures> figures() const;
+
+    /**
+     * @brief Send stream `track` to host:port from now on (empty host stops the direct link).
+     * @return false if no stream has that track name. Thread-safe against update().
+     */
+    bool set_direct_target(const std::string& track, const std::string& host, uint16_t port);
+
     /** @brief Print per-sensor frame counts to stdout. */
     void print_stats() const;
 
@@ -52,6 +72,7 @@ private:
     struct Stream
     {
         uint32_t sensor_id = 0;
+        std::string track;
         std::unique_ptr<LiveKitVideoOutput> livekit;
         /// SIPL publish counter of the frame already handled; skips re-reads.
         uint64_t last_sequence = 0;

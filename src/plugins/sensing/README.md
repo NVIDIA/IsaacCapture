@@ -80,6 +80,31 @@ DMA-BUFs that the hardware encoder reads without a copy. **The Argus code has ne
 Argus SDK or Argus camera available to the author.** Argus DMA-BUF input cannot be combined with
 `--livekit-scale-div` above 1.
 
+## Management channel and camera faults
+
+A camera that cannot start (no power cable, no GMSL link) does not end the producer. It reports the problem in plain
+words, retries every few seconds (`--retry-seconds`), and starts streaming once the cable is fixed. The same process
+can offer a WebSocket management channel, off unless `--control-token-file=PATH` names a file holding a shared secret:
+
+```bash
+camera_plugin_sensing ... --control-token-file=/etc/isaaccapture/control.token   # listens on 0.0.0.0:5610
+```
+
+Clients send one JSON object per message and get one reply; the producer also pushes `state_changed` and `error`
+events. `get_status` reports the state (`starting`, `streaming`, `camera_fault`, `error`, `stopping`), the fault with
+a code and what to check, each stream's frame counts, and where its direct link goes. `set_direct_target` sends a
+stream's encoded video to a new PC address and port from now on (an empty host turns the direct link off); the choice
+is remembered across camera restarts but not across a producer restart, where the command line applies. Every bad
+request gets an error reply with a code and a sentence. The token goes in `Authorization: Bearer ...` (or `?token=`).
+
+```bash
+src/sensing_control/tools/orin_control.py ORIN_HOST --token-file control.token status
+src/sensing_control/tools/orin_control.py ORIN_HOST --token-file control.token set-target sensing-left 192.168.1.205 5600
+```
+
+`sensing_mock_producer` runs the same channel, retry loop and direct sender over looped H.264 files, with
+`--simulate-fault-seconds=N` to show the unplugged-camera path, so the PC side can be tried without an Orin.
+
 `SENSING_TSC_PROBE=1` logs the SIPL capture counter beside the host clocks twice a second, as separate uncalibrated
 samples. The counter's units are unconfirmed, so do not subtract or fit them.
 
