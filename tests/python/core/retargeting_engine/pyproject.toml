@@ -12,7 +12,6 @@ dev = [
     "pytest",
     "mypy",
     "numpy",
-    "pyyaml",
     "scipy",
     "types-PyYAML",
     "scipy-stubs",
@@ -20,7 +19,6 @@ dev = [
 test = [
     "pytest",
     "numpy",
-    "pyyaml",
     "scipy",
 ]
 # Mirrors src/core/python/requirements-grounding.txt. The Sharpa unit test

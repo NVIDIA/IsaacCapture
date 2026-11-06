@@ -17,7 +17,7 @@ namespace plugins::realhand_ffg_glove
 class SerialGlove
 {
 public:
-    SerialGlove(const std::string& port, int baudrate);
+    SerialGlove(const std::string& port, int baudrate, bool check_existing_users = true);
     ~SerialGlove();
 
     SerialGlove(const SerialGlove&) = delete;
@@ -42,5 +42,6 @@ private:
 };
 
 std::vector<std::string> discover_serial_ports();
+bool serial_port_is_open(const std::string& port);
 
 } // namespace plugins::realhand_ffg_glove

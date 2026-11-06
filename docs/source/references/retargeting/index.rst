@@ -26,15 +26,6 @@ Source Nodes
 Available Retargeters
 ---------------------
 
-.. dropdown:: P7 and RealHand L6 / O6 / L20
-
-   ``P7ControllerPoseRetargeter`` and ``P7HandPoseRetargeter`` map an absolute OpenXR pose into
-   the calibrated P7 workspace. The official ``DexHandRetargeter``
-   and ``ControllerTriggerRealHandRetargeter`` produce joint commands for L6, O6, and L20.
-   FFG and optical tracking use the same standard human-joint hand-tracking pipeline.
-   See :doc:`realhand` for the full input-mode matrix and pipeline
-   example.
-
 .. dropdown:: Se3AbsRetargeter / Se3RelRetargeter
 
    Maps hand or controller tracking to end-effector pose. ``Se3AbsRetargeter`` outputs a 7D
@@ -390,4 +381,3 @@ See the :doc:`Contributing Guide <../../development/contributing>` for details.
    so101
    joint_space
    wuji
-   realhand

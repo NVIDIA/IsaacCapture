@@ -68,8 +68,12 @@ void append_glob(const char* pattern, std::vector<std::string>& paths)
     ::globfree(&matches);
 }
 
-bool port_is_open(const std::string& port)
+} // namespace
+#endif
+
+bool serial_port_is_open(const std::string& port)
 {
+#ifndef _WIN32
     struct stat device
     {
     };
@@ -100,19 +104,18 @@ bool port_is_open(const std::string& port)
         }
     }
 #    endif
+#endif
     return false;
 }
 
-} // namespace
-#endif
-
-SerialGlove::SerialGlove(const std::string& port, int baudrate) : port_(port), baudrate_(baudrate)
+SerialGlove::SerialGlove(const std::string& port, int baudrate, bool check_existing_users)
+    : port_(port), baudrate_(baudrate)
 {
 #ifdef _WIN32
     throw std::runtime_error("RealHand FFG Glove serial backend currently supports POSIX systems only");
 #else
     const speed_t speed = baud_to_termios(baudrate);
-    if (port_is_open(port))
+    if (check_existing_users && serial_port_is_open(port))
     {
         throw std::runtime_error("serial port is already in use: " + port);
     }

@@ -329,13 +329,15 @@ std::optional<HandJoints> HumanHandSkeleton::reconstruct(const std::array<float,
     return joints;
 }
 
-bool WristPoseContinuity::accept(const XrPosef& pose, std::int64_t time_ns, bool valid)
+bool WristPoseContinuity::accept(const plugin_utils::WristSample& wrist, std::int64_t time_ns)
 {
+    const auto& pose = wrist.pose;
     const auto& p = pose.position;
     const auto& q = pose.orientation;
     const float norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-    if (!valid || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || !std::isfinite(norm) ||
-        std::abs(norm - 1.0f) > 0.01f)
+    // VALID may describe a cached pose; controller publication needs live tracking.
+    if (!wrist.valid || !wrist.tracked || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+        !std::isfinite(norm) || std::abs(norm - 1.0f) > 0.01f)
     {
         previous_.reset();
         stable_samples_ = 0;

@@ -78,7 +78,7 @@ RealHandFFGGlovePlugin::RealHandFFGGlovePlugin(std::vector<std::string> configur
         config.wrist, handles, deviceio_session_.get(), wrist.controller_tracker);
     if (config.calibration_path.empty())
     {
-        isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.main")
+        isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.RealHandFFGGlovePlugin")
             ->warn("No human calibration: raw sensors are available for calibration, but hands remain inactive");
     }
     for (std::size_t side = 0; side < pushers_.size(); ++side)
@@ -179,11 +179,11 @@ void RealHandFFGGlovePlugin::update()
                 const auto wrist = wrist_source_->query(side == 0, time);
                 if (require_controller_wrist_)
                 {
-                    const bool rejected =
-                        !wrist_continuity_[side].accept(wrist.pose, core::os_monotonic_now_ns(), wrist.valid);
+                    const bool rejected = !wrist_continuity_[side].accept(wrist, core::os_monotonic_now_ns());
                     if (rejected != wrist_rejected_[side])
                     {
-                        auto logger = isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.wrist");
+                        auto logger =
+                            isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.RealHandFFGGlovePlugin");
                         if (rejected)
                         {
                             logger->warn("{} controller wrist tracking interrupted; hand inactive, raw sensors retained",

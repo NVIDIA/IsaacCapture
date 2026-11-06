@@ -234,15 +234,12 @@ devices:
     details:
       setup:
         - label: RealHand FFG Glove docs
-          doc: /device/realhand_ffg_glove
+          doc: /device/hand_tracking/realhand_ffg_glove
         - label: RealHand FFG Glove Plugin
           url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/realhand_ffg_glove
       requirements:
         - Linux workstation
         - USB serial access through the dialout group
-      acquire:
-        - label: RealHand FFG Glove SDK source
-          url: https://github.com/RealHand-Robotics/FFG_realhand_pure_python
 
   - id: oglo-tactile-glove
     name: OGLO Tactile Glove

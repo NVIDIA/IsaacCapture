@@ -20,7 +20,7 @@ constexpr auto kQueryPeriod = std::chrono::milliseconds(16);
 constexpr auto kStaleTimeout = std::chrono::seconds(1);
 auto logger()
 {
-    return isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.reader");
+    return isaaccapture::Logger::get("isaaccapture.plugins.realhand_ffg_glove.GloveReader");
 }
 } // namespace
 
@@ -54,6 +54,7 @@ void GloveReader::advance_probe()
     {
         baud_index_ = 0;
         ++candidate_index_;
+        checked_port_.reset();
     }
 }
 
@@ -75,6 +76,7 @@ void GloveReader::discover(Clock::time_point now)
         candidates_ = configured_ports_.empty() ? discover_serial_ports() : configured_ports_;
         candidate_index_ = 0;
         baud_index_ = 0;
+        checked_port_.reset();
         if (candidates_.empty())
         {
             for (std::size_t side = 0; side < endpoints_.size(); ++side)
@@ -92,13 +94,29 @@ void GloveReader::discover(Clock::time_point now)
     {
         ++candidate_index_;
         baud_index_ = 0;
+        checked_port_.reset();
         return;
     }
     try
     {
         if (!probe_)
         {
-            probe_ = std::make_unique<SerialGlove>(port, baudrates_[baud_index_]);
+            // Busyness belongs to the candidate, not each baud-rate attempt.
+            if (!checked_port_ || *checked_port_ != port)
+            {
+                if (serial_port_is_open(port))
+                {
+                    ++candidate_index_;
+                    baud_index_ = 0;
+                    checked_port_.reset();
+                    for (std::size_t side = 0; side < endpoints_.size(); ++side)
+                        if (!endpoints_[side])
+                            errors_[side] = "serial port is already in use: " + port;
+                    return;
+                }
+                checked_port_ = port;
+            }
+            probe_ = std::make_unique<SerialGlove>(port, baudrates_[baud_index_], false);
             probe_started_ = now;
             probe_->send(Command::Version);
             probe_last_query_ = now;
@@ -127,6 +145,7 @@ void GloveReader::discover(Clock::time_point now)
                 }
                 ++candidate_index_;
                 baud_index_ = 0;
+                checked_port_.reset();
                 return;
             }
         }
@@ -200,9 +219,8 @@ void GloveReader::poll_endpoint(std::size_t side, Clock::time_point now)
     }
 }
 
-void GloveReader::update()
+void GloveReader::update(Clock::time_point now)
 {
-    const auto now = Clock::now();
     poll_endpoint(0, now);
     poll_endpoint(1, now);
     discover(now);

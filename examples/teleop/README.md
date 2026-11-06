@@ -39,13 +39,6 @@ Every module runs the same way, as
 | `spacemouse_printer_example` | SpaceMouse axes and buttons. |
 | `keyboard_printer_example` | Keys from a small GLFW window. |
 | `keyboard_terminal_example` | Keys from the terminal, with no window. |
-| `p7_realhand_bimanual_example` | P7 arms with L6, O6, or L20 hands from controllers, optical tracking, or the FFG plugin. |
-| `realhand_ffg_glove_calibration` | Robot-independent FFG human-hand calibration. |
-| `realhand_ffg_diagnostics` | Record raw glove sensors, controllers, and reconstructed hands. |
-| `fetch_realhand_assets` | Download the pinned P7 and RealHand assemblies to the user cache. |
-
-The optional Isaac Sim [FFG hand viewer](realhand_ffg_hand_demo.md) includes a
-PC calibration window and [L6/O6/L20 robot-hand scenes](realhand_ffg_robot_scenes.md).
 
 The bimanual examples default to the dex-retargeting YAML and URDF files in
 [`config/dex_retargeting/`](python/isaaccapture_examples/teleop/config/dex_retargeting/),

@@ -5,83 +5,86 @@ SPDX-License-Identifier: Apache-2.0
 
 # RealHand FFG Glove plugin
 
-Publishes one or two RealHand FFG Gloves as standard 26-joint OpenXR hands at
-`/hand/left` and `/hand/right`, using the official `HandInjector` and `WristPoseSource`
-utilities. `HandsSource` feeds compatible `HandInput` retargeters independently of
-the target robot. Raw sensor collections are for calibration and diagnostics only.
-The plugin queries each glove's firmware-reported hand side.
-A single glove is supported; the absent side remains inactive.
+Reads one or two USB serial gloves and publishes standard 26-joint OpenXR hands
+at `/hand/left` and `/hand/right` using `HandInjector` and `WristPoseSource`.
+Firmware identifies each glove's side; an absent glove never controls the other
+hand. Human reconstruction is independent of any robot model.
 
-The serial protocol implementation follows the Apache-2.0
+The protocol follows the Apache-2.0
 [RealHand FFG Glove pure-Python SDK](https://github.com/RealHand-Robotics/FFG_realhand_pure_python).
-The external Python SDK is not redistributed or required at runtime.
+That SDK is not redistributed or required by the native plugin.
 
-## Build and run
+## Build
 
-The plugin is enabled by default on POSIX systems:
+The plugin is optional and disabled by default. The serial backend requires POSIX:
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DBUILD_PLUGIN_REALHAND_FFG_GLOVE=ON
 cmake --build build --target realhand_ffg_glove_plugin
-./build/src/plugins/realhand_ffg_glove/realhand_ffg_glove_plugin
+cmake --install build --component realhand_ffg_glove
 ```
 
-Use `-DBUILD_PLUGIN_REALHAND_FFG_GLOVE=OFF` to exclude it. The POSIX serial backend is not built by
-default on Windows.
+Install the built Isaac Capture package using the
+[source-build guide](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package),
+then install the self-contained example with `uv pip install -e ./examples/realhand_ffg_glove`.
 
-Automatic discovery only considers `/dev/serial/by-id/` entries whose names identify
-RealHand, RealForce, or FFG hardware. Generic USB UART names do not identify a glove;
-explicitly select the glove ports in that case:
+## Calibrate, Then Run
+
+On Ubuntu, USB access commonly requires membership of `dialout`. After
+`sudo usermod -aG dialout "$USER"`, log out and back in. Do not run Isaac Capture
+as root. Close any existing readers of the selected ports.
 
 ```bash
-realhand_ffg_glove_plugin --ports=/dev/ttyUSB0,/dev/ttyUSB1 --baudrates=2000000,460800
+python -m isaaccapture_examples.realhand_ffg_glove.realhand_ffg_glove_calibration \
+  --side both --output /path/to/ffg_human.yml --plugin-path install/plugins \
+  --realhand-ffg-glove-ports=/dev/ttyUSB0,/dev/ttyUSB1
 ```
 
-Use only verified glove ports and close other applications reading the same devices.
+The calibration command can acquire raw sensors before human calibration exists.
+Without calibration the plugin publishes raw sensor collections, but no active
+OpenXR hand. The same human calibration feeds any compatible hand retargeter.
+Recalibrate after re-wearing, power-cycling, or shifting a glove.
+Pose instructions and troubleshooting are on the
+[device page](../../../docs/source/device/hand_tracking/realhand_ffg_glove.rst).
 
-On Linux, the user must be able to open the serial device. Common distributions grant this via
-the `dialout` group:
+After calibration, start the runtime and the plugin:
 
 ```bash
-sudo usermod -aG dialout "$USER"
+python -m isaaccapture.cloudxr.service start
+source ~/.cloudxr/run/cloudxr.env
+./install/plugins/realhand_ffg_glove/realhand_ffg_glove_plugin \
+  --calibration=/path/to/ffg_human.yml \
+  --ports=/dev/ttyUSB0,/dev/ttyUSB1 --wrist-source=controller
 ```
 
-Log out and back in after changing group membership. Do not run the IsaacCapture process as root.
+Restricted automatic discovery probes USB serial identifiers containing
+RealHand, RealForce, or FFG. Generic UART identifiers require explicit verified
+ports. Connected devices are queried independently; lost or jumping controller
+tracking makes the human hand inactive until stable tracking returns.
 
-## Human calibration and tracking
+Raw collections `realhand_ffg_glove_left` and `realhand_ffg_glove_right` contain
+`sensor_0` through `sensor_20` in radians for calibration and diagnostics only.
+Robot hands consume the standard `HandsSource` output, not these raw sensors.
 
-Without human calibration, raw sensor collections remain available for calibration
-capture and diagnostics, but the human-hand outputs remain inactive.
-They use `JointStateSource`, IDs `realhand_ffg_glove_left` / `realhand_ffg_glove_right`,
-and names `sensor_0` through `sensor_20` (radians).
+## Wrist Source and CTS
+
+`--wrist-source=auto` prefers optical hand tracking, then controller aim pose.
+`controller` and `hand_tracking` select one source explicitly. The default
+controller-to-wrist transforms assume mirrored PICO 4 Ultra controllers upright
+on the RealHand hand-back bracket. Other mounts can use
+`--left-aim-to-wrist=px,py,pz,qx,qy,qz,qw` and `--right-aim-to-wrist=...`.
+
+The CTS recorder starts plugins without command-line flags. Set these defaults
+in its shell; explicit plugin flags take precedence:
 
 ```bash
-pip install -e ./examples/teleop
-python -m isaaccapture_examples.teleop.realhand_ffg_glove_calibration \
-  --side left --output /path/to/ffg_human.yml \
-  --plugin-path install/plugins --realhand-ffg-glove-ports=/dev/ttyUSB0
-realhand_ffg_glove_plugin --ports=/dev/ttyUSB0 \
-  --calibration=/path/to/ffg_human.yml --wrist-source=controller
+export REALHAND_FFG_GLOVE_CALIBRATION=/absolute/path/to/ffg_human.yml
+export REALHAND_FFG_GLOVE_PORTS=/dev/ttyUSB0,/dev/ttyUSB1
+export REALHAND_FFG_GLOVE_WRIST_SOURCE=controller
+bash src/python/isaaccapture/cts/hand/capture/record.sh realhand_ffg_glove \
+  --plugin realhand_ffg_glove_plugin
 ```
 
-Capture open palm, full fist, thumb-only curl, thumb opposition, and finger spread,
-then the four thumb-to-fingertip contacts, a second set of those contacts, and a
-repeated open palm. Each step waits for Enter, allows 8 seconds to prepare, and
-records a 6-second hold. Calibration requires NumPy and SciPy. Failed captures
-leave the previous file intact.
-Calibration is side-specific and robot-independent. Files use
-`realhand-ffg-glove-human-calibration-v1`; legacy robot calibration is rejected.
-The PC hand demos share this workflow and reuse one calibration for L6, O6, and L20.
-Recalibrate after re-wearing or power-cycling a glove. Human joint poses are
-estimated from glove angles; `--hand-scale=1.0` adjusts the estimated hand size.
-
-`--wrist-source=auto` prefers native hand tracking, then controller aim pose; `controller`
-and `handtracking` select a source explicitly. Default offsets support PICO 4 Ultra
-controllers mounted upright on the RealHand FFG hand-back bracket, with mirrored
-left/right installation. Override a different mount with
-`--left-aim-to-wrist=px,py,pz,qx,qy,qz,qw` and the corresponding right option
-(meters in the aim frame, XYZW quaternion). In controller mode, lost or jumping
-wrist tracking makes the hand inactive until tracking recovers.
-
-See `docs/source/device/realhand_ffg_glove.rst` for calibration poses and coordinate details.
-For verification, see the official [Hand CTS](https://nvidia.github.io/IsaacCapture/main/conformance/hand.html).
+Prepare the official CTS environments and record from the pushed source commit
+with its installed plugin and wheel. Keep the generated provenance unchanged.
+See the [Hand CTS workflow](https://nvidia.github.io/IsaacCapture/main/conformance/hand.html).

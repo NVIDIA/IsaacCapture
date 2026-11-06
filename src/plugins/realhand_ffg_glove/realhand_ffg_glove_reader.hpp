@@ -30,7 +30,7 @@ public:
     };
 
     explicit GloveReader(std::vector<std::string> ports = {}, std::vector<int> baudrates = {});
-    void update();
+    void update(Clock::time_point now = Clock::now());
     const std::array<std::unique_ptr<Endpoint>, 2>& endpoints() const
     {
         return endpoints_;
@@ -52,6 +52,7 @@ private:
     std::vector<std::string> candidates_;
     std::size_t candidate_index_ = 0;
     std::size_t baud_index_ = 0;
+    std::optional<std::string> checked_port_;
     std::unique_ptr<SerialGlove> probe_;
     Clock::time_point probe_started_{};
     Clock::time_point probe_last_query_{};

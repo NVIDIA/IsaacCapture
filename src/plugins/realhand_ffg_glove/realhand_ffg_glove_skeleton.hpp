@@ -6,6 +6,7 @@
 #include "realhand_ffg_glove_protocol.hpp"
 
 #include <openxr/openxr.h>
+#include <plugin_utils/wrist_pose_source.hpp>
 
 #include <array>
 #include <cstdint>
@@ -53,7 +54,7 @@ HandJoints place_hand(HandJoints joints, const XrPosef& wrist, bool wrist_valid,
 class WristPoseContinuity
 {
 public:
-    bool accept(const XrPosef& pose, std::int64_t time_ns, bool valid);
+    bool accept(const plugin_utils::WristSample& wrist, std::int64_t time_ns);
 
 private:
     std::optional<XrPosef> previous_;
