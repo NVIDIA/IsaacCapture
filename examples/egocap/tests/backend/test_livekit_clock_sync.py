@@ -43,7 +43,7 @@ class FakeRoom:
         self.off_calls.append((name, handler))
         self.handlers.pop(name, None)
 
-    async def connect(self, url: str, token: str) -> None:
+    async def connect(self, url: str, token: str, options: object = None) -> None:
         pass
 
     async def disconnect(self) -> None:
@@ -179,7 +179,15 @@ async def test_stop_cancels_task_and_removes_handler():
 
 
 def receiver(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> lr.LiveKitFrameReceiver:
-    monkeypatch.setattr(lr, "rtc", SimpleNamespace(Room=FakeRoom, TrackKind=SimpleNamespace(KIND_VIDEO="video")))
+    monkeypatch.setattr(
+        lr,
+        "rtc",
+        SimpleNamespace(
+            Room=FakeRoom,
+            RoomOptions=lambda **f: SimpleNamespace(**f),
+            TrackKind=SimpleNamespace(KIND_VIDEO="video"),
+        ),
+    )
     stream = lr.p.LiveKitCameraStream(
         stream_id=1, name="cam", track="left", url="ws://lk.test", room="room", publisher=PUBLISHER
     )

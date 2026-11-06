@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -24,7 +25,7 @@ import pytest
 
 from capture_server import protocol as p
 from egocap_web.clock_exchange import ClockEstimator, ClockMapping, Exchange
-from egocap_web.livekit_receiver import ReceivedFrame
+from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingFeed
 
 S = 1_000_000_000
@@ -150,8 +151,9 @@ class SimReceiver:
         self._frames = sorted(frames, key=lambda f: f.receive_time_ns)
         self._device = device
         self.clock_sync = SimClockSync(device)
+        self.counters: defaultdict[int, StreamCounters] = defaultdict(StreamCounters)
 
-    async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+    async def next_frame_or_lost(self, stream_id: int, timeout: float | None = None) -> ReceivedFrame | None:
         if not self._frames:
             return None
         frame = self._frames.pop(0)

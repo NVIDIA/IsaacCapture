@@ -152,8 +152,8 @@ class _FlipAfterFirst(FakeReceiver):
         super().__init__(frames, clock_sync)
         self._flip = flip
 
-    async def next_frame_or_lost(self, stream_id):
-        frame = await super().next_frame_or_lost(stream_id)
+    async def next_frame_or_lost(self, stream_id, timeout=None):
+        frame = await super().next_frame_or_lost(stream_id, timeout)
         if len(self.calls) == 2:
             self._flip(self.clock_sync)
         return frame
@@ -300,7 +300,7 @@ async def test_a_mapping_in_budget_at_the_first_frame_ages_over_budget_when_repl
             super().__init__({}, client)
             self.scripted = scripted
 
-        async def next_frame_or_lost(self, stream_id: int) -> ReceivedFrame | None:
+        async def next_frame_or_lost(self, stream_id: int, timeout=None) -> ReceivedFrame | None:
             if not self.scripted:
                 await asyncio.Event().wait()
             at_ns, received = self.scripted.pop(0)
@@ -608,6 +608,94 @@ async def test_silence_fails_the_take_after_the_limit(monkeypatch):
     assert receiver.timeouts == [0.02]
     assert feed.failure == "Head left: no frame for 0 s although the track is still published"
     assert reasons == [feed.failure]
+
+
+class _SilentReceiver(FakeReceiver):
+    async def next_frame_or_lost(self, stream_id, timeout=None):
+        raise asyncio.TimeoutError
+
+
+async def _silent_failure(clock: FakeClockSync) -> str | None:
+    feed = _feed(
+        _SilentReceiver({}, clock), [_stream(16, "Head left")], FakeIngress(), max_uncertainty_ns=5_000_000
+    )
+    feed.start()
+    await _settle()
+    await feed.stop()
+    return feed.failure
+
+
+_SILENCE = "Head left: no frame for 5 s although the track is still published"
+
+
+async def test_silence_with_a_healthy_clock_has_no_clock_suffix():
+    assert await _silent_failure(FakeClockSync()) == _SILENCE
+
+
+async def test_silence_with_a_missing_mapping_names_the_stopped_clock_sync_replies():
+    clock = FakeClockSync()
+    clock.available = False
+    failure = await _silent_failure(clock)
+    assert failure == _SILENCE + "; no current clock mapping from the publisher (its clock-sync replies stopped)"
+
+
+async def test_silence_with_a_clock_discontinuity_names_the_jump():
+    clock = FakeClockSync()
+    clock.discontinuity = True
+    assert await _silent_failure(clock) == _SILENCE + "; the publisher's clock mapping jumped"
+
+
+async def test_silence_with_uncertainty_over_budget_names_the_budget():
+    failure = await _silent_failure(FakeClockSync(uncertainty_ns=5_000_001))
+    assert failure == _SILENCE + "; the clock mapping is uncertain by 5.00 ms, over the budget"
+
+
+async def test_a_discontinuity_flag_wins_over_a_missing_mapping_in_the_silence_suffix():
+    clock = FakeClockSync()
+    clock.discontinuity = True
+    clock.available = False
+    failure = await _silent_failure(clock)
+    assert failure is not None and failure.endswith("the publisher's clock mapping jumped")
+
+
+async def test_overflow_and_publication_change_still_fail_the_take_while_timing_checks_are_active():
+    for field, text in (
+        ("queue_overflow", "the recorder fell behind and dropped 2 frame(s)"),
+        ("publication_changes", "the camera's publication was replaced during the take"),
+    ):
+        receiver = FakeReceiver({16: [_received(16, 1_000_000)]}, FakeClockSync(uncertainty_ns=4_000_000))
+        receiver.gates[16] = asyncio.Event()
+        ingress = FakeIngress()
+        feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=5_000_000)
+        feed.start()
+        setattr(receiver.counters[16], field, 2 if field == "queue_overflow" else 1)
+        receiver.gates[16].set()
+        await _settle()
+        await feed.stop()
+        assert ingress.offered == []
+        assert feed.failure == f"Head left: {text}"
+
+
+async def test_a_healthy_take_with_stride_two_frame_ids_and_a_valid_mapping_records_every_frame():
+    receiver = FakeReceiver({16: [_received(16, k * 1_000_000) for k in range(1, 6)]})
+    # The receiver accounts frame ids as they arrive; a paced publisher numbers 2, 4, 6... which is not loss.
+    for fid in (2, 4, 6, 8, 10):
+        lr_counters = receiver.counters[16]
+        lrec.LiveKitFrameReceiver._account(lr_counters, fid)
+    ingress = FakeIngress()
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, max_uncertainty_ns=5_000_000)
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert feed.failure is None
+    assert [m.capture_time for m in ingress.offered] == [11.0, 12.0, 13.0, 14.0, 15.0]
+    assert feed.loss()["Head left"] == {
+        "received": 5,
+        "queue_overflow": 0,
+        "publication_changes": 0,
+        "missing_frames": 0,
+        "frame_id_resets": 0,
+    }
 
 
 async def test_the_feed_asks_the_receiver_to_time_out_at_the_silence_limit():
