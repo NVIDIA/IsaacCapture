@@ -43,6 +43,26 @@ void check_cuda(cudaError_t err, const char* what)
         throw std::runtime_error(std::string("JetsonEncoder: ") + what + ": " + cudaGetErrorString(err));
 }
 
+// Asks the driver to return each input buffer's timestamp on its encoded unit. Must precede plane setup.
+bool enable_copy_timestamp(NvVideoEncoder& enc)
+{
+#ifdef V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP
+    struct v4l2_ext_control control;
+    struct v4l2_ext_controls controls;
+    std::memset(&control, 0, sizeof(control));
+    std::memset(&controls, 0, sizeof(controls));
+    control.id = V4L2_CID_MPEG_VIDEOENC_COPY_TIMESTAMP;
+    control.value = 1;
+    controls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
+    controls.count = 1;
+    controls.controls = &control;
+    return enc.setExtControls(controls) >= 0;
+#else
+    (void)enc;
+    return false;
+#endif
+}
+
 } // namespace
 
 struct JetsonEncoder::Impl
@@ -219,7 +239,17 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
     // join mid-stream, and the max-performance clock preset.
     check(enc->setNumBFrames(0), "setNumBFrames");
     check(enc->setInsertSpsPpsAtIdrEnabled(true), "setInsertSpsPpsAtIdrEnabled");
+    // Without a VUI the SPS carries no reorder/buffering limits, so a receiver's decoder (NVDEC) holds back about a
+    // dozen pictures. Non-fatal: a stream without it is valid, only slower to display.
+    if (enc->setInsertVuiEnabled(true) < 0)
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
+            ->warn("setInsertVuiEnabled failed; the SPS will have no VUI");
     check(enc->setMaxPerfMode(1), "setMaxPerfMode");
+    // Without this the driver numbers units from its own frame clock, so a unit cannot be tied to its capture by
+    // stamp. Non-fatal: the producer then reports unmatched units and sends them without a capture time.
+    if (!enable_copy_timestamp(*enc))
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.JetsonEncoder")
+            ->warn("the encoder will not copy input timestamps; encoded units cannot be matched to captures");
     // A separate control from the max-performance clocks: it trades quality for encoder throughput.
     // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
     check(enc->setHWPresetType(V4L2_ENC_HW_PRESET_FAST), "setHWPresetType");

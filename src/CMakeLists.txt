@@ -25,6 +25,25 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
+# The LiveKit SDK and publisher library: the PC video stage publishes to LiveKit. The camera producer on the Orin does
+# not use LiveKit; it sends over its direct links.
+if(BUILD_VIDEO_STAGE)
+    add_subdirectory(livekit_publisher)
+endif()
+
+if(BUILD_VIDEO_STAGE)
+    add_subdirectory(video_stage)
+elseif(BUILD_PLUGIN_SENSING)
+    # The SENSING plugin sends AVS1 records to the video stage and needs only its record codec and sender.
+    add_subdirectory(video_stage/wire)
+    add_subdirectory(video_stage/sender)
+endif()
+
+# The camera producer's management channel, also used by the mock producer.
+if(BUILD_PLUGIN_SENSING OR BUILD_VIDEO_STAGE)
+    add_subdirectory(sensing_control)
+endif()
+
 if(BUILD_PLUGINS)
     add_subdirectory(plugins)
 endif()

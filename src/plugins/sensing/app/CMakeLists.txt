@@ -5,7 +5,7 @@ add_executable(camera_plugin_sensing main.cpp)
 
 set_target_properties(camera_plugin_sensing PROPERTIES INSTALL_RPATH "$ORIGIN")
 
-target_link_libraries(camera_plugin_sensing PRIVATE sensing::core)
+target_link_libraries(camera_plugin_sensing PRIVATE sensing::core sensing::control)
 
 # The plugin resolves configs/shw5g.json relative to its own executable, so the
 # config has to sit beside the binary in the build tree as well as the install
@@ -17,20 +17,13 @@ add_custom_command(TARGET camera_plugin_sensing POST_BUILD
     COMMENT "Staging SIPL platform configs beside camera_plugin_sensing"
 )
 
+# Everything below is the `producer` install component: `cmake --install <build> --component producer` stages
+# exactly what scripts/deploy_orin.py packages for an Orin.
 install(TARGETS camera_plugin_sensing
     RUNTIME DESTINATION plugins/sensing_camera
+    COMPONENT producer
 )
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../configs/"
     DESTINATION plugins/sensing_camera/configs
-)
-
-# The plugin links the LiveKit runtime, whose RUNPATH points into the build tree; ship it beside the
-# binary, where INSTALL_RPATH=$ORIGIN (and liblivekit.so's own $ORIGIN) finds it.
-install(FILES
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit.so"
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
-    DESTINATION plugins/sensing_camera
-)
-install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
-    DESTINATION plugins/sensing_camera/licenses/livekit-sdk
+    COMPONENT producer
 )

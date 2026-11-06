@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# SIPL capture, colour conversion, the hardware encoder and the LiveKit track output.
+# SIPL capture, colour conversion, the hardware encoder and the output that sends encoded video to the PC.
 add_library(sensing_core STATIC
     sensing_camera.cpp
     camera_backend.cpp
     sensor_clock.cpp
     capture_factory.cpp
     jetson_encoder.cpp
-    livekit_video_output.cpp
+    video_output.cpp
     rgba_to_nv12.cu
     rgba_box_downscale.cu
     ${JETSON_MMAPI_SOURCES}
@@ -55,7 +55,7 @@ target_compile_options(sensing_core PRIVATE
 
 target_link_libraries(sensing_core
     PUBLIC
-        sensing::livekit
+        video_stage::sender
     PRIVATE
         CUDA::cudart
         CUDA::cuda_driver
