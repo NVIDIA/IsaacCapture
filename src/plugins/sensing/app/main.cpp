@@ -294,29 +294,33 @@ try
 
 #ifdef SENSING_HAS_SIPL
     sipl_probe.available = true;
-    if (camera_config.platform_config_json.empty())
-        camera_config.platform_config_json = default_platform_config();
-    if (camera_config.platform_config_json.empty())
+    // An explicit --camera-backend names the one backend to use: the other SDK is not initialised just to be probed.
+    if (requested_backend != CameraBackend::Argus)
     {
-        sipl_probe.detail =
-            "no platform config: configs/shw5g.json was not found beside this binary; pass "
-            "--platform-config=PATH";
-    }
-    else
-    {
-        // The query parses the configuration; it does not prove that the cameras are present.
-        try
+        if (camera_config.platform_config_json.empty())
+            camera_config.platform_config_json = default_platform_config();
+        if (camera_config.platform_config_json.empty())
         {
-            for (const auto& s : SiplCamera::query(
-                     camera_config.platform_config_json, camera_config.platform_config_name, camera_config.link_masks))
-                sipl_cameras.push_back({ s.id, s.name, s.width, s.height, s.fps });
-            sipl_probe.matches = !sipl_cameras.empty();
-            if (!sipl_probe.matches)
-                sipl_probe.detail = "the platform configuration names no sensors";
+            sipl_probe.detail =
+                "no platform config: configs/shw5g.json was not found beside this binary; pass "
+                "--platform-config=PATH";
         }
-        catch (const std::exception& e)
+        else
         {
-            sipl_probe.detail = e.what();
+            // The query parses the configuration; it does not prove that the cameras are present.
+            try
+            {
+                for (const auto& s : SiplCamera::query(camera_config.platform_config_json,
+                                                       camera_config.platform_config_name, camera_config.link_masks))
+                    sipl_cameras.push_back({ s.id, s.name, s.width, s.height, s.fps });
+                sipl_probe.matches = !sipl_cameras.empty();
+                if (!sipl_probe.matches)
+                    sipl_probe.detail = "the platform configuration names no sensors";
+            }
+            catch (const std::exception& e)
+            {
+                sipl_probe.detail = e.what();
+            }
         }
     }
 #else
@@ -325,27 +329,30 @@ try
 
 #ifdef SENSING_HAS_ARGUS
     argus_probe.available = true;
-    try
+    if (requested_backend != CameraBackend::Sipl)
     {
-        argus_cameras = ArgusCapture::query(camera_config.argus_sensor_mode);
-        // Every requested camera must exist; with none requested (--list-sensors) any camera counts.
-        argus_probe.matches = !argus_cameras.empty();
-        for (uint32_t id : camera_ids)
+        try
         {
-            const bool found = std::any_of(
-                argus_cameras.begin(), argus_cameras.end(), [id](const CameraInfo& c) { return c.id == id; });
-            if (!found)
+            argus_cameras = ArgusCapture::query(camera_config.argus_sensor_mode);
+            // Every requested camera must exist; with none requested (--list-sensors) any camera counts.
+            argus_probe.matches = !argus_cameras.empty();
+            for (uint32_t id : camera_ids)
             {
-                argus_probe.matches = false;
-                argus_probe.detail = "no Argus camera device " + std::to_string(id);
+                const bool found = std::any_of(
+                    argus_cameras.begin(), argus_cameras.end(), [id](const CameraInfo& c) { return c.id == id; });
+                if (!found)
+                {
+                    argus_probe.matches = false;
+                    argus_probe.detail = "no Argus camera device " + std::to_string(id);
+                }
             }
+            if (argus_cameras.empty())
+                argus_probe.detail = "Argus reports no camera devices";
         }
-        if (argus_cameras.empty())
-            argus_probe.detail = "Argus reports no camera devices";
-    }
-    catch (const std::exception& e)
-    {
-        argus_probe.detail = e.what();
+        catch (const std::exception& e)
+        {
+            argus_probe.detail = e.what();
+        }
     }
 #else
     argus_probe.detail = "this build has no Argus support (configure with -DSENSING_WITH_ARGUS=ON)";
