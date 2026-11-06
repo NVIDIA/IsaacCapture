@@ -273,6 +273,26 @@ devices:
           url: https://wuji.tech/en/
         - email: sales@wuji.tech
 
+  - id: agilink-omniglove
+    name: AgiLink OmniGlove
+    url: https://github.com/AgibotTech/agilink_omniglove_sdk
+    group: peripheral
+    modes: High-fidelity hand tracking
+    since: main
+    details:
+      setup:
+        - label: OmniGlove docs
+          doc: /device/hand_tracking/omniglove
+        - label: OmniGlove Plugin
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/omniglove
+      requirements:
+        - Linux, x86_64 or aarch64
+        - AgiLink OmniGlove SDK
+        - USB glove connection and host udev rule
+      acquire:
+        - label: AgiLink OmniGlove SDK
+          url: https://github.com/AgibotTech/agilink_omniglove_sdk
+
   - id: noitom
     name: Noitom Robotics Motion Capture
     url: https://www.noitomrobotics.com
