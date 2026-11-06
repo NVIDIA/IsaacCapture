@@ -143,8 +143,8 @@ class ClockEstimator:
     def mapping(self, now_ns: int) -> ClockMapping | None:
         """The current mapping, or None when there is none yet or no exchange arrived within the stale limit.
 
-        The uncertainty is aged to ``now_ns``: while replies are late the offset's drift allowance keeps growing, so
-        a budget check on a returned mapping never sees a figure older than the call. History is not appended.
+        The uncertainty is aged to ``now_ns``: while replies are late the offset's drift allowance keeps growing,
+        so a budget check on a returned mapping never sees a figure older than the call. History is not appended.
         """
         current = self._current
         if current is None or self._newest_ns is None or now_ns - self._newest_ns > self._stale_after_ns:
