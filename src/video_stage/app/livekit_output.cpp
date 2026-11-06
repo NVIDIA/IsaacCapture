@@ -53,6 +53,7 @@ void LiveKitOutput::end_session()
 
 void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, const Geometry& geometry)
 {
+    const int64_t write_start_ns = monotonic_ns();
     if (m_livekit.failed())
         throw std::runtime_error("LiveKit room lost: " + m_livekit.failure());
 
@@ -115,10 +116,14 @@ void LiveKitOutput::write(const EncodedPacket& packet, const FrameMeta& meta, co
     frame.timestamp_us = static_cast<uint64_t>(pc_ns / 1000);
     frame.user_timestamp_us = frame.timestamp_us;
     frame.frame_id = static_cast<uint32_t>(meta.frame_number);
-    if (m_track->submit(frame))
+    const int64_t submit_start_ns = monotonic_ns();
+    const bool accepted = m_track->submit(frame);
+    const int64_t now_ns = monotonic_ns();
+    if (accepted)
     {
         ++m_published;
-        const int64_t now_ns = monotonic_ns();
+        m_intake_to_write_ns.add(write_start_ns - meta.received_ns);
+        m_submit_ns.add(now_ns - submit_start_ns);
         m_uplink_ns.add(meta.received_ns - pc_ns);
         m_source_to_publish_ns.add(now_ns - pc_ns);
         m_upstream_uncertainty_ns = upstream->mapping.uncertainty_ns;

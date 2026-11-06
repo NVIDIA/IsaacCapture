@@ -106,6 +106,17 @@ public:
     {
         return m_source_to_publish_ns;
     }
+    /// From the intake of the record to the start of this publish call: the worker's own time (queue, decode, warp,
+    /// encode).
+    const DurationStats& intake_to_write_ns() const
+    {
+        return m_intake_to_write_ns;
+    }
+    /// The LiveKit SDK call that takes the encoded frame.
+    const DurationStats& submit_ns() const
+    {
+        return m_submit_ns;
+    }
     int64_t upstream_uncertainty_ns() const
     {
         return m_upstream_uncertainty_ns.load();
@@ -128,6 +139,8 @@ private:
     uint64_t m_refused = 0;
     uint64_t m_republished = 0;
     uint64_t m_over_budget = 0;
+    DurationStats m_intake_to_write_ns;
+    DurationStats m_submit_ns;
     DurationStats m_uplink_ns;
     DurationStats m_source_to_publish_ns;
     std::atomic<int64_t> m_upstream_uncertainty_ns{ 0 };

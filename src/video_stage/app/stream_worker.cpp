@@ -341,7 +341,10 @@ void StreamWorker::print_live(std::ostream& out) const
     {
         std::snprintf(
             line + n, sizeof(line) - static_cast<size_t>(n),
-            " | Orin->PC p50 %.1f p99 %.1f ms | Orin->publish p50 %.1f p99 %.1f ms | mapping +-%.1f ms | published %llu",
+            " | intake->write p50 %.1f p99 %.1f ms | submit p50 %.1f p99 %.1f ms | Orin->PC p50 %.1f p99 %.1f ms | Orin->publish p50 %.1f p99 %.1f ms | mapping +-%.1f ms | published %llu",
+            d.livekit_output->intake_to_write_ns().percentile(50) / 1e6,
+            d.livekit_output->intake_to_write_ns().percentile(99) / 1e6,
+            d.livekit_output->submit_ns().percentile(50) / 1e6, d.livekit_output->submit_ns().percentile(99) / 1e6,
             d.livekit_output->uplink_ns().percentile(50) / 1e6, d.livekit_output->uplink_ns().percentile(99) / 1e6,
             d.livekit_output->source_to_publish_ns().percentile(50) / 1e6,
             d.livekit_output->source_to_publish_ns().percentile(99) / 1e6,
