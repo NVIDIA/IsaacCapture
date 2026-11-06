@@ -110,7 +110,7 @@ def main() -> None:
             if delay > 0:
                 time.sleep(delay)
             frame += 1
-            sock.sendall(record(au, frame, frame, time.monotonic_ns(), args.width, args.height, args.fps))
+            sock.sendall(record(au, frame, frame, time.monotonic_ns() + int(args.clock_offset_ms * 1e6), args.width, args.height, args.fps))
             next_send += period
     sock.shutdown(socket.SHUT_WR)
     sock.settimeout(30)

@@ -36,7 +36,8 @@ struct UpstreamMapping
 class ControlChannel
 {
 public:
-    explicit ControlChannel(TcpReceiver& link);
+    /// `first_epoch` differs for every session of a stream, so an epoch is never reused across a sender restart.
+    ControlChannel(TcpReceiver& link, uint64_t first_epoch);
     ~ControlChannel();
 
     ControlChannel(const ControlChannel&) = delete;
@@ -78,7 +79,7 @@ private:
     static constexpr size_t kOutstanding = 4;
     Outstanding m_outstanding[kOutstanding]{};
     size_t m_next_outstanding = 0;
-    uint64_t m_epoch = 1;
+    uint64_t m_epoch;
     std::mutex m_wait_mutex;
     std::condition_variable m_wait;
     bool m_stop = false;

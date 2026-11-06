@@ -15,7 +15,7 @@ namespace video_stage
 
 namespace cs = plugins::sensing;
 
-ControlChannel::ControlChannel(TcpReceiver& link) : m_link(link)
+ControlChannel::ControlChannel(TcpReceiver& link, uint64_t first_epoch) : m_link(link), m_epoch(first_epoch)
 {
     m_reader = std::thread(&ControlChannel::read_loop, this);
     m_requester = std::thread(&ControlChannel::request_loop, this);

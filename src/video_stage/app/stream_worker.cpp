@@ -137,6 +137,7 @@ struct StreamWorker::Impl
     std::atomic<uint64_t> overflows{ 0 };
     std::atomic<uint64_t> discarded{ 0 };
     std::atomic<uint64_t> sessions{ 0 };
+    uint64_t epoch_base = 0; ///< advances for every session so a control channel's epoch is never reused
     std::atomic<uint64_t> clock_exchanges{ 0 };
     std::atomic<uint64_t> clock_rejected{ 0 };
     std::atomic<uint64_t> clock_discontinuities{ 0 };
@@ -260,11 +261,19 @@ struct StreamWorker::Impl
                 std::cout << "stream " << spec.port << ": Orin session connected" << std::endl;
                 ++sessions;
                 {
-                    ControlChannel control(*receiver);
+                    // A new session starts clean: nothing of the previous sender's publication or numbering carries
+                    // over.
+                    if (livekit_output)
+                        livekit_output->end_session();
+                    pipeline->reset_session();
+                    epoch_base += 1'000'000;
+                    ControlChannel control(*receiver, epoch_base + 1);
                     active_control = &control;
                     if (!run_session())
                         ok = false;
                     active_control = nullptr;
+                    if (livekit_output)
+                        livekit_output->end_session();
                     clock_exchanges += control.exchanges();
                     clock_rejected += control.rejected();
                     clock_discontinuities += control.discontinuities();
