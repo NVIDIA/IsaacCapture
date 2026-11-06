@@ -20,9 +20,7 @@ submission have separate evidence. A pending item below is not a pass.
 | USB devices | Left `cafe:4001`, right `cafe:4002` |
 | SDK stream | POST_DATA, DIRECT, nominal 125 Hz |
 | Wrist source qualified | `controller` |
-| Headset / controller model | Not recorded in the take; operator confirmation pending |
-| Glove hardware / firmware revision | Not recorded in the take; operator confirmation pending |
-| Physical controller mount | Final mount description/photo pending operator confirmation |
+| Headset / controller model | PICO 4 Ultra / PICO 4 controllers, operator-confirmed; original take has no model fields |
 
 ## Hardware CTS evidence
 
@@ -119,17 +117,17 @@ worker iteration.
 
 ## Final submission checklist
 
-- [ ] Confirm headset, controller, glove hardware/firmware and final mount.
+- [x] Confirm headset and controller models: PICO 4 Ultra / PICO 4 controllers.
 - [ ] OpenXR hot-unplug/recovery evidence for both hands.
 - [x] Software build, conversion/ABI tests, C++ format, strict docs and full
       pre-commit verified against the final source.
-- [ ] Commit the plugin with the operator's Git identity and DCO sign-off.
-- [ ] Push to the user-specified repository and open the integration PR.
+- [x] Commit the plugin with the operator's Git identity and DCO sign-off.
+- [x] Push to AgibotTech/IsaacCapture and open integration PR #1445.
 - [ ] Record from that pushed commit with a clean checkout and unchanged CTS:
 
 ```bash
 ./src/plugins/omniglove/record_cts.sh --wrist-config /path/to/mount.env \
-    --no-launch-cloudxr-runtime --note "headset/model, controller/model, firmware, mount"
+    --no-launch-cloudxr-runtime --note "headset=PICO 4 Ultra; controller=PICO 4 controllers"
 ```
 
 - [ ] Review the new take in `hand_cts.panel`; verify handedness, axes,

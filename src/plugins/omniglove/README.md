@@ -91,7 +91,7 @@ After committing and pushing the plugin, record from a clean checkout:
 The wrapper rejects uncommitted/unpushed code and changes to the official CTS.
 It records the installed binary's SHA-256 and the wrist configuration in
 provenance notes. `--allow-dirty` enables development takes with their original
-dirty provenance. `--note` adds hardware/firmware details; use
+dirty provenance. `--note` records the headset and controller models; use
 `--no-launch-cloudxr-runtime` when CloudXR is already running.
 
 Review the take with the official viewer and package it with the same builder:

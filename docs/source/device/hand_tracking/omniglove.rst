@@ -160,7 +160,7 @@ already pushed to the integration PR, load the mount configuration and record:
 
 Use ``--no-launch-cloudxr-runtime`` if CloudXR is already running. For
 development takes, ``--allow-dirty`` retains the recorder's dirty provenance.
-Include headset, controller, firmware and mount details in ``--note``.
+Use ``--note`` to record the headset and controller models.
 
 Review the take in the official panel, then package it using the panel's
 Submission button or the wrapper that uses the same bundle builder:
