@@ -3,7 +3,7 @@
 
 #include "inc/sensing_livekit/livekit_session.hpp"
 
-#include "inc/sensing_livekit/clock_sync.hpp"
+#include <video_stage/clock_sync.hpp>
 
 #include <livekit/encoded_video_source.h>
 #include <livekit/livekit.h>

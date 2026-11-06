@@ -167,7 +167,7 @@ TEST_CASE("interesting_lines picks failure lines", "[driver_log_capture]")
 {
     // Fewer matching lines than the six-line limit per call, so each word is seen.
     const std::vector<std::vector<std::string>> groups = {
-        { "an ERROR happened", "operation failed", "Fail to open", "request timeout", "I2C NACK at 0x10" },
+        { "an ERROR happened", "operation failed", "Fail to open", "request timeout" },
         { "OPEN_CIRCUIT", "CIRCUIT_OPEN_DISCONNECTION", "DES_LOCK_ERR", "CAMERA_DETECT" }
     };
     for (const auto& group : groups)
@@ -192,11 +192,17 @@ TEST_CASE("interesting_lines strips the Severity prefix and joins with semicolon
 {
     const std::string text =
         "[TID=1234] Module_id 30 Severity 2 : lock timeout on link 1\n"
-        "[TID=1234] Module_id 30 Severity 2 : I2C NACK\n";
-    CHECK(DriverLogCapture::interesting_lines(text) == "lock timeout on link 1; I2C NACK");
+        "[TID=1234] Module_id 30 Severity 2 : open failed\n";
+    CHECK(DriverLogCapture::interesting_lines(text) == "lock timeout on link 1; open failed");
 
     // A line with " : " but no Severity keeps its text.
     CHECK(DriverLogCapture::interesting_lines("camera : error 5\n") == "camera : error 5");
+}
+
+TEST_CASE("interesting_lines ignores NACK lines", "[driver_log_capture]")
+{
+    // The driver prints these on healthy starts.
+    CHECK(DriverLogCapture::interesting_lines("I2C: NACK ... errno=121\nbus NACK at 0x1a\n").empty());
 }
 
 TEST_CASE("interesting_lines collapses consecutive duplicates", "[driver_log_capture]")

@@ -15,21 +15,20 @@ namespace plugins
 namespace sensing
 {
 
-/// One captured sensor and the LiveKit track that carries it.
+/// One captured sensor and the stream that carries it to the PC.
 struct StreamConfig
 {
-    /// Also send every encoded unit of this stream to the PC video stage at host:port (AVS1 over TCP, beside the
-    /// LiveKit track); empty disables it. Each stream needs its own port on the PC.
+    /// Send every encoded unit of this stream to the PC video stage at host:port (AVS1 over TCP); empty means no
+    /// destination yet (one can be set over the management channel). Each stream needs its own port on the PC.
     std::string direct_host;
     uint16_t direct_port = 0;
     /// The selected backend's own camera index (SIPL pipeline or Argus device), validated at startup.
     uint32_t sensor_id = 0;
-    /// Name of the LiveKit camera track carrying this sensor.
-    std::string livekit_track;
+    /// The stream's name: what the PC, the management channel and the logs call this sensor.
+    std::string name;
 };
 
-/// Where and how the tracks are published.
-/// The clock and event a published frame's application timestamp is read from.
+/// The clock and event a frame's application timestamp is read from.
 enum class TimestampBasis
 {
     /// CLOCK_MONOTONIC when the frame was ready to encode (`monotonic_us`); recordable.
@@ -40,16 +39,13 @@ enum class TimestampBasis
     ProcessingUnix,
 };
 
-struct LiveKitConfig
+struct EncodeConfig
 {
-    std::string url;
-    /// The join token itself, not a path. It names the room and the participant. Never logged.
-    std::string token;
-    /// Publication rate cap, independent of the capture rate.
+    /// Rate cap of the encoded stream, independent of the capture rate.
     uint32_t fps = 30;
-    /// Output-only uniform reduction of every track; 1 publishes the sensor's native size.
+    /// Output-only uniform reduction of every stream; 1 sends the sensor's native size.
     uint32_t scale_div = 1;
-    /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again.
+    /// Target bitrate of each stream's hardware encoder; the VBR ceiling is half as much again.
     uint32_t bitrate_bps = 8'000'000;
     /// What each frame's application timestamp is; the receiving side's streams file must declare the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
@@ -78,7 +74,7 @@ struct SensingConfig
     /// Argus only: the sensor mode index applied to every camera.
     uint32_t argus_sensor_mode = 0;
 
-    LiveKitConfig livekit;
+    EncodeConfig encode;
 };
 
 } // namespace sensing

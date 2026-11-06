@@ -25,8 +25,9 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
-# The LiveKit SDK and publisher library, shared by the SENSING plugin and the video stage.
-if(BUILD_PLUGIN_SENSING OR BUILD_VIDEO_STAGE)
+# The LiveKit SDK and publisher library: the PC video stage publishes to LiveKit. The camera producer on the Orin does
+# not use LiveKit; it sends over its direct links.
+if(BUILD_VIDEO_STAGE)
     add_subdirectory(livekit_publisher)
 endif()
 

@@ -98,17 +98,30 @@ void init_sipl_trace()
 /// The enumerator name for the statuses whose meaning is known; every other value is reported by number only.
 const char* status_name(SIPLStatus status)
 {
+    // The order of NvSIPLCommon.hpp's SIPLStatus.
     switch (static_cast<int>(status))
     {
+    case 1:
+        return "bad argument";
+    case 2:
+        return "not supported";
+    case 3:
+        return "out of memory";
     case 4:
         return "resource error";
+    case 5:
+        return "timed out";
     case 6:
         return "invalid state";
+    case 7:
+        return "end of stream";
     case 8:
         // Init() reports this when some cameras started and at least one did not.
         return "not initialized: some cameras failed to start";
+    case 9:
+        return "fault state";
     case 10:
-        return "error";
+        return "error: no cause given";
     default:
         return nullptr;
     }

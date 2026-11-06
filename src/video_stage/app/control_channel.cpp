@@ -5,7 +5,7 @@
 
 #include "pipeline.hpp"
 
-#include <sensing_livekit/clock_sync.hpp>
+#include <video_stage/clock_sync.hpp>
 
 #include <chrono>
 #include <vector>

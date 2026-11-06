@@ -4,8 +4,8 @@
 #pragma once
 
 #include "camera_capture.hpp"
-#include "livekit_video_output.hpp"
 #include "sensing_types.hpp"
+#include "video_output.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -17,14 +17,12 @@ namespace plugins
 namespace sensing
 {
 
-class LiveKitSession;
-
 /**
- * @brief Multi-sensor SENSING camera publisher.
+ * @brief Multi-sensor SENSING camera producer.
  *
  * One CameraCapture owns every camera of the rig (SIPL's camera object is process-wide, so there is no
  * per-camera capture object to hold). Each update() polls every sensor's latest frame and hands a new frame
- * to that sensor's LiveKit track. Geometry is per sensor and comes from the capture backend.
+ * to that sensor's encoder and direct link to the PC. Geometry is per sensor and comes from the capture backend.
  */
 /// Live figures for one stream, for the management channel.
 struct StreamFigures
@@ -50,10 +48,10 @@ public:
     SensingCamera(SensingCamera&&) = delete;
     SensingCamera& operator=(SensingCamera&&) = delete;
 
-    /** @brief Poll every sensor and submit newly captured frames. Throws once the room is lost. */
+    /** @brief Poll every sensor and submit newly captured frames. Throws once a stream can no longer work. */
     void update();
 
-    /** @brief Flush each track's queued frames. */
+    /** @brief Flush each stream's encoder. */
     void flush();
 
     /** @brief Per-stream figures. Call from the thread that calls update(). */
@@ -73,7 +71,7 @@ private:
     {
         uint32_t sensor_id = 0;
         std::string track;
-        std::unique_ptr<LiveKitVideoOutput> livekit;
+        std::unique_ptr<VideoOutput> output;
         /// SIPL publish counter of the frame already handled; skips re-reads.
         uint64_t last_sequence = 0;
         bool have_last_sequence = false;
@@ -84,8 +82,6 @@ private:
 
     SensingConfig m_config;
     std::unique_ptr<CameraCapture> m_camera;
-    /// Declared before the streams so it is destroyed after their tracks have been unpublished.
-    std::unique_ptr<LiveKitSession> m_livekit;
     std::vector<Stream> m_streams;
 };
 
