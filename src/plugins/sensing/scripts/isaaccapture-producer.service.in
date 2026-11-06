@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Template for the Orin camera producer service; scripts/deploy_orin.py fills the @...@ fields.
+[Unit]
+Description=Isaac Capture camera producer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+SupplementaryGroups=@SERVICE_GROUPS@
+WorkingDirectory=@PREFIX@/current/plugins/sensing_camera
+# The release carries its own shared libraries; they must win over the build-tree paths the binary was linked with.
+Environment=LD_LIBRARY_PATH=@PREFIX@/current/plugins/sensing_camera
+@ENVIRONMENT@
+ExecStart=@EXEC_START@
+# The producer stops on SIGINT; systemd ends anything left in this cgroup after the timeout.
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
