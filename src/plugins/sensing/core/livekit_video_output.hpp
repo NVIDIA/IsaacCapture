@@ -57,8 +57,8 @@ struct LiveKitOutputStats
  *
  * Two snapshot slots bound the memory: one the worker is encoding, one waiting. A newer capture
  * replaces the waiting one; the worker never waits for it. The encoder is the JetsonEncoder class:
- * the V4L2 engine on a Jetson, NVENC through libavcodec in the mock. There is no software encoder: if
- * the hardware encoder cannot start, construction fails.
+ * the Jetson V4L2 hardware engine. There is no software encoder: if the hardware encoder cannot
+ * start, construction fails.
  *
  * The receiving side's keyframe requests and bitrate targets are applied before the next frame is
  * encoded. A frame the SDK refuses breaks the reference chain, so the output asks for a keyframe and

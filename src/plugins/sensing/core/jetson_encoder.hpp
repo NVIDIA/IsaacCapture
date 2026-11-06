@@ -26,10 +26,11 @@ struct EncoderConfig
     bool full_range = false;
 };
 
-/// One encoded Annex-B unit and the capture stamp of the frame it came from.
+/// One encoded Annex-B unit.
 struct EncodedUnit
 {
     std::vector<uint8_t> data;
+    /// The encoder's own frame-rate numbering, not the stamp given to submit().
     int64_t timestamp_ns = 0;
     /// The unit is an IDR (with its parameter sets), decodable on its own. Not set on the
     /// concatenated tail from end_of_stream().
@@ -69,7 +70,7 @@ public:
      * @brief Convert one GPU-resident RGBA8 frame to NV12 and queue it.
      * @param rgba_device_ptr Device pointer to a HxWx4 RGBA8 buffer.
      * @param row_pitch_bytes Byte stride between rows.
-     * @param timestamp_ns Capture stamp, set on the V4L2 output buffer. On the verified Orin driver the unit
+     * @param timestamp_ns Stamp set on the V4L2 output buffer. On the verified Orin driver the unit
      *        poll() returns does not carry it back (units are numbered from the encoder's own frame rate), so
      *        callers pair units with submissions by order and must not match on this value.
      * @return false when no input buffer is free (frame dropped).
@@ -82,7 +83,7 @@ public:
     /** @brief Signal EOS and drain the remaining bitstream, concatenated into one unit. */
     EncodedUnit end_of_stream();
 
-    /** @brief Signal EOS and drain the remaining bitstream, one unit per frame with its own stamp. */
+    /** @brief Signal EOS and drain the remaining bitstream, one unit per frame. */
     std::vector<EncodedUnit> drain();
 
     /** @brief Make the next submitted frame an IDR, preceded by SPS/PPS. */

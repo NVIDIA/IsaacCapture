@@ -73,8 +73,8 @@ struct FrameView
     size_t pitch = 0;
     uint32_t width = 0;
     uint32_t height = 0;
-    /// CLOCK_MONOTONIC, stamped at YUV->RGBA conversion. Round-trips through
-    /// the encoder, so it is what identifies a unit on the way back out.
+    /// CLOCK_MONOTONIC, stamped at YUV->RGBA conversion. Published as the frame's
+    /// transport timestamp; the encoder does not return it, so units pair with captures by order.
     uint64_t timestamp_ns = 0;
     /// CLOCK_REALTIME (Unix time) read at the same instant as timestamp_ns: processing time, after capture and
     /// conversion, so later than the capture event. Published as the frame's application timestamp; it is

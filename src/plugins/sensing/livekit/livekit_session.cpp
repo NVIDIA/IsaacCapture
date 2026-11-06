@@ -68,7 +68,9 @@ struct LiveKitSessionImpl : livekit::RoomDelegate
 {
     ~LiveKitSessionImpl() override
     {
-        // Leave the room while the SDK is still up: the reference below is released after the room.
+        // The members below are destroyed before the room: stop callbacks reaching them, then leave the
+        // room while the SDK is still up (its reference is released after the room).
+        room.setDelegate(nullptr);
         room.disconnect();
     }
 
