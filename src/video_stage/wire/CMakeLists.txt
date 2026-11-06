@@ -4,6 +4,7 @@
 # The AVS1 record codec: plain C++, no CUDA, so the Orin-side sender can link it too.
 add_library(video_stage_wire STATIC
     avs1.cpp
+    h264_sps.cpp
 )
 add_library(video_stage::wire ALIAS video_stage_wire)
 

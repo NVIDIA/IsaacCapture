@@ -3,9 +3,15 @@
 
 #include "pipeline.hpp"
 
+#include <video_stage/h264_sps.hpp>
+
+#include <algorithm>
 #include <atomic>
+#include <iostream>
 #include <stdexcept>
+#include <string>
 #include <time.h>
+#include <vector>
 
 namespace video_stage
 {
@@ -43,6 +49,7 @@ struct Pipeline::Impl
     std::unique_ptr<NvdecDecoder> decoder;
     PipelineStats stats;
     int64_t decode_start_ns = 0;
+    std::string last_sps;
     uint32_t source_fps = 0; ///< the frame rate the source declared in its last record
 
     Impl(CudaContext& ctx, GpuOperation& op, PacketSink& s, const PipelineConfig& cfg)
@@ -87,8 +94,9 @@ struct Pipeline::Impl
     {
         ++stats.pictures;
         const int64_t decoded_ns = monotonic_ns();
-        stats.decode_ns.add(decoded_ns - decode_start_ns);
         const FrameMeta m = meta[frame.key % kMetaRing];
+        stats.decode_ns.add(decoded_ns - m.submitted_ns);
+        stats.decode_lag.add(static_cast<int64_t>(next_key - 1 - frame.key));
         if (m.key != frame.key)
         {
             ++stats.metadata_lost;
@@ -158,8 +166,35 @@ void Pipeline::process(const avs1::Record& record, int64_t received_ns)
     slot.key = key;
     p.source_fps = record.sample.fps_numerator;
     p.decode_start_ns = monotonic_ns();
+    slot.submitted_ns = p.decode_start_ns;
     p.stats.queue_age_ns.add(p.decode_start_ns - received_ns);
-    p.decoder->decode(record.payload, record.payload_size, key);
+
+    // A sequence header that does not say "no reordering" makes NVDEC hold back pictures; say it when the source's
+    // contract is that it has no B-frames, and report what the stream declared.
+    const uint8_t* payload = record.payload;
+    size_t payload_size = record.payload_size;
+    std::vector<uint8_t> rewritten;
+    if (const auto sps = h264::parse_sps(payload, payload_size))
+    {
+        const std::string described = sps->describe();
+        if (described != p.last_sps)
+        {
+            p.last_sps = described;
+            std::cerr << "source SPS: " << described << std::endl;
+        }
+        const bool needs = !sps->bitstream_restriction || sps->max_num_reorder_frames != 0 ||
+                           sps->max_dec_frame_buffering > std::max<uint32_t>(sps->max_num_ref_frames, 1);
+        if (p.config.source_has_no_b_frames && needs)
+        {
+            if (auto fixed = h264::declare_no_reordering(payload, payload_size))
+            {
+                rewritten = std::move(*fixed);
+                payload = rewritten.data();
+                payload_size = rewritten.size();
+            }
+        }
+    }
+    p.decoder->decode(payload, payload_size, key);
 }
 
 void Pipeline::reset_session()
