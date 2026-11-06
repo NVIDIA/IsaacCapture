@@ -144,7 +144,8 @@ void Pipeline::process(const avs1::Record& record, int64_t received_ns)
     Impl& p = *m_impl;
     ++p.stats.records;
     const uint64_t frame = record.sample.frame_number;
-    if (p.have_previous_frame && frame != p.previous_frame + 1)
+    // Frame ids need not be consecutive (the camera captures faster than it publishes); they must increase.
+    if (p.have_previous_frame && frame <= p.previous_frame)
         ++p.stats.gaps;
     p.previous_frame = frame;
     p.have_previous_frame = true;
