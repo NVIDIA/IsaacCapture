@@ -41,18 +41,24 @@ import asyncio
 import collections
 import contextlib
 import json
+import logging
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
 import websockets
 from websockets.exceptions import ConnectionClosed
 from websockets.server import ServerConnection
 
+from . import mcal_catalog
 from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
+
+_LOG = logging.getLogger("isaaccapture.capture_server.server")
 
 __all__ = ["CaptureServer", "ServerConfig", "main"]
 
@@ -73,6 +79,11 @@ _SEND_DEADLINE_S = 2.0
 _CLOSE_TIMEOUT_S = 2.0
 _SOURCE_RELEASE_TIMEOUT_S = 5.0
 _COMPLETED_TOMBSTONE_CAPACITY = 16
+# A station query is one short exchange on its own connection; both the wait for the request and the directory
+# scan are bounded so a stalled peer or a huge directory cannot hold a connection open.
+_QUERY_DEADLINE_S = 10.0
+# Directory scans run off the event loop, at most this many at once.
+_MCAL_SCANS = 2
 
 
 class _StopDuringStartup(Exception):
@@ -160,9 +171,16 @@ class ServerConfig:
     # prints the mode's default (the mock's SYNTHETIC-data warning, nothing for live); replay sets it so
     # recorded data is never announced as synthetic.
     data_note: str | None = None
+    # The folder of MCAL files this host offers: clients list it through the device query and select files from
+    # it by name at Begin. Anything placed in it (by hand or by a calibration tool) is offered; None disables
+    # listing and selection.
+    manus_calibration_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        """Reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        # Resolved here, at construction, so no later request re-resolves it on the event loop.
+        if self.manus_calibration_dir is not None:
+            self.manus_calibration_dir = self.manus_calibration_dir.resolve()
         if self.cameras is not None:
             ids = [c.device_id for c in self.cameras.values()]
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
@@ -1123,6 +1141,10 @@ class CaptureServer:
         self._mode = p.CaptureMode.MOCK if self.config.mock else p.CaptureMode.LIVE
         self._source_factory = source_factory
         self._stop_event = asyncio.Event()
+        # Each scan holds a permit from its start until its thread really finishes, whatever happens to the
+        # request that asked for it, so timed-out queries can never accumulate live scans.
+        self._mcal_slots = asyncio.Semaphore(_MCAL_SCANS)
+        self._mcal_pool = ThreadPoolExecutor(max_workers=_MCAL_SCANS, thread_name_prefix="mcal-scan")
         self._ws_server: websockets.WebSocketServer | None = None
         self._owner: ServerConnection | None = None
         # The ONE connection-owned Outbox, constructed once per owner
@@ -1233,6 +1255,8 @@ class CaptureServer:
                         timeout=_SOURCE_RELEASE_TIMEOUT_S + _SEND_DEADLINE_S + 1.0,
                     )
         finally:
+            # Queued scans are dropped; a scan already running finishes on its own and its result is discarded.
+            self._mcal_pool.shutdown(wait=False, cancel_futures=True)
             if self._ws_server is not None:
                 self._ws_server.close()
                 await asyncio.wait_for(self._ws_server.wait_closed(), timeout=_CLOSE_TIMEOUT_S)
@@ -1244,6 +1268,11 @@ class CaptureServer:
             # being called and close() actually closing the listener, in
             # which a brand new connection could otherwise slip in.
             await ws.close(code=1012, reason="server is shutting down")
+            return
+        # Station queries are dispatched before owner admission: they never take or disturb the owner.
+        request_path = getattr(getattr(ws, "request", None), "path", "")
+        if request_path.split("?", 1)[0] == "/query":
+            await self._handle_query(ws)
             return
         if self._owner is not None:
             await ws.close(code=1013, reason="owner connection already active")
@@ -1499,6 +1528,28 @@ class CaptureServer:
             )
             return
 
+        # Only a Begin that would allocate a new session scans the folder, so a duplicate of an accepted Begin is
+        # replayed above without depending on a file that may have changed since.
+        refusal = await self._calibration_selection_refusal(begin)
+        # The scan awaited: shutdown, the writer or admission may have changed since the checks above. Checked
+        # before the refusal, so a scan cut short by shutdown reads as BUSY rather than as a bad selection.
+        if self._stop_event.is_set() or self._outbox is None or self._outbox.closed:
+            self._reject(
+                begin.session_id,
+                p.MessageType.BEGIN,
+                p.RejectionReason.BUSY,
+                "server is shutting down" if self._stop_event.is_set() else "this connection is no longer usable",
+            )
+            return
+        if refusal is not None:
+            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.INVALID_CONFIG, refusal)
+            return
+        if self._active_session is not None:
+            self._reject(
+                begin.session_id, p.MessageType.BEGIN, p.RejectionReason.BUSY, "another session is already active"
+            )
+            return
+
         # required is a fixed station acquisition policy, independent of any
         # mock fault -- whether a camera's failure proves fatal is decided
         # here once per camera, and the source (mock or live) separately
@@ -1527,6 +1578,146 @@ class CaptureServer:
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
+
+    async def _scan_mcal(self) -> mcal_catalog.Catalog:
+        """The current MCAL folder listing, read on a bounded pool and never on the event loop.
+
+        The permit is released by the scan's own completion, not by the caller, so a request that times out or
+        is cancelled cannot leave more than ``_MCAL_SCANS`` scans running. The caller waits at most
+        ``_QUERY_DEADLINE_S`` for a free slot and for the result, and gets UNAVAILABLE otherwise; it stops
+        waiting as soon as shutdown begins, so neither a query nor a Begin can hold ``close()`` open.
+        """
+        directory = self.config.manus_calibration_dir
+        shutting_down = mcal_catalog.Catalog(
+            p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the server is shutting down"
+        )
+        try:
+            async with asyncio.timeout(_QUERY_DEADLINE_S):
+                if not await self._acquire_scan_slot():
+                    return shutting_down
+                try:
+                    future = asyncio.get_running_loop().run_in_executor(
+                        self._mcal_pool, mcal_catalog.scan, directory
+                    )
+                except Exception:
+                    # run_in_executor never awaits, so only a submit failure lands here.
+                    self._mcal_slots.release()
+                    raise
+                future.add_done_callback(self._mcal_scan_finished)
+                # Shielded: cancelling this wait must not cancel the job whose permit is still held.
+                scan = asyncio.shield(future)
+                stop = asyncio.ensure_future(self._stop_event.wait())
+                try:
+                    await asyncio.wait({scan, stop}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    stop.cancel()
+                    # Cancels only this wait, never the scan thread; a timeout or shutdown leaves nothing dangling.
+                    if not scan.done():
+                        scan.cancel()
+                if scan.cancelled():
+                    return shutting_down
+                return scan.result()
+        except TimeoutError:
+            return mcal_catalog.Catalog(
+                p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan timed out"
+            )
+        except Exception:
+            _LOG.exception("calibration directory scan failed")
+            return mcal_catalog.Catalog(
+                p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan failed"
+            )
+
+    async def _acquire_scan_slot(self) -> bool:
+        """Take a scan permit, or give up (False) the moment shutdown begins; never leaves a permit held."""
+        if self._stop_event.is_set():
+            return False
+        acquire = asyncio.ensure_future(self._mcal_slots.acquire())
+        stop = asyncio.ensure_future(self._stop_event.wait())
+        try:
+            await asyncio.wait({acquire, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+            if not acquire.done():
+                acquire.cancel()
+        if acquire.done() and not acquire.cancelled():
+            if not self._stop_event.is_set():
+                return True
+            # Shutdown arrived as the permit was granted: hand it straight back.
+            self._mcal_slots.release()
+        return False
+
+    def _mcal_scan_finished(self, future: asyncio.Future[Any]) -> None:
+        """Free the scan's slot when its thread ends, and consume an abandoned job's exception."""
+        self._mcal_slots.release()
+        if not future.cancelled():
+            future.exception()
+
+    async def _calibration_selection_refusal(self, begin: p.BeginRequest) -> str | None:
+        """Why the selected MCAL files cannot be used, checked before any hardware starts; None when they can.
+
+        Uses the same policy as the device query, so a listed file is a selectable file, and a file that
+        disappeared or became invalid since it was listed is refused here rather than substituted.
+        """
+        names = [
+            name
+            for plugin in begin.plugins
+            if plugin.plugin == p.PluginType.MANUS and plugin.enabled
+            for name in (plugin.left_calibration, plugin.right_calibration)
+            if name is not None
+        ]
+        if not names:
+            return None
+        return mcal_catalog.selection_refusal(await self._scan_mcal(), names)
+
+    async def _handle_query(self, ws: ServerConnection) -> None:
+        """One read-only device query on its own connection: no ownership, no session, one reply.
+
+        Only a ``QueryDevices`` request is answered; anything else, including every capture command, closes the
+        connection. Whatever happens here never touches a running session.
+        """
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=_QUERY_DEADLINE_S)
+            if isinstance(raw, bytes):
+                await ws.close(code=1002, reason="query must be a JSON text message")
+                return
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                await ws.close(code=1002, reason="malformed JSON")
+                return
+            if not isinstance(data, dict) or data.get("type") != int(p.MessageType.QUERY_DEVICES):
+                await ws.close(code=1002, reason="unsupported query type")
+                return
+            try:
+                request = p.parse_query_devices(data)
+            except p.ProtocolError:
+                await ws.close(code=1002, reason="invalid QueryDevices request")
+                return
+            reply = p.DevicesReply(request.request_id, await self._device_entries())
+            payload = json.dumps(reply.to_json())
+            if len(payload.encode()) > p.MAX_QUERY_REPLY_BYTES:
+                # A valid error entry, never a truncated list or a message the client cannot receive.
+                reply = p.DevicesReply(
+                    request.request_id,
+                    (
+                        p.DeviceEntry(
+                            p.PluginType.MANUS,
+                            p.ManusCalibrationCatalogStatus.UNAVAILABLE,
+                            error_message="the MCAL listing is too large to send in one reply",
+                        ),
+                    ),
+                )
+                payload = json.dumps(reply.to_json())
+            await asyncio.wait_for(ws.send(payload), timeout=_QUERY_DEADLINE_S)
+            await ws.close(code=1000)
+        except (asyncio.TimeoutError, ConnectionClosed):
+            # The peer stalled or left; there is no session to clean up and nothing else to report.
+            pass
+
+    async def _device_entries(self) -> tuple[p.DeviceEntry, ...]:
+        """The devices this server offers; today the Manus plugin with its MCAL folder listing."""
+        catalog = await self._scan_mcal()
+        return (p.DeviceEntry(p.PluginType.MANUS, catalog.status, catalog.files, catalog.error_message),)
 
     async def _run_session(self, session: _Session) -> None:
         try:
@@ -1645,6 +1836,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="NAME=DEVICE_ID",
         help="real only: station camera, logical NAME -> stable physical DEVICE_ID (OAK-D MXID); repeatable",
     )
+    parser.add_argument(
+        "--manus-calibration-dir",
+        default=None,
+        metavar="DIR",
+        help="folder of MCAL files this host offers: listed by the device query and selectable by name at Begin",
+    )
     parser.add_argument("--camera-width", type=int, default=1280, help="real only")
     parser.add_argument("--camera-height", type=int, default=720, help="real only")
     parser.add_argument("--camera-fps", type=float, default=30.0, help="real only")
@@ -1653,6 +1850,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--camera-usb-speed", default=None, help="real only: cap the camera USB speed, e.g. HIGH (USB2) or SUPER"
     )
     return parser
+
+
+def _manus_calibration_dir(args: argparse.Namespace) -> Path | None:
+    """The ``--manus-calibration-dir`` folder, or None when the flag is absent."""
+    return Path(args.manus_calibration_dir) if args.manus_calibration_dir else None
 
 
 def _station_cameras(args: argparse.Namespace) -> dict[str, StationCamera] | None:
@@ -1711,6 +1913,7 @@ def _replay_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
         host=args.host,
         port=args.port,
         cameras=replay_station_cameras(episode),
+        manus_calibration_dir=_manus_calibration_dir(args),
         data_note=(
             f" -- REPLAY of recorded episode {episode.path} (streams: {', '.join(streams)}; loops every "
             f"{episode.period:.1f}s). Recorded data, not live hardware; reported to clients as MOCK mode."
@@ -1761,6 +1964,7 @@ def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
         host=args.host,
         port=args.port,
         cameras=stations,
+        manus_calibration_dir=_manus_calibration_dir(args),
         data_note=(
             " -- GMSL cameras from the frame feed at "
             f"{args.gmsl_ipc}: "
@@ -1770,7 +1974,9 @@ def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
             )
         ),
     )
-    return config, build_gmsl_source_factory(args.gmsl_ipc, cameras, stations)
+    return config, build_gmsl_source_factory(
+        args.gmsl_ipc, cameras, stations, calibration_dir=config.manus_calibration_dir
+    )
 
 
 async def _run_cli(args: argparse.Namespace) -> int:
@@ -1788,6 +1994,7 @@ async def _run_cli(args: argparse.Namespace) -> int:
                 port=args.port,
                 connect_delay=args.connect_delay,
                 cameras=_station_cameras(args),
+                manus_calibration_dir=_manus_calibration_dir(args),
             )
             # The one place the implementation is chosen, before any session is accepted.
             source_factory = build_source_factory(

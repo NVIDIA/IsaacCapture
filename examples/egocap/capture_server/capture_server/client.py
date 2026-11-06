@@ -50,7 +50,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import IntEnum
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
+from urllib.parse import urlsplit
 
 import numpy as np
 import websockets
@@ -68,6 +69,8 @@ FieldDescriptor = p.FieldDescriptor
 
 __all__ = [
     "CaptureClient",
+    "DeviceQueryError",
+    "ManusPluginConfig",
     "CaptureFrame",
     "CaptureStarted",
     "CaptureStatus",
@@ -86,6 +89,8 @@ Callback = Callable[[T], "None | Awaitable[None]"]
 _DEFAULT_RATE_HZ = 60.0
 _ACCEPT_TIMEOUT_S = 10.0
 _STOP_TIMEOUT_S = 10.0
+# A device query is one short exchange; the server bounds its own scan well inside this.
+_QUERY_TIMEOUT_S = 20.0
 _CLOSE_TIMEOUT_S = 2.0
 # The documented transport ceiling is a complete JPEG (2 MiB) plus the
 # 32-byte binary header; websockets' own default max_size (~1 MiB) would
@@ -290,6 +295,35 @@ class CaptureStopped:
     streams: tuple[p.StreamCounters, ...] | None
 
 
+@dataclass(frozen=True)
+class ManusPluginConfig:
+    """The Manus plugin and, optionally, MCAL files to load for each glove.
+
+    The names are bare ``.mcal`` basenames of files in the server's managed MCAL folder, as listed by
+    :meth:`CaptureClient.query_devices`; they are never paths on this machine. A name only selects a file:
+    whether the glove accepted it is reported by the plugin's own per-hand status.
+    """
+
+    left_calibration: str | None = None
+    right_calibration: str | None = None
+    plugin: ClassVar[p.PluginType] = p.PluginType.MANUS
+
+    def __post_init__(self) -> None:
+        """Reject names the protocol cannot carry, and one file chosen for both hands."""
+        for name in (self.left_calibration, self.right_calibration):
+            if name is not None and not p.is_mcal_name(name):
+                raise ValueError(f"calibration file must be an .mcal basename, got {name!r}")
+        if self.left_calibration is not None and self.left_calibration == self.right_calibration:
+            raise ValueError("left_calibration and right_calibration must name different files")
+
+
+class DeviceQueryError(Exception):
+    """The device list could not be retrieved (transport, timeout, protocol, or a server without the query).
+
+    Never reported as an empty list: an answer with no MCAL files is a READY entry with none.
+    """
+
+
 def _is_awaitable(value: Any) -> bool:
     return inspect.isawaitable(value)
 
@@ -370,7 +404,7 @@ class CaptureClient:
         *,
         sources: Sequence[p.SourceType],
         cameras: Sequence[p.CameraSelection] = (),
-        plugins: Sequence[p.PluginType] = (),
+        plugins: Sequence[p.PluginType | ManusPluginConfig] = (),
         on_started: Callback[CaptureStarted] | None = None,
         on_status: Callback[CaptureStatus] | None = None,
         on_capture_frame: Callback[CaptureFrame] | None = None,
@@ -733,6 +767,42 @@ class CaptureClient:
         finally:
             self._attempt = None
 
+    async def query_devices(self) -> tuple[p.DeviceEntry, ...]:
+        """List the devices the server offers, without taking the control connection.
+
+        Uses its own short-lived connection to the server's read-only ``/query`` route, so it works before
+        capture and while capturing (including from a callback), and needs no glove or session. The Manus
+        entry lists the MCAL files a :class:`ManusPluginConfig` can select. Concurrent calls are independent.
+        Raises :class:`DeviceQueryError` when no answer is obtained, including when the server is too old to
+        know the query.
+        """
+        # The query route is at the root path of the same listener; a station URL with a path prefix is not
+        # supported.
+        url = urlsplit(self._url)._replace(path="/query", query="", fragment="").geturl()
+        request = p.QueryDevicesRequest(request_id=f"devices-{uuid.uuid4()}")
+        try:
+            async with asyncio.timeout(_QUERY_TIMEOUT_S):
+                async with websockets.connect(url, compression=None, max_size=_MAX_MESSAGE_BYTES) as ws:
+                    await ws.send(_to_json_text(request.to_json()))
+                    raw = await ws.recv()
+        except ConnectionClosed as exc:
+            code = exc.rcvd.code if exc.rcvd is not None else None
+            raise DeviceQueryError(
+                f"the server closed the device query (close code {code}); it may not support device queries"
+            ) from None
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
+            raise DeviceQueryError(f"the device query failed: {str(exc) or type(exc).__name__}") from None
+        if isinstance(raw, bytes):
+            raise DeviceQueryError("the server answered the device query with a binary message")
+        try:
+            reply = p.DevicesReply.from_json(_from_json_text(raw))
+        except p.ProtocolError as exc:
+            raise DeviceQueryError(f"the server's device reply was invalid: {exc}") from None
+        # A reply for another request is never accepted as this query's answer.
+        if reply.request_id != request.request_id:
+            raise DeviceQueryError("the server's reply does not answer this device query")
+        return reply.devices
+
     # -- message/result construction ---------------------------------------
 
     def _build_begin_request(
@@ -740,11 +810,20 @@ class CaptureClient:
         *,
         sources: Sequence[p.SourceType],
         cameras: Sequence[p.CameraSelection],
-        plugins: Sequence[p.PluginType],
+        plugins: Sequence[p.PluginType | ManusPluginConfig],
     ) -> p.BeginRequest:
         try:
             tracking = p.TrackingConfig(sources=tuple(sources), rate_hz=_DEFAULT_RATE_HZ)
-            plugin_requests = tuple(p.PluginRequest(plugin=plugin) for plugin in plugins)
+            plugin_requests = tuple(
+                p.PluginRequest(
+                    plugin=plugin.plugin,
+                    left_calibration=plugin.left_calibration,
+                    right_calibration=plugin.right_calibration,
+                )
+                if isinstance(plugin, ManusPluginConfig)
+                else p.PluginRequest(plugin=plugin)
+                for plugin in plugins
+            )
             camera_requests = tuple(p.CameraRequest(name=c["name"], type=c["type"]) for c in cameras)
             return p.BeginRequest(
                 tracking=tracking,
