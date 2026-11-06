@@ -40,7 +40,8 @@ SERVICE = "isaaccapture-producer.service"
 BIN_REL = "plugins/sensing_camera/camera_plugin_sensing"
 UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
-CONFIG_KEYS = {"livekit_url", "token_file", "args"}
+MODES = ("direct", "livekit")
+CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args"}
 # The producer's connection options come from the config's own fields, not from `args`.
 PREFIX = "/opt/isaaccapture"
 SERVICE_GROUPS = "video"  # device access for the cameras
@@ -108,15 +109,26 @@ def sha256_file(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def configured_sensors(config: dict) -> list[int]:
-    """The sensor numbers the config asks the producer to publish, from its --add-stream=sensor=N,... arguments."""
-    sensors = []
+def configured_streams(config: dict) -> list[tuple[int, bool]]:
+    """(sensor, has a direct destination) for each --add-stream=sensor=N,... argument of the config."""
+    streams = []
     for arg in config.get("args", []):
-        if arg.startswith("--add-stream="):
-            match = re.search(r"(?:^|,|=)sensor=(\d+)", arg)
-            if match:
-                sensors.append(int(match.group(1)))
-    return sensors
+        if not arg.startswith("--add-stream="):
+            continue
+        # The argument is a comma-separated list of key=value pairs, in any order.
+        pairs = dict(
+            item.partition("=")[::2]
+            for item in arg.split("=", 1)[1].split(",")
+            if "=" in item
+        )
+        if pairs.get("sensor", "").isdigit():
+            streams.append((int(pairs["sensor"]), bool(pairs.get("direct"))))
+    return streams
+
+
+def configured_sensors(config: dict) -> list[int]:
+    """The sensor numbers the config asks the producer to publish."""
+    return [sensor for sensor, _ in configured_streams(config)]
 
 
 def load_config(path: Path) -> dict:
@@ -128,11 +140,16 @@ def load_config(path: Path) -> dict:
         raise DeployError(
             f"{path}: expected an object with args and, optionally, livekit_url and token_file"
         )
-    if ("livekit_url" in config) != ("token_file" in config):
+    mode = config.get("mode", "direct")
+    if mode not in MODES:
+        raise DeployError(f'{path}: "mode" must be one of {", ".join(MODES)}')
+    has_livekit = "livekit_url" in config or "token_file" in config
+    if mode == "direct" and has_livekit:
         raise DeployError(
-            f"{path}: livekit_url and token_file go together; leave both out for a producer that sends only over "
-            "its direct links"
+            f'{path}: livekit_url and token_file belong to "mode": "livekit"; a direct producer has no LiveKit settings'
         )
+    if mode == "livekit" and not ("livekit_url" in config and "token_file" in config):
+        raise DeployError(f'{path}: "mode": "livekit" needs livekit_url and token_file')
     args = config.get("args", [])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise DeployError(f"{path}: args must be a list of strings")
@@ -178,7 +195,7 @@ def render_unit(config: dict, prefix: str, user: str, groups: str) -> str:
                 f"--livekit-url={config['livekit_url']}",
                 f"--livekit-token-file={config['token_file']}",
             ]
-            if "livekit_url" in config
+            if config.get("mode") == "livekit"
             else []
         ),
         *config.get("args", []),
@@ -212,19 +229,7 @@ def repo_root() -> Path:
     return Path(out.stdout.strip())
 
 
-# Files that change while developing the producer, and everything else, which rarely does. A group whose digest
-# matches the Orin's is not compared file by file.
-VOLATILE_PREFIXES = ("src/", "cmake/", "tests/", "examples/egocap/")
-GROUPS = ("source", "bulk")
 DEPLOY_DIR = ".deploy"
-
-
-def file_group(path: str) -> str:
-    return (
-        "source"
-        if path == "CMakeLists.txt" or path.startswith(VOLATILE_PREFIXES)
-        else "bulk"
-    )
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -252,28 +257,13 @@ def hash_files(root: Path, files: list[str]) -> dict[str, str]:
     return entries
 
 
-def group_digest(entries: dict[str, str], group: str) -> str:
-    lines = (
-        f"{name}\0{entries[name]}"
-        for name in sorted(entries)
-        if file_group(name) == group
-    )
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
-
-
 def diff_manifests(
     local: dict[str, str], remote: dict[str, str]
 ) -> tuple[list[str], list[str]]:
-    """(files to send, files to remove on the Orin). A group with an equal digest is skipped without comparing."""
-    send, removed = [], []
-    for group in GROUPS:
-        mine = {n: h for n, h in local.items() if file_group(n) == group}
-        theirs = {n: h for n, h in remote.items() if file_group(n) == group}
-        if group_digest(local, group) == group_digest(remote, group):
-            continue
-        send += [n for n, h in mine.items() if theirs.get(n) != h]
-        removed += [n for n in theirs if n not in mine]
-    return sorted(send), sorted(removed)
+    """(files to send, files to remove on the Orin): one comparison of the two per-file manifests."""
+    send = sorted(n for n, h in local.items() if remote.get(n) != h)
+    removed = sorted(n for n in remote if n not in local)
+    return send, removed
 
 
 def read_remote_manifest(target: "Target", cache: str) -> dict[str, str]:
@@ -528,7 +518,7 @@ def deploy_source(
 
     step(2, f"Preflight on {target.host}")
     cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
-    if "token_file" in config and not target.readable(config["token_file"]):
+    if config.get("mode") == "livekit" and not target.readable(config["token_file"]):
         raise DeployError(
             f"the token file {config['token_file']} is not readable on the Orin"
         )
@@ -554,14 +544,11 @@ def deploy_source(
         src = f"{cache}/src"
         remote_manifest = read_remote_manifest(target, cache)
         send, removed = diff_manifests(local, remote_manifest)
-        for group in GROUPS:
-            names = [n for n in local if file_group(n) == group]
-            to_send = [n for n in send if file_group(n) == group]
-            size = sum((root / n).stat().st_size for n in to_send)
-            print(
-                f"    {group}: {len(names) - len(to_send)} identical, {len(to_send)} to send "
-                f"({size / 1e6:.1f} MB), {sum(1 for n in removed if file_group(n) == group)} to remove"
-            )
+        size = sum((root / n).stat().st_size for n in send)
+        print(
+            f"    {len(local) - len(send)} identical, {len(send)} to send ({size / 1e6:.1f} MB), "
+            f"{len(removed)} to remove"
+        )
         if send or removed:
             delta = Path(tmp) / "delta.tar.gz"
             build_delta(root, send, removed, local, delta)
@@ -603,8 +590,9 @@ def deploy_source(
     activate = (
         f"{remote} activate --archive {archive} --prefix {PREFIX} --release {release} "
         f"--unit {cache}/{SERVICE} --owner {user} --ready-timeout {READY_TIMEOUT_S} "
-        f"--sensors {','.join(str(n) for n in configured_sensors(config))}"
-        + ("" if "livekit_url" in config else " --no-livekit")
+        f"--sensors={','.join(str(n) for n in configured_sensors(config))} "
+        f"--direct-sensors={','.join(str(n) for n, direct in configured_streams(config) if direct)} "
+        f"--mode={config.get('mode', 'direct')}"
         + (" --replace-unmanaged" if args.replace_unmanaged else "")
     )
     target.sudo(activate)
@@ -962,13 +950,16 @@ def remote_activate(args: argparse.Namespace) -> None:
     os.replace(staging_link, link)
     since = time.strftime("%Y-%m-%d %H:%M:%S")
     run(["systemctl", "start", SERVICE])
-    wait_ready(
+    summary = wait_ready(
         since,
         args.ready_timeout,
         [int(n) for n in args.sensors.split(",") if n],
-        livekit=not args.no_livekit,
+        mode=args.mode,
+        direct_sensors=[int(n) for n in args.direct_sensors.split(",") if n],
     )
-    print(f"  producer is publishing (release {args.release})")
+    for line in summary:
+        print(f"  {line}")
+    print(f"  producer is up (release {args.release})")
 
 
 # The capture driver logs its own INFO and DEBUG lines at severity 5 and 6; they bury the lines that explain a failure.
@@ -1036,18 +1027,68 @@ def failure_report(since: str, sensors: list[int]) -> str:
     return "\n".join(out)
 
 
-def wait_ready(
-    since: str, timeout: int, sensors: list[int], livekit: bool = True
-) -> None:
-    """Ready means the producer joined the room and every configured sensor has published frames.
+def current_session(log: str, mode: str) -> str:
+    """The journal text of the producer's current session: what follows its last start marker.
 
-    The patterns come from the LiveKit session's join message and the per-sensor stats line in
-    sensing_camera.cpp ("sensor N: ... | livekit M published"); a pid alone is not readiness, and one publishing
-    camera does not make a two-camera rig ready. With no sensors known, any publishing sensor counts. A producer
-    without LiveKit (direct links only) never joins a room or prints "published": there every configured sensor
-    must be capturing ("sensor N: M frames", M >= 1).
+    A producer that restarts its cameras inside one process (it retries after a fault) logs the marker each time,
+    so progress from an earlier attempt never counts toward the current one.
     """
-    progress = r"livekit [1-9][0-9]* published" if livekit else r"[1-9][0-9]* frames"
+    marker = "Capturing." if mode == "direct" else "Joined LiveKit room"
+    return log.rsplit(marker, 1)[1] if marker in log else ""
+
+
+def readiness(
+    log: str, mode: str, sensors: list[int], direct_sensors: list[int]
+) -> tuple[list[str], list[str]]:
+    """(what is ready, what is not) for every configured sensor, judged on the latest status line of the session.
+
+    direct mode: a sensor is up when its latest line shows frames and, if the config gave it a direct destination,
+    that link connected; a stream with no destination is reported as capture-only. livekit mode (an older producer
+    that publishes to LiveKit itself): the latest line shows a positive "livekit N published".
+    """
+    current = current_session(log, mode)
+    ready, problems = [], []
+    if not current:
+        marker = "capturing" if mode == "direct" else "joined a LiveKit room"
+        return ready, [f"the producer has not reported {marker} yet"]
+    for n in sensors:
+        if mode == "livekit":
+            found = re.findall(rf"sensor {n}: [^\n]*livekit (\d+) published", current)
+            if found and int(found[-1]) > 0:
+                ready.append(f"sensor {n}: publishing to LiveKit")
+            else:
+                problems.append(f"sensor {n}: not publishing to LiveKit")
+            continue
+        lines = re.findall(rf"sensor {n}: (\d+) frames([^\n]*)", current)
+        if not lines or int(lines[-1][0]) == 0:
+            problems.append(f"sensor {n}: no frames captured")
+            continue
+        rest = lines[-1][1]
+        if n not in direct_sensors:
+            ready.append(f"sensor {n}: capturing (no direct destination configured)")
+        elif re.search(r"direct: \S+ connected", rest) and "NOT connected" not in rest:
+            ready.append(f"sensor {n}: capturing and connected to its destination")
+        else:
+            reason = re.search(r"direct: (\S+ NOT connected[^\n]*)", rest)
+            problems.append(
+                f"sensor {n}: capturing but {reason.group(1) if reason else 'its direct link is not connected'}"
+            )
+    return ready, problems
+
+
+def wait_ready(
+    since: str,
+    timeout: int,
+    sensors: list[int],
+    mode: str = "direct",
+    direct_sensors: list[int] | None = None,
+) -> list[str]:
+    """Wait until the current session is up for every configured sensor; return one line per sensor.
+
+    "Up" is the producer's own current output (see readiness()), never a pid and never progress left over from an
+    earlier attempt. A producer that is not up in time raises, with the sensors that were not.
+    """
+    direct_sensors = direct_sensors or []
     deadline = time.monotonic() + timeout
     log = ""
     while time.monotonic() < deadline:
@@ -1061,20 +1102,14 @@ def wait_ready(
         log = tail(
             ["journalctl", "-u", SERVICE, "--since", since, "--no-pager", "-o", "cat"]
         )
-        publishing = [
-            re.search(rf"sensor {n}: [^\n]*{progress}", log) for n in sensors
-        ] or [re.search(progress, log)]
-        if (not livekit or "Joined LiveKit room" in log) and all(publishing):
-            return
+        ready, problems = readiness(log, mode, sensors, direct_sensors)
+        if not problems:
+            return ready
         time.sleep(2)
     print(failure_report(since, sensors), file=sys.stderr)
     # Judged on the log the last check saw, so the error names what that check found missing.
-    missing = [
-        n for n in sensors if not re.search(rf"sensor {n}: [^\n]*{progress}", log)
-    ]
-    detail = (
-        f"; sensors not publishing: {', '.join(map(str, missing))}" if missing else ""
-    )
+    _, problems = readiness(log, mode, sensors, direct_sensors)
+    detail = f"; {'; '.join(problems)}" if problems else ""
     raise DeployError(
         f"the producer did not become ready{detail}; logs: journalctl -u {SERVICE}"
     )
@@ -1149,7 +1184,8 @@ def remote_parser() -> argparse.ArgumentParser:
         act.add_argument(f"--{name}", required=True)
     act.add_argument("--ready-timeout", type=int, default=60)
     act.add_argument("--sensors", default="")
-    act.add_argument("--no-livekit", action="store_true")
+    act.add_argument("--direct-sensors", default="")
+    act.add_argument("--mode", choices=MODES, default="direct")
     act.add_argument("--replace-unmanaged", action="store_true")
     return ap
 

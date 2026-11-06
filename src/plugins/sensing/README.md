@@ -95,10 +95,20 @@ anywhere else in this repository.
 `isaaccapture-producer.service` systemd service, so you do not build by hand on the Orin. It needs `ssh`, `scp` and
 `git` on the desktop, and `python3`, CMake, g++, CUDA, `uv` and the SDK headers (see `scripts/setup.sh`) on the Orin.
 
-Write a config naming the producer's own options (the LiveKit token file stays on the Orin; only its path is used):
+Write a config naming the producer's own options. `"mode"` says what the producer does and so how readiness is
+judged: `"direct"` (the default) for a producer that sends only over TCP to the PC video stage, or `"livekit"` for one
+that publishes to LiveKit itself, which also needs `livekit_url` and `token_file` (the token file stays on the Orin;
+only its path is used). Everything else goes in `args`, spelled as the deployed source's producer expects.
 
 ```json
-{"livekit_url": "ws://127.0.0.1:7880",
+{"args": ["--link-masks=0x0000 0x1100",
+          "--add-stream=sensor=0,name=sensing-left,direct=PC_HOST:5600",
+          "--add-stream=sensor=1,name=sensing-right,direct=PC_HOST:5601"]}
+```
+
+```json
+{"mode": "livekit",
+ "livekit_url": "ws://127.0.0.1:7880",
  "token_file": "/home/ido/livekit/join.token",
  "args": ["--link-masks=0x0000 0x1100",
           "--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
@@ -126,8 +136,9 @@ python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --config orin.j
   bounds compile jobs. The release is installed under `/opt/isaaccapture`.
 - The script checks the ssh connection first, then preflights the Orin, uploads only the source files that differ
   from what the Orin already holds, builds, installs a versioned release, replaces the running producer and waits for
-  it to join the room and publish frames. Steps are numbered and the upload and packing show progress. The sudo steps
-  prompt for the Orin password.
+  every configured camera to be up. "Up" is the producer's own latest output for its current session: frames captured
+  and, for a stream with a `direct=` destination, that link connected (a stream with none is reported as capture-only).
+  Steps are numbered and the upload and packing show progress. The sudo steps prompt for the Orin password.
 - A failed build or transfer leaves the running producer untouched. There is no automatic rollback; earlier releases
   stay under `/opt/isaaccapture/releases/`. Logs: `journalctl -u isaaccapture-producer.service -f` on the Orin. Stop
   it with `sudo systemctl stop isaaccapture-producer.service` before starting a producer by hand: the cameras are
