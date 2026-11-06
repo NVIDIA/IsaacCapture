@@ -41,7 +41,9 @@ BIN_REL = "plugins/sensing_camera/camera_plugin_sensing"
 UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
 MODES = ("direct", "livekit")
-CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args"}
+CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args", "env"}
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+RESERVED_ENV = ("LD_LIBRARY_PATH",)
 # The producer's connection options come from the config's own fields, not from `args`.
 PREFIX = "/opt/isaaccapture"
 SERVICE_GROUPS = "video"  # device access for the cameras
@@ -140,6 +142,21 @@ def load_config(path: Path) -> dict:
         raise DeployError(
             f"{path}: expected an object with args and, optionally, livekit_url and token_file"
         )
+    env = config.get("env", {})
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str)
+        and ENV_NAME.fullmatch(k)
+        and isinstance(v, str)
+        and "\n" not in v
+        for k, v in env.items()
+    ):
+        raise DeployError(
+            f"{path}: env must map variable names to single-line string values"
+        )
+    if any(k in RESERVED_ENV for k in env):
+        raise DeployError(
+            f"{path}: env may not set {', '.join(RESERVED_ENV)}; the release sets it"
+        )
     mode = config.get("mode", "direct")
     if mode not in MODES:
         raise DeployError(f'{path}: "mode" must be one of {", ".join(MODES)}')
@@ -206,6 +223,11 @@ def render_unit(config: dict, prefix: str, user: str, groups: str) -> str:
         "SERVICE_GROUPS": groups,
         "PREFIX": prefix,
         "EXEC_START": exec_start,
+        # The producer's own environment variables (for example a diagnostic switch), one Environment= line each.
+        "ENVIRONMENT": "\n".join(
+            f"Environment={systemd_quote(f'{name}={value}')}"
+            for name, value in config.get("env", {}).items()
+        ),
     }
     text = UNIT_TEMPLATE.read_text()
     for key, value in fields.items():
