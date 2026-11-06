@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 ORBBEC INC. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set(ego_camera_core_sources

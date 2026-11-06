@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 ORBBEC INC. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Record every EGO data class through PluginManager in one of three modes.
