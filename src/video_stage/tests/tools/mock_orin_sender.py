@@ -197,14 +197,24 @@ class DirectSender:
         self.keyframe_requests = 0
         self.clock_answers = 0
         self.connects = 0
+        self._live: list[socket.socket] = []
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        """Cancels any connect or send in progress and waits for the worker thread; a stuck thread is an error."""
         with self._cond:
             self._stop = True
             self._cond.notify_all()
-        self._thread.join(timeout=5)
+            live = list(self._live)
+        for s in live:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self._thread.join(timeout=10)
+        if self._thread.is_alive():
+            raise RuntimeError(f"sender for port {self.port} did not stop")
 
     def take_keyframe_request(self) -> bool:
         with self._cond:
@@ -244,6 +254,11 @@ class DirectSender:
         try:
             for hello in (b"DATA", b"CTRL"):
                 s = socket.create_connection((self.host, self.port), timeout=3)
+                with self._cond:
+                    if self._stop:
+                        s.close()
+                        raise OSError("stopping")
+                    self._live.append(s)
                 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 s.settimeout(None)
                 s.sendall(hello)
@@ -251,6 +266,8 @@ class DirectSender:
         except OSError:
             for s in socks:
                 s.close()
+            with self._cond:
+                self._live = []
             return None
         return socks[0], socks[1]
 
@@ -330,6 +347,8 @@ class DirectSender:
                     except OSError:
                         pass
                     s.close()
+                with self._cond:
+                    self._live = []
                 control.join(timeout=2)
 
 
@@ -404,7 +423,7 @@ def main() -> None:
         for p in args.port
     ]
     period = 1.0 / args.fps
-    index = 0
+    cursors = [0] * len(senders)
     frame_id = 0
     started = time.monotonic()
     next_tick = started
@@ -415,14 +434,16 @@ def main() -> None:
             if delay > 0:
                 time.sleep(delay)
             next_tick += period
-            # A keyframe request makes the encoder emit an IDR for this unit; the file's next keyframe stands in for it.
-            if any(s.take_keyframe_request() for s in senders):
-                index = next((k for k in keyframes if k >= index), keyframes[0])
-            au, key = units[index % len(units)]
-            index = (index + 1) % len(units)
             frame_id += args.frame_id_step
             stamp = clock.now_ns()
-            for s in senders:
+            for n, s in enumerate(senders):
+                # A keyframe request makes that camera's encoder emit an IDR; the file's next keyframe stands in for it.
+                if s.take_keyframe_request():
+                    cursors[n] = next(
+                        (k for k in keyframes if k >= cursors[n]), keyframes[0]
+                    )
+                au, key = units[cursors[n] % len(units)]
+                cursors[n] = (cursors[n] + 1) % len(units)
                 s.submit(au, key, frame_id, stamp)
             if time.monotonic() >= next_report:
                 next_report += 5
