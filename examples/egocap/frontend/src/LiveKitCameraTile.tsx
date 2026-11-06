@@ -65,6 +65,12 @@ export function LiveKitCameraTile({
   basis?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // The frame effect runs once per track, but the clock arrives (and the basis can change) after the track does, so
+  // it reads their current values through refs instead of the values it closed over when it started.
+  const clockRef = useRef<LiveKitClockSync | null>(clock ?? null);
+  clockRef.current = clock ?? null;
+  const basisRef = useRef<number>(basis);
+  basisRef.current = basis;
   const lastFrameAtRef = useRef<number | null>(null);
   // Cumulative presented-frame count of the newest frame callback, and the count at the start of the window.
   // The newest frame callback's cumulative presented-frame count and that frame's own presentation time (ms).
@@ -118,10 +124,10 @@ export function LiveKitCameraTile({
         frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
         // The publisher's stamp for exactly this frame, by its RTP timestamp, against its expected display time.
         const rtp = (metadata as { rtpTimestamp?: number }).rtpTimestamp;
-        if (MONOTONIC_TIMESTAMP_BASES.includes(basis) && typeof rtp === "number" && "lookupFrameMetadata" in track) {
+        if (MONOTONIC_TIMESTAMP_BASES.includes(basisRef.current) && typeof rtp === "number" && "lookupFrameMetadata" in track) {
           const stamp = (track as { lookupFrameMetadata: (a: { rtpTimestamp: number }) => { userTimestamp: bigint } | undefined })
             .lookupFrameMetadata({ rtpTimestamp: rtp });
-          const sample = latencySample(metadata.expectedDisplayTime, stamp, clock?.mapping() ?? null);
+          const sample = latencySample(metadata.expectedDisplayTime, stamp, clockRef.current?.mapping() ?? null);
           if (sample !== null) {
             const samples = latencySamplesRef.current;
             samples.push(sample);
@@ -148,7 +154,7 @@ export function LiveKitCameraTile({
       // current epoch count, so a window spanning a discontinuity has no figure.
       const samples = latencySamplesRef.current;
       latencySamplesRef.current = [];
-      const mapping = clock?.mapping() ?? null;
+      const mapping = clockRef.current?.mapping() ?? null;
       const summary = mapping === null ? null : summarizeLatency(samples, mapping.epoch);
       const latencyText = summary === null ? NO_LATENCY : `${summary.mean.toFixed(0)} ms latency`;
       setLatencyDetail(summary === null ? "" : `±${summary.uncertaintyMs.toFixed(1)} ms, 95th percentile ${summary.p95.toFixed(0)} ms`);
