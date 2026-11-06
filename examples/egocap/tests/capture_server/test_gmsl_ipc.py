@@ -297,12 +297,22 @@ def test_pipeline_serves_each_announced_frame_once_downscaled_as_jpeg(publisher)
             assert frame.getTimestamp() == pytest.approx(5.0)
             decoded = cv2.imdecode(np.frombuffer(frame.getData(), np.uint8), cv2.IMREAD_COLOR)
             assert decoded.shape == (24, 32, 3)
-            # The same frame is never served twice; a newer one is, and intermediate ones are skipped.
+            # The same frame is never served twice; a newer one is. The encoder thread may serve an older frame
+            # before the newest is encoded, so poll until the newest arrives rather than assuming it is first.
             assert queue.tryGet() is None
             publisher.publish("cam0")
             newest = publisher.publish("cam0")
-            wait_until(lambda: feed.latest("cam0").seq == newest)
-            assert queue.tryGet().getSequenceNum() == newest
+            served: list[int] = []
+
+            def newest_served() -> bool:
+                frame = queue.tryGet()
+                if frame is not None:
+                    served.append(frame.getSequenceNum())
+                return bool(served) and served[-1] == newest
+
+            wait_until(newest_served)
+            assert served == sorted(set(served))  # increasing, and no frame twice
+            assert queue.tryGet() is None
     finally:
         feed.close()
 
