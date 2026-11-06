@@ -43,6 +43,8 @@ target_link_libraries(sensing_core
     PUBLIC
         sensing::livekit
     PRIVATE
+        CUDA::cudart
+        CUDA::cuda_driver
         ${SIPL_LIBRARIES}
         ${EGL_LIBRARIES}
         ${NVBUFSURFACE_LIBRARY}

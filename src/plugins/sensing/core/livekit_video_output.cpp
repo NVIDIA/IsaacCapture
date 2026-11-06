@@ -273,7 +273,7 @@ struct LiveKitVideoOutput::Impl
         {
             const uint32_t target = std::clamp(*feedback.target_bitrate_bps, kMinBitrateBps, max_bitrate);
             // Congestion control re-estimates all the time. Follow it only for a real change, and not
-            // more than every few seconds: on the mock a change reopens the encoder session.
+            // more than every few seconds: a change reopens the encoder session.
             const auto now = std::chrono::steady_clock::now();
             const double change = std::abs(static_cast<double>(target) - applied_bitrate) / applied_bitrate;
             if (change >= kMinBitrateChange && now - last_bitrate_change >= kMinBitrateInterval &&
@@ -332,7 +332,7 @@ struct LiveKitVideoOutput::Impl
         const int64_t stamp_us = unit.timestamp_ns / 1000;
         // The Jetson encoder does not return the stamp it was given: it numbers its units from its own frame
         // rate. It does return one unit per accepted frame in submission order, so units pair with captures
-        // by order, and the stamp is only the unit's own.
+        // by order; the unit's own stamp is for diagnostics only.
         if (in_encoder.empty())
             throw std::runtime_error("LiveKit output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
                                      std::to_string(stamp_us) + ")");
@@ -347,7 +347,7 @@ struct LiveKitVideoOutput::Impl
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
-        frame.timestamp_us = static_cast<uint64_t>(stamp_us);
+        frame.timestamp_us = static_cast<uint64_t>(meta.stamp_us);
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
