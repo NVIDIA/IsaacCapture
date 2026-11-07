@@ -161,8 +161,12 @@ class EgoHand(nn.Module):
                 self.backbone.load_pretrained(backbone_weights)
             else:
                 Log.info(f"Loading backbone weights from {backbone_weights}")
+                # Backbone files contain tensor state only; keep pickle globals
+                # disabled so loading a supplied checkpoint cannot execute code.
                 self.backbone.load_state_dict(
-                    torch.load(backbone_weights, map_location="cpu")["state_dict"]
+                    torch.load(backbone_weights, map_location="cpu", weights_only=True)[
+                        "state_dict"
+                    ]
                 )
         if self.freeze_backbone:
             self._freeze_backbone()
