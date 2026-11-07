@@ -23,6 +23,8 @@ export type LiveKitPhase = "idle" | "connecting" | "connected" | "reconnecting" 
 
 export interface LiveKitTile {
   name: string;
+  /** The publisher's declared frame rate for the caption's "measured / declared" figure; null when unknown. */
+  fps: number | null;
   /** The subscribed video track, or null while the camera host has not published it. */
   track: RemoteTrack | null;
 }
@@ -39,7 +41,7 @@ const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [] };
 
 /** The offered streams with the given subscribed tracks filled in by track name. */
 function tilesFor(streams: LiveKitStreamDescriptor[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
-  return streams.map((s) => ({ name: s.name, track: tracks.get(s.track) ?? null }));
+  return streams.map((s) => ({ name: s.name, fps: s.fps, track: tracks.get(s.track) ?? null }));
 }
 
 /**

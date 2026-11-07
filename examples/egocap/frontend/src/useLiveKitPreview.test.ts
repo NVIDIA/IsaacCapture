@@ -99,7 +99,7 @@ describe("useLiveKitPreview", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(fetchFn.mock.calls[1][0]).toBe("/api/livekit-token?room=r2");
     expect(FakeRoom.instances[1].connect).toHaveBeenCalledWith("wss://other", "tok");
-    expect(result.current.tiles).toEqual([{ name: "Head left", track: null }]);
+    expect(result.current.tiles).toEqual([{ name: "Head left", fps: null, track: null }]);
   });
 
   it("goes back to idle and disconnects when the offer disappears", async () => {
@@ -121,8 +121,8 @@ describe("useLiveKitPreview", () => {
     expect(FakeRoom.instances[0].connect).toHaveBeenCalledWith("wss://lk", "tok");
     expect(result.current.phase).toBe("connected");
     expect(result.current.tiles).toEqual([
-      { name: "Head left", track: null },
-      { name: "Head right", track: null },
+      { name: "Head left", fps: null, track: null },
+      { name: "Head right", fps: null, track: null },
     ]);
   });
 
@@ -320,8 +320,8 @@ describe("useLiveKitPreview", () => {
     expect(result.current.phase).toBe("error");
     expect(result.current.message).toBe("Cannot reach the backend");
     expect(result.current.tiles).toEqual([
-      { name: "Head left", track: null },
-      { name: "Head right", track: null },
+      { name: "Head left", fps: null, track: null },
+      { name: "Head right", fps: null, track: null },
     ]);
     fail = false;
     await act(async () => {

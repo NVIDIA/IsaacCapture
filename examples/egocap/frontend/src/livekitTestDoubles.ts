@@ -60,6 +60,6 @@ export function publication(name: string): any {
 }
 
 export const STREAMS: LiveKitStreamDescriptor[] = [
-  { kind: "livekit_camera", stream_id: 16, name: "Head left", url: "wss://lk", room: "r", publisher: "orin", track: "left" },
-  { kind: "livekit_camera", stream_id: 17, name: "Head right", url: "wss://lk", room: "r", publisher: "orin", track: "right" },
+  { kind: "livekit_camera", stream_id: 16, name: "Head left", url: "wss://lk", room: "r", publisher: "orin", track: "left", fps: null },
+  { kind: "livekit_camera", stream_id: 17, name: "Head right", url: "wss://lk", room: "r", publisher: "orin", track: "right", fps: null },
 ];

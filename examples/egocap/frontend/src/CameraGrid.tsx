@@ -11,6 +11,8 @@ import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
 import { LiveKitCameraTile } from "./LiveKitCameraTile";
+import { ROLE_LABELS } from "./settingsApi";
+import { roleOfCamera } from "./useOperatorSettings";
 import { useLiveKitPreview } from "./useLiveKitPreview";
 
 const CAMERA_ERROR_RETRY_LIMIT = 3;
@@ -24,8 +26,11 @@ function CameraTile({
   stale,
   stats,
   primary,
+  role,
 }: {
   camera: PreviewSnapshot["cameras"][number];
+  /** The role this camera fills (ego, a wrist), shown beside its name; null when unassigned. */
+  role: string | null;
   /** The one camera the layout gives the most room (the operator's main view). */
   primary: boolean;
   live: boolean;
@@ -131,6 +136,7 @@ function CameraTile({
       )}
       <figcaption>
         {camera.name}
+        {role !== null && <span className="camera-role">{ROLE_LABELS[role] ?? role}</span>}
         {stats !== null && (
           <span className="camera-stats" aria-label={`${camera.name} frame rate and latency`}>
             {stats}
@@ -147,10 +153,13 @@ export function CameraGrid({
   snapshot,
   live,
   receivedAtMonotonic,
+  cameraRoles = null,
 }: {
   snapshot: PreviewSnapshot | null;
   live: boolean;
   receivedAtMonotonic: number | null;
+  /** The operator's role assignment (role -> camera name) from Settings; null falls back to the name-based layout. */
+  cameraRoles?: Record<string, string | null> | null;
 }) {
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -189,9 +198,14 @@ export function CameraGrid({
     );
   }
   const elapsedSinceReceipt = receivedAtMonotonic === null ? 0 : performance.now() - receivedAtMonotonic;
-  // The head camera is the operator's main view when there is one by that name; otherwise the first camera is.
+  // The operator's assigned ego camera is the main view. Without an assignment, the head camera is when there is
+  // one by that name; otherwise the first camera is.
+  const egoName = cameraRoles?.ego ?? null;
+  const egoCameraIndex = egoName === null ? -1 : cameras.findIndex((cam) => cam.name === egoName);
+  const egoLiveKitIndex = egoName === null ? -1 : livekit.tiles.findIndex((tile) => tile.name === egoName);
   const headIndex = cameras.findIndex((cam) => /head/i.test(cam.name));
-  const primaryIndex = headIndex === -1 ? 0 : headIndex;
+  // An ego assigned to a LiveKit tile leaves no CaptureServer camera primary.
+  const primaryIndex = egoCameraIndex !== -1 ? egoCameraIndex : egoLiveKitIndex !== -1 ? -1 : headIndex === -1 ? 0 : headIndex;
   // With only LiveKit video, every head camera is a main view of equal size; any other camera (a wrist camera)
   // stacks smaller beside them. With no more than one named head, the first tile is the main view.
   const liveKitOnly = cameras.length === 0;
@@ -242,6 +256,7 @@ export function CameraGrid({
               live={live}
               stale={stale}
               stats={stats}
+              role={roleOfCamera(cameraRoles, cam.name)}
             />
           );
         })}
@@ -251,9 +266,11 @@ export function CameraGrid({
             name={tile.name}
             track={tile.track}
             phase={livekit.phase}
-            // A LiveKit tile is a main view only when no CaptureServer camera claims that place: every head
-            // camera when there are several, otherwise the first tile.
-            primary={liveKitOnly && (equalHeads ? isHeadTile(tile.name) : index === 0)}
+            advertisedFps={tile.fps}
+            role={roleOfCamera(cameraRoles, tile.name)}
+            // The assigned ego tile is the main view. Otherwise a LiveKit tile is one only when no CaptureServer
+            // camera claims that place: every head camera when there are several, otherwise the first tile.
+            primary={egoLiveKitIndex !== -1 ? index === egoLiveKitIndex : egoCameraIndex === -1 && liveKitOnly && (equalHeads ? isHeadTile(tile.name) : index === 0)}
           />
         ))}
       </div>

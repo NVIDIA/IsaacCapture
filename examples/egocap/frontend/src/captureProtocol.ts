@@ -265,6 +265,8 @@ export interface LiveKitStreamDescriptor {
   /** Participant identity of the camera host; a track name is only unique within one participant. */
   publisher: string;
   track: string;
+  /** The frame rate the publisher declared, or null when the streams file left it out. */
+  fps: number | null;
 }
 
 export type StreamDescriptor = TrackingStreamDescriptor | CameraStreamDescriptor | LiveKitStreamDescriptor;
@@ -349,6 +351,8 @@ function parseStreamDescriptor(value: unknown, field: string): StreamDescriptor 
       room: expectString(value.room, `${field}.room`),
       publisher: expectString(value.publisher, `${field}.publisher`),
       track: expectString(value.track, `${field}.track`),
+      // Optional on the wire (the key may be absent or null); a declared rate must be a number.
+      fps: value.fps === undefined || value.fps === null ? null : expectNumber(value.fps, `${field}.fps`),
     };
   }
   // kind === StreamKind.IMAGE (the only remaining value expectEnum(StreamKind, ...) allows)

@@ -23,6 +23,7 @@ import { INITIAL_RECORDING_UI_STATE, recordingUiReducer, type CommandPhase, type
 import { RecordingCommandUncertainError } from "./useCaptureSession";
 import { useVoiceRecognition, type VoiceRecognitionStatus } from "./useVoiceRecognition";
 import { parseVoicePhrase } from "./voiceCommands";
+import { loadTaskCatalog as defaultLoadTaskCatalog, useTaskCatalog, type LoadTaskCatalog, type TaskCatalog } from "./taskCatalog";
 import type {
   RecordingActions,
   RecordingBatchIdentity,
@@ -63,6 +64,8 @@ export interface RecordingPanelProps {
   /** Told whenever this panel's own interaction phase changes (including the in-flight "stopping"/"starting" ones the
    * backend's snapshot does not show until the command finishes), so the page can mirror it in its status bar. */
   onPhaseChange?: (phase: RecordingPhase) => void;
+  /** How the task editor's catalog is fetched; tests inject a fake, the page uses the backend. */
+  loadTaskCatalog?: LoadTaskCatalog;
 }
 
 const NO_CONTROL_TOKEN_REASON = "Enter the recording control token before using recording controls";
@@ -126,6 +129,7 @@ export function RecordingPanel({
   setControlToken,
   clearControlToken,
   onPhaseChange,
+  loadTaskCatalog = defaultLoadTaskCatalog,
 }: RecordingPanelProps) {
   const [ui, dispatch] = useReducer(recordingUiReducer, INITIAL_RECORDING_UI_STATE);
   useEffect(() => {
@@ -591,6 +595,15 @@ export function RecordingPanel({
       : (recordingSnapshot?.lastResult?.durationMs ?? null);
   const taskEditBatchChanged = ui.taskEditBatchId !== null && batchId !== null && ui.taskEditBatchId !== batchId;
   const editingTask = ui.phase === "editingTask" || ui.phase === "savingTask";
+  // The operator's catalog, fetched when the editor opens. A preselected task fills an empty draft once, so a
+  // station with a standing task needs one keypress (Enter) instead of a retype; an existing task is left alone.
+  const taskCatalog = useTaskCatalog(editingTask, loadTaskCatalog);
+  useEffect(() => {
+    if (ui.phase !== "editingTask" || taskCatalog?.preselected == null || ui.taskDraft !== "") return;
+    dispatch({ type: "UPDATE_TASK_DRAFT", value: taskCatalog.preselected.instruction });
+    // Only the arrival of the catalog or the opening of the editor should prefill; typing must not re-trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskCatalog, ui.phase]);
   // `ui.phase` is this component's own interaction state machine, which
   // has no RECOVERY_REQUIRED value of its own -- with no command in
   // flight it reads "idle" even while the backend has a genuinely
@@ -785,6 +798,7 @@ export function RecordingPanel({
                       : null
               }
               batchChanged={taskEditBatchChanged}
+              catalog={taskCatalog}
               onChange={(value) => dispatch({ type: "UPDATE_TASK_DRAFT", value })}
               onSubmit={submitTaskEdit}
               onCancel={cancelTaskEdit}
@@ -836,6 +850,7 @@ function InlineTaskEditor({
   pending,
   saveBlockedReason,
   batchChanged,
+  catalog,
   onChange,
   onSubmit,
   onCancel,
@@ -847,12 +862,35 @@ function InlineTaskEditor({
    * different operator actions to fix. */
   saveBlockedReason: string | null;
   batchChanged: boolean;
+  /** The operator's chosen catalog, offered as a picker above the text; null keeps the editor free text. */
+  catalog: TaskCatalog | null;
   onChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  // The picker fills the text field rather than replacing it: an operator can still adjust the wording.
+  const pickedIndex = catalog === null ? -1 : catalog.tasks.findIndex((task) => task.instruction === draft);
   return (
     <span className="recording-task-editor">
+      {catalog !== null && catalog.tasks.length > 0 && (
+        <select
+          className="recording-task-editor-select"
+          aria-label={`Task from ${catalog.fileName}`}
+          value={pickedIndex}
+          disabled={pending}
+          onChange={(e) => {
+            const task = catalog.tasks[Number(e.target.value)];
+            if (task !== undefined) onChange(task.instruction);
+          }}
+        >
+          <option value={-1}>{pickedIndex === -1 ? `Pick from ${catalog.fileName}…` : "Custom text"}</option>
+          {catalog.tasks.map((task, index) => (
+            <option key={task.name} value={index}>
+              {task.name} — {task.instruction}
+            </option>
+          ))}
+        </select>
+      )}
       <input
         type="text"
         className="recording-task-editor-input"

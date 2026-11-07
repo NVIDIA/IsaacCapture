@@ -39,6 +39,8 @@ from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
 from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams, unrecordable_reason
+from .operator_settings import OperatorSettingsStore, operator_settings_path
+from .operator_settings import router as operator_settings_router
 from .preview_routes import router as preview_router
 from .recording_adapter import (
     MANUS_GLOVE_SPEC,
@@ -49,6 +51,8 @@ from .recording_adapter import (
 from .recording_command import RecordingContext
 from .recording_session import RecordingSessionCoordinator, TaskContext
 from .recordings import router as recordings_router
+from .settings_routes import EffectiveSettings
+from .settings_routes import router as settings_router
 from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
 from .task_file_routes import router as task_file_router
 from .viser_scene import VisualizationScene
@@ -382,6 +386,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # UI must never end up pointed at two different roots mid-process.
     recording_output_root = _recording_output_root(resolved_station.data_dir if resolved_station else None)
     app.state.recording_output_root = recording_output_root
+    # The operator's own station setup (camera type) lives beside the recordings unless pointed elsewhere.
+    operator_settings_file = operator_settings_path(recording_output_root)
+    app.state.operator_settings_store = OperatorSettingsStore(operator_settings_file)
+    # Catalogs the operator imports from the page sit beside that file, apart from the shipped ones.
+    app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
     livekit_source = LiveKitRecordingSource(
         lambda: recordable_livekit_streams(monitor.native.started), _recorder_livekit_token
@@ -409,9 +418,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.recording_context = RecordingContext(
         coordinator=coordinator, control_token=control_token, auto_fill_operator_name=auto_fill_operator_name
     )
+    # The 3D view settings are read once, for the view itself and for the settings report.
+    visualization_config: VisualizationConfig | None = None
+    visualization_error: str | None = None
+    try:
+        visualization_config = visualization_from_env()
+    except Exception as exc:
+        visualization_error = str(exc)
+    app.state.settings = EffectiveSettings(
+        capture=config,
+        station_path=station_config_path_from_env(),
+        station=resolved_station,
+        station_error=station_config_error,
+        recording_output_root=recording_output_root,
+        visualization=visualization_config,
+        visualization_error=visualization_error,
+        task_file_root=task_file_root,
+    )
     visualization: VisualizationScene | None = None
     try:
-        visualization = _optional_visualization(monitor)
+        visualization = _optional_visualization(monitor, visualization_config, visualization_error)
         app.state.visualization = visualization
         await visualization.start()  # never raises: a failed start only reports the view unavailable
         yield
@@ -430,21 +456,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await monitor.stop()
 
 
-def _optional_visualization(monitor: CaptureStatusMonitor) -> VisualizationScene:
-    """The optional 3D view; settings that cannot be read leave it unavailable instead of stopping the app."""
-    try:
-        return VisualizationScene(monitor, visualization_from_env())
-    except Exception as exc:
-        logger.error("3D view settings are invalid: %s", exc)
-        scene = VisualizationScene(monitor, VisualizationConfig(enabled=True))
-        scene.mark_unavailable(f"3D view settings are invalid: {exc}")
-        return scene
+def _optional_visualization(
+    monitor: CaptureStatusMonitor, config: VisualizationConfig | None, error: str | None
+) -> VisualizationScene:
+    """The optional 3D view; settings that could not be read leave it unavailable instead of stopping the app."""
+    if config is not None:
+        return VisualizationScene(monitor, config)
+    logger.error("3D view settings are invalid: %s", error)
+    scene = VisualizationScene(monitor, VisualizationConfig(enabled=True))
+    scene.mark_unavailable(f"3D view settings are invalid: {error}")
+    return scene
 
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(preview_router)
 app.include_router(livekit_preview_router)
 app.include_router(task_file_router)
+app.include_router(settings_router)
+app.include_router(operator_settings_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
 # recordings.py's own module docstring.

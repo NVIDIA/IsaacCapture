@@ -95,7 +95,16 @@ describe("parseSnapshot LiveKit camera streams", () => {
       room: "r",
       publisher: "orin",
       track: "left",
+      fps: 30,
     });
+  });
+
+  it("keeps a declared frame rate optional: an absent or null fps parses as null", () => {
+    const { fps: _declared, ...withoutFps } = LIVEKIT_STREAM;
+    const absent = parseSnapshot(snapshotWithStarted(startedWith([trackingStreamJson(), withoutFps])));
+    expect((absent.started?.streams[1] as { fps: number | null }).fps).toBeNull();
+    const nulled = parseSnapshot(snapshotWithStarted(startedWith([trackingStreamJson(), { ...LIVEKIT_STREAM, fps: null }])));
+    expect((nulled.started?.streams[1] as { fps: number | null }).fps).toBeNull();
   });
 
   it("liveKitStreams returns only the LiveKit entries, in order", () => {

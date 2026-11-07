@@ -21,6 +21,11 @@ Two layouts are supported:
 Other columns (operators, sessions, completion tracking) are ignored. A task file lists available tasks; it does not
 select one.
 
+Operators can add catalogs of their own from the page's Settings → Tasks (a CSV from their Downloads, by path or
+upload); those are stored in a `taskfiles/` directory beside the operator settings file (next to the recording
+output by default), listed together with the shipped ones, and can be removed again. An imported catalog with a
+shipped catalog's name takes its place in the listing without modifying the shipped file.
+
 Set `EGOCAP_TASK_FILES_DIR` to serve a different directory (for example the one the recorder reads its task library
 from); unset, the API reads this one. The summary file `Summary.csv`, hidden files and editor leftovers are never
 listed. Errors: 400 for a malformed name, 404 for a catalog that is not listed, 500 (with the reason) for a catalog on

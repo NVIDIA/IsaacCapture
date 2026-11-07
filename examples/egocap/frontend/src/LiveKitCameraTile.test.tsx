@@ -128,3 +128,84 @@ describe("LiveKitCameraTile track wiring and labels", () => {
     expect(document.querySelector(".camera-tile--primary")).not.toBeNull();
   });
 });
+
+describe("LiveKitCameraTile frame rate and latency", () => {
+  /** Present one frame carrying browser metadata, as a real requestVideoFrameCallback would. */
+  function presentFrameWith(metadata: Record<string, number>): void {
+    const cbs = frameCallbacks as unknown as Array<(now: number, metadata: Record<string, number>) => void>;
+    frameCallbacks = [];
+    act(() => cbs.forEach((cb) => cb(performance.now(), metadata)));
+  }
+
+  /** Thirty frames a second for `seconds`, with the browser's running frame counter and capture times. */
+  function stream30Fps(seconds: number, latencyMs: number): void {
+    const frames = seconds * 30;
+    for (let i = 1; i <= frames; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1000 / 30);
+      });
+      const now = performance.now();
+      presentFrameWith({ presentationTime: now, presentedFrames: i, captureTime: now - latencyMs });
+    }
+  }
+
+  it("shows the measured rate against the declared one and the end-to-end latency once a second", () => {
+    render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} advertisedFps={30} />);
+    stream30Fps(3, 120);
+    const stats = screen.getByLabelText("Head frame rate and latency");
+    expect(stats.textContent).toMatch(/^30\.0 \/ 30 Hz · 120 ms$/);
+  });
+
+  it("shows a dash for latency when the browser reports no capture time, and no declared rate when none is known", () => {
+    render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+    for (let i = 1; i <= 90; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1000 / 30);
+      });
+      presentFrameWith({ presentationTime: performance.now(), presentedFrames: i });
+    }
+    expect(screen.getByLabelText("Head frame rate and latency").textContent).toMatch(/^30\.0 Hz · —$/);
+  });
+
+  it("shows no stats before the first frame, while the rate is still unmeasured, or once the picture is stale", () => {
+    render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+    expect(screen.queryByLabelText("Head frame rate and latency")).toBeNull();
+    // One second of frames is not enough span for a rate: the line shows a dash, not a made-up number. The
+    // frames land a hair short of the one-second tick that refreshes the line, so nudge the clock past it.
+    stream30Fps(1, 100);
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    expect(screen.getByLabelText("Head frame rate and latency").textContent).toMatch(/^— Hz · 100 ms$/);
+    stream30Fps(2, 100);
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    expect(screen.getByLabelText("Head frame rate and latency").textContent).toMatch(/^30\.0 Hz/);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText("No video frames")).not.toBeNull();
+    expect(screen.queryByLabelText("Head frame rate and latency")).toBeNull();
+  });
+
+  it("starts the measurement over for a replacement track", () => {
+    const { rerender } = render(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+    stream30Fps(3, 100);
+    expect(screen.getByLabelText("Head frame rate and latency")).not.toBeNull();
+    rerender(<LiveKitCameraTile name="Head" track={fakeTrack()} phase="connected" primary={false} />);
+    expect(screen.queryByLabelText("Head frame rate and latency")).toBeNull();
+    stream30Fps(1, 100);
+    expect(screen.getByLabelText("Head frame rate and latency").textContent).toMatch(/^— Hz/);
+  });
+});
+
+describe("LiveKitCameraTile role badge", () => {
+  it("shows the assigned role beside the name, and nothing when unassigned", () => {
+    const { unmount } = render(<LiveKitCameraTile name="cam4" track={null} phase="connected" primary={false} role="wrist_left" />);
+    expect(screen.getByText("Left wrist").className).toBe("camera-role");
+    unmount();
+    render(<LiveKitCameraTile name="cam4" track={null} phase="connected" primary={false} />);
+    expect(document.querySelector(".camera-role")).toBeNull();
+  });
+});

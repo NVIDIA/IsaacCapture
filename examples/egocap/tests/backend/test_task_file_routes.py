@@ -25,14 +25,16 @@ def _client(root: Path) -> TestClient:
     return TestClient(small)
 
 
-def test_the_real_application_serves_json_not_the_spa_and_stays_up_for_capture(monkeypatch, unused_tcp_port):
+def test_the_real_application_serves_json_not_the_spa_and_stays_up_for_capture(monkeypatch, unused_tcp_port, tmp_path):
     monkeypatch.setenv("EGOCAP_CAPTURE_SERVER_URL", f"ws://127.0.0.1:{unused_tcp_port}")  # nothing listens there
     monkeypatch.delenv("EGOCAP_TASK_FILES_DIR", raising=False)
+    # Imported catalogs live beside the operator settings; keep the developer's own imports out of the test.
+    monkeypatch.setenv("EGOCAP_OPERATOR_SETTINGS_FILE", str(tmp_path / "op.json"))
     with TestClient(real_app) as client:  # runs the lifespan, with no capture server reachable
         listing = client.get("/api/task-files")
         assert listing.headers["content-type"].startswith("application/json")
         assert listing.headers["cache-control"] == "no-store"
-        assert listing.json() == {"files": ["Kitchen.csv"]}
+        assert listing.json() == {"files": ["Kitchen.csv"], "imported": []}
         kitchen = client.get("/api/task-files/Kitchen.csv")
         assert kitchen.status_code == 200 and kitchen.json()["format"] == "studio_csv"
         assert len(kitchen.json()["tasks"]) == 11
@@ -43,7 +45,7 @@ def test_the_real_application_serves_json_not_the_spa_and_stays_up_for_capture(m
 def test_listing_and_reading_through_http(tmp_path):
     (tmp_path / "m.csv").write_text("Task Name,Task Description\nfold_towel,Fold a towel\n")
     client = _client(tmp_path)
-    assert client.get("/api/task-files").json() == {"files": ["m.csv"]}
+    assert client.get("/api/task-files").json() == {"files": ["m.csv"], "imported": []}
     body = client.get("/api/task-files/m.csv").json()
     assert body == {
         "name": "m.csv",
@@ -84,8 +86,9 @@ def test_the_catalog_directory_can_be_pointed_elsewhere_by_the_environment(monke
     (tmp_path / "Other.csv").write_text("Task Name,Task Description\nfold_towel,Fold a towel\n")
     monkeypatch.setenv("EGOCAP_CAPTURE_SERVER_URL", f"ws://127.0.0.1:{unused_tcp_port}")
     monkeypatch.setenv("EGOCAP_TASK_FILES_DIR", str(tmp_path))
+    monkeypatch.setenv("EGOCAP_OPERATOR_SETTINGS_FILE", str(tmp_path / "op.json"))
     with TestClient(real_app) as client:
-        assert client.get("/api/task-files").json() == {"files": ["Other.csv"]}
+        assert client.get("/api/task-files").json() == {"files": ["Other.csv"], "imported": []}
 
 
 def test_a_file_with_a_name_that_is_not_valid_utf8_does_not_break_the_listing(tmp_path):
@@ -95,4 +98,4 @@ def test_a_file_with_a_name_that_is_not_valid_utf8_does_not_break_the_listing(tm
     with open(os.path.join(os.fsencode(tmp_path), b"bad\xff.csv"), "w") as handle:
         handle.write("x")
     response = _client(tmp_path).get("/api/task-files")
-    assert response.status_code == 200 and response.json() == {"files": ["ok.csv"]}
+    assert response.status_code == 200 and response.json() == {"files": ["ok.csv"], "imported": []}

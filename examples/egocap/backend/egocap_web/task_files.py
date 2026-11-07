@@ -152,6 +152,11 @@ def read_task_file(root: Path, name: str) -> TaskFileContents:
         raise TaskFilesUnavailable("task file storage is unavailable") from exc
     if not inside_root:
         raise TaskFileNotFound(f"no task file named {name}")
+    return parse_task_file(name, raw)
+
+
+def parse_task_file(name: str, raw: bytes) -> TaskFileContents:
+    """Parse catalog bytes (a file on disk or an upload) into task definitions, with the size bound applied."""
     if len(raw) > MAX_FILE_BYTES:
         raise TaskFileTooLarge(f"{name} is larger than {MAX_FILE_BYTES} bytes")
     # Decode (a leading BOM is allowed), then parse with strict CSV: quoted newlines work, bad quoting is refused.
@@ -164,6 +169,46 @@ def read_task_file(root: Path, name: str) -> TaskFileContents:
     except csv.Error as exc:
         raise MalformedTaskFile(f"{name} is not valid CSV: {exc}") from exc
     return _parse(name, records)
+
+
+def is_catalog_name(name: str) -> bool:
+    """Whether ``name`` could name a catalog: a plain ``*.csv`` name, not hidden, not an editor leftover."""
+    plain = _is_plain_csv_name(name) and not name.startswith((".", "~"))
+    return plain and name not in _NOT_CATALOGS
+
+
+def import_task_file(root: Path, name: str, raw: bytes) -> TaskFileContents:
+    """Store an operator-supplied catalog under ``root`` as ``name`` once it parses; a bad file is never written.
+
+    The write goes through a temporary file so a crash leaves either the old catalog or the new one, never half.
+    """
+    if not is_catalog_name(name):
+        raise InvalidTaskFileName("a task file name is a plain filename ending in .csv")
+    contents = parse_task_file(name, raw)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        tmp = root / (name + ".tmp")
+        tmp.write_bytes(raw)
+        tmp.replace(root / name)
+    except OSError as exc:
+        logger.error("task file %s could not be stored under %s: %s", name, root, exc)
+        raise TaskFilesUnavailable("task file storage is unavailable") from exc
+    return contents
+
+
+def remove_task_file(root: Path, name: str) -> None:
+    """Delete an imported catalog; a name that is not an imported catalog is absent, never a path to resolve."""
+    if not _is_plain_csv_name(name):
+        raise InvalidTaskFileName("a task file name is a plain filename ending in .csv")
+    if name not in list_task_files(root):
+        raise TaskFileNotFound(f"no imported task file named {name}")
+    try:
+        (root / name).unlink()
+    except FileNotFoundError as exc:
+        raise TaskFileNotFound(f"no imported task file named {name}") from exc
+    except OSError as exc:
+        logger.error("task file %s could not be removed: %s", root / name, exc)
+        raise TaskFilesUnavailable("task file storage is unavailable") from exc
 
 
 def _headers(record: list[str]) -> list[str]:
