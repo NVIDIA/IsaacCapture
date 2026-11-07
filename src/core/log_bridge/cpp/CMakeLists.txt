@@ -15,6 +15,13 @@ add_library(log_bridge_core STATIC
     inc/log_bridge/logger.hpp
 )
 
+if(NOT WIN32)
+    target_sources(log_bridge_core PRIVATE
+        posix_secure_directory.cpp
+        posix_secure_directory.hpp
+    )
+endif()
+
 target_include_directories(log_bridge_core
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
