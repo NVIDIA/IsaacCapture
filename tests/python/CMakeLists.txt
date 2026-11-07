@@ -30,6 +30,10 @@ if(BUILD_EXAMPLES AND BUILD_VIZ)
     add_subdirectory(examples)
 endif()
 
+if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS AND BUILD_PLUGIN_REALHAND_FFG_GLOVE)
+    add_subdirectory(examples/realhand_ffg_glove)
+endif()
+
 if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(examples/teleop_keyboard)
 endif()

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 RealHand. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-realhand-ffg-glove"
+version = "0.0.0"
+description = "RealHand FFG human skeleton calibration and diagnostics"
+requires-python = ">=3.11,<3.14"
+# Isaac Sim supplies the optional viewer's isaacsim, omni, and pxr modules.
+dependencies = ["isaaccapture[cloudxr]", "numpy", "scipy>=1.15.0", "pyyaml>=6.0.3"]
+
+[tool.hatch.build]
+only-include = ["python/isaaccapture_examples/realhand_ffg_glove"]
+
+[tool.hatch.build.targets.wheel]
+sources = ["python"]

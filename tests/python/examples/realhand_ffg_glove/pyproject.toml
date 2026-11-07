@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 RealHand. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "realhand-ffg-glove-example-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = ["pytest", "numpy", "scipy>=1.15.0", "pyyaml>=6.0.3"]
+
+[tool.pytest.ini_options]
+pythonpath = ["../.."]
