@@ -1255,6 +1255,8 @@ function AppContent() {
                   onResetTeleop={handleResetTeleop}
                   isXRMode={isXRMode}
                   panelHiddenAtStart={config.panelHiddenAtStart ?? false}
+                  autoHideOnConnect={config.teleopPath === 'real/gear/video'}
+                  isStreaming={isConnected && sessionStatus === 'Connected'}
                   serverAddress={serverAddress || config.serverIP}
                   sessionStatus={sessionStatus}
                   playLabel={

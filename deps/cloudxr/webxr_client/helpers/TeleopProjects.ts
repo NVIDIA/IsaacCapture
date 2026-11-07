@@ -98,7 +98,7 @@ export const TELEOP_PROJECTS: TeleopProjectRegistry = {
         label: 'GEAR',
         children: {
           headless: { label: 'Headless', settings: { headless: true } },
-          video: { label: 'Video streaming' },
+          video: { label: 'Video streaming', settings: { panelHiddenAtStart: false } },
           sonic: { label: 'SONIC' },
         },
       },
