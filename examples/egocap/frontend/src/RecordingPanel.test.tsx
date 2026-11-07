@@ -480,6 +480,14 @@ describe("RecordingPanel", () => {
     expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "Pour water into the cup.", "Left hand, blue cup");
   });
 
+  it("Enter that confirms IME composition does not save the task", () => {
+    const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);
+    fireEvent.click(screen.getByRole("button", { name: /edit task/i }));
+    fireEvent.keyDown(screen.getByLabelText("Task name"), { key: "Enter", isComposing: true });
+    expect(onSetTask).not.toHaveBeenCalled();
+  });
+
   it("Enter in the details field saves and Escape cancels, like the task field", async () => {
     const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
     render(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={activeSnapshot()} actions={{ onSetTask }} />);

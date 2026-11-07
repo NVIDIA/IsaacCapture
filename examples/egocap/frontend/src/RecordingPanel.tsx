@@ -876,6 +876,8 @@ function InlineTaskEditor({
   // Enter saves and Escape cancels from either field.
   const onEditorKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
+      // An Enter that confirms IME composition must not submit the draft.
+      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
       e.preventDefault();
       onSubmit();
     } else if (e.key === "Escape") {
