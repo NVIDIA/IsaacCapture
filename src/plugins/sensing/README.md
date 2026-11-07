@@ -46,7 +46,10 @@ encode H.264 on the hardware encoder, and publish one LiveKit video track per ca
 the egocap backend, recording, the browser) runs on the PC.
 
 Prerequisites: an AGX Orin on JetPack 7.2.1 / L4T R39.2.1 with the SENSING drivers installed and the cameras
-working, CUDA, CMake, and network access to the LiveKit server.
+working, CUDA, CMake 3.24 or newer (JetPack ships 3.22; `pip install --user cmake` is enough), `uv` and `patchelf`
+(the repository's top-level build needs both even with the Python bindings off), and network access to the LiveKit
+server. An Argus-only build (`-DSENSING_WITH_SIPL=OFF -DSENSING_WITH_ARGUS=ON`) also works on JetPack 6.2 /
+L4T R36.4.3; the LiveKit SDK prebuilt is chosen to match the host's Ubuntu release.
 
 ```bash
 # 1. Once: vendor drivers (see scripts/setup.sh --help). The Multimedia API and SIPL header trees are

@@ -61,5 +61,6 @@ target_link_libraries(sensing_core
         ${SIPL_LIBRARIES}
         ${EGL_LIBRARIES}
         ${NVBUFSURFACE_LIBRARY}
+        ${NVBUFSURFTRANSFORM_LIBRARY}
         ${V4L2_LIBRARY}
 )

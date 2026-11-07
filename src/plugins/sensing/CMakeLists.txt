@@ -92,6 +92,30 @@ if(NOT EGL_INCLUDE_DIRS OR NOT EGL_LIBRARIES)
 endif()
 
 # ==============================================================================
+# Jetson Multimedia API tree
+# ==============================================================================
+# Found before the Argus block below, whose header search is relative to it.
+if(NOT JETSON_MMAPI_DIR)
+    find_path(JETSON_MMAPI_DIR include/NvVideoEncoder.h
+        PATHS "/usr/src/jetson_multimedia_api"
+    )
+endif()
+if(NOT JETSON_MMAPI_DIR)
+    message(FATAL_ERROR
+        "================================================================================\n"
+        "SENSING camera plugin requires the Jetson Multimedia API encoder sources.\n"
+        "\n"
+        "setup_container.sh fetches the version matching /etc/nv_tegra_release:\n"
+        "  src/plugins/sensing/scripts/setup.sh\n"
+        "\n"
+        "Or point CMake at an existing tree:\n"
+        "  cmake -B build -DJETSON_MMAPI_DIR=/path/to/jetson_multimedia_api\n"
+        "================================================================================\n"
+    )
+endif()
+message(STATUS "SENSING plugin: Jetson Multimedia API=${JETSON_MMAPI_DIR}")
+
+# ==============================================================================
 # Argus (optional)
 # ==============================================================================
 # The Argus backend captures NV12 into DMA-BUFs the hardware encoder reads. It needs the Argus headers from the
@@ -120,26 +144,6 @@ endif()
 # ==============================================================================
 # Jetson has no libnvidia-encode (the Video Codec SDK is dGPU-only), so H.264
 # comes from the V4L2 M2M engine via NvVideoEncoder in the Multimedia API.
-if(NOT JETSON_MMAPI_DIR)
-    find_path(JETSON_MMAPI_DIR include/NvVideoEncoder.h
-        PATHS "/usr/src/jetson_multimedia_api"
-    )
-endif()
-if(NOT JETSON_MMAPI_DIR)
-    message(FATAL_ERROR
-        "================================================================================\n"
-        "SENSING camera plugin requires the Jetson Multimedia API encoder sources.\n"
-        "\n"
-        "setup_container.sh fetches the version matching /etc/nv_tegra_release:\n"
-        "  src/plugins/sensing/scripts/setup.sh\n"
-        "\n"
-        "Or point CMake at an existing tree:\n"
-        "  cmake -B build -DJETSON_MMAPI_DIR=/path/to/jetson_multimedia_api\n"
-        "================================================================================\n"
-    )
-endif()
-message(STATUS "SENSING plugin: Jetson Multimedia API=${JETSON_MMAPI_DIR}")
-
 set(_mmapi_classes "${JETSON_MMAPI_DIR}/samples/common/classes")
 set(JETSON_MMAPI_SOURCES
     "${_mmapi_classes}/NvVideoEncoder.cpp"
@@ -148,12 +152,18 @@ set(JETSON_MMAPI_SOURCES
     "${_mmapi_classes}/NvElement.cpp"
     "${_mmapi_classes}/NvElementProfiler.cpp"
     "${_mmapi_classes}/NvBuffer.cpp"
+    "${_mmapi_classes}/NvBufSurface.cpp"
     "${_mmapi_classes}/NvLogging.cpp"
 )
 
 find_library(NVBUFSURFACE_LIBRARY NAMES nvbufsurface PATHS ${_tegra_lib_dirs})
 if(NOT NVBUFSURFACE_LIBRARY)
     message(FATAL_ERROR "libnvbufsurface not found. Install nvidia-l4t-multimedia.")
+endif()
+# The NvBufSurf allocation wrapper in samples/common/classes/NvBufSurface.cpp also calls the transform API.
+find_library(NVBUFSURFTRANSFORM_LIBRARY NAMES nvbufsurftransform PATHS ${_tegra_lib_dirs})
+if(NOT NVBUFSURFTRANSFORM_LIBRARY)
+    message(FATAL_ERROR "libnvbufsurftransform not found. Install nvidia-l4t-multimedia.")
 endif()
 
 # NVIDIA's patched libv4l2 carries the Tegra M2M encoder ioctls, so search the
@@ -184,19 +194,36 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 set(_livekit_local ON)
 if(NOT LIVEKIT_SDK_DIR)
     set(_livekit_local OFF)
+    # The prebuilt links against the glibc of the Ubuntu release it was built on: the 24.04 build does not load on
+    # JetPack 6 (Ubuntu 22.04). Pick the release matching the host; LIVEKIT_SDK_UBUNTU overrides the detection.
+    if(NOT LIVEKIT_SDK_UBUNTU)
+        set(LIVEKIT_SDK_UBUNTU "24.04")
+        if(EXISTS /etc/os-release)
+            file(STRINGS /etc/os-release _os_version_id REGEX "^VERSION_ID=")
+            if(_os_version_id MATCHES "\"?22\\.04\"?$")
+                set(LIVEKIT_SDK_UBUNTU "22.04")
+            endif()
+        endif()
+    endif()
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         set(_livekit_arch "arm64")
-        set(_livekit_hash "e3a97f71943c0bf9fa4ebd70927ca2906b31dcd6c14b42312b1225b4b868e4ad")
+        set(_livekit_hash_24.04 "e3a97f71943c0bf9fa4ebd70927ca2906b31dcd6c14b42312b1225b4b868e4ad")
+        set(_livekit_hash_22.04 "7a698bbd8f61f019744fd99b3a5d2b6c6118787fd1f81140c9a6fc8732fc87e0")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         set(_livekit_arch "x64")
-        set(_livekit_hash "5e0feb2e519c6ff131dd2d1c45149115057ae4e21a324fdb249e1789d5614e7b")
+        set(_livekit_hash_24.04 "5e0feb2e519c6ff131dd2d1c45149115057ae4e21a324fdb249e1789d5614e7b")
+        set(_livekit_hash_22.04 "9e568ee6b2bb3c7b0d07faba694930767096a14d0e09422ba01f34077ffb03cb")
     else()
         message(FATAL_ERROR "No prebuilt LiveKit SDK for ${CMAKE_SYSTEM_PROCESSOR}; set LIVEKIT_SDK_DIR.")
     endif()
+    if(NOT DEFINED _livekit_hash_${LIVEKIT_SDK_UBUNTU})
+        message(FATAL_ERROR "No prebuilt LiveKit SDK for Ubuntu ${LIVEKIT_SDK_UBUNTU}; set LIVEKIT_SDK_DIR.")
+    endif()
+    set(_livekit_hash "${_livekit_hash_${LIVEKIT_SDK_UBUNTU}}")
     include(FetchContent)
     FetchContent_Declare(
         livekit_sdk
-        URL https://github.com/livekit/client-sdk-cpp/releases/download/v1.12.4/livekit-sdk-ubuntu-24.04-${_livekit_arch}-1.12.4.tar.gz
+        URL https://github.com/livekit/client-sdk-cpp/releases/download/v1.12.4/livekit-sdk-ubuntu-${LIVEKIT_SDK_UBUNTU}-${_livekit_arch}-1.12.4.tar.gz
         URL_HASH SHA256=${_livekit_hash}
     )
     FetchContent_MakeAvailable(livekit_sdk)
