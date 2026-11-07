@@ -361,7 +361,8 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        track_in_flight(stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000);
+        track_in_flight(
+            static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.timestamp_ns / 1000, slot.unix_ns / 1000);
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
@@ -378,14 +379,14 @@ struct LiveKitVideoOutput::Impl
             ++encoder_busy;
             return;
         }
-        track_in_flight(static_cast<int64_t>(frame.monotonic_ns) / 1000, static_cast<uint32_t>(frame.sequence),
-                        frame.sensor_time, frame.unix_ns / 1000);
+        track_in_flight(
+            static_cast<uint32_t>(frame.sequence), frame.sensor_time, frame.monotonic_ns / 1000, frame.unix_ns / 1000);
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
-    void track_in_flight(int64_t stamp_us, uint32_t sequence, uint64_t capture_tsc, uint64_t unix_us)
+    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t monotonic_us, uint64_t unix_us)
     {
-        in_encoder.push_back({ stamp_us, sequence, capture_tsc, unix_us });
+        in_encoder.push_back({ sequence, capture_tsc, monotonic_us, unix_us });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -427,7 +428,7 @@ struct LiveKitVideoOutput::Impl
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
-        frame.timestamp_us = static_cast<uint64_t>(meta.stamp_us);
+        frame.timestamp_us = meta.monotonic_us;
         frame.frame_id = meta.sequence;
         frame.capture_tsc = meta.capture_tsc;
         frame.user_timestamp_us = meta.unix_us;
@@ -452,10 +453,11 @@ struct LiveKitVideoOutput::Impl
 
     struct FrameMeta
     {
-        int64_t stamp_us = 0;
         uint32_t sequence = 0;
         uint64_t capture_tsc = 0;
-        /// Unix time of the same instant as stamp_us, for the frame's application timestamp.
+        /// CLOCK_MONOTONIC when the frame was handed over, for the frame's transport timestamp.
+        uint64_t monotonic_us = 0;
+        /// Unix time when the frame was handed over, for the frame's application timestamp.
         uint64_t unix_us = 0;
     };
 

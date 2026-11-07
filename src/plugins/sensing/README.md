@@ -53,4 +53,4 @@ guessing). SIPL is built by default (`-DSENSING_WITH_SIPL=OFF` for an Argus-only
 (`-DSENSING_WITH_ARGUS=ON`, Argus device index with `--add-stream=sensor=N,...`, `--argus-mode=K`) captures NV12 into
 DMA-BUFs that the hardware encoder reads without a copy. **The Argus code has never been built or run: there is no
 Argus SDK or Argus camera available to the author.** Argus DMA-BUF input cannot be combined with
-`--livekit-scale-div` above 1.
+`--livekit-scale-div` above 1. An Argus-only build (`-DSENSING_WITH_SIPL=OFF -DSENSING_WITH_ARGUS=ON`) also builds on JetPack 6.2 / L4T R36.4.3.
