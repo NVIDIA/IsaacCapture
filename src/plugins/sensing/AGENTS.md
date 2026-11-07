@@ -8,6 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 Keep launchers that primarily compose Docker commands in Bash.
 Keep machine-readable output on stdout and diagnostics on stderr.
 
+Missing build SDKs must not fail host capture-readiness checks; require them
+only for container build readiness.
+
 Maintain one root README for the plugin overview, source map, and config provenance.
 Link to the published GitHub Pages user guide, not its RST source.
 Setup procedures and troubleshooting belong in that guide, not in both files.
