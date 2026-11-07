@@ -38,6 +38,14 @@ class Frame:
 
     Stereo: ``image`` is the left eye; ``image_right`` carries the
     right eye when paired (both from the same capture instant).
+
+    ``image`` may be *borrowed* rather than owned: a source is allowed to
+    hand back a view onto memory it will reuse (``cuda_ipc`` maps producer
+    memory directly). A borrowed frame stays valid only until the next
+    ``latest()`` on the source that produced it, so a consumer must finish
+    reading — or copy — before polling again, and must not retain a Frame
+    across polls. ``ImageLayerBase::submit`` upholds this by synchronizing
+    its copy before returning; keep that guarantee if you change it.
     """
 
     image: Any
