@@ -281,6 +281,19 @@ async def test_stale_target_stop_is_rejected_and_the_real_active_take_keeps_inge
     await coordinator.close()
 
 
+async def test_task_details_reach_the_episode_metadata(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC))
+    await coordinator.open()
+    coordinator.set_task("t", task_details="left hand")
+    episode = await coordinator.start_episode()
+    coordinator.on_capture_frame(_fake_tracking_frame(head_x=1.0, capture_time_ns=1_000_000_000))
+    result = await coordinator.stop_episode(episode.episode_id)
+    assert result.disposition is Disposition.KEPT
+    group = zarr.open_group(str(result.final_path), mode="r")
+    assert group.attrs["task_details"] == "left hand"
+    await coordinator.close()
+
+
 async def test_real_capture_callback_to_zarr_round_trip(tmp_path: Path):
     """The real end-to-end path: a synthetic but REAL ic_tracking_v1
     payload, decoded and converted by recording_adapter, queued and
