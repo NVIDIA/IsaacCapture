@@ -842,8 +842,8 @@ function focusOwnedByInput(): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable;
 }
 
-/** The inline next-task text editor -- only the committed instruction TEXT,
- * never a mode/catalog/metadata editor. Enter submits, Escape cancels; it
+/** The inline next-task editor -- the committed instruction text and its
+ * optional free-text details, never a mode/catalog/metadata editor. Enter submits, Escape cancels; it
  * owns both keys itself rather than relying on the global shortcut
  * listener (which is skipped entirely while this is open). If the batch
  * rotated (a New batch command, from this viewer or another) while the

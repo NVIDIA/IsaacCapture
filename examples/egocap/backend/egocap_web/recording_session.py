@@ -416,7 +416,7 @@ class RecordingSessionCoordinator:
         if not ready or self._closing:
             raise CoordinatorBusyError("start was superseded while storage was opening")
         episode = await service.start_episode(
-            frozen_context.task_text, frozen_context.operator, frozen_context.task_details
+            frozen_context.task_text, frozen_context.operator, task_details=frozen_context.task_details
         )
         # Recheck readiness AND the service's own phase after the await:
         # start_episode can succeed at the storage level after something

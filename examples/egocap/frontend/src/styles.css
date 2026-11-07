@@ -771,7 +771,8 @@ below for the narrow/stacked layout). */
   color: var(--text-main);
 }
 
-.recording-status-task {
+.recording-status-task,
+.recording-status-details {
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
@@ -1330,7 +1331,7 @@ below for the narrow/stacked layout). */
 .op-task-details {
   margin: 2px 0 0;
   font-size: 14px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

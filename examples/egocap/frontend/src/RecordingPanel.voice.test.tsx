@@ -279,6 +279,21 @@ describe("RecordingPanel voice commands", () => {
     expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "fold the towel", "");
   });
 
+  it('"save task" keeps the already-committed details when only the task text is dictated', async () => {
+    const onSetTask = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    render(
+      <RecordingPanel
+        {...defaultOperatorProps}
+        recordingSnapshot={activeSnapshot({ taskDetails: "Left hand, blue cup." })}
+        actions={{ onSetTask }}
+      />,
+    );
+    const recognition = enableVoice();
+    await act(async () => recognition.emitFinal("task fold the towel"));
+    await act(async () => recognition.emitFinal("save task"));
+    expect(onSetTask).toHaveBeenCalledWith({ batchId: "b1" }, "fold the towel", "Left hand, blue cup.");
+  });
+
   it('"discard" opens the browser\'s native confirm() rather than a second spoken command; declining sends no command', async () => {
     const onDiscardEpisode = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);

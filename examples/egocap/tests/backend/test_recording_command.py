@@ -171,6 +171,15 @@ async def test_set_task_commits_details_and_a_later_set_without_them_clears_them
     assert reply["snapshot"]["task_details"] == ""
 
 
+async def test_set_task_whitespace_only_details_are_stored_as_empty(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": context.batch_id, "task": "Pour water.", "details": "   "}), context
+    )
+    assert reply["outcome"] == "ok"
+    assert reply["snapshot"]["task_details"] == ""
+
+
 async def test_set_task_overlong_details_are_rejected_and_change_nothing(tmp_path: Path):
     context = await _open_context(tmp_path)
     bid = context.batch_id

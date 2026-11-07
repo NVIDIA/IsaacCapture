@@ -67,9 +67,10 @@ export const MAX_TASK_DETAILS_CHARS = 1000;
  * RecordingPanel must render that honestly, never a fabricated state. Once
  * a snapshot exists, `batchId` always names a real, live batch -- there is
  * no closed/terminal batch state; `new_batch` rotates the id in place.
- * `taskText` is the currently committed next-task instruction text -- the
- * only task-related fact this component renders or edits; any other task
- * metadata (mode, catalog, library selection) belongs to the separate
+ * `taskText` is the currently committed next-task instruction text and
+ * `taskDetails` its optional free-text details (props, setup); these two are
+ * the only task-related facts this component renders or edits. Any other
+ * task metadata (mode, catalog, library selection) belongs to the separate
  * batch-setup screen, not here.
  */
 export interface RecordingSnapshot {

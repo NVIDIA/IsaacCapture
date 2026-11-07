@@ -93,8 +93,9 @@ export type RecordingUiAction =
    * never clobber that command's own pending COMMAND_SUCCEEDED/REJECTED
    * -- EXCEPT while "uncertain", which has no pending command of its own
    * left to clobber and exists precisely to be resolved by this.
-   * `taskText` is the resolved snapshot's own committed task text, used
-   * only to tell whether an uncertain savingTask actually took effect. */
+   * `taskText` and `taskDetails` are the resolved snapshot's own committed
+   * task text and details, used only to tell whether an uncertain savingTask
+   * actually took effect (both must match the draft; the backend trims details). */
   | { type: "SNAPSHOT_OBSERVED"; recording: boolean; taskText: string | null; taskDetails: string };
 
 /** The stable phase a known `recording` fact maps to. */
@@ -184,7 +185,7 @@ export function recordingUiReducer(state: RecordingUiState, action: RecordingUiA
         // (including a still-unset task) as "didn't take effect" and
         // hand the user back their draft to retry, rather than silently
         // discarding it.
-        if (action.taskText === state.taskDraft && action.taskDetails === state.detailsDraft) {
+        if (action.taskText === state.taskDraft && action.taskDetails === state.detailsDraft.trim()) {
           return { ...state, phase: stablePhaseFor(action.recording), uncertainCommandPhase: null, taskEditBatchId: null };
         }
         return {
