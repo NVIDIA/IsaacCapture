@@ -49,6 +49,12 @@ def main():
         "--right-config", type=str, help="Path to right hand retargeting config (YAML)"
     )
     parser.add_argument(
+        "--left-params", type=str, help="Path to left hand tunable parameters (JSON)"
+    )
+    parser.add_argument(
+        "--right-params", type=str, help="Path to right hand tunable parameters (JSON)"
+    )
+    parser.add_argument(
         "--enable-tuning",
         action="store_true",
         help="Enable retargeting tuning UI (needs the ui extra)",
@@ -95,12 +101,14 @@ def main():
 
     # --- A. Setup Hand Retargeters ---
 
+    # Parameter persistence stays opt-in: predictable names in a shared
+    # temporary directory can be pre-created by another local user.
     # Left Hand Config
     left_hand_cfg = DexHandRetargeterConfig(
         hand_retargeting_config=str(left_yaml),
         hand_urdf=str(left_urdf_path),
         hand_side="left",
-        parameter_config_path="/tmp/left_hand_params.json",
+        parameter_config_path=args.left_params,
     )
     left_hand_retargeter = DexHandRetargeter(left_hand_cfg, name="left_hand")
 
@@ -109,7 +117,7 @@ def main():
         hand_retargeting_config=str(right_yaml),
         hand_urdf=str(right_urdf_path),
         hand_side="right",
-        parameter_config_path="/tmp/right_hand_params.json",
+        parameter_config_path=args.right_params,
     )
     right_hand_retargeter = DexHandRetargeter(right_hand_cfg, name="right_hand")
 

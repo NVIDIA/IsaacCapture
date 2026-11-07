@@ -104,22 +104,17 @@ def main():
     # Create source (tracker is internal)
     hands = HandsSource(name="hands")
 
-    # Define parameter config paths for persistence
-    # Use provided args or default to /tmp/dex_bimanual_example_{side}_params.json
-    left_param_path = (
-        args.left_params
-        if args.left_params
-        else "/tmp/dex_bimanual_example_left_params.json"
-    )
-    right_param_path = (
-        args.right_params
-        if args.right_params
-        else "/tmp/dex_bimanual_example_right_params.json"
-    )
+    # Persistence is opt-in: predictable names in a shared temporary directory
+    # can be pre-created by another local user.
+    left_param_path = args.left_params
+    right_param_path = args.right_params
 
-    print(
-        f"Parameter persistence enabled. Configs will be saved to:\n  - {left_param_path}\n  - {right_param_path}"
-    )
+    if left_param_path or right_param_path:
+        print(
+            "Parameter persistence enabled for explicitly configured paths:\n"
+            f"  - left: {left_param_path or 'disabled'}\n"
+            f"  - right: {right_param_path or 'disabled'}"
+        )
 
     # Left Config
     left_cfg = DexHandRetargeterConfig(
