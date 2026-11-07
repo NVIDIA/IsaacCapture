@@ -317,12 +317,18 @@ std::optional<HandJoints> HumanHandSkeleton::reconstruct(const std::array<float,
     XrPosef thumb{ identity.orientation, { mirror * base[0] * scale, base[1] * scale, base[2] * scale } };
     thumb = oxr_utils::multiply_poses(thumb, rotate(mirror * angles[0], 1));
     thumb = oxr_utils::multiply_poses(thumb, rotate(mirror * angles[1], 2));
+    // Reverse thumb flexion and rotate its root to preserve the complete base-to-tip vector.
+    // This thumb-local convention must not depend on contacts or other fingers.
+    const float chord_y = thumb_lengths[1] * std::sin(angles[2]) + thumb_lengths[2] * std::sin(angles[2] + angles[3]);
+    const float chord_forward =
+        thumb_lengths[0] + thumb_lengths[1] * std::cos(angles[2]) + thumb_lengths[2] * std::cos(angles[2] + angles[3]);
+    thumb = oxr_utils::multiply_poses(thumb, rotate(-2.0f * std::atan2(chord_y, chord_forward), 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_METACARPAL_EXT, thumb, 0.012f * scale);
     thumb = advance(thumb, thumb_lengths[0] * scale);
-    thumb = oxr_utils::multiply_poses(thumb, rotate(-angles[2], 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(angles[2], 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, thumb, 0.010f * scale);
     thumb = advance(thumb, thumb_lengths[1] * scale);
-    thumb = oxr_utils::multiply_poses(thumb, rotate(-angles[3], 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(angles[3], 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_DISTAL_EXT, thumb, 0.009f * scale);
     thumb = advance(thumb, thumb_lengths[2] * scale);
     set_joint(joints, XR_HAND_JOINT_THUMB_TIP_EXT, thumb, 0.007f * scale);

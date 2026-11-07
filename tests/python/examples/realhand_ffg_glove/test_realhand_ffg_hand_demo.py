@@ -214,11 +214,52 @@ def test_malformed_repeated_open_is_rejected(fitted_thumb):
         _THUMB.fit_thumb_mapping(poses)
 
 
-def test_vectorized_thumb_tip_matches_joint_forward_kinematics():
-    angles = np.random.default_rng(29).uniform(_THUMB.LOWER, _THUMB.UPPER, (100, 4))
-    actual = _THUMB.thumb_tip_positions(angles)
-    expected = np.asarray([_THUMB.thumb_joints(a)[-1] for a in angles])
-    np.testing.assert_allclose(actual, expected, atol=1e-12)
+@pytest.mark.parametrize("scale", (0.85, 1.0, 1.15))
+def test_opposed_thumb_preserves_endpoints_and_bone_lengths_throughout_joint_range(
+    scale,
+):
+    angles = np.random.default_rng(29).uniform(_THUMB.LOWER, _THUMB.UPPER, (1000, 4))
+    angles = np.vstack((angles, _THUMB.LOWER, _THUMB.UPPER, _THUMB.OPEN_ANGLES))
+    lengths = _THUMB.LENGTHS * scale
+    points = np.asarray([_THUMB.thumb_joints(a, lengths=lengths) for a in angles])
+    np.testing.assert_allclose(
+        points[:, -1], _THUMB.thumb_tip_positions(angles, lengths), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        np.linalg.norm(np.diff(points, axis=1), axis=2),
+        np.broadcast_to(lengths, (len(points), 3)),
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    "mcp,ip", ((0.2, 0.3), (0.9, 0.0), (0.0, 0.6), (1.1, 1.2), (1.8, 1.8))
+)
+def test_thumb_bend_normal_follows_positive_local_x(mcp, ip):
+    for a, b in np.random.default_rng(30).uniform(
+        _THUMB.LOWER[:2], _THUMB.UPPER[:2], (20, 2)
+    ):
+        points = _THUMB.thumb_joints((a, b, mcp, ip))
+        bones = np.diff(points, axis=0)
+        normal = np.cross(bones[0], bones[1]) + np.cross(bones[1], bones[2])
+        expected = (_THUMB._rotation(a, 1) @ _THUMB._rotation(b, 2))[:, 0]
+        np.testing.assert_allclose(
+            normal / np.linalg.norm(normal), expected, atol=1e-12
+        )
+
+
+def test_opposed_thumb_preserves_straight_pose_and_is_continuous_near_zero_curl():
+    for a in np.linspace(_THUMB.LOWER[0], _THUMB.UPPER[0], 20):
+        rotation = _THUMB._rotation(a, 1) @ _THUMB._rotation(0.25, 2)
+        straight = _THUMB.BASE + np.r_[0, np.cumsum(_THUMB.LENGTHS)][:, None] * (
+            rotation @ (0, 0, -1)
+        )
+        np.testing.assert_allclose(
+            _THUMB.thumb_joints((a, 0.25, 0, 0)), straight, atol=1e-12
+        )
+        for epsilon in (1e-3, 1e-5, 1e-8):
+            curled = _THUMB.thumb_joints((a, 0.25, epsilon, epsilon))
+            assert np.max(np.linalg.norm(curled - straight, axis=1)) < epsilon * 0.3
 
 
 def test_sensor_gain_constraint_invalidates_cached_coefficients(

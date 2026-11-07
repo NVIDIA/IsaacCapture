@@ -135,10 +135,19 @@ def finger_tip(poses, values, finger, side="left"):
 
 def thumb_joints(angles, base=BASE, lengths=LENGTHS):
     rotation = _rotation(angles[0], 1) @ _rotation(angles[1], 2)
+    chord_y = lengths[1] * np.sin(angles[2]) + lengths[2] * np.sin(
+        angles[2] + angles[3]
+    )
+    chord_forward = (
+        lengths[0]
+        + lengths[1] * np.cos(angles[2])
+        + lengths[2] * np.cos(angles[2] + angles[3])
+    )
+    rotation = rotation @ _rotation(-2 * np.arctan2(chord_y, chord_forward), 0)
     point = np.asarray(base, dtype=float).copy()
     points = [point.copy()]
     for bend, length in zip((0, angles[2], angles[3]), lengths):
-        rotation = rotation @ _rotation(-bend, 0)
+        rotation = rotation @ _rotation(bend, 0)
         point += rotation @ np.array((0, 0, -length))
         points.append(point.copy())
     return np.asarray(points)
@@ -146,6 +155,7 @@ def thumb_joints(angles, base=BASE, lengths=LENGTHS):
 
 def thumb_tip_positions(angles, lengths=LENGTHS):
     """Batched equivalent of thumb_joints(...)[-1]."""
+    # Root compensation leaves the endpoint formula and fitted sensor coefficients unchanged.
     a, b, c, d = np.asarray(angles).T
     y = -lengths[1] * np.sin(c) - lengths[2] * np.sin(c + d)
     z = -lengths[0] - lengths[1] * np.cos(c) - lengths[2] * np.cos(c + d)
@@ -268,6 +278,7 @@ def fit_thumb_mapping(poses, side="left"):
 
     def residual(p):
         weights, q, lengths = unpack(p)
+        # Contact gaps do not identify the bend plane; shape changes need independent raw-replay checks.
         tips = thumb_tip_positions(np.clip(q[is_contact], LOWER, UPPER), lengths)
         noisy_q = np.clip(OPEN_ANGLES + noisy_features @ weights.T, LOWER, UPPER)
         jac = np.einsum("ij,njk->nik", weights, sensor_jacobians)

@@ -346,6 +346,70 @@ coefficients:
 }
 
 
+TEST_CASE("Opposed thumb flexion preserves endpoints and rigid bone frames", "[realhand_ffg_skeleton]")
+{
+    CalibrationFile file;
+    file.save(calibration());
+    constexpr std::array<float, 3> lengths{ 0.035f, 0.030f, 0.026f };
+    for (float scale : { 0.85f, 1.0f, 1.15f })
+    {
+        const HumanHandSkeleton model(file.path.string(), scale);
+        for (const auto side : { HandSide::Left, HandSide::Right })
+        {
+            const float mirror = side == HandSide::Left ? 1.0f : -1.0f;
+            for (float opposition : { 0.0f, 0.5f, 1.0f })
+            {
+                const float a = mirror * (-0.85f + 1.20f * opposition);
+                const float b = mirror * -0.70f * opposition;
+                for (int mcp = 0; mcp <= 10; ++mcp)
+                {
+                    for (int ip = 0; ip <= 10; ++ip)
+                    {
+                        std::array<float, kNumSensors> sensors{};
+                        sensors[0] = sensors[1] = opposition;
+                        sensors[2] = mcp / 10.0f;
+                        sensors[4] = ip / 10.0f;
+                        const float c = sensors[2] * 1.1f, d = sensors[4] * 1.2f;
+                        const auto hand = *model.reconstruct(sensors, side);
+                        // Endpoint reference independent of the opposed-flexion construction.
+                        const float y = -lengths[1] * std::sin(c) - lengths[2] * std::sin(c + d);
+                        const float z = -lengths[0] - lengths[1] * std::cos(c) - lengths[2] * std::cos(c + d);
+                        const float x = -std::sin(b) * y;
+                        const XrVector3f expected{ scale * (mirror * 0.025f + std::cos(a) * x + std::sin(a) * z),
+                                                   scale * (-0.005f + std::cos(b) * y),
+                                                   scale * (-0.020f - std::sin(a) * x + std::cos(a) * z) };
+                        check(distance(hand[5].pose.position, expected) < 1e-6f,
+                              "thumb endpoint is invariant for independent MCP/IP flexion");
+                        for (std::size_t bone = 0; bone < lengths.size(); ++bone)
+                        {
+                            const auto& root = hand[2 + bone].pose;
+                            const auto& end = hand[3 + bone].pose;
+                            const auto along_bone =
+                                oxr_utils::multiply_poses(root, { { 0, 0, 0, 1 }, { 0, 0, -scale * lengths[bone] } });
+                            check(distance(along_bone.position, end.position) < 1e-6f,
+                                  "thumb joint minus-Z axis follows its rigid bone");
+                            if (bone > 0)
+                            {
+                                const auto& parent = hand[1 + bone].pose.orientation;
+                                const auto relative = oxr_utils::multiply_poses(
+                                    { { -parent.x, -parent.y, -parent.z, parent.w }, { 0, 0, 0 } },
+                                    { root.orientation, { 0, 0, 0 } });
+                                const float angle = bone == 1 ? c : d;
+                                check(std::abs(relative.orientation.x - std::sin(angle / 2)) < 1e-6f &&
+                                          std::abs(relative.orientation.y) < 1e-6f &&
+                                          std::abs(relative.orientation.z) < 1e-6f &&
+                                          std::abs(relative.orientation.w - std::cos(angle / 2)) < 1e-6f,
+                                      "thumb flexion is positive local X on either hand");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 TEST_CASE("Cached controller wrist is inactive until stable tracked samples return", "[realhand_ffg_skeleton]")
 {
     constexpr std::int64_t frame_time_ns = 11'111'111;
