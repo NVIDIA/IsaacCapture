@@ -14,3 +14,14 @@ target_include_directories(sensing_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(sensing_backend_tests PRIVATE Catch2::Catch2WithMain)
 
 catch_discover_tests(sensing_backend_tests)
+
+# The buffer owner is header-only and SDK-free, tested against a fake port.
+add_executable(sensing_buffer_owner_tests
+    test_buffer_owner.cpp
+)
+
+target_include_directories(sensing_buffer_owner_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+target_link_libraries(sensing_buffer_owner_tests PRIVATE Catch2::Catch2WithMain Threads::Threads)
+
+catch_discover_tests(sensing_buffer_owner_tests)

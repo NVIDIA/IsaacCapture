@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Argus buffer-stream capture into NvBufSurface DMA-BUFs. The Argus calls follow the Jetson Multimedia API's
-// client-owned-buffer pattern. Built and run on an AGX Orin by a reviewer before the acquisition threads and the
-// bounded teardown were added; those have not been built or run.
+// client-owned-buffer pattern. Built and run on an AGX Orin by a reviewer before each camera's buffer stream was given
+// a single owner thread (buffer_owner.hpp); that structure and the bounded teardown have not been built or run.
 
 #include "argus_capture.hpp"
+
+#include "buffer_owner.hpp"
 
 #include <Argus/Argus.h>
 #include <Argus/BufferStream.h>
@@ -144,6 +146,7 @@ uint64_t clock_ns(clockid_t clock)
 // One NV12 DMA-BUF the camera writes into. Block-linear: only the hardware encoder reads it.
 struct CaptureBuffer
 {
+    uint32_t index = 0; ///< position in the camera's pool; names the buffer in the return mailbox
     int fd = -1;
     NvBufSurface* surface = nullptr;
     bool egl_mapped = false;
@@ -176,12 +179,10 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         /// Numbers frames whose capture has no metadata, so the consumer never mistakes them for one re-read frame.
         uint32_t fallback_sequence = 0;
 
-        /// This camera's acquisition thread: it blocks on the buffer stream, so a camera that delivers nothing
-        /// holds up no other camera. It keeps only the newest frame; a replaced one goes back to the camera.
-        std::thread worker;
-        std::mutex slot_mutex;
-        std::optional<CaptureFrame> latest; ///< guarded by slot_mutex
-        std::string error; ///< why the worker stopped, guarded by slot_mutex
+        /// The camera's buffer-stream calls, and the one thread that makes them (see BufferOwner). The owner is
+        /// declared last so it, and its thread, go before the port and the objects above.
+        std::unique_ptr<BufferPort> port;
+        std::unique_ptr<BufferOwner> owner;
     };
 
     // An initialised EGL display is released by this member whether construction completes or throws: a destructor
@@ -208,8 +209,8 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     std::vector<std::unique_ptr<Camera>> cameras;
     std::vector<CameraInfo> infos;
     std::map<uint32_t, Camera*> by_id;
-    bool running = false;
-    std::atomic<bool> stopping{ false };
+    bool started = false;
+    bool stopped = false;
 
     Impl(const ArgusConfig& config)
     {
@@ -247,6 +248,9 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
             camera->info = { index,         "argus" + std::to_string(index),      size.width(),
                              size.height(), 1e9 / static_cast<double>(period_ns), PixelKind::DmaBufNv12 };
             open(*camera, provider_iface, config.buffer_count);
+            camera->port = std::make_unique<Port>(*this, *camera);
+            camera->owner = std::make_unique<BufferOwner>(
+                *camera->port, config.buffer_count, std::chrono::nanoseconds(kAcquireTimeoutNs));
             infos.push_back(camera->info);
             by_id[index] = camera.get();
             cameras.push_back(std::move(camera));
@@ -256,9 +260,15 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     ~Impl()
     {
         stop();
-        // Destroying the Argus objects and the EGL display is SDK work too and can hang: one deadline covers all of it.
+        // Closing the owners, destroying the Argus objects and the EGL display is SDK work too and can hang: one
+        // deadline covers all of it.
         const StopWatchdog watchdog(kStopDeadline);
         g_active_call.camera.store(-1);
+        g_active_call.what.store("returning the last buffers");
+        // Every lease has been dropped by now (each keeps this object alive), so each owner returns its last buffers
+        // while the streams still exist, then ends.
+        for (auto& camera : cameras)
+            camera->owner->close();
         g_active_call.what.store("destroying the camera objects");
         for (auto& camera : cameras)
         {
@@ -336,6 +346,7 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                                                Argus::IEGLImageBufferSettings* egl_iface)
     {
         auto buffer = std::make_unique<CaptureBuffer>();
+        buffer->index = static_cast<uint32_t>(camera.pool.size());
         NvBufSurf::NvCommonAllocateParams params;
         std::memset(&params, 0, sizeof(params));
         params.memtag = NvBufSurfaceTag_CAMERA;
@@ -361,141 +372,155 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         return buffer;
     }
 
+    // Tied to the lifetime the issued frame leases keep alive; called once the shared_ptr exists.
+    void attach()
+    {
+        for (auto& camera : cameras)
+            camera->owner->set_keepalive(weak_from_this());
+    }
+
     void start()
     {
-        if (running)
-            return;
-        // Any failure below undoes everything started so far, so no thread or repeating session outlives it.
-        std::vector<Camera*> started;
-        stopping = false;
+        if (started)
+            throw std::logic_error("ArgusCapture: capture cannot be restarted; create a new instance");
+        started = true;
+        std::vector<Camera*> repeating;
         try
         {
             for (auto& camera : cameras)
             {
                 auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
                 check(session->repeat(camera->request.get()), "repeat");
-                started.push_back(camera.get());
+                repeating.push_back(camera.get());
             }
+            // Runtime ownership of each stream passes to its owner thread here; nothing above runs after this.
             for (auto& camera : cameras)
-            {
-                camera->error.clear();
-                camera->worker = std::thread([this, cam = camera.get()] { acquire_loop(*cam); });
-            }
+                camera->owner->start();
         }
         catch (...)
         {
-            teardown(started);
+            undo_start(repeating);
             throw;
         }
-        running = true;
     }
 
-    void stop()
+    // A failed start: end whichever owner threads began, then stop the sessions that were repeating. With the
+    // owners gone nothing else touches the streams, so the calls are made here.
+    void undo_start(const std::vector<Camera*>& repeating)
     {
-        if (!running)
-            return;
-        running = false;
-        std::vector<Camera*> all;
-        for (auto& camera : cameras)
-            all.push_back(camera.get());
-        teardown(all);
-    }
-
-    // The one teardown path, for stop() and for a failed start(), under one deadline: end the acquisition threads and
-    // return the frames they hold (a held frame's lease owns this Impl, so that cycle must always be broken here),
-    // then stop the sessions.
-    void teardown(const std::vector<Camera*>& sessions)
-    {
+        stopped = true;
         const StopWatchdog watchdog(kStopDeadline);
-        // Acquisition threads end within one acquire timeout; none may still hold a buffer when the sessions stop.
-        stopping = true;
         for (auto& camera : cameras)
-            if (camera->worker.joinable())
-                timed("joining the acquisition thread", camera->info.id,
-                      [&]
-                      {
-                          camera->worker.join();
-                          return 0;
-                      });
-        // Frames waiting in the slots go back to their streams first: an in-flight request may need a free buffer to
-        // finish, and waitForIdle would wait on it. Buffers the encoder still holds stay with it.
-        for (auto& camera : cameras)
-        {
-            std::optional<CaptureFrame> dropped;
-            {
-                std::lock_guard<std::mutex> lock(camera->slot_mutex);
-                dropped = std::move(camera->latest);
-                camera->latest.reset();
-            }
-            timed("returning a held frame", camera->info.id,
+            timed("ending the owner thread", camera->info.id,
                   [&]
                   {
-                      dropped.reset();
+                      camera->owner->close();
                       return 0;
                   });
-        }
-        // Stop every session before waiting on any, so one camera's slow stop does not delay the others'.
-        for (Camera* camera : sessions)
+        for (Camera* camera : repeating)
+            if (!stop_session(*camera))
+                fatal("a session did not go idle after stopRepeat", camera->info.id);
+    }
+
+    // Stops capture on every camera's owner thread: all are asked before any is waited for, so one camera's slow stop
+    // does not delay the others'. Frames the consumers still hold stay valid, and their buffers keep coming back.
+    void stop()
+    {
+        if (!started || stopped)
+            return;
+        stopped = true;
+        const StopWatchdog watchdog(kStopDeadline);
+        for (auto& camera : cameras)
+            camera->owner->request_stop();
+        for (auto& camera : cameras)
         {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            timed("stopRepeat", camera->info.id, [&] { return session->stopRepeat(); });
-        }
-        for (Camera* camera : sessions)
-        {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            const Argus::Status status =
-                timed("waitForIdle", camera->info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); });
+            // The owner's own idle wait is bounded by kIdleTimeoutNs; the margin covers its other work.
+            const bool ok = timed("waiting for the owner to stop capture", camera->info.id,
+                                  [&] {
+                                      return camera->owner->wait_stopped(std::chrono::nanoseconds(kIdleTimeoutNs) +
+                                                                         std::chrono::seconds(2));
+                                  });
             // The hardware may still own the session's buffers and a retry in this process would pile new sessions on
             // top of it. This executable is dedicated to the cameras, so a session that will not stop ends the
             // process and the service supervisor restarts it.
-            if (status != Argus::STATUS_OK)
+            if (!ok)
                 fatal("a session did not go idle after stopRepeat", camera->info.id);
         }
     }
 
-    // Worker thread: block for each frame, stamp it on arrival, and keep only the newest.
-    void acquire_loop(Camera& camera)
+    bool stop_session(Camera& camera)
     {
-        try
+        auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera.session);
+        timed("stopRepeat", camera.info.id, [&] { return session->stopRepeat(); });
+        return timed("waitForIdle", camera.info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); }) ==
+               Argus::STATUS_OK;
+    }
+
+    // The SDK calls of one camera's buffer stream. BufferOwner makes them all, on its one thread.
+    class Port : public BufferPort
+    {
+    public:
+        Port(Impl& impl, Camera& camera) : m_impl(impl), m_camera(camera)
         {
-            while (!stopping.load())
+        }
+
+        Acquired acquire(uint64_t timeout_ns) override
+        {
+            Acquired out;
+            Argus::Status status = Argus::STATUS_OK;
+            Argus::Buffer* buffer = m_camera.buffers->acquireBuffer(timeout_ns, &status);
+            if (!buffer)
             {
-                Argus::Status status = Argus::STATUS_OK;
-                Argus::Buffer* buffer = camera.buffers->acquireBuffer(kAcquireTimeoutNs, &status);
-                if (!buffer)
-                {
-                    if (status == Argus::STATUS_TIMEOUT)
-                        continue;
-                    if (!stopping.load())
-                        fail(camera,
-                             "Argus: acquireBuffer failed (status " + std::to_string(static_cast<int>(status)) + ")");
-                    return;
-                }
-                CaptureFrame frame = make_frame(camera, buffer);
-                std::optional<CaptureFrame> replaced;
-                {
-                    std::lock_guard<std::mutex> lock(camera.slot_mutex);
-                    replaced = std::move(camera.latest);
-                    camera.latest = std::move(frame);
-                }
-                // `replaced` is destroyed here, outside the lock: its lease returns the buffer to the camera.
+                if (status == Argus::STATUS_TIMEOUT)
+                    return out;
+                out.result = Result::Failed;
+                out.error = "Argus: acquireBuffer failed (status " + std::to_string(static_cast<int>(status)) + ")";
+                return out;
             }
+            auto* iface = Argus::interface_cast<Argus::IBuffer>(buffer);
+            const auto* data = iface ? static_cast<const CaptureBuffer*>(iface->getClientData()) : nullptr;
+            if (!data)
+            {
+                // Its slot is unknown, so it cannot go through the mailbox: give it straight back.
+                m_camera.buffers->releaseBuffer(buffer);
+                out.result = Result::Failed;
+                out.error = "Argus: a captured buffer carries no client data";
+                return out;
+            }
+            out.holds_buffer = true;
+            out.slot = data->index;
+            try
+            {
+                out.frame = m_impl.make_frame(m_camera, buffer, *data);
+                out.result = Result::Frame;
+            }
+            catch (const std::exception& e)
+            {
+                out.result = Result::Failed;
+                out.error = e.what();
+            }
+            return out;
         }
-        catch (const std::exception& e)
+
+        bool release(uint32_t slot) override
         {
-            fail(camera, e.what());
+            if (slot >= m_camera.pool.size())
+                return false;
+            return m_camera.buffers->releaseBuffer(m_camera.pool[slot]->argus.get()) == Argus::STATUS_OK;
         }
-    }
 
-    void fail(Camera& camera, const std::string& what)
-    {
-        std::lock_guard<std::mutex> lock(camera.slot_mutex);
-        if (camera.error.empty())
-            camera.error = what;
-    }
+        bool stop_capture() override
+        {
+            return m_impl.stop_session(m_camera);
+        }
 
-    // The frame for a buffer that has just arrived; its stamps are the arrival time.
-    CaptureFrame make_frame(Camera& camera, Argus::Buffer* buffer)
+    private:
+        Impl& m_impl;
+        Camera& m_camera;
+    };
+
+    // The frame for a buffer that has just arrived; its stamps are the arrival time. The owner adds the lease.
+    CaptureFrame make_frame(Camera& camera, Argus::Buffer* buffer, const CaptureBuffer& data)
     {
         CaptureFrame frame;
         frame.camera_id = camera.info.id;
@@ -505,7 +530,6 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         frame.unix_ns = clock_ns(CLOCK_REALTIME);
 
         auto* iface = Argus::interface_cast<Argus::IBuffer>(buffer);
-        const auto* data = static_cast<const CaptureBuffer*>(iface->getClientData());
         // The sensor's own timestamp, unscaled and in Argus's clock domain; the capture id numbers the frames.
         const auto* metadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iface->getMetadata());
         if (metadata)
@@ -517,17 +541,14 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         {
             frame.sequence = ++camera.fallback_sequence;
         }
-        frame.pixels = DmaBufNv12Pixels{ data->fd };
-
-        // The lease returns the buffer to the camera, and keeps the Argus objects alive until it does.
-        frame.lease = FrameLease([self = shared_from_this(), stream = camera.buffers, buffer]()
-                                 { stream->releaseBuffer(buffer); });
+        frame.pixels = DmaBufNv12Pixels{ data.fd };
         return frame;
     }
 };
 
 ArgusCapture::ArgusCapture(const ArgusConfig& config) : m_impl(std::make_shared<Impl>(config))
 {
+    m_impl->attach();
 }
 
 ArgusCapture::~ArgusCapture()
@@ -584,15 +605,8 @@ std::optional<CaptureFrame> ArgusCapture::acquire_latest(uint32_t camera_id)
     const auto found = m_impl->by_id.find(camera_id);
     if (found == m_impl->by_id.end())
         throw std::runtime_error("Argus: no camera " + std::to_string(camera_id));
-    Impl::Camera& camera = *found->second;
-
-    // The camera's own thread keeps the newest frame; take it, if there is one.
-    std::lock_guard<std::mutex> lock(camera.slot_mutex);
-    if (!camera.error.empty())
-        throw std::runtime_error(camera.error);
-    std::optional<CaptureFrame> frame = std::move(camera.latest);
-    camera.latest.reset();
-    return frame;
+    // The camera's owner thread keeps the newest frame; take it, if there is one.
+    return found->second->owner->take_latest();
 }
 
 } // namespace sensing
