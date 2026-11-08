@@ -83,6 +83,7 @@ public:
                 m_busy[slot] = true;
                 ++m_acquired[slot];
                 ++m_acquired_total;
+                m_events.push_back({ Event::Kind::Acquire, static_cast<uint32_t>(slot) });
                 produce = true;
                 if (m_fail_next)
                 {
@@ -115,6 +116,9 @@ public:
         Guard guard(*this);
         std::lock_guard<std::mutex> lock(m_mutex);
         ++m_release_calls;
+        m_events.push_back({ Event::Kind::Release, slot });
+        if (m_throw_on_release)
+            throw std::runtime_error("release threw");
         if (slot >= m_pool_size || !m_busy[slot])
         {
             ++m_bad_releases;
@@ -129,7 +133,9 @@ public:
     bool stop_capture() override
     {
         Guard guard(*this);
+        std::lock_guard<std::mutex> lock(m_mutex);
         ++m_stop_calls;
+        m_events.push_back({ Event::Kind::StopBegin, 0 });
         return m_stop_ok;
     }
 
@@ -152,6 +158,11 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_release_ok = v;
+    }
+    void set_throw_on_release(bool v)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_throw_on_release = v;
     }
     void set_stop_ok(bool v)
     {
@@ -183,6 +194,23 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_bad_releases;
+    }
+    /// Port calls in the order they happened, across all slots.
+    struct Event
+    {
+        enum class Kind
+        {
+            Acquire,
+            Release,
+            StopBegin,
+        };
+        Kind kind;
+        uint32_t slot;
+    };
+    std::vector<Event> events() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_events;
     }
     int stop_calls() const
     {
@@ -252,6 +280,8 @@ private:
     bool m_fail_next = false;
     bool m_release_ok = true;
     bool m_stop_ok = true;
+    bool m_throw_on_release = false;
+    std::vector<Event> m_events;
     uint64_t m_acquire_calls = 0;
     uint64_t m_acquired_total = 0;
     uint64_t m_released_total = 0;
@@ -653,4 +683,126 @@ TEST_CASE("the mailbox rejects a post beyond its capacity", "[buffer_owner]")
     std::vector<uint32_t> out;
     mailbox.take(out);
     CHECK(out == std::vector<uint32_t>{ 0, 1 });
+}
+
+TEST_CASE("stop returns the held frame's buffer before stop_capture begins", "[buffer_owner]")
+{
+    FakePort port(8);
+    port.set_budget(kUnlimited);
+    BufferOwner owner(port, 8, kWait);
+    owner.start();
+
+    // The consumer never takes a frame, so the latest one is always held by the owner.
+    REQUIRE(wait_until([&] { return port.released_total() >= 3; }));
+    owner.request_stop();
+    REQUIRE(owner.wait_stopped(kDeadline));
+
+    const auto events = port.events();
+    size_t stop_at = events.size();
+    for (size_t i = 0; i < events.size(); ++i)
+    {
+        if (events[i].kind == FakePort::Event::Kind::StopBegin)
+        {
+            stop_at = i;
+            break;
+        }
+    }
+    REQUIRE(stop_at < events.size());
+
+    // The last buffer acquired before the stop is the latest frame.
+    bool found_acquire = false;
+    uint32_t latest_slot = 0;
+    for (size_t i = 0; i < stop_at; ++i)
+    {
+        if (events[i].kind == FakePort::Event::Kind::Acquire)
+        {
+            found_acquire = true;
+            latest_slot = events[i].slot;
+        }
+    }
+    REQUIRE(found_acquire);
+    size_t acquired_before = 0;
+    size_t released_before = 0;
+    bool latest_released_first = false;
+    size_t last_acquire = 0;
+    for (size_t i = 0; i < stop_at; ++i)
+        if (events[i].kind == FakePort::Event::Kind::Acquire)
+            last_acquire = i;
+    for (size_t i = 0; i < stop_at; ++i)
+    {
+        acquired_before += events[i].kind == FakePort::Event::Kind::Acquire;
+        released_before += events[i].kind == FakePort::Event::Kind::Release;
+        if (i > last_acquire && events[i].kind == FakePort::Event::Kind::Release && events[i].slot == latest_slot)
+            latest_released_first = true;
+    }
+    CHECK(latest_released_first);
+    CHECK(released_before == acquired_before);
+    for (size_t i = stop_at + 1; i < events.size(); ++i)
+        CHECK(events[i].kind != FakePort::Event::Kind::Acquire);
+
+    owner.close();
+    CHECK(port.balanced());
+    CHECK(owner.rejected_returns() == 0);
+}
+
+TEST_CASE("a refused or throwing release keeps the buffer out and ends acquisition", "[buffer_owner]")
+{
+    constexpr size_t kPool = 4;
+    FakePort port(kPool);
+    port.set_budget(kUnlimited);
+
+    std::string expected;
+    SECTION("refused")
+    {
+        port.set_release_ok(false);
+        expected = "refused";
+    }
+    SECTION("throws")
+    {
+        port.set_throw_on_release(true);
+        expected = "release threw";
+    }
+
+    BufferOwner owner(port, kPool, kWait);
+    owner.start();
+    std::string what;
+    REQUIRE(take_throws(owner, &what));
+    CHECK_THAT(what, ContainsSubstring(expected));
+
+    // Let anything in flight finish; after that nothing more is acquired or released.
+    std::this_thread::sleep_for(50ms);
+    const uint64_t acquires = port.acquire_calls();
+    const uint64_t acquired = port.acquired_total();
+    const uint64_t releases = port.release_calls();
+    std::this_thread::sleep_for(150ms);
+    CHECK(port.acquire_calls() == acquires);
+    CHECK(port.release_calls() == releases);
+    CHECK(acquired <= kPool);
+    for (size_t i = 0; i < kPool; ++i)
+        CHECK(port.acquired(i) <= 1); // the refused slot is never handed out again
+    CHECK(port.release_calls() == 1); // the refused buffer is not retried
+    CHECK_THROWS_AS(owner.take_latest(), std::runtime_error);
+
+    owner.request_stop();
+    CHECK(owner.wait_stopped(kDeadline));
+    owner.close();
+    CHECK(port.acquire_calls() == acquires);
+}
+
+TEST_CASE("a refused release with a full pool does not over-acquire", "[buffer_owner]")
+{
+    // The stream has more slots than the owner's pool, so only the owner's own count can stop it.
+    constexpr size_t kPool = 2;
+    FakePort port(8);
+    port.set_budget(kUnlimited);
+    port.set_release_ok(false);
+    BufferOwner owner(port, kPool, kWait);
+    owner.start();
+    REQUIRE(take_throws(owner));
+    std::this_thread::sleep_for(50ms);
+    const uint64_t acquires = port.acquire_calls();
+    std::this_thread::sleep_for(100ms);
+    CHECK(port.acquire_calls() == acquires);
+    CHECK(port.acquired_total() <= kPool);
+    owner.close();
 }

@@ -223,7 +223,6 @@ private:
         std::vector<uint32_t> returned;
         returned.reserve(m_pool_size);
         bool stopped = false;
-        bool acquiring = true;
         for (;;)
         {
             drain(returned);
@@ -232,7 +231,10 @@ private:
                 break;
             if (command == Command::Stop && !stopped)
             {
+                // Return the held frame's buffer before the blocking idle wait: the owner cannot return anything while
+                // it is inside that wait.
                 clear_latest();
+                drain(returned);
                 bool ok = false;
                 try
                 {
@@ -247,7 +249,7 @@ private:
                 continue;
             }
             // Nothing to acquire into, or nothing more to acquire: wait for returns or a command instead.
-            if (stopped || !acquiring || m_outstanding >= m_pool_size)
+            if (stopped || !m_acquiring || m_outstanding >= m_pool_size)
             {
                 m_mailbox.wait(m_wait);
                 continue;
@@ -261,7 +263,7 @@ private:
             {
                 // A port reports failure through its result; a throw is a bug, and it took no buffer we know of.
                 fail(e.what());
-                acquiring = false;
+                m_acquiring = false;
                 continue;
             }
             if (got.holds_buffer)
@@ -273,7 +275,7 @@ private:
                 if (got.holds_buffer)
                     give_back(got.slot);
                 fail(got.error.empty() ? "the buffer stream failed" : got.error);
-                acquiring = false;
+                m_acquiring = false;
                 continue;
             }
             got.frame.lease = make_lease(got.slot);
@@ -290,18 +292,19 @@ private:
         drain(returned);
     }
 
+    // Returns every posted buffer to the stream. A buffer the stream refuses stays counted as out, and acquiring
+    // stops: the stream is failing and the pool no longer adds up.
     void drain(std::vector<uint32_t>& returned)
     {
         returned.clear();
         m_mailbox.take(returned);
         for (uint32_t slot : returned)
-            give_back(slot);
+            if (!give_back(slot))
+                m_acquiring = false;
     }
 
-    void give_back(uint32_t slot)
+    bool give_back(uint32_t slot)
     {
-        if (m_outstanding > 0)
-            --m_outstanding;
         bool ok = false;
         try
         {
@@ -310,10 +313,16 @@ private:
         catch (const std::exception& e)
         {
             fail(e.what());
-            return;
+            return false;
         }
         if (!ok)
+        {
             fail("the buffer stream refused a returned buffer");
+            return false;
+        }
+        if (m_outstanding > 0)
+            --m_outstanding;
+        return true;
     }
 
     void clear_latest()
@@ -328,7 +337,14 @@ private:
 
     FrameLease make_lease(uint32_t slot)
     {
-        return FrameLease([mailbox = &m_mailbox, keep = m_keepalive.lock(), slot]() { mailbox->post(slot); });
+        // The owner outlives its leases (see the class comment), so `this` is valid when a lease is dropped. A
+        // rejected post means a buffer came back twice: that breaks the pool count, so it fails the owner.
+        return FrameLease(
+            [this, keep = m_keepalive.lock(), slot]()
+            {
+                if (!m_mailbox.post(slot))
+                    fail("a buffer was returned twice");
+            });
     }
 
     void fail(const std::string& why)
@@ -358,6 +374,7 @@ private:
     std::thread m_thread;
 
     size_t m_outstanding = 0; ///< owner thread only: buffers acquired and not yet released
+    bool m_acquiring = true; ///< owner thread only: false once the stream has failed
 
     std::mutex m_state_mutex; ///< guards the members below
     std::condition_variable m_state_cv;
