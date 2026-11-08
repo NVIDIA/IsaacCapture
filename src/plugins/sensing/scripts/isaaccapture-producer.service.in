@@ -16,6 +16,12 @@ WorkingDirectory=@PREFIX@/current/plugins/sensing_camera
 Environment=LD_LIBRARY_PATH=@PREFIX@/current/plugins/sensing_camera
 @ENVIRONMENT@
 ExecStart=@EXEC_START@
+# A fatal exit (a camera session that will not stop ends the process) restarts the producer; a clean stop does not,
+# and the start limit keeps a producer that cannot start from restarting forever.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=5
 # The producer stops on SIGINT; systemd ends anything left in this cgroup after the timeout.
 KillSignal=SIGINT
 KillMode=control-group

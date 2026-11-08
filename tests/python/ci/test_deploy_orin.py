@@ -233,6 +233,20 @@ class UnitRenderTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=/opt/ic/current/plugins/sensing_camera", text)
         self.assertIsNone(re.search(r"@[A-Z_]+@", text))
 
+    def test_render_unit_restarts_on_failure_with_start_limit(self):
+        text = deploy_orin.render_unit({"args": [STREAM]}, "/opt/ic", "bob", "video")
+        lines = text.splitlines()
+        service = lines[lines.index("[Service]") + 1 :]
+        for line in (
+            "Restart=on-failure",
+            "RestartSec=5",
+            "StartLimitIntervalSec=120",
+            "StartLimitBurst=5",
+        ):
+            self.assertEqual(service.count(line), 1, line)
+        self.assertNotIn("Restart=always", lines)
+        self.assertIsNone(re.search(r"@[A-Z_]+@", text))
+
     def test_render_unit_env_lines_follow_ld_library_path_in_order(self):
         config = {"args": [STREAM], "env": {"ZED": "1", "ALPHA": "two"}}
         lines = deploy_orin.render_unit(config, "/opt/ic", "bob", "video").splitlines()
