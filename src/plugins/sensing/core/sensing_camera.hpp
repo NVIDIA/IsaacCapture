@@ -22,8 +22,8 @@ class LiveKitVideoOutput;
  * @brief Multi-sensor SENSING camera publisher.
  *
  * One CameraCapture owns every camera of the rig (SIPL's camera object is process-wide, so there is no
- * per-camera capture object to hold). Each update() polls every sensor's latest-frame mailbox and hands a new
- * frame to that sensor's LiveKit track. Geometry is per sensor and comes from the platform config.
+ * per-camera capture object to hold). Each update() polls every sensor's latest frame and hands a new frame
+ * to that sensor's LiveKit track. Geometry is per sensor and comes from the capture backend.
  */
 class SensingCamera
 {

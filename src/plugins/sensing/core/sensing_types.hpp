@@ -18,7 +18,7 @@ namespace sensing
 /// One captured sensor and the LiveKit track that carries it.
 struct StreamConfig
 {
-    /// SIPL pipeline index, validated against the platform config at startup.
+    /// The selected backend's own camera index (SIPL pipeline or Argus device), validated at startup.
     uint32_t sensor_id = 0;
     /// Name of the LiveKit camera track carrying this sensor.
     std::string livekit_track;

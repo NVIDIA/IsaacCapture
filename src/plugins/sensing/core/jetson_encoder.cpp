@@ -25,7 +25,7 @@ namespace sensing
 namespace
 {
 
-constexpr uint32_t kOutputBuffers = 6;
+constexpr uint32_t kOutputBuffers = kEncoderInputBuffers;
 constexpr uint32_t kCaptureBuffers = 6;
 
 void check(int ret, const char* what)

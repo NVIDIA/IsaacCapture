@@ -79,7 +79,7 @@ static StreamConfig parse_stream_arg(const std::string& arg)
     }
 
     if (!has_sensor || cfg.livekit_track.empty())
-        throw std::runtime_error("--add-stream requires sensor=<sipl-pipeline-index>,livekit=<track>");
+        throw std::runtime_error("--add-stream requires sensor=<camera-index>,livekit=<track>");
 
     return cfg;
 }
@@ -127,7 +127,7 @@ static void print_usage(const char* program_name)
     std::cout
         << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
         << "\n"
-        << "Publishes each SENSING sensor as a LiveKit camera track: SIPL capture, hardware H.264,\n"
+        << "Publishes each SENSING sensor as a LiveKit camera track: SIPL or Argus capture, hardware H.264,\n"
         << "sent as it is.\n"
         << "\n"
         << "Streams (repeat for each sensor):\n"
@@ -279,6 +279,15 @@ try
         }
     }
 
+    // This process captures and never renders, but EGL is on its critical path:
+    // NvBufSurfaceMapEglImage() is how a SIPL NvSciBufObj reaches CUDA, and
+    // libnvbufsurface resolves its own display via
+    // eglGetDisplay(EGL_DEFAULT_DISPLAY). GLVND hands out Mesa's EGL rather than
+    // Tegra's whenever DISPLAY names an X server Tegra EGL cannot drive (Xvfb,
+    // X11 forwarding), and that choice cannot be made per-call -- DISPLAY has to
+    // be gone from the environment before the first EGL call, including the probes below.
+    ::unsetenv("DISPLAY");
+
     // Each backend reports whether it can open the configured rig; probing parses configuration or enumerates
     // devices and opens no camera, so --list-sensors works on a rig whose cameras are unplugged.
     std::vector<uint32_t> camera_ids;
@@ -404,15 +413,6 @@ try
     if (camera_config.livekit.token.empty())
         throw std::runtime_error("--livekit-token-file " + livekit_token_file + " is empty");
 
-    // This process captures and never renders, but EGL is on its critical path:
-    // NvBufSurfaceMapEglImage() is how a SIPL NvSciBufObj reaches CUDA, and
-    // libnvbufsurface resolves its own display via
-    // eglGetDisplay(EGL_DEFAULT_DISPLAY). GLVND hands out Mesa's EGL rather than
-    // Tegra's whenever DISPLAY names an X server Tegra EGL cannot drive (Xvfb,
-    // X11 forwarding), and that choice cannot be made per-call -- DISPLAY has to
-    // be gone from the environment before the first EGL call.
-    ::unsetenv("DISPLAY");
-
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
@@ -428,9 +428,9 @@ try
     constexpr auto stats_interval = std::chrono::seconds(5);
     auto last_stats_time = std::chrono::steady_clock::now();
 
-    // SiplCamera::latest() is a non-blocking mailbox read, so poll at roughly
-    // twice the fastest sensor's frame rate rather than spinning a core flat
-    // out. Capture itself runs on SIPL's own threads and is unaffected.
+    // acquire_latest() is non-blocking, so poll at roughly twice the fastest sensor's frame rate rather than
+    // spinning a core flat out. SIPL captures on its own threads and is unaffected; with Argus this loop also
+    // returns buffers to the camera, so a stalled loop stalls capture.
     double fastest_fps = 30.0;
     for (const auto& c : cameras)
     {

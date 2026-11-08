@@ -14,6 +14,9 @@ namespace plugins
 namespace sensing
 {
 
+/// Input buffers the encoder holds; with DMA-BUF input each one pins a capture buffer until its index is reused.
+constexpr uint32_t kEncoderInputBuffers = 6;
+
 struct EncoderConfig
 {
     uint32_t width = 0;
