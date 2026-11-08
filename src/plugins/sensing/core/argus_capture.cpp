@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Argus buffer-stream capture into NvBufSurface DMA-BUFs. The Argus calls follow the Jetson Multimedia API's
-// client-owned-buffer pattern. Not built or run by the author: no Argus SDK or camera was available.
+// client-owned-buffer pattern. Built and run on an AGX Orin by a reviewer before the acquisition threads and the
+// bounded teardown were added; those have not been built or run.
 
 #include "inc/sensing_core/argus_capture.hpp"
 
@@ -10,13 +11,24 @@
 #include <Argus/BufferStream.h>
 #include <Argus/EGLImage.h>
 #include <EGL/egl.h>
+#include <log_bridge/logger.hpp>
 
 #include <NvBufSurface.h>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace plugins
 {
@@ -30,6 +42,78 @@ void check(Argus::Status status, const std::string& what)
 {
     if (status != Argus::STATUS_OK)
         throw std::runtime_error("Argus: " + what + " failed (status " + std::to_string(static_cast<int>(status)) + ")");
+}
+
+// A blocking acquire returns as soon as a frame arrives; the wait only bounds how long a camera with no frames
+// (an empty port) takes to notice a stop. The value needs validating on the Orin.
+constexpr uint64_t kAcquireTimeoutNs = 100'000'000;
+// Per camera, how long a stopped session may take to go idle before it is treated as hung.
+constexpr uint64_t kIdleTimeoutNs = 3'000'000'000;
+// Whole-teardown budget. An SDK call that never returns cannot be cancelled, so past this the process ends: no
+// cleanup may run on state the camera hardware could still be writing to.
+constexpr std::chrono::seconds kStopDeadline{ 20 };
+
+std::shared_ptr<isaaccapture::Logger> logger()
+{
+    return isaaccapture::Logger::get("isaaccapture.plugins.sensing.ArgusCapture");
+}
+
+// Ends the process if teardown does not finish in time. Scope it around the blocking SDK calls.
+class StopWatchdog
+{
+public:
+    explicit StopWatchdog(std::chrono::seconds limit)
+        : m_thread(
+              [this, limit]
+              {
+                  std::unique_lock<std::mutex> lock(m_mutex);
+                  if (!m_cv.wait_for(lock, limit, [this] { return m_done; }))
+                  {
+                      std::fprintf(stderr, "Argus: stopping the cameras did not finish; ending the process\n");
+                      std::_Exit(EXIT_FAILURE);
+                  }
+              })
+    {
+    }
+    StopWatchdog(const StopWatchdog&) = delete;
+    StopWatchdog& operator=(const StopWatchdog&) = delete;
+    ~StopWatchdog()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_done = true;
+        }
+        m_cv.notify_all();
+        m_thread.join();
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_done = false;
+    std::thread m_thread; // last: it starts using the members above
+};
+
+// Runs one blocking SDK call and names it in the log when it is slow, so a hang points at the exact call.
+template <typename F>
+auto timed(const char* what, uint32_t camera_id, F&& call)
+{
+    const auto begin = std::chrono::steady_clock::now();
+    auto finish = [&]
+    {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin);
+        if (ms.count() >= 1000)
+            logger()->warn("camera {}: {} took {} ms", camera_id, what, ms.count());
+    };
+    struct Guard
+    {
+        decltype(finish)& f;
+        ~Guard()
+        {
+            f();
+        }
+    } guard{ finish };
+    return call();
 }
 
 uint64_t clock_ns(clockid_t clock)
@@ -59,7 +143,7 @@ struct CaptureBuffer
 
 } // namespace
 
-struct ArgusCapture::Impl
+struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
 {
     struct Camera
     {
@@ -73,6 +157,15 @@ struct ArgusCapture::Impl
         std::vector<std::unique_ptr<CaptureBuffer>> pool;
         /// Numbers frames whose capture has no metadata, so the consumer never mistakes them for one re-read frame.
         uint32_t fallback_sequence = 0;
+
+        /// This camera's acquisition thread: it blocks on the buffer stream, so a camera that delivers nothing
+        /// holds up no other camera. It keeps only the newest frame; a replaced one goes back to the camera.
+        std::thread worker;
+        std::mutex slot_mutex;
+        std::optional<CaptureFrame> latest; ///< guarded by slot_mutex
+        std::string error; ///< why the worker stopped, guarded by slot_mutex
+        /// The session did not go idle in time: its buffers may still be written, so they are never freed.
+        bool unclean = false;
     };
 
     // An initialised EGL display is released by this member whether construction completes or throws: a destructor
@@ -96,6 +189,7 @@ struct ArgusCapture::Impl
     std::vector<CameraInfo> infos;
     std::map<uint32_t, Camera*> by_id;
     bool running = false;
+    std::atomic<bool> stopping{ false };
 
     Impl(const ArgusConfig& config)
     {
@@ -142,14 +236,30 @@ struct ArgusCapture::Impl
     ~Impl()
     {
         stop();
+        bool any_unclean = false;
         for (auto& camera : cameras)
         {
+            if (camera->unclean)
+            {
+                // The hardware may still be writing these buffers: leak them rather than free them.
+                any_unclean = true;
+                static_cast<void>(camera.release());
+                continue;
+            }
             camera->request.reset();
             camera->pool.clear(); // Argus buffers, then the DMA-BUFs behind them
             camera->stream.reset();
             camera->session.reset();
         }
         cameras.clear();
+        if (any_unclean)
+        {
+            // The provider and EGL display back the leaked objects, so they stay too.
+            logger()->error("a camera did not stop; its capture buffers are left allocated until the process exits");
+            static_cast<void>(provider.release());
+            egl.handle = EGL_NO_DISPLAY;
+            return;
+        }
         provider.reset();
         // `egl` terminates the display when the members are destroyed, after the Argus objects above.
     }
@@ -247,26 +357,51 @@ struct ArgusCapture::Impl
         if (running)
             return;
         // A camera that fails to start must not leave the ones before it repeating: stop what was started, then fail.
-        std::vector<Argus::ICaptureSession*> started;
+        std::vector<Camera*> started;
         try
         {
             for (auto& camera : cameras)
             {
                 auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
                 check(session->repeat(camera->request.get()), "repeat");
-                started.push_back(session);
+                started.push_back(camera.get());
             }
         }
         catch (...)
         {
-            for (auto* session : started)
-            {
-                session->stopRepeat();
-                session->waitForIdle();
-            }
+            stop_sessions(started);
             throw;
         }
+        stopping = false;
+        for (auto& camera : cameras)
+        {
+            camera->error.clear();
+            camera->worker = std::thread([this, cam = camera.get()] { acquire_loop(*cam); });
+        }
         running = true;
+    }
+
+    // Stops every session before waiting on any, so one camera's slow stop does not delay the others'.
+    void stop_sessions(const std::vector<Camera*>& targets)
+    {
+        const StopWatchdog watchdog(kStopDeadline);
+        for (Camera* camera : targets)
+        {
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
+            timed("stopRepeat", camera->info.id, [&] { return session->stopRepeat(); });
+        }
+        for (Camera* camera : targets)
+        {
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
+            const Argus::Status status =
+                timed("waitForIdle", camera->info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); });
+            if (status != Argus::STATUS_OK)
+            {
+                camera->unclean = true;
+                logger()->error(
+                    "camera {}: the session did not go idle (status {})", camera->info.id, static_cast<int>(status));
+            }
+        }
     }
 
     void stop()
@@ -274,12 +409,100 @@ struct ArgusCapture::Impl
         if (!running)
             return;
         running = false;
+        // Acquisition threads end within one acquire timeout; none may still hold a buffer when the sessions stop.
+        stopping = true;
+        {
+            const StopWatchdog watchdog(kStopDeadline);
+            for (auto& camera : cameras)
+                if (camera->worker.joinable())
+                    camera->worker.join();
+        }
+        std::vector<Camera*> all;
+        for (auto& camera : cameras)
+            all.push_back(camera.get());
+        stop_sessions(all);
+        // Frames still held in the slots go back to their streams now that the sessions are idle.
         for (auto& camera : cameras)
         {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            session->stopRepeat();
-            session->waitForIdle();
+            std::optional<CaptureFrame> dropped;
+            {
+                std::lock_guard<std::mutex> lock(camera->slot_mutex);
+                dropped = std::move(camera->latest);
+                camera->latest.reset();
+            }
         }
+    }
+
+    // Worker thread: block for each frame, stamp it on arrival, and keep only the newest.
+    void acquire_loop(Camera& camera)
+    {
+        try
+        {
+            while (!stopping.load())
+            {
+                Argus::Status status = Argus::STATUS_OK;
+                Argus::Buffer* buffer = camera.buffers->acquireBuffer(kAcquireTimeoutNs, &status);
+                if (!buffer)
+                {
+                    if (status == Argus::STATUS_TIMEOUT)
+                        continue;
+                    if (!stopping.load())
+                        fail(camera,
+                             "Argus: acquireBuffer failed (status " + std::to_string(static_cast<int>(status)) + ")");
+                    return;
+                }
+                CaptureFrame frame = make_frame(camera, buffer);
+                std::optional<CaptureFrame> replaced;
+                {
+                    std::lock_guard<std::mutex> lock(camera.slot_mutex);
+                    replaced = std::move(camera.latest);
+                    camera.latest = std::move(frame);
+                }
+                // `replaced` is destroyed here, outside the lock: its lease returns the buffer to the camera.
+            }
+        }
+        catch (const std::exception& e)
+        {
+            fail(camera, e.what());
+        }
+    }
+
+    void fail(Camera& camera, const std::string& what)
+    {
+        std::lock_guard<std::mutex> lock(camera.slot_mutex);
+        if (camera.error.empty())
+            camera.error = what;
+    }
+
+    // The frame for a buffer that has just arrived; its stamps are the arrival time.
+    CaptureFrame make_frame(Camera& camera, Argus::Buffer* buffer)
+    {
+        CaptureFrame frame;
+        frame.camera_id = camera.info.id;
+        frame.width = camera.info.width;
+        frame.height = camera.info.height;
+        frame.monotonic_ns = clock_ns(CLOCK_MONOTONIC);
+        frame.unix_ns = clock_ns(CLOCK_REALTIME);
+
+        auto* iface = Argus::interface_cast<Argus::IBuffer>(buffer);
+        const auto* data = static_cast<const CaptureBuffer*>(iface->getClientData());
+        // The sensor's own timestamp, unscaled and in Argus's clock domain; the capture id numbers the frames.
+        const auto* metadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iface->getMetadata());
+        if (metadata)
+        {
+            frame.sensor_time = metadata->getSensorTimestamp();
+            frame.sequence = metadata->getCaptureId();
+        }
+        else
+        {
+            frame.sequence = ++camera.fallback_sequence;
+        }
+        frame.pixels = DmaBufNv12Pixels{ data->fd };
+
+        // The lease returns the buffer to the camera, and keeps the Argus objects alive until it does.
+        frame.lease = FrameLease([self = shared_from_this(), stream = camera.buffers, buffer]()
+                                 { stream->releaseBuffer(buffer); });
+        return frame;
     }
 };
 
@@ -343,55 +566,12 @@ std::optional<CaptureFrame> ArgusCapture::acquire_latest(uint32_t camera_id)
         throw std::runtime_error("Argus: no camera " + std::to_string(camera_id));
     Impl::Camera& camera = *found->second;
 
-    // Take everything that has arrived and keep the newest: older frames are returned to the camera at once.
-    // At most one pass over the capture pool per call, so a continuously refilled stream cannot hold this call.
-    Argus::Buffer* newest = nullptr;
-    for (size_t taken = 0; taken < camera.pool.size(); ++taken)
-    {
-        Argus::Status status = Argus::STATUS_OK;
-        Argus::Buffer* buffer = camera.buffers->acquireBuffer(0, &status);
-        if (!buffer)
-        {
-            if (status != Argus::STATUS_TIMEOUT)
-            {
-                if (newest)
-                    camera.buffers->releaseBuffer(newest); // do not leak the frame already taken
-                throw std::runtime_error("Argus: acquireBuffer failed (status " +
-                                         std::to_string(static_cast<int>(status)) + ")");
-            }
-            break;
-        }
-        if (newest)
-            camera.buffers->releaseBuffer(newest);
-        newest = buffer;
-    }
-    if (!newest)
-        return std::nullopt;
-
-    CaptureFrame frame;
-    frame.camera_id = camera_id;
-    frame.width = camera.info.width;
-    frame.height = camera.info.height;
-    frame.monotonic_ns = clock_ns(CLOCK_MONOTONIC);
-    frame.unix_ns = clock_ns(CLOCK_REALTIME);
-
-    auto* iface = Argus::interface_cast<Argus::IBuffer>(newest);
-    const auto* data = static_cast<const CaptureBuffer*>(iface->getClientData());
-    // The sensor's own timestamp, unscaled and in Argus's clock domain; the capture id numbers the frames.
-    const auto* metadata = Argus::interface_cast<const Argus::ICaptureMetadata>(iface->getMetadata());
-    if (metadata)
-    {
-        frame.sensor_time = metadata->getSensorTimestamp();
-        frame.sequence = metadata->getCaptureId();
-    }
-    else
-    {
-        frame.sequence = ++camera.fallback_sequence;
-    }
-    frame.pixels = DmaBufNv12Pixels{ data->fd };
-
-    // The lease returns the buffer to the camera, and keeps the Argus objects alive until it does.
-    frame.lease = FrameLease([impl = m_impl, stream = camera.buffers, newest]() { stream->releaseBuffer(newest); });
+    // The camera's own thread keeps the newest frame; take it, if there is one.
+    std::lock_guard<std::mutex> lock(camera.slot_mutex);
+    if (!camera.error.empty())
+        throw std::runtime_error(camera.error);
+    std::optional<CaptureFrame> frame = std::move(camera.latest);
+    camera.latest.reset();
     return frame;
 }
 
