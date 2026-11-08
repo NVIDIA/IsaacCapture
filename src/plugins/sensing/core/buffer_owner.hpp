@@ -121,8 +121,11 @@ public:
     virtual Acquired acquire(uint64_t timeout_ns) = 0;
     /// Gives the buffer in `slot` back to the stream. False: the stream refused it.
     virtual bool release(uint32_t slot) = 0;
-    /// Stops capture and waits for it to go idle. False: it did not.
+    /// Stops new captures from starting (no waiting). False: it could not.
     virtual bool stop_capture() = 0;
+    /// Waits for capture that was stopped to go idle. The owner calls it once every buffer is back, so the wait
+    /// never depends on a buffer a consumer still holds. False: it did not go idle.
+    virtual bool wait_idle() = 0;
 };
 
 /**
@@ -130,8 +133,9 @@ public:
  *
  * The thread blocks on the port's finite acquire, stamps nothing itself, and replaces the single latest frame; a
  * replaced frame goes back through the same mailbox as any other. When every buffer is out it waits on the mailbox
- * instead of in an acquire that needs a returned buffer. Stopping has two parts: stop() ends capture and clears
- * the latest frame but keeps returning buffers; close() ends the thread, after draining the mailbox. Frames handed
+ * instead of in an acquire that needs a returned buffer. Stopping has two parts: request_stop() stops new captures and
+ * clears the latest frame but keeps returning buffers; close() ends the thread after draining the mailbox, and only
+ * then waits for the stream to go idle. Frames handed
  * out stay valid across both; the owner must outlive every lease it issued, which `keepalive` can tie to a larger
  * object.
  */
@@ -203,6 +207,13 @@ public:
         std::optional<CaptureFrame> frame = std::move(m_latest);
         m_latest.reset();
         return frame;
+    }
+
+    /// After close(): every buffer was returned and, if capture was stopped, the stream went idle with nothing out.
+    bool closed_cleanly() const
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        return m_closed_clean;
     }
 
     uint64_t rejected_returns() const
@@ -287,9 +298,31 @@ private:
             }
             // `replaced` goes out of scope here, outside the lock: its lease posts the buffer back.
         }
-        drain(returned); // every posted buffer goes back before the thread ends
+        // The thread is ending: every posted buffer goes back, then (if capture was stopped) the stream must go idle
+        // with nothing out. A buffer still out, or a stream that will not go idle, is reported to close()'s caller.
+        drain(returned);
         clear_latest();
         drain(returned);
+        bool clean = m_outstanding == 0;
+        if (stopped)
+        {
+            bool idle = false;
+            try
+            {
+                idle = m_port.wait_idle();
+            }
+            catch (const std::exception& e)
+            {
+                fail(e.what());
+            }
+            if (!idle)
+                fail("the buffer stream did not go idle");
+            clean = clean && idle;
+            drain(returned);
+            clean = clean && m_outstanding == 0;
+        }
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_closed_clean = clean;
     }
 
     // Returns every posted buffer to the stream. A buffer the stream refuses stays counted as out, and acquiring
@@ -376,12 +409,13 @@ private:
     size_t m_outstanding = 0; ///< owner thread only: buffers acquired and not yet released
     bool m_acquiring = true; ///< owner thread only: false once the stream has failed
 
-    std::mutex m_state_mutex; ///< guards the members below
+    mutable std::mutex m_state_mutex; ///< guards the members below
     std::condition_variable m_state_cv;
     std::optional<CaptureFrame> m_latest;
     std::string m_error;
     bool m_stop_done = false;
     bool m_stop_ok = false;
+    bool m_closed_clean = true; ///< set by the owner thread as it ends; true if no thread ever ran
 };
 
 } // namespace sensing
