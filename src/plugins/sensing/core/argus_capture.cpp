@@ -442,7 +442,8 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                                   });
             // The hardware may still own the session's buffers and a retry in this process would pile new sessions on
             // top of it. This executable is dedicated to the cameras, so a session that will not stop ends the
-            // process and the service supervisor restarts it.
+            // process. Starting it again is the supervisor's job; the deployed unit sets no Restart=, so today that
+            // is a manual restart.
             if (!ok)
                 fatal("a session did not go idle after stopRepeat", camera->info.id);
         }
