@@ -58,6 +58,14 @@ std::shared_ptr<isaaccapture::Logger> logger()
     return isaaccapture::Logger::get("isaaccapture.plugins.sensing.ArgusCapture");
 }
 
+// The SDK call teardown is in, recorded before the call is made so a call that never returns is still named.
+struct ActiveCall
+{
+    std::atomic<const char*> what{ nullptr };
+    std::atomic<int64_t> camera{ -1 };
+};
+ActiveCall g_active_call;
+
 // Ends the process if teardown does not finish in time. Scope it around the blocking SDK calls.
 class StopWatchdog
 {
@@ -69,7 +77,10 @@ public:
                   std::unique_lock<std::mutex> lock(m_mutex);
                   if (!m_cv.wait_for(lock, limit, [this] { return m_done; }))
                   {
-                      std::fprintf(stderr, "Argus: stopping the cameras did not finish; ending the process\n");
+                      const char* what = g_active_call.what.load();
+                      std::fprintf(stderr,
+                                   "Argus: teardown did not finish while in %s (camera %lld); ending the process\n",
+                                   what ? what : "an unknown step", static_cast<long long>(g_active_call.camera.load()));
                       std::_Exit(EXIT_FAILURE);
                   }
               })
@@ -96,23 +107,25 @@ private:
 
 // Runs one blocking SDK call and names it in the log when it is slow, so a hang points at the exact call.
 template <typename F>
-auto timed(const char* what, uint32_t camera_id, F&& call)
+auto timed(const char* what, int64_t camera_id, F&& call)
 {
+    g_active_call.camera.store(camera_id);
+    g_active_call.what.store(what);
     const auto begin = std::chrono::steady_clock::now();
-    auto finish = [&]
-    {
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin);
-        if (ms.count() >= 1000)
-            logger()->warn("camera {}: {} took {} ms", camera_id, what, ms.count());
-    };
     struct Guard
     {
-        decltype(finish)& f;
+        const char* what;
+        int64_t camera_id;
+        std::chrono::steady_clock::time_point begin;
         ~Guard()
         {
-            f();
+            g_active_call.what.store(nullptr);
+            const auto ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin);
+            if (ms.count() >= 1000)
+                logger()->warn("camera {}: {} took {} ms", camera_id, what, ms.count());
         }
-    } guard{ finish };
+    } guard{ what, camera_id, begin };
     return call();
 }
 
@@ -236,6 +249,10 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     ~Impl()
     {
         stop();
+        // Destroying the Argus objects is SDK work too, and can hang: it gets its own whole-step deadline.
+        const StopWatchdog watchdog(kStopDeadline);
+        g_active_call.camera.store(-1);
+        g_active_call.what.store("destroying the camera objects");
         bool any_unclean = false;
         for (auto& camera : cameras)
         {
@@ -369,22 +386,37 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         }
         catch (...)
         {
+            const StopWatchdog watchdog(kStopDeadline);
             stop_sessions(started);
             throw;
         }
         stopping = false;
-        for (auto& camera : cameras)
+        // Worker creation can fail too: undo whatever was started, so no thread outlives its camera.
+        try
         {
-            camera->error.clear();
-            camera->worker = std::thread([this, cam = camera.get()] { acquire_loop(*cam); });
+            for (auto& camera : cameras)
+            {
+                camera->error.clear();
+                camera->worker = std::thread([this, cam = camera.get()] { acquire_loop(*cam); });
+            }
+        }
+        catch (...)
+        {
+            const StopWatchdog watchdog(kStopDeadline);
+            stopping = true;
+            for (auto& camera : cameras)
+                if (camera->worker.joinable())
+                    camera->worker.join();
+            stop_sessions(started);
+            throw;
         }
         running = true;
     }
 
     // Stops every session before waiting on any, so one camera's slow stop does not delay the others'.
+    // Runs under the caller's teardown deadline.
     void stop_sessions(const std::vector<Camera*>& targets)
     {
-        const StopWatchdog watchdog(kStopDeadline);
         for (Camera* camera : targets)
         {
             auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
@@ -409,19 +441,20 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         if (!running)
             return;
         running = false;
+        // One deadline covers the whole teardown, including returning frames to their streams.
+        const StopWatchdog watchdog(kStopDeadline);
         // Acquisition threads end within one acquire timeout; none may still hold a buffer when the sessions stop.
         stopping = true;
-        {
-            const StopWatchdog watchdog(kStopDeadline);
-            for (auto& camera : cameras)
-                if (camera->worker.joinable())
-                    camera->worker.join();
-        }
-        std::vector<Camera*> all;
         for (auto& camera : cameras)
-            all.push_back(camera.get());
-        stop_sessions(all);
-        // Frames still held in the slots go back to their streams now that the sessions are idle.
+            if (camera->worker.joinable())
+                timed("joining the acquisition thread", camera->info.id,
+                      [&]
+                      {
+                          camera->worker.join();
+                          return 0;
+                      });
+        // Frames waiting in the slots go back to their streams first: an in-flight request may need a free buffer to
+        // finish, and waitForIdle would wait on it. Buffers the encoder still holds stay with it.
         for (auto& camera : cameras)
         {
             std::optional<CaptureFrame> dropped;
@@ -430,7 +463,17 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                 dropped = std::move(camera->latest);
                 camera->latest.reset();
             }
+            timed("returning a held frame", camera->info.id,
+                  [&]
+                  {
+                      dropped.reset();
+                      return 0;
+                  });
         }
+        std::vector<Camera*> all;
+        for (auto& camera : cameras)
+            all.push_back(camera.get());
+        stop_sessions(all);
     }
 
     // Worker thread: block for each frame, stamp it on arrival, and keep only the newest.
