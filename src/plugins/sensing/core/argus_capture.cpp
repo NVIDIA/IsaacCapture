@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace plugins
@@ -66,6 +67,12 @@ struct ActiveCall
 };
 ActiveCall g_active_call;
 
+[[noreturn]] void fatal(const char* what, int64_t camera_id)
+{
+    std::fprintf(stderr, "Argus: %s (camera %lld); ending the process\n", what, static_cast<long long>(camera_id));
+    std::_Exit(EXIT_FAILURE);
+}
+
 // Ends the process if teardown does not finish in time. Scope it around the blocking SDK calls.
 class StopWatchdog
 {
@@ -78,10 +85,8 @@ public:
                   if (!m_cv.wait_for(lock, limit, [this] { return m_done; }))
                   {
                       const char* what = g_active_call.what.load();
-                      std::fprintf(stderr,
-                                   "Argus: teardown did not finish while in %s (camera %lld); ending the process\n",
-                                   what ? what : "an unknown step", static_cast<long long>(g_active_call.camera.load()));
-                      std::_Exit(EXIT_FAILURE);
+                      fatal((std::string("teardown did not finish in ") + (what ? what : "an unknown step")).c_str(),
+                            g_active_call.camera.load());
                   }
               })
     {
@@ -177,8 +182,6 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         std::mutex slot_mutex;
         std::optional<CaptureFrame> latest; ///< guarded by slot_mutex
         std::string error; ///< why the worker stopped, guarded by slot_mutex
-        /// The session did not go idle in time: its buffers may still be written, so they are never freed.
-        bool unclean = false;
     };
 
     // An initialised EGL display is released by this member whether construction completes or throws: a destructor
@@ -191,8 +194,12 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         EglDisplay& operator=(const EglDisplay&) = delete;
         ~EglDisplay()
         {
+            terminate();
+        }
+        void terminate()
+        {
             if (handle != EGL_NO_DISPLAY)
-                eglTerminate(handle);
+                eglTerminate(std::exchange(handle, EGL_NO_DISPLAY));
         }
     };
 
@@ -249,36 +256,21 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     ~Impl()
     {
         stop();
-        // Destroying the Argus objects is SDK work too, and can hang: it gets its own whole-step deadline.
+        // Destroying the Argus objects and the EGL display is SDK work too and can hang: one deadline covers all of it.
         const StopWatchdog watchdog(kStopDeadline);
         g_active_call.camera.store(-1);
         g_active_call.what.store("destroying the camera objects");
-        bool any_unclean = false;
         for (auto& camera : cameras)
         {
-            if (camera->unclean)
-            {
-                // The hardware may still be writing these buffers: leak them rather than free them.
-                any_unclean = true;
-                static_cast<void>(camera.release());
-                continue;
-            }
             camera->request.reset();
             camera->pool.clear(); // Argus buffers, then the DMA-BUFs behind them
             camera->stream.reset();
             camera->session.reset();
         }
         cameras.clear();
-        if (any_unclean)
-        {
-            // The provider and EGL display back the leaked objects, so they stay too.
-            logger()->error("a camera did not stop; its capture buffers are left allocated until the process exits");
-            static_cast<void>(provider.release());
-            egl.handle = EGL_NO_DISPLAY;
-            return;
-        }
         provider.reset();
-        // `egl` terminates the display when the members are destroyed, after the Argus objects above.
+        g_active_call.what.store("terminating the EGL display");
+        egl.terminate(); // after the Argus objects above; the member's destructor then has nothing left to do
     }
 
     static Argus::SensorMode* sensor_mode(Argus::CameraDevice* device, uint32_t index)
@@ -373,8 +365,9 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     {
         if (running)
             return;
-        // A camera that fails to start must not leave the ones before it repeating: stop what was started, then fail.
+        // Any failure below undoes everything started so far, so no thread or repeating session outlives it.
         std::vector<Camera*> started;
+        stopping = false;
         try
         {
             for (auto& camera : cameras)
@@ -383,17 +376,6 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                 check(session->repeat(camera->request.get()), "repeat");
                 started.push_back(camera.get());
             }
-        }
-        catch (...)
-        {
-            const StopWatchdog watchdog(kStopDeadline);
-            stop_sessions(started);
-            throw;
-        }
-        stopping = false;
-        // Worker creation can fail too: undo whatever was started, so no thread outlives its camera.
-        try
-        {
             for (auto& camera : cameras)
             {
                 camera->error.clear();
@@ -402,38 +384,10 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         }
         catch (...)
         {
-            const StopWatchdog watchdog(kStopDeadline);
-            stopping = true;
-            for (auto& camera : cameras)
-                if (camera->worker.joinable())
-                    camera->worker.join();
-            stop_sessions(started);
+            teardown(started);
             throw;
         }
         running = true;
-    }
-
-    // Stops every session before waiting on any, so one camera's slow stop does not delay the others'.
-    // Runs under the caller's teardown deadline.
-    void stop_sessions(const std::vector<Camera*>& targets)
-    {
-        for (Camera* camera : targets)
-        {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            timed("stopRepeat", camera->info.id, [&] { return session->stopRepeat(); });
-        }
-        for (Camera* camera : targets)
-        {
-            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
-            const Argus::Status status =
-                timed("waitForIdle", camera->info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); });
-            if (status != Argus::STATUS_OK)
-            {
-                camera->unclean = true;
-                logger()->error(
-                    "camera {}: the session did not go idle (status {})", camera->info.id, static_cast<int>(status));
-            }
-        }
     }
 
     void stop()
@@ -441,7 +395,17 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         if (!running)
             return;
         running = false;
-        // One deadline covers the whole teardown, including returning frames to their streams.
+        std::vector<Camera*> all;
+        for (auto& camera : cameras)
+            all.push_back(camera.get());
+        teardown(all);
+    }
+
+    // The one teardown path, for stop() and for a failed start(), under one deadline: end the acquisition threads and
+    // return the frames they hold (a held frame's lease owns this Impl, so that cycle must always be broken here),
+    // then stop the sessions.
+    void teardown(const std::vector<Camera*>& sessions)
+    {
         const StopWatchdog watchdog(kStopDeadline);
         // Acquisition threads end within one acquire timeout; none may still hold a buffer when the sessions stop.
         stopping = true;
@@ -470,10 +434,23 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                       return 0;
                   });
         }
-        std::vector<Camera*> all;
-        for (auto& camera : cameras)
-            all.push_back(camera.get());
-        stop_sessions(all);
+        // Stop every session before waiting on any, so one camera's slow stop does not delay the others'.
+        for (Camera* camera : sessions)
+        {
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
+            timed("stopRepeat", camera->info.id, [&] { return session->stopRepeat(); });
+        }
+        for (Camera* camera : sessions)
+        {
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(camera->session);
+            const Argus::Status status =
+                timed("waitForIdle", camera->info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); });
+            // The hardware may still own the session's buffers and a retry in this process would pile new sessions on
+            // top of it. This executable is dedicated to the cameras, so a session that will not stop ends the
+            // process and the service supervisor restarts it.
+            if (status != Argus::STATUS_OK)
+                fatal("a session did not go idle after stopRepeat", camera->info.id);
+        }
     }
 
     // Worker thread: block for each frame, stamp it on arrival, and keep only the newest.

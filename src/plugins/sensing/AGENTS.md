@@ -21,3 +21,8 @@ Container preview must carry the desktop display and authorization into the imag
 
 Support SSH launch with a local DISPLAY: when XAUTHORITY is unset, check the
 current user's GDM authority file as well as ~/.Xauthority.
+
+A frame lease keeps its capture backend alive, so a held frame is an ownership
+cycle. Every cleanup path, including a failed start,
+must join the worker threads and drop the held frames, not only normal stop.
+A camera session that will not stop ends the process; do not retry in-process.
