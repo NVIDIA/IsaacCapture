@@ -169,14 +169,10 @@ struct LiveKitVideoOutput::Impl
         if (failed_flag.load())
             return;
 
-        // Pace on the capture clock, so poll jitter does not drop a frame that is due. A tenth of a
-        // period of slack lets 60 fps capture feed a 30 fps track every second capture.
-        if (have_last && frame.monotonic_ns < last_accepted_ns + period_ns * 9 / 10)
-        {
-            ++paced_out;
-            return;
-        }
-
+        // Pace on the clock the frame is stamped with: the sensor's capture time when that is the published basis,
+        // otherwise the time the camera backend handed the frame over. Either way it is not the poll time, so poll
+        // jitter does not drop a frame that is due.
+        uint64_t pace_ns = frame.monotonic_ns;
         if (config.timestamp_basis == TimestampBasis::SensorCaptureMonotonic)
         {
             try
@@ -188,11 +184,21 @@ struct LiveKitVideoOutput::Impl
                 fail(e.what());
                 return;
             }
+            pace_ns = frame.capture_monotonic_ns;
+        }
+        // A clock that steps back would otherwise hold every frame until it caught up: restart pacing instead.
+        if (have_last && pace_ns < last_accepted_ns)
+            have_last = false;
+        // A tenth of a period of slack lets 60 fps capture feed a 30 fps track every second capture.
+        if (have_last && pace_ns < last_accepted_ns + period_ns * 9 / 10)
+        {
+            ++paced_out;
+            return;
         }
 
         if (dma)
         {
-            const uint64_t accepted_ns = frame.monotonic_ns;
+            const uint64_t accepted_ns = pace_ns;
             // A frame still waiting is replaced by this newer one. Its lease is released after the lock is dropped:
             // that is a camera API call, and must not run inside the section the worker waits on.
             std::optional<CaptureFrame> replaced_frame;
@@ -254,7 +260,7 @@ struct LiveKitVideoOutput::Impl
         }
         ++snapshots;
         have_last = true;
-        last_accepted_ns = frame.monotonic_ns;
+        last_accepted_ns = pace_ns;
         wake.notify_one();
     }
 
