@@ -72,6 +72,9 @@ SensingCamera::SensingCamera(const SensingConfig& config,
             throw std::runtime_error(oss.str());
         }
         LiveKitVideoOutput::validate_geometry(found->width, found->height, config.livekit.scale_div);
+        if (found->pixels == PixelKind::DmaBufNv12 && config.livekit.scale_div != 1)
+            throw std::runtime_error("sensor " + std::to_string(found->id) +
+                                     " delivers DMA-BUF frames, which cannot be reduced: use --livekit-scale-div=1");
     }
 
     m_livekit = LiveKitSession::connect(config.livekit.url, config.livekit.token);

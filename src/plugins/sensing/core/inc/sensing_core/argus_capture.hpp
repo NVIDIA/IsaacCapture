@@ -8,6 +8,7 @@
 #pragma once
 
 #include "camera_capture.hpp"
+#include "jetson_encoder.hpp"
 
 #include <memory>
 #include <vector>
@@ -23,9 +24,9 @@ struct ArgusConfig
     std::vector<uint32_t> devices;
     /// Index into each device's sensor modes (as listed by query()).
     uint32_t sensor_mode = 0;
-    /// Capture buffers per camera. More than the encoder holds (its input plane) plus one being acquired, or the
-    /// camera stalls waiting for a buffer.
-    uint32_t buffer_count = 10;
+    /// Capture buffers per camera. The encoder pins kEncoderInputBuffers, the output's pending mailbox and its
+    /// worker's frame hold one each, and a fresh acquire needs one more; fewer and the camera stalls.
+    uint32_t buffer_count = kEncoderInputBuffers + 4;
 };
 
 class ArgusCapture : public CameraCapture

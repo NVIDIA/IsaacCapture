@@ -53,9 +53,10 @@ struct LiveKitOutputStats
 /**
  * @brief Encodes one sensor's frames on hardware and feeds them to a pre-encoded video track.
  *
- * submit() runs on the caller's polling loop. It takes a snapshot of the borrowed camera frame in
- * GPU memory and finishes that copy before returning, because the camera may overwrite its slot at
- * the second following poll. Everything else -- the optional reduction, the hardware encode and the
+ * submit() runs on the caller's polling loop. A pixel-buffer frame (SIPL) is copied into a snapshot in GPU
+ * memory before returning, because the camera may overwrite its slot at the second following poll. A DMA-BUF
+ * frame (Argus) is not copied: it goes to the encoder as it is, and its lease returns the buffer to the camera
+ * when the encoder is done with it. Everything else -- the optional reduction, the hardware encode and the
  * SDK call -- happens on this output's own worker thread, so a slow network cannot hold up capture
  * or the other sensors.
  *

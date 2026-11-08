@@ -71,6 +71,8 @@ struct ArgusCapture::Impl
         Argus::IBufferOutputStream* buffers = nullptr;
         Argus::UniqueObj<Argus::Request> request;
         std::vector<std::unique_ptr<CaptureBuffer>> pool;
+        /// Numbers frames whose capture has no metadata, so the consumer never mistakes them for one re-read frame.
+        uint32_t fallback_sequence = 0;
     };
 
     // An initialised EGL display is released by this member whether construction completes or throws: a destructor
@@ -97,6 +99,11 @@ struct ArgusCapture::Impl
 
     Impl(const ArgusConfig& config)
     {
+        // Peak demand per camera: the encoder's pinned buffers, the output's pending frame, its worker's frame and
+        // one fresh acquire.
+        if (config.buffer_count < kEncoderInputBuffers + 3)
+            throw std::runtime_error("Argus: buffer_count must be at least " + std::to_string(kEncoderInputBuffers + 3) +
+                                     " so the camera never waits for a buffer the encoder holds");
         provider.reset(Argus::CameraProvider::create());
         auto* provider_iface = Argus::interface_cast<Argus::ICameraProvider>(provider);
         if (!provider_iface)
@@ -117,6 +124,8 @@ struct ArgusCapture::Impl
             camera->device = devices[index];
             camera->mode = sensor_mode(camera->device, config.sensor_mode);
             auto* mode_iface = Argus::interface_cast<Argus::ISensorMode>(camera->mode);
+            if (!mode_iface)
+                throw std::runtime_error("Argus: sensor mode has no mode interface");
             const auto size = mode_iface->getResolution();
             const uint64_t period_ns = mode_iface->getFrameDurationRange().min();
             if (period_ns == 0)
@@ -296,7 +305,14 @@ std::vector<CameraInfo> ArgusCapture::query(uint32_t sensor_mode)
     std::vector<CameraInfo> infos;
     for (uint32_t index = 0; index < devices.size(); ++index)
     {
-        const auto* mode = Argus::interface_cast<Argus::ISensorMode>(Impl::sensor_mode(devices[index], sensor_mode));
+        // A device without this mode cannot be opened with it, but must not hide the other cameras.
+        auto* properties = Argus::interface_cast<Argus::ICameraProperties>(devices[index]);
+        std::vector<Argus::SensorMode*> modes;
+        if (!properties || properties->getAllSensorModes(&modes) != Argus::STATUS_OK || sensor_mode >= modes.size())
+            continue;
+        const auto* mode = Argus::interface_cast<Argus::ISensorMode>(modes[sensor_mode]);
+        if (!mode)
+            continue;
         const auto size = mode->getResolution();
         const uint64_t period_ns = mode->getFrameDurationRange().min();
         infos.push_back({ index, "argus" + std::to_string(index), size.width(), size.height(),
@@ -367,6 +383,10 @@ std::optional<CaptureFrame> ArgusCapture::acquire_latest(uint32_t camera_id)
     {
         frame.sensor_time = metadata->getSensorTimestamp();
         frame.sequence = metadata->getCaptureId();
+    }
+    else
+    {
+        frame.sequence = ++camera.fallback_sequence;
     }
     frame.pixels = DmaBufNv12Pixels{ data->fd };
 
