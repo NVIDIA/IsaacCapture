@@ -119,15 +119,17 @@ public:
         m_events.push_back({ Event::Kind::Release, slot });
         if (m_throw_on_release)
             throw std::runtime_error("release threw");
+        if (!m_release_ok)
+            return false; // refused: the buffer stays out and is not counted as released
         if (slot >= m_pool_size || !m_busy[slot])
         {
             ++m_bad_releases;
-            return m_release_ok;
+            return true;
         }
         m_busy[slot] = false;
         ++m_released[slot];
         ++m_released_total;
-        return m_release_ok;
+        return true;
     }
 
     bool stop_capture() override
@@ -137,6 +139,17 @@ public:
         ++m_stop_calls;
         m_events.push_back({ Event::Kind::StopBegin, 0 });
         return m_stop_ok;
+    }
+
+    bool wait_idle() override
+    {
+        Guard guard(*this);
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ++m_idle_calls;
+        m_events.push_back({ Event::Kind::WaitIdle, 0 });
+        if (m_throw_on_idle)
+            throw std::runtime_error("wait_idle threw");
+        return m_idle_ok;
     }
 
     void set_budget(int64_t n)
@@ -168,6 +181,21 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_stop_ok = v;
+    }
+    void set_idle_ok(bool v)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_idle_ok = v;
+    }
+    void set_throw_on_idle(bool v)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_throw_on_idle = v;
+    }
+    int idle_calls() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_idle_calls;
     }
 
     uint64_t acquire_calls() const
@@ -203,6 +231,7 @@ public:
             Acquire,
             Release,
             StopBegin,
+            WaitIdle,
         };
         Kind kind;
         uint32_t slot;
@@ -281,6 +310,9 @@ private:
     bool m_release_ok = true;
     bool m_stop_ok = true;
     bool m_throw_on_release = false;
+    bool m_idle_ok = true;
+    bool m_throw_on_idle = false;
+    int m_idle_calls = 0;
     std::vector<Event> m_events;
     uint64_t m_acquire_calls = 0;
     uint64_t m_acquired_total = 0;
@@ -781,12 +813,19 @@ TEST_CASE("a refused or throwing release keeps the buffer out and ends acquisiti
     for (size_t i = 0; i < kPool; ++i)
         CHECK(port.acquired(i) <= 1); // the refused slot is never handed out again
     CHECK(port.release_calls() == 1); // the refused buffer is not retried
+    CHECK(port.released_total() == 0); // nothing the stream refused counts as returned
     CHECK_THROWS_AS(owner.take_latest(), std::runtime_error);
 
     owner.request_stop();
     CHECK(owner.wait_stopped(kDeadline));
     owner.close();
     CHECK(port.acquire_calls() == acquires);
+    CHECK(port.acquired_total() == acquired);
+    CHECK(port.released_total() == 0);
+    for (size_t i = 0; i < kPool; ++i)
+        CHECK(port.acquired(i) <= 1);
+    CHECK_FALSE(owner.closed_cleanly()); // the unresolved buffers are still out
+    CHECK(port.idle_calls() == 1);
 }
 
 TEST_CASE("a refused release with a full pool does not over-acquire", "[buffer_owner]")
@@ -805,4 +844,177 @@ TEST_CASE("a refused release with a full pool does not over-acquire", "[buffer_o
     CHECK(port.acquire_calls() == acquires);
     CHECK(port.acquired_total() <= kPool);
     owner.close();
+    CHECK_FALSE(owner.closed_cleanly());
+}
+
+namespace
+{
+
+/// Index of the single event of `kind`, or events.size() if there is none or more than one.
+size_t only_event(const std::vector<FakePort::Event>& events, FakePort::Event::Kind kind)
+{
+    size_t found = events.size();
+    for (size_t i = 0; i < events.size(); ++i)
+    {
+        if (events[i].kind == kind)
+        {
+            if (found != events.size())
+                return events.size();
+            found = i;
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("only close waits for the stream to go idle, after every buffer is back", "[buffer_owner]")
+{
+    FakePort port(8);
+    port.set_budget(kUnlimited);
+    BufferOwner owner(port, 8, kWait);
+    owner.start();
+
+    // Frames an encoder still holds when stop is requested; they come back before close().
+    std::vector<CaptureFrame> held = take_frames(owner, 2);
+    REQUIRE(held.size() == 2);
+
+    owner.request_stop();
+    REQUIRE(owner.wait_stopped(kDeadline));
+    CHECK(port.idle_calls() == 0);
+
+    held.clear();
+    owner.close();
+
+    CHECK(port.idle_calls() == 1);
+    CHECK(owner.closed_cleanly());
+    CHECK(port.balanced());
+    CHECK(port.max_in_flight() == 1);
+    CHECK(port.threads().size() == 1);
+    CHECK_FALSE(owner.take_latest().has_value());
+
+    const auto events = port.events();
+    const size_t stop_at = only_event(events, FakePort::Event::Kind::StopBegin);
+    const size_t idle_at = only_event(events, FakePort::Event::Kind::WaitIdle);
+    REQUIRE(stop_at < events.size());
+    REQUIRE(idle_at < events.size());
+    CHECK(stop_at < idle_at);
+    size_t acquires = 0;
+    size_t releases = 0;
+    for (size_t i = 0; i < events.size(); ++i)
+    {
+        acquires += events[i].kind == FakePort::Event::Kind::Acquire;
+        if (events[i].kind == FakePort::Event::Kind::Release)
+        {
+            ++releases;
+            CHECK(i < idle_at);
+        }
+        if (i > stop_at)
+            CHECK(events[i].kind != FakePort::Event::Kind::Acquire);
+    }
+    CHECK(acquires == releases);
+    CHECK(idle_at == events.size() - 1);
+}
+
+TEST_CASE("close with leases never dropped ends the owner and reports it unclean", "[buffer_owner]")
+{
+    FakePort port(8);
+    port.set_budget(kUnlimited);
+    BufferOwner owner(port, 8, kWait);
+    owner.start();
+    std::vector<CaptureFrame> held = take_frames(owner, 2);
+    REQUIRE(held.size() == 2);
+
+    SECTION("after a stop request")
+    {
+        owner.request_stop();
+        REQUIRE(owner.wait_stopped(kDeadline));
+        owner.close();
+        CHECK(port.idle_calls() == 1);
+    }
+    SECTION("without a stop request")
+    {
+        owner.close();
+        CHECK(port.idle_calls() == 0);
+    }
+    CHECK_FALSE(owner.closed_cleanly());
+    CHECK(port.released_total() + 2 == port.acquired_total());
+    held.clear(); // lands in a mailbox nobody drains; must be harmless
+    CHECK(owner.rejected_returns() == 0);
+}
+
+TEST_CASE("the outcome of wait_idle decides closed_cleanly", "[buffer_owner]")
+{
+    FakePort port(4);
+    port.set_budget(kUnlimited);
+    bool expect_clean = false;
+    std::string expected;
+    SECTION("returns false")
+    {
+        port.set_idle_ok(false);
+        expected = "did not go idle";
+    }
+    SECTION("throws")
+    {
+        port.set_throw_on_idle(true);
+        expected = "wait_idle threw";
+    }
+    SECTION("returns true")
+    {
+        expect_clean = true;
+    }
+
+    BufferOwner owner(port, 4, kWait);
+    owner.start();
+    REQUIRE(wait_until([&] { return port.acquired_total() >= 2; }));
+    owner.request_stop();
+    REQUIRE(owner.wait_stopped(kDeadline));
+    owner.close();
+
+    CHECK(port.idle_calls() == 1);
+    CHECK(port.balanced());
+    CHECK(owner.closed_cleanly() == expect_clean);
+    if (expect_clean)
+    {
+        CHECK_NOTHROW(owner.take_latest());
+    }
+    else
+    {
+        std::string what;
+        try
+        {
+            owner.take_latest();
+        }
+        catch (const std::runtime_error& e)
+        {
+            what = e.what();
+        }
+        CHECK_THAT(what, ContainsSubstring(expected));
+    }
+}
+
+TEST_CASE("close without a stop request does not wait for idle", "[buffer_owner]")
+{
+    FakePort port(4);
+    port.set_budget(kUnlimited);
+    BufferOwner owner(port, 4, kWait);
+    owner.start();
+    REQUIRE(wait_until([&] { return port.acquired_total() >= 2; }));
+    owner.close();
+    CHECK(port.idle_calls() == 0);
+    CHECK(port.stop_calls() == 0);
+    CHECK(owner.closed_cleanly());
+    CHECK(port.balanced());
+}
+
+TEST_CASE("an owner that never started is cleanly closed", "[buffer_owner]")
+{
+    FakePort port(4);
+    BufferOwner owner(port, 4, kWait);
+    CHECK(owner.closed_cleanly());
+    owner.close();
+    owner.close();
+    CHECK(owner.closed_cleanly());
+    CHECK(port.idle_calls() == 0);
+    CHECK(port.threads().empty());
 }

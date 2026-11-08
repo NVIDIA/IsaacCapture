@@ -55,6 +55,8 @@ constexpr uint64_t kIdleTimeoutNs = 3'000'000'000;
 // Whole-teardown budget. An SDK call that never returns cannot be cancelled, so past this the process ends: no
 // cleanup may run on state the camera hardware could still be writing to.
 constexpr std::chrono::seconds kStopDeadline{ 20 };
+// How long the owner may take to stop new captures (a stopRepeat) before that is treated as hung.
+constexpr std::chrono::seconds kStopAckTimeout{ 5 };
 
 std::shared_ptr<isaaccapture::Logger> logger()
 {
@@ -268,7 +270,15 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         // Every lease has been dropped by now (each keeps this object alive), so each owner returns its last buffers
         // while the streams still exist, then ends.
         for (auto& camera : cameras)
+        {
             camera->owner->close();
+            // The owner waited for the session to go idle once every buffer was back. The hardware may still own the
+            // session's buffers if it did not, and a retry in this process would pile new sessions on top of it. This
+            // executable is dedicated to the cameras, so that ends the process; starting it again is the supervisor's
+            // job (the deployed unit restarts it on failure).
+            if (!camera->owner->closed_cleanly())
+                fatal("a session did not go idle after stopRepeat", camera->info.id);
+        }
         g_active_call.what.store("destroying the camera objects");
         for (auto& camera : cameras)
         {
@@ -422,8 +432,9 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
                 fatal("a session did not go idle after stopRepeat", camera->info.id);
     }
 
-    // Stops capture on every camera's owner thread: all are asked before any is waited for, so one camera's slow stop
-    // does not delay the others'. Frames the consumers still hold stay valid, and their buffers keep coming back.
+    // Stops new captures on every camera's owner thread: all are asked before any is waited for, so one camera's
+    // slow stop does not delay the others'. Frames the consumers still hold stay valid and their buffers keep coming
+    // back; the wait for the sessions to go idle is deferred to the end (see ~Impl), when no consumer holds one.
     void stop()
     {
         if (!started || stopped)
@@ -434,18 +445,10 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
             camera->owner->request_stop();
         for (auto& camera : cameras)
         {
-            // The owner's own idle wait is bounded by kIdleTimeoutNs; the margin covers its other work.
             const bool ok = timed("waiting for the owner to stop capture", camera->info.id,
-                                  [&] {
-                                      return camera->owner->wait_stopped(std::chrono::nanoseconds(kIdleTimeoutNs) +
-                                                                         std::chrono::seconds(2));
-                                  });
-            // The hardware may still own the session's buffers and a retry in this process would pile new sessions on
-            // top of it. This executable is dedicated to the cameras, so a session that will not stop ends the
-            // process. Starting it again is the supervisor's job; the deployed unit sets no Restart=, so today that
-            // is a manual restart.
+                                  [&] { return camera->owner->wait_stopped(kStopAckTimeout); });
             if (!ok)
-                fatal("a session did not go idle after stopRepeat", camera->info.id);
+                fatal("a session did not stop", camera->info.id);
         }
     }
 
@@ -512,7 +515,15 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
 
         bool stop_capture() override
         {
-            return m_impl.stop_session(m_camera);
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(m_camera.session);
+            return timed("stopRepeat", m_camera.info.id, [&] { return session->stopRepeat(); }) == Argus::STATUS_OK;
+        }
+
+        bool wait_idle() override
+        {
+            auto* session = Argus::interface_cast<Argus::ICaptureSession>(m_camera.session);
+            return timed("waitForIdle", m_camera.info.id, [&] { return session->waitForIdle(kIdleTimeoutNs); }) ==
+                   Argus::STATUS_OK;
         }
 
     private:
