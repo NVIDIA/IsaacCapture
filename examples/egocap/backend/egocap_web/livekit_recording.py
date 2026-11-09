@@ -71,6 +71,11 @@ _TRACKING_SEMANTICS: dict[str, str] = {
 }
 
 
+def sensor_capture_names(streams: Sequence[p.LiveKitCameraStream]) -> frozenset[str]:
+    """The names of the recordable streams whose time is the sensor's capture event, which alignment requires."""
+    return frozenset(s.name for s in streams if _RECORDABLE_BASES.get(s.timestamp_basis) == "sensor_capture")
+
+
 def tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any]]:
     """What each tracking source's saved time is, and whether it is a qualified event time.
 

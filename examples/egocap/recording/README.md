@@ -143,10 +143,10 @@ Calibration files appear only when present at `EGOCAP_CALIBRATION_DIR` (which al
 resolved value, see above -- absence there is a skip, not a configuration requirement); the
 service does not write a separate `data_check_config.yaml`.
 
-A data-loading pipeline's source-config reader requires `video_sources`/`numeric_sources`,
-source names, frame types/defaults, and latency to run its alignment step; the per-group
-`config.yaml` above does not carry those fields, so this reader needs that configuration
-supplied separately, not read from the recorded output. A Zarr-to-LeRobot converter reads fixed,
+The per-group `config.yaml` carries the source declarations time alignment reads (the
+`video_sources`/`numeric_sources` names, frame types and recording defaults); a data-loading
+pipeline's source-config reader that also needs per-source latency or other settings must have
+them supplied separately, not read from the recorded output. A Zarr-to-LeRobot converter reads fixed,
 hardcoded group paths instead: `pico_controller/{left,right,head}_pose_interp` and
 `manus_glove/{left,right}_hand_pose_interp`. Renaming a wire stream is harmless as long as the
 backend still maps it to the established recorded source name; renaming the recorded group

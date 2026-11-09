@@ -30,7 +30,6 @@ from egocap_web.recording_adapter import (
     PICO_CONTROLLER_SPEC,
     RecordingAdapterError,
     RecordingIngress,
-    _convert_raw_item,
     _raw_item_bytes,
     build_manus_glove_fields,
     build_pico_controller_fields,
@@ -40,6 +39,7 @@ from egocap_web.recording_adapter import (
     convert_controller_aim_pose,
     convert_hand_pose,
     convert_head_pose,
+    convert_raw_item,
     oxr_fingertips_to_manus_skeleton,
     pose7d_to_matrix,
     validate_tracking_descriptor,
@@ -676,9 +676,9 @@ def _video_sample(shape=(10, 10, 3), source="head_left") -> VideoSample:
     )
 
 
-def test_convert_raw_item_passes_a_video_sample_through_unchanged():
+def testconvert_raw_item_passes_a_video_sample_through_unchanged():
     sample = _video_sample()
-    converted = _convert_raw_item(sample)
+    converted = convert_raw_item(sample)
     assert len(converted) == 1
     assert converted[0] is sample
 
@@ -743,7 +743,7 @@ def test_pico_and_manus_samples_are_both_stamped_with_the_one_host_poll_frame_ti
     # The recorded tracking time is when the host polled the devices (HOST_POLL), not a device measurement time:
     # every sample from one frame carries that frame's single timestamp, whichever source it is.
     frame = _tracking_frame(capture_time_ns=5_000_123_456_789, receive_time_ns=5_000_130_000_000)
-    samples = _convert_raw_item(frame)
+    samples = convert_raw_item(frame)
 
     assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
     for sample in samples:
@@ -829,7 +829,7 @@ async def test_livekit_video_and_tracking_from_one_frame_share_the_pc_monotonic_
 
     (video,) = ingress.offered
     assert isinstance(video, VideoSample)
-    tracking = _convert_raw_item(_tracking_frame(capture_time_ns=event_ns + 1_500_000, receive_time_ns=now_ns))
+    tracking = convert_raw_item(_tracking_frame(capture_time_ns=event_ns + 1_500_000, receive_time_ns=now_ns))
     assert tracking
 
     # Both are seconds on the PC's monotonic clock; their gap is the synthetic 1.5 ms (the host poll lags the
@@ -851,7 +851,7 @@ def test_tracking_specs_name_the_frame_types_that_select_their_alignment_rules()
 
 def test_every_tracking_sample_of_a_frame_carries_the_host_clock_connection_as_its_continuity():
     frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_000_100_000)
-    samples = _convert_raw_item(frame)
+    samples = convert_raw_item(frame)
     assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
     assert [s.continuity for s in samples] == [("host_clock", "s")] * 2
 
@@ -862,13 +862,13 @@ def _capture_times(samples):
 
 def test_no_latency_leaves_the_poll_time_as_the_capture_time():
     frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
-    for samples in (_convert_raw_item(frame), _convert_raw_item(frame, {}), convert_capture_frame(frame, None)):
+    for samples in (convert_raw_item(frame), convert_raw_item(frame, {}), convert_capture_frame(frame, None)):
         assert set(_capture_times(samples).values()) == {5.0}
 
 
 def test_a_latency_is_taken_off_the_poll_time_per_source_and_receive_time_is_unchanged():
     frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
-    samples = _convert_raw_item(frame, {"pico_controller": 0.02, "manus_glove": 0.0})
+    samples = convert_raw_item(frame, {"pico_controller": 0.02, "manus_glove": 0.0})
     assert _capture_times(samples) == pytest.approx({"pico_controller": 4.98, "manus_glove": 5.0})
     assert {s.receive_time for s in samples} == {5.04}
 
@@ -877,27 +877,25 @@ def test_a_later_receive_time_does_not_move_the_adjusted_capture_times():
     latency = {"pico_controller": 0.02, "manus_glove": 0.03}
     prompt = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_001_000_000)
     delayed = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_250_000_000)
-    assert _capture_times(_convert_raw_item(prompt, latency)) == _capture_times(
-        _convert_raw_item(delayed, latency)
-    )
+    assert _capture_times(convert_raw_item(prompt, latency)) == _capture_times(convert_raw_item(delayed, latency))
 
 
 def test_the_latency_is_applied_once_to_each_frame():
     latency = {"pico_controller": 0.02, "manus_glove": 0.02}
     times = [
-        _capture_times(_convert_raw_item(_tracking_frame(t, t + 1_000_000), latency))["pico_controller"]
+        _capture_times(convert_raw_item(_tracking_frame(t, t + 1_000_000), latency))["pico_controller"]
         for t in (1_000_000_000, 2_000_000_000)
     ]
     assert times == pytest.approx([0.98, 1.98])
 
 
 def test_a_latency_does_not_change_the_tracking_continuity():
-    samples = _convert_raw_item(_tracking_frame(5_000_000_000, 5_000_100_000), {"pico_controller": 0.02})
+    samples = convert_raw_item(_tracking_frame(5_000_000_000, 5_000_100_000), {"pico_controller": 0.02})
     assert {s.continuity for s in samples} == {("host_clock", "s")}
 
 
 def test_a_new_capture_connection_changes_the_tracking_continuity_identity():
-    first = _convert_raw_item(_tracking_frame(1_000_000_000, 1_000_100_000))
+    first = convert_raw_item(_tracking_frame(1_000_000_000, 1_000_100_000))
     other = dataclasses.replace(_tracking_frame(2_000_000_000, 2_000_100_000), session_id="t")
-    assert {s.continuity for s in _convert_raw_item(other)} == {("host_clock", "t")}
+    assert {s.continuity for s in convert_raw_item(other)} == {("host_clock", "t")}
     assert {s.continuity for s in first} == {("host_clock", "s")}

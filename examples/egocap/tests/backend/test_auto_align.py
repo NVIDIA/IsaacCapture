@@ -98,35 +98,50 @@ def test_kept_results_are_queued_before_any_session_has_reported_its_sources():
     assert aligner._queue.qsize() == 1
 
 
-def test_kept_results_are_queued_while_the_session_records_the_index_source():
+def test_kept_results_are_queued_when_the_index_source_and_every_recorded_camera_are_qualified():
     aligner = AutoAligner(Path("/out"), "head")
-    aligner.note_video_sources(frozenset({"head", "wrist"}))
+    aligner.note_video_sources(frozenset({"head", "wrist"}), frozenset({"head", "wrist", "other"}))
     aligner.submit(_result())
     assert aligner._queue.qsize() == 1
 
 
-def test_kept_results_are_not_queued_while_the_session_does_not_record_the_index_source():
+def test_kept_results_are_not_queued_when_the_index_source_is_recorded_without_a_sensor_capture_time():
     aligner = AutoAligner(Path("/out"), "head")
-    aligner.note_video_sources(frozenset({"wrist"}))
+    aligner.note_video_sources(frozenset({"head"}), frozenset())
     aligner.submit(_result())
     assert aligner._queue.empty()
 
 
-def test_the_not_recorded_warning_is_logged_once_per_transition(caplog):
+def test_kept_results_are_not_queued_when_the_index_source_is_not_recorded():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.note_video_sources(frozenset({"wrist"}), frozenset({"wrist"}))
+    aligner.submit(_result())
+    assert aligner._queue.empty()
+
+
+def test_kept_results_are_not_queued_when_another_recorded_camera_is_not_qualified():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.note_video_sources(frozenset({"head", "wrist"}), frozenset({"head"}))
+    aligner.submit(_result())
+    assert aligner._queue.empty()
+
+
+def test_the_not_alignable_warning_is_logged_once_per_transition(caplog):
     aligner = AutoAligner(Path("/out"), "head")
     with caplog.at_level(logging.WARNING, logger="isaaccapture"):
-        aligner.note_video_sources(frozenset({"wrist"}))
-        aligner.note_video_sources(frozenset())
-        assert len(caplog.records) == 1 and "'head'" in caplog.text
-        aligner.note_video_sources(frozenset({"head"}))
-        aligner.note_video_sources(frozenset({"wrist"}))
+        aligner.note_video_sources(frozenset({"wrist"}), frozenset({"wrist"}))
+        aligner.note_video_sources(frozenset(), frozenset())
+        assert len(caplog.records) == 1
+        assert "'head'" in caplog.text and "sensor capture time" in caplog.text
+        aligner.note_video_sources(frozenset({"head"}), frozenset({"head"}))
+        aligner.note_video_sources(frozenset({"wrist"}), frozenset())
     assert len(caplog.records) == 2
 
 
-def test_queueing_resumes_when_a_later_session_records_the_index_source():
+def test_queueing_resumes_when_a_later_session_is_alignable():
     aligner = AutoAligner(Path("/out"), "head")
-    aligner.note_video_sources(frozenset())
-    aligner.note_video_sources(frozenset({"head"}))
+    aligner.note_video_sources(frozenset({"head"}), frozenset())
+    aligner.note_video_sources(frozenset({"head"}), frozenset({"head"}))
     aligner.submit(_result())
     assert aligner._queue.qsize() == 1
 

@@ -158,17 +158,17 @@ def _resolve_latency(station_id: str, entry: dict) -> dict[str, float]:
 
 
 def _resolve_alignment_index(station_id: str, entry: dict) -> str | None:
-    """The index camera for automatic alignment: ``alignment.index_source``, else the first camera.
+    """The index camera for automatic alignment: ``alignment.index_source``, which has no default.
 
-    On unless ``alignment.enabled`` is false; None also when there is no camera to index on.
+    None (alignment off) when it is not set or ``alignment.enabled`` is false. It must name a camera the
+    station records with a sensor capture time, which is checked each time a session opens.
     """
     section = entry.get("alignment") or {}
     if not isinstance(section, dict):
         raise StationConfigError(f"station {station_id!r}: 'alignment' must be a mapping")
     if not _bool_field(section, "enabled", default=True):
         return None
-    cameras = [s.get("name") for s in entry.get("video_sources") or [] if isinstance(s, dict)]
-    return _str_field(section, "index_source") or (cameras[0] if cameras else None)
+    return _str_field(section, "index_source") or None
 
 
 def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> ResolvedStation:

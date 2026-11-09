@@ -54,21 +54,22 @@ def test_config_factory_declares_and_requires_each_recordable_livekit_stream(tmp
     assert "cam16" in config.qc.required_sources
 
 
-def test_config_factory_reports_the_recorded_video_source_names_each_time_it_builds(tmp_path):
+def test_config_factory_reports_recorded_and_sensor_captured_names_each_time_it_builds(tmp_path):
     capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
-    monitor = _monitor([_stream(16, capture), _stream(17, capture)])
+    ready = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
+    monitor = _monitor([_stream(16, capture), _stream(17, ready)])
     reported = []
-    factory = app_module._recording_config_factory(monitor, None, tmp_path, reported.append)
+    factory = app_module._recording_config_factory(monitor, None, tmp_path, lambda *names: reported.append(names))
     factory()
     factory()
-    assert reported == [frozenset({"cam16", "cam17"})] * 2
+    assert reported == [(frozenset({"cam16", "cam17"}), frozenset({"cam16"}))] * 2
 
 
 def test_config_factory_reports_no_names_when_nothing_is_recordable(tmp_path):
     monitor = SimpleNamespace(camera_descriptors=(), native=SimpleNamespace(started=None))
     reported = []
-    app_module._recording_config_factory(monitor, None, tmp_path, reported.append)()
-    assert reported == [frozenset()]
+    app_module._recording_config_factory(monitor, None, tmp_path, lambda *names: reported.append(names))()
+    assert reported == [(frozenset(), frozenset())]
 
 
 def test_config_factory_without_a_started_session_has_no_livekit_sources(tmp_path):

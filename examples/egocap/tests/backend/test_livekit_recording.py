@@ -19,6 +19,7 @@ from egocap_web.livekit_receiver import LiveKitFrameReceiver, ReceivedFrame, Str
 from egocap_web.livekit_recording import (
     BUDGET_ENV,
     LiveKitRecordingFeed,
+    sensor_capture_names,
     uncertainty_budget_ns,
     unrecordable_reason,
 )
@@ -886,3 +887,16 @@ def test_unrecordable_reason_refuses_a_capture_server_on_another_host(url):
 
 def test_a_remote_capture_server_does_not_affect_a_session_without_livekit_streams():
     assert unrecordable_reason(_started(object()), "ws://192.168.1.20:8082") is None
+
+
+def test_sensor_capture_names_keeps_only_streams_stamped_at_sensor_capture():
+    streams = [
+        _stream(1, "sensor", CAPTURE),
+        _stream(2, "frame_ready", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
+        _stream(3, "unix", p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
+    ]
+    assert sensor_capture_names(streams) == frozenset({"sensor"})
+
+
+def test_sensor_capture_names_is_empty_without_streams():
+    assert sensor_capture_names([]) == frozenset()

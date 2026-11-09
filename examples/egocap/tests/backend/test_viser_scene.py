@@ -738,6 +738,10 @@ async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or
     assert events == ["scene stop"] and created[0].stopped  # capture is still stopped
 
 
+_HEAD_VIDEO = "video_sources:\n  - type: oak_camera\n    name: head\n"
+_HEAD_ALIGNED = _HEAD_VIDEO + "alignment:\n  index_source: head\n"
+
+
 class _FakeAligner:
     instances = []
 
@@ -751,8 +755,8 @@ class _FakeAligner:
     def submit(self, result):
         self.submitted.append(result)
 
-    def note_video_sources(self, names):
-        self.noted = names
+    def note_video_sources(self, recorded, qualified):
+        self.noted = (recorded, qualified)
 
     async def run(self):
         import asyncio
@@ -792,7 +796,7 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
     app_module = await _lifespan_with_station(
         monkeypatch,
         tmp_path,
-        f"recording:\n  data_dir: {tmp_path}/rec\nvideo_sources:\n  - type: oak_camera\n    name: head\n",
+        f"recording:\n  data_dir: {tmp_path}/rec\n" + _HEAD_ALIGNED,
     )
     app = app_module.FastAPI()
     async with app_module.lifespan(app):
@@ -805,7 +809,9 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
 
 async def test_the_aligner_is_created_once_and_is_the_factorys_video_source_callback(monkeypatch, tmp_path):
     app_module = await _lifespan_with_station(
-        monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
     )
     factory_args = []
     real_factory = app_module._recording_config_factory
@@ -837,7 +843,9 @@ async def test_no_video_source_callback_is_passed_without_an_index_camera(monkey
 
 async def test_the_kept_hook_is_the_aligner_and_the_result_hook_is_left_alone(monkeypatch, tmp_path):
     app_module = await _lifespan_with_station(
-        monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
     )
     previous_calls = []
     real_context = app_module.RecordingContext
@@ -861,7 +869,9 @@ async def test_a_kept_result_emitted_while_the_recorder_closes_is_aligned_before
     monkeypatch, tmp_path
 ):
     app_module = await _lifespan_with_station(
-        monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
     )
     from recording_service import Disposition, EpisodeResult
 
@@ -901,7 +911,7 @@ async def test_the_lifespan_starts_no_aligner_when_alignment_is_off(monkeypatch,
     app_module = await _lifespan_with_station(
         monkeypatch,
         tmp_path,
-        "video_sources:\n  - type: oak_camera\n    name: head\nalignment:\n  enabled: false\n",
+        _HEAD_VIDEO + "alignment:\n  index_source: head\n  enabled: false\n",
     )
     async with app_module.lifespan(app_module.FastAPI()):
         assert _FakeAligner.instances == []

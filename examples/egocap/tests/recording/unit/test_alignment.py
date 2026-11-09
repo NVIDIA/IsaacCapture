@@ -268,40 +268,6 @@ def test_valid_range_is_first_and_last_common_time():
     assert simple().valid_range == (0.0, 9.0)
 
 
-def test_no_epochs_and_empty_epochs_change_nothing():
-    data = load("01_jittered_index_offset_wrist")
-    base = by_output_key(align(data))
-    for epochs in (None, {}):
-        again = by_output_key(align(data, epochs=epochs))
-        assert all(np.array_equal(base[k], again[k]) for k in base)
-
-
-def test_uniform_epoch_labels_leave_the_output_identical():
-    data = load("01_jittered_index_offset_wrist")
-    times, _ = inputs(data)
-    epochs = {name: np.full(len(t), 4) for name, t in times.items()}
-    base = by_output_key(align(data))
-    labelled = by_output_key(align(data, epochs=epochs))
-    assert set(base) == set(labelled)
-    assert all(np.array_equal(base[k], labelled[k]) for k in base)
-
-
-def test_changed_epoch_label_is_refused():
-    labels = np.array([0] * 14 + [1] * 14)
-    with pytest.raises(AlignmentError, match="restart or invalid interval"):
-        simple(epochs={"arm": labels})
-
-
-def test_epoch_labels_of_the_wrong_length_are_refused():
-    with pytest.raises(AlignmentError, match="one per sample"):
-        simple(epochs={"arm": np.zeros(3)})
-
-
-def test_epoch_labels_for_an_unknown_source_are_refused():
-    with pytest.raises(AlignmentError, match="one per sample"):
-        simple(epochs={"ghost": np.zeros(3)})
-
-
 def event_time(**entries):
     """A timing attribute shaped like the backend's, with per-source event-time entries."""
     return {"event_time": entries}

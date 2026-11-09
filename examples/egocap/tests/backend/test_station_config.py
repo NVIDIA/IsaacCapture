@@ -311,8 +311,8 @@ def test_a_non_mapping_alignment_or_tracking_latency_is_a_station_config_error(t
 _CAMERAS = "video_sources:\n  - type: oak_camera\n    name: head\n  - type: oak_camera\n    name: wrist\n"
 
 
-def test_alignment_defaults_to_the_first_camera(tmp_path):
-    assert load_station_config(_write(tmp_path, _CAMERAS)).alignment_index == "head"
+def test_alignment_is_off_without_an_index_source_even_with_cameras(tmp_path):
+    assert load_station_config(_write(tmp_path, _CAMERAS)).alignment_index is None
 
 
 def test_alignment_index_source_can_be_named(tmp_path):
@@ -321,11 +321,11 @@ def test_alignment_index_source_can_be_named(tmp_path):
 
 
 def test_alignment_can_be_disabled(tmp_path):
-    path = _write(tmp_path, _CAMERAS + "alignment:\n  enabled: false\n")
+    path = _write(tmp_path, _CAMERAS + "alignment:\n  enabled: false\n  index_source: head\n")
     assert load_station_config(path).alignment_index is None
 
 
-def test_alignment_is_off_without_cameras(tmp_path):
+def test_alignment_is_off_without_an_alignment_section(tmp_path):
     assert load_station_config(_write(tmp_path, "meta: {}\n")).alignment_index is None
 
 

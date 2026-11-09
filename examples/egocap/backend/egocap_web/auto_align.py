@@ -69,22 +69,29 @@ class AutoAligner:
         # Unbounded: a job is three small fields, and the number waiting is the number of kept episodes.
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._process: asyncio.subprocess.Process | None = None
-        # False while the open session does not record the index camera; set once per session open.
-        self._index_recorded = True
+        # False while the open session cannot be aligned; set once per session open.
+        self._session_alignable = True
 
-    def note_video_sources(self, names: frozenset[str]) -> None:
-        """Note whether the session being opened records the index camera; if not, its episodes are not queued."""
-        recorded = self._index_source in names
-        if not recorded and self._index_recorded:
+    def note_video_sources(self, recorded: frozenset[str], qualified: frozenset[str]) -> None:
+        """Note whether the session being opened can be aligned; if not, its episodes are not queued.
+
+        It can when the index camera is among the cameras recorded with a sensor capture time and every recorded
+        camera has one, since an episode with any other camera is refused whole.
+        """
+        alignable = self._index_source in qualified and recorded <= qualified
+        if not alignable and self._session_alignable:
             logger.warning(
-                "automatic time alignment is off: index source %r is not a camera this session records",
+                "automatic time alignment is off: index source %r and every recorded camera need a sensor "
+                "capture time (recorded: %s; with one: %s)",
                 self._index_source,
+                sorted(recorded),
+                sorted(qualified),
             )
-        self._index_recorded = recorded
+        self._session_alignable = alignable
 
     def submit(self, result: EpisodeResult) -> None:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
-        if result.disposition is Disposition.KEPT and result.final_path is not None and self._index_recorded:
+        if result.disposition is Disposition.KEPT and result.final_path is not None and self._session_alignable:
             self._queue.put_nowait(_Job(result.session_id, result.episode_index, result.final_path))
 
     def scan(self) -> list[_Job]:

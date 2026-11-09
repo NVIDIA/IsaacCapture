@@ -225,9 +225,9 @@ def write_aligned_episode(
 
     _write_root(raw_session, aligned_session, index_source)
     root = zarr.open_group(str(aligned_session), mode="a")
-    # A previous alignment of this episode is removed whole, so no chunk of a different shape survives it.
+    # An existing aligned episode is never replaced.
     if key in root:
-        del root[key]
+        raise AlignedWriteError(f"{key} already exists in the aligned session")
     episode = root.require_group(key)
     _copy_attrs(raw_episode, episode)
     episode["valid_indices"] = aligned.valid_indices

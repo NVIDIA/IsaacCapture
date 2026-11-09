@@ -41,7 +41,12 @@ from .config import VisualizationConfig, config_from_env, visualization_from_env
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
-from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams, unrecordable_reason
+from .livekit_recording import (
+    LiveKitRecordingSource,
+    recordable_livekit_streams,
+    sensor_capture_names,
+    unrecordable_reason,
+)
 from .operator_settings import OperatorSettingsStore, operator_settings_path
 from .operator_settings import router as operator_settings_router
 from .preview_routes import router as preview_router
@@ -168,7 +173,7 @@ def _recording_config_factory(
     monitor: CaptureStatusMonitor,
     station_label: str | None,
     output_root: Path,
-    on_video_sources: Callable[[frozenset[str]], None] | None = None,
+    on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -192,8 +197,12 @@ def _recording_config_factory(
             for s in recordable_livekit_streams(monitor.native.started)
         )
         if on_video_sources is not None:
-            # Tells the aligner, once per session open, which cameras this session records.
-            on_video_sources(frozenset(v.name for v in video_sources))
+            # Tells the aligner, once per session open, which cameras this session records and which of them
+            # have a sensor capture time (only LiveKit streams stamped that way do).
+            on_video_sources(
+                frozenset(v.name for v in video_sources),
+                sensor_capture_names(recordable_livekit_streams(monitor.native.started)),
+            )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
         # are required for a KEPT result. manus_glove is NOT required:

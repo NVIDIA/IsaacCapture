@@ -297,25 +297,15 @@ def align_episode(
     rules: Mapping[str, Mapping[str, FieldRule]],
     *,
     downsample: int = 1,
-    epochs: Mapping[str, np.ndarray] | None = None,
 ) -> AlignedEpisode:
     """Align every source in ``times`` onto ``index_source``.
 
     ``times`` maps each source to the times to align on (sorted, finite); ``cameras`` names the sources that are
     cameras; ``fields[source][name]`` are a source's arrays and ``rules[source][name]`` how each is resampled (a
     field with no rule is not resampled). Raises ``AlignmentError`` if the index source has no frame in the valid
-    range, so an alignment is never an empty success. ``epochs`` optionally labels each sample of a source with the
-    unbroken stretch it belongs to (the label changes at a restart, a reconnect or an invalid interval); a source
-    with more than one label is refused, since interpolating across the break would produce values the sensor
-    never reported.
+    range, so an alignment is never an empty success.
     """
     _check_inputs(index_source, times, downsample)
-    for name, labels in (epochs or {}).items():
-        # The aligned numbers follow the rules above unchanged; a break is refused, not handled differently.
-        if name not in times or len(labels) != len(times[name]):
-            raise AlignmentError(f"{name}: epoch labels must be one per sample of a source being aligned")
-        if len(np.unique(labels)) > 1:
-            raise AlignmentError(f"{name}: has a restart or invalid interval inside the episode")
     index_times = np.asarray(times[index_source], dtype=np.float64)
 
     # The valid range: every source has data on both sides of a kept time.

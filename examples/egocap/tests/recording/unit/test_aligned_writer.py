@@ -119,7 +119,8 @@ def golden(name):
     return entries
 
 
-@pytest.mark.parametrize("name", sorted(META["scenarios"]))
+# "realign" writes episode 0 twice, which is refused (see the test below), so it has no written tree.
+@pytest.mark.parametrize("name", sorted(set(META["scenarios"]) - {"realign"}))
 def test_written_tree_equals_the_expected_tree(tmp_path, name):
     scenario = META["scenarios"][name]
     build_raw(tmp_path / "raw", scenario)
@@ -221,18 +222,15 @@ def test_a_declared_source_absent_from_the_episode_is_skipped(tmp_path):
     assert sorted(episode.group_keys()) == ["head_camera", "pico_controller", "wrist_camera"]
 
 
-def test_realigning_replaces_the_episode_whole(tmp_path):
+def test_an_episode_already_in_the_aligned_session_is_refused_and_left_unchanged(tmp_path):
     build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
     write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
-    stale = zarr.open_group(str(tmp_path / "aligned"), mode="a")["episode_0"]["glove"]
-    stale["stale_array"] = np.arange(3)
-
-    write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 2)])
-
-    episode = zarr.open_group(str(tmp_path / "aligned"), mode="r")["episode_0"]
-    assert "stale_array" not in episode["glove"]
-    assert episode["valid_timestamps"].shape == (18,)
-    assert (tmp_path / "aligned" / "episode_0" / "head_camera.mp4").read_bytes() == video_bytes("head_camera", 0)
+    before = raw_listing(tmp_path / "aligned")
+    shape = zarr.open_group(str(tmp_path / "aligned"), mode="r")["episode_0"]["valid_timestamps"].shape
+    with pytest.raises(AlignedWriteError, match="episode_0 already exists in the aligned session"):
+        write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 2)])
+    assert raw_listing(tmp_path / "aligned") == before
+    assert zarr.open_group(str(tmp_path / "aligned"), mode="r")["episode_0"]["valid_timestamps"].shape == shape
 
 
 def test_an_existing_target_video_is_replaced_by_the_link(tmp_path):
@@ -254,10 +252,10 @@ def test_an_existing_aligned_sidecar_is_not_overwritten(tmp_path):
 
 
 def test_an_edited_aligned_config_is_replaced_by_the_raw_one(tmp_path):
-    build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
+    build_raw(tmp_path / "raw", META["scenarios"]["realign"])
     write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
     (tmp_path / "aligned" / "config.yaml").write_text("edited: true\n")
-    write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
+    write_steps(tmp_path / "raw", tmp_path / "aligned", [(1, 1)])
     assert (tmp_path / "aligned" / "config.yaml").read_bytes() == (tmp_path / "raw" / "config.yaml").read_bytes()
 
 

@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.livekit_recording import tracking_event_time
-from egocap_web.recording_adapter import RecordingIngress, _convert_raw_item, validate_tracking_descriptor
+from egocap_web.recording_adapter import RecordingIngress, convert_raw_item, validate_tracking_descriptor
 from recording_service import (
     CloseResult,
     Disposition,
@@ -479,7 +479,7 @@ class RecordingSessionCoordinator:
             queue_bytes=self._queue_bytes() if callable(self._queue_bytes) else self._queue_bytes,
             submit=partial(service.submit_sample, episode_id),
             on_failure=lambda message: self._schedule_failure_settlement(service, episode_id, message),
-            convert=partial(_convert_raw_item, latency=self._tracking_latency),
+            convert=partial(convert_raw_item, latency=self._tracking_latency),
         )
         await ingress.start()
         self._current_ingress = ingress

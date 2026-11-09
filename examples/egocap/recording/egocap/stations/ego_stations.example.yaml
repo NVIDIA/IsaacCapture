@@ -38,8 +38,10 @@ stations:
       # then this only prefills the field's draft text; the operator still has to press "Set
       # operator" before any recording command is accepted.
       auto_fill_operator_name: false
-    # Each kept episode is time-aligned in the background on this camera's frames. Defaults: enabled, and the
-    # first video source as the index. Set enabled: false to leave episodes as recorded.
+    # Each kept episode is time-aligned in the background on index_source's frames; with no index_source nothing
+    # is aligned, and enabled: false also turns it off. Alignment needs every recorded camera, the index
+    # included, to have a sensor capture time (a LiveKit stream with timestamp_basis capture_monotonic_us); the
+    # plain CaptureServer cameras of the mock do not, so episodes recorded with them are not aligned.
     alignment:
       enabled: true
       index_source: head_human_camera

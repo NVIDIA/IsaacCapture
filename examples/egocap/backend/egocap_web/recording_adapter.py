@@ -370,7 +370,7 @@ def _raw_item_bytes(raw_item: RawItem) -> int:
     return len(raw_item.jpeg) if isinstance(raw_item, CameraImage) else len(raw_item.payload)
 
 
-def _convert_raw_item(
+def convert_raw_item(
     raw_item: RawItem, latency: Mapping[str, float] | None = None
 ) -> list[NumericSample | VideoSample]:
     """The default, real conversion dispatch -- CPU-bound (JPEG decode,
@@ -415,7 +415,7 @@ class RecordingIngress:
         submit: Callable[[NumericSample | VideoSample], object],
         queue_capacity: int,
         queue_bytes: int | None = None,
-        convert: Callable[[RawItem], list[NumericSample | VideoSample]] = _convert_raw_item,
+        convert: Callable[[RawItem], list[NumericSample | VideoSample]] = convert_raw_item,
         full_retry_deadline_seconds: float = 2.0,
         full_retry_backoff_seconds: float = 0.01,
         in_flight_timeout_seconds: float = 30.0,
