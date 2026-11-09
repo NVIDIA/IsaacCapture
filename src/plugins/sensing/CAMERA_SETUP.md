@@ -157,8 +157,57 @@ jack. Either order works, and swapping the cameras only swaps the sensor numbers
 
 ## Step 3: Set up the operating system
 
-The Orin must be on L4T R39.2.1 (JetPack 7.2.1); check `/etc/nv_tegra_release`. Run the host setup once, choose the
-Jetson-IO overlay **Jetson Sensing SG8A-AGON-G2Y-A1 SIPL GMSL2x8** when it asks, and reboot:
+The Orin must be on L4T R39.2.1 (JetPack 7.2.1); check `/etc/nv_tegra_release`.
+
+### Flash JetPack (new or reflashed Orin)
+
+Skip this if the check above already shows R39.2.1. The AGX Orin is flashed over USB-C from an x86_64 Ubuntu host with
+[NVIDIA SDK Manager](https://developer.nvidia.com/sdk-manager). It does not boot a generic installer image from a USB
+drive, and an amd64 Ubuntu ISO is the wrong architecture.
+
+1. **Recovery mode.** With the Orin's power adapter connected and the unit off, connect the host to the USB-C port next
+   to the 40-pin header. Hold the middle (Force Recovery) button, press and release Power, then release Force Recovery
+   after about 2 seconds. `lsusb` on the host should list `NVIDIA Corp. APX`.
+2. **Target.** In SDK Manager choose **Jetson AGX Orin** (the 64 GB developer kit), JetPack **7.2.1** and **Direct
+   Flash**. Leave DeepStream and Holoscan unticked. SDK Manager opens on Jetson AGX Thor by default, so check the target
+   after every launch. If it asks for the exact model, choose the developer kit version that matches the module's memory.
+3. **Flash.** In the flash dialog choose **Pre-Config**, set a username and password, pick eMMC or NVMe (if an SSD is
+   fitted) and click **Flash**. Keep the host awake and the cable connected until the Orin reboots. An interrupted
+   flash leaves a partial image; put the Orin back in recovery mode and run it again.
+4. **SDK components (optional).** SDK Manager then offers to install CUDA and the other components over USB
+   (`192.168.55.1`) or Ethernet. Skip it, or install them later with `sudo apt install nvidia-jetpack`.
+
+If the host driver step stalls on a "Pending kernel upgrade" dialog, press Enter in SDK Manager's terminal tab. If that
+tab ignores input, `sudo pkill -f 'needrestart -m u'` from another terminal releases it.
+
+Once the Orin boots, log in as the user you set (`ssh <user>@192.168.55.1` over the USB-C cable), then run the host
+setup below.
+
+### Packages to install
+
+On the freshly flashed Orin, install these before the host setup:
+
+```bash
+sudo apt update
+sudo apt install -y git nvidia-jetpack
+```
+
+| Package | Why |
+| --- | --- |
+| `git` | `setup.sh` fetches the vendor driver package from its public repository with a sparse clone. |
+| `nvidia-jetpack` | The CUDA, TensorRT and other JetPack components that SDK Manager skips when you decline its post-flash install. |
+
+`sudo` is also required: `setup.sh` installs files under `/usr` and `/boot` and adds your user to the `i2c` and `gpio`
+groups. Everything else the cameras need (the SIPL libraries, camera HAL, ISP tuning files, the device-tree overlay and
+`nvsipl_camera`) comes from the vendor package that `setup.sh` installs, not from apt.
+
+For the container route, the host also needs Docker with the NVIDIA container runtime (`docker.io` and
+`nvidia-container-toolkit`, normally already present with `nvidia-jetpack`). The container image installs its own
+packages (`libegl1 libgles2 libglib2.0-0 libxext6 libxcb-glx0`), so install nothing extra for it on the host.
+
+### Host setup
+
+Run the host setup once, choose the Jetson-IO overlay **Jetson Sensing SG8A-AGON-G2Y-A1 SIPL GMSL2x8** when it asks, and reboot:
 
 ```bash
 src/plugins/sensing/scripts/setup.sh
