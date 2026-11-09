@@ -252,9 +252,9 @@ def publish_aligned_episode(
     Arguments and refusals are those of :func:`write_aligned_episode`.
 
     Publication contract: one publisher at a time per aligned session (an exclusive lock on a file beside it is
-    held throughout, so concurrent runs queue instead of discarding each other's staging); a reader sees the previous
-    episode, the new one, or, in the instant between the two renames of a re-publication, no episode, and never a
-    partial one. The rename pair is crash-recoverable, not a single atomic replacement.
+    held throughout, so concurrent runs queue instead of discarding each other's staging). A reader sees the
+    previous episode, the new one, or, in the instant between the two renames of a re-publication, no episode;
+    never a partial one. The rename pair is crash-recoverable, not a single atomic replacement.
     """
     _check_separate(raw_session, aligned_session)
     key = f"episode_{episode_index}"
