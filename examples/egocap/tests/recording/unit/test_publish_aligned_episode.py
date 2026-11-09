@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -428,3 +430,96 @@ def test_a_failure_after_staging_started_removes_the_staging_tree_and_propagates
     assert seen["staged"]
     assert not (tmp_path / ".aligned.staging").exists()
     assert listing(aligned) == before
+
+
+def test_concurrent_publications_of_different_episodes_both_land_complete(tmp_path, raw):
+    aligned = tmp_path / "aligned"
+    errors = []
+
+    def run(episode):
+        try:
+            publish(raw, aligned, episode, downsample=2)
+        except BaseException as exc:  # reported below, on the main thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(episode,)) for episode in (0, 1)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=120)
+    assert errors == []
+
+    reference(raw, tmp_path / "ref", 0, downsample=2)
+    reference(raw, tmp_path / "ref", 1, downsample=2)
+    assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
+    for episode in (0, 1):
+        assert validate_aligned_episode(aligned, episode, INDEX) == []
+    assert_no_leftovers(aligned)
+    # The lock file is beside the aligned session, not inside it.
+    assert (tmp_path / ".aligned.lock").is_file()
+    assert not list(aligned.glob("*.lock"))
+
+
+def test_a_second_publisher_waits_for_the_lock_holder(tmp_path, raw):
+    aligned = tmp_path / "aligned"
+    done = threading.Event()
+
+    def run():
+        publish(raw, aligned, 0)
+        done.set()
+
+    with open(tmp_path / ".aligned.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        thread = threading.Thread(target=run)
+        thread.start()
+        # Blocked on the lock: nothing finishes and nothing is written.
+        assert not done.wait(1.0)
+        assert not aligned.exists()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    assert done.wait(60)
+    thread.join()
+    assert validate_aligned_episode(aligned, 0, INDEX) == []
+    assert_no_leftovers(aligned)
+
+
+def test_a_refused_run_creates_nothing_inside_the_aligned_session(tmp_path, raw):
+    aligned = tmp_path / "aligned"
+    publish(raw, aligned, 1)
+    before = listing(aligned)
+    with pytest.raises(AlignedWriteError):
+        publish(raw, aligned, 0, continuity=None)
+    assert listing(aligned) == before
+    # Only the lock file may be added beside it, and a never-created session stays absent.
+    with pytest.raises(AlignedWriteError):
+        publish(raw, tmp_path / "fresh", 0, continuity=None)
+    assert not (tmp_path / "fresh").exists()
+    assert not (tmp_path / ".fresh.staging").exists()
+
+
+def test_between_the_renames_the_episode_is_absent_never_partial(tmp_path, raw, monkeypatch):
+    aligned = tmp_path / "aligned"
+    publish(raw, aligned, 0)
+    old_files = listing(aligned / "episode_0")
+    seen = []
+
+    class Inspecting(FailingOs):
+        def replace(self, source, target):
+            self.calls += 1
+            if self.calls == 2:
+                # Old episode already moved aside whole; the new one is complete in staging, not yet visible.
+                seen.append(
+                    (
+                        (aligned / "episode_0").exists(),
+                        listing(aligned / ".episode_0.replaced") == old_files,
+                        validate_aligned_episode(tmp_path / ".aligned.staging", 0, INDEX),
+                    )
+                )
+            return os.replace(source, target)
+
+    monkeypatch.setattr(aligned_writer, "os", Inspecting(0))
+    publish(raw, aligned, 0, downsample=2)
+    monkeypatch.undo()
+
+    assert seen == [(False, True, [])]
+    assert validate_aligned_episode(aligned, 0, INDEX) == []
+    assert_no_leftovers(aligned)
