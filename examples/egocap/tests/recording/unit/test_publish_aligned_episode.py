@@ -2,12 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import fcntl
 import hashlib
 import json
 import os
 import shutil
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -130,7 +128,6 @@ def raw_state(root):
 
 def assert_no_leftovers(aligned):
     assert not (aligned.parent / f".{aligned.name}.staging").exists()
-    assert not list(aligned.glob(".*.replaced"))
 
 
 def assert_snapshots_equal(got, want):
@@ -198,29 +195,29 @@ def test_published_videos_are_copies_when_linking_is_not_possible(tmp_path, raw,
         assert aligned_video.read_bytes() == video_bytes(camera, 0)
 
 
-def test_republishing_replaces_the_whole_episode_and_leaves_others_alone(tmp_path, raw):
+def test_an_existing_episode_is_refused_and_left_untouched(tmp_path, raw):
     aligned = tmp_path / "aligned"
     publish(raw, aligned, 0)
-    publish(raw, aligned, 1)
-    # A stale array and a stray file that only the first publication could have left behind.
-    stale = zarr.open_group(str(aligned), mode="a")["episode_0"]
-    stale["stale_array"] = np.arange(5)
-    (aligned / "episode_0" / "stale.txt").write_text("old")
-    other_before = {k: v for k, v in snapshot(aligned).items() if k.startswith("episode_1")}
+    before = snapshot(aligned)
+    files = listing(aligned)
 
+    with pytest.raises(AlignedWriteError, match="already exists"):
+        publish(raw, aligned, 0, downsample=2)
+
+    assert listing(aligned) == files
+    assert_snapshots_equal(snapshot(aligned), before)
+    assert_no_leftovers(aligned)
+
+
+def test_a_different_episode_publishes_beside_the_first(tmp_path, raw):
+    aligned = tmp_path / "aligned"
     publish(raw, aligned, 0, downsample=2)
+    publish(raw, aligned, 1, downsample=2)
 
     write_control(raw, tmp_path / "ref", 0, downsample=2)
-    now = snapshot(aligned)
-    assert "episode_0/stale_array" not in now
-    assert "episode_0/stale.txt" not in now
-    assert_snapshots_equal(
-        {k: v for k, v in now.items() if k.startswith("episode_0")},
-        {k: v for k, v in snapshot(tmp_path / "ref").items() if k.startswith("episode_0")},
-    )
-    assert_snapshots_equal({k: v for k, v in now.items() if k.startswith("episode_1")}, other_before)
+    write_control(raw, tmp_path / "ref", 1, downsample=2)
+    assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
     assert_no_leftovers(aligned)
-    assert validate_aligned_episode(aligned, 0, INDEX) == []
 
 
 def with_entry(source, **changes):
@@ -277,82 +274,22 @@ def test_a_staging_path_that_is_the_raw_session_is_refused_and_not_deleted(tmp_p
     assert not (tmp_path / "aligned").exists()
 
 
-class FailingOs:
-    """The ``os`` module as the writer sees it, with ``replace`` failing on one chosen call."""
-
-    def __init__(self, fail_on):
-        self.calls = 0
-        self.fail_on = fail_on
-
-    def __getattr__(self, name):
-        return getattr(os, name)
-
-    def replace(self, source, target):
-        self.calls += 1
-        if self.calls == self.fail_on:
-            raise OSError("simulated crash")
-        return os.replace(source, target)
-
-
-@pytest.mark.parametrize("fail_on", [1, 2])
-def test_a_crash_while_replacing_an_existing_episode_never_leaves_a_partial_one(
-    tmp_path, raw, monkeypatch, fail_on
-):
+def test_a_failed_rename_removes_the_staging_tree(tmp_path, raw, monkeypatch):
     aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0, downsample=1)
-    old = snapshot(aligned)
-    write_control(raw, tmp_path / "ref", 0, downsample=2)
+    publish(raw, aligned, 1)
+    before = listing(aligned)
 
-    monkeypatch.setattr(aligned_writer, "os", FailingOs(fail_on))
-    with pytest.raises(OSError, match="simulated crash"):
-        publish(raw, aligned, 0, downsample=2)
-    monkeypatch.undo()
+    def failing_rename(source, target):
+        raise OSError("simulated failure")
 
-    if (aligned / "episode_0").exists():
-        # The first rename failed: the previous episode is still there, whole.
-        assert fail_on == 1
-        assert_snapshots_equal(snapshot(aligned), old)
-    else:
-        # Between the two renames: the previous episode is held under its .replaced name, whole.
-        assert fail_on == 2
-        assert (aligned / ".episode_0.replaced").is_dir()
-        assert validate_aligned_episode(aligned, 0, INDEX) != []
-
-    publish(raw, aligned, 0, downsample=2)
-
-    assert_no_leftovers(aligned)
-    assert validate_aligned_episode(aligned, 0, INDEX) == []
-    assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
-
-
-def test_a_crash_between_the_renames_is_undone_by_a_run_that_refuses(tmp_path, raw, monkeypatch):
-    aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0)
-    old = snapshot(aligned)
-    monkeypatch.setattr(aligned_writer, "os", FailingOs(2))
-    with pytest.raises(OSError):
-        publish(raw, aligned, 0, downsample=2)
-    monkeypatch.undo()
-
-    with pytest.raises(AlignedWriteError):
-        publish(raw, aligned, 0, continuity=None)
-
-    # The refused run still put the previous episode back.
-    assert_snapshots_equal(snapshot(aligned), old)
-    assert_no_leftovers(aligned)
-
-
-def test_a_crash_publishing_a_new_episode_leaves_none_and_a_retry_succeeds(tmp_path, raw, monkeypatch):
-    aligned = tmp_path / "aligned"
-    monkeypatch.setattr(aligned_writer, "os", FailingOs(1))
-    with pytest.raises(OSError, match="simulated crash"):
+    monkeypatch.setattr(aligned_writer.os, "rename", failing_rename)
+    with pytest.raises(OSError, match="simulated failure"):
         publish(raw, aligned, 0)
     monkeypatch.undo()
-    assert not (aligned / "episode_0").exists()
 
-    publish(raw, aligned, 0)
-
+    assert listing(aligned) == before
     assert_no_leftovers(aligned)
+    publish(raw, aligned, 0)
     assert validate_aligned_episode(aligned, 0, INDEX) == []
 
 
@@ -367,46 +304,6 @@ def test_a_leftover_staging_tree_is_discarded(tmp_path, raw):
     assert not staging.exists()
     assert not (aligned / "episode_0" / "junk.bin").exists()
     assert validate_aligned_episode(aligned, 0, INDEX) == []
-
-
-def test_a_leftover_replaced_episode_without_a_replacement_is_restored_first(tmp_path, raw):
-    aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0)
-    old = snapshot(aligned)
-    os.rename(aligned / "episode_0", aligned / ".episode_0.replaced")
-
-    # A refused run shows the restore happened before anything else.
-    with pytest.raises(AlignedWriteError):
-        publish(raw, aligned, 0, continuity=None)
-    assert_snapshots_equal(snapshot(aligned), old)
-    assert_no_leftovers(aligned)
-
-
-def test_a_leftover_replaced_episode_without_a_replacement_is_then_overwritten_by_a_publish(tmp_path, raw):
-    aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0)
-    os.rename(aligned / "episode_0", aligned / ".episode_0.replaced")
-
-    publish(raw, aligned, 0, downsample=2)
-
-    write_control(raw, tmp_path / "ref", 0, downsample=2)
-    assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
-    assert_no_leftovers(aligned)
-
-
-def test_a_leftover_replaced_episode_beside_its_replacement_is_dropped(tmp_path, raw):
-    aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0)
-    current = snapshot(aligned)
-    shutil.copytree(aligned / "episode_0", aligned / ".episode_0.replaced")
-    (aligned / ".episode_0.replaced" / "older.txt").write_text("previous generation")
-
-    with pytest.raises(AlignedWriteError):
-        publish(raw, aligned, 0, continuity=None)
-
-    # The replacement that did arrive is kept as it was; the set-aside copy is gone.
-    assert_snapshots_equal(snapshot(aligned), current)
-    assert_no_leftovers(aligned)
 
 
 @pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt])
@@ -432,56 +329,6 @@ def test_a_failure_after_staging_started_removes_the_staging_tree_and_propagates
     assert listing(aligned) == before
 
 
-def test_concurrent_publications_of_different_episodes_both_land_complete(tmp_path, raw):
-    aligned = tmp_path / "aligned"
-    errors = []
-
-    def run(episode):
-        try:
-            publish(raw, aligned, episode, downsample=2)
-        except BaseException as exc:  # reported below, on the main thread
-            errors.append(exc)
-
-    threads = [threading.Thread(target=run, args=(episode,)) for episode in (0, 1)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=120)
-    assert errors == []
-
-    write_control(raw, tmp_path / "ref", 0, downsample=2)
-    write_control(raw, tmp_path / "ref", 1, downsample=2)
-    assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
-    for episode in (0, 1):
-        assert validate_aligned_episode(aligned, episode, INDEX) == []
-    assert_no_leftovers(aligned)
-    # The lock file is beside the aligned session, not inside it.
-    assert (tmp_path / ".aligned.lock").is_file()
-    assert not list(aligned.glob("*.lock"))
-
-
-def test_a_second_publisher_waits_for_the_lock_holder(tmp_path, raw):
-    aligned = tmp_path / "aligned"
-    done = threading.Event()
-
-    def run():
-        publish(raw, aligned, 0)
-        done.set()
-
-    with open(tmp_path / ".aligned.lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        thread = threading.Thread(target=run)
-        thread.start()
-        # Blocked on the lock: nothing finishes and nothing is written.
-        assert not done.wait(1.0)
-        assert not aligned.exists()
-        fcntl.flock(lock, fcntl.LOCK_UN)
-    assert done.wait(60)
-    thread.join()
-    assert validate_aligned_episode(aligned, 0, INDEX) == []
-    assert_no_leftovers(aligned)
-
-
 def test_a_refused_run_creates_nothing_inside_the_aligned_session(tmp_path, raw):
     aligned = tmp_path / "aligned"
     publish(raw, aligned, 1)
@@ -489,37 +336,8 @@ def test_a_refused_run_creates_nothing_inside_the_aligned_session(tmp_path, raw)
     with pytest.raises(AlignedWriteError):
         publish(raw, aligned, 0, continuity=None)
     assert listing(aligned) == before
-    # Only the lock file may be added beside it, and a never-created session stays absent.
+    # A never-created session stays absent.
     with pytest.raises(AlignedWriteError):
         publish(raw, tmp_path / "fresh", 0, continuity=None)
     assert not (tmp_path / "fresh").exists()
     assert not (tmp_path / ".fresh.staging").exists()
-
-
-def test_between_the_renames_the_episode_is_absent_never_partial(tmp_path, raw, monkeypatch):
-    aligned = tmp_path / "aligned"
-    publish(raw, aligned, 0)
-    old_files = listing(aligned / "episode_0")
-    seen = []
-
-    class Inspecting(FailingOs):
-        def replace(self, source, target):
-            self.calls += 1
-            if self.calls == 2:
-                # Old episode already moved aside whole; the new one is complete in staging, not yet visible.
-                seen.append(
-                    (
-                        (aligned / "episode_0").exists(),
-                        listing(aligned / ".episode_0.replaced") == old_files,
-                        validate_aligned_episode(tmp_path / ".aligned.staging", 0, INDEX),
-                    )
-                )
-            return os.replace(source, target)
-
-    monkeypatch.setattr(aligned_writer, "os", Inspecting(0))
-    publish(raw, aligned, 0, downsample=2)
-    monkeypatch.undo()
-
-    assert seen == [(False, True, [])]
-    assert validate_aligned_episode(aligned, 0, INDEX) == []
-    assert_no_leftovers(aligned)

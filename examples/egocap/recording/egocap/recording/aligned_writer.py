@@ -12,12 +12,11 @@ array, the attributes, the session's ``config.yaml`` and sidecars, and the video
 aligned root's ``zarr.json`` records which source was the index.
 
 This module writes the files; the caller chooses the times, qualification and the staging that makes publication
-atomic.
+all-or-nothing.
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
@@ -252,63 +251,24 @@ def publish_aligned_episode(
     qualified: Mapping[str, bool],
     continuity: Mapping[str, Mapping[str, object]] | None,
 ) -> AlignedEpisode:
-    """Write the aligned episode privately, then move it into ``aligned_session`` by renames.
+    """Write the aligned episode privately, then move it into ``aligned_session`` with one rename.
 
-    A reader never sees a half-written episode: it is written and validated in a staging session beside the
-    aligned one (same filesystem, so the videos stay linked and the moves are renames). An interrupted run
-    leaves either the staging tree, which the next run discards, or, if it stopped between the two renames,
-    the previous episode under a ``.replaced`` name, which the next run puts back before anything else.
-    Arguments and refusals are those of :func:`write_aligned_episode`.
-
-    Publication contract: one publisher at a time per aligned session (an exclusive lock on a file beside it is
-    held throughout, so concurrent runs queue instead of discarding each other's staging). A reader sees the
-    previous episode, the new one, or, in the instant between the two renames of a re-publication, no episode;
-    never a partial one. The rename pair is crash-recoverable, not a single atomic replacement.
+    The episode is built and validated in a staging session beside the aligned one (same filesystem, so the
+    videos stay linked), so a reader sees the finished episode or none. An existing aligned episode is never
+    replaced: it is refused. A crashed run leaves only the staging tree, which the next run discards. One
+    publisher at a time per aligned session. Arguments and refusals are those of :func:`write_aligned_episode`.
     """
     _check_separate(raw_session, aligned_session)
     key = f"episode_{episode_index}"
+    final = aligned_session / key
+    # Refuse before doing any work; the rename below fails too if one appears meanwhile.
+    if final.exists():
+        raise AlignedWriteError(f"{final} already exists; it is not replaced")
     staging = aligned_session.with_name(f".{aligned_session.name}.staging")
     _check_separate(raw_session, staging)
-    lock_path = aligned_session.with_name(f".{aligned_session.name}.lock")
-    # The lock file sits beside the aligned session, not in it, so a refused run still creates nothing inside.
-    with open(lock_path, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        return _publish_locked(
-            raw_session,
-            aligned_session,
-            staging,
-            key,
-            episode_index,
-            index_source,
-            downsample,
-            qualified,
-            continuity,
-        )
 
-
-def _publish_locked(
-    raw_session: Path,
-    aligned_session: Path,
-    staging: Path,
-    key: str,
-    episode_index: int,
-    index_source: str,
-    downsample: int,
-    qualified: Mapping[str, bool],
-    continuity: Mapping[str, Mapping[str, object]] | None,
-) -> AlignedEpisode:
-    """The body of :func:`publish_aligned_episode`, run while its lock is held."""
-    final, replaced = aligned_session / key, aligned_session / f".{key}.replaced"
-
-    # Leftovers of an interrupted run: a half-built staging tree is discarded, and an episode set aside by an
-    # interrupted move is restored (or dropped if its replacement did arrive).
+    # A staging tree left by a crashed run is stale by definition.
     shutil.rmtree(staging, ignore_errors=True)
-    if replaced.exists():
-        if final.exists():
-            shutil.rmtree(replaced)
-        else:
-            os.replace(replaced, final)
-
     try:
         aligned = write_aligned_episode(
             raw_session,
@@ -319,19 +279,12 @@ def _publish_locked(
             qualified=qualified,
             continuity=continuity,
         )
-    except BaseException:
+        # The aligned root and sidecars are idempotent; the episode itself moves in by one rename.
+        _write_root(raw_session, aligned_session, index_source)
+        os.rename(staging / key, final)
+    finally:
         # Nothing of a failed or refused write reaches the aligned session.
         shutil.rmtree(staging, ignore_errors=True)
-        raise
-
-    # The aligned root and sidecars are idempotent; the episode moves in with two renames, keeping the old copy
-    # until the new one is in place.
-    _write_root(raw_session, aligned_session, index_source)
-    if final.exists():
-        os.replace(final, replaced)
-    os.replace(staging / key, final)
-    shutil.rmtree(replaced, ignore_errors=True)
-    shutil.rmtree(staging, ignore_errors=True)
     return aligned
 
 

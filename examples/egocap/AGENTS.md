@@ -76,4 +76,4 @@ Run all three test suites per "Run the tests yourself" above — check each pack
 
 An aligned or otherwise derived copy of a recording must live in its own tree and read the raw session
 read-only. Check that the output path is not the raw session, inside it or containing it (resolving links)
-before any file is written; replacing a derived episode deletes it first.
+before any file is written. An existing derived episode is refused, never replaced.
