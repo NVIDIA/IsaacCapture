@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_executable(pose_provider_tests
+    test_pose_provider.cpp
     test_stub_contract.cpp
 )
 
@@ -9,6 +10,7 @@ target_link_libraries(pose_provider_tests
     PRIVATE
         Catch2::Catch2WithMain
         pose_provider::pose_engine_stub
+        pose_provider::pose_provider_core
 )
 
 catch_discover_tests(pose_provider_tests ADD_TAGS_AS_LABELS)

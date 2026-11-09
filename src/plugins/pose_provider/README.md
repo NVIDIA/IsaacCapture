@@ -18,6 +18,8 @@ stream through an interchangeable pose estimation engine.
 | --- | --- | --- |
 | `engine_api/` | `pose_provider::pose_engine_api` | Header-only engine interface: `IPoseEngine`, its records and `ResolvedPoseSetup`; standard library only |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
+| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, status and failure handling around one engine adapter; links no adapter |
+| `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
 
 ## Build
 
@@ -25,18 +27,46 @@ The `BUILD_PLUGIN_POSE_PROVIDER` option is off by default and needs `BUILD_PLUGI
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_POSE_PROVIDER=ON
-cmake --build build --target pose_provider_tests
+cmake --build build --target pose_provider_plugin pose_provider_tests
 ctest --test-dir build -L pose_provider
 ```
 
 To use an engine adapter instead of the stub, also pass
 `-DPOSE_ENGINE_<NAME>=ON -D<NAME>_ROOT=<engine library directory>`.
 
-`POSE_ENGINE_TARGET` names the adapter that executables link: the one enabled adapter, or
-the stub. `pose_provider_tests` checks the stub against the contract, and the
-`pose_engine_*` tests check adapter registration. This directory has no install rules. A pip
-build with the option on still installs `pose_provider_tests`, as it does other test
-executables.
+`POSE_ENGINE_TARGET` names the adapter that `pose_provider_plugin` links: the one enabled
+adapter, or the stub. `pose_provider_tests` checks the stub against the contract and runs
+`PoseProvider` on the stub and on a scripted engine; the `pose_engine_*` tests check adapter
+registration. The build places `pose_provider_plugin` beside a copy of `plugin.yaml` in
+`build/src/plugins/pose_provider/`, so `build/src/plugins` works as a `PluginManager` search
+path. No target here has install rules, and a pip build with `BUILD_PLUGIN_POSE_PROVIDER` on
+stops at configuration.
+
+## Run
+
+`pose_provider_plugin` runs the linked engine adapter through one run: Preparing, Ready,
+Running, Draining and Finished. It issues its own start request at launch, so the run starts
+as soon as the engine is ready; an application cannot start it separately.
+
+| Option | Meaning |
+| --- | --- |
+| `--startup-timeout=<seconds>` | Time allowed from launch for the setup to arrive and the run to start; engine initialization is not interrupted |
+| `--drain-timeout=<seconds>` | Time allowed from a finish request until the engine has processed its accepted input |
+| `--plugin-root-id=<id>` | Set by the plugin launcher |
+
+`--help` prints the defaults. SIGINT or SIGTERM finishes the run: a running engine drains,
+and a run that has not started ends at once. The exit status is 0 when the run finished, 1
+when it failed (the log gives the reason) and 2 for a usage error.
+
+After its SIGINT, `PluginManager` waits `shutdown_timeout_seconds` from
+[`plugin.yaml`](plugin.yaml) and then sends SIGKILL. Keep that value above the longest
+finish: `--drain-timeout` plus the engine's stop time, plus the rest of engine initialization
+and start if a stop can arrive while the engine initializes. When `PluginManager` stops the
+plugin itself, it reports the plugin as stopped and drops its exit status; the plugin's last
+log line still gives the outcome.
+
+Camera input is not implemented: no setup arrives, so the plugin waits in Preparing until
+it is stopped or the startup timeout fails it.
 
 ## Write an adapter
 
