@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=0017f0b3" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -392,7 +393,6 @@
 <li class="toctree-l2"><a class="reference internal" href="so101.html">Retargeters: SO-101 (5-DOF arm)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="joint_space.html">Retargeter: Joint-Space Device</a></li>
 <li class="toctree-l2"><a class="reference internal" href="wuji.html">Retargeter: Wuji Glove to Wuji Hand</a></li>
-<li class="toctree-l2"><a class="reference internal" href="realhand.html">Retargeters: P7 and RealHand</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -476,16 +476,6 @@ See <a class="reference internal" href="../../device/trackers/index.html"><span 
 <section id="available-retargeters">
 <h2>Available Retargeters<a class="headerlink" href="#available-retargeters" title="Link to this heading">#</a></h2>
 <details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
-<summary class="sd-summary-title sd-card-header">
-<span class="sd-summary-text">P7 and RealHand L6 / O6 / L20</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
-<p class="sd-card-text"><code class="docutils literal notranslate"><span class="pre">P7ControllerPoseRetargeter</span></code> and <code class="docutils literal notranslate"><span class="pre">P7HandPoseRetargeter</span></code> map an absolute OpenXR pose into
-the calibrated P7 workspace. The official <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code>
-and <code class="docutils literal notranslate"><span class="pre">ControllerTriggerRealHandRetargeter</span></code> produce joint commands for L6, O6, and L20.
-FFG and optical tracking use the same standard human-joint hand-tracking pipeline.
-See <a class="reference internal" href="realhand.html"><span class="doc">Retargeters: P7 and RealHand</span></a> for the full input-mode matrix and pipeline
-example.</p>
-</div>
-</details><details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">Se3AbsRetargeter / Se3RelRetargeter</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">Maps hand or controller tracking to end-effector pose. <code class="docutils literal notranslate"><span class="pre">Se3AbsRetargeter</span></code> outputs a 7D
@@ -857,7 +847,6 @@ retargeter tuning UI.</p></li>
 <li class="toctree-l1"><a class="reference internal" href="so101.html">Retargeters: SO-101 (5-DOF arm)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="joint_space.html">Retargeter: Joint-Space Device</a></li>
 <li class="toctree-l1"><a class="reference internal" href="wuji.html">Retargeter: Wuji Glove to Wuji Hand</a></li>
-<li class="toctree-l1"><a class="reference internal" href="realhand.html">Retargeters: P7 and RealHand</a></li>
 </ul>
 </div>
 </section>
@@ -998,7 +987,7 @@ retargeter tuning UI.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 09, 2026.
       <br/>
     
   </p>

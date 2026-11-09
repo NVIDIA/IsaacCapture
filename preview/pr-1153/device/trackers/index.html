@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=0017f0b3" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -730,6 +731,23 @@ reads the PICO <code class="docutils literal notranslate"><span class="pre">XR_B
 <p><code class="docutils literal notranslate"><span class="pre">FullBodyTrackerPico</span></code> remains available as a deprecated alias for
 <code class="docutils literal notranslate"><span class="pre">FullBodyTracker</span></code> so existing scripts run unchanged.</p>
 </div>
+<p>To run the examples from the repo root (the C++ ones need the CloudXR runtime
+started first; the Python modules start it themselves):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># C++ (after cmake --install)</span>
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/examples/schemaio/full_body_printer
+./install/examples/mcap_record_replay/cpp/record_full_body<span class="w"> </span><span class="m">5</span><span class="w"> </span>recordings/
+
+<span class="c1"># Python</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.record_full_body<span class="w"> </span>--accept-eula
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../body_tracking/index.html"><span class="doc">Body Tracking</span></a> for headset setup and
+<a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a> for the record and replay options.</p>
 </section>
 <section id="soma-body-trackers">
 <h3>SOMA body trackers<a class="headerlink" href="#soma-body-trackers" title="Link to this heading">#</a></h3>
@@ -857,6 +875,26 @@ utility internally.</p>
 </ul>
 </li>
 </ul>
+<p>The printer reads <code class="docutils literal notranslate"><span class="pre">{prefix}/Color</span></code>, <code class="docutils literal notranslate"><span class="pre">{prefix}/MonoLeft</span></code> and
+<code class="docutils literal notranslate"><span class="pre">{prefix}/MonoRight</span></code> (default prefix <code class="docutils literal notranslate"><span class="pre">oak_camera</span></code>). Both processes wait for
+a headset to connect to the CloudXR runtime; after that the printer reports
+<code class="docutils literal notranslate"><span class="pre">Waiting</span> <span class="pre">for</span> <span class="pre">data</span> <span class="pre">from</span> <span class="pre">prefix:</span> <span class="pre">...</span></code> until <code class="docutils literal notranslate"><span class="pre">camera_plugin_oak</span></code> pushes with
+the same <code class="docutils literal notranslate"><span class="pre">--collection-prefix</span></code>. Run each in its own shell:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+
+<span class="c1"># Shell 1: the plugin</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./build/src/plugins/oak/camera_plugin_oak<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--add-stream<span class="o">=</span><span class="nv">camera</span><span class="o">=</span>Color,output<span class="o">=</span>./color.h264<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--collection-prefix<span class="o">=</span>oak_camera
+
+<span class="c1"># Shell 2: the printer</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/examples/schemaio/frame_metadata_printer<span class="w"> </span>--collection-prefix<span class="o">=</span>oak_camera
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../cameras/oak.html"><span class="doc">OAK Camera Plugin</span></a> to build the plugin and
+<a class="reference internal" href="../../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> for the runtime setup.</p>
 </section>
 <section id="generic3axispedaltracker">
 <h3>Generic3AxisPedalTracker<a class="headerlink" href="#generic3axispedaltracker" title="Link to this heading">#</a></h3>
@@ -1098,7 +1136,7 @@ construction; see <a class="reference internal" href="../../teleop/teleop_sessio
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 09, 2026.
       <br/>
     
   </p>
