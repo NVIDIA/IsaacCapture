@@ -297,6 +297,11 @@ def test_a_source_without_a_delay_reads_the_current_instant_exactly():
     assert _entered_session(controller_delay_s=0.2)._delayed(3.0, "glove") == 3.0
 
 
+def test_jitter_never_moves_a_source_that_has_no_delay():
+    session = _entered_session(controller_delay_s=0.2, delay_jitter_s=0.5)
+    assert all(session._delayed(3.0, "glove") == 3.0 for _ in range(50))
+
+
 def test_startup_error_fault_raises_on_enter():
     session = mic.TeleopSession(_full_config(), scenario="demo", seed=0, faults={"startup_error"})
     with pytest.raises(RuntimeError, match="startup_error"):

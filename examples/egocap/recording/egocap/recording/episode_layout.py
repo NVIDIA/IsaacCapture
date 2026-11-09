@@ -182,7 +182,8 @@ def write_manifest(session_path: Path, manifest: EpisodeManifest) -> None:
 #: Sidecar record of the calibration assets preserved in a session: name -> sha256 (null if absent at creation).
 CALIBRATION_RECORD = "calibration_assets.json"
 
-#: Session-root (and, once routed, group-root) metadata snapshot: {"meta": {"egocap_station_name": ...}}.
+#: Session-root (and, once routed, group-root) config snapshot: the station identity under ``meta`` plus the
+#: source declarations (names, frame types, recording defaults) that time alignment reads.
 #: Written once at session creation and never rewritten on reopen/recovery (see
 #: RecordingService._prepare_session_assets); downstream tooling such as
 #: analytics/count_daily_trajectories.py reads it to map a session back to its station.

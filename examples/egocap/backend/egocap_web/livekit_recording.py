@@ -541,8 +541,6 @@ class LiveKitRecordingSource:
                     for s in self._streams
                 },
             },
-            # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
-            "tracking_time": "host_poll",
             "tracking_semantics": _TRACKING_SEMANTICS,
         }
 

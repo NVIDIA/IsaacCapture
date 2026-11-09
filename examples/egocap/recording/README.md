@@ -127,9 +127,9 @@ What the recording service writes into each routed group:
 ├── <Studio>/
 │   └── <YYYY-MM-DD-HH-MM-SS>/
 │       ├── zarr.json              # dataset-level attrs
-│       ├── config.yaml             # {"meta": {"egocap_station_name": ...}} -- station identity
-│       │                           # only, NOT the fuller video_sources/numeric_sources/recording
-│       │                           # schema `core/config_io.py`'s default config illustrates
+│       ├── config.yaml             # meta.egocap_station_name plus the source declarations time
+│       │                           # alignment reads (video_sources/numeric_sources names and frame
+│       │                           # types, recording defaults)
 │       ├── head_camera_intrinsics.json, head_camera_extrinsics.json
 │       ├── left_wrist_camera_intrinsics.json, right_wrist_camera_intrinsics.json
 │       ├── wrist_calibration_offsets.json

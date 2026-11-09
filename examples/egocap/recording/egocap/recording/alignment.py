@@ -18,8 +18,8 @@ expect these values:
   transforms: linear position, slerp rotation), ``linear`` (element-wise, also used for a 4x4 field with extra
   leading dimensions) or ``nearest`` (the value at the nearest sample); ``raw`` fields are not resampled.
 
-There is no file access here. The times passed in are the ones to align on: a source's recorded capture time, or
-its receive time minus a configured latency, chosen by the caller and never adjusted here.
+There is no file access here. The times passed in are the ones to align on: each source's recorded capture time,
+used exactly as given and never adjusted here.
 """
 
 from __future__ import annotations
@@ -65,8 +65,8 @@ def qualified_sources(timing: Mapping[str, object] | None, sources: Sequence[str
     ``timing["event_time"][source]["qualified"]`` is the recorded statement, per source, of whether its saved time
     is a qualified event time (a sensor's capture event, or a device measurement time). Only a literal True counts;
     a source the attribute does not list, an entry without it, or no attribute at all is False. A clock mapping
-    says which clock a time is on, not what it measures, so it is never taken as qualification. A caller that
-    aligns on ``receive_time - latency`` instead states that choice itself; this says nothing about it.
+    says which clock a time is on, not what it measures, so it is never taken as qualification. A configured
+    latency estimate is applied when the sample is recorded and marked in this attribute; it is not applied here.
     """
     event_time = (timing or {}).get("event_time")
     entries = event_time if isinstance(event_time, Mapping) else {}

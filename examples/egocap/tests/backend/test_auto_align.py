@@ -235,40 +235,27 @@ def test_recover_is_not_vetoed_by_a_declared_source_the_episode_did_not_record(t
     assert [job.episode_index for job in _queued(aligner)] == [0]
 
 
-async def test_more_recovered_episodes_than_the_queue_holds_are_all_aligned_in_order(monkeypatch, tmp_path):
+async def test_many_recovered_episodes_are_all_aligned_in_order(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(auto_align, "align_kept_episode", lambda *args: calls.append(args))
-    monkeypatch.setattr(auto_align, "_QUEUE_LIMIT", 2)
-    for index in range(5):
+    for index in range(9):
         _write_session_manifest(tmp_path, "s1", index)
     aligner = AutoAligner(tmp_path, "head")
     aligner.recover()
-    assert aligner._queue.qsize() == 2 and len(aligner._backlog) == 3
+    assert aligner._queue.qsize() == 9
     task = asyncio.create_task(aligner.run())
-    await aligner.close(task, 5)
-    assert [args[1] for args in calls] == [0, 1, 2, 3, 4]
-    assert not aligner._backlog
+    await aligner.close(task, 30)
+    assert [args[1] for args in calls] == list(range(9))
 
 
-async def test_a_live_submit_while_the_queue_is_full_is_kept_and_aligned_last(calls, monkeypatch):
-    monkeypatch.setattr(auto_align, "_QUEUE_LIMIT", 1)
+async def test_many_live_submits_are_all_aligned_in_order_and_close_drains_them(calls):
     aligner = AutoAligner(Path("/out"), "head")
-    for index in (1, 2, 3):
+    for index in range(100):
         aligner.submit(_result(index=index, final_path=Path("/g") / f"episode_{index}"))
     task = asyncio.create_task(aligner.run())
-    await aligner.close(task, 5)
-    assert [args[1] for args in calls] == [1, 2, 3]
-
-
-async def test_close_waits_for_the_backlog_too(calls, monkeypatch):
-    monkeypatch.setattr(auto_align, "_QUEUE_LIMIT", 1)
-    aligner = AutoAligner(Path("/out"), "head")
-    for index in range(4):
-        aligner.submit(_result(index=index))
-    assert len(aligner._backlog) == 3
-    task = asyncio.create_task(aligner.run())
-    await aligner.close(task, 5)
-    assert len(calls) == 4 and not aligner._backlog and task.cancelled()
+    await aligner.close(task, 30)
+    assert [args[1] for args in calls] == list(range(100))
+    assert aligner._queue.empty() and task.cancelled()
 
 
 def test_the_logger_is_in_the_isaaccapture_tree():

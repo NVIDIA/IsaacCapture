@@ -30,7 +30,6 @@ from recording_service import (
 ROWS = 5
 TIMING = {
     "clock_mapping": {"method": "m", "mappings": [{"epoch": 1, "offset_ns": -7}]},
-    "tracking_time": "host_poll",
 }
 
 

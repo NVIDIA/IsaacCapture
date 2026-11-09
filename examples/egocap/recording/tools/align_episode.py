@@ -13,7 +13,7 @@ refused with the reason, never assumed good.
 Usage (from any directory outside ``egocap`` itself)::
 
     <egocap>/.venv/bin/python recording/tools/align_episode.py SESSION_DIR --episode N --index-source NAME \
-        [--manifest-session DIR] [--aligned-session DIR] [--downsample K]
+        [--manifest-session DIR] [--manifest-episode N] [--aligned-session DIR] [--downsample K]
 
 ``--manifest-session`` is where the episode's manifest lives when that is not ``SESSION_DIR`` (a routed
 episode's manifest stays in the session it was recorded in), and ``--manifest-episode`` its index there when that

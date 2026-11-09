@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,9 +31,6 @@ from egocap.recording.episode_layout import (
 from recording_service import Disposition, EpisodeResult
 
 logger = logging.getLogger("isaaccapture.egocap_web.auto_align")
-
-#: Kept episodes held in the queue at once; any more wait in the backlog, so none is dropped.
-_QUEUE_LIMIT = 64
 
 
 @dataclass(frozen=True)
@@ -58,21 +54,13 @@ class AutoAligner:
         """``output_root`` holds the recording sessions; ``index_source`` is the camera that sets the timeline."""
         self._output_root = output_root
         self._index_source = index_source
-        self._queue: asyncio.Queue[_Job] = asyncio.Queue(_QUEUE_LIMIT)
-        # Work beyond the queue's room; the worker tops the queue up from it as episodes finish.
-        self._backlog: deque[_Job] = deque()
-
-    def _enqueue(self, job: _Job) -> None:
-        """Queue a job, or hold it in the backlog while the queue is full."""
-        try:
-            self._queue.put_nowait(job)
-        except asyncio.QueueFull:
-            self._backlog.append(job)
+        # Unbounded: a job is three small fields, and the number waiting is the number of kept episodes.
+        self._queue: asyncio.Queue[_Job] = asyncio.Queue()
 
     def submit(self, result: EpisodeResult) -> None:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
         if result.disposition is Disposition.KEPT and result.final_path is not None:
-            self._enqueue(_Job(result.session_id, result.episode_index, result.final_path))
+            self._queue.put_nowait(_Job(result.session_id, result.episode_index, result.final_path))
 
     def recover(self) -> None:
         """Queue every kept episode, in any session, that has no aligned copy and whose evidence allows one.
@@ -103,7 +91,7 @@ class AutoAligner:
             except Exception:  # noqa: BLE001, S112 - an unreadable record is simply not eligible
                 continue
             if eligible:
-                self._enqueue(job)
+                self._queue.put_nowait(job)
 
     async def run(self) -> None:
         """Align queued episodes until cancelled; a failed alignment is logged and never stops the worker."""
@@ -115,9 +103,6 @@ class AutoAligner:
             except Exception as exc:  # noqa: BLE001 - one episode's failure must not end the worker
                 logger.warning("%s episode %d was not time-aligned: %s", job.session_id, job.episode_index, exc)
             finally:
-                # Refill from the backlog before marking this job done, so a drain waits for it too.
-                while self._backlog and not self._queue.full():
-                    self._queue.put_nowait(self._backlog.popleft())
                 self._queue.task_done()
 
     async def close(self, task: asyncio.Task[None], timeout: float) -> None:

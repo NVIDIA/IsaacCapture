@@ -760,8 +760,10 @@ class TeleopSession:
 
     def _delayed(self, t: float, source: str) -> float:
         """The instant ``source``'s content is from: ``t`` less its synthetic delay and jitter, never before 0."""
-        jitter = self._delay_rng.uniform(-self._jitter_s, self._jitter_s) if self._jitter_s else 0.0
-        return max(0.0, t - max(0.0, self._delays[source] + jitter))
+        delay = self._delays[source]
+        # A source with no delay is read at the poll instant; jitter on it would only skew it late.
+        jitter = self._delay_rng.uniform(-self._jitter_s, self._jitter_s) if self._jitter_s and delay else 0.0
+        return max(0.0, t - max(0.0, delay + jitter))
 
     def step(
         self,

@@ -59,11 +59,9 @@ def test_config_factory_without_a_started_session_has_no_livekit_sources(tmp_pat
     assert app_module._recording_config_factory(monitor, None, tmp_path)().video_sources == ()
 
 
-def test_config_factory_passes_the_stations_latency_to_the_config(tmp_path):
+def test_config_factory_does_not_carry_a_latency(tmp_path):
     monitor = SimpleNamespace(camera_descriptors=(), native=SimpleNamespace(started=None))
-    latency = {"pico_controller": 0.05}
-    assert app_module._recording_config_factory(monitor, None, tmp_path, latency)().latency == latency
-    assert app_module._recording_config_factory(monitor, None, tmp_path, {})().latency is None
+    assert app_module._recording_config_factory(monitor, None, tmp_path)().latency is None
 
 
 def test_recorder_token_is_signed_when_the_key_pair_is_set(monkeypatch):

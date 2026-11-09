@@ -57,9 +57,14 @@ def make_config_factory(tmp_path: Path, *, numeric_sources=(NUMERIC,), **overrid
     return factory
 
 
-def make_coordinator(tmp_path: Path, *, readiness_check=ALWAYS_READY, **overrides) -> RecordingSessionCoordinator:
+def make_coordinator(
+    tmp_path: Path, *, readiness_check=ALWAYS_READY, tracking_latency=None, **overrides
+) -> RecordingSessionCoordinator:
     return RecordingSessionCoordinator(
-        make_config_factory(tmp_path, **overrides), queue_capacity=8, readiness_check=readiness_check
+        make_config_factory(tmp_path, **overrides),
+        queue_capacity=8,
+        readiness_check=readiness_check,
+        tracking_latency=tracking_latency,
     )
 
 
@@ -753,7 +758,7 @@ async def test_the_configured_latency_reaches_the_converted_tracking_sample_time
     coordinator = make_coordinator(
         tmp_path,
         numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
-        latency={"pico_controller": 0.02},
+        tracking_latency={"pico_controller": 0.02},
     )
     await coordinator.open()
     coordinator.set_task("t")
@@ -791,10 +796,11 @@ class _MediaSource:
 
 async def _kept_timing(tmp_path: Path, *, latency=None, livekit_source=None):
     coordinator = RecordingSessionCoordinator(
-        make_config_factory(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC), latency=latency),
+        make_config_factory(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC)),
         queue_capacity=8,
         readiness_check=ALWAYS_READY,
         livekit_source=livekit_source,
+        tracking_latency=latency,
     )
     await coordinator.open()
     coordinator.set_task("t")
@@ -824,6 +830,14 @@ async def test_a_configured_latency_is_recorded_as_a_qualified_estimate_matching
     }
     assert group["pico_controller"]["capture_time"][0] == pytest.approx(4.98)
     assert group["manus_glove"]["capture_time"][0] == pytest.approx(5.0)
+
+
+async def test_the_coordinator_keeps_its_own_copy_of_the_tracking_latency(tmp_path: Path):
+    latency = {"pico_controller": 0.02}
+    coordinator = make_coordinator(tmp_path, tracking_latency=latency)
+    latency["pico_controller"] = 9.0
+    assert coordinator._tracking_latency == {"pico_controller": 0.02}
+    assert make_coordinator(tmp_path)._tracking_latency == {}
 
 
 async def test_a_missing_latency_is_recorded_as_an_unqualified_host_poll_time(tmp_path: Path):

@@ -18,7 +18,7 @@ Only the fields in :class:`ResolvedStation` are consumed; everything else in the
 visualization, or any other section) is read by nobody here and never passed downstream. The
 ``cameras`` field is itself a small ``name``/``type`` projection of ``video_sources`` -- the
 fuller per-source declaration (``frame_type``, ``params``) is reference data for other tooling, not consumed
-here; the one exception is a tracking source's ``latency`` under ``numeric_sources``.
+here; the one exception is the ``alignment`` section.
 """
 
 from __future__ import annotations
@@ -59,8 +59,8 @@ class ResolvedStation:
     task_description: str | None
     data_dir: Path | None
     cameras: tuple[p.CameraSelection, ...]
-    #: Seconds of device-to-host delay per tracking source, from ``numeric_sources[].latency``; a source without
-    #: one is recorded without a latency and cannot be time-aligned.
+    #: Estimated seconds of device-to-host delay per tracking source, from ``alignment.tracking_latency_s``. Only
+    #: a source named there is recorded as a qualified estimate; the others cannot be time-aligned.
     latency: dict[str, float]
     #: The camera that sets the timeline for automatic time alignment of kept episodes; None turns it off.
     alignment_index: str | None
@@ -138,17 +138,22 @@ def _resolve_cameras(station_id: str, entry: dict) -> tuple[p.CameraSelection, .
 
 
 def _resolve_latency(station_id: str, entry: dict) -> dict[str, float]:
-    """The finite, non-negative ``latency`` each recorded tracking source declares in ``numeric_sources``."""
+    """The finite, non-negative seconds in ``alignment.tracking_latency_s``, keyed by tracking source."""
+    section = entry.get("alignment") or {}
+    if not isinstance(section, dict):
+        raise StationConfigError(f"station {station_id!r}: 'alignment' must be a mapping")
+    configured = section.get("tracking_latency_s") or {}
+    if not isinstance(configured, dict):
+        raise StationConfigError(f"station {station_id!r}: alignment.tracking_latency_s must be a mapping")
     latency: dict[str, float] = {}
-    for source in entry.get("numeric_sources") or []:
-        if not isinstance(source, dict) or source.get("name") not in _TRACKING_SOURCES or "latency" not in source:
-            continue
-        seconds = source["latency"]
+    for name, seconds in configured.items():
+        if name not in _TRACKING_SOURCES:
+            raise StationConfigError(f"station {station_id!r}: tracking_latency_s names unknown source {name!r}")
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 <= seconds < float("inf"):
             raise StationConfigError(
-                f"station {station_id!r}: {source['name']} latency must be a finite number of seconds >= 0"
+                f"station {station_id!r}: tracking_latency_s.{name} must be a finite number of seconds >= 0"
             )
-        latency[source["name"]] = float(seconds)
+        latency[name] = float(seconds)
     return latency
 
 
@@ -157,7 +162,7 @@ def _resolve_alignment_index(station_id: str, entry: dict) -> str | None:
 
     On unless ``alignment.enabled`` is false; None also when there is no camera to index on.
     """
-    section = entry.get("alignment", {})
+    section = entry.get("alignment") or {}
     if not isinstance(section, dict):
         raise StationConfigError(f"station {station_id!r}: 'alignment' must be a mapping")
     if not _bool_field(section, "enabled", default=True):

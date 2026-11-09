@@ -188,12 +188,14 @@ class RecordingSessionCoordinator:
         readiness_check: ReadinessCheck,
         initial_context: TaskContext | None = None,
         livekit_source: LiveKitRecordingSource | None = None,
+        tracking_latency: dict[str, float] | None = None,
     ) -> None:
         self._config_factory = config_factory
         # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
         # before the ingress is retired.
         self._livekit_source = livekit_source
-        self._tracking_latency: dict[str, float] = {}
+        # The station's estimated delay per tracking source, applied to every take's tracking times.
+        self._tracking_latency = dict(tracking_latency or {})
         #: The clock-mapping evidence of the take in progress, gathered when its video source stops.
         self._timing_evidence: dict[str, Any] | None = None
         self._queue_capacity = queue_capacity
@@ -337,9 +339,7 @@ class RecordingSessionCoordinator:
                 )
             return self._service
         self._status = SessionStatus.OPENING
-        config = self._config_factory()
-        self._tracking_latency = config.latency or {}
-        service = _RecordingService(config)
+        service = _RecordingService(self._config_factory())
         # Assigned BEFORE the await below: a failure or cancellation here
         # must not orphan a service instance that may have already
         # acquired real resources -- self._service is the one place close()

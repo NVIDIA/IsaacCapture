@@ -142,7 +142,8 @@ def _digest(config: ServiceConfig) -> str:
         qc["capture_algorithm_version"] = ALGORITHM_VERSION  # a changed algorithm is a changed configuration
     canonical = {
         **({"routing": True} if config.routing is not None else {}),  # routed or not; each take freezes its studio
-        # A frame type left unset is absent, not null, so a configuration that predates it keeps its digest.
+        # A frame type left unset is absent, not null, so a configuration that predates it keeps its digest. A
+        # take left SEALED or CHECKED across a change that sets frame types is judged as a changed configuration.
         "numeric": [
             {k: v for k, v in asdict(s).items() if k != "frame_type" or v is not None}
             for s in config.numeric_sources

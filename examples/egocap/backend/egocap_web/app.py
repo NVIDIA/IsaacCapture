@@ -168,7 +168,6 @@ def _recording_config_factory(
     monitor: CaptureStatusMonitor,
     station_label: str | None,
     output_root: Path,
-    latency: dict[str, float] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -205,7 +204,6 @@ def _recording_config_factory(
             qc=QcConfig(required_sources=required),
             calibration_assets=_station_calibration_assets(),
             station_label=station_label,
-            latency=latency or None,
         )
         largest_decoded_frame_bytes = max((cam.width * cam.height * 3 for cam in video_sources), default=0)
         if largest_decoded_frame_bytes > 0:
@@ -408,17 +406,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _recorder_livekit_token,
     )
     coordinator = RecordingSessionCoordinator(
-        _recording_config_factory(
-            monitor,
-            config.station_label,
-            recording_output_root,
-            resolved_station.latency if resolved_station is not None else None,
-        ),
+        _recording_config_factory(monitor, config.station_label, recording_output_root),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
         readiness_check=_recording_readiness_check(monitor, station_config_error, config.capture_server_url),
         initial_context=initial_context,
         livekit_source=livekit_source,
+        tracking_latency=resolved_station.latency if resolved_station is not None else None,
     )
     monitor.set_recording(coordinator)
     await monitor.start()
