@@ -214,7 +214,8 @@ printer. Use a collection id printed by the plugin in Step 7:
 Step 9 (optional): Record and replay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the examples package once, from the Isaac Capture root:
+Install the examples package once, from the Isaac Capture root, in a venv set up as in
+:ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
