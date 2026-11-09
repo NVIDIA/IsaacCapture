@@ -16,6 +16,8 @@
 # Usage:
 #   ./setup.sh [options]
 #
+# Exit status: 0 done, 2 a new login or manual reboot is needed, 3 with -y: overlay selected and a reboot scheduled.
+#
 # Options:
 #   --pkg DIR          vendor driver package dir (default: fetch from SENSING's repo)
 #   --no-fetch         do not download the vendor package; fail if it is not on disk
@@ -40,7 +42,7 @@ REBOOT_REQUIRED=0
 LOGIN_REQUIRED=0
 ASSUME_YES=0
 
-usage() { sed -n '4,27p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; }
+usage() { sed -n '4,29p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; }
 
 while (( $# )); do
     case "$1" in
@@ -212,7 +214,41 @@ else
     info "nvpmodel not found"
 fi
 
+# Select the SG8A overlay with Jetson-IO's command line, without its menu.
+select_overlay() {
+    local tool=/opt/nvidia/jetson-io/config-by-hardware.py list header
+    [[ -x "$tool" ]] || die "$tool not found." "Install the JetPack Jetson-IO tool, or run without -y."
+    list="$(sudo "$tool" -l)" || die "Jetson-IO could not list its hardware modules."
+    header="$(awk -v name="$SENSING_OVERLAY_NAME" '
+        /^Header [0-9]+/ { h = $2; sub(/[^0-9].*/, "", h) }
+        index($0, name)  { print h; exit }' <<<"$list")"
+    [[ -n "$header" ]] || die "Jetson-IO lists no '$SENSING_OVERLAY_NAME'." "$list"
+    sudo "$tool" -n "$header=$SENSING_OVERLAY_NAME" || die "Jetson-IO could not select the overlay."
+}
+
 # Complete first-install setup before offering a capture command.
+# The deserializer's I2C bus exists only once the overlay is selected and the Orin has rebooted.
+OVERLAY_STAMP=/var/lib/sensing/overlay-selected-boot-id
+boot_id() { cat /proc/sys/kernel/random/boot_id; }
+if [[ "$ASSUME_YES" -eq 1 ]] && { [[ "$REBOOT_REQUIRED" -eq 1 ]] || [[ ! -e /dev/i2c-9 ]]; }; then
+    step "Activate the device-tree overlay"
+    previous="$(cat "$OVERLAY_STAMP" 2>/dev/null || true)"
+    # One selection per boot, and never a second reboot for the same fault: an Orin that has already rebooted
+    # after selecting and still lacks the bus needs a person.
+    if [[ "$REBOOT_REQUIRED" -eq 0 && -n "$previous" && "$previous" != "$(boot_id)" ]]; then
+        die "the overlay was selected and the Orin rebooted, but /dev/i2c-9 is still absent." \
+            "Check the Jetson-IO selection, the carrier's 12 V supply and the cables."
+    fi
+    if [[ "$REBOOT_REQUIRED" -eq 1 || "$previous" != "$(boot_id)" ]]; then
+        select_overlay
+        sudo mkdir -p "$(dirname "$OVERLAY_STAMP")"
+        boot_id | sudo tee "$OVERLAY_STAMP" >/dev/null
+    fi
+    # Reboot after this script has exited, so a caller over ssh still gets the exit status.
+    sudo systemd-run --quiet --on-active=5 systemctl reboot
+    warn "overlay selected; rebooting in 5 s to load it."
+    exit 3
+fi
 if [[ "$REBOOT_REQUIRED" -eq 1 ]]; then
     step "Activate the device-tree overlay"
     hint "Configure Jetson AGX CSI Connector -> Configure for compatible hardware"
