@@ -186,10 +186,11 @@ def write_aligned_episode(
     unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
     if unqualified:
         raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
-    broken = check_continuity(continuity, [index_source, *present])
+    times = {name: raw_episode[name]["capture_time"][:] for name in present}
+    # The evidence is checked against the rows actually written: a break at a row the source lacks is refused.
+    broken = check_continuity(continuity, [index_source, *present], {name: len(t) for name, t in times.items()})
     if broken:
         raise AlignedWriteError("; ".join(broken))
-    times = {name: raw_episode[name]["capture_time"][:] for name in present}
     fields = {name: {a: raw_episode[name][a][:] for a in raw_episode[name].array_keys()} for name in present}
     aligned = align_episode(
         index_source,

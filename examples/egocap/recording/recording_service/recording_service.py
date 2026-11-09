@@ -398,6 +398,21 @@ class RecordingService:
         for stamp in (sample.capture_time, sample.receive_time):
             if not isinstance(stamp, int | float) or not np.isfinite(stamp):
                 raise ValidationError(f"{sample.source}: timestamps must be finite numbers")
+        # Continuity evidence is stored in the manifest as JSON, so its shape is checked before any bookkeeping
+        # changes: a malformed value must leave the counters, the queue and the evidence untouched.
+        evidence = sample.continuity
+        if evidence is not None:
+            valid = (
+                isinstance(evidence, tuple)
+                and len(evidence) == 2
+                and isinstance(evidence[0], str)
+                and isinstance(evidence[1], str | int)
+                and not isinstance(evidence[1], bool)
+            )
+            if not valid:
+                raise ValidationError(
+                    f"{sample.source}: continuity must be a (scope, identity) pair of str and str|int"
+                )
         if isinstance(sample, NumericSample):
             if kind != "numeric":
                 raise ValidationError(f"{sample.source} is a video source")
@@ -443,6 +458,7 @@ class RecordingService:
                 float(sample.capture_time),
                 float(sample.receive_time),
                 {k: np.array(v, copy=True) for k, v in sample.fields.items()},
+                sample.continuity,
             )
         intrinsics = (
             None if sample.intrinsics is None else np.array(sample.intrinsics, dtype=np.float64, copy=True)
@@ -454,6 +470,7 @@ class RecordingService:
             float(sample.capture_time),
             float(sample.receive_time),
             intrinsics,
+            sample.continuity,
         )
 
     # -- task and call ownership --------------------------------------------------

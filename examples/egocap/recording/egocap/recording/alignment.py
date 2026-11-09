@@ -87,18 +87,35 @@ def qualified_sources(
     return {**{name: name in mapped for name in cameras}, **{name: tracking_ok for name in tracking}}
 
 
+def _complete(entry: Mapping[str, object], rows: int | None) -> bool:
+    """Whether a source's evidence has its initial identity and a well-formed list of break rows."""
+    identity, breaks = entry.get("identity"), entry.get("breaks")
+    if not isinstance(identity, (str, int)) or isinstance(identity, bool) or not isinstance(breaks, list):
+        return False
+    # A break is a row index: a non-negative integer, and a row the source actually has.
+    return all(
+        isinstance(b, int) and not isinstance(b, bool) and b >= 0 and (rows is None or b < rows) for b in breaks
+    )
+
+
 #: Continuity scopes that vouch for a source being one unbroken stretch. A clock mapping's epoch covers the
 #: publisher's times; a transport session does not cover the device behind it, so it is not accepted.
 ACCEPTED_CONTINUITY_SCOPES = ("clock_mapping",)
 
 
-def check_continuity(continuity: Mapping[str, Mapping[str, object]] | None, sources: Sequence[str]) -> list[str]:
+def check_continuity(
+    continuity: Mapping[str, Mapping[str, object]] | None,
+    sources: Sequence[str],
+    rows: Mapping[str, int] | None = None,
+) -> list[str]:
     """Why the recorded continuity evidence does not allow aligning ``sources``; empty means it does.
 
     ``continuity`` is the per-source evidence stored with the episode (None when the episode recorded none). A
     source is refused when there is no evidence for it, the evidence is incomplete, its scope is not one that
     vouches for the source, or it records a break: interpolating across a restart would produce values the
-    sensor never reported. Nothing here defaults to clean.
+    sensor never reported. Nothing here defaults to clean: the initial identity and an explicit list of break rows
+    must both be present and well formed, and with ``rows`` (the written row count per source) every break must be
+    a row of the source.
     """
     if continuity is None:
         return ["no continuity evidence was recorded for this episode"]
@@ -113,7 +130,9 @@ def check_continuity(continuity: Mapping[str, Mapping[str, object]] | None, sour
             problems.append(
                 f"{name}: its continuity evidence ({entry.get('scope')!r}) does not cover the source itself"
             )
-        elif entry.get("breaks"):
+        elif not _complete(entry, None if rows is None else rows.get(name)):
+            problems.append(f"{name}: continuity evidence is incomplete or malformed")
+        elif entry["breaks"]:
             problems.append(f"{name}: has a restart inside the episode (rows {list(entry['breaks'])})")
     return problems
 
