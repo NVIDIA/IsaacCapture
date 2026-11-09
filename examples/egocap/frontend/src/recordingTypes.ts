@@ -58,15 +58,19 @@ export interface EpisodeResultSummary {
   durationMs: number;
 }
 
+/** Longest task details the backend accepts (it rejects anything longer). */
+export const MAX_TASK_DETAILS_CHARS = 1000;
+
 /**
  * Authoritative recording facts, published by the backend's RecordingContext
  * over the existing WS. `null` until the first one actually arrives --
  * RecordingPanel must render that honestly, never a fabricated state. Once
  * a snapshot exists, `batchId` always names a real, live batch -- there is
  * no closed/terminal batch state; `new_batch` rotates the id in place.
- * `taskText` is the currently committed next-task instruction text -- the
- * only task-related fact this component renders or edits; any other task
- * metadata (mode, catalog, library selection) belongs to the separate
+ * `taskText` is the currently committed next-task instruction text and
+ * `taskDetails` its optional free-text details (props, setup); these two are
+ * the only task-related facts this component renders or edits. Any other
+ * task metadata (mode, catalog, library selection) belongs to the separate
  * batch-setup screen, not here.
  */
 export interface RecordingSnapshot {
@@ -84,6 +88,8 @@ export interface RecordingSnapshot {
    * to observe "recording". */
   currentEpisodeElapsedMs: number | null;
   taskText: string | null;
+  /** Optional free-text details the operator attached to the task; "" when none. */
+  taskDetails: string;
   /** The station's configured default operator name (from the deployment's station
    * YAML), or null when unconfigured -- a PREFILL hint only, applied at most once to
    * the entry field when nothing is already stored for this browser; never itself
@@ -132,7 +138,7 @@ export interface RecordingCommandResult {
  * from mere receipt. There is no `onCloseSession` -- `onNewBatch` replaces
  * it; this component never closes/opens anything. */
 export interface RecordingActions {
-  onSetTask?: (target: RecordingBatchIdentity, taskText: string) => Promise<RecordingCommandResult>;
+  onSetTask?: (target: RecordingBatchIdentity, taskText: string, details: string) => Promise<RecordingCommandResult>;
   onStartEpisode?: (target: RecordingBatchIdentity) => Promise<RecordingCommandResult>;
   onStopEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;
   onDiscardEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;

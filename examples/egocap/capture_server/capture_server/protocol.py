@@ -28,6 +28,7 @@ of this module's dataclasses -- e.g. building a ``BeginRequest`` or a
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -70,6 +71,19 @@ class MessageType(IntEnum):
     CAPTURE_IMAGE = 8
     SESSION_INIT = 9
     REQUEST_REJECTED = 10
+    # Station queries on the read-only /query route: one request, one reply, no session and no ownership.
+    QUERY_DEVICES = 11
+    DEVICES = 12
+    # Calibration operations. The numeric names below are the wire form of the symbolic operation names
+    # startCalibration, confirmCalibrationStep, stopCalibration, CalibrationStarted, CalibrationStatus,
+    # CalibrationStepAccepted and CalibrationStopped.
+    START_CALIBRATION = 13
+    CONFIRM_CALIBRATION_STEP = 14
+    STOP_CALIBRATION = 15
+    CALIBRATION_STARTED = 16
+    CALIBRATION_STATUS = 17
+    CALIBRATION_STEP_ACCEPTED = 18
+    CALIBRATION_STOPPED = 19
 
 
 class SourceType(IntEnum):
@@ -84,6 +98,14 @@ class PluginType(IntEnum):
 
 class ManusDataset(IntEnum):
     HUMAN = 1
+
+
+class ManusCalibrationCatalogStatus(IntEnum):
+    """Whether the Manus MCAL folder listing is usable."""
+
+    READY = 1
+    DISABLED = 2
+    UNAVAILABLE = 3
 
 
 class CaptureMode(IntEnum):
@@ -111,6 +133,33 @@ class RejectionReason(IntEnum):
     INVALID_CONFIG = 1
     BUSY = 2
     UNKNOWN_SESSION = 3
+
+
+class HandSide(IntEnum):
+    LEFT = 1
+    RIGHT = 2
+
+
+class CalibrationPhase(IntEnum):
+    CONNECTING = 1
+    AWAITING_STEP = 2
+    CAPTURING_STEP = 3
+    SAVING = 4
+    STOPPING = 5
+
+
+class CalibrationStepMode(IntEnum):
+    HOLD = 0
+    MOTION = 1
+
+
+class CalibrationStopReason(IntEnum):
+    COMPLETED = 0
+    CANCELLED = 1
+    FAILED = 2
+    # The server could not establish what the worker did (for example it stopped answering and was
+    # terminated); no files are offered.
+    UNCERTAIN = 3
 
 
 class StreamKind(IntEnum):
@@ -925,6 +974,39 @@ def _require_session_id(data: dict) -> str:
     return session_id
 
 
+# A bare filename: no separators, no leading dot, bounded length.
+_MCAL_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.mcal")
+_MAX_TOKEN_LEN = 128
+
+
+def is_mcal_name(value: object) -> bool:
+    """True for a name the protocol can carry: ASCII letters, digits, ``_``, ``.`` and ``-``, starting with a
+    letter or digit, lower-case ``.mcal`` extension, at most 133 characters."""
+    return type(value) is str and _MCAL_NAME_RE.fullmatch(value) is not None
+
+
+def _require_mcal_name(value: Any, context: str) -> str | None:
+    """An optional ``.mcal`` basename, or ``ProtocolError`` when present but not one."""
+    if value is None:
+        return None
+    if not is_mcal_name(value):
+        raise ProtocolError(f"{context} must be an .mcal basename or null")
+    return value
+
+
+def _require_token(value: Any, context: str) -> str:
+    """A nonempty, bounded string identifier."""
+    if not isinstance(value, str) or not value or len(value) > _MAX_TOKEN_LEN:
+        raise ProtocolError(f"{context} must be a nonempty string of at most {_MAX_TOKEN_LEN} characters")
+    return value
+
+
+def _require_seconds(value: Any, context: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 <= value < float("inf")):
+        raise ProtocolError(f"{context} must be a finite nonnegative number")
+    return float(value)
+
+
 def require_envelope(data: dict, expected_type: MessageType) -> str:
     """Envelope-level validation shared by every message kind that needs
     it: message type, protocol version, and the canonical session_id rule
@@ -985,10 +1067,18 @@ class PluginRequest:
     enabled: bool = dataclass_field(default=True, kw_only=True)
     required: bool = dataclass_field(default=False, kw_only=True)
     datasets: tuple[ManusDataset, ...] = dataclass_field(default=(ManusDataset.HUMAN,), kw_only=True)
+    # MCAL basenames in the server's managed directory for the Manus plugin; resolved by the server, never paths.
+    left_calibration: str | None = dataclass_field(default=None, kw_only=True)
+    right_calibration: str | None = dataclass_field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if type(self.plugin) is not PluginType:
             raise ValueError(f"PluginRequest.plugin must be a PluginType, got {self.plugin!r}")
+        for name in (self.left_calibration, self.right_calibration):
+            if name is not None and not is_mcal_name(name):
+                raise ValueError(f"PluginRequest calibration must be an .mcal basename, got {name!r}")
+        if self.left_calibration is not None and self.left_calibration == self.right_calibration:
+            raise ValueError("left_calibration and right_calibration must name different files")
         if type(self.enabled) is not bool:
             raise ValueError("PluginRequest.enabled must be a boolean")
         if type(self.required) is not bool:
@@ -1125,18 +1215,30 @@ class PluginConfiguration:
     enabled: bool
     required: bool
     datasets: tuple[ManusDataset, ...]
+    left_calibration: str | None = None
+    right_calibration: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "plugin": int(self.plugin),
             "enabled": self.enabled,
             "required": self.required,
             "datasets": [int(d) for d in self.datasets],
         }
+        # Omitted, not null, so a selection without files keeps its exact earlier wire form.
+        if self.left_calibration is not None:
+            data["left_calibration"] = self.left_calibration
+        if self.right_calibration is not None:
+            data["right_calibration"] = self.right_calibration
+        return data
 
     @classmethod
     def from_json(cls, data: Any) -> PluginConfiguration:
-        _require_keys(data, {"plugin", "enabled", "required", "datasets"}, "plugin configuration")
+        _require_keys(
+            data,
+            {"plugin", "enabled", "required", "datasets", "left_calibration", "right_calibration"},
+            "plugin configuration",
+        )
         datasets_raw = data.get("datasets")
         if not isinstance(datasets_raw, list) or not datasets_raw:
             raise ProtocolError("plugin configuration datasets must be a nonempty list")
@@ -1147,6 +1249,8 @@ class PluginConfiguration:
             datasets=tuple(
                 _require_int_enum(d, ManusDataset, "plugin configuration datasets[]") for d in datasets_raw
             ),
+            left_calibration=_require_mcal_name(data.get("left_calibration"), "plugin configuration left"),
+            right_calibration=_require_mcal_name(data.get("right_calibration"), "plugin configuration right"),
         )
 
 
@@ -1192,7 +1296,14 @@ def effective_config(begin: BeginRequest) -> CaptureConfiguration:
             headset=HeadsetConfiguration(device_index=begin.tracking.headset.device_index),
         ),
         plugins=tuple(
-            PluginConfiguration(plugin=p.plugin, enabled=p.enabled, required=p.required, datasets=p.datasets)
+            PluginConfiguration(
+                plugin=p.plugin,
+                enabled=p.enabled,
+                required=p.required,
+                datasets=p.datasets,
+                left_calibration=p.left_calibration,
+                right_calibration=p.right_calibration,
+            )
             for p in begin.plugins
         ),
         cameras=tuple(CameraSelection(name=c.name, type=c.type) for c in begin.cameras),
@@ -1292,7 +1403,11 @@ def _parse_plugin_requests(data: Any) -> tuple[PluginRequest, ...]:
 
 
 def _parse_plugin_request(data: Any) -> PluginRequest:
-    _require_keys(data, {"plugin", "enabled", "required", "datasets"}, "a plugin request")
+    _require_keys(
+        data,
+        {"plugin", "enabled", "required", "datasets", "left_calibration", "right_calibration"},
+        "a plugin request",
+    )
     plugin = _require_int_enum(data.get("plugin"), PluginType, "plugin.plugin")
     enabled = _require_strict_bool(data.get("enabled", True), "plugin.enabled")
     required = _require_strict_bool(data.get("required", False), "plugin.required")
@@ -1304,7 +1419,18 @@ def _parse_plugin_request(data: Any) -> PluginRequest:
     if len(datasets) != len(set(datasets)):
         raise ProtocolError(f"plugin.datasets has duplicate entries: {[int(d) for d in datasets]}")
 
-    return PluginRequest(plugin=plugin, enabled=enabled, required=required, datasets=datasets)
+    left = _require_mcal_name(data.get("left_calibration"), "plugin.left_calibration")
+    right = _require_mcal_name(data.get("right_calibration"), "plugin.right_calibration")
+    if left is not None and left == right:
+        raise ProtocolError("plugin.left_calibration and plugin.right_calibration must name different files")
+    return PluginRequest(
+        plugin=plugin,
+        enabled=enabled,
+        required=required,
+        datasets=datasets,
+        left_calibration=left,
+        right_calibration=right,
+    )
 
 
 def _parse_camera_requests(data: Any) -> tuple[CameraRequest, ...]:
@@ -1799,23 +1925,413 @@ class SessionStopped:
         )
 
 
+# ---------------------------------------------------------------------------
+# Calibration. A calibration session is exclusive with a capture session and emits control/status
+# messages only. Operation names map to numeric discriminators (see MessageType).
+# ---------------------------------------------------------------------------
+
+
+def _require_hand_sides(value: Any, context: str) -> tuple[HandSide, ...]:
+    if not isinstance(value, list) or not value:
+        raise ProtocolError(f"{context} must be a nonempty list")
+    sides = tuple(_require_int_enum(item, HandSide, f"{context}[]") for item in value)
+    if len(sides) != len(set(sides)):
+        raise ProtocolError(f"{context} has duplicate entries: {[int(side) for side in sides]}")
+    return sides
+
+
+@dataclass(frozen=True)
+class StartCalibrationRequest:
+    session_id: str
+    sides: tuple[HandSide, ...]
+
+    def __post_init__(self) -> None:
+        if not self.sides or len(self.sides) != len(set(self.sides)):
+            raise ValueError("sides must be a nonempty sequence of unique HandSide values")
+        if not all(type(side) is HandSide for side in self.sides):
+            raise ValueError("sides must contain only HandSide members")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(MessageType.START_CALIBRATION),
+            "version": PROTOCOL_VERSION,
+            "session_id": self.session_id,
+            "sides": [int(side) for side in self.sides],
+        }
+
+
+def parse_start_calibration(data: dict) -> StartCalibrationRequest:
+    _require_keys(data, {"type", "version", "session_id", "sides"}, "StartCalibration")
+    session_id = require_envelope(data, MessageType.START_CALIBRATION)
+    return StartCalibrationRequest(
+        session_id=session_id, sides=_require_hand_sides(data.get("sides"), "StartCalibration.sides")
+    )
+
+
+@dataclass(frozen=True)
+class ConfirmCalibrationStepRequest:
+    session_id: str
+    step_token: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(MessageType.CONFIRM_CALIBRATION_STEP),
+            "version": PROTOCOL_VERSION,
+            "session_id": self.session_id,
+            "step_token": self.step_token,
+        }
+
+
+def parse_confirm_calibration_step(data: dict) -> ConfirmCalibrationStepRequest:
+    _require_keys(data, {"type", "version", "session_id", "step_token"}, "ConfirmCalibrationStep")
+    session_id = require_envelope(data, MessageType.CONFIRM_CALIBRATION_STEP)
+    return ConfirmCalibrationStepRequest(
+        session_id=session_id,
+        step_token=_require_token(data.get("step_token"), "ConfirmCalibrationStep.step_token"),
+    )
+
+
+@dataclass(frozen=True)
+class StopCalibrationRequest:
+    session_id: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(MessageType.STOP_CALIBRATION),
+            "version": PROTOCOL_VERSION,
+            "session_id": self.session_id,
+        }
+
+
+def parse_stop_calibration(data: dict) -> StopCalibrationRequest:
+    _require_keys(data, {"type", "version", "session_id"}, "StopCalibration")
+    return StopCalibrationRequest(session_id=require_envelope(data, MessageType.STOP_CALIBRATION))
+
+
+@dataclass(frozen=True)
+class CalibrationGlove:
+    side: HandSide
+    glove_id: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {"side": int(self.side), "glove_id": self.glove_id}
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationGlove:
+        _require_keys(data, {"side", "glove_id"}, "CalibrationGlove")
+        glove_id = data.get("glove_id")
+        if type(glove_id) is not int or glove_id < 0:
+            raise ProtocolError("CalibrationGlove.glove_id must be a nonnegative integer")
+        return cls(side=_require_int_enum(data.get("side"), HandSide, "CalibrationGlove.side"), glove_id=glove_id)
+
+
+@dataclass(frozen=True)
+class CalibrationStep:
+    """One SDK-provided step awaiting confirmation or running.
+
+    ``duration_seconds`` is a timed sampling window (positive only for MOTION). A continuous step
+    (``continuous``) has no completion signal from the vendor: ``estimated_seconds`` is the SDK's estimate,
+    guidance for the operator only, and never a guaranteed completion time.
+    """
+
+    token: str
+    side: HandSide
+    index: int
+    count: int
+    title: str
+    instruction: str
+    mode: CalibrationStepMode
+    duration_seconds: float
+    continuous: bool
+    estimated_seconds: float
+
+    def __post_init__(self) -> None:
+        if not self.token or self.count <= 0 or not 0 <= self.index < self.count:
+            raise ValueError("CalibrationStep needs a token and 0 <= index < count")
+        if (self.mode is CalibrationStepMode.HOLD) != (self.duration_seconds == 0):
+            raise ValueError("duration_seconds must be 0 for HOLD and positive for MOTION")
+        if self.continuous and (self.mode is not CalibrationStepMode.HOLD or self.estimated_seconds <= 0):
+            raise ValueError("a continuous step is a HOLD with a positive estimated_seconds")
+        if not self.continuous and self.estimated_seconds != 0:
+            raise ValueError("estimated_seconds must be 0 unless the step is continuous")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "token": self.token,
+            "side": int(self.side),
+            "index": self.index,
+            "count": self.count,
+            "title": self.title,
+            "instruction": self.instruction,
+            "mode": int(self.mode),
+            "duration_seconds": self.duration_seconds,
+            "continuous": self.continuous,
+            "estimated_seconds": self.estimated_seconds,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationStep:
+        _require_keys(
+            data,
+            {
+                "token",
+                "side",
+                "index",
+                "count",
+                "title",
+                "instruction",
+                "mode",
+                "duration_seconds",
+                "continuous",
+                "estimated_seconds",
+            },
+            "CalibrationStep",
+        )
+        index, count = data.get("index"), data.get("count")
+        if type(index) is not int or type(count) is not int:
+            raise ProtocolError("CalibrationStep.index and count must be integers")
+        title, instruction = data.get("title"), data.get("instruction")
+        if not isinstance(title, str) or not isinstance(instruction, str) or not instruction:
+            raise ProtocolError("CalibrationStep.title must be a string and instruction a nonempty string")
+        try:
+            return cls(
+                token=_require_token(data.get("token"), "CalibrationStep.token"),
+                side=_require_int_enum(data.get("side"), HandSide, "CalibrationStep.side"),
+                index=index,
+                count=count,
+                title=title,
+                instruction=instruction,
+                mode=_require_int_enum(data.get("mode"), CalibrationStepMode, "CalibrationStep.mode"),
+                duration_seconds=_require_seconds(
+                    data.get("duration_seconds"), "CalibrationStep.duration_seconds"
+                ),
+                continuous=_require_strict_bool(data.get("continuous"), "CalibrationStep.continuous"),
+                estimated_seconds=_require_seconds(
+                    data.get("estimated_seconds"), "CalibrationStep.estimated_seconds"
+                ),
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
+@dataclass(frozen=True)
+class McalFile:
+    side: HandSide
+    filename: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"side": int(self.side), "filename": self.filename}
+
+    @classmethod
+    def from_json(cls, data: Any) -> McalFile:
+        _require_keys(data, {"side", "filename"}, "McalFile")
+        filename = _require_mcal_name(data.get("filename"), "McalFile.filename")
+        if filename is None:
+            raise ProtocolError("McalFile.filename is required")
+        return cls(side=_require_int_enum(data.get("side"), HandSide, "McalFile.side"), filename=filename)
+
+
+@dataclass(frozen=True)
+class CalibrationResult:
+    files: tuple[McalFile, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {"files": [f.to_json() for f in self.files]}
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationResult:
+        _require_keys(data, {"files"}, "CalibrationResult")
+        files = data.get("files")
+        if not isinstance(files, list) or not files:
+            raise ProtocolError("CalibrationResult.files must be a nonempty list")
+        parsed = tuple(McalFile.from_json(f) for f in files)
+        if len({f.side for f in parsed}) != len(parsed):
+            raise ProtocolError("CalibrationResult.files has two files for one side")
+        return cls(files=parsed)
+
+
+@dataclass(frozen=True)
+class CalibrationStarted:
+    session_id: str
+    sides: tuple[HandSide, ...]
+    type: MessageType = dataclass_field(default=MessageType.CALIBRATION_STARTED, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "session_id": self.session_id,
+            "sides": [int(side) for side in self.sides],
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationStarted:
+        _require_keys(data, {"type", "version", "session_id", "sides"}, "CalibrationStarted")
+        _require_message_type(data, MessageType.CALIBRATION_STARTED)
+        _require_version(data)
+        return cls(
+            session_id=_require_session_id(data),
+            sides=_require_hand_sides(data.get("sides"), "CalibrationStarted.sides"),
+        )
+
+
+@dataclass(frozen=True)
+class CalibrationStatus:
+    """A complete replacement snapshot of calibration progress, never a delta."""
+
+    session_id: str
+    phase: CalibrationPhase
+    gloves: tuple[CalibrationGlove, ...]
+    step: CalibrationStep | None
+    step_elapsed_seconds: float | None
+    type: MessageType = dataclass_field(default=MessageType.CALIBRATION_STATUS, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "session_id": self.session_id,
+            "phase": int(self.phase),
+            "gloves": [g.to_json() for g in self.gloves],
+            "step": self.step.to_json() if self.step is not None else None,
+            "step_elapsed_seconds": self.step_elapsed_seconds,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationStatus:
+        _require_keys(
+            data,
+            {"type", "version", "session_id", "phase", "gloves", "step", "step_elapsed_seconds"},
+            "CalibrationStatus",
+        )
+        _require_message_type(data, MessageType.CALIBRATION_STATUS)
+        _require_version(data)
+        gloves = data.get("gloves")
+        if not isinstance(gloves, list):
+            raise ProtocolError("CalibrationStatus.gloves must be a list")
+        step = data.get("step")
+        elapsed = data.get("step_elapsed_seconds")
+        return cls(
+            session_id=_require_session_id(data),
+            phase=_require_int_enum(data.get("phase"), CalibrationPhase, "CalibrationStatus.phase"),
+            gloves=tuple(CalibrationGlove.from_json(g) for g in gloves),
+            step=None if step is None else CalibrationStep.from_json(step),
+            step_elapsed_seconds=None if elapsed is None else _require_seconds(elapsed, "step_elapsed_seconds"),
+        )
+
+
+@dataclass(frozen=True)
+class CalibrationStepAccepted:
+    """The worker accepted starting the step; it does not mean the step or the calibration finished."""
+
+    session_id: str
+    step_token: str
+    type: MessageType = dataclass_field(default=MessageType.CALIBRATION_STEP_ACCEPTED, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "session_id": self.session_id,
+            "step_token": self.step_token,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationStepAccepted:
+        _require_keys(data, {"type", "version", "session_id", "step_token"}, "CalibrationStepAccepted")
+        _require_message_type(data, MessageType.CALIBRATION_STEP_ACCEPTED)
+        _require_version(data)
+        return cls(
+            session_id=_require_session_id(data),
+            step_token=_require_token(data.get("step_token"), "CalibrationStepAccepted.step_token"),
+        )
+
+
+@dataclass(frozen=True)
+class CalibrationStopped:
+    """The one terminal message of an accepted calibration, sent after cleanup. Files only for COMPLETED."""
+
+    session_id: str
+    reason: CalibrationStopReason
+    result: CalibrationResult | None
+    error_message: str | None
+    type: MessageType = dataclass_field(default=MessageType.CALIBRATION_STOPPED, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def __post_init__(self) -> None:
+        if (self.reason is CalibrationStopReason.COMPLETED) != (self.result is not None):
+            raise ValueError("a result is present exactly when the calibration COMPLETED")
+        if self.error_message is not None and not self.error_message:
+            raise ValueError("error_message must be nonempty or null")
+        if self.reason is CalibrationStopReason.COMPLETED and self.error_message is not None:
+            raise ValueError("a COMPLETED calibration has no error_message")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "session_id": self.session_id,
+            "reason": int(self.reason),
+            "result": self.result.to_json() if self.result is not None else None,
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> CalibrationStopped:
+        _require_keys(
+            data, {"type", "version", "session_id", "reason", "result", "error_message"}, "CalibrationStopped"
+        )
+        _require_message_type(data, MessageType.CALIBRATION_STOPPED)
+        _require_version(data)
+        result = data.get("result")
+        error_message = data.get("error_message")
+        if error_message is not None and (not isinstance(error_message, str) or not error_message):
+            raise ProtocolError("CalibrationStopped.error_message must be a nonempty string or null")
+        try:
+            return cls(
+                session_id=_require_session_id(data),
+                reason=_require_int_enum(data.get("reason"), CalibrationStopReason, "CalibrationStopped.reason"),
+                result=None if result is None else CalibrationResult.from_json(result),
+                error_message=error_message,
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
+# Client request types a RequestRejected can answer.
+_REJECTABLE_REQUESTS = (
+    MessageType.BEGIN,
+    MessageType.STOP,
+    MessageType.START_CALIBRATION,
+    MessageType.CONFIRM_CALIBRATION_STEP,
+    MessageType.STOP_CALIBRATION,
+)
+
+
 @dataclass(frozen=True)
 class RequestRejected:
     session_id: str
     request_type: MessageType
     reason: RejectionReason
     error_message: str
+    # The attempted token of a rejected CONFIRM_CALIBRATION_STEP, so the client can tell which prompt failed.
+    step_token: str | None = None
     type: MessageType = dataclass_field(default=MessageType.REQUEST_REJECTED, init=False)
     version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
 
     def __post_init__(self) -> None:
-        if self.request_type not in (MessageType.BEGIN, MessageType.STOP):
-            raise ValueError("RequestRejected.request_type must be BEGIN or STOP")
+        if self.request_type not in _REJECTABLE_REQUESTS:
+            raise ValueError("RequestRejected.request_type must be a client request type")
         if not self.error_message:
             raise ValueError("RequestRejected.error_message must be a nonempty string")
+        if self.step_token is not None and self.request_type != MessageType.CONFIRM_CALIBRATION_STEP:
+            raise ValueError("RequestRejected.step_token is only valid for CONFIRM_CALIBRATION_STEP")
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "type": int(self.type),
             "version": self.version,
             "session_id": self.session_id,
@@ -1823,33 +2339,191 @@ class RequestRejected:
             "reason": int(self.reason),
             "error_message": self.error_message,
         }
+        # Omitted rather than null, so Begin and Stop rejections keep their exact earlier wire form.
+        if self.step_token is not None:
+            data["step_token"] = self.step_token
+        return data
 
     @classmethod
     def from_json(cls, data: Any) -> RequestRejected:
         _require_keys(
             data,
-            {"type", "version", "session_id", "request_type", "reason", "error_message"},
+            {"type", "version", "session_id", "request_type", "reason", "error_message", "step_token"},
             "RequestRejected",
         )
         _require_message_type(data, MessageType.REQUEST_REJECTED)
         _require_version(data)
         session_id = _require_session_id(data)
         request_type = _require_int_enum(data.get("request_type"), MessageType, "RequestRejected.request_type")
-        if request_type not in (MessageType.BEGIN, MessageType.STOP):
-            raise ProtocolError("RequestRejected.request_type must be BEGIN or STOP")
+        if request_type not in _REJECTABLE_REQUESTS:
+            raise ProtocolError("RequestRejected.request_type must be a client request type")
         error_message = data.get("error_message")
         if not isinstance(error_message, str) or not error_message:
             raise ProtocolError("RequestRejected.error_message must be a nonempty string")
+        step_token = data.get("step_token")
+        if step_token is not None:
+            if request_type != MessageType.CONFIRM_CALIBRATION_STEP:
+                raise ProtocolError("RequestRejected.step_token is only valid for CONFIRM_CALIBRATION_STEP")
+            step_token = _require_token(step_token, "RequestRejected.step_token")
         return cls(
             session_id=session_id,
             request_type=request_type,
             reason=_require_int_enum(data.get("reason"), RejectionReason, "RequestRejected.reason"),
             error_message=error_message,
+            step_token=step_token,
         )
 
 
+# ---------------------------------------------------------------------------
+# Station queries. A query is one request and one reply on the read-only /query route; it carries a
+# ``request_id`` (never a session) and neither takes the control connection's ownership nor touches a session.
+# ---------------------------------------------------------------------------
+
+# A larger MCAL listing is an error, never a silently truncated list.
+MAX_MCAL_FILES = 2000
+# The serialized reply must fit well inside the transport's message ceiling whatever the file count.
+MAX_QUERY_REPLY_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class QueryDevicesRequest:
+    """Ask which devices this server offers and what each can be configured with."""
+
+    request_id: str
+
+    def to_json(self) -> dict[str, Any]:
+        """The request as a wire object."""
+        return {"type": int(MessageType.QUERY_DEVICES), "version": PROTOCOL_VERSION, "request_id": self.request_id}
+
+
+def parse_query_devices(data: dict) -> QueryDevicesRequest:
+    """Strict parse of a device query; the reply is addressed by its ``request_id``."""
+    _require_keys(data, {"type", "version", "request_id"}, "QueryDevices")
+    _require_message_type(data, MessageType.QUERY_DEVICES)
+    _require_version(data)
+    return QueryDevicesRequest(request_id=_require_token(data.get("request_id"), "request_id"))
+
+
+@dataclass(frozen=True)
+class DeviceEntry:
+    """One device and its configuration choices.
+
+    For the Manus device, ``mcal_files`` are the basenames in the server's managed MCAL folder that a Begin
+    can select. ``mcal_status`` says whether that listing is usable: READY (possibly empty), DISABLED (the
+    server has no MCAL folder) or UNAVAILABLE (the folder could not be read, with ``error_message``).
+    """
+
+    device: PluginType
+    mcal_status: ManusCalibrationCatalogStatus
+    mcal_files: tuple[str, ...] = ()
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        """Enforce that the status, error message and file list agree with each other."""
+        # The error message exists exactly when the listing is unavailable, and is never empty.
+        unavailable = self.mcal_status is ManusCalibrationCatalogStatus.UNAVAILABLE
+        if unavailable != (self.error_message is not None):
+            raise ValueError("error_message is present exactly when the MCAL listing is UNAVAILABLE")
+        if self.error_message is not None and not self.error_message:
+            raise ValueError("error_message must be nonempty or null")
+        # Only a READY listing carries files, and they must fit one reply as unique basenames.
+        if self.mcal_status is not ManusCalibrationCatalogStatus.READY and self.mcal_files:
+            raise ValueError("mcal_files are present only for a READY listing")
+        if len(self.mcal_files) > MAX_MCAL_FILES:
+            raise ValueError(f"at most {MAX_MCAL_FILES} MCAL files fit in one reply")
+        if not all(is_mcal_name(name) for name in self.mcal_files):
+            raise ValueError("mcal_files must be .mcal basenames")
+        if len(set(self.mcal_files)) != len(self.mcal_files):
+            raise ValueError("an MCAL file appears twice in the listing")
+
+    def to_json(self) -> dict[str, Any]:
+        """The entry as a wire object."""
+        return {
+            "device": int(self.device),
+            "mcal_status": int(self.mcal_status),
+            "mcal_files": list(self.mcal_files),
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> DeviceEntry:
+        """Strict parse of one device entry."""
+        _require_keys(data, {"device", "mcal_status", "mcal_files", "error_message"}, "device entry")
+        files, error_message = data.get("mcal_files"), data.get("error_message")
+        if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+            raise ProtocolError("device entry mcal_files must be a list of strings")
+        if error_message is not None and not isinstance(error_message, str):
+            raise ProtocolError("device entry error_message must be a string or null")
+        try:
+            return cls(
+                device=_require_int_enum(data.get("device"), PluginType, "device entry device"),
+                mcal_status=_require_int_enum(
+                    data.get("mcal_status"), ManusCalibrationCatalogStatus, "device entry mcal_status"
+                ),
+                mcal_files=tuple(files),
+                error_message=error_message,
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
+@dataclass(frozen=True)
+class DevicesReply:
+    """The reply to a device query: one entry per device kind the server knows."""
+
+    request_id: str
+    devices: tuple[DeviceEntry, ...]
+    type: MessageType = dataclass_field(default=MessageType.DEVICES, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def __post_init__(self) -> None:
+        """Reject a reply that lists the same device kind twice."""
+        # One entry per device kind keeps a client's lookup unambiguous.
+        kinds = [d.device for d in self.devices]
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("a device appears twice in the reply")
+
+    def to_json(self) -> dict[str, Any]:
+        """The reply as a wire object."""
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "request_id": self.request_id,
+            "devices": [d.to_json() for d in self.devices],
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> DevicesReply:
+        """Strict parse of a device reply."""
+        _require_keys(data, {"type", "version", "request_id", "devices"}, "Devices")
+        _require_message_type(data, MessageType.DEVICES)
+        _require_version(data)
+        devices = data.get("devices")
+        if not isinstance(devices, list):
+            raise ProtocolError("Devices.devices must be a list")
+        try:
+            return cls(
+                request_id=_require_token(data.get("request_id"), "request_id"),
+                devices=tuple(DeviceEntry.from_json(d) for d in devices),
+            )
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from None
+
+
 # A server-to-client JSON message, dispatched by its envelope's "type".
-ServerJsonMessage = SessionInit | SessionStarting | SessionBegun | SessionStatus | SessionStopped | RequestRejected
+ServerJsonMessage = (
+    SessionInit
+    | SessionStarting
+    | SessionBegun
+    | SessionStatus
+    | SessionStopped
+    | RequestRejected
+    | CalibrationStarted
+    | CalibrationStatus
+    | CalibrationStepAccepted
+    | CalibrationStopped
+    | DevicesReply
+)
 
 _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {
     MessageType.SESSION_INIT: SessionInit.from_json,
@@ -1858,6 +2532,10 @@ _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {
     MessageType.SESSION_STATUS: SessionStatus.from_json,
     MessageType.SESSION_STOPPED: SessionStopped.from_json,
     MessageType.REQUEST_REJECTED: RequestRejected.from_json,
+    MessageType.CALIBRATION_STARTED: CalibrationStarted.from_json,
+    MessageType.CALIBRATION_STATUS: CalibrationStatus.from_json,
+    MessageType.CALIBRATION_STEP_ACCEPTED: CalibrationStepAccepted.from_json,
+    MessageType.CALIBRATION_STOPPED: CalibrationStopped.from_json,
 }
 
 

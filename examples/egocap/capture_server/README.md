@@ -88,6 +88,12 @@ a degraded camera. There is no automatic reconnection: retry by starting a new s
 If a release times out the server refuses further sessions (`BUSY`) until it is
 restarted, because a timeout does not prove the device was released.
 
+## Manus calibration
+
+CaptureServer can calibrate Manus gloves on its host and keep the MCAL files in a managed directory for
+later capture. See [`CALIBRATION.md`](CALIBRATION.md) for setup, the `CaptureClient` calibration API, the
+wire messages.
+
 ## Validation status
 
 Implemented and exercised on a Pico 4 Ultra and an OAK-D-W through the normal server
@@ -121,7 +127,7 @@ async def start(
     *,
     sources: Sequence[SourceType],
     cameras: Sequence[CameraSelection] = (),
-    plugins: Sequence[PluginType] = (),
+    plugins: Sequence[PluginType | ManusPluginConfig] = (),
     on_started: Callback[CaptureStarted] | None = None,
     on_status: Callback[CaptureStatus] | None = None,
     on_capture_frame: Callback[CaptureFrame] | None = None,
@@ -134,7 +140,11 @@ async def start(
 async def stop(self) -> None: ...
 ```
 
-`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes two operations, start and stop.
+```python
+async def query_devices(self) -> tuple[protocol.DeviceEntry, ...]: ...
+```
+
+`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes three operations: start, stop and the read-only device query. `ManusPluginConfig` and `DeviceQueryError` are imported from `capture_server.client`; `DeviceEntry` and `ManusCalibrationCatalogStatus` are in `capture_server.protocol`.
 
 #### Constructor and start arguments
 
@@ -143,7 +153,7 @@ async def stop(self) -> None: ...
 | Constructor `url` | Nonempty `str`, a `ws://` or `wss://` station URL. | Identifies the remote capture server. Construction creates an idle client without connecting. |
 | `sources` | Sequence of unique `SourceType`: `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. Required; an empty sequence is allowed. | Chooses tracking outputs. CONTROLLERS selects both controller sides; HANDS selects both hand sides. An empty sequence supports camera-only capture. |
 | `cameras` | Sequence of `CameraSelection`, default empty; at most three, with unique names. | Selects station-configured cameras by logical name and type. |
-| `plugins` | Sequence of unique `PluginType`: `MANUS=1`; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
+| `plugins` | Sequence of unique plugins: a `PluginType` (`MANUS=1`) or a `ManusPluginConfig` that also names MCAL files; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
 | Five `on_...` arguments | `Callback[T] \| None`, default None; argument types appear below. | Registers notifications. None discards that notification; it does not disable acquisition. |
 
 An empty `sources` sequence together with any enabled plugin is rejected as `INVALID_CONFIG`: an enabled plugin needs IC actually entered for discovery to run, but the real IC graph-construction API rejects an empty output mapping outright, so that combination has no valid native graph to build. Plugin requests are otherwise independent of output subscriptions — a session can enable Manus without selecting `HANDS`, and vice versa; only the specific zero-sources-with-an-enabled-plugin combination is rejected, not any particular source choice. Camera-only capture (empty `sources`, no enabled plugin) remains supported and never enters IC.
@@ -352,6 +362,7 @@ The client validates the wire SessionInit notification and converts it to Captur
 | `enabled` | `bool` | Whether the station launches it; true for a plugin selected through start. |
 | `required` | `bool` | Whether failure to discover the plugin fails startup; false for start selections. It does not require connected gloves. |
 | `datasets` | `tuple[ManusDataset, ...]`: `HUMAN=1`. | Requested live human-skeleton dataset. start selects HUMAN. |
+| `left_calibration`, `right_calibration` | `str` or omitted: an `.mcal` basename. | MCAL file for that glove, chosen from the server's MCAL folder (see Device query). Omitted when none was selected. |
 
 #### CaptureClock
 
@@ -686,18 +697,28 @@ One JSON object is one text message. One complete header and payload is one bina
 | Server → client | 5 | SessionStatus |
 | Server → client | 6 | SessionStopped |
 | Server → client | 10 | RequestRejected |
+| Client → server, on `/query` | 11 | QueryDevices |
+| Server → client, on `/query` | 12 | Devices |
 | Server → client | BinaryKind 1 | CaptureFrame |
 | Server → client | BinaryKind 2 | CaptureImage |
 
-There are ten message families. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
+There are ten session message families, plus the device query described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
 
-Every JSON message has these envelope fields. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
+Every JSON session message has these envelope fields. The two `/query` messages instead carry `type`, `version` and a client-chosen `request_id`, and no `session_id`; a query message that carries one is rejected. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
 
 | Field | Allowed contents | What it does |
 |---|---|---|
-| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
+| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`, `QUERY_DEVICES=11`, `DEVICES=12`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
 | `version` | Not an enum: exactly integer 1; not boolean true. | Identifies the protocol contract used to interpret all remaining fields. A receiver must reject another version rather than guess its meaning. |
 | `session_id` | Nonempty string, at most 128 characters; a new UUID string is recommended for each new session. | Associates configuration, status, samples and terminal replies with one session. A reply for another ID must not reset the active session. This is a client-chosen correlation ID, not a hardware identifier. |
+
+#### Device query
+
+`QueryDevices` is a read-only request on the server's `/query` path: its own short-lived connection, one request and one reply, no ownership and no session, so it works before capture and while a capture is running. Any other message on `/query`, including every capture command, closes the connection with 1002. `await client.query_devices()` returns the `DeviceEntry` tuple and raises `DeviceQueryError` when no answer is obtained; a failure is never reported as an empty list.
+
+Request: `{"type": 11, "version": 1, "request_id": "<1..128 chars>"}`. Reply: `{"type": 12, "version": 1, "request_id": ..., "devices": [...]}` with one entry per device kind. The Manus entry is `{"device": 1, "mcal_status": ..., "mcal_files": [...], "error_message": ...}`. `mcal_status` is `READY=1` (the list may be empty), `DISABLED=2` (the server has no MCAL folder) or `UNAVAILABLE=3` (the folder could not be read; `error_message` says why). A listing over the 2000-file limit is `UNAVAILABLE`, never truncated.
+
+The MCAL folder is set with `--manus-calibration-dir DIR`. It is a plain folder: any nonempty, readable `.mcal` regular file directly in it is offered, whether placed by hand or written by a calibration tool. Symbolic links are never offered; copy files in. A name is offered only if it uses ASCII letters, digits, `_`, `.` and `-`, starts with a letter or digit, ends in lower-case `.mcal` and is at most 133 characters; any other file (for example `left glove (2).mcal` or `A.MCAL`) is silently skipped, so rename it. Select files by name with `ManusPluginConfig(left_calibration=..., right_calibration=...)` in `start(plugins=...)`. Begin is refused as `INVALID_CONFIG` when a name is not in the folder at that moment. A name only selects a file; whether the glove accepted it is the Manus plugin's per-hand status. If the file disappears or becomes unreadable after Begin is accepted, the plugin cannot load it and both hands are lost for that session.
 
 #### Begin: configure sources, plugins and cameras
 

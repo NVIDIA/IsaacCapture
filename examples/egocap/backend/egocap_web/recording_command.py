@@ -55,6 +55,9 @@ _WIRE_COMPATIBLE_DISPOSITIONS = frozenset({Disposition.KEPT, Disposition.REJECTE
 
 _logger = logging.getLogger(__name__)
 
+#: Longest free-text task details a set_task command may carry.
+MAX_TASK_DETAILS_CHARS = 1000
+
 
 class RecordingCommandError(ValueError):
     """Raised for a malformed recording command -- a real protocol violation
@@ -114,10 +117,14 @@ def _require_str_type(payload: dict[str, Any], field_name: str) -> None:
 def _validate_set_task(payload: dict[str, Any]) -> None:
     """Requires a batch id and a string next-task instruction (any string,
     including empty -- whether empty text is acceptable is a business rule
-    the handler decides, not a shape check). This component only ever
-    edits that text, never a mode/catalog/metadata object."""
+    the handler decides, not a shape check), plus an optional string
+    ``details`` of free-text context. This component only ever edits those,
+    never a mode/catalog/metadata object."""
     _require_str(payload, "batch_id")
     _require_str_type(payload, "task")
+    # Optional free-text details; absent means none, but a present value must be a string.
+    if "details" in payload:
+        _require_str_type(payload, "details")
 
 
 def _validate_batch_target(payload: dict[str, Any]) -> None:
@@ -344,6 +351,7 @@ class RecordingContext:
             "current_episode_id": current_episode_id,
             "current_episode_elapsed_ms": elapsed_ms,
             "task_text": coordinator_snapshot.context.task_text,
+            "task_details": coordinator_snapshot.context.task_details,
             # The committed context's operator, exposed only as a PREFILL hint for the entry
             # field -- never used to admit a command: start_episode always requires the
             # browser's own operator_token and never reads this value. null when unconfigured
@@ -443,7 +451,11 @@ class RecordingContext:
                 # Whitespace-only text is not a real instruction either.
                 if task.strip() == "":
                     return "rejected", "task text cannot be empty"
-                self.coordinator.set_task(task)
+                details = command.payload.get("details", "").strip()
+                # Bounded so a stray paste cannot bloat every episode's metadata.
+                if len(details) > MAX_TASK_DETAILS_CHARS:
+                    return "rejected", f"details are limited to {MAX_TASK_DETAILS_CHARS} characters"
+                self.coordinator.set_task(task, task_details=details)
                 self.revision += 1
                 return "ok", None
             if command.action == "start_episode":

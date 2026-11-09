@@ -47,6 +47,7 @@ function recording(overrides: Partial<RecordingSnapshot> = {}): RecordingSnapsho
     currentEpisodeId: null,
     currentEpisodeElapsedMs: null,
     taskText: "Place the object",
+    taskDetails: "",
     defaultOperator: null,
     autoFillOperatorName: false,
     savedCount: 3,

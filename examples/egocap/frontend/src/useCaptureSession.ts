@@ -204,6 +204,8 @@ function parseRecordingSnapshot(raw: unknown): RecordingSnapshot | null {
       currentEpisodeId: requireNullableString(r.current_episode_id),
       currentEpisodeElapsedMs: requireNullableNonNegativeSafeInt(r.current_episode_elapsed_ms),
       taskText: requireNullableString(r.task_text),
+      // Absent from a backend that predates task details: treat as none rather than dropping the snapshot.
+      taskDetails: r.task_details === undefined ? "" : requireString(r.task_details),
       defaultOperator: requireNullableString(r.default_operator),
       autoFillOperatorName: requireBoolean(r.auto_fill_operator_name),
       savedCount: requireNonNegativeSafeInt(r.saved_count),

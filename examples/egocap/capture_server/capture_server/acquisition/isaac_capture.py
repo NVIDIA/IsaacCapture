@@ -153,6 +153,11 @@ class TrackingSelection:
     # silently. Meaningless when manus_enabled is False (no plugin is
     # constructed at all in that case).
     manus_required: bool = False
+    # Resolved host paths of MCAL files for the Manus plugin (the server turns the client's basenames into these
+    # before any hardware starts). Passed to the plugin as its own calibration arguments, so whether the glove
+    # accepted a file is still reported by the plugin's per-hand status, not assumed here.
+    manus_left_calibration: str | None = None
+    manus_right_calibration: str | None = None
 
 
 class IsaacCaptureAdapter:
@@ -229,6 +234,7 @@ class IsaacCaptureAdapter:
                     plugin_name=MANUS_PLUGIN_NAME,
                     plugin_root_id="manus",
                     search_paths=[],
+                    plugin_args=self._manus_args(),
                     required=self._selection.manus_required,
                 )
             ]
@@ -236,6 +242,15 @@ class IsaacCaptureAdapter:
             else []
         )
         return self._sdk.TeleopSessionConfig(app_name="capture_server", pipeline=pipeline, plugins=plugins)
+
+    def _manus_args(self) -> list[str]:
+        """The Manus plugin's calibration arguments for the files this session selected."""
+        args = []
+        if self._selection.manus_left_calibration is not None:
+            args.append(f"--left-calibration={self._selection.manus_left_calibration}")
+        if self._selection.manus_right_calibration is not None:
+            args.append(f"--right-calibration={self._selection.manus_right_calibration}")
+        return args
 
     def _enter_sync(self) -> Any:
         # CloudXRLauncher.launch_context is the shared launcher/context

@@ -41,18 +41,26 @@ import asyncio
 import collections
 import contextlib
 import json
+import logging
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
 import websockets
+from isaaccapture_manus_calibration.worker import AttemptError
 from websockets.exceptions import ConnectionClosed
 from websockets.server import ServerConnection
 
+from . import mcal_catalog
 from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
+from .calibration import CalibrationConfig, CalibrationSession, build_worker, find_worker
+
+_LOG = logging.getLogger("isaaccapture.capture_server.server")
 
 __all__ = ["CaptureServer", "ServerConfig", "main"]
 
@@ -73,6 +81,11 @@ _SEND_DEADLINE_S = 2.0
 _CLOSE_TIMEOUT_S = 2.0
 _SOURCE_RELEASE_TIMEOUT_S = 5.0
 _COMPLETED_TOMBSTONE_CAPACITY = 16
+# A station query is one short exchange on its own connection; both the wait for the request and the directory
+# scan are bounded so a stalled peer or a huge directory cannot hold a connection open.
+_QUERY_DEADLINE_S = 10.0
+# Directory scans run off the event loop, at most this many at once.
+_MCAL_SCANS = 2
 
 
 class _StopDuringStartup(Exception):
@@ -160,9 +173,25 @@ class ServerConfig:
     # prints the mode's default (the mock's SYNTHETIC-data warning, nothing for live); replay sets it so
     # recorded data is never announced as synthetic.
     data_note: str | None = None
+    # The folder of MCAL files this host offers: clients list it through the device query and select files from
+    # it by name at Begin. Anything placed in it (by hand or by a calibration tool) is offered; None disables
+    # listing and selection.
+    manus_calibration_dir: Path | None = None
+    # Manus glove calibration: the worker executable and the managed MCAL directory. None leaves calibration
+    # unavailable (a StartCalibration is rejected) and capture unaffected.
+    calibration: CalibrationConfig | None = None
 
     def __post_init__(self) -> None:
-        """Reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        # Resolved here, at construction, so no later request re-resolves it on the event loop.
+        if self.manus_calibration_dir is not None:
+            self.manus_calibration_dir = self.manus_calibration_dir.resolve()
+        # Calibration writes into the same folder the device query lists: one folder, never two.
+        if self.calibration is not None:
+            if self.manus_calibration_dir is None:
+                self.manus_calibration_dir = self.calibration.directory.resolve()
+            elif self.calibration.directory.resolve() != self.manus_calibration_dir:
+                raise ValueError("calibration.directory and manus_calibration_dir must be the same folder")
         if self.cameras is not None:
             ids = [c.device_id for c in self.cameras.values()]
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
@@ -1123,6 +1152,10 @@ class CaptureServer:
         self._mode = p.CaptureMode.MOCK if self.config.mock else p.CaptureMode.LIVE
         self._source_factory = source_factory
         self._stop_event = asyncio.Event()
+        # Each scan holds a permit from its start until its thread really finishes, whatever happens to the
+        # request that asked for it, so timed-out queries can never accumulate live scans.
+        self._mcal_slots = asyncio.Semaphore(_MCAL_SCANS)
+        self._mcal_pool = ThreadPoolExecutor(max_workers=_MCAL_SCANS, thread_name_prefix="mcal-scan")
         self._ws_server: websockets.WebSocketServer | None = None
         self._owner: ServerConnection | None = None
         # The ONE connection-owned Outbox, constructed once per owner
@@ -1131,7 +1164,12 @@ class CaptureServer:
         # ws.send() directly; everything (rejections, replays, session
         # lifecycle, status, frames) goes through this.
         self._outbox: _Outbox | None = None
-        self._active_session: _Session | None = None
+        self._active_session: _Session | CalibrationSession | None = None
+        self._calibration_worker = build_worker(self.config.calibration) if self.config.calibration else None
+        # Terminal calibration messages of recent attempts on the current owner connection, for stop retries.
+        self._completed_calibrations: collections.OrderedDict[str, p.CalibrationStopped] = (
+            collections.OrderedDict()
+        )
         # Scoped to the CURRENT owner connection, reset in _handle_connection
         # -- a session ID completed under a since-disconnected owner must
         # not leak into a brand new connection's admission decisions.
@@ -1227,12 +1265,15 @@ class CaptureServer:
                 # clean shutdown, same as REQUESTED/OWNER_DISCONNECTED --
                 # these are benign stop causes, not error diagnostics.
                 self._active_session.request_stop(p.StopReason.SERVER_SHUTDOWN)
+                timeout = _SOURCE_RELEASE_TIMEOUT_S + _SEND_DEADLINE_S + 1.0
+                if isinstance(self._active_session, CalibrationSession):
+                    # A stuck worker needs its full cancel, terminate and kill sequence before it is reaped.
+                    timeout = max(timeout, self._active_session.cleanup_budget_s)
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(
-                        self._active_session.done.wait(),
-                        timeout=_SOURCE_RELEASE_TIMEOUT_S + _SEND_DEADLINE_S + 1.0,
-                    )
+                    await asyncio.wait_for(self._active_session.done.wait(), timeout=timeout)
         finally:
+            # Queued scans are dropped; a scan already running finishes on its own and its result is discarded.
+            self._mcal_pool.shutdown(wait=False, cancel_futures=True)
             if self._ws_server is not None:
                 self._ws_server.close()
                 await asyncio.wait_for(self._ws_server.wait_closed(), timeout=_CLOSE_TIMEOUT_S)
@@ -1244,6 +1285,11 @@ class CaptureServer:
             # being called and close() actually closing the listener, in
             # which a brand new connection could otherwise slip in.
             await ws.close(code=1012, reason="server is shutting down")
+            return
+        # Station queries are dispatched before owner admission: they never take or disturb the owner.
+        request_path = getattr(getattr(ws, "request", None), "path", "")
+        if request_path.split("?", 1)[0] == "/query":
+            await self._handle_query(ws)
             return
         if self._owner is not None:
             await ws.close(code=1013, reason="owner connection already active")
@@ -1262,6 +1308,7 @@ class CaptureServer:
         outbox.start()
         self._outbox = outbox
         self._completed.clear()
+        self._completed_calibrations.clear()
         try:
             async for raw in ws:
                 await self._handle_message(ws, raw)
@@ -1324,6 +1371,12 @@ class CaptureServer:
             await self._handle_begin(ws, data)
         elif data.get("type") == int(p.MessageType.STOP):
             await self._handle_stop(ws, data)
+        elif data.get("type") == int(p.MessageType.START_CALIBRATION):
+            await self._handle_start_calibration(ws, data)
+        elif data.get("type") == int(p.MessageType.CONFIRM_CALIBRATION_STEP):
+            await self._handle_confirm_calibration_step(ws, data)
+        elif data.get("type") == int(p.MessageType.STOP_CALIBRATION):
+            await self._handle_stop_calibration(ws, data)
         else:
             await ws.close(code=1002, reason="unexpected message type from client")
 
@@ -1333,6 +1386,7 @@ class CaptureServer:
         request_type: p.MessageType,
         reason: p.RejectionReason,
         message: str,
+        step_token: str | None = None,
     ) -> None:
         """Enqueued through the shared Outbox's control FIFO, same as
         every other required message -- not a direct send. There is only
@@ -1346,6 +1400,7 @@ class CaptureServer:
                 request_type=request_type,
                 reason=reason,
                 error_message=message,
+                step_token=step_token,
             ).to_json(),
         )
 
@@ -1422,6 +1477,15 @@ class CaptureServer:
 
         if self._active_session is not None:
             active = self._active_session
+            if isinstance(active, CalibrationSession):
+                # Capture never interrupts a calibration, and a calibration is not replayable as a capture.
+                self._reject(
+                    begin.session_id,
+                    p.MessageType.BEGIN,
+                    p.RejectionReason.BUSY,
+                    "a calibration session is active",
+                )
+                return
             # Owner identity, not just session_id, gates replay: a session
             # can remain the active/admission-blocking one after its owner
             # disconnected (its resource release failed) -- a DIFFERENT,
@@ -1499,6 +1563,28 @@ class CaptureServer:
             )
             return
 
+        # Only a Begin that would allocate a new session scans the folder, so a duplicate of an accepted Begin is
+        # replayed above without depending on a file that may have changed since.
+        refusal = await self._calibration_selection_refusal(begin)
+        # The scan awaited: shutdown, the writer or admission may have changed since the checks above. Checked
+        # before the refusal, so a scan cut short by shutdown reads as BUSY rather than as a bad selection.
+        if self._stop_event.is_set() or self._outbox is None or self._outbox.closed:
+            self._reject(
+                begin.session_id,
+                p.MessageType.BEGIN,
+                p.RejectionReason.BUSY,
+                "server is shutting down" if self._stop_event.is_set() else "this connection is no longer usable",
+            )
+            return
+        if refusal is not None:
+            self._reject(begin.session_id, p.MessageType.BEGIN, p.RejectionReason.INVALID_CONFIG, refusal)
+            return
+        if self._active_session is not None:
+            self._reject(
+                begin.session_id, p.MessageType.BEGIN, p.RejectionReason.BUSY, "another session is already active"
+            )
+            return
+
         # required is a fixed station acquisition policy, independent of any
         # mock fault -- whether a camera's failure proves fatal is decided
         # here once per camera, and the source (mock or live) separately
@@ -1527,6 +1613,146 @@ class CaptureServer:
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
+
+    async def _scan_mcal(self) -> mcal_catalog.Catalog:
+        """The current MCAL folder listing, read on a bounded pool and never on the event loop.
+
+        The permit is released by the scan's own completion, not by the caller, so a request that times out or
+        is cancelled cannot leave more than ``_MCAL_SCANS`` scans running. The caller waits at most
+        ``_QUERY_DEADLINE_S`` for a free slot and for the result, and gets UNAVAILABLE otherwise; it stops
+        waiting as soon as shutdown begins, so neither a query nor a Begin can hold ``close()`` open.
+        """
+        directory = self.config.manus_calibration_dir
+        shutting_down = mcal_catalog.Catalog(
+            p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the server is shutting down"
+        )
+        try:
+            async with asyncio.timeout(_QUERY_DEADLINE_S):
+                if not await self._acquire_scan_slot():
+                    return shutting_down
+                try:
+                    future = asyncio.get_running_loop().run_in_executor(
+                        self._mcal_pool, mcal_catalog.scan, directory
+                    )
+                except Exception:
+                    # run_in_executor never awaits, so only a submit failure lands here.
+                    self._mcal_slots.release()
+                    raise
+                future.add_done_callback(self._mcal_scan_finished)
+                # Shielded: cancelling this wait must not cancel the job whose permit is still held.
+                scan = asyncio.shield(future)
+                stop = asyncio.ensure_future(self._stop_event.wait())
+                try:
+                    await asyncio.wait({scan, stop}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    stop.cancel()
+                    # Cancels only this wait, never the scan thread; a timeout or shutdown leaves nothing dangling.
+                    if not scan.done():
+                        scan.cancel()
+                if scan.cancelled():
+                    return shutting_down
+                return scan.result()
+        except TimeoutError:
+            return mcal_catalog.Catalog(
+                p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan timed out"
+            )
+        except Exception:
+            _LOG.exception("calibration directory scan failed")
+            return mcal_catalog.Catalog(
+                p.ManusCalibrationCatalogStatus.UNAVAILABLE, (), "the calibration directory scan failed"
+            )
+
+    async def _acquire_scan_slot(self) -> bool:
+        """Take a scan permit, or give up (False) the moment shutdown begins; never leaves a permit held."""
+        if self._stop_event.is_set():
+            return False
+        acquire = asyncio.ensure_future(self._mcal_slots.acquire())
+        stop = asyncio.ensure_future(self._stop_event.wait())
+        try:
+            await asyncio.wait({acquire, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+            if not acquire.done():
+                acquire.cancel()
+        if acquire.done() and not acquire.cancelled():
+            if not self._stop_event.is_set():
+                return True
+            # Shutdown arrived as the permit was granted: hand it straight back.
+            self._mcal_slots.release()
+        return False
+
+    def _mcal_scan_finished(self, future: asyncio.Future[Any]) -> None:
+        """Free the scan's slot when its thread ends, and consume an abandoned job's exception."""
+        self._mcal_slots.release()
+        if not future.cancelled():
+            future.exception()
+
+    async def _calibration_selection_refusal(self, begin: p.BeginRequest) -> str | None:
+        """Why the selected MCAL files cannot be used, checked before any hardware starts; None when they can.
+
+        Uses the same policy as the device query, so a listed file is a selectable file, and a file that
+        disappeared or became invalid since it was listed is refused here rather than substituted.
+        """
+        names = [
+            name
+            for plugin in begin.plugins
+            if plugin.plugin == p.PluginType.MANUS and plugin.enabled
+            for name in (plugin.left_calibration, plugin.right_calibration)
+            if name is not None
+        ]
+        if not names:
+            return None
+        return mcal_catalog.selection_refusal(await self._scan_mcal(), names)
+
+    async def _handle_query(self, ws: ServerConnection) -> None:
+        """One read-only device query on its own connection: no ownership, no session, one reply.
+
+        Only a ``QueryDevices`` request is answered; anything else, including every capture command, closes the
+        connection. Whatever happens here never touches a running session.
+        """
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=_QUERY_DEADLINE_S)
+            if isinstance(raw, bytes):
+                await ws.close(code=1002, reason="query must be a JSON text message")
+                return
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                await ws.close(code=1002, reason="malformed JSON")
+                return
+            if not isinstance(data, dict) or data.get("type") != int(p.MessageType.QUERY_DEVICES):
+                await ws.close(code=1002, reason="unsupported query type")
+                return
+            try:
+                request = p.parse_query_devices(data)
+            except p.ProtocolError:
+                await ws.close(code=1002, reason="invalid QueryDevices request")
+                return
+            reply = p.DevicesReply(request.request_id, await self._device_entries())
+            payload = json.dumps(reply.to_json())
+            if len(payload.encode()) > p.MAX_QUERY_REPLY_BYTES:
+                # A valid error entry, never a truncated list or a message the client cannot receive.
+                reply = p.DevicesReply(
+                    request.request_id,
+                    (
+                        p.DeviceEntry(
+                            p.PluginType.MANUS,
+                            p.ManusCalibrationCatalogStatus.UNAVAILABLE,
+                            error_message="the MCAL listing is too large to send in one reply",
+                        ),
+                    ),
+                )
+                payload = json.dumps(reply.to_json())
+            await asyncio.wait_for(ws.send(payload), timeout=_QUERY_DEADLINE_S)
+            await ws.close(code=1000)
+        except (asyncio.TimeoutError, ConnectionClosed):
+            # The peer stalled or left; there is no session to clean up and nothing else to report.
+            pass
+
+    async def _device_entries(self) -> tuple[p.DeviceEntry, ...]:
+        """The devices this server offers; today the Manus plugin with its MCAL folder listing."""
+        catalog = await self._scan_mcal()
+        return (p.DeviceEntry(p.PluginType.MANUS, catalog.status, catalog.files, catalog.error_message),)
 
     async def _run_session(self, session: _Session) -> None:
         try:
@@ -1558,6 +1784,7 @@ class CaptureServer:
         # session_id.
         if (
             self._active_session is not None
+            and not isinstance(self._active_session, CalibrationSession)
             and self._active_session.session_id == stop.session_id
             and self._active_session.owner_ws is ws
         ):
@@ -1583,6 +1810,160 @@ class CaptureServer:
             p.MessageType.STOP,
             p.RejectionReason.UNKNOWN_SESSION,
             "no active or recently completed session with that ID",
+        )
+
+    async def _handle_start_calibration(self, ws: ServerConnection, data: dict[str, Any]) -> None:
+        try:
+            session_id = p.require_envelope(data, p.MessageType.START_CALIBRATION)
+        except p.ProtocolError:
+            await ws.close(code=1002, reason="invalid StartCalibration envelope")
+            return
+        if self._stop_event.is_set() or self._outbox is None or self._outbox.closed:
+            self._reject(
+                session_id,
+                p.MessageType.START_CALIBRATION,
+                p.RejectionReason.BUSY,
+                "server is shutting down" if self._stop_event.is_set() else "this connection is no longer usable",
+            )
+            return
+        try:
+            request = p.parse_start_calibration(data)
+        except p.ProtocolError as exc:
+            self._reject(session_id, p.MessageType.START_CALIBRATION, p.RejectionReason.INVALID_CONFIG, str(exc))
+            return
+        active = self._active_session
+        if (
+            isinstance(active, CalibrationSession)
+            and active.session_id == request.session_id
+            and active.owner_ws is ws
+        ):
+            # An identical repeat re-sends acceptance and the current snapshot; it never starts a second worker.
+            if active.request != request:
+                self._reject(
+                    request.session_id,
+                    p.MessageType.START_CALIBRATION,
+                    p.RejectionReason.INVALID_CONFIG,
+                    "StartCalibration differs from the active calibration",
+                )
+                return
+            active.replay()
+            return
+        if active is not None:
+            self._reject(
+                request.session_id,
+                p.MessageType.START_CALIBRATION,
+                p.RejectionReason.BUSY,
+                "another session is already active",
+            )
+            return
+        if self._calibration_worker is None:
+            # Say which setting is missing, so the operator knows what to start the server with.
+            reason = (
+                "the server has no calibration directory (--manus-calibration-dir) and no Manus calibration "
+                "worker (--manus-calibrator)"
+                if self.config.calibration is None
+                else "no Manus calibration worker is configured or found"
+            )
+            self._reject(
+                request.session_id,
+                p.MessageType.START_CALIBRATION,
+                p.RejectionReason.INVALID_CONFIG,
+                f"calibration is not available: {reason}",
+            )
+            return
+        if request.session_id in self._completed or request.session_id in self._completed_calibrations:
+            self._reject(
+                request.session_id,
+                p.MessageType.START_CALIBRATION,
+                p.RejectionReason.INVALID_CONFIG,
+                "session_id was already used by a completed session",
+            )
+            return
+        assert self._outbox is not None  # bound in _handle_connection before any message is handled
+        try:
+            session = CalibrationSession(request, self._calibration_worker, self._outbox, ws)
+        except AttemptError as exc:
+            # A worker that could not be reaped may still hold the gloves.
+            self._reject(request.session_id, p.MessageType.START_CALIBRATION, p.RejectionReason.BUSY, str(exc))
+            return
+        # Occupies the gate before any await, exactly as an accepted Begin does.
+        self._active_session = session
+        asyncio.ensure_future(self._run_calibration(session))
+
+    async def _run_calibration(self, session: CalibrationSession) -> None:
+        try:
+            await session.run()
+        finally:
+            if session.terminal is not None:
+                self._completed_calibrations[session.session_id] = session.terminal
+                self._completed_calibrations.move_to_end(session.session_id)
+                while len(self._completed_calibrations) > _COMPLETED_TOMBSTONE_CAPACITY:
+                    self._completed_calibrations.popitem(last=False)
+            # Released only when the worker is known to be gone; an unreaped worker keeps the station busy.
+            if self._active_session is session and session.cleanup_ok:
+                self._active_session = None
+
+    async def _handle_confirm_calibration_step(self, ws: ServerConnection, data: dict[str, Any]) -> None:
+        try:
+            confirm = p.parse_confirm_calibration_step(data)
+        except p.ProtocolError:
+            await ws.close(code=1002, reason="invalid ConfirmCalibrationStep envelope")
+            return
+        active = self._active_session
+        if not (
+            isinstance(active, CalibrationSession)
+            and active.session_id == confirm.session_id
+            and active.owner_ws is ws
+            and not active.done.is_set()
+        ):
+            self._reject(
+                confirm.session_id,
+                p.MessageType.CONFIRM_CALIBRATION_STEP,
+                p.RejectionReason.UNKNOWN_SESSION,
+                "no active calibration with that ID",
+                step_token=confirm.step_token,
+            )
+            return
+        # Run off the read loop: a slow acceptance must not block a StopCalibration behind it.
+        active.spawn_confirm(
+            confirm.step_token,
+            lambda message: self._reject(
+                confirm.session_id,
+                p.MessageType.CONFIRM_CALIBRATION_STEP,
+                p.RejectionReason.INVALID_CONFIG,
+                message,
+                step_token=confirm.step_token,
+            ),
+        )
+
+    async def _handle_stop_calibration(self, ws: ServerConnection, data: dict[str, Any]) -> None:
+        try:
+            stop = p.parse_stop_calibration(data)
+        except p.ProtocolError:
+            await ws.close(code=1002, reason="invalid StopCalibration envelope")
+            return
+        active = self._active_session
+        if (
+            isinstance(active, CalibrationSession)
+            and active.session_id == stop.session_id
+            and active.owner_ws is ws
+        ):
+            if active.done.is_set():
+                # Already finished but still holding the gate (its worker was not reaped): replay the terminal.
+                if active.terminal is not None and self._outbox is not None:
+                    self._outbox.publish_control(active.terminal.to_json())
+                return
+            active.request_stop()
+            return
+        if stop.session_id in self._completed_calibrations:
+            if self._outbox is not None:
+                self._outbox.publish_control(self._completed_calibrations[stop.session_id].to_json())
+            return
+        self._reject(
+            stop.session_id,
+            p.MessageType.STOP_CALIBRATION,
+            p.RejectionReason.UNKNOWN_SESSION,
+            "no active or recently completed calibration with that ID",
         )
 
 
@@ -1652,7 +2033,48 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--camera-usb-speed", default=None, help="real only: cap the camera USB speed, e.g. HIGH (USB2) or SUPER"
     )
+    parser.add_argument(
+        "--manus-calibration-dir",
+        default=None,
+        metavar="DIR",
+        help="folder of MCAL files on this host: new calibrations are written here, and its files are listed by "
+        "the device query and selectable by name at Begin; setting it enables Manus glove calibration",
+    )
+    parser.add_argument(
+        "--manus-calibrator",
+        default=None,
+        metavar="PATH",
+        help="the manus_glove_calibrator executable (default: the Manus install under "
+        "$ISAAC_ROOT/install/plugins)",
+    )
     return parser
+
+
+def _manus_calibration_dir(args: argparse.Namespace) -> Path | None:
+    """The ``--manus-calibration-dir`` folder, or None when the flag is absent."""
+    return Path(args.manus_calibration_dir) if args.manus_calibration_dir else None
+
+
+def _calibration_config(args: argparse.Namespace) -> CalibrationConfig | None:
+    """The calibration setup from ``--manus-calibration-dir``; None leaves calibration off.
+
+    An explicit ``--manus-calibrator`` that is not an executable is a startup error. A missing default worker
+    only disables generating new calibrations, with a note so the operator knows why.
+    """
+    if args.manus_calibration_dir is None:
+        if args.manus_calibrator is not None:
+            raise ValueError("--manus-calibrator needs --manus-calibration-dir")
+        return None
+    worker = find_worker(args.manus_calibrator)
+    if worker is None:
+        if args.manus_calibrator is not None:
+            raise ValueError(f"--manus-calibrator {args.manus_calibrator} is not an executable file")
+        print(
+            "capture-server: no manus_glove_calibrator found under $ISAAC_ROOT/install/plugins/manus; "
+            "generating new calibrations is unavailable (pass --manus-calibrator PATH)",
+            file=sys.stderr,
+        )
+    return CalibrationConfig(directory=Path(args.manus_calibration_dir), worker_path=worker)
 
 
 def _station_cameras(args: argparse.Namespace) -> dict[str, StationCamera] | None:
@@ -1711,6 +2133,8 @@ def _replay_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
         host=args.host,
         port=args.port,
         cameras=replay_station_cameras(episode),
+        manus_calibration_dir=_manus_calibration_dir(args),
+        calibration=_calibration_config(args),
         data_note=(
             f" -- REPLAY of recorded episode {episode.path} (streams: {', '.join(streams)}; loops every "
             f"{episode.period:.1f}s). Recorded data, not live hardware; reported to clients as MOCK mode."
@@ -1761,6 +2185,8 @@ def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
         host=args.host,
         port=args.port,
         cameras=stations,
+        manus_calibration_dir=_manus_calibration_dir(args),
+        calibration=_calibration_config(args),
         data_note=(
             " -- GMSL cameras from the frame feed at "
             f"{args.gmsl_ipc}: "
@@ -1770,7 +2196,9 @@ def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
             )
         ),
     )
-    return config, build_gmsl_source_factory(args.gmsl_ipc, cameras, stations)
+    return config, build_gmsl_source_factory(
+        args.gmsl_ipc, cameras, stations, calibration_dir=config.manus_calibration_dir
+    )
 
 
 async def _run_cli(args: argparse.Namespace) -> int:
@@ -1788,6 +2216,8 @@ async def _run_cli(args: argparse.Namespace) -> int:
                 port=args.port,
                 connect_delay=args.connect_delay,
                 cameras=_station_cameras(args),
+                manus_calibration_dir=_manus_calibration_dir(args),
+                calibration=_calibration_config(args),
             )
             # The one place the implementation is chosen, before any session is accepted.
             source_factory = build_source_factory(
