@@ -37,6 +37,9 @@ livekit:
   [streams file reference](capture_server/README.md#the---livekit-streams-file). Preview works with any of them.
   Recording needs a monotonic basis, `monotonic_us` or `capture_monotonic_us`, and `width`, `height` and `fps`;
   recording is refused while any offered stream lacks them.
+- Automatic time alignment of a kept episode needs the stream's time to be the sensor's capture event, so use
+  `capture_monotonic_us`. With `monotonic_us`, which is when the frame was ready, the take is recorded but not
+  aligned.
 
 Start CaptureServer with the file (add `--mock` for synthetic tracking):
 

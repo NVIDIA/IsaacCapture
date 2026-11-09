@@ -143,7 +143,6 @@ async def test_a_routed_group_copy_carries_the_declarations(tmp_path, own):
 
 
 def _pre_frame_type_digest(config: ServiceConfig) -> str:
-    """The digest as it was computed before numeric sources carried a frame type."""
     qc = dataclasses.asdict(config.qc)
     if config.qc.capture is None:
         del qc["capture"]
@@ -162,7 +161,7 @@ def _pre_frame_type_digest(config: ServiceConfig) -> str:
     return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
 
 
-def test_an_unset_frame_type_leaves_the_digest_as_it_was_before_the_field_existed():
+def test_a_take_recorded_before_frame_types_existed_keeps_its_digest():
     for extra in (
         {},
         {"routing": RoutingConfig()},
@@ -181,11 +180,28 @@ def test_an_unset_frame_type_leaves_the_digest_as_it_was_before_the_field_existe
         )
 
 
-def test_a_set_frame_type_changes_the_digest_and_a_different_one_changes_it_again():
+def test_the_digest_is_the_same_with_a_frame_type_unset_set_or_changed():
     def digest(frame_type):
         return impl._digest(ServiceConfig(Path("out"), (NumericSourceSpec("a", FIELDS, frame_type),)))
 
-    assert len({digest(None), digest("PicoTrackingFrame"), digest("ManusFrame")}) == 3
+    assert digest(None) == digest("PicoTrackingFrame") == digest("ManusFrame")
+
+
+def test_a_frame_type_does_not_change_the_layout_digest_but_a_field_does():
+    def layout(fields, frame_type):
+        return impl._layout_digest(ServiceConfig(Path("out"), (NumericSourceSpec("a", fields, frame_type),)))
+
+    other = (FieldSpec("extra", "float64"),)
+    assert layout(FIELDS, None) == layout(FIELDS, "ManusFrame")
+    assert layout(FIELDS, None) != layout(other, None)
+
+
+def test_other_source_fields_still_change_the_digest():
+    def digest(name, fields):
+        return impl._digest(ServiceConfig(Path("out"), (NumericSourceSpec(name, fields, "ManusFrame"),)))
+
+    assert digest("a", FIELDS) != digest("b", FIELDS)
+    assert digest("a", FIELDS) != digest("a", (FieldSpec("extra", "float64"),))
 
 
 async def test_a_recorded_episode_aligns_from_its_own_config_yaml_and_arrays(tmp_path, own):

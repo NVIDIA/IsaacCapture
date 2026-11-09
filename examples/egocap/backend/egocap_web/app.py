@@ -15,6 +15,7 @@ import secrets
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -167,6 +168,7 @@ def _recording_config_factory(
     monitor: CaptureStatusMonitor,
     station_label: str | None,
     output_root: Path,
+    on_video_sources: Callable[[frozenset[str]], None] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -189,6 +191,9 @@ def _recording_config_factory(
             VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
             for s in recordable_livekit_streams(monitor.native.started)
         )
+        if on_video_sources is not None:
+            # Tells the aligner, once per session open, which cameras this session records.
+            on_video_sources(frozenset(v.name for v in video_sources))
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
         # are required for a KEPT result. manus_glove is NOT required:
@@ -404,8 +409,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lambda: recordable_livekit_streams(monitor.native.started),
         _recorder_livekit_token,
     )
+    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner = (
+        AutoAligner(recording_output_root, resolved_station.alignment_index)
+        if resolved_station is not None and resolved_station.alignment_index is not None
+        else None
+    )
     coordinator = RecordingSessionCoordinator(
-        _recording_config_factory(monitor, config.station_label, recording_output_root),
+        _recording_config_factory(
+            monitor,
+            config.station_label,
+            recording_output_root,
+            aligner.note_video_sources if aligner is not None else None,
+        ),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
         readiness_check=_recording_readiness_check(monitor, station_config_error, config.capture_server_url),
@@ -448,8 +464,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Kept episodes are time-aligned in the background when the station configures an index camera.
     aligner: AutoAligner | None = None
     aligner_task: asyncio.Task[None] | None = None
-    if resolved_station is not None and resolved_station.alignment_index is not None:
-        aligner = AutoAligner(recording_output_root, resolved_station.alignment_index)
+    if aligner is not None:
         coordinator.on_episode_kept = aligner.submit
         aligner_task = asyncio.create_task(aligner.run())
     visualization: VisualizationScene | None = None

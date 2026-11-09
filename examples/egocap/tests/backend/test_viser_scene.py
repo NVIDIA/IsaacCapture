@@ -751,6 +751,9 @@ class _FakeAligner:
     def submit(self, result):
         self.submitted.append(result)
 
+    def note_video_sources(self, names):
+        self.noted = names
+
     async def run(self):
         import asyncio
 
@@ -798,6 +801,38 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
         assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
         assert app.state.recording_context.coordinator.on_episode_kept == aligner.submit
     assert aligner.cancelled and aligner.closed_with == app_module._ALIGNER_SHUTDOWN_SECONDS
+
+
+async def test_the_aligner_is_created_once_and_is_the_factorys_video_source_callback(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(
+        monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
+    )
+    factory_args = []
+    real_factory = app_module._recording_config_factory
+
+    def spy(*args, **kwargs):
+        factory_args.append(args)
+        return real_factory(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_recording_config_factory", spy)
+    async with app_module.lifespan(app_module.FastAPI()):
+        (aligner,) = _FakeAligner.instances
+        (args,) = factory_args
+        assert args[3] == aligner.note_video_sources
+
+
+async def test_no_video_source_callback_is_passed_without_an_index_camera(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(monkeypatch, tmp_path, "meta: {}\n")
+    factory_args = []
+    real_factory = app_module._recording_config_factory
+
+    def spy(*args, **kwargs):
+        factory_args.append(args)
+        return real_factory(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_recording_config_factory", spy)
+    async with app_module.lifespan(app_module.FastAPI()):
+        assert _FakeAligner.instances == [] and factory_args[0][3] is None
 
 
 async def test_the_kept_hook_is_the_aligner_and_the_result_hook_is_left_alone(monkeypatch, tmp_path):

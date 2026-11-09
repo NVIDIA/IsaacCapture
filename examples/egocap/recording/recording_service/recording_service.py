@@ -142,12 +142,9 @@ def _digest(config: ServiceConfig) -> str:
         qc["capture_algorithm_version"] = ALGORITHM_VERSION  # a changed algorithm is a changed configuration
     canonical = {
         **({"routing": True} if config.routing is not None else {}),  # routed or not; each take freezes its studio
-        # A frame type left unset is absent, not null, so a configuration that predates it keeps its digest. A
-        # take left SEALED or CHECKED across a change that sets frame types is judged as a changed configuration.
-        "numeric": [
-            {k: v for k, v in asdict(s).items() if k != "frame_type" or v is not None}
-            for s in config.numeric_sources
-        ],
+        # A frame type says how a source's fields are resampled, not how its data is laid out, so it is left out:
+        # setting or changing one never makes a take recorded earlier look like a different configuration.
+        "numeric": [{k: v for k, v in asdict(s).items() if k != "frame_type"} for s in config.numeric_sources],
         "video": [asdict(s) for s in config.video_sources],
         "qc": qc,
         "latency": config.latency,

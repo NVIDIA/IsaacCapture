@@ -69,10 +69,22 @@ class AutoAligner:
         # Unbounded: a job is three small fields, and the number waiting is the number of kept episodes.
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._process: asyncio.subprocess.Process | None = None
+        # False while the open session does not record the index camera; set once per session open.
+        self._index_recorded = True
+
+    def note_video_sources(self, names: frozenset[str]) -> None:
+        """Note whether the session being opened records the index camera; if not, its episodes are not queued."""
+        recorded = self._index_source in names
+        if not recorded and self._index_recorded:
+            logger.warning(
+                "automatic time alignment is off: index source %r is not a camera this session records",
+                self._index_source,
+            )
+        self._index_recorded = recorded
 
     def submit(self, result: EpisodeResult) -> None:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
-        if result.disposition is Disposition.KEPT and result.final_path is not None:
+        if result.disposition is Disposition.KEPT and result.final_path is not None and self._index_recorded:
             self._queue.put_nowait(_Job(result.session_id, result.episode_index, result.final_path))
 
     def scan(self) -> list[_Job]:

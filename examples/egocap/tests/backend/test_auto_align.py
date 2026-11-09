@@ -92,6 +92,45 @@ def test_results_that_are_not_a_kept_episode_with_a_path_are_ignored(result):
     assert aligner._queue.empty()
 
 
+def test_kept_results_are_queued_before_any_session_has_reported_its_sources():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.submit(_result())
+    assert aligner._queue.qsize() == 1
+
+
+def test_kept_results_are_queued_while_the_session_records_the_index_source():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.note_video_sources(frozenset({"head", "wrist"}))
+    aligner.submit(_result())
+    assert aligner._queue.qsize() == 1
+
+
+def test_kept_results_are_not_queued_while_the_session_does_not_record_the_index_source():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.note_video_sources(frozenset({"wrist"}))
+    aligner.submit(_result())
+    assert aligner._queue.empty()
+
+
+def test_the_not_recorded_warning_is_logged_once_per_transition(caplog):
+    aligner = AutoAligner(Path("/out"), "head")
+    with caplog.at_level(logging.WARNING, logger="isaaccapture"):
+        aligner.note_video_sources(frozenset({"wrist"}))
+        aligner.note_video_sources(frozenset())
+        assert len(caplog.records) == 1 and "'head'" in caplog.text
+        aligner.note_video_sources(frozenset({"head"}))
+        aligner.note_video_sources(frozenset({"wrist"}))
+    assert len(caplog.records) == 2
+
+
+def test_queueing_resumes_when_a_later_session_records_the_index_source():
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.note_video_sources(frozenset())
+    aligner.note_video_sources(frozenset({"head"}))
+    aligner.submit(_result())
+    assert aligner._queue.qsize() == 1
+
+
 async def test_cancelling_an_idle_worker_ends_it_cleanly(tmp_path):
     task = asyncio.create_task(AutoAligner(tmp_path / "out", "head").run())
     await asyncio.sleep(0.05)
