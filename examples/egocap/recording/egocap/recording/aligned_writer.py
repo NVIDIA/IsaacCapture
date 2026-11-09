@@ -200,7 +200,7 @@ def write_aligned_episode(
     raw_episode = zarr.open_group(str(raw_session / key), mode="r")
 
     # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
-    present = [name for name in rules if name in raw_episode]
+    present = _participating(raw_episode, rules)
     unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
     if unqualified:
         raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
@@ -338,12 +338,17 @@ def _attribute(metadata_file: Path, name: str) -> Any:
         return None
 
 
-def episode_qualification(raw_session: Path, episode_index: int) -> dict[str, bool]:
-    """Which of the session's declared sources the episode's own timing evidence says have a qualified time."""
+def _participating(episode: Any, rules: Mapping[str, Any]) -> list[str]:
+    """The declared sources an episode recorded with at least one row; an absent or empty one takes no part."""
+    return [name for name in rules if name in episode and episode[name]["capture_time"].shape[0] > 0]
+
+
+def episode_qualification(raw_session: Path, episode_index: int, index_source: str) -> dict[str, bool]:
+    """Whether the episode's own timing evidence qualifies the index source and each source that took part."""
     config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
-    declared = [e["name"] for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
-    timing = dict(zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r").attrs).get("timing")
-    return qualified_sources(timing, declared)
+    episode = zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r")
+    names = sorted({index_source, *_participating(episode, source_rules(config))})
+    return qualified_sources(dict(episode.attrs).get("timing"), names)
 
 
 def align_kept_episode(
@@ -371,6 +376,6 @@ def align_kept_episode(
         episode_index,
         index_source,
         downsample=downsample,
-        qualified=episode_qualification(raw_session, episode_index),
+        qualified=episode_qualification(raw_session, episode_index, index_source),
         continuity=manifest.continuity,
     )

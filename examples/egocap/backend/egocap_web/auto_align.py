@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,7 @@ from recording_service import Disposition, EpisodeResult
 
 logger = logging.getLogger("isaaccapture.egocap_web.auto_align")
 
-#: Kept episodes waiting to be aligned. A full queue drops the newest; ``recover`` finds it again at next start.
+#: Kept episodes held in the queue at once; any more wait in the backlog, so none is dropped.
 _QUEUE_LIMIT = 64
 
 
@@ -58,15 +59,15 @@ class AutoAligner:
         self._output_root = output_root
         self._index_source = index_source
         self._queue: asyncio.Queue[_Job] = asyncio.Queue(_QUEUE_LIMIT)
+        # Work beyond the queue's room; the worker tops the queue up from it as episodes finish.
+        self._backlog: deque[_Job] = deque()
 
     def _enqueue(self, job: _Job) -> None:
-        """Queue a job unless the queue is full, in which case ``recover`` picks it up later."""
+        """Queue a job, or hold it in the backlog while the queue is full."""
         try:
             self._queue.put_nowait(job)
         except asyncio.QueueFull:
-            logger.warning(
-                "%s episode %d was not queued for time alignment: queue full", job.session_id, job.episode_index
-            )
+            self._backlog.append(job)
 
     def submit(self, result: EpisodeResult) -> None:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
@@ -93,7 +94,11 @@ class AutoAligner:
                     manifest.storage_phase == "FINALIZED"
                     and manifest.finalization == FINALIZATION_KEEP
                     and not job.aligned.exists()
-                    and all(episode_qualification(final.parent, int(final.name.removeprefix("episode_"))).values())
+                    and all(
+                        episode_qualification(
+                            final.parent, int(final.name.removeprefix("episode_")), self._index_source
+                        ).values()
+                    )
                 )
             except Exception:  # noqa: BLE001, S112 - an unreadable record is simply not eligible
                 continue
@@ -110,6 +115,9 @@ class AutoAligner:
             except Exception as exc:  # noqa: BLE001 - one episode's failure must not end the worker
                 logger.warning("%s episode %d was not time-aligned: %s", job.session_id, job.episode_index, exc)
             finally:
+                # Refill from the backlog before marking this job done, so a drain waits for it too.
+                while self._backlog and not self._queue.full():
+                    self._queue.put_nowait(self._backlog.popleft())
                 self._queue.task_done()
 
     async def close(self, task: asyncio.Task[None], timeout: float) -> None:

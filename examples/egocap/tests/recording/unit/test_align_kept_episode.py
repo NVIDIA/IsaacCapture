@@ -440,7 +440,7 @@ def test_cli_refuses_a_manifest_that_does_not_bind(tmp_path, raw, capsys):
 def test_qualification_reports_each_declared_source_from_the_episodes_own_timing(tmp_path):
     timing = {"event_time": {"head_camera": {"qualified": True}, "pico_controller": {"qualified": False}}}
     build_raw(tmp_path / "raw", timing=timing)
-    assert episode_qualification(tmp_path / "raw", 1) == {
+    assert episode_qualification(tmp_path / "raw", 1, INDEX) == {
         "head_camera": True,
         "wrist_camera": False,
         "pico_controller": False,
@@ -450,8 +450,41 @@ def test_qualification_reports_each_declared_source_from_the_episodes_own_timing
 
 def test_qualification_is_false_for_every_source_when_the_episode_has_no_timing(tmp_path):
     build_raw(tmp_path / "raw", timing=None)
-    assert set(episode_qualification(tmp_path / "raw", 0).values()) == {False}
+    assert set(episode_qualification(tmp_path / "raw", 0, INDEX).values()) == {False}
 
 
 def test_qualification_covers_every_declared_source_when_all_are_qualified(raw):
-    assert episode_qualification(raw, 0) == dict.fromkeys(SOURCES, True)
+    assert episode_qualification(raw, 0, INDEX) == dict.fromkeys(SOURCES, True)
+
+
+def drop_rows(raw, source):
+    """Leave the source's group in the episode with its arrays emptied."""
+    group = zarr.open_group(str(raw / "episode_0"), mode="r+")[source]
+    for name in list(group.array_keys()):
+        array = group[name]
+        del group[name]
+        group[name] = array[:0]
+
+
+def test_an_absent_optional_source_is_left_out_of_the_qualification_and_alignment_proceeds(tmp_path, raw):
+    shutil.rmtree(raw / "episode_0" / "glove")
+    assert "glove" not in episode_qualification(raw, 0, INDEX)
+    align_kept_episode(raw, 0, INDEX, make_manifest(raw))
+    aligned = zarr.open_group(str(tmp_path / "raw_aligned" / "episode_0"), mode="r")
+    assert "glove" not in aligned and "pico_controller" in aligned
+
+
+def test_a_source_with_no_rows_is_excluded_from_the_output_and_the_qualification_and_does_not_veto(tmp_path, raw):
+    drop_rows(raw, "glove")
+    timing = good_timing()
+    timing["event_time"]["glove"] = {"qualified": False}
+    zarr.open_group(str(raw / "episode_0"), mode="r+").attrs["timing"] = timing
+    assert "glove" not in episode_qualification(raw, 0, INDEX)
+    align_kept_episode(raw, 0, INDEX, make_manifest(raw))
+    aligned = zarr.open_group(str(tmp_path / "raw_aligned" / "episode_0"), mode="r")
+    assert "glove" not in aligned and "pico_controller" in aligned
+
+
+def test_the_index_source_is_always_in_the_qualification(raw):
+    shutil.rmtree(raw / "episode_0" / INDEX)
+    assert INDEX in episode_qualification(raw, 0, INDEX)
