@@ -16,7 +16,9 @@ Usage (from any directory outside ``egocap`` itself)::
         [--manifest-session DIR] [--aligned-session DIR] [--downsample K]
 
 ``--manifest-session`` is where the episode's manifest lives when that is not ``SESSION_DIR`` (a routed
-episode's manifest stays in the session it was recorded in). Exit status 0 means the aligned episode was
+episode's manifest stays in the session it was recorded in), and ``--manifest-episode`` its index there when that
+differs from ``--episode`` (a routed episode sits under its slot). The manifest is used only if it describes
+exactly this finalized, kept episode. Exit status 0 means the aligned episode was
 published; 1 means it was refused or failed, with the reason on stderr.
 """
 
@@ -36,13 +38,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--episode", type=int, required=True, help="the episode's index in that directory")
     parser.add_argument("--index-source", required=True, help="the camera whose frames define the timeline")
     parser.add_argument("--manifest-session", type=Path, help="the session whose manifest describes the episode")
+    parser.add_argument(
+        "--manifest-episode",
+        type=int,
+        help="the episode's index in that session's manifests, when it differs from --episode (a routed episode)",
+    )
     parser.add_argument("--aligned-session", type=Path, help="where to publish (default: <session>_aligned)")
     parser.add_argument("--downsample", type=int, default=1, help="keep every K-th index frame (default 1)")
     args = parser.parse_args(argv)
 
     # The manifest carries the continuity evidence; without a readable one the episode cannot be vouched for.
     try:
-        manifest = read_manifest(manifest_path(args.manifest_session or args.session, args.episode))
+        manifest_episode = args.episode if args.manifest_episode is None else args.manifest_episode
+        manifest = read_manifest(manifest_path(args.manifest_session or args.session, manifest_episode))
     except (OSError, ValueError) as exc:
         print(f"cannot read the episode's manifest: {exc}", file=sys.stderr)
         return 1
@@ -51,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             args.session,
             args.episode,
             args.index_source,
-            manifest.continuity,
+            manifest,
             aligned_session=args.aligned_session,
             downsample=args.downsample,
         )

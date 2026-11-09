@@ -18,6 +18,7 @@ atomic.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import shutil
 from collections.abc import Mapping
@@ -29,11 +30,19 @@ import yaml
 import zarr
 
 from .alignment import AlignedEpisode, align_episode, check_continuity, qualified_sources, source_rules
+from .episode_layout import (
+    FINALIZATION_KEEP,
+    ROUTE_ATTR,
+    EpisodeManifest,
+    read_identity,
+    route_id,
+)
 
 __all__ = [
     "ALIGNED_SESSION_SIDECARS",
     "AlignedWriteError",
     "align_kept_episode",
+    "check_kept_episode",
     "publish_aligned_episode",
     "validate_aligned_episode",
     "write_aligned_episode",
@@ -326,21 +335,70 @@ def _publish_locked(
     return aligned
 
 
+def check_kept_episode(raw_session: Path, episode_index: int, manifest: EpisodeManifest) -> list[str]:
+    """Why ``manifest`` is not the record of the finalized, kept episode at ``raw_session/episode_<index>``.
+
+    The stored evidence is trusted only for the exact episode it describes, so this binds them: the episode's
+    own stamp must name the manifest's episode, the take must be finalized and kept, the written row counts must
+    match the manifest's, and the location must be the manifest's: its routed slot and group when it was routed,
+    its own index otherwise. A matching integer in a file name is never taken as identity. Empty means it is.
+    """
+    problems: list[str] = []
+    episode_dir = raw_session / f"episode_{episode_index}"
+    # The episode directory carries the id of the episode that owns it.
+    if read_identity(episode_dir) != manifest.episode_id:
+        problems.append("the episode directory is not the one this manifest describes (episode id differs)")
+    # Only a finalized take whose disposition was to keep its data is a kept episode.
+    if manifest.storage_phase != "FINALIZED" or manifest.finalization != FINALIZATION_KEEP:
+        problems.append(
+            f"the manifest is not a finalized kept episode ({manifest.storage_phase}, {manifest.finalization})"
+        )
+    if manifest.assignment is not None:
+        # A routed episode sits in its group under its slot, which need not equal its recording index.
+        group = manifest.assignment["group"]
+        stamp = _attribute(raw_session / "zarr.json", ROUTE_ATTR)
+        if episode_index != manifest.assignment["slot"] or stamp != route_id(manifest.session_id, group):
+            problems.append("the episode is not at the routed location the manifest records")
+    elif episode_index != manifest.episode_index:
+        problems.append("the episode index is not the manifest's")
+    # The written rows must be exactly the rows the manifest sealed.
+    try:
+        episode = zarr.open_group(str(episode_dir), mode="r")
+        for name, count in manifest.counts.items():
+            if name in episode and len(episode[name]["capture_time"]) != count.get("written"):
+                problems.append(f"{name}: the rows on disk differ from the sealed count")
+    except (OSError, zarr.errors.GroupNotFoundError) as exc:
+        problems.append(f"the episode cannot be read: {exc}")
+    return problems
+
+
+def _attribute(metadata_file: Path, name: str) -> Any:
+    """One attribute of a zarr group's metadata file, or None when the file or the attribute is absent."""
+    try:
+        return json.loads(metadata_file.read_text(encoding="utf-8")).get("attributes", {}).get(name)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def align_kept_episode(
     raw_session: Path,
     episode_index: int,
     index_source: str,
-    continuity: Mapping[str, Mapping[str, object]] | None,
+    manifest: EpisodeManifest,
     *,
     aligned_session: Path | None = None,
     downsample: int = 1,
 ) -> AlignedEpisode:
     """Align one kept episode from what the recorder stored about it, and publish the result.
 
-    ``continuity`` is the episode manifest's evidence. Which sources have a qualified event time is read from the
+    ``manifest`` must be the record of exactly this finalized, kept episode (see :func:`check_kept_episode`);
+    its continuity evidence is used only then. Which sources have a qualified event time is read from the
     episode's own ``timing`` attribute, so an episode recorded without that evidence is refused, never assumed
     qualified. The aligned session defaults to ``<raw session name>_aligned`` beside the raw one.
     """
+    problems = check_kept_episode(raw_session, episode_index, manifest)
+    if problems:
+        raise AlignedWriteError("; ".join(problems))
     config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
     declared = [e["name"] for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
     timing = dict(zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r").attrs).get("timing")
@@ -351,5 +409,5 @@ def align_kept_episode(
         index_source,
         downsample=downsample,
         qualified=qualified_sources(timing, declared),
-        continuity=continuity,
+        continuity=manifest.continuity,
     )
