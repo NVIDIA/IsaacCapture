@@ -23,6 +23,11 @@ QUALIFIED = dict.fromkeys(("head_camera", "wrist_camera", "pico_controller", "gl
 CAMERAS = ("head_camera", "wrist_camera")
 
 
+def clean_continuity(sources=tuple(QUALIFIED)):
+    """Continuity evidence that vouches for every source: the clock mapping, no restart, known."""
+    return {name: {"scope": "clock_mapping", "identity": 0, "breaks": [], "known": True} for name in sources}
+
+
 def video_bytes(source, episode):
     return (f"dummy video {source} episode {episode} ".encode()) * 16
 
@@ -56,7 +61,9 @@ def build_raw(root, scenario, drop_sources=()):
 
 def write_steps(raw, aligned, steps):
     for episode, downsample in steps:
-        write_aligned_episode(raw, aligned, episode, INDEX, downsample=downsample, qualified=QUALIFIED)
+        write_aligned_episode(
+            raw, aligned, episode, INDEX, downsample=downsample, qualified=QUALIFIED, continuity=clean_continuity()
+        )
 
 
 def snapshot(root):
@@ -177,7 +184,9 @@ def test_videos_are_copied_when_linking_is_not_possible(tmp_path, monkeypatch):
 def test_an_unqualified_or_unlisted_source_refuses_and_writes_nothing(tmp_path, qualified):
     build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
     with pytest.raises(AlignedWriteError, match="qualified"):
-        write_aligned_episode(tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=qualified)
+        write_aligned_episode(
+            tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=qualified, continuity=clean_continuity()
+        )
     assert not (tmp_path / "aligned").exists()
 
 
@@ -185,7 +194,9 @@ def test_a_declared_source_absent_from_the_episode_is_skipped(tmp_path):
     build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"], drop_sources=("glove",))
     # Not recorded, so its qualification is not asked for either.
     qualified = {name: ok for name, ok in QUALIFIED.items() if name != "glove"}
-    write_aligned_episode(tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=qualified)
+    write_aligned_episode(
+        tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=qualified, continuity=clean_continuity()
+    )
     episode = zarr.open_group(str(tmp_path / "aligned"), mode="r")["episode_0"]
     assert sorted(episode.group_keys()) == ["head_camera", "pico_controller", "wrist_camera"]
 
@@ -216,10 +227,86 @@ def test_an_existing_target_video_is_replaced_by_the_link(tmp_path):
 def test_an_existing_aligned_sidecar_is_not_overwritten(tmp_path):
     build_raw(tmp_path / "raw", META["scenarios"]["attrs_sidecars"])
     (tmp_path / "aligned").mkdir()
-    (tmp_path / "aligned" / "config.yaml").write_text("kept: true\n")
+    (tmp_path / "aligned" / "head_camera_intrinsics.json").write_text("kept: true\n")
     write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
-    assert (tmp_path / "aligned" / "config.yaml").read_text() == "kept: true\n"
-    assert (tmp_path / "aligned" / "head_camera_intrinsics.json").is_file()
+    assert (tmp_path / "aligned" / "head_camera_intrinsics.json").read_text() == "kept: true\n"
+    assert any((tmp_path / "aligned" / name).is_file() for name in aligned_writer.ALIGNED_SESSION_SIDECARS)
+
+
+def test_an_edited_aligned_config_is_replaced_by_the_raw_one(tmp_path):
+    build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
+    write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
+    (tmp_path / "aligned" / "config.yaml").write_text("edited: true\n")
+    write_steps(tmp_path / "raw", tmp_path / "aligned", [(0, 1)])
+    assert (tmp_path / "aligned" / "config.yaml").read_bytes() == (tmp_path / "raw" / "config.yaml").read_bytes()
+
+
+def raw_listing(root):
+    """Every path under the raw session with its size and content hash, to compare before and after."""
+    return {
+        path.relative_to(root).as_posix(): (path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+        if path.is_file()
+        else None
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def test_the_aligned_root_is_written_from_a_raw_root_without_zarr_json_and_the_raw_session_gains_no_files(
+    tmp_path,
+):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
+    (raw / "zarr.json").unlink()
+    before = raw_listing(raw)
+    aligned_writer._write_root(raw, tmp_path / "aligned", INDEX)
+    assert raw_listing(raw) == before
+    assert not (raw / "zarr.json").exists()
+    assert dict(zarr.open_group(str(tmp_path / "aligned"), mode="r").attrs) == {"index_source": INDEX}
+
+
+def test_a_raw_session_without_a_root_zarr_json_aligns_and_is_left_untouched(tmp_path):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
+    (raw / "zarr.json").unlink()
+    before = raw_listing(raw)
+    write_steps(raw, tmp_path / "aligned", [(0, 1)])
+    assert raw_listing(raw) == before
+    assert not (raw / "zarr.json").exists()
+    assert zarr.open_group(str(tmp_path / "aligned"), mode="r").attrs["index_source"] == INDEX
+
+
+@pytest.fixture
+def raw_session(tmp_path):
+    build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
+    return tmp_path / "raw"
+
+
+def test_the_aligned_session_must_be_separate_from_the_raw_session(tmp_path, raw_session):
+    (tmp_path / "alias").symlink_to(raw_session, target_is_directory=True)
+    (tmp_path / "outer").mkdir()
+    (tmp_path / "outer" / "inner_alias").symlink_to(raw_session, target_is_directory=True)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "up").symlink_to(tmp_path, target_is_directory=True)
+    targets = {
+        "same_path": raw_session,
+        "inside_raw": raw_session / "aligned",
+        "inside_episode": raw_session / "episode_0" / "aligned",
+        "containing_raw": tmp_path,
+        "symlink_alias": tmp_path / "alias",
+        "inside_through_symlink": tmp_path / "alias" / "aligned",
+        "containing_through_symlink": outside / "up",
+    }
+    before = raw_listing(raw_session)
+    for label, target in targets.items():
+        with pytest.raises(AlignedWriteError, match="must be separate"):
+            write_aligned_episode(
+                raw_session, target, 0, INDEX, qualified=QUALIFIED, continuity=clean_continuity()
+            )
+        # Nothing is created in, or removed from, the raw session, and its content is byte for byte the same.
+        assert raw_listing(raw_session) == before, label
+    assert not (raw_session / "aligned").exists()
+    assert (raw_session / "episode_0" / "head_camera.mp4").read_bytes() == video_bytes("head_camera", 0)
 
 
 @pytest.fixture
@@ -288,4 +375,35 @@ def test_a_write_that_does_not_validate_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(aligned_writer, "align_episode", empty_timestamps)
     with pytest.raises(AlignedWriteError, match="valid_timestamps is empty"):
-        write_aligned_episode(tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED)
+        write_aligned_episode(
+            tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED, continuity=clean_continuity()
+        )
+
+
+def with_entry(name, **changes):
+    """Clean evidence with one source's entry changed."""
+    evidence = clean_continuity()
+    evidence[name] = {**evidence[name], **changes}
+    return evidence
+
+
+@pytest.mark.parametrize(
+    "continuity",
+    [
+        None,
+        {k: v for k, v in clean_continuity().items() if k != "glove"},
+        with_entry("glove", known=False),
+        with_entry("glove", scope="capture_session"),
+        with_entry("glove", breaks=[12]),
+        with_entry(INDEX, breaks=[3]),
+    ],
+    ids=["none", "source_missing", "unknown", "capture_session_scope", "breaks", "index_breaks"],
+)
+def test_missing_or_broken_continuity_refuses_and_writes_nothing(tmp_path, continuity):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
+    before = raw_listing(raw)
+    with pytest.raises(AlignedWriteError):
+        write_aligned_episode(raw, tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED, continuity=continuity)
+    assert not (tmp_path / "aligned").exists()
+    assert raw_listing(raw) == before
