@@ -88,7 +88,7 @@ class FakeRoom:
 FAKE_RTC = SimpleNamespace(
     Room=FakeRoom,
     VideoStream=FakeVideoStream,
-    RoomOptions=lambda **fields: SimpleNamespace(**fields),
+    RoomOptions=SimpleNamespace,
     TrackKind=SimpleNamespace(KIND_VIDEO="video"),
     VideoBufferType=SimpleNamespace(RGB24="rgb24"),
 )

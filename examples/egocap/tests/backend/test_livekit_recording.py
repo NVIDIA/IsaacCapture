@@ -14,7 +14,7 @@ import pytest
 
 from capture_server import protocol as p
 from egocap_web import livekit_recording as lrec
-from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+from egocap_web.livekit_receiver import LiveKitFrameReceiver, ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import (
     LiveKitRecordingFeed,
     UnixClockMap,
@@ -553,8 +553,6 @@ def test_loss_before_start_reports_raw_counters():
 
 
 async def test_a_healthy_take_with_stride_two_ids_records_every_frame_with_no_missing():
-    import egocap_web.livekit_receiver as lr
-
     frames = [_received(16, 1_000_000 * i) for i in (1, 2, 3, 4)]
     receiver = FakeReceiver({16: frames})
     counters = receiver.counters[16]
@@ -562,7 +560,7 @@ async def test_a_healthy_take_with_stride_two_ids_records_every_frame_with_no_mi
     feed = _feed(receiver, [_stream(16, "Head left")], ingress)
     feed.start()
     for fid in (2, 4, 6, 8):  # the receiver's own accounting, fed the ids a half-rate publisher numbers
-        lr.LiveKitFrameReceiver._account(counters, fid)
+        LiveKitFrameReceiver._account(counters, fid)
     await _settle()
     await feed.stop()
     assert len(ingress.offered) == 4 and feed.failure is None
