@@ -42,6 +42,7 @@ __all__ = [
     "align_episode",
     "find_nearest_timestamp_indices",
     "interpolate_field",
+    "check_continuity",
     "qualified_sources",
     "source_rules",
 ]
@@ -84,6 +85,37 @@ def qualified_sources(
     alignment = semantics.get("physical_alignment") if isinstance(semantics, Mapping) else None
     tracking_ok = isinstance(alignment, str) and alignment.startswith("available")
     return {**{name: name in mapped for name in cameras}, **{name: tracking_ok for name in tracking}}
+
+
+#: Continuity scopes that vouch for a source being one unbroken stretch. A clock mapping's epoch covers the
+#: publisher's times; a transport session does not cover the device behind it, so it is not accepted.
+ACCEPTED_CONTINUITY_SCOPES = ("clock_mapping",)
+
+
+def check_continuity(continuity: Mapping[str, Mapping[str, object]] | None, sources: Sequence[str]) -> list[str]:
+    """Why the recorded continuity evidence does not allow aligning ``sources``; empty means it does.
+
+    ``continuity`` is the per-source evidence stored with the episode (None when the episode recorded none). A
+    source is refused when there is no evidence for it, the evidence is incomplete, its scope is not one that
+    vouches for the source, or it records a break: interpolating across a restart would produce values the
+    sensor never reported. Nothing here defaults to clean.
+    """
+    if continuity is None:
+        return ["no continuity evidence was recorded for this episode"]
+    problems: list[str] = []
+    for name in sources:
+        entry = continuity.get(name)
+        if not isinstance(entry, Mapping):
+            problems.append(f"{name}: no continuity evidence")
+        elif entry.get("known") is not True:
+            problems.append(f"{name}: continuity is unknown")
+        elif entry.get("scope") not in ACCEPTED_CONTINUITY_SCOPES:
+            problems.append(
+                f"{name}: its continuity evidence ({entry.get('scope')!r}) does not cover the source itself"
+            )
+        elif entry.get("breaks"):
+            problems.append(f"{name}: has a restart inside the episode (rows {list(entry['breaks'])})")
+    return problems
 
 
 def find_nearest_timestamp_indices(source_times: np.ndarray, target_times: np.ndarray) -> np.ndarray:

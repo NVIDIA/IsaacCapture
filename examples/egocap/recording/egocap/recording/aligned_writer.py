@@ -27,7 +27,7 @@ import numpy as np
 import yaml
 import zarr
 
-from .alignment import AlignedEpisode, align_episode, source_rules
+from .alignment import AlignedEpisode, align_episode, check_continuity, source_rules
 
 __all__ = ["ALIGNED_SESSION_SIDECARS", "AlignedWriteError", "validate_aligned_episode", "write_aligned_episode"]
 
@@ -163,12 +163,15 @@ def write_aligned_episode(
     *,
     downsample: int = 1,
     qualified: Mapping[str, bool],
+    continuity: Mapping[str, Mapping[str, object]] | None,
 ) -> AlignedEpisode:
     """Align one recorded episode and write it into ``aligned_session``; returns the alignment.
 
     ``qualified`` says, per source, whether its recorded capture time is a qualified event time; a source that is
     not qualified (or not listed) refuses the alignment, so nothing is written for it. The times aligned on are
-    the recorded capture times. Raises ``AlignedWriteError`` if the written episode does not validate.
+    the recorded capture times. ``continuity`` is the episode's stored per-source continuity evidence (None if it
+    recorded none): a source whose evidence is missing, unknown or records a break refuses the alignment too.
+    Raises ``AlignedWriteError`` if the written episode does not validate.
     """
     _check_separate(raw_session, aligned_session)
     config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
@@ -182,6 +185,9 @@ def write_aligned_episode(
     unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
     if unqualified:
         raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
+    broken = check_continuity(continuity, [index_source, *present])
+    if broken:
+        raise AlignedWriteError("; ".join(broken))
     times = {name: raw_episode[name]["capture_time"][:] for name in present}
     fields = {name: {a: raw_episode[name][a][:] for a in raw_episode[name].array_keys()} for name in present}
     aligned = align_episode(

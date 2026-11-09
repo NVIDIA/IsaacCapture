@@ -168,6 +168,8 @@ class _Take:
         self.admission_closed = False
         self.accepted = dict.fromkeys(sources, 0)
         self.written = dict.fromkeys(sources, 0)
+        # Per source: whether its accepted rows were one unbroken stretch (see note_continuity).
+        self.continuity: dict[str, dict[str, Any]] = {}
         self.span: dict[str, list[float]] = {}
         self.worker: asyncio.Task[Any] | None = None
         self.operation_task: asyncio.Task[Any] | None = None
@@ -188,6 +190,38 @@ class _Take:
     def episode_id(self) -> str:
         """The stable episode identity."""
         return self.manifest.episode_id
+
+    def note_continuity(self, source: str, row: int, continuity: tuple[str, str | int] | None) -> None:
+        """Record the continuity evidence of one accepted row of ``source``.
+
+        The first row fixes the scope and identity; a later row with a different identity is a break at that row
+        (rows are positions among the source's accepted rows, which equal its written rows once sealed). A row
+        with no evidence, or one whose scope changes, makes the source's continuity unknown: a take cannot vouch
+        for stretches it was never told about.
+        """
+        entry = self.continuity.setdefault(source, {"scope": None, "identity": None, "breaks": [], "known": True})
+        if continuity is None:
+            entry["known"] = False
+            return
+        scope, identity = continuity
+        if entry["scope"] is None:
+            entry["scope"], entry["identity"], entry["last"] = scope, identity, identity
+            return
+        if scope != entry["scope"]:
+            entry["known"] = False
+        elif identity != entry["last"]:
+            entry["breaks"].append(row)
+            entry["last"] = identity
+
+    def continuity_record(self) -> dict[str, dict[str, Any]]:
+        """The evidence for every source of the take, as stored in the manifest.
+
+        A source that accepted no rows has no evidence and is recorded as unknown, never as an empty clean list.
+        """
+        unknown = {"scope": None, "identity": None, "breaks": [], "known": False}
+        return {
+            s: {k: v for k, v in self.continuity.get(s, unknown).items() if k != "last"} for s in self.accepted
+        }
 
     def duration(self) -> float:
         """Maximum per-source capture-time span; never subtracts timestamps from different sources."""
@@ -255,6 +289,8 @@ class RecordingService:
         copied = self._copy(sample)  # the only fallible step: finish it before any bookkeeping changes
         index = take.accepted[sample.source]
         take.accepted[sample.source] = index + 1
+        # Evidence is noted for the accepted row only, never for an offer that came back FULL and will be retried.
+        take.note_continuity(sample.source, index, sample.continuity)
         take.queue.append(copied)
         take.wake.set()
         return SubmissionResult(SubmissionStatus.ACCEPTED, sample.source, index)
@@ -922,6 +958,7 @@ class RecordingService:
                         counts={
                             s: {"accepted": take.accepted[s], "written": take.written[s]} for s in take.accepted
                         },
+                        continuity=take.continuity_record(),
                         duration_seconds=take.duration(),
                         storage_phase="SEALED",
                     )

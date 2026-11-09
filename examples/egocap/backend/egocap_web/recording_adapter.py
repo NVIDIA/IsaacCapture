@@ -325,6 +325,8 @@ def convert_camera_image(
         capture_time=image.capture_time_ns / 1e9,
         receive_time=image.receive_time_ns / 1e9,
         intrinsics=intrinsics,
+        # The transport session says the connection was unbroken; it says nothing about the camera behind it.
+        continuity=("capture_session", image.session_id),
     )
 
 
@@ -338,13 +340,16 @@ def convert_capture_frame(frame: CaptureFrame) -> list[NumericSample]:
     tracking = capture_protocol.decode_tracking_frame(frame.payload)
     capture_time = frame.capture_time_ns / 1e9
     receive_time = frame.receive_time_ns / 1e9
+    # Only the transport session is known here: it does not establish that the controller or glove itself ran
+    # without a restart, so this is recorded as transport continuity and not as a device epoch.
+    continuity = ("capture_session", frame.session_id)
     samples: list[NumericSample] = []
     pico_fields = build_pico_controller_fields(tracking)
     if pico_fields is not None:
-        samples.append(NumericSample(PICO_CONTROLLER_SOURCE, capture_time, receive_time, pico_fields))
+        samples.append(NumericSample(PICO_CONTROLLER_SOURCE, capture_time, receive_time, pico_fields, continuity))
     manus_fields = build_manus_glove_fields(tracking)
     if manus_fields is not None:
-        samples.append(NumericSample(MANUS_GLOVE_SOURCE, capture_time, receive_time, manus_fields))
+        samples.append(NumericSample(MANUS_GLOVE_SOURCE, capture_time, receive_time, manus_fields, continuity))
     return samples
 
 

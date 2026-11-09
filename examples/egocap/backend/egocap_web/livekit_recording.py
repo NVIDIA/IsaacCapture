@@ -283,6 +283,8 @@ class LiveKitRecordingFeed:
                 pixel_format=PixelFormat.RGB8,
                 capture_time=capture_time,
                 receive_time=receive_time,
+                # The mapping that placed this frame, read once here: a later refresh must not relabel it.
+                continuity=("clock_mapping", mapping.epoch),
             )
             if not self._ingress.offer(sample):
                 # The ingress refuses once it has failed or stopped; it reports its own reason.
