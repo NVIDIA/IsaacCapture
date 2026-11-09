@@ -9,6 +9,7 @@
 #include "device_controls.hpp"
 #include "device_diagnostics.hpp"
 #include "diagnostics.hpp"
+#include "frame_liveness.hpp"
 #include "inc/ego_camera/cancellation.hpp"
 #include "inc/ego_camera/ego_camera.hpp"
 #include "inc/ego_camera/sdk_timestamp.hpp"
@@ -544,19 +545,7 @@ public:
                             }
                             return;
                         }
-                        const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
-                        {
-                            std::lock_guard<std::mutex> lock(video_queue_mutex_);
-                            if (!accepting_callbacks_.load(std::memory_order_relaxed))
-                                return;
-                            if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
-                            {
-                                ++auxiliary_stats_.dropped_video_frame_sets;
-                                return;
-                            }
-                            video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
-                        }
-                        video_queue_cv_.notify_one();
+                        receive_video_frame_set(std::move(frame_set));
                     });
                 video_pipeline_started_ = true;
             }
@@ -570,8 +559,8 @@ public:
             // SDK stream startup can reset image controls; reapply before capture begins.
             reapply_controls("startup");
             verify_active_controls();
-            capture_active_.store(true, std::memory_order_release);
             capture_epoch_started_ns_ = core::os_monotonic_now_ns();
+            capture_active_.store(true, std::memory_order_release);
             publish_periodic_device_state();
             wait_for_active_auxiliary_readiness();
             device_changed_callback_id_ = context_->registerDeviceChangedCallback(
@@ -738,7 +727,7 @@ public:
         active_gyro_ready_.store(false, std::memory_order_release);
         last_accel_arrival_ns_.store(0, std::memory_order_release);
         last_gyro_arrival_ns_.store(0, std::memory_order_release);
-        last_video_arrival_ns_.clear();
+        video_liveness_.reset();
     }
 
     void stop_capture_for_reconnect(bool device_removal_confirmed = false)
@@ -820,26 +809,8 @@ public:
     void start_recovered_video(const std::shared_ptr<ob::Config>& pipeline_config)
     {
         pipeline_ = std::make_unique<ob::Pipeline>(device_);
-        pipeline_->start(pipeline_config,
-                         [this](std::shared_ptr<ob::FrameSet> frame_set)
-                         {
-                             if (!frame_set || !accepting_callbacks_.load(std::memory_order_acquire) ||
-                                 !capture_active_.load(std::memory_order_acquire))
-                             {
-                                 return;
-                             }
-                             const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
-                             {
-                                 std::lock_guard<std::mutex> lock(video_queue_mutex_);
-                                 if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
-                                 {
-                                     ++auxiliary_stats_.dropped_video_frame_sets;
-                                     return;
-                                 }
-                                 video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
-                             }
-                             video_queue_cv_.notify_one();
-                         });
+        pipeline_->start(pipeline_config, [this](std::shared_ptr<ob::FrameSet> frame_set)
+                         { receive_video_frame_set(std::move(frame_set)); });
         video_pipeline_started_ = true;
     }
 
@@ -994,8 +965,8 @@ public:
                 throw FatalReconnectError("resolved profiles changed to [" + describe_profiles(active_profiles_) + "]");
             }
 
-            accepting_callbacks_.store(true, std::memory_order_release);
             reset_stream_readiness();
+            accepting_callbacks_.store(true, std::memory_order_release);
             const auto pipeline_config = make_video_config(active_profiles_, streams_);
             start_device_state();
             if (config_.enable_imu)
@@ -1580,10 +1551,7 @@ public:
         const int64_t now = core::os_monotonic_now_ns();
         for (const auto& stream : streams_)
         {
-            const auto observed = last_video_arrival_ns_.find(stream.camera);
-            const int64_t reference =
-                observed == last_video_arrival_ns_.end() ? capture_epoch_started_ns_ : observed->second;
-            if (now - reference > 5'000'000'000LL)
+            if (video_liveness_.expired(stream.camera, now, capture_epoch_started_ns_))
             {
                 throw RecoverableCaptureError("Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) +
                                               " stopped delivering frames for five seconds");
@@ -1607,6 +1575,40 @@ public:
         };
         validate(config_.enable_imu, last_accel_arrival_ns_, "Accel");
         validate(config_.enable_imu, last_gyro_arrival_ns_, "Gyro");
+    }
+
+    void receive_video_frame_set(std::shared_ptr<ob::FrameSet> frame_set)
+    {
+        if (!frame_set || !accepting_callbacks_.load(std::memory_order_acquire) ||
+            !capture_active_.load(std::memory_order_acquire))
+            return;
+        const int64_t arrival_time_local_common_clock_ns = core::os_monotonic_now_ns();
+        try
+        {
+            // Arrival proves liveness even when a slow consumer fills the queue.
+            video_liveness_.observe(arrival_time_local_common_clock_ns, [&frame_set](auto stream)
+                                    { return static_cast<bool>(frame_set->getFrame(to_ob_frame(stream))); });
+            {
+                std::lock_guard<std::mutex> lock(video_queue_mutex_);
+                if (!accepting_callbacks_.load(std::memory_order_relaxed))
+                    return;
+                if (video_frame_sets_.size() >= kMaxQueuedVideoFrameSets)
+                {
+                    ++auxiliary_stats_.dropped_video_frame_sets;
+                    return;
+                }
+                video_frame_sets_.emplace_back(std::move(frame_set), arrival_time_local_common_clock_ns);
+            }
+            video_queue_cv_.notify_one();
+        }
+        catch (const std::exception& error)
+        {
+            set_async_error(std::string("Video callback failed: ") + error.what());
+        }
+        catch (...)
+        {
+            set_async_error("Video callback failed: unknown error");
+        }
     }
 
     void drain_video_frames(bool wait_for_frame = true)
@@ -1710,7 +1712,6 @@ public:
             stats.byte_count += captured.encoded_data.size();
             stats.last_sequence = captured.metadata.sequence_number;
             stats.last_device_timestamp_ns = captured.sample_time_raw_device_clock_ns;
-            last_video_arrival_ns_[stream.camera] = arrival_time_local_common_clock_ns;
         }
     }
 
@@ -2207,7 +2208,7 @@ private:
     std::unique_ptr<Preview> preview_;
 #endif
     std::map<core::OrbbecEgoCameraStream, StreamStats> stats_;
-    std::map<core::OrbbecEgoCameraStream, int64_t> last_video_arrival_ns_;
+    VideoLiveness video_liveness_;
     std::vector<PropertySetting> original_properties_;
     std::vector<PropertySetting> requested_controls_;
     AuxiliaryStats auxiliary_stats_;

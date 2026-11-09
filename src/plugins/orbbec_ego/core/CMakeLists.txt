@@ -3,6 +3,7 @@
 
 set(ego_camera_core_sources
     ego_camera.cpp
+    frame_liveness.hpp
     calibration.cpp
     calibration.hpp
     inc/ego_camera/calibration.hpp
