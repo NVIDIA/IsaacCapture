@@ -36,8 +36,8 @@ namespace
 //! runtime reports them separately and two spellings of the same plugin read as two plugins.
 constexpr const char* APP_NAME = "JmexPlugin";
 
-//! How long to wait before each attempt to re-establish a lost session, in milliseconds: about
-//! 23 s in total, short first, then 4 s.
+//! How long to wait before each attempt to re-establish a lost session, in milliseconds: short
+//! first, then 4 s.
 constexpr int SESSION_BACKOFF_MS[] = { 500, 1000, 2000, 4000, 4000, 4000, 4000, 4000 };
 
 //! How many times a lost session is re-established before the plugin gives up: one per wait.

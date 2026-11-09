@@ -17,8 +17,9 @@
  * guard the button was showing.
  */
 
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { computeEligibility } from "./recordingEligibility";
+import { MAX_TASK_DETAILS_CHARS } from "./recordingTypes";
 import { INITIAL_RECORDING_UI_STATE, recordingUiReducer, type CommandPhase, type RecordingPhase } from "./recordingUiReducer";
 import { RecordingCommandUncertainError } from "./useCaptureSession";
 import { useVoiceRecognition, type VoiceRecognitionStatus } from "./useVoiceRecognition";
@@ -60,6 +61,9 @@ export interface RecordingPanelProps {
   /** Clears the entered control token -- disables this tab's future
    * commands until a new one is entered. */
   clearControlToken: () => void;
+  /** Told whenever this panel's own interaction phase changes (including the in-flight "stopping"/"starting" ones the
+   * backend's snapshot does not show until the command finishes), so the page can mirror it in its status bar. */
+  onPhaseChange?: (phase: RecordingPhase) => void;
 }
 
 const NO_CONTROL_TOKEN_REASON = "Enter the recording control token before using recording controls";
@@ -100,7 +104,7 @@ const PHASE_BADGE_VARIANT: Record<RecordingPhase, "idle" | "recording" | "busy" 
 };
 
 /** Formats a millisecond duration as `m:ss` for the elapsed-time display. */
-function formatElapsed(ms: number): string {
+export function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -122,8 +126,12 @@ export function RecordingPanel({
   controlToken,
   setControlToken,
   clearControlToken,
+  onPhaseChange,
 }: RecordingPanelProps) {
   const [ui, dispatch] = useReducer(recordingUiReducer, INITIAL_RECORDING_UI_STATE);
+  useEffect(() => {
+    onPhaseChange?.(ui.phase);
+  }, [ui.phase, onPhaseChange]);
   const [operatorDraft, setOperatorDraft] = useState(operatorToken ?? "");
   const [controlDraft, setControlDraft] = useState(controlToken ?? "");
   // controlToken can become null from outside a local Clear click too (a
@@ -189,6 +197,7 @@ export function RecordingPanel({
       type: "SNAPSHOT_OBSERVED",
       recording: recordingSnapshot.episodePhase === "RECORDING",
       taskText: recordingSnapshot.taskText,
+      taskDetails: recordingSnapshot.taskDetails,
     });
   }, [recordingSnapshot]);
 
@@ -287,7 +296,12 @@ export function RecordingPanel({
 
   const beginTaskEdit = useCallback(() => {
     if (!eligibility.taskEdit.allowed) return;
-    dispatch({ type: "BEGIN_TASK_EDIT", currentText: recordingSnapshot?.taskText ?? "", currentBatchId: batchId });
+    dispatch({
+      type: "BEGIN_TASK_EDIT",
+      currentText: recordingSnapshot?.taskText ?? "",
+      currentDetails: recordingSnapshot?.taskDetails ?? "",
+      currentBatchId: batchId,
+    });
   }, [eligibility, recordingSnapshot, batchId]);
 
   const cancelTaskEdit = useCallback(() => {
@@ -307,8 +321,9 @@ export function RecordingPanel({
     }
     const target: RecordingBatchIdentity = { batchId };
     const text = ui.taskDraft;
-    void runCommand("savingTask", () => actions.onSetTask?.(target, text));
-  }, [ui.phase, ui.taskDraft, batchId, actions, runCommand, operatorToken, controlToken]);
+    const details = ui.detailsDraft;
+    void runCommand("savingTask", () => actions.onSetTask?.(target, text, details));
+  }, [ui.phase, ui.taskDraft, ui.detailsDraft, batchId, actions, runCommand, operatorToken, controlToken]);
 
   // --- Voice commands: a continuously-listening alternative to the s/w/a/t/r
   // shortcuts and the inline task editor above, never a second command path
@@ -471,7 +486,12 @@ export function RecordingPanel({
               return;
             }
             setVoiceFeedback(null);
-            dispatch({ type: "BEGIN_TASK_EDIT", currentText: intent.text, currentBatchId: batchId });
+            dispatch({
+              type: "BEGIN_TASK_EDIT",
+              currentText: intent.text,
+              currentDetails: recordingSnapshotRef.current?.taskDetails ?? "",
+              currentBatchId: batchId,
+            });
           } else if (phase === "editingTask") {
             setVoiceFeedback(null);
             dispatch({ type: "UPDATE_TASK_DRAFT", value: intent.text });
@@ -699,6 +719,9 @@ export function RecordingPanel({
           <span className="recording-status-task">
             Task: {recordingSnapshot === null ? "—" : recordingSnapshot.taskText || "unset"}
           </span>
+          {recordingSnapshot !== null && recordingSnapshot.taskDetails !== "" && (
+            <span className="recording-status-details">Description: {recordingSnapshot.taskDetails}</span>
+          )}
         </p>
         {voiceStatus !== "unsupported" && (
           <p className="recording-voice-status">
@@ -767,6 +790,7 @@ export function RecordingPanel({
           ) : (
             <InlineTaskEditor
               draft={ui.taskDraft}
+              detailsDraft={ui.detailsDraft}
               pending={ui.phase === "savingTask"}
               saveBlockedReason={
                 operatorToken === null
@@ -779,6 +803,7 @@ export function RecordingPanel({
               }
               batchChanged={taskEditBatchChanged}
               onChange={(value) => dispatch({ type: "UPDATE_TASK_DRAFT", value })}
+              onDetailsChange={(value) => dispatch({ type: "UPDATE_DETAILS_DRAFT", value })}
               onSubmit={submitTaskEdit}
               onCancel={cancelTaskEdit}
             />
@@ -817,8 +842,8 @@ function focusOwnedByInput(): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable;
 }
 
-/** The inline next-task text editor -- only the committed instruction TEXT,
- * never a mode/catalog/metadata editor. Enter submits, Escape cancels; it
+/** The inline next-task editor -- the committed instruction text and its
+ * optional free-text details, never a mode/catalog/metadata editor. Enter submits, Escape cancels; it
  * owns both keys itself rather than relying on the global shortcut
  * listener (which is skipped entirely while this is open). If the batch
  * rotated (a New batch command, from this viewer or another) while the
@@ -826,14 +851,17 @@ function focusOwnedByInput(): boolean {
  * or committing the draft -- Save retries explicitly against the new batch. */
 function InlineTaskEditor({
   draft,
+  detailsDraft,
   pending,
   saveBlockedReason,
   batchChanged,
   onChange,
+  onDetailsChange,
   onSubmit,
   onCancel,
 }: {
   draft: string;
+  detailsDraft: string;
   pending: boolean;
   /** Why Save is disabled, or null when it's allowed -- distinguishes "no
    * open batch" from "no control token", since both block Save but need
@@ -841,27 +869,46 @@ function InlineTaskEditor({
   saveBlockedReason: string | null;
   batchChanged: boolean;
   onChange: (value: string) => void;
+  onDetailsChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  // Enter saves and Escape cancels from either field.
+  const onEditorKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      // An Enter that confirms IME composition must not submit the draft.
+      if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+      e.preventDefault();
+      onSubmit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  };
   return (
     <span className="recording-task-editor">
       <input
         type="text"
         className="recording-task-editor-input"
+        aria-label="Task name"
+        placeholder="Task name"
         value={draft}
         autoFocus
         disabled={pending}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            onSubmit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
+        onKeyDown={onEditorKeyDown}
+      />
+      {/* Optional free-text description of the task (props, grasp, scene); saved with the task name and recorded in the episode metadata. */}
+      <input
+        type="text"
+        className="recording-task-editor-input recording-task-editor-details"
+        aria-label="Task description (optional)"
+        placeholder="Describe the task: what to do, props, setup (optional)"
+        maxLength={MAX_TASK_DETAILS_CHARS}
+        value={detailsDraft}
+        disabled={pending}
+        onChange={(e) => onDetailsChange(e.target.value)}
+        onKeyDown={onEditorKeyDown}
       />
       <span className="recording-task-editor-actions">
         <button

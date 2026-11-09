@@ -17,16 +17,13 @@ namespace jmex
  */
 struct ReceiverConfig
 {
-    //! MOXI channel to open, one skeleton per channel. 1..10 is what a live capture assigns; 255
-    //! is what Player uses when it replays a recording.
+    //! MOXI channel to open, one skeleton per channel. 0 is a suit connected over USB; 1..10 is
+    //! what a live capture assigns; 255 is what Player uses when it replays a recording.
     int channel = 1;
 
-    /*!
-     * @brief Local address the receiver's TCP server binds. Empty means every interface.
-     *
-     * Advertisements go out from every broadcast-capable interface whatever this is set to, and
-     * Player connects back to the address it heard one from: bind an address Player can reach.
-     */
+    //! Local address the receiver's TCP server binds and sends channel advertisements from; Player
+    //! connects back to it. Empty means every interface, advertising from each broadcast-capable,
+    //! non-loopback one.
     std::string bind_ip;
 
     //! Where channel advertisements are broadcast. Empty means 255.255.255.255, which every MOXI

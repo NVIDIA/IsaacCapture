@@ -10,7 +10,7 @@ endif()
 
 # The MOXI Receiver SDK is obtained from j-mex rather than fetched; README.md says where to put it.
 set(_JMEX_LOCAL_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/MOXIReceiverSDK")
-set(_JMEX_MIN_SDK_VERSION 0.8.0)
+set(_JMEX_MIN_SDK_VERSION 0.8.1)
 
 if(NOT DEFINED JMEX_SDK_ROOT AND DEFINED ENV{JMEX_SDK_ROOT})
     set(JMEX_SDK_ROOT "$ENV{JMEX_SDK_ROOT}" CACHE PATH "Path to the MOXI Receiver SDK platform directory")
@@ -38,9 +38,9 @@ endif()
 add_subdirectory(core)
 
 if(NOT TARGET Moxi::Receiver)
-    message(STATUS "Skipping jmex plugin build: MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} or newer not found "
-                   "(unpack the SDK into ${_JMEX_LOCAL_SDK_ROOT}, or set CMAKE_PREFIX_PATH or "
-                   "JMEX_SDK_ROOT to <sdk>/sdk/linux-x64)")
+    message(WARNING "BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} or newer was found; "
+                    "skipping the jmex plugin build. Unpack the SDK into ${_JMEX_LOCAL_SDK_ROOT}, or set "
+                    "CMAKE_PREFIX_PATH or JMEX_SDK_ROOT to <sdk>/sdk/linux-x64.")
     return()
 endif()
 

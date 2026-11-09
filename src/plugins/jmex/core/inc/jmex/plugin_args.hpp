@@ -19,6 +19,8 @@ struct PluginArgs
     ReceiverConfig receiver;
     std::string collection_id = "jmex_full_body";
     DeviceClock device_clock = DeviceClock::DEVICE;
+    //! --help or -h was given; nothing else was parsed, JMEX_DEVICE_CLOCK included.
+    bool help = false;
 };
 
 /*!
@@ -28,6 +30,9 @@ struct PluginArgs
  * std::runtime_error naming the argument it cannot use.
  */
 PluginArgs parse_plugin_args(int argc, const char* const* argv, const char* device_clock_env);
+
+//! The flags and their defaults, for --help.
+std::string plugin_usage();
 
 } // namespace jmex
 } // namespace plugins

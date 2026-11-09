@@ -1269,8 +1269,7 @@ def _model_without(*slots: BodyJoint) -> FullBodyPose:
     return frame
 
 
-# The torso slots a G1 URDF loaded in Player leaves empty; its arm slots come through.
-_ROBOT_URDF_GAPS = (
+_TORSO_SLOTS = (
     BodyJoint.PELVIS,
     BodyJoint.SPINE1,
     BodyJoint.SPINE2,
@@ -1287,11 +1286,11 @@ def test_a_model_that_never_fills_every_slot_is_named_on_the_console(caplog):
     caplog.clear()
 
     for _ in range(60):
-        _run(source, _model_without(*_ROBOT_URDF_GAPS))
+        _run(source, _model_without(*_TORSO_SLOTS))
 
     (warning,) = [line for line in _told(caplog, logging.WARNING) if "skeleton" in line]
     assert "standard human skeleton" in warning
-    for slot in _ROBOT_URDF_GAPS:
+    for slot in _TORSO_SLOTS:
         assert slot.name in warning
     # The slots that did arrive are not on the list.
     assert BodyJoint.LEFT_WRIST.name not in warning
@@ -1303,7 +1302,7 @@ def test_the_wrong_model_leaves_the_robot_at_rest_even_with_its_arms_complete():
     source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
     for _ in range(60):
-        action = _run(source, _model_without(*_ROBOT_URDF_GAPS))
+        action = _run(source, _model_without(*_TORSO_SLOTS))
 
     for task_index in range(len(layout.frame_targets)):
         position, quaternion = _target_pose(action, task_index)

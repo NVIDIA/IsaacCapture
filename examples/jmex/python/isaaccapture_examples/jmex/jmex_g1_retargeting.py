@@ -56,9 +56,9 @@ POSE_DIM = POSITION_DIM + ORIENTATION_DIM
 
 #: The lower-body policy's command, ``[vx, vy, wz, hip_height]`` in the robot's body frame, in
 #: m/s, m/s, rad/s and m. It is a policy input, not a set-point: under a constant command the
-#: legs still counterbalance the arms. 0.72 is Isaac Lab's
-#: ``LocomotionRootCmdRetargeterConfig(initial_hip_height=0.72)`` in
-#: isaaclab_tasks/.../locomanipulation/pick_place/locomanipulation_g1_env_cfg.py.
+#: legs still counterbalance the arms. 0.72 is the
+#: ``LocomotionRootCmdRetargeterConfig(initial_hip_height=0.72)`` in the pipeline Isaac Lab builds
+#: for ``LocomanipulationG1EnvCfg``.
 STANDING_LOCOMOTION_COMMAND: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.72)
 
 #: Change of basis from the plugin's OpenXR axes (+X the operator's right, +Y up, -Z the way
@@ -677,7 +677,7 @@ class JmexG1ActionSource(IDeviceIOSource):
         """What the robot is doing while nothing drives it, for the console."""
         if self._rebuilt_once:
             return "The robot is holding the last target it was given."
-        return "The robot is holding its own rest pose."
+        return "The robot is holding its own reset pose."
 
     def _on_unpaired(self) -> None:
         """No sample on the collection. Say so, and forget what the last pairing measured.

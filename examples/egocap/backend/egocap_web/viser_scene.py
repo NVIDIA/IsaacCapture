@@ -66,6 +66,44 @@ HAND_BONES = tuple(pair for chain in _CHAINS for pair in zip((_WRIST, *chain), c
 
 _COLORS = {"left": (60, 140, 255), "right": (255, 140, 60)}
 
+# Joint and bone size in the glove drawing. Larger than a bare point so the skeleton reads at arm's length on a
+# projector, small enough that the finger joints stay distinct.
+_JOINT_POINT_SIZE = 0.009
+_BONE_LINE_WIDTH = 3.0
+# How much a fingertip is lightened toward white (0 keeps the side colour, 1 is white).
+_TIP_LIGHTEN = 0.65
+# A finger's base joint is the side colour darkened to this fraction, so the shade runs knuckle to fingertip.
+_BASE_DARKEN = 0.55
+
+
+def _joint_colors(side: str) -> np.ndarray:
+    """A (26, 3) uint8 colour per OpenXR hand joint for one side.
+
+    The side keeps its identity (blue left, orange right) while each finger shades from a dark knuckle to a pale
+    tip, which makes the finger direction and curl readable without a legend. The palm and wrist sit mid-shade."""
+    base = np.array(_COLORS[side], dtype=np.float64)
+    dark, light = base * _BASE_DARKEN, base + (255.0 - base) * _TIP_LIGHTEN
+    colors = np.tile(dark + (light - dark) * 0.35, (26, 1))  # PALM and WRIST
+    for chain in _CHAINS:
+        for rank, joint in enumerate(chain):
+            colors[joint] = dark + (light - dark) * (rank / (len(chain) - 1))
+    return np.clip(colors, 0, 255).astype(np.uint8)
+
+
+_JOINT_COLORS = {side: _joint_colors(side) for side in _COLORS}
+
+# The floor of the 3D view: a dark slab under a blue-grey grid. Tracking space is ``session_floor`` (y = 0 is the
+# floor), so the slab's top face and the grid sit at the origin plane and the person is drawn standing on them.
+# The slab is what gives the floor a surface to read against; lines alone float in the empty canvas.
+_FLOOR_SIZE_M = 6.0
+_FLOOR_THICKNESS_M = 0.01
+_FLOOR_SURFACE_COLOR = (15, 22, 34)
+_FLOOR_CELL_M = 0.25
+_FLOOR_CELL_COLOR = (44, 58, 82)
+_FLOOR_SECTION_COLOR = (86, 108, 142)
+_ORIGIN_AXES_LENGTH_M = 0.25
+
+
 # The tracking fields this view reads, with the dtype and shape the ic_tracking_v1 layout must declare for each.
 _HAND_FIELDS = (
     ("present", "u1", ()),
@@ -203,10 +241,15 @@ class NodePose:
 
 @dataclass(frozen=True)
 class Glove:
-    """A glove skeleton: the reported valid joint points and the bones between valid joints, in tracking space."""
+    """A glove skeleton: the reported valid joint points and the bones between valid joints, in tracking space.
+
+    The colour arrays are presentation only (a shade per joint, and per bone end so a bone blends from one joint's
+    shade to the next); ``None`` draws the whole glove in one flat colour."""
 
     points: np.ndarray  # (N, 3)
     segments: np.ndarray  # (M, 2, 3)
+    point_colors: np.ndarray | None = None  # (N, 3) uint8
+    segment_colors: np.ndarray | None = None  # (M, 2, 3) uint8
 
 
 @dataclass(frozen=True)
@@ -237,8 +280,11 @@ def _glove(values: dict[str, np.ndarray], side: str) -> Glove | None:
     valid = values[f"{hand}.joint_valid"].astype(bool) & np.isfinite(positions).all(axis=1)
     if not valid.any():
         return None
-    segments = np.array([(positions[a], positions[b]) for a, b in HAND_BONES if valid[a] and valid[b]])
-    return Glove(positions[valid], segments.reshape(-1, 2, 3))
+    bones = [(a, b) for a, b in HAND_BONES if valid[a] and valid[b]]
+    segments = np.array([(positions[a], positions[b]) for a, b in bones])
+    shades = _JOINT_COLORS[side]
+    segment_colors = np.array([(shades[a], shades[b]) for a, b in bones], dtype=np.uint8)
+    return Glove(positions[valid], segments.reshape(-1, 2, 3), shades[valid], segment_colors.reshape(-1, 2, 3))
 
 
 def build_frame(values: dict[str, np.ndarray]) -> SceneFrame:
@@ -443,6 +489,7 @@ class VisualizationScene:
         self._assets.setdefault(self._profile, assets)
         scene = server.scene
         scene.set_up_direction("+y")
+        self._add_environment(scene)
         scene.add_frame("/tracking", show_axes=False)
         head = scene.add_frame("/tracking/head", show_axes=assets["head"] is None, axes_length=0.1, visible=False)
         self._handles["head"] = head
@@ -455,6 +502,32 @@ class VisualizationScene:
                 f"/tracking/{side}_glove", show_axes=False, visible=False
             )
         self._add_models(scene, assets)
+
+    def _add_environment(self, scene: Any) -> None:
+        """The static surroundings: a dark floor slab, a grid on it at y = 0 and the tracking-space origin axes.
+
+        None of it is tracked data, so it is never hidden with the tracked nodes. The floor and axes give the eye a
+        reference for height and distance, which the bare models on a flat canvas lack."""
+        # The slab sits just below y = 0 so its top face is the floor plane and never z-fights the grid on it.
+        scene.add_box(
+            "/floor_surface",
+            color=_FLOOR_SURFACE_COLOR,
+            dimensions=(_FLOOR_SIZE_M, _FLOOR_THICKNESS_M, _FLOOR_SIZE_M),
+            position=(0.0, -_FLOOR_THICKNESS_M / 2 - 0.002, 0.0),
+        )
+        scene.add_grid(
+            "/floor",
+            width=_FLOOR_SIZE_M,
+            height=_FLOOR_SIZE_M,
+            plane="xz",
+            cell_size=_FLOOR_CELL_M,
+            cell_thickness=0.6,
+            cell_color=_FLOOR_CELL_COLOR,
+            section_size=1.0,
+            section_thickness=1.2,
+            section_color=_FLOOR_SECTION_COLOR,
+        )
+        scene.add_frame("/origin", show_axes=True, axes_length=_ORIGIN_AXES_LENGTH_M, axes_radius=0.005)
 
     def _add_models(self, scene: Any, assets: dict[str, bytes | None]) -> None:
         """Attach one profile's model meshes under the tracked frames (a missing file leaves the frame's axes)."""
@@ -591,9 +664,23 @@ class VisualizationScene:
         if glove is None or not len(glove.points):
             return
         scene, base, color = self._server.scene, f"/tracking/{side}_glove", _COLORS[side]
-        handles = [scene.add_point_cloud(f"{base}/joints", glove.points, colors=color, point_size=0.006)]
+        joint_colors = color if glove.point_colors is None else glove.point_colors
+        bone_colors = color if glove.segment_colors is None else glove.segment_colors
+        handles = [
+            scene.add_point_cloud(
+                f"{base}/joints",
+                glove.points,
+                colors=joint_colors,
+                point_size=_JOINT_POINT_SIZE,
+                point_shape="circle",
+            )
+        ]
         if len(glove.segments):
-            handles.append(scene.add_line_segments(f"{base}/bones", glove.segments, colors=color, line_width=2.0))
+            handles.append(
+                scene.add_line_segments(
+                    f"{base}/bones", glove.segments, colors=bone_colors, line_width=_BONE_LINE_WIDTH
+                )
+            )
         self._geometry[side] = handles
 
     def _place(self, key: str, pose: NodePose | None) -> None:

@@ -16,7 +16,7 @@ using namespace plugins::jmex;
 namespace
 {
 
-//! Parse as the plugin would, with the PluginManager's injected root id ahead of the arguments.
+//! Parse as the plugin would, with the root id the PluginManager passes ahead of the arguments.
 PluginArgs parse(const std::vector<std::string>& args, const char* device_clock_env = nullptr)
 {
     std::vector<const char*> argv{ "jmex_plugin", "--plugin-root-id=jmex" };
@@ -40,6 +40,7 @@ TEST_CASE("plugin args: no flags give the defaults", "[unit][jmex][args]")
     REQUIRE(args.receiver.broadcast_ip.empty());
     REQUIRE(args.collection_id == "jmex_full_body");
     REQUIRE(args.device_clock == DeviceClock::DEVICE);
+    REQUIRE_FALSE(args.help);
 }
 
 TEST_CASE("plugin args: every flag sets its field, and the last occurrence wins", "[unit][jmex][args]")
@@ -70,6 +71,39 @@ TEST_CASE("plugin args: an argument it does not know stops the plugin", "[unit][
     REQUIRE_THROWS_WITH(parse({ "2" }), ContainsSubstring("'2'"));
 }
 
+TEST_CASE("plugin args: --help or -h asks for the usage whatever else is given", "[unit][jmex][args]")
+{
+    REQUIRE(parse({ "--help" }).help);
+    REQUIRE(parse({ "-h" }).help);
+    REQUIRE(parse({ "--chanel=2", "--help", "--channel=0" }).help);
+    REQUIRE(parse({ "--help" }, "neither").help);
+}
+
+TEST_CASE("plugin args: the usage names every flag and its default", "[unit][jmex][args]")
+{
+    const std::string usage = plugin_usage();
+    for (const char* flag : { "--channel=", "--collection-id=", "--bind-ip=", "--broadcast-ip=", "--tcp-port=",
+                              "--udp-start-port=", "--device-clock=", "--help" })
+    {
+        CAPTURE(flag);
+        REQUIRE_THAT(usage, ContainsSubstring(flag));
+    }
+    REQUIRE_THAT(usage, ContainsSubstring("(default 1;"));
+    REQUIRE_THAT(usage, ContainsSubstring("(default jmex_full_body)"));
+    REQUIRE_THAT(usage, ContainsSubstring("(default 7000)"));
+    REQUIRE_THAT(usage, ContainsSubstring("(default 10100)"));
+    REQUIRE_THAT(usage, ContainsSubstring("(default every interface)"));
+    REQUIRE_THAT(usage, ContainsSubstring("(default 255.255.255.255)"));
+    REQUIRE_THAT(usage, ContainsSubstring("device (Player's frame time, default)"));
+}
+
+TEST_CASE("plugin args: an empty collection id or address stops the plugin", "[unit][jmex][args]")
+{
+    REQUIRE_THROWS_WITH(parse({ "--collection-id=" }), ContainsSubstring("--collection-id="));
+    REQUIRE_THROWS_WITH(parse({ "--bind-ip=" }), ContainsSubstring("--bind-ip="));
+    REQUIRE_THROWS_WITH(parse({ "--broadcast-ip=" }), ContainsSubstring("--broadcast-ip="));
+}
+
 TEST_CASE("plugin args: a value that is not a whole number stops the plugin", "[unit][jmex][args]")
 {
     REQUIRE_THROWS_WITH(parse({ "--channel=2.9" }), ContainsSubstring("--channel="));
@@ -78,13 +112,13 @@ TEST_CASE("plugin args: a value that is not a whole number stops the plugin", "[
     REQUIRE_THROWS_WITH(parse({ "--udp-start-port=port" }), ContainsSubstring("--udp-start-port="));
 }
 
-TEST_CASE("plugin args: a channel outside 1..255 stops the plugin", "[unit][jmex][args]")
+TEST_CASE("plugin args: a channel outside 0..255 stops the plugin", "[unit][jmex][args]")
 {
+    REQUIRE(parse({ "--channel=0" }).receiver.channel == 0);
     REQUIRE(parse({ "--channel=1" }).receiver.channel == 1);
     REQUIRE(parse({ "--channel=11" }).receiver.channel == 11);
     REQUIRE(parse({ "--channel=255" }).receiver.channel == 255);
 
-    REQUIRE_THROWS_WITH(parse({ "--channel=0" }), ContainsSubstring("--channel="));
     REQUIRE_THROWS_WITH(parse({ "--channel=-1" }), ContainsSubstring("--channel="));
     REQUIRE_THROWS_WITH(parse({ "--channel=256" }), ContainsSubstring("--channel="));
     REQUIRE_THROWS_WITH(parse({ "--channel=300" }), ContainsSubstring("--channel="));
@@ -100,12 +134,7 @@ TEST_CASE("plugin args: a port outside 1..65535 stops the plugin", "[unit][jmex]
     REQUIRE_THROWS_WITH(parse({ "--udp-start-port=99999999999" }), ContainsSubstring("--udp-start-port="));
 }
 
-TEST_CASE("plugin args: a channel data port past 65535 stops the plugin", "[unit][jmex][args]")
+TEST_CASE("plugin args: the data port range is left to the SDK", "[unit][jmex][args]")
 {
-    // 65279 + 1 + 255 is the last port there is.
-    REQUIRE(parse({ "--udp-start-port=65279", "--channel=255" }).receiver.udp_start_port == 65279);
-
-    REQUIRE_THROWS_WITH(parse({ "--udp-start-port=65280", "--channel=255" }), ContainsSubstring("65536"));
-    REQUIRE_THROWS_WITH(parse({ "--channel=255", "--udp-start-port=65280" }), ContainsSubstring("65536"));
-    REQUIRE_THROWS_WITH(parse({ "--udp-start-port=65535" }), ContainsSubstring("--udp-start-port="));
+    REQUIRE(parse({ "--udp-start-port=65535", "--channel=255" }).receiver.udp_start_port == 65535);
 }

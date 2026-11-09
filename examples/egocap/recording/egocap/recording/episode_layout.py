@@ -82,6 +82,8 @@ class EpisodeManifest:
     layout_digest: str | None = None
     issues: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+    # Optional free-text context the operator attached to the task; "" on manifests written before it existed.
+    task_details: str = ""
     schema_version: int = MANIFEST_SCHEMA_VERSION
 
 

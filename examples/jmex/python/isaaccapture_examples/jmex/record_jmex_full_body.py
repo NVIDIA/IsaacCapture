@@ -129,7 +129,8 @@ def main(argv: list[str]) -> int:
         if not search_paths:
             sys.exit(
                 "[record] error: no installed plugin directory found. "
-                "Run `cmake --install build` or pass `--no-plugin` for a manually "
+                "Configure with -DBUILD_PLUGIN_JMEX=ON and run `cmake --install build`, "
+                "or pass `--no-plugin` for a manually "
                 "started plugin."
             )
         plugins.append(

@@ -771,7 +771,8 @@ below for the narrow/stacked layout). */
   color: var(--text-main);
 }
 
-.recording-status-task {
+.recording-status-task,
+.recording-status-details {
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
@@ -896,6 +897,12 @@ below for the narrow/stacked layout). */
   outline-offset: 1px;
 }
 
+/* The details field takes its own row so a long task and long details are both readable while editing. */
+.recording-task-editor-details {
+  flex-basis: 100%;
+  order: 1;
+}
+
 .recording-task-editor-actions {
   display: flex;
   gap: var(--space-2);
@@ -961,22 +968,129 @@ below for the narrow/stacked layout). */
   padding: var(--space-3) var(--space-4);
 }
 
-/* Viser's fixed control strip (control_width "small", 16em) plus its edge. */
+.pose-viser-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* Segmented size control: one pill whose pressed segment is the current size. */
+.pose-viser-sizes {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  overflow: hidden;
+}
+
+.pose-viser-size {
+  padding: 4px 12px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pose-viser-size:last-child {
+  border-right: 0;
+}
+
+.pose-viser-size:hover {
+  background: var(--surface-raised);
+  color: var(--text-main);
+}
+
+.pose-viser-size[aria-pressed="true"] {
+  background: var(--accent);
+  color: #0b1018;
+  font-weight: 600;
+}
+
+.pose-viser-size:focus-visible,
+.pose-viser-exit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Viser's fixed control strip (control_width "small", 16em) plus its edge. The viewport is dark, matching the
+   scene's own backdrop, so nothing flashes white while Viser loads or around a narrow scene. */
 .pose-viser-viewport {
   --viser-strip: 272px;
+  position: relative;
   overflow: hidden;
   height: 340px;
+  margin-top: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  background: #fff;
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 3%);
+}
+
+/* The pop-up: centred over a dimmed page. Like full screen it is the same iframe, so the orbit camera is kept. */
+.pose-viser-viewport--large {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 1000;
+  width: min(96vw, 1500px);
+  height: min(88vh, 960px);
+  margin: 0;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-card-lg);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 60%);
+}
+
+.pose-viser-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgb(5 8 14 / 72%);
+  backdrop-filter: blur(3px);
+}
+
+/* Full screen covers the window. The iframe stays the same element, so the orbit camera is kept. */
+.pose-viser-viewport--full {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  height: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.pose-viser-exit {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 1;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  background: rgb(18 26 38 / 85%);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.pose-viser-exit:hover {
+  background: var(--surface-raised);
 }
 
 .pose-viser-frame {
   display: block;
   /* The viewport's width plus the strip, so the scene is exactly as wide as the viewport and nothing of it is
-     clipped. The 576px floor is what keeps Viser in its desktop layout (below it, its narrow layout hides the scene
-     behind the controls); in a column narrower than 576px - 272px the scene is slightly wider than the viewport. */
-  width: max(calc(100% + var(--viser-strip)), 576px);
+     clipped. The 640px floor keeps Viser in its desktop layout: at or below its 576px breakpoint it switches to a
+     narrow layout that hides the scene behind the controls (and, when resized across the breakpoint, crashes its own
+     React tree), so the iframe is never allowed to sit on it. In a column narrower than 640px - 272px the scene is
+     slightly wider than the viewport and its right edge is cropped. */
+  width: max(calc(100% + var(--viser-strip)), 640px);
   height: 100%;
   border: 0;
 }
@@ -994,7 +1108,7 @@ below for the narrow/stacked layout). */
 }
 
 @media (max-width: 640px) {
-  .pose-viser-viewport {
+  .pose-viser-viewport--normal {
     height: 320px;
   }
 }
@@ -1008,4 +1122,787 @@ below for the narrow/stacked layout). */
   font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+/* ==========================================================================
+ * Operator layout: the cameras are the page.
+ *
+ * A status bar on top, every remaining pixel to the cameras, a control dock below, and a side drawer for the 3D
+ * view and raw data. Scoped under .app-shell--operator so the older generic rules above stay untouched.
+ * ========================================================================== */
+
+:root {
+  --rec: #ef4444;
+  --rec-soft: rgb(239 68 68 / 14%);
+  --ready: #22c55e;
+}
+
+.app-shell--operator {
+  height: 100vh;
+  min-height: 680px;
+}
+
+.app-shell--operator .app-header {
+  height: 40px;
+  flex: none;
+  padding: 0 var(--space-5);
+}
+
+.app-shell--operator .app-name {
+  font-size: 14px;
+}
+
+.op-main {
+  /* The status bar lays itself out by this column's width (see the container query below), which the divider changes. */
+  container: op-main / inline-size;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.op-main > * {
+  flex: none;
+}
+
+.op-main .status-strip {
+  padding: 0 var(--space-1);
+  font-size: 12px;
+}
+
+.op-main .stale-banner {
+  margin: 0;
+}
+
+/* --- Status bar ---------------------------------------------------------- */
+
+.op-bar {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto minmax(380px, 1.7fr);
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card-lg);
+}
+
+.op-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.op-rec {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 200px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.op-rec-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.op-rec-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.op-rec-label {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+}
+
+.op-rec-hint {
+  max-width: 240px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.op-rec-time {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-rec--recording {
+  background: var(--rec-soft);
+  border-color: var(--rec);
+}
+
+.op-rec--recording .op-rec-dot {
+  background: var(--rec);
+  animation: op-pulse 1.2s ease-in-out infinite;
+}
+
+.op-rec--recording .op-rec-label,
+.op-rec--recording .op-rec-time {
+  color: var(--rec);
+}
+
+.op-rec--ready .op-rec-dot {
+  background: var(--ready);
+}
+
+.op-rec--ready .op-rec-label {
+  color: var(--ready);
+}
+
+.op-rec--busy .op-rec-dot,
+.op-rec--warning .op-rec-dot {
+  background: var(--warning);
+}
+
+.op-rec--busy .op-rec-label,
+.op-rec--warning .op-rec-label {
+  color: var(--warning);
+}
+
+.op-rec--warning,
+.op-rec--stale {
+  border-color: var(--warning);
+}
+
+.op-rec--stale .op-rec-label {
+  color: var(--text-secondary);
+}
+
+@keyframes op-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+.op-task {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.op-task-text {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  /* Two lines of the instruction, then an ellipsis: it must be readable at arm's length, not scroll the bar. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.op-task-text--unset {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+/* The optional details sit under the task in a quieter weight; one line, full text on hover. */
+.op-task-details {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-counts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.op-saved {
+  text-align: center;
+}
+
+.op-saved-count {
+  display: block;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.op-last {
+  min-width: 140px;
+}
+
+.op-last-value {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.op-last--kept .op-last-value {
+  color: var(--positive);
+}
+
+.op-last--rejected .op-last-value {
+  color: var(--critical);
+}
+
+.op-last--discarded .op-last-value {
+  color: var(--text-secondary);
+}
+
+.op-health {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.op-health-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.op-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.op-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.op-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.op-chip--positive .op-chip-dot {
+  background: var(--positive);
+}
+
+.op-chip--warning {
+  border-color: var(--warning);
+}
+
+.op-chip--warning .op-chip-dot {
+  background: var(--warning);
+}
+
+.op-chip--critical {
+  border-color: var(--critical);
+  background: rgb(248 113 113 / 12%);
+}
+
+.op-chip--critical .op-chip-dot {
+  background: var(--critical);
+}
+
+.op-chip-state {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* --- Camera stage -------------------------------------------------------- */
+
+.op-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  border-radius: var(--radius-card-lg);
+  transition: box-shadow 0.2s ease;
+}
+
+/* A live take: a red frame around the cameras, readable from across the room. */
+.op-stage--recording {
+  box-shadow: 0 0 0 3px var(--rec);
+}
+
+.op-stage .camera-grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+/* The "Cameras" heading is for assistive tech only here: the tiles name themselves. */
+.op-stage .camera-grid > .group-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.op-stage .camera-grid-items {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* The head camera gets the left two-thirds; the rest stack on the right. */
+.op-stage .camera-grid-items--n2,
+.op-stage .camera-grid-items--n3,
+.op-stage .camera-grid-items--n4 {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.op-stage .camera-grid-items--n2 {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.op-stage .camera-grid-items--n3 {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--n4 {
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+
+.op-stage .camera-tile--primary {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.op-stage .camera-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #000;
+  border-radius: var(--radius-card-lg);
+}
+
+.op-stage .camera-tile img {
+  flex: 1 1 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.op-stage .camera-placeholder {
+  flex: 1;
+  height: auto;
+  font-size: 14px;
+}
+
+/* The name and live rate sit on the picture, so the camera and its health read as one thing. */
+.op-stage .camera-tile figcaption {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  border-radius: var(--radius-chip);
+  background: rgb(0 0 0 / 62%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.op-stage .camera-tile--primary figcaption {
+  font-size: 16px;
+}
+
+.op-stage .camera-tile figcaption .camera-stats {
+  margin-top: 0;
+  color: #cbd5e1;
+  font-weight: 400;
+}
+
+.op-stage .camera-tile.tone-warning {
+  outline: 2px solid var(--warning);
+  outline-offset: -2px;
+}
+
+/* --- Control dock -------------------------------------------------------- */
+
+.op-dock {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.op-dock .recording-panel {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-card-lg);
+}
+
+/* The bar above already shows the state, timer, task, count and last result; the dock keeps only controls. */
+.op-dock .recording-panel-header,
+.op-dock .recording-status,
+.op-dock .recording-last-result,
+.op-dock .recording-actions-divider {
+  display: none;
+}
+
+.op-dock .recording-controls {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.op-dock .recording-actions--primary {
+  order: 1;
+  flex: 1 1 460px;
+  flex-wrap: nowrap;
+}
+
+.op-dock .recording-actions--primary .recording-button {
+  min-height: 60px;
+  font-size: 16px;
+}
+
+.op-dock .recording-button--record {
+  background: var(--rec);
+  border-color: var(--rec);
+  color: #fff;
+}
+
+.op-dock .recording-button--record:enabled:hover {
+  background: #dc2626;
+  border-color: #fca5a5;
+}
+
+.op-dock .recording-actions--secondary {
+  order: 2;
+}
+
+.op-dock .recording-voice-status {
+  order: 3;
+  margin: 0;
+}
+
+/* Setting the operator or token is needed before anything can record, so an unset entry leads the dock... */
+.op-dock .recording-operator-entry,
+.op-dock .recording-control-token-entry {
+  order: 0;
+  flex: 1 1 260px;
+}
+
+/* ...and once set it shrinks to a quiet line at the end. */
+.op-dock .recording-operator-current,
+.op-dock .recording-control-token-current {
+  order: 5;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.op-dock .recording-feedback {
+  order: 10;
+  flex: 1 0 100%;
+  margin: 0;
+}
+
+/* The drawer is narrow: let the recorded tracking tables scroll instead of overflowing it. */
+@media (max-width: 1100px) {
+  .op-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .op-counts,
+  .op-health {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .op-dock {
+    flex-direction: column;
+  }
+
+  .op-stage .camera-grid-items--n2,
+  .op-stage .camera-grid-items--n3,
+  .op-stage .camera-grid-items--n4 {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: minmax(160px, 1fr);
+  }
+
+  .op-stage .camera-tile--primary {
+    grid-row: auto;
+  }
+}
+
+/* The open drawer pushes the page aside rather than covering the controls; on a narrow window it overlays. */
+/* Operator and token entry in the dock: a wide field with its button beside it, not a stacked sliver. */
+.op-dock .recording-operator-row,
+.op-dock .recording-control-token-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.op-dock .recording-operator-row input,
+.op-dock .recording-control-token-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.op-dock .recording-operator-row .recording-button,
+.op-dock .recording-control-token-row .recording-button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.op-dock .recording-operator-entry,
+.op-dock .recording-control-token-entry {
+  flex: 1 1 320px;
+}
+
+/* The operator field and its label were never styled (a bare white box); match the control-token field. */
+.op-dock .recording-operator-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.op-dock .recording-operator-entry label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.op-dock .recording-operator-row input {
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.op-dock .recording-operator-row input::placeholder {
+  color: var(--text-secondary);
+}
+
+.op-dock .recording-operator-row input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* "Operator: name [New operator]" and "Control token entered [Clear]" read as a label with its button, not a
+   run-on sentence. */
+.op-dock .recording-operator-current,
+.op-dock .recording-control-token-current {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.op-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+/* The 3D view keeps its own height; Details takes what is left and scrolls inside itself, so opening both never
+   pushes either off the screen. */
+.op-panel--3d {
+  flex: none;
+}
+
+.op-panel--details {
+  flex: 1 1 260px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+/* --- Side panel: always showing, 3D view above Details, width chosen by dragging the divider ------------------ */
+
+.op-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.op-sidebar {
+  flex: none;
+  width: var(--op-sidebar-width, 460px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4) var(--space-3);
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+/* The divider: a wide, easy-to-grab strip with a thin line that lights up on hover, focus and while dragging. */
+.op-resizer {
+  position: relative;
+  flex: none;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.op-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+
+.op-resizer:hover::before,
+.op-resizer:focus-visible::before,
+.op-resizer--dragging::before {
+  background: var(--accent);
+}
+
+.op-resizer:focus-visible {
+  box-shadow: 0 0 0 2px rgb(96 165 250 / 35%);
+  border-radius: 4px;
+}
+
+/* While dragging: the 3D view's iframe must not swallow the pointer, and nothing should get selected. */
+.op-body--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.op-body--resizing iframe {
+  pointer-events: none;
+}
+
+.op-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+/* The 3D view keeps its own height (a little taller in a wider panel); Details takes what is left and scrolls inside
+   itself, so neither is ever pushed off the screen. */
+.op-panel--3d {
+  flex: none;
+}
+
+.op-sidebar .pose-viser-viewport--normal {
+  height: clamp(300px, 42vh, 560px);
+}
+
+.op-panel--details {
+  flex: 1 1 260px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+/* A narrow window cannot share a row: the panel goes below the main column and the divider goes away. */
+@media (max-width: 900px) {
+  .app-shell--operator {
+    height: auto;
+  }
+
+  .op-body {
+    flex-direction: column;
+  }
+
+  .op-resizer {
+    display: none;
+  }
+
+  .op-sidebar {
+    width: auto;
+    overflow-y: visible;
+    border-top: 1px solid var(--border);
+  }
+
+  .op-stage {
+    flex: none;
+    height: 60vh;
+  }
+}
+
+/* A narrow main column (a wide side panel, or a small window): the health chips take their own full-width row under the
+   state, task and counts instead of running off the bar. By the column's width, not the window's. */
+@container op-main (max-width: 1080px) {
+  .op-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .op-health {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .op-chips {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }

@@ -20,7 +20,7 @@ Mocap Suit -> MOXI Player -- channel --> jmex_plugin -- "jmex_full_body" --> Ful
 
 ## Prerequisites
 
-1. **MOXI Receiver SDK** 0.8.0 or newer. It is Apache-2.0 but not a public download: request it,
+1. **MOXI Receiver SDK** 0.8.1 or newer. It is Apache-2.0 but not a public download: request it,
    with MOXI Player and its license key, through the
    [AgileMaster product page](https://jmex.com.tw/agilemaster/).
 2. **MOXI Player for Robot**, with the **standard human skeleton** loaded, on this machine or
@@ -29,12 +29,12 @@ Mocap Suit -> MOXI Player -- channel --> jmex_plugin -- "jmex_full_body" --> Ful
 
 ## Building
 
-Unpack the SDK into this directory as `MOXIReceiverSDK/`, so that
-`src/plugins/jmex/MOXIReceiverSDK/sdk/linux-x64/lib/cmake/MOXIReceiverSDK/` exists. No build flags
-are then needed:
+The plugin builds only with `BUILD_PLUGIN_JMEX` on. Unpack the SDK into this directory as
+`MOXIReceiverSDK/`, so that `src/plugins/jmex/MOXIReceiverSDK/sdk/linux-x64/lib/cmake/MOXIReceiverSDK/`
+exists, then:
 
 ```bash
-cmake -B build
+cmake -B build -DBUILD_PLUGIN_JMEX=ON
 cmake --build build --parallel
 cmake --install build
 ```
@@ -43,13 +43,13 @@ To keep the SDK elsewhere, point `JMEX_SDK_ROOT` (a CMake or environment variabl
 `CMAKE_PREFIX_PATH` at the SDK's platform directory, the one containing `lib/cmake/MOXIReceiverSDK`:
 
 ```bash
-cmake -B build -DJMEX_SDK_ROOT=/path/to/MOXIReceiverSDK-0.8.0/sdk/linux-x64
+cmake -B build -DBUILD_PLUGIN_JMEX=ON -DJMEX_SDK_ROOT=/path/to/MOXIReceiverSDK-0.8.1/sdk/linux-x64
 ```
 
 The configure output names the SDK it found: `jmex plugin: MOXIReceiverSDK <version> from <dir>`.
-Without one, the plugin is skipped with `Skipping jmex plugin build:` and the rest of the tree still
-builds. The project's own build prerequisites still apply; see
-[Build from Source](../../../docs/source/getting_started/build_from_source/index.rst).
+Without one, configure warns `BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK`, skips the plugin, and
+the rest of the tree still builds. The project's own build prerequisites still apply; see
+[Build from Source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html).
 
 ## Running
 
@@ -104,17 +104,27 @@ builds. The project's own build prerequisites still apply; see
 | --- | --- | --- |
 | `--channel=` | `1` | Player streams on another channel. Its file replay is fixed on 255 |
 | `--collection-id=` | `jmex_full_body` | More than one of these plugins runs on one machine. Consumers must name the same id |
-| `--bind-ip=` | every interface | Rarely. It narrows only the TCP server, so a Player answering from an interface it leaves out cannot connect |
+| `--bind-ip=` | every interface | Player should reach this machine on one address only; see below |
 | `--broadcast-ip=` | `255.255.255.255` | Another MOXI Player on the subnet would otherwise contend for the same channel |
 | `--tcp-port=` | `7000` | A second plugin on this machine; with the default, the second one to start finds the port taken |
-| `--udp-start-port=` | `10100` | A firewall rule needs predictable data ports. Channel N receives on this + 1 + N |
+| `--udp-start-port=` | `10100` | A firewall rule needs predictable data ports. Channel N receives on this + 1 + N, or on a higher port if that one is taken |
 
-One plugin receives one channel. A second plugin on this machine needs only its own `--tcp-port=`.
-Every flag takes its value after `=`. An argument the plugin does not know, or a value it cannot
-use, stops it with exit code 1 and names the argument.
+One plugin receives one channel. Every flag but `--help` takes its value after `=`. An argument the
+plugin does not know, or a value it cannot use, stops it with exit code 1 and names the argument.
+`--help` lists the flags and their defaults.
+
+Launched by `TeleopSession`, the plugin also gets `--bind-ip=127.0.0.1 --broadcast-ip=127.0.0.1` from
+`plugin.yaml`, so only a MOXI Player on this machine can pair unless `plugin_args` sets the two flags
+again. Started by hand, it takes the defaults above, and any Player on the subnet can.
+
+Nothing authenticates a pairing. The channel's data port listens on every interface whatever
+`--bind-ip=` says, and takes motion frames from any sender: only a firewall keeps another host from
+sending poses into a paired channel. For a Player on another machine, set `--bind-ip=` to this
+machine's address on the interface facing it and `--broadcast-ip=` to Player's address, and let only
+Player's machine reach the TCP port and the UDP ports above `--udp-start-port=`:
 
 ```bash
-./install/plugins/jmex/jmex_plugin --channel=255 --bind-ip=192.0.2.10 --broadcast-ip=192.0.2.10
+./install/plugins/jmex/jmex_plugin --channel=255 --bind-ip=192.0.2.10 --broadcast-ip=192.0.2.20
 ```
 
 ### Choosing the device clock
@@ -208,7 +218,7 @@ TrackerVendor("body.jmex", {"collection_id": "mysuit_full_body"})
 - When Player disconnects, the plugin stops publishing but keeps the collection, so a consumer goes
   on reading the last frame until Player pairs again. The plugin logs
   `MOXI Player disconnected; waiting for it to come back` when that happens.
-- The spine, foot, neck, collar and hand slots have no sensor of their own: read them for position,
+- The spine, foot, neck, collar and hand slots have no controller of their own: read them for position,
   not orientation.
 - The skeleton has fixed dimensions, so positions describe the operator's posture, not their size.
 
@@ -219,12 +229,13 @@ MCAP, see the [example](../../../examples/jmex/README.md).
 
 | Symptom | What to check |
 | --- | --- |
-| Stuck at `Waiting for MOXI Player to pair` | Player is streaming, and **on the same channel**: a mismatch looks exactly like Player not running. With two hosts, check they share a subnet and that the wireless access point does not isolate clients |
+| Stuck at `Waiting for MOXI Player to pair` | Player is streaming, and **on the same channel**: a mismatch looks exactly like Player not running. With two hosts, a plugin started by `TeleopSession` needs `--bind-ip=` and `--broadcast-ip=` in `plugin_args` ([Choosing where the receiver listens](#choosing-where-the-receiver-listens)); also check the hosts share a subnet and that the wireless access point does not isolate clients |
 | Stuck at `OpenXR HMD form factor is unavailable; waiting for a system...` | The runtime hands out no system. Use a concrete device profile such as the default `Quest3`: an `auto-*` profile waits for a client to connect, and nothing times that wait out |
 | `Environment variable NV_CXR_RUNTIME_DIR is not set` | `~/.cloudxr/run/cloudxr.env` has not been sourced in this terminal |
 | `Failed to create OpenXR instance: -51` | The environment is loaded, but the runtime it names is not running |
 | `OpenXR session unrecoverable after` … | The runtime went away and did not come back within about 23 seconds. Start it again, then the plugin |
-| `Skipping jmex plugin build:` at configure time | No SDK 0.8.0 or newer in `MOXIReceiverSDK/`, and neither `JMEX_SDK_ROOT` nor `CMAKE_PREFIX_PATH` points at one. An older SDK is skipped the same way |
+| No `install/plugins/jmex/` after `cmake --install build` | The build was configured without `-DBUILD_PLUGIN_JMEX=ON`, or found no SDK (next row) |
+| `BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK` at configure time | No SDK 0.8.1 or newer in `MOXIReceiverSDK/`, and neither `JMEX_SDK_ROOT` nor `CMAKE_PREFIX_PATH` points at one. An older SDK is skipped the same way |
 | `no joint on this channel is named for a body slot` | Player has a model loaded whose joint names match no slot. Load the standard human skeleton |
 | Fewer than 24 of 24 slots filled at pairing | Player has another model loaded. The lines after the count name each empty slot |
 | A consumer never receives a sample while the plugin is paired | The consumer's `collection_id` is not the one `--collection-id=` names |

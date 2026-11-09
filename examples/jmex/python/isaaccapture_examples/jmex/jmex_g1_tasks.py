@@ -380,7 +380,8 @@ def _plugin_configs(settings: JmexG1TaskSettings) -> list[PluginConfig]:
     search_paths = _plugin_search_paths()
     if not search_paths:
         raise RuntimeError(
-            "jmex plugin directory not found. Run `cmake --install build`, or set "
+            "jmex plugin directory not found. Configure with -DBUILD_PLUGIN_JMEX=ON and run "
+            "`cmake --install build`, or set "
             "JMEX_PLUGIN_AUTO_LAUNCH=0 to drive a manually started plugin."
         )
     return [
@@ -395,7 +396,7 @@ def _plugin_configs(settings: JmexG1TaskSettings) -> list[PluginConfig]:
                 f"--collection-id={settings.device.collection_id}",
             ],
             # Refuse to start rather than wait for a pairing that cannot happen: a build without
-            # the SDK installs the other plugins but not this one.
+            # BUILD_PLUGIN_JMEX or without the SDK installs the other plugins but not this one.
             required=True,
         )
     ]
@@ -747,8 +748,13 @@ class JmexLocomanipulationG1EnvCfg(LocomanipulationG1EnvCfg):
         settings = _settings_from_env()
 
         # Without this the agile lower-body policy crouches over the first steps, and the
-        # IK then cannot reach the targets it is being given.
-        self.scene.robot.spawn.articulation_props.fix_root_link = True
+        # IK then cannot reach the targets it is being given. In the Isaac Lab v3.0.0 release, unlike
+        # EA and beta2, G1_29DOF_CFG's articulation_props is a list; the flag then goes on the spawner.
+        spawn = self.scene.robot.spawn
+        if hasattr(spawn.articulation_props, "fix_root_link"):
+            spawn.articulation_props.fix_root_link = True
+        else:
+            spawn.fix_root_link = True
 
         # The robot rests with its hands over the table, and hands following an operator's
         # lowered arms turn down into it and stay caught there. Park the table and the wheel
@@ -778,6 +784,7 @@ class JmexLocomanipulationG1EnvCfg(LocomanipulationG1EnvCfg):
             build_jmex_g1_locomanipulation_pipeline(settings)
         )
         self.isaac_teleop.plugins = _plugin_configs(settings)
+        # Required: pipelined, the default, would run the overlay's Kit calls on a worker thread.
         self.isaac_teleop.retargeting_execution = RetargetingExecutionConfig(
             mode="sync"
         )

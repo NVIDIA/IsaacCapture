@@ -31,9 +31,9 @@ class ReceiverSession
 {
 public:
     /*!
-     * @throws std::runtime_error if another ReceiverSession already exists in this process, or if
-     *         the SDK refuses to start -- the port is already taken, or `bind_ip` is not an address
-     *         this machine has.
+     * @throws std::runtime_error if another ReceiverSession already exists in this process, if the
+     *         SDK refuses to start -- the port is already taken, or `bind_ip` is not an address this
+     *         machine has -- or if it can bind no data port for the channel.
      */
     explicit ReceiverSession(const ReceiverConfig& config);
     ~ReceiverSession();

@@ -13,18 +13,23 @@ pose to a standard Isaac Capture full-body MCAP.
 ## Prerequisites
 
 1. **The plugin, installed.** `cmake --install build` — a plugin that has only been built is not
-   discoverable. The [plugin README](../../src/plugins/jmex/README.md) lists the SDK it needs and
-   the build prerequisites.
-2. **MOXI Player**, with the **standard human skeleton** loaded, on a known channel. The plugin's
-   default is channel 1; Player's file replay is fixed on 255.
+   discoverable. [Building](../../src/plugins/jmex/README.md#building) in the plugin README gives the
+   build option, the SDK and the build prerequisites.
+2. **MOXI Player for Robot**, with the **standard human skeleton** loaded, on a known channel. The
+   plugin's default is channel 1; Player's file replay is fixed on 255. For a Player on another
+   machine, start the plugin yourself as in
+   [Choosing where the receiver listens](../../src/plugins/jmex/README.md#choosing-where-the-receiver-listens),
+   and keep the examples from starting their own: `JMEX_PLUGIN_AUTO_LAUNCH=0` for the task,
+   `--no-plugin` for the recording script.
 3. **A CloudXR runtime.** It is required even though no headset is.
-4. **Isaac Lab 3.0.0 EA or 3.0.0 beta2**, for the teleop half. [Verified on](#verified-on) gives
-   the exact versions.
+4. **Isaac Lab 3.0.0, 3.0.0 EA or 3.0.0 beta2**, for the teleop half. [Verified on](#verified-on)
+   gives the exact versions.
 5. **This repository's `isaaccapture`, in Isaac Lab's Python**, also for the teleop half: no
    released package carries the `body.jmex` vendor yet. Build it as in
    [Build from source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html),
-   with `-DISAAC_TELEOP_PYTHON_VERSION=3.12`, the Python Isaac Sim 6 runs. Then install the wheel
-   into Isaac Lab's Python instead of a venv, with `X.Y` the first two numbers of `VERSION`:
+   with `-DISAAC_TELEOP_PYTHON_VERSION=3.12`, the Python Isaac Sim 6 runs, and `-DBUILD_PLUGIN_JMEX=ON`
+   for the plugin in step 1. Then install the wheel into Isaac Lab's Python instead of a venv, with
+   `X.Y` the first two numbers of `VERSION`:
 
    ```bash
    cd <IsaacLab>
@@ -102,7 +107,7 @@ Things to know:
   Isaac Lab's Python ([Prerequisites](#prerequisites) step 6).
 - **The task launches `jmex_plugin` itself.** `JMEX_PLUGIN_AUTO_LAUNCH=0` leaves that to you, and
   `JMEX_CHANNEL` and `JMEX_COLLECTION_ID` change the channel and the collection.
-- **Until Player pairs**, the G1 holds its own rest pose, and the console says so once and then
+- **Until Player pairs**, the G1 holds its own reset pose, and the console says so once and then
   every 300 frames.
 - **If Player disconnects mid-run**, the G1 holds the last pose it received: the collection keeps its
   last frame. The plugin logs `MOXI Player disconnected; waiting for it to come back`, and the G1
@@ -232,16 +237,18 @@ once each; neither is a fault.
 
 ## Verified on
 
+- Isaac Lab v3.0.0 on Isaac Sim 6.2.0
 - Isaac Lab v3.0.0-EA on Isaac Sim 6.1.0
 - Isaac Lab v3.0.0-beta2.patch1 on Isaac Sim 6.0.1
 
-Both with the `LocomanipulationG1EnvCfg` base task and the Pink IK controller that ships with it.
+Each with the `LocomanipulationG1EnvCfg` base task and the Pink IK controller that ships with it.
 
 ## Running the offline tests
 
 The retargeting tests need only the staged `isaaccapture` package: no Isaac Sim, Isaac Lab, device
 or MOXI Player. They carry the ctest label `jmex`, as do the plugin's C++ tests, which need no MOXI
-Receiver SDK. A build registers the Python ones only with `BUILD_EXAMPLES` and `BUILD_VIZ` on:
+Receiver SDK. A build registers them only with `BUILD_PLUGIN_JMEX` on, and the Python ones also need
+`BUILD_EXAMPLES` and `BUILD_VIZ`:
 
 ```bash
 ctest --test-dir build -L jmex --output-on-failure

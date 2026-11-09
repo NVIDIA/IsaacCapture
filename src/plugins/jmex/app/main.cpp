@@ -19,6 +19,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -51,16 +52,21 @@ try
 {
     const auto logger = isaaccapture::Logger::get(LOGGER_NAME);
     const PluginArgs args = parse_plugin_args(argc, argv, std::getenv("JMEX_DEVICE_CLOCK"));
+    if (args.help)
+    {
+        std::cout << plugin_usage();
+        return 0;
+    }
 
     const int channel = args.receiver.channel;
     const std::string collection_id = args.collection_id;
 
     logger->info("j-mex AgileMaster plugin (channel: {}, collection: {}, device clock: {}, SDK: {})", channel,
                  collection_id, device_clock_name(args.device_clock), moxi_sdk_version());
-    logger->info("receiver on tcp {}:{}, advertising to {}, channel data from port {}",
+    logger->info("receiver on tcp {}:{}, advertising to {}, data port base {}",
                  args.receiver.bind_ip.empty() ? "every interface" : args.receiver.bind_ip, args.receiver.tcp_port,
                  args.receiver.broadcast_ip.empty() ? "255.255.255.255" : args.receiver.broadcast_ip,
-                 args.receiver.udp_start_port + 1 + channel);
+                 args.receiver.udp_start_port);
 
     // OpenXR first: a missing runtime is the common setup mistake, and failing on it before the
     // MOXI receiver starts means we never take the process-global TCP port just to give it back.

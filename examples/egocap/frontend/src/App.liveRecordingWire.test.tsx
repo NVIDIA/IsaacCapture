@@ -91,6 +91,7 @@ const activeSnapshot: RecordingSnapshot = {
   currentEpisodeId: null,
   currentEpisodeElapsedMs: null,
   taskText: "Pour water into the cup.",
+  taskDetails: "",
   defaultOperator: null,
   autoFillOperatorName: false,
   savedCount: 0,
@@ -155,7 +156,7 @@ describe("RecordingPanel -> real transport -> real backend wire shape", () => {
     expect(recordingFrames).toHaveLength(1);
     const frame = recordingFrames[0];
     expect(frame.action).toBe("set_task");
-    expect(frame.payload).toEqual({ batch_id: "b1", task: "Fold the towel in half." });
+    expect(frame.payload).toEqual({ batch_id: "b1", task: "Fold the towel in half.", details: "" });
     expect(frame.operator_token).toBe("Alice");
     expect(frame.control_token).toBe("real-control-token");
 

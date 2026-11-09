@@ -112,7 +112,8 @@ ReceiverSession::ReceiverSession(const ReceiverConfig& config) : config_(config)
         MxRFinishSystem();
         g_session_alive.store(false);
         throw std::runtime_error("ReceiverSession: MxROpenChannel(" + std::to_string(config_.channel) +
-                                 ") failed; nothing would ever arrive on this channel");
+                                 ") failed: the SDK bound none of the data ports it tried above base " +
+                                 std::to_string(config_.udp_start_port) + " (taken, or past 65535)");
     }
 }
 
@@ -192,7 +193,7 @@ void ReceiverSession::discover_joints()
     const int joint_count = MxRGetBoneJointCount(config_.channel);
     if (joint_count <= 0)
     {
-        return; // the initial pose has not landed yet; try again on the next frame
+        return; // the reference pose has not arrived yet; try again on the next frame
     }
 
     joint_names_.clear();
