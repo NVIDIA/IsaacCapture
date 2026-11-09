@@ -58,9 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     except (AlignedWriteError, AlignmentError) as exc:
         print(f"not aligned: {exc}", file=sys.stderr)
         return 1
-    print(
-        f"aligned episode_{args.episode}: {int(aligned.valid_indices.sum())} of {len(aligned.valid_indices)} frames"
-    )
+    kept, total = int(aligned.valid_indices.sum()), len(aligned.valid_indices)
+    print(f"aligned episode_{args.episode}: {kept} of {total} frames")
     return 0
 
 
