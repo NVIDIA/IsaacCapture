@@ -16,6 +16,7 @@ from egocap.recording.aligned_writer import (
     AlignedWriteError,
     align_kept_episode,
     check_kept_episode,
+    episode_qualification,
     publish_aligned_episode,
 )
 from egocap.recording.episode_layout import (
@@ -434,3 +435,23 @@ def test_cli_refuses_a_manifest_that_does_not_bind(tmp_path, raw, capsys):
     assert run_cli(raw, "--episode", 0, "--index-source", INDEX) == 1
     assert "episode id differs" in capsys.readouterr().err
     assert not (tmp_path / "raw_aligned").exists()
+
+
+def test_qualification_reports_each_declared_source_from_the_episodes_own_timing(tmp_path):
+    timing = {"event_time": {"head_camera": {"qualified": True}, "pico_controller": {"qualified": False}}}
+    build_raw(tmp_path / "raw", timing=timing)
+    assert episode_qualification(tmp_path / "raw", 1) == {
+        "head_camera": True,
+        "wrist_camera": False,
+        "pico_controller": False,
+        "glove": False,
+    }
+
+
+def test_qualification_is_false_for_every_source_when_the_episode_has_no_timing(tmp_path):
+    build_raw(tmp_path / "raw", timing=None)
+    assert set(episode_qualification(tmp_path / "raw", 0).values()) == {False}
+
+
+def test_qualification_covers_every_declared_source_when_all_are_qualified(raw):
+    assert episode_qualification(raw, 0) == dict.fromkeys(SOURCES, True)

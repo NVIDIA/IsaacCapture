@@ -770,3 +770,86 @@ async def test_the_configured_latency_reaches_the_converted_tracking_sample_time
     times = {s.source: s.capture_time for s in converters[-1](frame)}
     assert times["pico_controller"] == pytest.approx(4.98) and times["manus_glove"] == 5.0
     await coordinator.close()
+
+
+class _MediaSource:
+    def __init__(self, evidence):
+        self.evidence = evidence
+
+    async def prepare(self):
+        pass
+
+    def start(self, ingress, on_failure):
+        pass
+
+    async def stop(self):
+        pass
+
+    def timing_evidence(self):
+        return self.evidence
+
+
+async def _kept_timing(tmp_path: Path, *, latency=None, livekit_source=None):
+    coordinator = RecordingSessionCoordinator(
+        make_config_factory(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC), latency=latency),
+        queue_capacity=8,
+        readiness_check=ALWAYS_READY,
+        livekit_source=livekit_source,
+    )
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    coordinator.on_capture_frame(_fake_tracking_frame(capture_time_ns=5_000_000_000))
+    result = await coordinator.stop_episode(episode.episode_id)
+    await coordinator.close()
+    group = zarr.open_group(str(result.final_path), mode="r")
+    return dict(group.attrs).get("timing"), group
+
+
+async def test_a_configured_latency_is_recorded_as_a_qualified_estimate_matching_the_stored_times(tmp_path: Path):
+    timing, group = await _kept_timing(tmp_path, latency={"pico_controller": 0.02, "manus_glove": 0.0})
+    assert timing["event_time"] == {
+        "pico_controller": {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": 0.02,
+            "qualified": True,
+        },
+        "manus_glove": {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": 0.0,
+            "qualified": True,
+        },
+    }
+    assert group["pico_controller"]["capture_time"][0] == pytest.approx(4.98)
+    assert group["manus_glove"]["capture_time"][0] == pytest.approx(5.0)
+
+
+async def test_a_missing_latency_is_recorded_as_an_unqualified_host_poll_time(tmp_path: Path):
+    timing, _ = await _kept_timing(tmp_path)
+    assert timing["event_time"] == {
+        "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+        "manus_glove": {"meaning": "host_poll_time", "qualified": False},
+    }
+
+
+async def test_tracking_timing_is_recorded_when_the_media_source_has_no_evidence(tmp_path: Path):
+    timing, _ = await _kept_timing(tmp_path, latency={"pico_controller": 0.02}, livekit_source=_MediaSource(None))
+    assert timing["event_time"]["pico_controller"]["qualified"] is True
+    assert timing["event_time"]["manus_glove"]["qualified"] is False
+
+
+async def test_tracking_timing_is_merged_with_the_media_evidence_and_keeps_its_cameras(tmp_path: Path):
+    media = {
+        "clock_mapping": {"mappings": []},
+        "event_time": {
+            "cam16": {"meaning": "sensor_capture", "qualified": True},
+            "pico_controller": {"meaning": "stale", "qualified": False},
+        },
+    }
+    timing, _ = await _kept_timing(tmp_path, latency={"pico_controller": 0.02}, livekit_source=_MediaSource(media))
+    assert timing["clock_mapping"] == {"mappings": []}
+    assert timing["event_time"]["cam16"] == {"meaning": "sensor_capture", "qualified": True}
+    assert timing["event_time"]["pico_controller"]["meaning"] == "host_poll_minus_latency"
+    assert timing["event_time"]["manus_glove"] == {"meaning": "host_poll_time", "qualified": False}

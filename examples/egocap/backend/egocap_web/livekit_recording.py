@@ -71,7 +71,7 @@ _TRACKING_SEMANTICS: dict[str, str] = {
 }
 
 
-def _tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any]]:
+def tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any]]:
     """What each tracking source's saved time is, and whether it is a qualified event time.
 
     A source with a configured latency is saved as its host poll time minus that latency: an estimate, marked as
@@ -346,9 +346,7 @@ class LiveKitRecordingSource:
         first_frame_timeout_s: float = 10.0,
         join_timeout_s: float = _JOIN_TIMEOUT_S,
         leave_timeout_s: float = _LEAVE_TIMEOUT_S,
-        tracking_latency: Mapping[str, float] | None = None,
     ) -> None:
-        self._tracking_latency = tracking_latency or {}
         self._recordable_streams = recordable_streams
         self._make_token = make_token
         self._first_frame_timeout_s = first_frame_timeout_s
@@ -542,7 +540,6 @@ class LiveKitRecordingSource:
                     }
                     for s in self._streams
                 },
-                **_tracking_event_time(self._tracking_latency),
             },
             # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
             "tracking_time": "host_poll",

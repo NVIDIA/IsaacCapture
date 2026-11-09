@@ -59,6 +59,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from capture_server.client import CameraImage, CaptureFrame
+from egocap_web.livekit_recording import tracking_event_time
 from egocap_web.recording_adapter import RecordingIngress, _convert_raw_item, validate_tracking_descriptor
 from recording_service import (
     CloseResult,
@@ -650,11 +651,15 @@ class RecordingSessionCoordinator:
         ingress = self._current_ingress
         if ingress is None:
             return _IngressRetirement(settled=True, failure=None)
+        # What the tracking times are, whatever media the take has: the same latency its conversion applied.
+        evidence: dict[str, Any] = {"event_time": tracking_event_time(self._tracking_latency)}
         if self._livekit_source is not None:
-            # Read before the room is left: the clock mappings the take was recorded under.
-            evidence = self._livekit_source.timing_evidence()
-            if evidence is not None:
-                self._timing_evidence = evidence
+            # Read before the room is left: the clock mappings the take was recorded under, merged with the above.
+            media = self._livekit_source.timing_evidence()
+            if media is not None:
+                evidence = {**media, "event_time": {**media.get("event_time", {}), **evidence["event_time"]}}
+        self._timing_evidence = evidence
+        if self._livekit_source is not None:
             # The producer stops first, so nothing is offered to an ingress that is draining.
             await self._livekit_source.stop()
         settled = await ingress.stop()

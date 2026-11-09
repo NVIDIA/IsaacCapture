@@ -94,6 +94,8 @@ _RECORDING_QUEUE_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
 # LiveKit stream's decoded frame when that is larger.
 _INGRESS_QUEUE_BYTES = 64 * 1024 * 1024
 _INGRESS_QUEUE_CAPACITY = 4096
+#: How long shutdown waits for queued time alignments before leaving them for the next start.
+_ALIGNER_SHUTDOWN_SECONDS = 30.0
 # LiveKit frames are decoded RGB (megabytes each, ~15 MB at 2560x1984), so
 # the JPEG allowance above holds only a few and a short consumer stall would
 # fail the take. Each recordable stream therefore adds this many of its own
@@ -404,7 +406,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     livekit_source = LiveKitRecordingSource(
         lambda: recordable_livekit_streams(monitor.native.started),
         _recorder_livekit_token,
-        tracking_latency=resolved_station.latency if resolved_station is not None else None,
     )
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(
@@ -452,6 +453,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         task_file_root=task_file_root,
     )
     # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner: AutoAligner | None = None
     aligner_task: asyncio.Task[None] | None = None
     if resolved_station is not None and resolved_station.alignment_index is not None:
         aligner = AutoAligner(recording_output_root, resolved_station.alignment_index)
@@ -481,9 +483,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # owner stops -- it still needs the live capture connection to
             # retire any in-flight take cleanly. An unreleased close is
             # surfaced, not silently discarded.
-            if aligner_task is not None:
-                aligner_task.cancel()
             close_result = await coordinator.close(final=True)
+            if aligner is not None and aligner_task is not None:
+                # After the recorder closed, so its last kept episode is queued; bounded so shutdown is too.
+                await aligner.close(aligner_task, _ALIGNER_SHUTDOWN_SECONDS)
             if not close_result.released:
                 logger.error("recording coordinator did not fully release on shutdown: %s", close_result.issues)
             await monitor.stop()

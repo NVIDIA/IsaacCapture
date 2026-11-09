@@ -746,6 +746,7 @@ class _FakeAligner:
         self.submitted = []
         self.recovered = False
         self.cancelled = False
+        self.closed_with = None
         _FakeAligner.instances.append(self)
 
     def submit(self, result):
@@ -762,6 +763,14 @@ class _FakeAligner:
         except asyncio.CancelledError:
             self.cancelled = True
             raise
+
+    async def close(self, task, timeout):
+        import asyncio
+
+        self.closed_with = timeout
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 async def _lifespan_with_station(monkeypatch, tmp_path, station_yaml):
@@ -791,8 +800,7 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
         await asyncio.sleep(0)  # let the worker start so its cancellation is observable
         assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
         assert aligner.recovered
-    await asyncio.sleep(0)
-    assert aligner.cancelled
+    assert aligner.cancelled and aligner.closed_with == app_module._ALIGNER_SHUTDOWN_SECONDS
 
 
 async def test_the_chained_callback_runs_the_previous_one_then_queues_for_alignment(monkeypatch, tmp_path):
@@ -813,6 +821,46 @@ async def test_the_chained_callback_runs_the_previous_one_then_queues_for_alignm
         (aligner,) = _FakeAligner.instances
         app.state.recording_context.coordinator.on_episode_result("result")
         assert previous_calls == ["result"] and aligner.submitted == ["result"]
+
+
+async def test_a_kept_result_emitted_while_the_recorder_closes_is_aligned_before_the_aligner_closes(
+    monkeypatch, tmp_path
+):
+    app_module = await _lifespan_with_station(
+        monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
+    )
+    from recording_service import Disposition, EpisodeResult
+
+    last = EpisodeResult(
+        session_id="s",
+        episode_id="e",
+        episode_index=0,
+        disposition=Disposition.KEPT,
+        final_path=tmp_path / "episode_0",
+        pending_path=None,
+        counts=(),
+        duration_seconds=1.0,
+        quality=None,
+    )
+    events = []
+    real_close = app_module.RecordingSessionCoordinator.close
+
+    async def close_after_a_last_result(self, *args, **kwargs):
+        self.on_episode_result(last)
+        events.append("coordinator closed")
+        return await real_close(self, *args, **kwargs)
+
+    monkeypatch.setattr(app_module.RecordingSessionCoordinator, "close", close_after_a_last_result)
+    async with app_module.lifespan(app_module.FastAPI()):
+        (aligner,) = _FakeAligner.instances
+        original_close = aligner.close
+
+        async def recording_close(task, timeout):
+            events.append(f"aligner closed with {len(aligner.submitted)} result")
+            await original_close(task, timeout)
+
+        aligner.close = recording_close
+    assert events == ["coordinator closed", "aligner closed with 1 result"]
 
 
 async def test_the_lifespan_starts_no_aligner_when_alignment_is_off(monkeypatch, tmp_path):

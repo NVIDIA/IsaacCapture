@@ -338,6 +338,14 @@ def _attribute(metadata_file: Path, name: str) -> Any:
         return None
 
 
+def episode_qualification(raw_session: Path, episode_index: int) -> dict[str, bool]:
+    """Which of the session's declared sources the episode's own timing evidence says have a qualified time."""
+    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
+    declared = [e["name"] for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
+    timing = dict(zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r").attrs).get("timing")
+    return qualified_sources(timing, declared)
+
+
 def align_kept_episode(
     raw_session: Path,
     episode_index: int,
@@ -357,15 +365,12 @@ def align_kept_episode(
     problems = check_kept_episode(raw_session, episode_index, manifest)
     if problems:
         raise AlignedWriteError("; ".join(problems))
-    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
-    declared = [e["name"] for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
-    timing = dict(zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r").attrs).get("timing")
     return publish_aligned_episode(
         raw_session,
         aligned_session or raw_session.with_name(f"{raw_session.name}_aligned"),
         episode_index,
         index_source,
         downsample=downsample,
-        qualified=qualified_sources(timing, declared),
+        qualified=episode_qualification(raw_session, episode_index),
         continuity=manifest.continuity,
     )

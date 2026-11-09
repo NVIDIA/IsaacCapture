@@ -6,9 +6,12 @@
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 
 import pytest
+import yaml
+import zarr
 
 from egocap.recording.episode_layout import (
     FINALIZATION_KEEP,
@@ -20,6 +23,7 @@ from egocap.recording.episode_layout import (
 from egocap_web import auto_align
 from egocap_web.auto_align import AutoAligner
 from recording_service import Disposition, EpisodeResult
+from tests.recording.unit.test_align_kept_episode import INDEX, build_raw, make_manifest
 
 
 def _result(index=3, disposition=Disposition.KEPT, final_path="default", session_id="session_a"):
@@ -111,7 +115,14 @@ async def test_cancelling_an_idle_worker_ends_it_cleanly():
     assert task.cancelled()
 
 
-def _write_session_manifest(output_root, session, index, *, aligned=False, **overrides):
+def _write_evidence(group_dir, slot, *, qualified):
+    group_dir.mkdir(parents=True, exist_ok=True)
+    (group_dir / "config.yaml").write_text(yaml.safe_dump({"video_sources": [{"name": "head"}]}), encoding="utf-8")
+    episode = zarr.open_group(str(group_dir / f"episode_{slot}"), mode="w")
+    episode.attrs["timing"] = {"event_time": {"head": {"qualified": qualified}}}
+
+
+def _write_session_manifest(output_root, session, index, *, aligned=False, qualified=True, **overrides):
     pending, final = episode_dir_names(index)
     fields = {
         "session_id": session,
@@ -129,8 +140,13 @@ def _write_session_manifest(output_root, session, index, *, aligned=False, **ove
     fields.update(overrides)
     (output_root / session).mkdir(parents=True, exist_ok=True)
     write_manifest(output_root / session, EpisodeManifest(**fields))
+    assignment = fields.get("assignment")
+    group = output_root / assignment["group"] if assignment else output_root / session
+    slot = assignment["slot"] if assignment else index
+    if qualified is not None:
+        _write_evidence(group, slot, qualified=qualified)
     if aligned:
-        (output_root / f"{session}_aligned" / final).mkdir(parents=True)
+        (group.with_name(f"{group.name}_aligned") / f"episode_{slot}").mkdir(parents=True)
     return final
 
 
@@ -151,12 +167,28 @@ def test_recover_queues_only_kept_episodes_without_an_aligned_copy(tmp_path):
     assert _queued(aligner) == [auto_align._Job("s1", 0, tmp_path / "s1" / episode_dir_names(0)[1])]
 
 
-def test_recover_looks_only_at_the_latest_session(tmp_path):
+def test_recover_queues_older_sessions_work_even_when_the_newest_session_is_empty(tmp_path):
     _write_session_manifest(tmp_path, "s1", 0)
     _write_session_manifest(tmp_path, "s2", 0)
+    (tmp_path / "s3" / auto_align.MANIFEST_DIR).mkdir(parents=True)
     aligner = AutoAligner(tmp_path, "head")
     aligner.recover()
-    assert [job.session_id for job in _queued(aligner)] == ["s2"]
+    assert [job.session_id for job in _queued(aligner)] == ["s1", "s2"]
+
+
+def test_recover_skips_an_episode_whose_timing_is_not_qualified(tmp_path):
+    _write_session_manifest(tmp_path, "s1", 0, qualified=False)
+    _write_session_manifest(tmp_path, "s1", 1)
+    aligner = AutoAligner(tmp_path, "head")
+    aligner.recover()
+    assert [job.episode_index for job in _queued(aligner)] == [1]
+
+
+def test_recover_skips_an_episode_with_no_readable_evidence(tmp_path):
+    _write_session_manifest(tmp_path, "s1", 0, qualified=None)
+    aligner = AutoAligner(tmp_path, "head")
+    aligner.recover()
+    assert aligner._queue.empty()
 
 
 def test_recover_skips_an_unreadable_manifest_and_keeps_the_rest(tmp_path):
@@ -175,8 +207,9 @@ def test_recover_uses_the_routed_destination_for_a_routed_episode(tmp_path):
 
 
 def test_recover_skips_a_routed_episode_that_is_already_aligned(tmp_path):
-    _write_session_manifest(tmp_path, "s1", 0, studio="Lab", assignment={"group": "Lab/20260101", "slot": 4})
-    (tmp_path / "Lab" / "20260101_aligned" / "episode_4").mkdir(parents=True)
+    _write_session_manifest(
+        tmp_path, "s1", 0, aligned=True, studio="Lab", assignment={"group": "Lab/20260101", "slot": 4}
+    )
     aligner = AutoAligner(tmp_path, "head")
     aligner.recover()
     assert _queued(aligner) == []
@@ -190,3 +223,64 @@ def test_recover_with_no_sessions_queues_nothing(tmp_path, create_root):
     aligner = AutoAligner(root, "head")
     aligner.recover()
     assert aligner._queue.empty()
+
+
+def test_a_full_queue_drops_the_newest_with_a_warning_instead_of_raising(monkeypatch, caplog):
+    monkeypatch.setattr(auto_align, "_QUEUE_LIMIT", 1)
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.submit(_result(index=1))
+    with caplog.at_level(logging.WARNING, logger="isaaccapture.egocap_web.auto_align"):
+        aligner.submit(_result(index=2))
+    assert [job.episode_index for job in _queued(aligner)] == [1]
+    assert "episode 2 was not queued" in caplog.text and "queue full" in caplog.text
+
+
+def test_the_logger_is_in_the_isaaccapture_tree():
+    assert auto_align.logger.name == "isaaccapture.egocap_web.auto_align"
+
+
+async def test_an_episode_that_already_has_an_aligned_copy_is_not_aligned_again(calls, tmp_path):
+    aligned = tmp_path / "group_aligned" / "episode_7"
+    aligned.mkdir(parents=True)
+    aligner = AutoAligner(tmp_path, "head")
+    aligner.submit(_result(final_path=tmp_path / "group" / "episode_7"))
+    await _drain(aligner)
+    assert calls == []
+
+
+async def test_a_recovered_episode_is_aligned_for_real_and_its_aligned_copy_appears(tmp_path):
+    session = tmp_path / "out" / "s1"
+    build_raw(session)
+    write_manifest(session, make_manifest(session, session_id="s1"))
+    aligner = AutoAligner(tmp_path / "out", INDEX)
+    aligner.recover()
+    assert aligner._queue.qsize() == 1
+    task = asyncio.create_task(aligner.run())
+    await aligner.close(task, 60)
+    assert (tmp_path / "out" / "s1_aligned" / "episode_0").is_dir()
+    assert task.cancelled()
+
+
+async def test_close_waits_for_queued_episodes_before_stopping_the_worker(calls):
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.submit(_result(index=1))
+    aligner.submit(_result(index=2))
+    task = asyncio.create_task(aligner.run())
+    await aligner.close(task, 5)
+    assert len(calls) == 2 and task.cancelled()
+
+
+async def test_close_with_a_blocked_job_warns_after_the_timeout_and_cancels_the_worker(calls, monkeypatch, caplog):
+    release = threading.Event()
+    monkeypatch.setattr(auto_align, "align_kept_episode", lambda *args: release.wait(5))
+    aligner = AutoAligner(Path("/out"), "head")
+    aligner.submit(_result())
+    task = asyncio.create_task(aligner.run())
+    await asyncio.sleep(0.05)
+    try:
+        with caplog.at_level(logging.WARNING, logger=auto_align.logger.name):
+            await aligner.close(task, 0.1)
+    finally:
+        release.set()
+    assert task.cancelled()
+    assert "still has queued episodes" in caplog.text
