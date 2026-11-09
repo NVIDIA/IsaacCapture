@@ -1,0 +1,199 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Writes a time-aligned copy of a recorded episode, in the aligned dataset layout downstream readers expect.
+
+The aligned session sits beside the raw one and mirrors it: the same ``episode_<n>`` groups, the same per-source
+groups, the same videos. What differs is the time alignment (see :mod:`alignment`): each episode gains
+``valid_indices`` and ``valid_timestamps``; each camera gains ``aligned_frame_indices``; each resampled field is
+written as ``<field>_interp`` and its raw array is left out (readers use the ``_interp`` name); every other raw
+array, the attributes, the session's ``config.yaml`` and sidecars, and the videos are carried over unchanged. The
+aligned root's ``zarr.json`` records which source was the index.
+
+This module writes the files; the caller chooses the times, qualification and the staging that makes publication
+atomic.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import yaml
+import zarr
+
+from .alignment import AlignedEpisode, align_episode, source_rules
+
+__all__ = ["ALIGNED_SESSION_SIDECARS", "AlignedWriteError", "validate_aligned_episode", "write_aligned_episode"]
+
+#: Session-level files carried into the aligned session when the raw session has them.
+ALIGNED_SESSION_SIDECARS = (
+    "config.yaml",
+    "data_check_config.yaml",
+    "head_camera_intrinsics.json",
+    "head_camera_extrinsics.json",
+    "wrist_calibration_offsets.json",
+    "left_wrist_camera_intrinsics.json",
+    "right_wrist_camera_intrinsics.json",
+    "rectification.json",
+)
+#: Video container suffixes that are carried into the aligned episode.
+_VIDEO_SUFFIXES = (".mp4", ".mkv", ".avi", ".mov")
+#: Arrays at most this large are read back by validation to catch stale or empty chunks.
+_CHECK_MAX_BYTES = 10 * 1024 * 1024
+
+
+class AlignedWriteError(RuntimeError):
+    """The aligned episode could not be written or did not validate."""
+
+
+def _copy_attrs(source: Any, target: Any) -> None:
+    """Carry every attribute of a zarr group over to the aligned group."""
+    for key, value in source.attrs.items():
+        target.attrs[key] = value
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    """Put a video in the aligned episode: a hard link when the filesystem allows it, else a copy."""
+    # A video from an earlier alignment is replaced, not merged with.
+    if os.path.lexists(target):
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _write_root(raw_session: Path, aligned_session: Path, index_source: str) -> None:
+    """Create the aligned root: its attributes, the session sidecars, and the index source in ``zarr.json``."""
+    aligned_session.mkdir(parents=True, exist_ok=True)
+    raw_root = zarr.open_group(str(raw_session), mode="a")
+    aligned_root = zarr.open_group(str(aligned_session), mode="a")
+    _copy_attrs(raw_root, aligned_root)
+    # The index source is a root attribute so a reader knows which camera's frames define the timeline.
+    aligned_root.attrs["index_source"] = index_source
+    for name in ALIGNED_SESSION_SIDECARS:
+        source, target = raw_session / name, aligned_session / name
+        # An existing aligned sidecar is left alone, so re-aligning never overwrites what is already there.
+        if source.is_file() and not target.exists():
+            shutil.copy2(source, target)
+
+
+def _write_source(raw_group: Any, target_group: Any, aligned_source: Any) -> None:
+    """Write one source: its attributes, the raw arrays that are not resampled, and what the alignment adds."""
+    _copy_attrs(raw_group, target_group)
+    for name in raw_group.array_keys():
+        # A resampled field is read as ``<field>_interp``; its raw array is not kept.
+        if name not in aligned_source.interpolated:
+            target_group[name] = raw_group[name][:]
+    for name, values in aligned_source.interpolated.items():
+        target_group[f"{name}_interp"] = values
+    if aligned_source.aligned_frame_indices is not None:
+        target_group["aligned_frame_indices"] = aligned_source.aligned_frame_indices
+
+
+def validate_aligned_episode(aligned_session: Path, episode_index: int, index_source: str) -> list[str]:
+    """Problems with a written aligned episode; empty means it is as expected.
+
+    Checks the arrays every aligned episode has, that the index source has ``aligned_frame_indices``, and that the
+    small arrays can be read back and are not empty (a stale chunk from an earlier, differently shaped alignment
+    only shows when the data is read).
+    """
+    problems: list[str] = []
+    key = f"episode_{episode_index}"
+    root = zarr.open_group(str(aligned_session), mode="r")
+    if key not in root:
+        return [f"{key} group missing from the aligned session"]
+    episode = root[key]
+    for required in ("valid_indices", "valid_timestamps"):
+        if required not in episode:
+            problems.append(f"{key}/{required} missing")
+    if index_source not in episode:
+        problems.append(f"{key}/{index_source} group missing")
+    elif "aligned_frame_indices" not in episode[index_source]:
+        problems.append(f"{key}/{index_source}/aligned_frame_indices missing")
+
+    def check(group: Any, prefix: str) -> None:
+        """Read each small array under ``group`` and report one that fails or is empty."""
+        for name in group.array_keys():
+            array = group[name]
+            if array.nbytes > _CHECK_MAX_BYTES:
+                continue
+            try:
+                data = np.asarray(array[:])
+            except Exception as exc:  # a stale chunk raises something zarr-specific
+                problems.append(f"{prefix}/{name} unreadable: {exc}")
+                continue
+            if data.size == 0:
+                problems.append(f"{prefix}/{name} is empty")
+        for name in group.group_keys():
+            check(group[name], f"{prefix}/{name}")
+
+    check(episode, key)
+    return problems
+
+
+def write_aligned_episode(
+    raw_session: Path,
+    aligned_session: Path,
+    episode_index: int,
+    index_source: str,
+    *,
+    downsample: int = 1,
+    qualified: Mapping[str, bool],
+) -> AlignedEpisode:
+    """Align one recorded episode and write it into ``aligned_session``; returns the alignment.
+
+    ``qualified`` says, per source, whether its recorded capture time is a qualified event time; a source that is
+    not qualified (or not listed) refuses the alignment, so nothing is written for it. The times aligned on are
+    the recorded capture times. Raises ``AlignedWriteError`` if the written episode does not validate.
+    """
+    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
+    rules = source_rules(config)
+    cameras = [e["name"] for e in config.get("video_sources") or []]
+    key = f"episode_{episode_index}"
+    raw_episode = zarr.open_group(str(raw_session), mode="r")[key]
+
+    # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
+    present = [name for name in rules if name in raw_episode]
+    unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
+    if unqualified:
+        raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
+    times = {name: raw_episode[name]["capture_time"][:] for name in present}
+    fields = {name: {a: raw_episode[name][a][:] for a in raw_episode[name].array_keys()} for name in present}
+    aligned = align_episode(
+        index_source,
+        times,
+        [c for c in cameras if c in present],
+        fields,
+        {name: rules[name] for name in present},
+        downsample=downsample,
+    )
+
+    _write_root(raw_session, aligned_session, index_source)
+    root = zarr.open_group(str(aligned_session), mode="a")
+    # A previous alignment of this episode is removed whole, so no chunk of a different shape survives it.
+    if key in root:
+        del root[key]
+    episode = root.require_group(key)
+    _copy_attrs(raw_episode, episode)
+    episode["valid_indices"] = aligned.valid_indices
+    episode["valid_timestamps"] = aligned.valid_timestamps
+    for name in present:
+        _write_source(raw_episode[name], episode.require_group(name), aligned.sources[name])
+
+    # The videos are the same files: linked, so the aligned episode costs no extra disk.
+    raw_dir, aligned_dir = raw_session / key, aligned_session / key
+    for video in sorted(raw_dir.iterdir()) if raw_dir.is_dir() else []:
+        if video.suffix in _VIDEO_SUFFIXES:
+            _link_or_copy(video, aligned_dir / video.name)
+
+    problems = validate_aligned_episode(aligned_session, episode_index, index_source)
+    if problems:
+        raise AlignedWriteError("; ".join(problems))
+    return aligned
