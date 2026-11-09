@@ -19,5 +19,9 @@ camera runtime checks must not require build SDKs or cached vendor packages.
 The quick-start camera command must open a live visual preview, not only print FPS.
 Container preview must carry the desktop display and authorization into the image.
 
+`deploy_orin.py` is the single entry point for putting an Orin into a working state.
+A prerequisite or setup step belongs in it, through `orin_setup.sh`, not in a document
+the operator must follow by hand before running it.
+
 Support SSH launch with a local DISPLAY: when XAUTHORITY is unset, check the
 current user's GDM authority file as well as ~/.Xauthority.

@@ -93,6 +93,18 @@ python3 src/plugins/sensing/scripts/deploy_orin.py 192.168.1.176 --config orin.j
 - `--replace-unmanaged` stops a `camera_plugin_sensing` that someone started by hand (its exact PIDs are shown);
   without it the deployment refuses and changes nothing. `--no-activate` builds and packages only, and `--jobs N`
   bounds compile jobs. The release is installed under `/opt/isaaccapture`.
+- `scripts/orin_setup.sh` installs the Orin's prerequisites and the SENSING drivers (`setup.sh`), then checks the cameras (`verify.sh`, then a
+  `validate.sh` stream). The deploy uploads it, with those scripts, to `~/.cache/isaaccapture-deploy/tools/scripts/`
+  before the preflight, so a missing prerequisite can be fixed first, and each release carries a copy under
+  `plugins/sensing_camera/scripts/`. `--prereqs-only` and `--check-only` run one half; stop the producer service
+  before the camera check, since SIPL serves one client at a time. From the desktop, `deploy_orin.py USER@ORIN
+  --install-prereqs` and `--check-camera` run them over ssh without deploying (the sudo password is asked on the
+  Orin's terminal); together they run both halves.
+- `"cameras": "auto"` in the deploy config makes the deploy find the cameras itself, on any of the carrier's 8 inputs, and
+  start the producer with them (at most the two the vendor config names; streams for sensors that were not found are
+  dropped). The inputs found are saved in `known-cameras.json` in the deploy's cache directory on the Orin and tried
+  first on the next deploy. All 8 are scanned again only when that file is missing or a saved camera does not answer, or
+  with `--rescan-cameras`. Leave `--link-masks`, `--platform-config` and `--config-name` out of `args` in this mode.
 - The script checks the ssh connection first, then preflights the Orin, uploads only the source files that differ
   from what the Orin already holds, builds, installs a versioned release, replaces the running producer and waits for
   every configured camera to be up. "Up" is the producer's own latest output for its current session: frames captured

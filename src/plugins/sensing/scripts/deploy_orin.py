@@ -7,6 +7,9 @@ Run on the desktop:
 
     deploy_orin.py user@orin --config orin.json
 
+`--install-prereqs` and `--check-camera` run the Orin's prerequisite install and camera check instead of deploying
+(neither needs a config).
+
 The config is JSON with the producer's own options, nothing else:
 
     {"args": ["--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
@@ -41,14 +44,48 @@ BIN_REL = "plugins/sensing_camera/camera_plugin_sensing"
 UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
 MODES = ("direct", "livekit")
-CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args", "env"}
+CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args", "env", "cameras"}
+# With "cameras": "auto" the deploy finds the cameras and supplies these, so the config must not.
+DETECTED_ARGS = ("--platform-config", "--config-name", "--link-masks")
+PLATFORM_FILE = (
+    "camera-platform.json"  # under the install prefix; the detected platform config
+)
+PLATFORM_CONFIG_NAME = "SHW5G_2"
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_ENV = ("LD_LIBRARY_PATH",)
 # The producer's connection options come from the config's own fields, not from `args`.
 PREFIX = "/opt/isaaccapture"
 SERVICE_GROUPS = "video"  # device access for the cameras
 READY_TIMEOUT_S = 60
+REBOOT_TIMEOUT_S = (
+    600  # a reboot to load the device-tree overlay, until ssh answers again
+)
+REBOOT_START_S = (
+    120  # how long to wait for the Orin to go down once setup asks for a reboot
+)
+NEEDS_REBOOT = 2  # orin_setup.sh exit status: reboot or log in again, then re-run
+SDKM_DOWNLOADS = "~/Downloads/nvidia/sdkm_downloads"
 RESERVED_ARGS = ("--livekit-url", "--livekit-token-file")
+# The Orin-side setup and camera-check scripts, and the platform config they stream with.
+TOOL_SCRIPTS = ("orin_setup.sh", "setup.sh", "common.sh", "verify.sh", "validate.sh")
+TOOL_CONFIG = "shw5g.json"
+SETUP_HINT = f"bash {CACHE}/tools/scripts/orin_setup.sh"
+
+
+def tool_files() -> list[tuple[Path, str]]:
+    """(local file, path under the tools directory) for the Orin-side scripts.
+
+    They come from the checkout holding this helper, never from the deployed source, so any source can be deployed.
+    On the Orin the helper sits beside the `tools/` directory the desktop uploaded.
+    """
+    here = Path(__file__).resolve().parent
+    if (here / "tools").is_dir():
+        scripts, configs = here / "tools" / "scripts", here / "tools" / "configs"
+    else:
+        scripts, configs = here, here.parent / "configs"
+    return [(scripts / name, f"scripts/{name}") for name in TOOL_SCRIPTS] + [
+        (configs / TOOL_CONFIG, f"configs/{TOOL_CONFIG}")
+    ]
 
 
 STEPS = 5
@@ -178,6 +215,13 @@ def load_config(path: Path) -> dict:
         raise DeployError(
             f"{path}: args needs at least one --add-stream=sensor=N,livekit=NAME"
         )
+    if "cameras" in config:
+        if config["cameras"] != "auto":
+            raise DeployError(f'{path}: "cameras" must be "auto"')
+        if any(a.split("=", 1)[0] in DETECTED_ARGS for a in args):
+            raise DeployError(
+                f'{path}: with "cameras": "auto" the deploy supplies {", ".join(DETECTED_ARGS)}; remove them from args'
+            )
     if "token_file" in config:
         if not all(
             isinstance(config[k], str) and config[k]
@@ -391,6 +435,31 @@ class Target:
             )
         return result
 
+    def status(
+        self,
+        command: str,
+        *,
+        tty: bool = False,
+        timeout: int = 0,
+        stdin: str | None = None,
+    ) -> int:
+        """Run a command and return its exit status instead of raising (255 when ssh itself fails)."""
+        opts = ["-o", f"ConnectTimeout={timeout}"] if timeout else []
+        extra: dict = {"capture_output": True} if timeout else {}
+        if stdin is not None:
+            extra.update(input=stdin, text=True)
+        return self._run(
+            "ssh", [*opts, *(["-t"] if tty else []), self.host, command], **extra
+        ).returncode
+
+    def output(self, command: str, *, stdin: str | None = None) -> tuple[int, str]:
+        """Run a command; return (exit status, stdout). Its stderr still goes to this terminal."""
+        extra: dict = (
+            {"input": stdin, "text": True} if stdin is not None else {"text": True}
+        )
+        result = self._run("ssh", [self.host, command], stdout=subprocess.PIPE, **extra)
+        return result.returncode, result.stdout
+
     def sudo(self, command: str) -> None:
         """Run a command as root: the password from the environment on stdin, else an interactive prompt."""
         if self.password:
@@ -458,11 +527,234 @@ class Target:
         shutil.rmtree(self._dir, ignore_errors=True)
 
 
+def upload_tools(target: "Target", cache: str) -> None:
+    """Put the setup and camera-check scripts, with the config they stream with, under the Orin's cache."""
+    target.capture(f"mkdir -p {cache}/tools/scripts {cache}/tools/configs")
+    for local_file, relative in tool_files():
+        target.put(local_file, f"{cache}/tools/{relative}")
+
+
+def show_logs(target: "Target") -> None:
+    """Print the producer service's state and recent journal; nothing on the Orin changes."""
+    target.validate_connection()
+    target.sudo(f"systemctl status {SERVICE} --no-pager -l")
+    target.sudo(f"journalctl -u {SERVICE} -n 120 --no-pager")
+
+
+def run_tools(args: argparse.Namespace, target: "Target") -> None:
+    """Install the Orin's prerequisites and/or check its cameras with the uploaded scripts; deploy nothing.
+
+    The output shows live. Given ORIN_PASSWORD the Orin's sudo is answered for you; otherwise it prompts in the
+    terminal.
+    """
+    if args.logs:
+        show_logs(target)
+        return
+    step(1, f"Connecting to {target.host}")
+    target.validate_connection()
+    cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
+    step(2, "Upload the setup and camera-check scripts")
+    upload_tools(target, cache)
+    check = args.check_camera or args.scan_cameras
+    flags = []
+    if args.install_prereqs and not check:
+        flags.append("--prereqs-only")
+    elif not args.install_prereqs:
+        flags.append("--check-only")
+    if args.scan_cameras:
+        flags.append("--scan")
+    label = " and ".join(
+        part
+        for part, wanted in (
+            ("Install prerequisites", args.install_prereqs),
+            (
+                "Scan the camera links" if args.scan_cameras else "Check the cameras",
+                check,
+            ),
+        )
+        if wanted
+    )
+    step(3, label)
+    code = run_orin_setup(target, cache, " ".join(flags))
+    if code != 0:
+        raise DeployError(f"{label.lower()} failed on {target.host} (exit {code})")
+
+
+def detect_cameras(target: "Target", cache: str, rescan: bool = False) -> dict:
+    """Find where cameras are connected, on any of the carrier's 8 inputs, and write the platform config for them.
+
+    The inputs found are remembered on the Orin and tried first next time; all 8 are scanned again only when a
+    remembered camera does not answer, or with rescan. The Orin's producer service holds the cameras, so it is
+    stopped first. Returns the JSON orin_setup.sh prints:
+    the platform config's path on the Orin, the link masks, and how many cameras were found and used.
+    """
+    print("==> Finding the cameras (any of the carrier's 8 inputs)", flush=True)
+    target.sudo(f"sh -c {shlex.quote(f'systemctl stop {SERVICE} || true')}")
+    code, text = target.output(
+        f"bash {cache}/tools/scripts/orin_setup.sh --detect {cache}/cameras"
+        + (" --rescan" if rescan else "")
+    )
+    if code != 0:
+        raise DeployError(
+            "no camera answers on any of the 8 inputs; check the carrier's 12 V supply and each cable, "
+            "or run --scan-cameras"
+        )
+    try:
+        found = json.loads(text.strip().splitlines()[-1])
+        found["config"], found["masks"], found["used"]
+    except (ValueError, IndexError, KeyError) as exc:
+        raise DeployError(
+            f"camera detection printed no usable result: {text!r}"
+        ) from exc
+    for place in found.get("positions", []):
+        print(f"    camera: {place}")
+    return found
+
+
+def apply_detected(config: dict, found: dict) -> dict:
+    """The deploy config with the detected cameras: their platform config and masks, and streams for them only.
+
+    Sensors are numbered from 0 in the order of the detected cameras, so a stream for a sensor that was not found
+    is dropped. All streams dropped is an error.
+    """
+    used = found["used"]
+    kept, dropped = [], []
+    for arg in config["args"]:
+        if arg.startswith("--add-stream="):
+            sensors = configured_sensors({"args": [arg]})
+            if sensors and sensors[0] >= used:
+                dropped.append(arg)
+                continue
+        kept.append(arg)
+    if not configured_sensors({"args": kept}):
+        raise DeployError(
+            f"the config streams sensors the detected cameras do not have ({used} found)"
+        )
+    if dropped:
+        print(
+            f"    {used} camera(s) found; dropping {len(dropped)} stream(s) for sensors that are not there",
+            flush=True,
+        )
+    return {
+        **config,
+        "args": [
+            *kept,
+            f"--platform-config={PREFIX}/{PLATFORM_FILE}",
+            f"--config-name={PLATFORM_CONFIG_NAME}",
+            f"--link-masks={found['masks']}",
+        ],
+    }
+
+
+def find_sipl_package(explicit: str | None) -> Path | None:
+    """The L4T SIPL API headers archive on this desktop: the named file, else the newest SDK Manager download."""
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_file():
+            raise DeployError(f"--sipl-api {explicit}: no such file")
+        return path
+    found = sorted(
+        Path(SDKM_DOWNLOADS).expanduser().glob("Jetson_SIPL_API_R*_aarch64.tbz2"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return found[-1] if found else None
+
+
+def wait_for_reboot(target: "Target") -> None:
+    """Block until the Orin has gone down and answered ssh again; fail when it never reboots or never returns."""
+    print("==> Waiting for the Orin to reboot", flush=True)
+    start = time.monotonic()
+    went_down = False
+    while time.monotonic() - start < REBOOT_TIMEOUT_S:
+        up = target.status("true", timeout=5) == 0
+        if not up:
+            went_down = True
+        elif went_down:
+            return
+        elif time.monotonic() - start > REBOOT_START_S:
+            break
+        time.sleep(5)
+    raise DeployError(
+        "the Orin did not reboot and come back; reboot it yourself and run this command again"
+        if not went_down
+        else f"the Orin did not answer ssh within {REBOOT_TIMEOUT_S} s of rebooting"
+    )
+
+
+def prerequisites_ready(target: "Target", cache: str, sdk_root: str) -> bool:
+    """The Orin passes its own preflight and has the drivers, overlay and SIPL headers the cameras need."""
+    remote = f"python3 {cache}/deploy_orin.py remote"
+    if target.status(f"{remote} preflight --sdk-root {shlex.quote(sdk_root)}") != 0:
+        return False
+    check = (
+        f"bash {cache}/tools/scripts/orin_setup.sh --prereqs-only --no-apt --no-drivers"
+    )
+    return target.status(f"{check} --sdk-root {shlex.quote(sdk_root or '/')}") == 0
+
+
+def run_orin_setup(target: "Target", cache: str, flags: str) -> int:
+    """Run orin_setup.sh on the Orin and return its exit status.
+
+    With the password in the environment nothing prompts: it goes to the script on stdin, for its sudo calls.
+    Without one the script runs in a terminal and sudo prompts there.
+    """
+    command = f"bash {cache}/tools/scripts/orin_setup.sh {flags}".rstrip()
+    if target.password:
+        return target.status(
+            f"{command} --sudo-password-stdin", stdin=target.password + "\n"
+        )
+    return target.status(command, tty=True)
+
+
+def install_prerequisites(
+    args: argparse.Namespace, target: "Target", cache: str
+) -> None:
+    """Install what the preflight found missing: packages, uv, SIPL headers, the SENSING drivers and overlay.
+
+    The drivers step selects the overlay through Jetson-IO's command line and reboots the Orin; the deploy waits out
+    the reboot and carries on. With no ORIN_PASSWORD it runs in a terminal and sudo prompts.
+    """
+    print("==> Installing the Orin's missing prerequisites", flush=True)
+    flags = "--prereqs-only"
+    if args.sdk_root:
+        flags += f" --sdk-root {shlex.quote(args.sdk_root)}"
+    sipl = find_sipl_package(args.sipl_api)
+    if sipl:
+        target.put(sipl, f"{cache}/{sipl.name}")
+        flags += f" --sipl-api {cache}/{sipl.name}"
+
+    def run_setup() -> int:
+        return run_orin_setup(target, cache, flags)
+
+    code = run_setup()
+    if code in (
+        NEEDS_REBOOT,
+        255,
+    ):  # 255: ssh dropped because Jetson-IO rebooted the Orin
+        wait_for_reboot(target)
+        target.validate_connection()
+        code = run_setup()
+    if code != 0:
+        raise DeployError(
+            f"prerequisite setup did not finish (exit {code}); fix what it reported and run this command again"
+        )
+    if not prerequisites_ready(target, cache, args.sdk_root):
+        raise DeployError("the Orin still fails the preflight after setup")
+
+
 def deploy(args: argparse.Namespace) -> None:
-    config = load_config(Path(args.config))
+    tools_only = (
+        args.install_prereqs or args.check_camera or args.scan_cameras or args.logs
+    )
+    if not tools_only and not args.config:
+        raise DeployError("--config is required to deploy")
+    config = None if tools_only else load_config(Path(args.config))
     target = Target(target_host(args.target))
     try:
-        run_deploy(args, config, target)
+        if tools_only:
+            run_tools(args, target)
+        else:
+            run_deploy(args, config, target)
     finally:
         target.close()
 
@@ -536,7 +828,6 @@ def deploy_source(
     step(1, f"Connecting to {target.host}")
     target.validate_connection()
     user = args.service_user or target.capture("id -un")
-    unit = render_unit(config, PREFIX, user, SERVICE_GROUPS)
 
     step(2, f"Preflight on {target.host}")
     cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
@@ -547,8 +838,22 @@ def deploy_source(
     # The helper always travels alone and fresh, so the Orin-side steps never depend on an older source copy.
     helper = f"{cache}/deploy_orin.py"
     target.put(Path(__file__).resolve(), helper)
+    # The setup and camera-check scripts go up before the preflight, so a missing prerequisite can be fixed with them.
+    upload_tools(target, cache)
     remote = f"python3 {helper} remote"
-    target.ssh(f"{remote} preflight --sdk-root {shlex.quote(args.sdk_root)}")
+    if not prerequisites_ready(target, cache, args.sdk_root):
+        if args.no_setup:
+            raise DeployError(
+                f"the Orin fails the preflight; run {SETUP_HINT} --prereqs-only or drop --no-setup"
+            )
+        install_prerequisites(args, target, cache)
+
+    platform_file = ""
+    if config.get("cameras") == "auto":
+        found = detect_cameras(target, cache, args.rescan_cameras)
+        config = apply_detected(config, found)
+        platform_file = found["config"]
+    unit = render_unit(config, PREFIX, user, SERVICE_GROUPS)
 
     with tempfile.TemporaryDirectory() as tmp:
         step(3, "Compare the source with the Orin's and upload what differs")
@@ -615,6 +920,7 @@ def deploy_source(
         f"--sensors={','.join(str(n) for n in configured_sensors(config))} "
         f"--direct-sensors={','.join(str(n) for n, direct in configured_streams(config) if direct)} "
         f"--mode={config.get('mode', 'direct')}"
+        + (f" --platform-file {shlex.quote(platform_file)}" if platform_file else "")
         + (" --replace-unmanaged" if args.replace_unmanaged else "")
     )
     target.sudo(activate)
@@ -659,26 +965,25 @@ def remote_preflight(args: argparse.Namespace) -> None:
             ["which", tool], capture_output=True, check=False, env=on_path
         )
         if found.returncode != 0:
-            hint = (
-                " (the build's Python setup needs it: curl -LsSf https://astral.sh/uv/install.sh | sh)"
-                if tool == "uv"
-                else ""
+            raise DeployError(
+                f"{tool} is not installed; run {SETUP_HINT} --prereqs-only"
             )
-            raise DeployError(f"{tool} is not installed{hint}")
     if (
         not Path("/usr/local/cuda/bin/nvcc").exists()
         and subprocess.run(
             ["which", "nvcc"], capture_output=True, check=False
         ).returncode
     ):
-        raise DeployError("nvcc not found (CUDA toolkit)")
+        raise DeployError(
+            f"nvcc not found (CUDA toolkit); run {SETUP_HINT} --prereqs-only"
+        )
     stat = os.statvfs(Path.home())
     if stat.f_bavail * stat.f_frsize < 4 << 30:
         raise DeployError("less than 4 GB free in the home directory")
     mmapi, _ = sdk_dirs(args.sdk_root)
     if not mmapi.is_dir():
         raise DeployError(
-            f"the Jetson Multimedia API is missing at {mmapi}; run src/plugins/sensing/scripts/setup.sh "
+            f"the Jetson Multimedia API is missing at {mmapi}; run {SETUP_HINT} --prereqs-only "
             "or pass --sdk-root"
         )
     print("  preflight ok")
@@ -710,8 +1015,8 @@ def livekit_notice(build_dir: Path, name: str) -> Path:
 def stage_producer(build_dir: Path, stage: Path) -> None:
     """Assemble the release from the build tree itself, so it does not depend on the source's install rules.
 
-    The release is the binary, the SIPL platform configs the build puts beside it, the LiveKit runtime libraries
-    the binary resolves, and the LiveKit licence files. The service sets LD_LIBRARY_PATH to the release directory,
+    The release is the binary, the SIPL platform configs the build puts beside it, the setup and camera-check
+    scripts, the LiveKit runtime libraries the binary resolves, and the LiveKit licence files. The service sets LD_LIBRARY_PATH to the release directory,
     so the copied libraries win over the build tree's RUNPATH.
     """
     binaries = [p for p in build_dir.rglob("camera_plugin_sensing") if p.is_file()]
@@ -728,6 +1033,11 @@ def stage_producer(build_dir: Path, stage: Path) -> None:
     if not configs.is_dir():
         raise DeployError(f"the build staged no platform configs beside {built}")
     shutil.copytree(configs, out / "configs")
+    # The setup and camera-check scripts resolve the platform config as ../configs from their own directory.
+    (out / "scripts").mkdir()
+    for local_file, relative in tool_files():
+        if relative.startswith("scripts/"):
+            shutil.copy2(local_file, out / relative)
     # The libraries are found by name among what the binary resolves in the build, not by the SDK's layout.
     for line in tail(["ldd", str(built)]).splitlines():
         name, _, rest = line.strip().partition(" => ")
@@ -940,17 +1250,25 @@ def remote_activate(args: argparse.Namespace) -> None:
         )
     dest.mkdir(parents=True)
     try:
+        print("  unpacking the release", flush=True)
         with tarfile.open(args.archive) as tar:
             tar.extractall(dest, filter="data")
-        for line in (dest / "SHA256SUMS").read_text().splitlines():
+        sums = (dest / "SHA256SUMS").read_text().splitlines()
+        bar = Progress("verifying files", len(sums))
+        for done, line in enumerate(sums, 1):
             digest, name = line.split("  ", 1)
             if sha256_file(dest / name) != digest:
                 raise DeployError(
                     f"checksum mismatch for {name} in release {args.release}"
                 )
+            bar.update(done)
+        bar.finish()
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
+    if args.platform_file:
+        # The detected platform config outlives the release: the service reads it from a fixed path.
+        shutil.copy2(args.platform_file, prefix / PLATFORM_FILE)
     run(["chown", "-R", f"{args.owner}:", str(prefix)])
     print(f"  installed release {args.release}")
 
@@ -961,6 +1279,7 @@ def remote_activate(args: argparse.Namespace) -> None:
         run(["systemctl", "daemon-reload"])
         run(["systemctl", "enable", SERVICE], capture_output=True)
         print("  service unit updated")
+    print("  stopping the running producer", flush=True)
     run(["systemctl", "stop", SERVICE])
     if unmanaged:
         print(f"  stopping unmanaged producer(s): {[pid for pid, _ in unmanaged]}")
@@ -971,6 +1290,7 @@ def remote_activate(args: argparse.Namespace) -> None:
     staging_link.symlink_to(Path("releases") / args.release)
     os.replace(staging_link, link)
     since = time.strftime("%Y-%m-%d %H:%M:%S")
+    print("  starting the new producer; waiting for the cameras", flush=True)
     run(["systemctl", "start", SERVICE])
     summary = wait_ready(
         since,
@@ -984,8 +1304,30 @@ def remote_activate(args: argparse.Namespace) -> None:
     print(f"  producer is up (release {args.release})")
 
 
-# The capture driver logs its own INFO and DEBUG lines at severity 5 and 6; they bury the lines that explain a failure.
-DRIVER_NOISE = re.compile(r"Severity [56] :")
+# Every line the capture driver logs carries "Severity N :"; at any severity they bury the lines that explain a
+# failure. DRIVER_FAULT picks the few that do explain one, and BENIGN_DRIVER the ones that look like errors but are
+# the driver noting a library or power driver it does not need.
+DRIVER_NOISE = re.compile(r"Severity \d+ :")
+DRIVER_FAULT = re.compile(r"Failed to|Error processing|HSL I2C error|status: \d+")
+BENIGN_DRIVER = re.compile(r"driverCatalog|uddf_discover|No module power driver")
+
+
+# The deserializer's own report that a link did not lock: SIPL names the link by letter, A to D for links 0 to 3.
+DEAD_LINK = re.compile(r'Sequence: "enable_link_([A-D])"')
+
+
+def dead_link_lines(lines: list[str]) -> list[str]:
+    """One plain line per camera link the deserializer could not lock, in the order they failed."""
+    found = []
+    for line in lines:
+        match = DEAD_LINK.search(line)
+        if match and match.group(1) not in found:
+            found.append(match.group(1))
+    return [
+        f"link {ord(letter) - ord('A')} (COAX{ord(letter) - ord('A')} on CN1) did not lock: no camera answers there. "
+        "Check that camera's cable and its harness lead."
+        for letter in found
+    ]
 
 
 def failure_report(since: str, sensors: list[int]) -> str:
@@ -1024,11 +1366,25 @@ def failure_report(since: str, sensors: list[int]) -> str:
             ln,
         )
     ]
+    driver_faults = []
+    for line in lines:
+        if (
+            DRIVER_NOISE.search(line)
+            and DRIVER_FAULT.search(line)
+            and not BENIGN_DRIVER.search(line)
+        ):
+            text = line.split(" : ", 1)[-1].strip()
+            if text not in driver_faults:
+                driver_faults.append(text)
     out = [
         f"service: {state}",
-        f"log: {len(lines)} lines since the start, {len(lines) - len(quiet)} of them driver INFO/DEBUG; "
+        *dead_link_lines(lines),
+        f"log: {len(lines)} lines since the start, {len(lines) - len(quiet)} of them from the camera driver; "
         f"complete log saved on the Orin at {saved}",
     ]
+    if driver_faults:
+        out.append("camera driver errors:")
+        out += [f"  {ln}" for ln in driver_faults[:4]]
     if sensors:
         out.append(f"sensors expected to publish: {', '.join(map(str, sensors))}")
     if faults:
@@ -1111,7 +1467,9 @@ def wait_ready(
     earlier attempt. A producer that is not up in time raises, with the sensors that were not.
     """
     direct_sensors = direct_sensors or []
-    deadline = time.monotonic() + timeout
+    start = time.monotonic()
+    deadline = start + timeout
+    bar = Progress("waiting for cameras", timeout)
     log = ""
     while time.monotonic() < deadline:
         if (
@@ -1126,8 +1484,13 @@ def wait_ready(
         )
         ready, problems = readiness(log, mode, sensors, direct_sensors)
         if not problems:
+            bar.finish()
             return ready
+        bar.label = f"waiting for cameras ({len(ready)}/{len(sensors)} up)"
+        bar.update(int(time.monotonic() - start))
         time.sleep(2)
+    if sys.stdout.isatty():
+        print()
     print(failure_report(since, sensors), file=sys.stderr)
     # Judged on the log the last check saw, so the error names what that check found missing.
     _, problems = readiness(log, mode, sensors, direct_sensors)
@@ -1145,7 +1508,37 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "target", help=f"host or user@host of the Orin (a bare host uses ${USER_ENV})"
     )
-    ap.add_argument("--config", required=True, help="producer options (JSON)")
+    ap.add_argument(
+        "--config",
+        help="producer options (JSON); required unless only setting up or checking",
+    )
+    ap.add_argument(
+        "--install-prereqs",
+        action="store_true",
+        help="install the Orin's build prerequisites (asks for its sudo password), then stop without deploying",
+    )
+    ap.add_argument(
+        "--logs",
+        action="store_true",
+        help="show the producer service's status and recent journal, then stop",
+    )
+    ap.add_argument(
+        "--rescan-cameras",
+        action="store_true",
+        help='with "cameras": "auto", scan all 8 inputs instead of trying the cameras found last time first',
+    )
+    ap.add_argument(
+        "--scan-cameras",
+        action="store_true",
+        help="try each camera link alone and report which has a camera (stops the producer service), then stop "
+        "without deploying",
+    )
+    ap.add_argument(
+        "--check-camera",
+        action="store_true",
+        help="stream both cameras for a few seconds and report, then stop without deploying; "
+        "with --install-prereqs the prerequisites go first",
+    )
     ap.add_argument(
         "--jobs", type=int, default=2, help="parallel compile jobs on the Orin"
     )
@@ -1180,6 +1573,17 @@ def parser() -> argparse.ArgumentParser:
         help="extra CMake argument for the producer build, repeatable (for options only some source trees have)",
     )
     ap.add_argument("--no-activate", action="store_true", help="build and package only")
+    ap.add_argument(
+        "--no-setup",
+        action="store_true",
+        help="fail when the Orin lacks a prerequisite instead of installing it",
+    )
+    ap.add_argument(
+        "--sipl-api",
+        metavar="FILE",
+        help="Jetson_SIPL_API_R<release>_aarch64.tbz2 to unpack on the Orin when its SIPL headers are missing "
+        f"(default: the newest in {SDKM_DOWNLOADS})",
+    )
     return ap
 
 
@@ -1209,6 +1613,7 @@ def remote_parser() -> argparse.ArgumentParser:
     act.add_argument("--direct-sensors", default="")
     act.add_argument("--mode", choices=MODES, default="direct")
     act.add_argument("--replace-unmanaged", action="store_true")
+    act.add_argument("--platform-file", default="")
     return ap
 
 

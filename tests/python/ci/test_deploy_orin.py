@@ -452,6 +452,14 @@ class FakeOrin:
         self.target.capture.side_effect = self.capture
         self.target.put.side_effect = self.put
         self.target.ssh.side_effect = self.ssh
+        self.target.status.side_effect = self.status
+        self.target.password = None
+        self.target.output.side_effect = self.output
+        self.detected = None
+        self.status_calls = []
+        self.preflight_codes = []
+        self.rig_codes = []
+        self.setup_codes = []
 
     def capture(self, cmd):
         if "pwd" in cmd:
@@ -470,12 +478,31 @@ class FakeOrin:
                 )
             self.deltas.append(sorted(n for n in names if not n.startswith(".deploy/")))
 
-    def ssh(self, cmd):
+    def status(self, cmd, tty=False, timeout=0, stdin=None):
+        self.events.append(("status", cmd))
+        self.status_calls.append((cmd, tty, stdin))
+        if " preflight " in cmd:
+            queue = self.preflight_codes
+        elif "--no-apt" in cmd:  # the read-only rig check
+            queue = self.rig_codes
+        elif "orin_setup.sh" in cmd:
+            queue = self.setup_codes
+        else:
+            queue = []
+        return queue.pop(0) if queue else 0
+
+    def output(self, cmd, stdin=None):
+        self.events.append(("output", cmd))
+        if self.detected is None:
+            return 1, ""
+        return 0, "noise\n" + json.dumps(self.detected) + "\n"
+
+    def ssh(self, cmd, tty=False):
         self.events.append(("ssh", cmd))
         if " apply " in cmd:
             self.manifest = self.pending
 
-    def run(self, root, *extra):
+    def run(self, root, *extra, config=None):
         args = deploy_orin.parser().parse_args(
             [
                 "u@orin",
@@ -485,7 +512,7 @@ class FakeOrin:
                 *extra,
             ]
         )
-        config = {
+        config = config or {
             "mode": "livekit",
             "livekit_url": "wss://x",
             "token_file": "/t",
@@ -513,13 +540,235 @@ class DeployOrderTests(TempDirTestCase):
         for kind, value in orin.events:
             if kind == "put" and value.endswith("/deploy_orin.py"):
                 kinds.append("helper")
-            elif kind == "ssh" and " preflight " in value:
+            elif kind == "status" and " preflight " in value:
                 kinds.append("preflight")
             elif kind == "put" and value.endswith("delta.tar.gz"):
                 kinds.append("delta")
         self.assertEqual(kinds, ["helper", "preflight", "delta"])
         apply_cmd = next(v for k, v in orin.events if k == "ssh" and " apply " in v)
         self.assertIn("--fresh", apply_cmd)
+
+    def test_setup_and_camera_check_scripts_are_uploaded_before_preflight(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.run(root)
+        wanted = [f"{CACHE_DIR}/tools/{rel}" for _, rel in deploy_orin.tool_files()]
+        uploads = [
+            i for i, (k, v) in enumerate(orin.events) if k == "put" and v in wanted
+        ]
+        self.assertEqual(len(uploads), len(wanted))
+        preflight = next(
+            i
+            for i, (k, v) in enumerate(orin.events)
+            if k == "status" and " preflight " in v
+        )
+        self.assertTrue(all(i < preflight for i in uploads))
+        names = {rel for _, rel in deploy_orin.tool_files()}
+        self.assertTrue(
+            {
+                "scripts/orin_setup.sh",
+                "scripts/setup.sh",
+                "scripts/validate.sh",
+                "scripts/verify.sh",
+            }
+            <= names
+        )
+
+    def tools_run(self, *flags):
+        args = deploy_orin.parser().parse_args(["u@orin", *flags])
+        orin = FakeOrin()
+        deploy_orin.run_tools(args, orin.target)
+        return orin
+
+    def tools_command(self, *flags):
+        orin = self.tools_run(*flags)
+        (call,) = [c for c in orin.status_calls if "orin_setup.sh" in c[0]]
+        return orin, call
+
+    def test_install_prereqs_runs_only_the_prerequisite_half_in_a_terminal(self):
+        orin, call = self.tools_command("--install-prereqs")
+        self.assertTrue(call[0].endswith("orin_setup.sh --prereqs-only"))
+        self.assertTrue(call[1])
+        self.assertFalse(any("deploy_orin.py" in v for _, v in orin.events))
+
+    def test_check_camera_runs_only_the_camera_half(self):
+        _, call = self.tools_command("--check-camera")
+        self.assertTrue(call[0].endswith("orin_setup.sh --check-only"))
+
+    def test_both_flags_run_the_whole_script(self):
+        _, call = self.tools_command("--install-prereqs", "--check-camera")
+        self.assertTrue(call[0].endswith("orin_setup.sh"))
+
+    def test_scan_cameras_runs_the_camera_half_with_the_scan(self):
+        _, call = self.tools_command("--scan-cameras")
+        self.assertTrue(call[0].endswith("orin_setup.sh --check-only --scan"))
+
+    def test_install_and_scan_run_everything_with_the_scan(self):
+        _, call = self.tools_command("--install-prereqs", "--scan-cameras")
+        self.assertTrue(call[0].endswith("orin_setup.sh --scan"))
+
+    def test_tools_modes_upload_the_scripts_first_and_need_no_config(self):
+        events = self.tools_run("--check-camera").events
+        self.assertEqual(events[-1][0], "status")
+        self.assertTrue(all(k == "put" for k, _ in events[:-1]))
+
+    def test_a_failing_setup_script_is_a_deploy_error(self):
+        args = deploy_orin.parser().parse_args(["u@orin", "--scan-cameras"])
+        orin = FakeOrin()
+        orin.setup_codes = [1]
+        with self.assertRaisesRegex(DeployError, "exit 1"):
+            deploy_orin.run_tools(args, orin.target)
+
+    def test_tools_run_answers_sudo_from_the_environment_password(self):
+        args = deploy_orin.parser().parse_args(["u@orin", "--scan-cameras"])
+        orin = FakeOrin()
+        orin.target.password = "s3cret"
+        deploy_orin.run_tools(args, orin.target)
+        (call,) = [c for c in orin.status_calls if "orin_setup.sh" in c[0]]
+        self.assertTrue(call[0].endswith("--sudo-password-stdin"))
+        self.assertEqual(call[2], "s3cret\n")
+        self.assertNotIn("s3cret", call[0])
+
+    def test_logs_only_reads_the_service_and_changes_nothing(self):
+        orin = self.tools_run("--logs")
+        commands = [c.args[0] for c in orin.target.sudo.call_args_list]
+        self.assertEqual(len(commands), 2)
+        self.assertIn(deploy_orin.SERVICE, commands[0])
+        self.assertIn("journalctl", commands[1])
+        self.assertEqual(orin.events, [])
+
+    def test_deploying_without_a_config_is_an_error(self):
+        args = deploy_orin.parser().parse_args(["u@orin"])
+        with self.assertRaisesRegex(DeployError, "--config is required"):
+            deploy_orin.deploy(args)
+
+    def setup_events(self, orin):
+        return [
+            v
+            for k, v in orin.events
+            if k == "status" and "orin_setup.sh" in v and "--no-apt" not in v
+        ]
+
+    def test_passing_preflight_installs_nothing(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.run(root)
+        self.assertEqual(self.setup_events(orin), [])
+
+    def test_failing_preflight_installs_prerequisites_then_rechecks(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1, 0]
+        with mock.patch.object(deploy_orin, "find_sipl_package", return_value=None):
+            orin.run(root)
+        (setup,) = self.setup_events(orin)
+        self.assertTrue(setup.endswith("orin_setup.sh --prereqs-only"))
+        kinds = [
+            "preflight" if " preflight " in v else "setup"
+            for k, v in orin.events
+            if k == "status"
+            and (" preflight " in v or ("orin_setup.sh" in v and "--no-apt" not in v))
+        ]
+        self.assertEqual(kinds, ["preflight", "setup", "preflight"])
+
+    def test_missing_drivers_or_overlay_alone_trigger_the_install(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.rig_codes = [1, 0]
+        with mock.patch.object(deploy_orin, "find_sipl_package", return_value=None):
+            orin.run(root)
+        self.assertEqual(len(self.setup_events(orin)), 1)
+
+    def test_install_without_a_password_runs_in_a_terminal(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1, 0]
+        with mock.patch.object(deploy_orin, "find_sipl_package", return_value=None):
+            orin.run(root)
+        (call,) = [
+            c
+            for c in orin.status_calls
+            if "orin_setup.sh" in c[0] and "--no-apt" not in c[0]
+        ]
+        self.assertTrue(call[1])
+        self.assertIsNone(call[2])
+        self.assertNotIn("--sudo-password-stdin", call[0])
+
+    def test_install_with_a_password_sends_it_on_stdin_and_never_in_the_command(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.target.password = "s3cret"
+        orin.preflight_codes = [1, 0]
+        with mock.patch.object(deploy_orin, "find_sipl_package", return_value=None):
+            orin.run(root)
+        (call,) = [
+            c
+            for c in orin.status_calls
+            if "orin_setup.sh" in c[0] and "--no-apt" not in c[0]
+        ]
+        self.assertTrue(call[0].endswith("--sudo-password-stdin"))
+        self.assertEqual(call[2], "s3cret\n")
+        self.assertFalse(call[1])
+        self.assertTrue(all("s3cret" not in c[0] for c in orin.status_calls))
+
+    def test_sipl_archive_is_uploaded_and_named_to_the_setup_script(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        archive = self.tmp / "Jetson_SIPL_API_R39.2.1_aarch64.tbz2"
+        archive.write_bytes(b"x")
+        orin = FakeOrin()
+        orin.preflight_codes = [1, 0]
+        with mock.patch.object(deploy_orin, "find_sipl_package", return_value=archive):
+            orin.run(root)
+        self.assertIn(("put", f"{CACHE_DIR}/{archive.name}"), orin.events)
+        (setup,) = self.setup_events(orin)
+        self.assertIn(f"--sipl-api {CACHE_DIR}/{archive.name}", setup)
+
+    def test_no_setup_refuses_instead_of_installing(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1]
+        with self.assertRaisesRegex(DeployError, "fails the preflight"):
+            orin.run(root, "--no-setup")
+        self.assertEqual(self.setup_events(orin), [])
+
+    def test_reboot_request_waits_then_reruns_setup(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1, 0]
+        orin.setup_codes = [deploy_orin.NEEDS_REBOOT, 0]
+        with (
+            mock.patch.object(deploy_orin, "find_sipl_package", return_value=None),
+            mock.patch.object(deploy_orin, "wait_for_reboot") as wait,
+        ):
+            orin.run(root)
+        wait.assert_called_once_with(orin.target)
+        self.assertEqual(len(self.setup_events(orin)), 2)
+
+    def test_dropped_ssh_during_setup_is_treated_as_a_reboot(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1, 0]
+        orin.setup_codes = [255, 0]
+        with (
+            mock.patch.object(deploy_orin, "find_sipl_package", return_value=None),
+            mock.patch.object(deploy_orin, "wait_for_reboot") as wait,
+        ):
+            orin.run(root)
+        wait.assert_called_once()
+
+    def test_setup_failure_stops_the_deploy(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.preflight_codes = [1]
+        orin.setup_codes = [1]
+        with (
+            mock.patch.object(deploy_orin, "find_sipl_package", return_value=None),
+            self.assertRaisesRegex(DeployError, "prerequisite setup did not finish"),
+        ):
+            orin.run(root)
+        self.assertFalse(
+            any(k == "put" and v.endswith("delta.tar.gz") for k, v in orin.events)
+        )
 
     def test_unchanged_second_run_sends_nothing_and_one_change_sends_only_it(self):
         root, _ = git_repo(
@@ -996,6 +1245,7 @@ class ActivateTests(TempDirTestCase):
         archive,
         timeout=60,
         replace_unmanaged=False,
+        platform_file="",
         sensors="",
         mode="livekit",
         direct_sensors="",
@@ -1012,8 +1262,16 @@ class ActivateTests(TempDirTestCase):
                 mode=mode,
                 direct_sensors=direct_sensors,
                 replace_unmanaged=replace_unmanaged,
+                platform_file=platform_file,
             )
         )
+
+    def test_platform_file_is_installed_under_the_prefix(self):
+        platform = self.tmp / "platform.json"
+        platform.write_text("{}")
+        self.journal = "Joined LiveKit room x\nstats livekit 12 published\n"
+        self.activate(self.make_archive(), platform_file=str(platform))
+        self.assertEqual((self.prefix / deploy_orin.PLATFORM_FILE).read_text(), "{}")
 
     def test_checksum_mismatch_aborts_before_stop(self):
         with self.assertRaisesRegex(DeployError, "checksum mismatch"):
@@ -1351,7 +1609,7 @@ class BuildPathTests(unittest.TestCase):
                 self.seen = seen
 
     def test_preflight_requires_uv_using_the_build_path(self):
-        with self.assertRaisesRegex(DeployError, "uv is not installed.*astral.sh"):
+        with self.assertRaisesRegex(DeployError, "uv is not installed.*orin_setup.sh"):
             self.preflight(missing=("uv",))
         uv_call = next(k for c, k in self.seen if c == ["which", "uv"])
         self.assertEqual(
@@ -1551,6 +1809,12 @@ class StageProducerTests(TempDirTestCase):
         cmd, kwargs = runs[-1]
         self.assertEqual(cmd, ["ldd", str(self.stage / deploy_orin.BIN_REL)])
         self.assertEqual(kwargs["env"]["LD_LIBRARY_PATH"], str(out))
+
+    def test_release_carries_the_setup_and_camera_check_scripts(self):
+        self.stage_it()
+        scripts = self.stage / "plugins/sensing_camera/scripts"
+        for name in deploy_orin.TOOL_SCRIPTS:
+            self.assertTrue((scripts / name).is_file(), name)
 
     def test_ldd_not_found_for_a_livekit_library_is_not_copied(self):
         self.build_ldd = "\tliblivekit_ffi.so => not found"
@@ -2078,8 +2342,53 @@ class FailureReportTests(TempDirTestCase):
         out = self.report(log)
         self.assertNotIn("driver info", out)
         self.assertNotIn("driver debug", out)
-        self.assertIn("4 lines since the start, 2 of them driver INFO/DEBUG", out)
+        self.assertIn("4 lines since the start, 2 of them from the camera driver", out)
         self.assertIn("  real line one", out)
+
+    def test_a_link_that_did_not_lock_is_named_in_plain_words(self):
+        log = "\n".join(
+            [
+                'x [Deser_9]    Sequence: "enable_link_C" (operation 4/7)',
+                'x [Deser_9]    Sequence: "enable_link_C" (operation 4/7)',
+            ]
+        )
+        out = self.report(log)
+        self.assertEqual(out.count("link 2 (COAX2 on CN1) did not lock"), 1)
+
+    def test_driver_chatter_at_every_severity_is_hidden(self):
+        log = "\n".join(
+            [
+                "[TID=1] Module_id 30 Severity 2 : [PIPELINE (0,0)] CNvFusaRawBlock.cpp:2143: DBG GetOutputBuffer",
+                "[TID=1] Module_id 30 Severity 3 : [CameraHAL] WARNING: No module power driver found for GMSL transport 'Deser_9'",
+                "producer line",
+            ]
+        )
+        out = self.report(log)
+        self.assertNotIn("GetOutputBuffer", out)
+        self.assertIn("  producer line", out)
+
+    def test_only_real_driver_errors_are_listed_and_deduplicated(self):
+        log = "\n".join(
+            [
+                "[TID=1] Module_id 30 Severity 2 : [CameraHAL] ERROR: CameraHalPortal.cpp:280:  driverCatalog: path='/x'",
+                "[TID=1] Module_id 30 Severity 3 : dlsym failed for 'uddf_discover_drivers'",
+                "[TID=1] Module_id 30 Severity 2 : Failed to initialize camera module: 0",
+                "[TID=2] Module_id 30 Severity 2 : Failed to initialize camera module: 0",
+                "[TID=1] Module_id 30 Severity 2 : Master initialization failed. status: 10",
+            ]
+        )
+        out = self.report(log)
+        errors = out.split("camera driver errors:")[1].split("first lines")[0]
+        self.assertEqual(errors.count("Failed to initialize camera module"), 1)
+        self.assertIn("Master initialization failed. status: 10", errors)
+        self.assertNotIn("driverCatalog", errors)
+        self.assertNotIn("uddf_discover", errors)
+
+    def test_no_driver_error_section_without_driver_errors(self):
+        self.assertNotIn("camera driver errors", self.report("plain"))
+
+    def test_no_link_failure_adds_no_link_line(self):
+        self.assertNotIn("did not lock", self.report("real line"))
 
     def test_service_state_and_sensors_listed(self):
         out = self.report("x")
@@ -2156,3 +2465,198 @@ class FailureReportTests(TempDirTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SiplPackageTests(TempDirTestCase):
+    def test_explicit_file_wins_and_a_missing_one_is_an_error(self):
+        archive = self.tmp / "a.tbz2"
+        archive.write_bytes(b"x")
+        self.assertEqual(deploy_orin.find_sipl_package(str(archive)), archive)
+        with self.assertRaisesRegex(DeployError, "no such file"):
+            deploy_orin.find_sipl_package(str(self.tmp / "missing.tbz2"))
+
+    def test_default_is_the_newest_sdk_manager_download(self):
+        old = self.tmp / "Jetson_SIPL_API_R39.2.0_aarch64.tbz2"
+        new = self.tmp / "Jetson_SIPL_API_R39.2.1_aarch64.tbz2"
+        for path, when in ((old, 100), (new, 200)):
+            path.write_bytes(b"x")
+            os.utime(path, (when, when))
+        with mock.patch.object(deploy_orin, "SDKM_DOWNLOADS", str(self.tmp)):
+            self.assertEqual(deploy_orin.find_sipl_package(None), new)
+
+    def test_no_download_means_none(self):
+        with mock.patch.object(deploy_orin, "SDKM_DOWNLOADS", str(self.tmp)):
+            self.assertIsNone(deploy_orin.find_sipl_package(None))
+
+
+class WaitForRebootTests(unittest.TestCase):
+    def wait(self, codes):
+        target = mock.Mock()
+        target.status.side_effect = codes
+        clock = iter(range(0, 100000, 5))
+        with (
+            mock.patch.object(deploy_orin.time, "sleep"),
+            mock.patch.object(deploy_orin.time, "monotonic", lambda: next(clock)),
+        ):
+            deploy_orin.wait_for_reboot(target)
+
+    def test_returns_once_the_orin_has_gone_down_and_come_back(self):
+        self.wait([0, 255, 255, 0])
+
+    def test_an_orin_that_never_goes_down_is_an_error(self):
+        with self.assertRaisesRegex(DeployError, "did not reboot"):
+            self.wait([0] * 1000)
+
+    def test_an_orin_that_never_returns_is_an_error(self):
+        with self.assertRaisesRegex(DeployError, "did not answer ssh"):
+            self.wait([255] * 1000)
+
+
+FOUND_ONE = {
+    "config": f"{CACHE_DIR}/cameras/platform.json",
+    "masks": "0x0100 0x0000",
+    "count": 1,
+    "used": 1,
+    "positions": ["CN2 COAX6 (deserializer AB, link 2)"],
+}
+TWO_STREAMS = [
+    "--add-stream=sensor=0,name=left,direct=10.0.0.1:5600",
+    "--add-stream=sensor=1,name=right,direct=10.0.0.1:5601",
+]
+
+
+class AutoCamerasConfigTests(TempDirTestCase):
+    def load(self, config):
+        path = self.tmp / "c.json"
+        path.write_text(json.dumps(config))
+        return deploy_orin.load_config(path)
+
+    def test_auto_is_accepted(self):
+        self.assertEqual(
+            self.load({"cameras": "auto", "args": TWO_STREAMS})["cameras"], "auto"
+        )
+
+    def test_only_auto_is_a_valid_value(self):
+        with self.assertRaisesRegex(DeployError, '"cameras" must be "auto"'):
+            self.load({"cameras": "manual", "args": TWO_STREAMS})
+
+    def test_auto_forbids_the_arguments_the_deploy_supplies(self):
+        for arg in (
+            "--link-masks=0x0000 0x1100",
+            "--platform-config=/x",
+            "--config-name=Y",
+        ):
+            with self.subTest(arg), self.assertRaisesRegex(DeployError, "supplies"):
+                self.load({"cameras": "auto", "args": [*TWO_STREAMS, arg]})
+
+
+class ApplyDetectedTests(unittest.TestCase):
+    def test_streams_for_missing_sensors_are_dropped(self):
+        config = deploy_orin.apply_detected({"args": TWO_STREAMS}, FOUND_ONE)
+        self.assertEqual(deploy_orin.configured_sensors(config), [0])
+
+    def test_platform_arguments_are_appended(self):
+        config = deploy_orin.apply_detected({"args": TWO_STREAMS}, FOUND_ONE)
+        self.assertIn(
+            f"--platform-config={deploy_orin.PREFIX}/camera-platform.json",
+            config["args"],
+        )
+        self.assertIn("--config-name=SHW5G_2", config["args"])
+        self.assertIn("--link-masks=0x0100 0x0000", config["args"])
+
+    def test_other_keys_and_stream_order_are_kept(self):
+        config = deploy_orin.apply_detected(
+            {"mode": "direct", "env": {"A": "b"}, "args": ["--fps=30", TWO_STREAMS[0]]},
+            {**FOUND_ONE, "used": 2},
+        )
+        self.assertEqual(config["env"], {"A": "b"})
+        self.assertEqual(config["args"][:2], ["--fps=30", TWO_STREAMS[0]])
+
+    def test_two_cameras_keep_both_streams(self):
+        found = {**FOUND_ONE, "used": 2, "masks": "0x0000 0x1100"}
+        config = deploy_orin.apply_detected({"args": TWO_STREAMS}, found)
+        self.assertEqual(deploy_orin.configured_sensors(config), [0, 1])
+
+    def test_no_stream_left_is_an_error(self):
+        with self.assertRaisesRegex(DeployError, "do not have"):
+            deploy_orin.apply_detected({"args": [TWO_STREAMS[1]]}, FOUND_ONE)
+
+
+class DetectCamerasTests(unittest.TestCase):
+    def target(self, code, text):
+        target = mock.Mock()
+        target.output.return_value = (code, text)
+        return target
+
+    def test_returns_the_json_printed_last(self):
+        target = self.target(0, "junk\n" + json.dumps(FOUND_ONE) + "\n")
+        self.assertEqual(deploy_orin.detect_cameras(target, CACHE_DIR), FOUND_ONE)
+
+    def test_stops_the_service_before_probing(self):
+        target = self.target(0, json.dumps(FOUND_ONE))
+        deploy_orin.detect_cameras(target, CACHE_DIR)
+        self.assertIn(deploy_orin.SERVICE, target.sudo.call_args.args[0])
+        self.assertIn("--detect", target.output.call_args.args[0])
+
+    def test_remembered_cameras_are_used_unless_a_rescan_is_asked_for(self):
+        target = self.target(0, json.dumps(FOUND_ONE))
+        deploy_orin.detect_cameras(target, CACHE_DIR)
+        self.assertNotIn("--rescan", target.output.call_args.args[0])
+        deploy_orin.detect_cameras(target, CACHE_DIR, rescan=True)
+        self.assertTrue(target.output.call_args.args[0].endswith("--rescan"))
+
+    def test_no_camera_is_an_error_that_points_at_the_scan(self):
+        with self.assertRaisesRegex(DeployError, "--scan-cameras"):
+            deploy_orin.detect_cameras(self.target(1, ""), CACHE_DIR)
+
+    def test_unusable_output_is_an_error(self):
+        with self.assertRaisesRegex(DeployError, "no usable result"):
+            deploy_orin.detect_cameras(self.target(0, "not json"), CACHE_DIR)
+
+
+class AutoCamerasDeployTests(TempDirTestCase):
+    def deploy(self, detected=FOUND_ONE):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        orin.detected = detected
+        written = {}
+        original = deploy_orin.render_unit
+
+        def spy(config, *rest):
+            written["args"] = config["args"]
+            return original(config, *rest)
+
+        with mock.patch.object(deploy_orin, "render_unit", spy):
+            orin.run(
+                root, config={"mode": "direct", "cameras": "auto", "args": TWO_STREAMS}
+            )
+        return orin, written
+
+    def test_the_unit_uses_the_detected_cameras(self):
+        _, written = self.deploy()
+        self.assertIn("--link-masks=0x0100 0x0000", written["args"])
+        self.assertEqual(deploy_orin.configured_sensors({"args": written["args"]}), [0])
+
+    def test_detection_runs_after_the_prerequisites_and_before_the_upload(self):
+        orin, _ = self.deploy()
+        kinds = [
+            "detect"
+            if k == "output"
+            else "upload"
+            if v.endswith("delta.tar.gz")
+            else None
+            for k, v in orin.events
+            if k == "output" or (k == "put" and v.endswith("delta.tar.gz"))
+        ]
+        self.assertEqual(kinds, ["detect", "upload"])
+
+    def test_no_detected_cameras_stops_before_anything_is_uploaded(self):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        orin = FakeOrin()
+        with self.assertRaises(DeployError):
+            orin.run(
+                root, config={"mode": "direct", "cameras": "auto", "args": TWO_STREAMS}
+            )
+        self.assertFalse(
+            any(k == "put" and v.endswith("delta.tar.gz") for k, v in orin.events)
+        )
