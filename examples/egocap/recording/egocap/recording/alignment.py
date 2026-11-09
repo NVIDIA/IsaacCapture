@@ -59,32 +59,21 @@ class InsufficientSamplesError(AlignmentError):
     """Fewer than two samples with strictly increasing times remain, so nothing can be interpolated."""
 
 
-def qualified_sources(
-    timing: Mapping[str, object] | None, cameras: Sequence[str], tracking: Sequence[str]
-) -> dict[str, bool]:
+def qualified_sources(timing: Mapping[str, object] | None, sources: Sequence[str]) -> dict[str, bool]:
     """Which sources' recorded times are qualified event times, from an episode's ``timing`` attribute.
 
-    A camera is qualified only when its entry in ``clock_mapping.streams`` says its time is the sensor's capture
-    event (``time_meaning == "sensor_capture"``); a clock mapping alone says which clock a time is on, not what it
-    measures, and a ``frame_ready`` time is not a capture event. A tracking source is qualified only when
-    ``tracking_semantics.physical_alignment`` says a measurement time is available; it says ``unavailable: ...``
-    while tracking carries the host's poll time. Anything the attribute does not vouch for is False. A caller that
+    ``timing["event_time"][source]["qualified"]`` is the recorded statement, per source, of whether its saved time
+    is a qualified event time (a sensor's capture event, or a device measurement time). Only a literal True counts;
+    a source the attribute does not list, an entry without it, or no attribute at all is False. A clock mapping
+    says which clock a time is on, not what it measures, so it is never taken as qualification. A caller that
     aligns on ``receive_time - latency`` instead states that choice itself; this says nothing about it.
     """
-    timing = timing or {}
-    # Cameras: a stream whose time means the sensor's capture event (a non-list vouches for nothing).
-    mapping = timing.get("clock_mapping")
-    streams = mapping.get("streams") if isinstance(mapping, Mapping) else None
-    mapped = (
-        {s.get("name") for s in streams if isinstance(s, Mapping) and s.get("time_meaning") == "sensor_capture"}
-        if isinstance(streams, (list, tuple))
-        else set()
-    )
-    # Tracking: qualified only if the recording says a measurement time exists.
-    semantics = timing.get("tracking_semantics")
-    alignment = semantics.get("physical_alignment") if isinstance(semantics, Mapping) else None
-    tracking_ok = isinstance(alignment, str) and alignment.startswith("available")
-    return {**{name: name in mapped for name in cameras}, **{name: tracking_ok for name in tracking}}
+    event_time = (timing or {}).get("event_time")
+    entries = event_time if isinstance(event_time, Mapping) else {}
+    # Fail closed: anything but an explicit True is not qualified.
+    return {
+        name: isinstance(entries.get(name), Mapping) and entries[name].get("qualified") is True for name in sources
+    }
 
 
 def _complete(entry: Mapping[str, object], rows: int | None) -> bool:

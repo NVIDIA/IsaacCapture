@@ -33,7 +33,7 @@ from capture_server import protocol as p
 from recording_service import PixelFormat, VideoSample
 
 from .livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
-from .recording_adapter import RecordingIngress
+from .recording_adapter import MANUS_GLOVE_SOURCE, PICO_CONTROLLER_SOURCE, RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
@@ -68,6 +68,15 @@ _TRACKING_SEMANTICS: dict[str, str] = {
     "controllers": "device value is the pose-evaluation time (a predicted XrTime), not an acquisition time",
     "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
     "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
+}
+
+
+# What each tracking source's saved time is, and whether it is a qualified event time. Neither is: both are host
+# times, not a measurement of the device. A source becomes qualified only when its producer carries a measurement
+# time from acquisition, and its entry here changes with that evidence, not before.
+_TRACKING_EVENT_TIME: dict[str, dict[str, Any]] = {
+    PICO_CONTROLLER_SOURCE: {"meaning": "pose_evaluation_time", "qualified": False},
+    MANUS_GLOVE_SOURCE: {"meaning": "host_push_time", "qualified": False},
 }
 
 
@@ -508,6 +517,18 @@ class LiveKitRecordingSource:
                 "discontinuity": clock_sync.discontinuity,
                 "exchanges_rejected": clock_sync.rejected,
                 "mapping_current_at_stop": clock_sync.mapping() is not None,
+            },
+            # Per recorded source: what its saved time means and whether it is a qualified event time. A camera is
+            # qualified only when its time is the sensor's capture event; a frame-ready time is not.
+            "event_time": {
+                **{
+                    self._source_names[stream_id]: {
+                        "meaning": _RECORDABLE_BASES[s.timestamp_basis],
+                        "qualified": _RECORDABLE_BASES[s.timestamp_basis] == "sensor_capture",
+                    }
+                    for stream_id, s in self._streams.items()
+                },
+                **_TRACKING_EVENT_TIME,
             },
             # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
             "tracking_time": "host_poll",

@@ -27,11 +27,12 @@ import numpy as np
 import yaml
 import zarr
 
-from .alignment import AlignedEpisode, align_episode, check_continuity, source_rules
+from .alignment import AlignedEpisode, align_episode, check_continuity, qualified_sources, source_rules
 
 __all__ = [
     "ALIGNED_SESSION_SIDECARS",
     "AlignedWriteError",
+    "align_kept_episode",
     "publish_aligned_episode",
     "validate_aligned_episode",
     "write_aligned_episode",
@@ -288,3 +289,32 @@ def publish_aligned_episode(
     shutil.rmtree(replaced, ignore_errors=True)
     shutil.rmtree(staging, ignore_errors=True)
     return aligned
+
+
+def align_kept_episode(
+    raw_session: Path,
+    episode_index: int,
+    index_source: str,
+    continuity: Mapping[str, Mapping[str, object]] | None,
+    *,
+    aligned_session: Path | None = None,
+    downsample: int = 1,
+) -> AlignedEpisode:
+    """Align one kept episode from what the recorder stored about it, and publish the result.
+
+    ``continuity`` is the episode manifest's evidence. Which sources have a qualified event time is read from the
+    episode's own ``timing`` attribute, so an episode recorded without that evidence is refused, never assumed
+    qualified. The aligned session defaults to ``<raw session name>_aligned`` beside the raw one.
+    """
+    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
+    declared = [e["name"] for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
+    timing = dict(zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r").attrs).get("timing")
+    return publish_aligned_episode(
+        raw_session,
+        aligned_session or raw_session.with_name(f"{raw_session.name}_aligned"),
+        episode_index,
+        index_source,
+        downsample=downsample,
+        qualified=qualified_sources(timing, declared),
+        continuity=continuity,
+    )
