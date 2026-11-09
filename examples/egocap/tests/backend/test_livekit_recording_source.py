@@ -479,10 +479,32 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
             "exchanges_rejected": 4,
             "mapping_current_at_stop": False,
         },
+        "event_time": {
+            "cam16": {"meaning": "sensor_capture", "qualified": True},
+            "cam17": {"meaning": "frame_ready", "qualified": False},
+            "pico_controller": {"meaning": "pose_evaluation_time", "qualified": False},
+            "manus_glove": {"meaning": "host_push_time", "qualified": False},
+        },
         "tracking_time": "host_poll",
         "tracking_semantics": lrec._TRACKING_SEMANTICS,
     }
     assert json.loads(json.dumps(evidence)) == evidence
+
+
+async def test_event_time_is_keyed_by_recorded_source_and_qualifies_only_sensor_capture(monkeypatch):
+    streams = [livekit_stream(16), livekit_stream(17, basis=MONO)]
+    source, receiver = await prepared_source(streams)
+    receiver.clock_sync = clock_sync_with(history_of(1))
+    event_time = source.timing_evidence()["event_time"]
+    # Recorded sources are named after their streams; the key is that source name, never a stream id.
+    assert {k: v["qualified"] for k, v in event_time.items()} == {
+        "cam16": True,
+        "cam17": False,
+        "pico_controller": False,
+        "manus_glove": False,
+    }
+    assert event_time["cam16"]["meaning"] == "sensor_capture" and event_time["cam17"]["meaning"] == "frame_ready"
+    assert 16 not in event_time and 17 not in event_time
 
 
 async def test_timing_evidence_records_the_configured_uncertainty_budget(monkeypatch):

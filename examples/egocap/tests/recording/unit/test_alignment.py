@@ -302,67 +302,67 @@ def test_epoch_labels_for_an_unknown_source_are_refused():
         simple(epochs={"ghost": np.zeros(3)})
 
 
-def stream(name, meaning="sensor_capture"):
-    return {"name": name, "timestamp_basis": "PUBLISHER_MONOTONIC_US", "time_meaning": meaning}
+def event_time(**entries):
+    """A timing attribute shaped like the backend's, with per-source event-time entries."""
+    return {"event_time": entries}
 
 
-def timing(streams, physical="available: measurement time per sample"):
-    return {
-        "clock_mapping": {"streams": streams},
-        "tracking_semantics": {"physical_alignment": physical},
+# What the backend records today: a sensor-capture camera qualified, a frame-ready camera and both tracking
+# sources not.
+REALISTIC = event_time(
+    cam_capture={"meaning": "sensor_capture", "qualified": True},
+    cam_ready={"meaning": "frame_ready", "qualified": False},
+    pico_controller={"meaning": "pose_evaluation_time", "qualified": False},
+    manus_glove={"meaning": "host_push_time", "qualified": False},
+)
+
+
+def test_only_sources_recorded_as_qualified_are_qualified():
+    sources = ["cam_capture", "cam_ready", "pico_controller", "manus_glove", "unlisted"]
+    assert qualified_sources(REALISTIC, sources) == {
+        "cam_capture": True,
+        "cam_ready": False,
+        "pico_controller": False,
+        "manus_glove": False,
+        "unlisted": False,
     }
 
 
-def test_camera_is_qualified_only_for_a_sensor_capture_stream():
-    t = timing([stream("cam1"), stream("cam2", "frame_ready")])
-    assert qualified_sources(t, ["cam1", "cam2", "cam3"], []) == {"cam1": True, "cam2": False, "cam3": False}
+def test_the_result_has_exactly_the_requested_sources():
+    assert qualified_sources(REALISTIC, []) == {}
+    assert list(qualified_sources(REALISTIC, ["manus_glove", "cam_capture"])) == ["manus_glove", "cam_capture"]
 
 
-@pytest.mark.parametrize(
-    "entry",
-    [
-        {"name": "cam", "timestamp_basis": "PUBLISHER_MONOTONIC_US"},
-        {"name": "cam"},
-        {"name": "cam", "time_meaning": None},
-        {"name": "other"},
-        "cam",
-    ],
-)
-def test_camera_with_missing_or_unqualified_evidence_is_false(entry):
-    assert qualified_sources(timing([entry]), ["cam"], []) == {"cam": False}
+@pytest.mark.parametrize("qualified", [False, None, "true", "True", 1, 1.0, [True], {}])
+def test_a_qualified_value_that_is_not_literally_true_is_false(qualified):
+    assert qualified_sources(event_time(cam={"qualified": qualified}), ["cam"]) == {"cam": False}
 
 
-def test_tracking_is_qualified_only_when_physical_alignment_is_available():
-    sources = ["pico_controller", "manus_glove"]
-    assert qualified_sources(timing([], "available: x"), [], sources) == dict.fromkeys(sources, True)
-    assert qualified_sources(timing([], "unavailable: no time"), [], sources) == dict.fromkeys(sources, False)
+def test_an_entry_without_a_qualified_key_is_false():
+    assert qualified_sources(event_time(cam={"meaning": "sensor_capture"}), ["cam"]) == {"cam": False}
 
 
-@pytest.mark.parametrize(
-    "t",
-    [
-        None,
-        {},
-        {"tracking_semantics": {}},
-        {"tracking_semantics": {"physical_alignment": 3}},
-        {"tracking_semantics": "available"},
-        {"clock_mapping": {"streams": "cam"}, "tracking_semantics": []},
-        {"clock_mapping": {"streams": 7}},
-        {"clock_mapping": {"streams": {"name": "cam", "time_meaning": "sensor_capture"}}},
-        {"clock_mapping": "cam"},
-        {"clock_mapping": {}},
-    ],
-)
-def test_malformed_timing_gives_false_and_never_raises(t):
-    assert qualified_sources(t, ["cam"], ["pico_controller"]) == {"cam": False, "pico_controller": False}
+@pytest.mark.parametrize("entry", [None, True, "cam", 1, [("qualified", True)]])
+def test_an_entry_that_is_not_a_mapping_is_false(entry):
+    assert qualified_sources(event_time(cam=entry), ["cam"]) == {"cam": False}
 
 
-def test_backends_current_tracking_text_does_not_qualify_tracking():
-    livekit_recording = pytest.importorskip("egocap_web.livekit_recording")
-    semantics = {"physical_alignment": livekit_recording._TRACKING_SEMANTICS["physical_alignment"]}
-    assert qualified_sources({"tracking_semantics": semantics}, [], ["pico_controller"]) == {
-        "pico_controller": False
+@pytest.mark.parametrize("value", [None, [], "cam", 7, [{"qualified": True}], True])
+def test_an_event_time_that_is_not_a_mapping_gives_false(value):
+    assert qualified_sources({"event_time": value}, ["cam"]) == {"cam": False}
+
+
+@pytest.mark.parametrize("t", [None, {}, {"clock_mapping": {"streams": [{"name": "cam"}]}}])
+def test_timing_without_event_time_gives_false(t):
+    assert qualified_sources(t, ["cam"]) == {"cam": False}
+
+
+def test_a_clock_mapping_or_physical_alignment_text_is_never_qualification():
+    t = {
+        "clock_mapping": {"streams": [{"name": "cam", "time_meaning": "sensor_capture"}]},
+        "tracking_semantics": {"physical_alignment": "available: measurement time per sample"},
     }
+    assert qualified_sources(t, ["cam", "pico_controller"]) == {"cam": False, "pico_controller": False}
 
 
 def test_controller_poses_are_slerped_and_buttons_stay_raw():
@@ -524,3 +524,50 @@ def test_every_refused_source_is_reported_at_once():
     }
     problems = check_continuity(evidence, ["a", "b", "c", "ok", "missing"])
     assert [p.split(":")[0] for p in problems] == ["a", "b", "c", "missing"]
+
+
+def test_missing_identity_is_incomplete():
+    entry = clean()
+    del entry["identity"]
+    assert check_continuity({"cam": entry}, ["cam"]) == ["cam: continuity evidence is incomplete or malformed"]
+
+
+@pytest.mark.parametrize("identity", [None, True, False, 1.5, [1]])
+def test_an_identity_that_is_not_a_str_or_int_is_incomplete(identity):
+    assert check_continuity({"cam": clean(identity=identity)}, ["cam"]) == [
+        "cam: continuity evidence is incomplete or malformed"
+    ]
+
+
+@pytest.mark.parametrize("identity", ["epoch-a", 0, 7])
+def test_str_and_int_identities_are_complete(identity):
+    assert check_continuity({"cam": clean(identity=identity)}, ["cam"]) == []
+
+
+def test_missing_breaks_is_incomplete():
+    entry = clean()
+    del entry["breaks"]
+    assert check_continuity({"cam": entry}, ["cam"]) == ["cam: continuity evidence is incomplete or malformed"]
+
+
+@pytest.mark.parametrize("breaks", [None, 0, (), (3,), "3", [True], [-1], [1.0], [2, "3"], [3, False]])
+def test_breaks_that_are_not_a_list_of_non_negative_ints_are_incomplete(breaks):
+    assert check_continuity({"cam": clean(breaks=breaks)}, ["cam"]) == [
+        "cam: continuity evidence is incomplete or malformed"
+    ]
+
+
+def test_a_break_beyond_the_written_rows_is_malformed():
+    problems = check_continuity({"cam": clean(breaks=[10])}, ["cam"], rows={"cam": 10})
+    assert problems == ["cam: continuity evidence is incomplete or malformed"]
+
+
+def test_a_break_at_the_last_row_is_a_restart_not_malformed():
+    problems = check_continuity({"cam": clean(breaks=[9])}, ["cam"], rows={"cam": 10})
+    assert problems == ["cam: has a restart inside the episode (rows [9])"]
+
+
+def test_rows_for_other_sources_do_not_bound_this_one():
+    assert check_continuity({"cam": clean(breaks=[])}, ["cam"], rows={"other": 1}) == []
+    problems = check_continuity({"cam": clean(breaks=[50])}, ["cam"], rows={"other": 1})
+    assert problems == ["cam: has a restart inside the episode (rows [50])"]

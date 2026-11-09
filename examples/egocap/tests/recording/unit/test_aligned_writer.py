@@ -407,3 +407,25 @@ def test_missing_or_broken_continuity_refuses_and_writes_nothing(tmp_path, conti
         write_aligned_episode(raw, tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED, continuity=continuity)
     assert not (tmp_path / "aligned").exists()
     assert raw_listing(raw) == before
+
+
+@pytest.mark.parametrize("source", ["glove", INDEX])
+def test_a_break_beyond_the_episodes_rows_is_refused_and_writes_nothing(tmp_path, source):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
+    before = raw_listing(raw)
+    with pytest.raises(AlignedWriteError, match=rf"{source}: continuity evidence is incomplete or malformed"):
+        write_aligned_episode(
+            raw, tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED, continuity=with_entry(source, breaks=[10**6])
+        )
+    assert not (tmp_path / "aligned").exists()
+    assert raw_listing(raw) == before
+
+
+def test_partial_evidence_without_identity_or_breaks_is_refused(tmp_path):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
+    partial = {name: {"scope": "clock_mapping", "known": True} for name in QUALIFIED}
+    with pytest.raises(AlignedWriteError, match="incomplete or malformed"):
+        write_aligned_episode(raw, tmp_path / "aligned", 0, INDEX, qualified=QUALIFIED, continuity=partial)
+    assert not (tmp_path / "aligned").exists()
