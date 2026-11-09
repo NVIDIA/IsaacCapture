@@ -72,3 +72,8 @@ Run all three test suites per "Run the tests yourself" above — check each pack
 - Bound mutation request streams before JSON parsing, even when Content-Length is absent or false; return only deliberate public error messages.
 - Dialogs must move, contain and restore focus as well as suppress recording shortcuts.
 - Concurrent coverage runs must use separate `COVERAGE_FILE` paths so one suite cannot overwrite another suite’s measurements.
+## Derived output never touches the raw recording
+
+An aligned or otherwise derived copy of a recording must live in its own tree and read the raw session
+read-only. Check that the output path is not the raw session, inside it or containing it (resolving links)
+before any file is written; replacing a derived episode deletes it first.

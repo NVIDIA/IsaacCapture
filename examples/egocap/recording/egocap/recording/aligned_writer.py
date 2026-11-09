@@ -69,18 +69,35 @@ def _link_or_copy(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def _check_separate(raw_session: Path, aligned_session: Path) -> None:
+    """Refuse an output that is the raw session or shares a tree with it, before any file is touched.
+
+    Re-aligning an episode deletes the aligned copy first; if that copy were the raw episode, the recording
+    would be destroyed. Paths are resolved, so a symlink to the raw session is refused too.
+    """
+    raw, aligned = raw_session.resolve(), aligned_session.resolve()
+    if aligned == raw or raw in aligned.parents or aligned in raw.parents:
+        raise AlignedWriteError("the aligned session must be separate from the raw session")
+
+
 def _write_root(raw_session: Path, aligned_session: Path, index_source: str) -> None:
     """Create the aligned root: its attributes, the session sidecars, and the index source in ``zarr.json``."""
     aligned_session.mkdir(parents=True, exist_ok=True)
-    raw_root = zarr.open_group(str(raw_session), mode="a")
     aligned_root = zarr.open_group(str(aligned_session), mode="a")
-    _copy_attrs(raw_root, aligned_root)
+    # The raw session is only read: a raw root with no metadata of its own has no attributes to carry over.
+    try:
+        raw_attrs = dict(zarr.open_group(str(raw_session), mode="r").attrs)
+    except (FileNotFoundError, zarr.errors.GroupNotFoundError):
+        raw_attrs = {}
+    for key, value in raw_attrs.items():
+        aligned_root.attrs[key] = value
     # The index source is a root attribute so a reader knows which camera's frames define the timeline.
     aligned_root.attrs["index_source"] = index_source
     for name in ALIGNED_SESSION_SIDECARS:
         source, target = raw_session / name, aligned_session / name
-        # An existing aligned sidecar is left alone, so re-aligning never overwrites what is already there.
-        if source.is_file() and not target.exists():
+        # The session config is always refreshed from the raw session, as the aligned dataset format does; any
+        # other existing sidecar is left alone, so re-aligning never overwrites what is already there.
+        if source.is_file() and (name == "config.yaml" or not target.exists()):
             shutil.copy2(source, target)
 
 
@@ -153,6 +170,7 @@ def write_aligned_episode(
     not qualified (or not listed) refuses the alignment, so nothing is written for it. The times aligned on are
     the recorded capture times. Raises ``AlignedWriteError`` if the written episode does not validate.
     """
+    _check_separate(raw_session, aligned_session)
     config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
     rules = source_rules(config)
     cameras = [e["name"] for e in config.get("video_sources") or []]
