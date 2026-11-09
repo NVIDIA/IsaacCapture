@@ -28,7 +28,6 @@ from egocap.core.data_root import calibration_dir
 from recording_service import (
     CalibrationAsset,
     ConfigurationError,
-    EpisodeResult,
     QcConfig,
     ServiceConfig,
     VideoSourceSpec,
@@ -451,16 +450,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     aligner_task: asyncio.Task[None] | None = None
     if resolved_station is not None and resolved_station.alignment_index is not None:
         aligner = AutoAligner(recording_output_root, resolved_station.alignment_index)
-        recorded = coordinator.on_episode_result
-
-        def on_result(result: EpisodeResult) -> None:
-            """Keep the recording status update, then queue a kept episode for alignment."""
-            if recorded is not None:
-                recorded(result)
-            aligner.submit(result)
-
-        coordinator.on_episode_result = on_result
-        aligner.recover()
+        coordinator.on_episode_kept = aligner.submit
         aligner_task = asyncio.create_task(aligner.run())
     visualization: VisualizationScene | None = None
     try:

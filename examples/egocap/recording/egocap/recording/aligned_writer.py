@@ -108,7 +108,11 @@ def _write_root(raw_session: Path, aligned_session: Path, index_source: str) -> 
         raw_attrs = {}
     for key, value in raw_attrs.items():
         aligned_root.attrs[key] = value
-    # The index source is a root attribute so a reader knows which camera's frames define the timeline.
+    # The index source is a root attribute so a reader knows which camera's frames define the timeline. One root
+    # has one, so an episode on a different index is refused rather than relabelling the ones already there.
+    existing = aligned_root.attrs.get("index_source")
+    if existing not in (None, index_source):
+        raise AlignedWriteError(f"the aligned session uses index source {existing!r}, not {index_source!r}")
     aligned_root.attrs["index_source"] = index_source
     for name in ALIGNED_SESSION_SIDECARS:
         source, target = raw_session / name, aligned_session / name

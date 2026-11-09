@@ -82,7 +82,13 @@ def relocate_session_to_canonical_studio(
     if dest.exists():
         raise OSError(f"EOD session relocate: destination already exists (refuse overwrite): {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    aligned, aligned_dest = session.with_name(f"{session.name}_aligned"), dest.with_name(f"{dest.name}_aligned")
+    # The aligned copy follows its session; refuse before moving anything if it would collide.
+    if aligned.is_dir() and aligned_dest.exists():
+        raise OSError(f"EOD session relocate: destination already exists (refuse overwrite): {aligned_dest}")
     shutil.move(str(session), str(dest))
+    if aligned.is_dir():
+        shutil.move(str(aligned), str(aligned_dest))
     return dest
 
 

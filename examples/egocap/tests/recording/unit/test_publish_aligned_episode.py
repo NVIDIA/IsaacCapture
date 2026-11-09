@@ -224,6 +224,21 @@ def test_a_different_episode_publishes_beside_the_first(tmp_path, raw):
     assert_no_leftovers(aligned)
 
 
+def test_an_episode_on_a_different_index_source_is_refused_and_leaves_the_aligned_session_unchanged(tmp_path, raw):
+    aligned = tmp_path / "aligned"
+    publish(raw, aligned, 0)
+    before, snap = listing(aligned), snapshot(aligned)
+    other = next(name for name in CAMERAS if name != INDEX)
+
+    with pytest.raises(AlignedWriteError, match="the aligned session uses index source"):
+        publish_aligned_episode(raw, aligned, 1, other, qualified=QUALIFIED, continuity=clean_continuity())
+
+    assert listing(aligned) == before
+    assert_snapshots_equal(snapshot(aligned), snap)
+    assert zarr.open_group(str(aligned), mode="r").attrs["index_source"] == INDEX
+    assert_no_leftovers(aligned)
+
+
 def with_entry(source, **changes):
     evidence = clean_continuity()
     evidence[source] = {**evidence[source], **changes}

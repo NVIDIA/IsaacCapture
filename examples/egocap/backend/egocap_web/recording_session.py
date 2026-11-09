@@ -63,6 +63,7 @@ from egocap_web.livekit_recording import tracking_event_time
 from egocap_web.recording_adapter import RecordingIngress, _convert_raw_item, validate_tracking_descriptor
 from recording_service import (
     CloseResult,
+    Disposition,
     EpisodeInfo,
     EpisodeResult,
     PendingEpisode,
@@ -244,6 +245,8 @@ class RecordingSessionCoordinator:
         # methods. None (the default) means no one is listening yet.
         self.on_episode_started: Callable[[], None] | None = None
         self.on_episode_result: Callable[[EpisodeResult], None] | None = None
+        #: Called with each episode finalized as kept, including one recovered after an interruption.
+        self.on_episode_kept: Callable[[EpisodeResult], None] | None = None
         self.on_batch_rotated: Callable[[], None] | None = None
 
     @property
@@ -560,6 +563,12 @@ class RecordingSessionCoordinator:
         coordinator's own retained operation task."""
         if self.on_episode_result is not None:
             self.on_episode_result(result)
+        self._emit_kept(result)
+
+    def _emit_kept(self, result: EpisodeResult) -> None:
+        """Tell ``on_episode_kept`` about an episode that was kept."""
+        if result.disposition is Disposition.KEPT and self.on_episode_kept is not None:
+            self.on_episode_kept(result)
 
     async def stop_episode(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()
@@ -683,7 +692,9 @@ class RecordingSessionCoordinator:
 
     async def recover_episode(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()
-        return await self._run_operation(OperationKind.RECOVERING, partial(service.recover_episode, episode_id))
+        result = await self._run_operation(OperationKind.RECOVERING, partial(service.recover_episode, episode_id))
+        self._emit_kept(result)
+        return result
 
     async def discard_pending(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()

@@ -19,7 +19,8 @@ Usage (from any directory outside ``egocap`` itself)::
 episode's manifest stays in the session it was recorded in), and ``--manifest-episode`` its index there when that
 differs from ``--episode`` (a routed episode sits under its slot). The manifest is used only if it describes
 exactly this finalized, kept episode. Exit status 0 means the aligned episode was
-published; 1 means it was refused or failed, with the reason on stderr.
+published; 1 means it was refused (the same input is refused every time); 2 means the manifest could not be read
+(retry later). The reason is on stderr.
 """
 
 import argparse
@@ -53,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest = read_manifest(manifest_path(args.manifest_session or args.session, manifest_episode))
     except (OSError, ValueError) as exc:
         print(f"cannot read the episode's manifest: {exc}", file=sys.stderr)
-        return 1
+        return 2
     try:
         aligned = align_kept_episode(
             args.session,

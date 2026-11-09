@@ -87,6 +87,26 @@ def test_relocate_destination_collision_raises(tmp_path):
         relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
 
 
+def test_relocate_moves_the_aligned_sibling_with_its_session(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    aligned = session.with_name(f"{session.name}_aligned")
+    (aligned / "episode_0").mkdir(parents=True)
+    result = relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    moved = result.with_name(f"{result.name}_aligned")
+    assert (moved / "episode_0").is_dir() and not aligned.exists() and not session.exists()
+
+
+def test_relocate_refuses_before_moving_anything_when_the_aligned_destination_exists(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    aligned = session.with_name(f"{session.name}_aligned")
+    aligned.mkdir()
+    taken = tmp_path / "Kitchen" / f"{session.name}_aligned"
+    taken.mkdir(parents=True)
+    with pytest.raises(OSError, match="refuse overwrite"):
+        relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert session.is_dir() and aligned.is_dir() and not (tmp_path / "Kitchen" / session.name).exists()
+
+
 def test_relocate_have_equals_want_but_different_case_is_noop(tmp_path):
     # session folder is "kitchen" (lowercase); canonicalizing both "have" and
     # "want" against KNOWN resolves them to the same "Kitchen" spelling, even

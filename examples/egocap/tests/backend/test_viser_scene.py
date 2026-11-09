@@ -744,16 +744,12 @@ class _FakeAligner:
     def __init__(self, output_root, index_source):
         self.output_root, self.index_source = output_root, index_source
         self.submitted = []
-        self.recovered = False
         self.cancelled = False
         self.closed_with = None
         _FakeAligner.instances.append(self)
 
     def submit(self, result):
         self.submitted.append(result)
-
-    def recover(self):
-        self.recovered = True
 
     async def run(self):
         import asyncio
@@ -795,15 +791,16 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
         tmp_path,
         f"recording:\n  data_dir: {tmp_path}/rec\nvideo_sources:\n  - type: oak_camera\n    name: head\n",
     )
-    async with app_module.lifespan(app_module.FastAPI()):
+    app = app_module.FastAPI()
+    async with app_module.lifespan(app):
         (aligner,) = _FakeAligner.instances
         await asyncio.sleep(0)  # let the worker start so its cancellation is observable
         assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
-        assert aligner.recovered
+        assert app.state.recording_context.coordinator.on_episode_kept == aligner.submit
     assert aligner.cancelled and aligner.closed_with == app_module._ALIGNER_SHUTDOWN_SECONDS
 
 
-async def test_the_chained_callback_runs_the_previous_one_then_queues_for_alignment(monkeypatch, tmp_path):
+async def test_the_kept_hook_is_the_aligner_and_the_result_hook_is_left_alone(monkeypatch, tmp_path):
     app_module = await _lifespan_with_station(
         monkeypatch, tmp_path, "video_sources:\n  - type: oak_camera\n    name: head\n"
     )
@@ -819,8 +816,10 @@ async def test_the_chained_callback_runs_the_previous_one_then_queues_for_alignm
     app = app_module.FastAPI()
     async with app_module.lifespan(app):
         (aligner,) = _FakeAligner.instances
-        app.state.recording_context.coordinator.on_episode_result("result")
-        assert previous_calls == ["result"] and aligner.submitted == ["result"]
+        coordinator = app.state.recording_context.coordinator
+        assert coordinator.on_episode_kept == aligner.submit
+        coordinator.on_episode_result("result")
+        assert previous_calls == ["result"] and aligner.submitted == []
 
 
 async def test_a_kept_result_emitted_while_the_recorder_closes_is_aligned_before_the_aligner_closes(
@@ -846,7 +845,7 @@ async def test_a_kept_result_emitted_while_the_recorder_closes_is_aligned_before
     real_close = app_module.RecordingSessionCoordinator.close
 
     async def close_after_a_last_result(self, *args, **kwargs):
-        self.on_episode_result(last)
+        self.on_episode_kept(last)
         events.append("coordinator closed")
         return await real_close(self, *args, **kwargs)
 

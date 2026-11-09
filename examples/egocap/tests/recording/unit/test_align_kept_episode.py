@@ -354,16 +354,16 @@ def test_cli_success_prints_the_kept_count(tmp_path, raw, capsys):
     assert (tmp_path / "raw_aligned" / "episode_0").is_dir()
 
 
-def test_cli_missing_manifest_exits_1(raw, capsys):
-    assert run_cli(raw, "--episode", 0, "--index-source", INDEX) == 1
+def test_cli_missing_manifest_exits_2(raw, capsys):
+    assert run_cli(raw, "--episode", 0, "--index-source", INDEX) == 2
     assert "cannot read the episode's manifest" in capsys.readouterr().err
 
 
-def test_cli_garbage_manifest_exits_1(raw, capsys):
+def test_cli_garbage_manifest_exits_2(raw, capsys):
     path = manifest_path(raw, 0)
     path.parent.mkdir()
     path.write_text("{not json")
-    assert run_cli(raw, "--episode", 0, "--index-source", INDEX) == 1
+    assert run_cli(raw, "--episode", 0, "--index-source", INDEX) == 2
     assert "cannot read the episode's manifest" in capsys.readouterr().err
 
 
@@ -426,7 +426,7 @@ def test_cli_routed_episode_without_the_manifest_episode_cannot_find_it(tmp_path
     sessions.mkdir()
     write_manifest(sessions, manifest)
     args = (group_dir, "--episode", 3, "--index-source", INDEX, "--manifest-session", sessions)
-    assert run_cli(*args) == 1
+    assert run_cli(*args) == 2
     assert "cannot read the episode's manifest" in capsys.readouterr().err
 
 

@@ -32,6 +32,7 @@ from egocap_web.recording_adapter import MANUS_GLOVE_SPEC, PICO_CONTROLLER_SPEC,
 from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator, SessionStatus
 from recording_service import (
     Disposition,
+    EpisodeResult,
     FieldSpec,
     NumericSourceSpec,
     RecordingPhase,
@@ -867,3 +868,86 @@ async def test_tracking_timing_is_merged_with_the_media_evidence_and_keeps_its_c
     assert timing["event_time"]["cam16"] == {"meaning": "sensor_capture", "qualified": True}
     assert timing["event_time"]["pico_controller"]["meaning"] == "host_poll_minus_latency"
     assert timing["event_time"]["manus_glove"] == {"meaning": "host_poll_time", "qualified": False}
+
+
+async def test_a_kept_stop_calls_the_kept_hook_once_and_leaves_the_result_hook_alone(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    result = await coordinator.stop_episode(episode.episode_id)
+    assert kept == [result] and results == [result]
+    await coordinator.close()
+
+
+async def test_a_discarded_episode_does_not_call_the_kept_hook_but_still_reports_its_result(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    result = await coordinator.discard_episode(episode.episode_id)
+    assert kept == [] and results == [result]
+    await coordinator.close()
+
+
+async def test_a_kept_stop_without_hooks_set_succeeds(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    assert (await coordinator.stop_episode(episode.episode_id)).disposition is Disposition.KEPT
+    await coordinator.close()
+
+
+def _recovered_result(disposition):
+    return EpisodeResult(
+        session_id="s",
+        episode_id="s/episode_0",
+        episode_index=0,
+        disposition=disposition,
+        final_path=Path("/out/s/episode_0"),
+        pending_path=None,
+        counts=(),
+        duration_seconds=1.0,
+        quality=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected_calls"),
+    [(Disposition.KEPT, 1), (Disposition.RECOVERY_REQUIRED, 0), (Disposition.DISCARDED, 0)],
+)
+async def test_a_recovered_episode_calls_the_kept_hook_only_when_it_was_kept(
+    tmp_path: Path, monkeypatch, disposition, expected_calls
+):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(disposition)
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            return result
+
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    assert await coordinator.recover_episode("s/episode_0") is result
+    assert kept == [result] * expected_calls and results == []
+
+
+async def test_a_recovered_episode_without_a_kept_hook_succeeds(tmp_path: Path, monkeypatch):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(Disposition.KEPT)
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            return result
+
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    assert await coordinator.recover_episode("s/episode_0") is result
