@@ -59,7 +59,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from capture_server.client import CameraImage, CaptureFrame
-from egocap_web.recording_adapter import RecordingIngress, validate_tracking_descriptor
+from egocap_web.recording_adapter import RecordingIngress, _convert_raw_item, validate_tracking_descriptor
 from recording_service import (
     CloseResult,
     EpisodeInfo,
@@ -192,6 +192,7 @@ class RecordingSessionCoordinator:
         # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
         # before the ingress is retired.
         self._livekit_source = livekit_source
+        self._tracking_latency: dict[str, float] = {}
         #: The clock-mapping evidence of the take in progress, gathered when its video source stops.
         self._timing_evidence: dict[str, Any] | None = None
         self._queue_capacity = queue_capacity
@@ -335,7 +336,9 @@ class RecordingSessionCoordinator:
                 )
             return self._service
         self._status = SessionStatus.OPENING
-        service = _RecordingService(self._config_factory())
+        config = self._config_factory()
+        self._tracking_latency = config.latency or {}
+        service = _RecordingService(config)
         # Assigned BEFORE the await below: a failure or cancellation here
         # must not orphan a service instance that may have already
         # acquired real resources -- self._service is the one place close()
@@ -472,6 +475,7 @@ class RecordingSessionCoordinator:
             queue_bytes=self._queue_bytes() if callable(self._queue_bytes) else self._queue_bytes,
             submit=partial(service.submit_sample, episode_id),
             on_failure=lambda message: self._schedule_failure_settlement(service, episode_id, message),
+            convert=partial(_convert_raw_item, latency=self._tracking_latency),
         )
         await ingress.start()
         self._current_ingress = ingress

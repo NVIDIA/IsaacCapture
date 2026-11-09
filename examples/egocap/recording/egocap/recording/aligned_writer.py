@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -171,12 +172,6 @@ def validate_aligned_episode(aligned_session: Path, episode_index: int, index_so
     return problems
 
 
-def _latencies(config: Mapping[str, Any]) -> dict[str, float]:
-    """The per-source latency (seconds) that the session's ``config.yaml`` declares."""
-    entries = [e for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
-    return {e["name"]: float(e["latency"]) for e in entries if "latency" in e}
-
-
 def write_aligned_episode(
     raw_session: Path,
     aligned_session: Path,
@@ -189,10 +184,11 @@ def write_aligned_episode(
 ) -> AlignedEpisode:
     """Align one recorded episode and write it into ``aligned_session``; returns the alignment.
 
-    ``qualified`` says, per source, whether its recorded capture time is a qualified event time; one that is not
-    (or not listed) is aligned on receive time minus its configured latency, or refuses the alignment when it has
-    none, so nothing is written for it. ``continuity`` is the episode's stored per-source continuity evidence
-    (None if it recorded none): a source whose evidence is missing, unknown or records a break refuses it too.
+    ``qualified`` says, per source, whether its recorded capture time is a qualified event time (a measured one,
+    or a configured estimate the recorder already applied). A source that is not, or is not listed, refuses the
+    alignment, so nothing is written for it. The times aligned on are the recorded capture times, used unchanged.
+    ``continuity`` is the episode's stored per-source continuity evidence (None if it recorded none): a source
+    whose evidence is missing, unknown or records a break refuses it too.
     Raises ``AlignedWriteError`` if the written episode does not validate.
     """
     _check_separate(raw_session, aligned_session)
@@ -205,18 +201,10 @@ def write_aligned_episode(
 
     # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
     present = [name for name in rules if name in raw_episode]
-    # A source with a configured latency but no qualified event time is aligned on receive time minus that
-    # latency, an estimate of when the device measured it.
-    latency = _latencies(config)
-    unusable = [n for n in [index_source, *present] if not (qualified.get(n, False) or n in latency)]
-    if unusable:
-        raise AlignedWriteError(f"sources without a qualified event time or a latency: {sorted(set(unusable))}")
-    times = {
-        name: raw_episode[name]["capture_time"][:]
-        if qualified.get(name, False)
-        else raw_episode[name]["receive_time"][:] - latency[name]
-        for name in present
-    }
+    unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
+    if unqualified:
+        raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
+    times = {name: raw_episode[name]["capture_time"][:] for name in present}
     # The evidence is checked against the rows actually written: a break at a row the source lacks is refused.
     broken = check_continuity(continuity, [index_source, *present], {name: len(t) for name, t in times.items()})
     if broken:
@@ -267,10 +255,11 @@ def publish_aligned_episode(
 ) -> AlignedEpisode:
     """Write the aligned episode privately, then move it into ``aligned_session`` with one rename.
 
-    The episode is built and validated in a staging session beside the aligned one (same filesystem, so the
-    videos stay linked), so a reader sees the finished episode or none. An existing aligned episode is never
-    replaced: it is refused. A crashed run leaves only the staging tree, which the next run discards. One
-    publisher at a time per aligned session. Arguments and refusals are those of :func:`write_aligned_episode`.
+    The episode is built and validated in a private staging directory beside the aligned session (same
+    filesystem, so the videos stay linked), so a reader sees the finished episode or none. Each attempt owns its
+    staging directory, so concurrent runs never touch each other's work. An existing aligned episode is never
+    replaced: it is refused. A crashed run leaves its staging directory behind. Arguments and refusals are those
+    of :func:`write_aligned_episode`.
     """
     _check_separate(raw_session, aligned_session)
     key = f"episode_{episode_index}"
@@ -278,12 +267,10 @@ def publish_aligned_episode(
     # Refuse before doing any work; the rename below fails too if one appears meanwhile.
     if final.exists():
         raise AlignedWriteError(f"{final} already exists; it is not replaced")
-    staging = aligned_session.with_name(f".{aligned_session.name}.staging")
-    _check_separate(raw_session, staging)
-
-    # A staging tree left by a crashed run is stale by definition.
-    shutil.rmtree(staging, ignore_errors=True)
+    aligned_session.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{aligned_session.name}.staging-", dir=aligned_session.parent))
     try:
+        _check_separate(raw_session, staging)
         aligned = write_aligned_episode(
             raw_session,
             staging,
@@ -332,7 +319,11 @@ def check_kept_episode(raw_session: Path, episode_index: int, manifest: EpisodeM
     try:
         episode = zarr.open_group(str(episode_dir), mode="r")
         for name, count in manifest.counts.items():
-            if name in episode and int(episode[name]["capture_time"].shape[0]) != count.get("written"):
+            # A source with sealed rows must still be there; one that wrote none may be absent.
+            if name not in episode:
+                if count.get("written"):
+                    problems.append(f"{name}: recorded rows are missing from the episode")
+            elif int(episode[name]["capture_time"].shape[0]) != count.get("written"):
                 problems.append(f"{name}: the rows on disk differ from the sealed count")
     except (OSError, zarr.errors.GroupNotFoundError) as exc:
         problems.append(f"the episode cannot be read: {exc}")

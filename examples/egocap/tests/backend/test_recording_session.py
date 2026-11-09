@@ -737,3 +737,36 @@ async def test_a_final_close_keeps_admission_blocked_but_an_ordinary_close_reope
         coordinator.set_task("too late")
     with pytest.raises(CoordinatorBusyError):
         await coordinator.start_episode()
+
+
+async def test_the_configured_latency_reaches_the_converted_tracking_sample_times(tmp_path: Path, monkeypatch):
+    from tests.backend.test_recording_adapter import default_tracking_values
+
+    converters = []
+    real = coordinator_module.RecordingIngress
+
+    def capture_convert(*args, **kwargs):
+        converters.append(kwargs["convert"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "RecordingIngress", capture_convert)
+    coordinator = make_coordinator(
+        tmp_path,
+        numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
+        latency={"pico_controller": 0.02},
+    )
+    await coordinator.open()
+    coordinator.set_task("t")
+    await coordinator.start_episode()
+    frame = CaptureFrame(
+        session_id="s",
+        description=None,  # type: ignore[arg-type]
+        stream_id=1,
+        sequence=0,
+        capture_time_ns=5_000_000_000,
+        receive_time_ns=5_040_000_000,
+        payload=capture_protocol.encode_tracking_frame(default_tracking_values()),
+    )
+    times = {s.source: s.capture_time for s in converters[-1](frame)}
+    assert times["pico_controller"] == pytest.approx(4.98) and times["manus_glove"] == 5.0
+    await coordinator.close()

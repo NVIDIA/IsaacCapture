@@ -184,71 +184,30 @@ def test_videos_are_copied_when_linking_is_not_possible(tmp_path, monkeypatch):
 )
 def test_an_unqualified_or_unlisted_source_refuses_and_writes_nothing(tmp_path, qualified):
     build_raw(tmp_path / "raw", META["scenarios"]["basic_ds1"])
-    with pytest.raises(AlignedWriteError, match="without a qualified event time or a latency"):
+    with pytest.raises(AlignedWriteError, match="without a qualified event time"):
         write_aligned_episode(
             tmp_path / "raw", tmp_path / "aligned", 0, INDEX, qualified=qualified, continuity=clean_continuity()
         )
     assert not (tmp_path / "aligned").exists()
 
 
-def set_latency(raw, **seconds):
+def test_an_unqualified_source_is_refused_even_when_its_config_declares_a_latency(tmp_path):
+    raw = tmp_path / "raw"
+    build_raw(raw, META["scenarios"]["basic_ds1"])
     config = yaml.safe_load((raw / "config.yaml").read_text())
-    for entry in config["video_sources"] + config["numeric_sources"]:
-        if entry["name"] in seconds:
-            entry["latency"] = seconds[entry["name"]]
+    for entry in config["numeric_sources"]:
+        entry["latency"] = 0.02
     (raw / "config.yaml").write_text(yaml.safe_dump(config))
-
-
-def aligned_glove(tmp_path, qualified, **latency):
-    raw = tmp_path / "raw"
-    build_raw(raw, META["scenarios"]["basic_ds1"])
-    set_latency(raw, **latency)
-    write_aligned_episode(raw, tmp_path / "aligned", 0, INDEX, qualified=qualified, continuity=clean_continuity())
-    episode = zarr.open_group(str(tmp_path / "aligned"), mode="r")["episode_0"]
-    return episode["valid_timestamps"][:], episode["glove"]
-
-
-def test_an_unqualified_source_with_a_latency_is_aligned_on_receive_time_minus_it(tmp_path):
-    baseline = aligned_glove(tmp_path / "baseline", QUALIFIED)
-    # Receive time is capture time plus 20 ms for every source, so that latency recovers the capture times.
-    estimated = aligned_glove(tmp_path / "latency", {**QUALIFIED, "glove": False}, glove=0.02)
-    np.testing.assert_array_equal(estimated[0], baseline[0])
-    for name in baseline[1].array_keys():
-        np.testing.assert_array_equal(estimated[1][name][:], baseline[1][name][:])
-
-
-def test_the_configured_latency_value_moves_the_aligned_source(tmp_path):
-    baseline = aligned_glove(tmp_path / "baseline", QUALIFIED)
-    shifted = aligned_glove(tmp_path / "shifted", {**QUALIFIED, "glove": False}, glove=0.05)
-    differs = [n for n in baseline[1].array_keys() if not np.array_equal(shifted[1][n][:], baseline[1][n][:])]
-    assert differs
-
-
-def test_a_qualified_source_uses_its_capture_time_even_with_a_latency(tmp_path):
-    baseline = aligned_glove(tmp_path / "baseline", QUALIFIED)
-    ignored = aligned_glove(tmp_path / "latency", QUALIFIED, glove=5.0)
-    np.testing.assert_array_equal(ignored[0], baseline[0])
-    for name in baseline[1].array_keys():
-        np.testing.assert_array_equal(ignored[1][name][:], baseline[1][name][:])
-
-
-def test_an_unqualified_index_source_with_a_latency_is_accepted(tmp_path):
-    raw = tmp_path / "raw"
-    build_raw(raw, META["scenarios"]["basic_ds1"])
-    set_latency(raw, **{INDEX: 0.02})
-    write_aligned_episode(
-        raw, tmp_path / "aligned", 0, INDEX, qualified={**QUALIFIED, INDEX: False}, continuity=clean_continuity()
-    )
-    assert (tmp_path / "aligned" / "episode_0").is_dir()
-
-
-def test_only_sources_with_a_latency_are_listed_by_latencies():
-    config = {
-        "video_sources": [{"name": "cam", "latency": 1}, {"name": "other"}],
-        "numeric_sources": [{"name": "arm", "latency": 0.5}],
-    }
-    assert aligned_writer._latencies(config) == {"cam": 1.0, "arm": 0.5}
-    assert aligned_writer._latencies({}) == {}
+    with pytest.raises(AlignedWriteError, match="without a qualified event time"):
+        write_aligned_episode(
+            raw,
+            tmp_path / "aligned",
+            0,
+            INDEX,
+            qualified={**QUALIFIED, "glove": False},
+            continuity=clean_continuity(),
+        )
+    assert not (tmp_path / "aligned").exists()
 
 
 def test_a_declared_source_absent_from_the_episode_is_skipped(tmp_path):

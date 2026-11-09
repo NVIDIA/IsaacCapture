@@ -126,8 +126,12 @@ def raw_state(root):
     return state
 
 
+def staging_dirs(aligned):
+    return sorted(aligned.parent.glob(f".{aligned.name}.staging-*"))
+
+
 def assert_no_leftovers(aligned):
-    assert not (aligned.parent / f".{aligned.name}.staging").exists()
+    assert staging_dirs(aligned) == []
 
 
 def assert_snapshots_equal(got, want):
@@ -251,7 +255,7 @@ def test_a_refused_publication_leaves_the_aligned_session_unchanged(tmp_path, ra
         assert_snapshots_equal(snapshot(aligned), snap)
     else:
         assert not aligned.exists()
-    assert not (tmp_path / ".aligned.staging").exists()
+    assert_no_leftovers(aligned)
     assert raw_state(raw) == raw_before
 
 
@@ -262,16 +266,6 @@ def test_an_aligned_path_aliasing_the_raw_session_is_refused(tmp_path, raw):
         with pytest.raises(AlignedWriteError, match="separate"):
             publish(raw, target)
     assert raw_state(raw) == before
-
-
-def test_a_staging_path_that_is_the_raw_session_is_refused_and_not_deleted(tmp_path):
-    raw_named_like_staging = tmp_path / ".aligned.staging"
-    build_raw(raw_named_like_staging, META["scenarios"]["basic_ds1"])
-    before = raw_state(raw_named_like_staging)
-    with pytest.raises(AlignedWriteError, match="separate"):
-        publish(raw_named_like_staging, tmp_path / "aligned")
-    assert raw_state(raw_named_like_staging) == before
-    assert not (tmp_path / "aligned").exists()
 
 
 def test_a_failed_rename_removes_the_staging_tree(tmp_path, raw, monkeypatch):
@@ -293,17 +287,42 @@ def test_a_failed_rename_removes_the_staging_tree(tmp_path, raw, monkeypatch):
     assert validate_aligned_episode(aligned, 0, INDEX) == []
 
 
-def test_a_leftover_staging_tree_is_discarded(tmp_path, raw):
+def test_an_unrelated_staging_directory_is_left_alone(tmp_path, raw):
     aligned = tmp_path / "aligned"
-    staging = tmp_path / ".aligned.staging"
-    (staging / "episode_0").mkdir(parents=True)
-    (staging / "episode_0" / "junk.bin").write_bytes(b"half written")
+    other = tmp_path / ".aligned.staging-x"
+    (other / "episode_0").mkdir(parents=True)
+    (other / "episode_0" / "partial.bin").write_bytes(b"another run's work")
 
     publish(raw, aligned, 0)
 
-    assert not staging.exists()
-    assert not (aligned / "episode_0" / "junk.bin").exists()
+    assert (other / "episode_0" / "partial.bin").read_bytes() == b"another run's work"
+    assert staging_dirs(aligned) == [other]
     assert validate_aligned_episode(aligned, 0, INDEX) == []
+
+
+def test_each_attempt_stages_in_its_own_directory(tmp_path, raw, monkeypatch):
+    aligned = tmp_path / "aligned"
+    seen = []
+    real_validate = aligned_writer.validate_aligned_episode
+
+    def record(session, episode, index_source):
+        seen.append(session)
+        return real_validate(session, episode, index_source)
+
+    monkeypatch.setattr(aligned_writer, "validate_aligned_episode", record)
+    publish(raw, aligned, 0)
+    publish(raw, aligned, 1)
+
+    assert seen[0] != seen[1]
+    assert all(path.parent == tmp_path and path.name.startswith(".aligned.staging-") for path in seen)
+    assert_no_leftovers(aligned)
+
+
+def test_a_missing_parent_of_the_aligned_session_is_created(tmp_path, raw):
+    aligned = tmp_path / "deeper" / "aligned"
+    publish(raw, aligned, 0)
+    assert validate_aligned_episode(aligned, 0, INDEX) == []
+    assert_no_leftovers(aligned)
 
 
 @pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt])
@@ -325,7 +344,7 @@ def test_a_failure_after_staging_started_removes_the_staging_tree_and_propagates
 
     # Staging existed when the failure hit, and nothing of it is left or reached the aligned session.
     assert seen["staged"]
-    assert not (tmp_path / ".aligned.staging").exists()
+    assert_no_leftovers(aligned)
     assert listing(aligned) == before
 
 
@@ -340,4 +359,4 @@ def test_a_refused_run_creates_nothing_inside_the_aligned_session(tmp_path, raw)
     with pytest.raises(AlignedWriteError):
         publish(raw, tmp_path / "fresh", 0, continuity=None)
     assert not (tmp_path / "fresh").exists()
-    assert not (tmp_path / ".fresh.staging").exists()
+    assert_no_leftovers(tmp_path / "fresh")

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Literal
 
 import numpy as np
@@ -330,7 +330,7 @@ def convert_camera_image(
     )
 
 
-def convert_capture_frame(frame: CaptureFrame) -> list[NumericSample]:
+def convert_capture_frame(frame: CaptureFrame, latency: Mapping[str, float] | None = None) -> list[NumericSample]:
     """Decodes one raw tracking payload and converts it into zero, one or
     two ``NumericSample``s (``pico_controller``/``manus_glove``), each
     omitted entirely (not fabricated) when its own whole-row validity
@@ -338,16 +338,20 @@ def convert_capture_frame(frame: CaptureFrame) -> list[NumericSample]:
     the descriptor once per attempt (``validate_tracking_descriptor``) --
     this does not re-validate it per frame."""
     tracking = capture_protocol.decode_tracking_frame(frame.payload)
-    capture_time = frame.capture_time_ns / 1e9
+    poll_time = frame.capture_time_ns / 1e9
     receive_time = frame.receive_time_ns / 1e9
-    # Stamped on this host's clock, so only the capture connection can break; a new connection is a break.
+    latency = latency or {}
+    # Host poll and connection continuity only: a device restart behind a live connection is not visible here.
     continuity = ("host_clock", frame.session_id)
     samples: list[NumericSample] = []
     pico_fields = build_pico_controller_fields(tracking)
     if pico_fields is not None:
+        # A configured latency is taken off the poll time once, here: the saved time is the estimated event time.
+        capture_time = poll_time - latency.get(PICO_CONTROLLER_SOURCE, 0.0)
         samples.append(NumericSample(PICO_CONTROLLER_SOURCE, capture_time, receive_time, pico_fields, continuity))
     manus_fields = build_manus_glove_fields(tracking)
     if manus_fields is not None:
+        capture_time = poll_time - latency.get(MANUS_GLOVE_SOURCE, 0.0)
         samples.append(NumericSample(MANUS_GLOVE_SOURCE, capture_time, receive_time, manus_fields, continuity))
     return samples
 
@@ -366,13 +370,15 @@ def _raw_item_bytes(raw_item: RawItem) -> int:
     return len(raw_item.jpeg) if isinstance(raw_item, CameraImage) else len(raw_item.payload)
 
 
-def _convert_raw_item(raw_item: RawItem) -> list[NumericSample | VideoSample]:
+def _convert_raw_item(
+    raw_item: RawItem, latency: Mapping[str, float] | None = None
+) -> list[NumericSample | VideoSample]:
     """The default, real conversion dispatch -- CPU-bound (JPEG decode,
     pose math), so ``RecordingIngress`` always runs this inside its
     bounded consumer (off the synchronous capture-callback path that
     calls ``offer()``), via a worker executor, never before the queue."""
     if isinstance(raw_item, CaptureFrame):
-        return list(convert_capture_frame(raw_item))
+        return list(convert_capture_frame(raw_item, latency))
     if isinstance(raw_item, CameraImage):
         return [convert_camera_image(raw_item, raw_item.name)]
     if isinstance(raw_item, VideoSample):

@@ -8,6 +8,7 @@ built React app.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -27,11 +28,13 @@ from egocap.core.data_root import calibration_dir
 from recording_service import (
     CalibrationAsset,
     ConfigurationError,
+    EpisodeResult,
     QcConfig,
     ServiceConfig,
     VideoSourceSpec,
 )
 
+from .auto_align import AutoAligner
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
@@ -399,7 +402,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
     livekit_source = LiveKitRecordingSource(
-        lambda: recordable_livekit_streams(monitor.native.started), _recorder_livekit_token
+        lambda: recordable_livekit_streams(monitor.native.started),
+        _recorder_livekit_token,
+        tracking_latency=resolved_station.latency if resolved_station is not None else None,
     )
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(
@@ -446,6 +451,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         visualization_error=visualization_error,
         task_file_root=task_file_root,
     )
+    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner_task: asyncio.Task[None] | None = None
+    if resolved_station is not None and resolved_station.alignment_index is not None:
+        aligner = AutoAligner(recording_output_root, resolved_station.alignment_index)
+        recorded = coordinator.on_episode_result
+
+        def on_result(result: EpisodeResult) -> None:
+            """Keep the recording status update, then queue a kept episode for alignment."""
+            if recorded is not None:
+                recorded(result)
+            aligner.submit(result)
+
+        coordinator.on_episode_result = on_result
+        aligner_task = asyncio.create_task(aligner.run())
     visualization: VisualizationScene | None = None
     try:
         visualization = _optional_visualization(monitor, visualization_config, visualization_error)
@@ -461,6 +480,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # owner stops -- it still needs the live capture connection to
             # retire any in-flight take cleanly. An unreleased close is
             # surfaced, not silently discarded.
+            if aligner_task is not None:
+                aligner_task.cancel()
             close_result = await coordinator.close(final=True)
             if not close_result.released:
                 logger.error("recording coordinator did not fully release on shutdown: %s", close_result.issues)

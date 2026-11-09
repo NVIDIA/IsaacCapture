@@ -49,6 +49,7 @@ recording:
         data_dir=tmp_path / "recordings",
         cameras=(),
         latency={},
+        alignment_index=None,
     )
 
 
@@ -284,3 +285,30 @@ def test_an_invalid_tracking_latency_is_a_station_config_error(tmp_path, value):
     path = _write(tmp_path, _latency_yaml(("pico_controller", value)))
     with pytest.raises(StationConfigError, match="pico_controller latency must be"):
         load_station_config(path)
+
+
+_CAMERAS = "video_sources:\n  - type: oak_camera\n    name: head\n  - type: oak_camera\n    name: wrist\n"
+
+
+def test_alignment_defaults_to_the_first_camera(tmp_path):
+    assert load_station_config(_write(tmp_path, _CAMERAS)).alignment_index == "head"
+
+
+def test_alignment_index_source_can_be_named(tmp_path):
+    path = _write(tmp_path, _CAMERAS + "alignment:\n  index_source: wrist\n")
+    assert load_station_config(path).alignment_index == "wrist"
+
+
+def test_alignment_can_be_disabled(tmp_path):
+    path = _write(tmp_path, _CAMERAS + "alignment:\n  enabled: false\n")
+    assert load_station_config(path).alignment_index is None
+
+
+def test_alignment_is_off_without_cameras(tmp_path):
+    assert load_station_config(_write(tmp_path, "meta: {}\n")).alignment_index is None
+
+
+@pytest.mark.parametrize("section", ["[a, b]", "yes", "3"])
+def test_a_non_mapping_alignment_section_is_a_station_config_error(tmp_path, section):
+    with pytest.raises(StationConfigError, match="alignment"):
+        load_station_config(_write(tmp_path, _CAMERAS + f"alignment: {section}\n"))

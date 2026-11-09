@@ -64,20 +64,31 @@ _DEFAULT_BUDGET_MS = 5.0
 
 # What each tracking source's saved time means today; none is a physical acquisition time.
 _TRACKING_SEMANTICS: dict[str, str] = {
-    "recorded_time": "the host's poll time for every tracking source",
+    "recorded_time": "the host's poll time for every tracking source, less a configured latency where one is set",
     "controllers": "device value is the pose-evaluation time (a predicted XrTime), not an acquisition time",
     "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
     "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
 }
 
 
-# What each tracking source's saved time is, and whether it is a qualified event time. Neither is: both are host
-# times, not a measurement of the device. A source becomes qualified only when its producer carries a measurement
-# time from acquisition, and its entry here changes with that evidence, not before.
-_TRACKING_EVENT_TIME: dict[str, dict[str, Any]] = {
-    PICO_CONTROLLER_SOURCE: {"meaning": "pose_evaluation_time", "qualified": False},
-    MANUS_GLOVE_SOURCE: {"meaning": "host_push_time", "qualified": False},
-}
+def _tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any]]:
+    """What each tracking source's saved time is, and whether it is a qualified event time.
+
+    A source with a configured latency is saved as its host poll time minus that latency: an estimate, marked as
+    one with the latency used, never a measurement of the device. One without a latency is only the host poll
+    time and stays unqualified.
+    """
+    return {
+        name: {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": latency[name],
+            "qualified": True,
+        }
+        if name in latency
+        else {"meaning": "host_poll_time", "qualified": False}
+        for name in (PICO_CONTROLLER_SOURCE, MANUS_GLOVE_SOURCE)
+    }
 
 
 def uncertainty_budget_ns() -> int:
@@ -335,7 +346,9 @@ class LiveKitRecordingSource:
         first_frame_timeout_s: float = 10.0,
         join_timeout_s: float = _JOIN_TIMEOUT_S,
         leave_timeout_s: float = _LEAVE_TIMEOUT_S,
+        tracking_latency: Mapping[str, float] | None = None,
     ) -> None:
+        self._tracking_latency = tracking_latency or {}
         self._recordable_streams = recordable_streams
         self._make_token = make_token
         self._first_frame_timeout_s = first_frame_timeout_s
@@ -529,7 +542,7 @@ class LiveKitRecordingSource:
                     }
                     for s in self._streams
                 },
-                **_TRACKING_EVENT_TIME,
+                **_tracking_event_time(self._tracking_latency),
             },
             # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
             "tracking_time": "host_poll",

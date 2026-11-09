@@ -88,8 +88,8 @@ def _complete(entry: Mapping[str, object], rows: int | None) -> bool:
 
 
 #: Continuity scopes that vouch for a source being one unbroken stretch. A clock mapping's epoch covers the
-#: publisher's times; ``host_clock`` is a source stamped on the recording host's own clock, so only its
-#: connection can break. A transport session does not cover the device behind it, so it is not accepted.
+#: publisher's times; ``host_clock`` is a source stamped on the recording host's own clock, covering its host
+#: poll and connection but not the device behind it. A transport session alone is not accepted.
 ACCEPTED_CONTINUITY_SCOPES = ("clock_mapping", "host_clock")
 
 

@@ -424,8 +424,8 @@ def clock_sync_with(history, *, discontinuity=False, rejected=0, current=True, t
     )
 
 
-async def prepared_source(streams):
-    source = make_source(streams)
+async def prepared_source(streams, **kwargs):
+    source = make_source(streams, **kwargs)
     await prepare_with_frames(source, streams)
     return source, FakeReceiver.instances[0]
 
@@ -482,8 +482,8 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
         "event_time": {
             "cam16": {"meaning": "sensor_capture", "qualified": True},
             "cam17": {"meaning": "frame_ready", "qualified": False},
-            "pico_controller": {"meaning": "pose_evaluation_time", "qualified": False},
-            "manus_glove": {"meaning": "host_push_time", "qualified": False},
+            "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+            "manus_glove": {"meaning": "host_poll_time", "qualified": False},
         },
         "tracking_time": "host_poll",
         "tracking_semantics": lrec._TRACKING_SEMANTICS,
@@ -505,6 +505,19 @@ async def test_event_time_is_keyed_by_recorded_source_and_qualifies_only_sensor_
     }
     assert event_time["cam16"]["meaning"] == "sensor_capture" and event_time["cam17"]["meaning"] == "frame_ready"
     assert 16 not in event_time and 17 not in event_time
+
+
+async def test_a_tracking_latency_makes_that_source_a_marked_estimate_and_others_stay_unqualified():
+    source, receiver = await prepared_source([livekit_stream(16)], tracking_latency={"pico_controller": 0.02})
+    receiver.clock_sync = clock_sync_with(history_of(1))
+    event_time = source.timing_evidence()["event_time"]
+    assert event_time["pico_controller"] == {
+        "meaning": "host_poll_minus_latency",
+        "estimated": True,
+        "latency_s": 0.02,
+        "qualified": True,
+    }
+    assert event_time["manus_glove"] == {"meaning": "host_poll_time", "qualified": False}
 
 
 async def test_timing_evidence_records_the_configured_uncertainty_budget(monkeypatch):

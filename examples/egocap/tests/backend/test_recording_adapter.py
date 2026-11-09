@@ -36,6 +36,7 @@ from egocap_web.recording_adapter import (
     build_pico_controller_fields,
     button_pressed,
     convert_camera_image,
+    convert_capture_frame,
     convert_controller_aim_pose,
     convert_hand_pose,
     convert_head_pose,
@@ -853,6 +854,46 @@ def test_every_tracking_sample_of_a_frame_carries_the_host_clock_connection_as_i
     samples = _convert_raw_item(frame)
     assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
     assert [s.continuity for s in samples] == [("host_clock", "s")] * 2
+
+
+def _capture_times(samples):
+    return {s.source: s.capture_time for s in samples}
+
+
+def test_no_latency_leaves_the_poll_time_as_the_capture_time():
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
+    for samples in (_convert_raw_item(frame), _convert_raw_item(frame, {}), convert_capture_frame(frame, None)):
+        assert set(_capture_times(samples).values()) == {5.0}
+
+
+def test_a_latency_is_taken_off_the_poll_time_per_source_and_receive_time_is_unchanged():
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
+    samples = _convert_raw_item(frame, {"pico_controller": 0.02, "manus_glove": 0.0})
+    assert _capture_times(samples) == pytest.approx({"pico_controller": 4.98, "manus_glove": 5.0})
+    assert {s.receive_time for s in samples} == {5.04}
+
+
+def test_a_later_receive_time_does_not_move_the_adjusted_capture_times():
+    latency = {"pico_controller": 0.02, "manus_glove": 0.03}
+    prompt = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_001_000_000)
+    delayed = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_250_000_000)
+    assert _capture_times(_convert_raw_item(prompt, latency)) == _capture_times(
+        _convert_raw_item(delayed, latency)
+    )
+
+
+def test_the_latency_is_applied_once_to_each_frame():
+    latency = {"pico_controller": 0.02, "manus_glove": 0.02}
+    times = [
+        _capture_times(_convert_raw_item(_tracking_frame(t, t + 1_000_000), latency))["pico_controller"]
+        for t in (1_000_000_000, 2_000_000_000)
+    ]
+    assert times == pytest.approx([0.98, 1.98])
+
+
+def test_a_latency_does_not_change_the_tracking_continuity():
+    samples = _convert_raw_item(_tracking_frame(5_000_000_000, 5_000_100_000), {"pico_controller": 0.02})
+    assert {s.continuity for s in samples} == {("host_clock", "s")}
 
 
 def test_a_new_capture_connection_changes_the_tracking_continuity_identity():

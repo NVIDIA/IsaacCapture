@@ -188,6 +188,18 @@ def test_unqualified_timing_is_refused_and_nothing_is_written(tmp_path, case):
     assert snapshot(tmp_path / "raw") == before
 
 
+def test_a_source_with_recorded_rows_missing_from_the_episode_is_refused_and_nothing_is_written(tmp_path, raw):
+    manifest = make_manifest(raw)
+    assert manifest.counts["glove"]["written"] > 0
+    shutil.rmtree(raw / "episode_0" / "glove")
+    before = snapshot(raw)
+    files = tree_files(raw)
+    with pytest.raises(AlignedWriteError, match="recorded rows are missing"):
+        align_kept_episode(raw, 0, INDEX, manifest)
+    assert not (tmp_path / "raw_aligned").exists()
+    assert tree_files(raw) == files and snapshot(raw) == before
+
+
 def test_missing_continuity_is_refused(tmp_path, raw):
     with pytest.raises(AlignedWriteError):
         align_kept_episode(raw, 0, INDEX, make_manifest(raw, continuity=None))
@@ -244,9 +256,9 @@ def test_a_written_count_that_differs_from_the_disk_is_refused(tmp_path, raw, de
     refused(tmp_path, raw, manifest, match="glove: the rows on disk differ")
 
 
-def test_a_counted_source_absent_from_the_episode_is_not_a_problem(raw):
+def test_a_source_that_wrote_no_rows_may_be_absent_from_the_episode(raw):
     manifest = make_manifest(raw)
-    manifest.counts["not_recorded"] = {"accepted": 3, "written": 3}
+    manifest.counts["not_recorded"] = {"accepted": 3, "written": 0}
     assert check_kept_episode(raw, 0, manifest) == []
 
 

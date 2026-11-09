@@ -6,8 +6,8 @@
 # backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
 # consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,
 # meta.task_description, recording.data_dir, and each video_sources entry's name/type (as the
-# cameras requested from CaptureServer) and each numeric_sources entry's latency (the recorder aligns a
-# tracking source on receive time minus it). The rest of each video_sources entry (frame_type, latency,
+# cameras requested from CaptureServer), the alignment section, and each numeric_sources entry's latency
+# (a tracking source is aligned on receive time minus it). The rest of each video_sources entry (frame_type, latency,
 # params) is reference data for other tooling, not consumed here --
 # CaptureServer owns actually opening the selected cameras/devices. Each video_sources name MUST
 # match one of the names the running CaptureServer instance actually knows about (its own
@@ -39,6 +39,11 @@ stations:
       # then this only prefills the field's draft text; the operator still has to press "Set
       # operator" before any recording command is accepted.
       auto_fill_operator_name: false
+    # Each kept episode is time-aligned in the background on this camera's frames. Defaults: enabled, and the
+    # first video source as the index. Set enabled: false to leave episodes as recorded.
+    alignment:
+      enabled: true
+      index_source: head_human_camera
     video_sources:
     - type: oak_camera
       name: head_human_camera
