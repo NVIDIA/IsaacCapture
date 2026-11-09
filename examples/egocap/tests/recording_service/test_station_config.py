@@ -52,20 +52,21 @@ async def test_station_label_writes_config_yaml_once_and_freezes_on_reopen(tmp_p
     service = own(RecordingService(base))
     session = await service.open_session()
     cfg_path = session.session_path / "config.yaml"
-    assert yaml.safe_load(cfg_path.read_text()) == {"meta": {"egocap_station_name": "Station 01"}}
+    assert yaml.safe_load(cfg_path.read_text())["meta"] == {"egocap_station_name": "Station 01"}
     await service.close()
 
     relabeled = dataclasses.replace(base, station_label="Station 02")
     service2 = own(RecordingService(relabeled))
     await service2.open_session(session.session_id)  # reopen the same session
-    assert yaml.safe_load(cfg_path.read_text()) == {"meta": {"egocap_station_name": "Station 01"}}  # unchanged
+    assert yaml.safe_load(cfg_path.read_text())["meta"] == {"egocap_station_name": "Station 01"}  # unchanged
 
 
-async def test_no_station_label_writes_no_config_yaml(tmp_path, own):
-    """An unset station_label (the ServiceConfig default) writes no config.yaml at all."""
+async def test_no_station_label_writes_a_config_yaml_without_station_meta(tmp_path, own):
+    """An unset station_label (the ServiceConfig default) still writes the source declarations, but no meta."""
     service = own(RecordingService(_config(tmp_path / "out")))
     session = await service.open_session()
-    assert not (session.session_path / "config.yaml").exists()
+    written = yaml.safe_load((session.session_path / "config.yaml").read_text())
+    assert "meta" not in written and written["numeric_sources"] == [{"name": "s"}]
 
 
 async def test_routed_group_gets_a_copy_of_the_session_config_yaml(tmp_path, own):

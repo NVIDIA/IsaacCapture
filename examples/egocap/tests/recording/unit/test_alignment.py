@@ -9,24 +9,28 @@ import pytest
 
 from egocap.recording import alignment
 from egocap.recording.alignment import (
+    FRAME_FIELD_RULES,
     AlignmentError,
     InsufficientSamplesError,
     align_episode,
     find_nearest_timestamp_indices,
     interpolate_field,
     qualified_sources,
+    source_rules,
 )
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "alignment"
 CAMERAS = ["head_camera", "wrist_camera"]
-RULES = {
-    **alignment.TRACKING_FIELD_RULES,
-    "head_camera": {"pose": "pose"},
-    "wrist_camera": {"pose": "pose"},
-    # Raw fields are not resampled, and the glove's integer count takes the nearest sample.
-    "pico_controller": {**alignment.TRACKING_FIELD_RULES["pico_controller"], "a_button": "raw"},
-    "manus_glove": {**alignment.TRACKING_FIELD_RULES["manus_glove"], "left_sensor_count": "nearest"},
+# The declarations a session's config.yaml carries for the golden scenarios' sources.
+CONFIG = {
+    "recording": {"video_frame_type": "RGBCameraFrame", "numeric_frame_type": "NumericFrame"},
+    "video_sources": [{"name": name} for name in CAMERAS],
+    "numeric_sources": [
+        {"name": "pico_controller", "frame_type": "PicoTrackingFrame"},
+        {"name": "manus_glove", "frame_type": "ManusFrame"},
+    ],
 }
+RULES = alignment.source_rules(CONFIG)
 GLOVE_FIELDS = ("left_hand_pose", "right_hand_pose", "left_sensor_count")
 
 
@@ -358,3 +362,102 @@ def test_backends_current_tracking_text_does_not_qualify_tracking():
     assert qualified_sources({"tracking_semantics": semantics}, [], ["pico_controller"]) == {
         "pico_controller": False
     }
+
+
+def test_controller_poses_are_slerped_and_buttons_stay_raw():
+    rules = FRAME_FIELD_RULES["PicoTrackingFrame"]
+    assert {rules[f] for f in ("head_pose", "left_pose", "right_pose")} == {"pose"}
+    assert {rules[f] for f in ("left_trigger", "right_trigger")} == {"linear"}
+    assert not {"a_button", "b_button", "x_button", "y_button"} & set(rules)
+
+
+def test_glove_poses_are_elementwise_linear_never_slerped():
+    rules = FRAME_FIELD_RULES["ManusFrame"]
+    assert rules["left_hand_pose"] == rules["right_hand_pose"] == "linear"
+    assert "pose" not in rules.values()
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_glove_sensors_are_linear_and_their_counts_nearest(side):
+    rules = FRAME_FIELD_RULES["ManusFrame"]
+    assert [rules[f"{side}_sensor_{kind}"] for kind in ("position", "orientation", "rotation")] == ["linear"] * 3
+    assert rules[f"{side}_sensor_count"] == "nearest"
+
+
+def test_camera_frames_resample_a_pose_and_generic_numeric_frames_nothing():
+    assert FRAME_FIELD_RULES["RGBCameraFrame"] == {"pose": "pose"}
+    assert FRAME_FIELD_RULES["NumericFrame"] == {}
+
+
+def test_source_rules_takes_each_sources_declared_frame_type():
+    rules = source_rules(CONFIG)
+    assert set(rules) == {"head_camera", "wrist_camera", "pico_controller", "manus_glove"}
+    assert rules["head_camera"] == {"pose": "pose"}
+    assert rules["pico_controller"] == FRAME_FIELD_RULES["PicoTrackingFrame"]
+    assert rules["manus_glove"] == FRAME_FIELD_RULES["ManusFrame"]
+
+
+def test_source_rules_returns_copies_so_a_caller_cannot_alter_the_table():
+    source_rules(CONFIG)["pico_controller"]["head_pose"] = "raw"
+    assert FRAME_FIELD_RULES["PicoTrackingFrame"]["head_pose"] == "pose"
+
+
+def test_source_without_a_frame_type_takes_the_sessions_default_for_its_kind():
+    config = {
+        "recording": {"video_frame_type": "NumericFrame", "numeric_frame_type": "ManusFrame"},
+        "video_sources": [{"name": "cam"}],
+        "numeric_sources": [{"name": "glove"}, {"name": "tracker", "frame_type": "NumericFrame"}],
+    }
+    assert source_rules(config) == {
+        "cam": {},
+        "glove": FRAME_FIELD_RULES["ManusFrame"],
+        "tracker": {},
+    }
+
+
+@pytest.mark.parametrize("recording", [None, "x", ["RGBCameraFrame"], {}])
+def test_missing_or_malformed_recording_defaults_to_camera_and_numeric_frames(recording):
+    config = {"video_sources": [{"name": "cam"}], "numeric_sources": [{"name": "arm"}]}
+    if recording is not None:
+        config["recording"] = recording
+    assert source_rules(config) == {"cam": {"pose": "pose"}, "arm": {}}
+
+
+def test_a_recording_section_naming_one_default_leaves_the_other():
+    config = {
+        "recording": {"numeric_frame_type": "ManusFrame"},
+        "video_sources": [{"name": "cam"}],
+        "numeric_sources": [{"name": "glove"}],
+    }
+    assert source_rules(config) == {"cam": {"pose": "pose"}, "glove": FRAME_FIELD_RULES["ManusFrame"]}
+
+
+@pytest.mark.parametrize(
+    "config", [{}, {"video_sources": None, "numeric_sources": "arm"}, {"numeric_sources": {}}]
+)
+def test_absent_or_malformed_sections_declare_nothing(config):
+    assert source_rules(config) == {}
+
+
+def test_sections_may_be_tuples_or_lists():
+    as_tuples = {"video_sources": ({"name": "cam"},), "numeric_sources": ({"name": "arm"},)}
+    as_lists = {"video_sources": [{"name": "cam"}], "numeric_sources": [{"name": "arm"}]}
+    assert source_rules(as_tuples) == source_rules(as_lists) == {"cam": {"pose": "pose"}, "arm": {}}
+
+
+def test_unknown_frame_type_is_refused_naming_the_source():
+    config = {"numeric_sources": [{"name": "arm", "frame_type": "Bogus"}]}
+    with pytest.raises(AlignmentError, match="arm.*Bogus"):
+        source_rules(config)
+
+
+def test_unknown_default_frame_type_is_refused():
+    config = {"recording": {"video_frame_type": "Bogus"}, "video_sources": [{"name": "cam"}]}
+    with pytest.raises(AlignmentError, match="Bogus"):
+        source_rules(config)
+
+
+@pytest.mark.parametrize("entry", ["cam", None, {"frame_type": "NumericFrame"}, {"name": 3}, ["name"]])
+def test_an_entry_that_is_not_a_named_mapping_is_refused(entry):
+    with pytest.raises(AlignmentError, match="video_sources: every source needs a name"):
+        source_rules({"video_sources": [entry]})

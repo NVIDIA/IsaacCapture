@@ -142,7 +142,11 @@ def _digest(config: ServiceConfig) -> str:
         qc["capture_algorithm_version"] = ALGORITHM_VERSION  # a changed algorithm is a changed configuration
     canonical = {
         **({"routing": True} if config.routing is not None else {}),  # routed or not; each take freezes its studio
-        "numeric": [asdict(s) for s in config.numeric_sources],
+        # A frame type left unset is absent, not null, so a configuration that predates it keeps its digest.
+        "numeric": [
+            {k: v for k, v in asdict(s).items() if k != "frame_type" or v is not None}
+            for s in config.numeric_sources
+        ],
         "video": [asdict(s) for s in config.video_sources],
         "qc": qc,
         "latency": config.latency,
@@ -651,11 +655,7 @@ class RecordingService:
                     record[asset.name] = None
                     self._issues.append(f"optional calibration asset {asset.name!r} not found at {source}")
             write_json_atomic(record_path, record)
-            if self._config.station_label:
-                write_yaml_atomic(
-                    session_path / SESSION_CONFIG_FILE,
-                    {"meta": {"egocap_station_name": self._config.station_label}},
-                )
+            write_yaml_atomic(session_path / SESSION_CONFIG_FILE, self._session_config())
             return
         record = json.loads(record_path.read_text()) if record_path.is_file() else {}
         for asset in assets:
@@ -666,6 +666,35 @@ class RecordingService:
             if asset.required:
                 raise ConfigurationError(problem)
             self._issues.append("optional " + problem)
+
+    def _session_config(self) -> dict[str, Any]:
+        """The session's ``config.yaml``: the station identity and the source declarations time alignment reads.
+
+        Each source is declared by name with the frame type that says how its fields are resampled. A latency is
+        written only for a source the configuration gives one, since a latency that was never measured must not
+        be recorded as zero.
+        """
+        config = self._config
+        data: dict[str, Any] = {}
+        # The station identity analytics tools map a recorded session back to its station with.
+        if config.station_label:
+            data["meta"] = {"egocap_station_name": config.station_label}
+        # The default frame types for sources that declare none.
+        data["recording"] = {"video_frame_type": "RGBCameraFrame", "numeric_frame_type": "NumericFrame"}
+        latency = config.latency or {}
+
+        def declare(name: str, frame_type: str | None = None) -> dict[str, Any]:
+            """One source's declaration; a frame type or latency appears only when it is known."""
+            entry: dict[str, Any] = {"name": name}
+            if frame_type is not None:
+                entry["frame_type"] = frame_type
+            if name in latency:
+                entry["latency"] = latency[name]
+            return entry
+
+        data["video_sources"] = [declare(s.name) for s in config.video_sources]
+        data["numeric_sources"] = [declare(s.name, s.frame_type) for s in config.numeric_sources]
+        return data
 
     def _seed_group_assets(self, session_path: Path, group: str) -> None:
         """Copy the session's frozen config.yaml and preserved calibration assets into a routed group.

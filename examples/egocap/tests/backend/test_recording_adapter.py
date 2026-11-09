@@ -25,6 +25,8 @@ import pytest
 from capture_server import protocol as capture_protocol
 from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.recording_adapter import (
+    MANUS_GLOVE_SPEC,
+    PICO_CONTROLLER_SPEC,
     RecordingAdapterError,
     RecordingIngress,
     _convert_raw_item,
@@ -826,3 +828,11 @@ async def test_livekit_video_and_tracking_from_one_frame_share_the_pc_monotonic_
     assert abs(video.capture_time - event_ns / S) <= tolerance_s
     for sample in tracking:
         assert abs((sample.capture_time - video.capture_time) - truth_gap_s) <= tolerance_s
+
+
+def test_tracking_specs_name_the_frame_types_that_select_their_alignment_rules():
+    from egocap.recording.alignment import FRAME_FIELD_RULES
+
+    assert PICO_CONTROLLER_SPEC.frame_type == "PicoTrackingFrame"
+    assert MANUS_GLOVE_SPEC.frame_type == "ManusFrame"
+    assert {PICO_CONTROLLER_SPEC.frame_type, MANUS_GLOVE_SPEC.frame_type} <= set(FRAME_FIELD_RULES)

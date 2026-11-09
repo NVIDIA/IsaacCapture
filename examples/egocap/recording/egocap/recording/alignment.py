@@ -36,13 +36,14 @@ __all__ = [
     "AlignedEpisode",
     "AlignedSource",
     "AlignmentError",
+    "FRAME_FIELD_RULES",
     "FieldRule",
     "InsufficientSamplesError",
-    "TRACKING_FIELD_RULES",
     "align_episode",
     "find_nearest_timestamp_indices",
     "interpolate_field",
     "qualified_sources",
+    "source_rules",
 ]
 
 #: How one field is resampled onto the kept times.
@@ -176,19 +177,60 @@ class AlignedEpisode:
     sources: dict[str, AlignedSource]
 
 
-#: How each field of the station's tracking sources is resampled. Head and controller poses are rigid transforms
-#: (slerp); the glove's 25 joint transforms per hand are interpolated element-wise; triggers are continuous; the
-#: buttons are not resampled, so they stay raw.
-TRACKING_FIELD_RULES: dict[str, dict[str, FieldRule]] = {
-    "pico_controller": {
+#: How each field of a frame type is resampled when an episode is time aligned. A session's config.yaml names the
+#: frame type of each source. Head and controller poses are rigid transforms (slerp); the glove's joint transforms
+#: are interpolated element-wise, so their shape never selects slerp; triggers and sensor values are continuous;
+#: a count is the nearest sample's; buttons and flags are not resampled, so they are absent here (raw).
+FRAME_FIELD_RULES: dict[str, dict[str, FieldRule]] = {
+    "RGBCameraFrame": {"pose": "pose"},
+    "NumericFrame": {},
+    "PicoTrackingFrame": {
         "head_pose": "pose",
         "left_pose": "pose",
         "right_pose": "pose",
         "left_trigger": "linear",
         "right_trigger": "linear",
     },
-    "manus_glove": {"left_hand_pose": "linear", "right_hand_pose": "linear"},
+    "ManusFrame": {
+        **{f"{side}_hand_pose": "linear" for side in ("left", "right")},
+        **{
+            f"{side}_sensor_{kind}": "linear"
+            for side in ("left", "right")
+            for kind in ("position", "orientation", "rotation")
+        },
+        **{f"{side}_sensor_count": "nearest" for side in ("left", "right")},
+    },
 }
+
+
+def source_rules(config: Mapping[str, object]) -> dict[str, dict[str, FieldRule]]:
+    """Each declared source's field rules, from the source declarations in a session's ``config.yaml``.
+
+    A source declares its ``frame_type``; one that declares none takes the session's default for its kind. A frame
+    type with no known rules is an error, since silently resampling nothing would write an aligned episode that
+    looks complete and is not.
+    """
+    recording = config.get("recording")
+    defaults = {
+        "video_sources": (recording or {}).get("video_frame_type", "RGBCameraFrame")
+        if isinstance(recording, Mapping)
+        else "RGBCameraFrame",
+        "numeric_sources": (recording or {}).get("numeric_frame_type", "NumericFrame")
+        if isinstance(recording, Mapping)
+        else "NumericFrame",
+    }
+    rules: dict[str, dict[str, FieldRule]] = {}
+    for section, default in defaults.items():
+        entries = config.get(section)
+        # An absent or malformed section declares no sources.
+        for entry in entries if isinstance(entries, (list, tuple)) else []:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("name"), str):
+                raise AlignmentError(f"{section}: every source needs a name")
+            frame_type = entry.get("frame_type", default)
+            if frame_type not in FRAME_FIELD_RULES:
+                raise AlignmentError(f"{entry['name']}: no alignment rules for frame type {frame_type!r}")
+            rules[entry["name"]] = dict(FRAME_FIELD_RULES[frame_type])
+    return rules
 
 
 def _check_inputs(index_source: str, times: Mapping[str, np.ndarray], downsample: int) -> None:

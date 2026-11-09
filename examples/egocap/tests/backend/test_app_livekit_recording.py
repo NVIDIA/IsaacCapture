@@ -237,3 +237,12 @@ def test_readiness_accepts_livekit_recording_with_a_loopback_capture_server(acce
         _ready_monitor([_stream(16, capture)]), None, "ws://127.0.0.1:8082"
     )
     assert check() == (True, None)
+
+
+def test_config_factory_numeric_sources_carry_their_frame_types(tmp_path):
+    monitor = SimpleNamespace(camera_descriptors=(), native=SimpleNamespace(started=None))
+    config = app_module._recording_config_factory(monitor, None, tmp_path)()
+    assert {s.name: s.frame_type for s in config.numeric_sources} == {
+        "pico_controller": "PicoTrackingFrame",
+        "manus_glove": "ManusFrame",
+    }

@@ -71,6 +71,7 @@ PICO_CONTROLLER_SPEC = NumericSourceSpec(
         FieldSpec("x_button", "bool"),
         FieldSpec("y_button", "bool"),
     ),
+    "PicoTrackingFrame",
 )
 MANUS_GLOVE_SPEC = NumericSourceSpec(
     MANUS_GLOVE_SOURCE,
@@ -78,6 +79,7 @@ MANUS_GLOVE_SPEC = NumericSourceSpec(
         FieldSpec("left_hand_pose", "float64", (25, 4, 4)),
         FieldSpec("right_hand_pose", "float64", (25, 4, 4)),
     ),
+    "ManusFrame",
 )
 
 
