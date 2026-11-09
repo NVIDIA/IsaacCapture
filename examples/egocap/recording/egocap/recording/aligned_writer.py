@@ -29,7 +29,13 @@ import zarr
 
 from .alignment import AlignedEpisode, align_episode, check_continuity, source_rules
 
-__all__ = ["ALIGNED_SESSION_SIDECARS", "AlignedWriteError", "validate_aligned_episode", "write_aligned_episode"]
+__all__ = [
+    "ALIGNED_SESSION_SIDECARS",
+    "AlignedWriteError",
+    "publish_aligned_episode",
+    "validate_aligned_episode",
+    "write_aligned_episode",
+]
 
 #: Session-level files carried into the aligned session when the raw session has them.
 ALIGNED_SESSION_SIDECARS = (
@@ -222,4 +228,63 @@ def write_aligned_episode(
     problems = validate_aligned_episode(aligned_session, episode_index, index_source)
     if problems:
         raise AlignedWriteError("; ".join(problems))
+    return aligned
+
+
+def publish_aligned_episode(
+    raw_session: Path,
+    aligned_session: Path,
+    episode_index: int,
+    index_source: str,
+    *,
+    downsample: int = 1,
+    qualified: Mapping[str, bool],
+    continuity: Mapping[str, Mapping[str, object]] | None,
+) -> AlignedEpisode:
+    """Write the aligned episode privately, then move it into ``aligned_session`` by renames.
+
+    A reader never sees a half-written episode: it is written and validated in a staging session beside the
+    aligned one (same filesystem, so the videos stay linked and the moves are renames). An interrupted run
+    leaves either the staging tree, which the next run discards, or, if it stopped between the two renames,
+    the previous episode under a ``.replaced`` name, which the next run puts back before anything else.
+    Arguments and refusals are those of :func:`write_aligned_episode`.
+    """
+    _check_separate(raw_session, aligned_session)
+    key = f"episode_{episode_index}"
+    staging = aligned_session.with_name(f".{aligned_session.name}.staging")
+    _check_separate(raw_session, staging)
+    final, replaced = aligned_session / key, aligned_session / f".{key}.replaced"
+
+    # Leftovers of an interrupted run: a half-built staging tree is discarded, and an episode set aside by an
+    # interrupted move is restored (or dropped if its replacement did arrive).
+    shutil.rmtree(staging, ignore_errors=True)
+    if replaced.exists():
+        if final.exists():
+            shutil.rmtree(replaced)
+        else:
+            os.replace(replaced, final)
+
+    try:
+        aligned = write_aligned_episode(
+            raw_session,
+            staging,
+            episode_index,
+            index_source,
+            downsample=downsample,
+            qualified=qualified,
+            continuity=continuity,
+        )
+    except BaseException:
+        # Nothing of a failed or refused write reaches the aligned session.
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    # The aligned root and sidecars are idempotent; the episode moves in with two renames, keeping the old copy
+    # until the new one is in place.
+    _write_root(raw_session, aligned_session, index_source)
+    if final.exists():
+        os.replace(final, replaced)
+    os.replace(staging / key, final)
+    shutil.rmtree(replaced, ignore_errors=True)
+    shutil.rmtree(staging, ignore_errors=True)
     return aligned
