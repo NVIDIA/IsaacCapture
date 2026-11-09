@@ -60,6 +60,7 @@ process-global mutable registry.
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from functools import lru_cache
@@ -682,9 +683,17 @@ class TeleopSession:
         seed: int = 0,
         faults: set[str] | frozenset[str] | None = None,
         clock: Clock | None = None,
+        controller_delay_s: float = 0.0,
+        glove_delay_s: float = 0.0,
+        delay_jitter_s: float = 0.0,
     ) -> None:
         self.config = config
         self.frame_count = 0
+        # Synthetic device-to-host delay: a source's content is what the operator was doing this long before the
+        # poll, plus seeded bounded jitter, so a configured latency can be checked against a known truth.
+        self._delays = {"controller": controller_delay_s, "glove": glove_delay_s}
+        self._jitter_s = delay_jitter_s
+        self._delay_rng = random.Random(seed)
         self._operator = _Operator(scenario=scenario, seed=seed)
         self._faults: set[str] = set(faults) if faults else set()
         self._clock = clock or MonotonicClock()
@@ -749,6 +758,11 @@ class TeleopSession:
             self._frozen_t = None
         return now - self._enter_t0
 
+    def _delayed(self, t: float, source: str) -> float:
+        """The instant ``source``'s content is from: ``t`` less its synthetic delay and jitter, never before 0."""
+        jitter = self._delay_rng.uniform(-self._jitter_s, self._jitter_s) if self._jitter_s else 0.0
+        return max(0.0, t - max(0.0, self._delays[source] + jitter))
+
     def step(
         self,
         *,
@@ -771,8 +785,12 @@ class TeleopSession:
             raise RuntimeError("mock fatal_acquisition_error fault: acquisition worker exited")
 
         t = self._elapsed()
-        head_pose, left_hand, right_hand = self._operator.core(t)
-        inputs = self._operator.inputs(t)
+        head_pose, _, _ = self._operator.core(t)
+        # Each source reads the operator at its own delayed instant (the head is not delayed).
+        t_controller, t_glove = self._delayed(t, "controller"), self._delayed(t, "glove")
+        _, left_ctrl, right_ctrl = self._operator.core(t_controller)
+        _, left_hand, right_hand = self._operator.core(t_glove)
+        inputs = self._operator.inputs(t_controller)
 
         result: dict[str, OptionalTensorGroup] = {}
         for leaf_key, (source_node, selector) in self.config.pipeline.outputs.items():
@@ -786,7 +804,7 @@ class TeleopSession:
                     # all (which would simply not appear in this dict).
                     result[leaf_key] = OptionalTensorGroup(len(ControllerInputIndex))
                     continue
-                hand = left_hand if side == "left" else right_hand
+                hand = left_ctrl if side == "left" else right_ctrl
                 valid = "controller_pose_invalid" not in self._faults
                 result[leaf_key] = self._controller_group(hand, inputs, side, valid=valid)
             elif isinstance(source_node, HandsSource):
