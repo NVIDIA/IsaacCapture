@@ -119,7 +119,7 @@ def golden(name):
 
 
 @pytest.mark.parametrize("name", sorted(META["scenarios"]))
-def test_written_tree_equals_the_reference_aligned_tree(tmp_path, name):
+def test_written_tree_equals_the_expected_tree(tmp_path, name):
     scenario = META["scenarios"][name]
     build_raw(tmp_path / "raw", scenario)
     write_steps(tmp_path / "raw", tmp_path / "aligned", scenario["steps"])

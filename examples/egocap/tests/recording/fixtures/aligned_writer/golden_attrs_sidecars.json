@@ -568,7 +568,7 @@
    ]
   }
  ],
- "reference_tree_listing": [
+ "expected_tree_listing": [
   "config.yaml",
   "episode_0",
   "episode_0/glove",

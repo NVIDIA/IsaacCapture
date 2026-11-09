@@ -106,7 +106,7 @@ def publish(raw, aligned, episode=0, downsample=1, qualified=QUALIFIED, continui
     )
 
 
-def reference(raw, target, episode=0, downsample=1):
+def write_control(raw, target, episode=0, downsample=1):
     write_aligned_episode(
         raw, target, episode, INDEX, downsample=downsample, qualified=QUALIFIED, continuity=clean_continuity()
     )
@@ -153,7 +153,7 @@ def raw(tmp_path):
 
 @pytest.mark.parametrize("episode", [0, 1])
 def test_published_tree_equals_what_write_aligned_episode_produces(tmp_path, raw, episode):
-    reference(raw, tmp_path / "ref", episode, downsample=2)
+    write_control(raw, tmp_path / "ref", episode, downsample=2)
     before = raw_state(raw)
     publish(raw, tmp_path / "aligned", episode, downsample=2)
 
@@ -210,7 +210,7 @@ def test_republishing_replaces_the_whole_episode_and_leaves_others_alone(tmp_pat
 
     publish(raw, aligned, 0, downsample=2)
 
-    reference(raw, tmp_path / "ref", 0, downsample=2)
+    write_control(raw, tmp_path / "ref", 0, downsample=2)
     now = snapshot(aligned)
     assert "episode_0/stale_array" not in now
     assert "episode_0/stale.txt" not in now
@@ -301,7 +301,7 @@ def test_a_crash_while_replacing_an_existing_episode_never_leaves_a_partial_one(
     aligned = tmp_path / "aligned"
     publish(raw, aligned, 0, downsample=1)
     old = snapshot(aligned)
-    reference(raw, tmp_path / "ref", 0, downsample=2)
+    write_control(raw, tmp_path / "ref", 0, downsample=2)
 
     monkeypatch.setattr(aligned_writer, "os", FailingOs(fail_on))
     with pytest.raises(OSError, match="simulated crash"):
@@ -389,7 +389,7 @@ def test_a_leftover_replaced_episode_without_a_replacement_is_then_overwritten_b
 
     publish(raw, aligned, 0, downsample=2)
 
-    reference(raw, tmp_path / "ref", 0, downsample=2)
+    write_control(raw, tmp_path / "ref", 0, downsample=2)
     assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
     assert_no_leftovers(aligned)
 
@@ -449,8 +449,8 @@ def test_concurrent_publications_of_different_episodes_both_land_complete(tmp_pa
         t.join(timeout=120)
     assert errors == []
 
-    reference(raw, tmp_path / "ref", 0, downsample=2)
-    reference(raw, tmp_path / "ref", 1, downsample=2)
+    write_control(raw, tmp_path / "ref", 0, downsample=2)
+    write_control(raw, tmp_path / "ref", 1, downsample=2)
     assert_snapshots_equal(snapshot(aligned), snapshot(tmp_path / "ref"))
     for episode in (0, 1):
         assert validate_aligned_episode(aligned, episode, INDEX) == []

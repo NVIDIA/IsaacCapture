@@ -55,7 +55,7 @@ def align(data, ds=1, rules=RULES, **kwargs):
     return align_episode("head_camera", times, CAMERAS, fields, rules, downsample=ds, **kwargs)
 
 
-def ours_by_reference_key(result):
+def by_output_key(result):
     out = {"valid_indices": result.valid_indices, "valid_timestamps": result.valid_timestamps}
     for name, source in result.sources.items():
         if source.aligned_frame_indices is not None:
@@ -65,12 +65,12 @@ def ours_by_reference_key(result):
     return out
 
 
-def assert_equals_reference(data, ds, rules=RULES):
-    ours = ours_by_reference_key(align(data, ds, rules))
+def assert_matches_expected(data, ds, rules=RULES):
+    ours = by_output_key(align(data, ds, rules))
     ref = {k.split("__", 1)[1]: v for k, v in data.items() if k.startswith(f"out{ds}__")}
     ref1 = {k.split("__", 1)[1]: v for k, v in data.items() if k.startswith("out1__")}
     if ds > 1:
-        # The reference's glove arrays for a stride are the matching rows of its full run (checked when generated).
+        # The expected glove arrays for a stride are the matching rows of the full-rate run.
         rows = np.searchsorted(np.flatnonzero(ref1["valid_indices"]), np.flatnonzero(ref["valid_indices"]))
         for field_name in GLOVE_FIELDS:
             ref[f"interp__manus_glove__{field_name}"] = ref1[f"interp__manus_glove__{field_name}"][rows]
@@ -94,8 +94,8 @@ def assert_equals_reference(data, ds, rules=RULES):
         ("05_irregular_tracking_with_gap", 1),
     ],
 )
-def test_matches_reference_alignment_outputs(scenario, ds):
-    assert_equals_reference(load(scenario), ds)
+def test_matches_expected_alignment_outputs(scenario, ds):
+    assert_matches_expected(load(scenario), ds)
 
 
 def test_late_tracking_sets_the_valid_range():
@@ -106,24 +106,24 @@ def test_late_tracking_sets_the_valid_range():
     assert not result.valid_indices[0]
 
 
-def test_single_sample_source_matches_reference_except_where_the_reference_skips():
-    # The reference logs and skips the glove's linear fields (a single sample cannot be interpolated); ours raises.
+def test_single_sample_source_is_refused_for_its_linear_fields():
+    # A single sample cannot be interpolated, so the glove's linear fields are refused rather than skipped.
     data = load("06_single_sample_source")
     assert "out1__interp__manus_glove__left_hand_pose" not in data
     with pytest.raises(InsufficientSamplesError):
         align(data)
     without_hand_poses = {**RULES, "manus_glove": {"left_sensor_count": "nearest"}}
-    assert_equals_reference(data, 1, without_hand_poses)
+    assert_matches_expected(data, 1, without_hand_poses)
 
 
-def test_backwards_timestamp_is_refused_where_the_reference_drops_the_sample():
+def test_backwards_timestamp_is_refused():
     data = load("04b_backwards_timestamp")
     assert "out1__valid_indices" in data
     with pytest.raises(AlignmentError, match="backwards"):
         align(data)
 
 
-def test_no_common_range_is_refused_where_the_reference_writes_empty_output():
+def test_no_common_range_is_refused():
     data = load("07_no_common_range")
     assert not data["out1__valid_indices"].any()
     times, fields = inputs(data)
@@ -270,9 +270,9 @@ def test_valid_range_is_first_and_last_common_time():
 
 def test_no_epochs_and_empty_epochs_change_nothing():
     data = load("01_jittered_index_offset_wrist")
-    base = ours_by_reference_key(align(data))
+    base = by_output_key(align(data))
     for epochs in (None, {}):
-        again = ours_by_reference_key(align(data, epochs=epochs))
+        again = by_output_key(align(data, epochs=epochs))
         assert all(np.array_equal(base[k], again[k]) for k in base)
 
 
@@ -280,8 +280,8 @@ def test_uniform_epoch_labels_leave_the_output_identical():
     data = load("01_jittered_index_offset_wrist")
     times, _ = inputs(data)
     epochs = {name: np.full(len(t), 4) for name, t in times.items()}
-    base = ours_by_reference_key(align(data))
-    labelled = ours_by_reference_key(align(data, epochs=epochs))
+    base = by_output_key(align(data))
+    labelled = by_output_key(align(data, epochs=epochs))
     assert set(base) == set(labelled)
     assert all(np.array_equal(base[k], labelled[k]) for k in base)
 

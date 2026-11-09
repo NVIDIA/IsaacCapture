@@ -5,7 +5,7 @@
 """Time alignment of a recorded episode, producing the aligned-dataset arrays downstream consumers read.
 
 The recorded sources are resampled onto one camera's frame times (the index source). The rules are fixed by the
-aligned dataset format and are reproduced here exactly, because consumers read the result by array name and
+aligned dataset format and are implemented exactly as stated, because consumers read the result by array name and
 expect these values:
 
 * the valid range runs from the latest first time to the earliest last time over all sources; an index frame is
@@ -310,7 +310,7 @@ def align_episode(
     """
     _check_inputs(index_source, times, downsample)
     for name, labels in (epochs or {}).items():
-        # The aligned numbers stay those of the reference rules; a break is refused, not handled differently.
+        # The aligned numbers follow the rules above unchanged; a break is refused, not handled differently.
         if name not in times or len(labels) != len(times[name]):
             raise AlignmentError(f"{name}: epoch labels must be one per sample of a source being aligned")
         if len(np.unique(labels)) > 1:
