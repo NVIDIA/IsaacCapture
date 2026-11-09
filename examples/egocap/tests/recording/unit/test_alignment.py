@@ -13,6 +13,7 @@ from egocap.recording.alignment import (
     AlignmentError,
     InsufficientSamplesError,
     align_episode,
+    check_continuity,
     find_nearest_timestamp_indices,
     interpolate_field,
     qualified_sources,
@@ -461,3 +462,65 @@ def test_unknown_default_frame_type_is_refused():
 def test_an_entry_that_is_not_a_named_mapping_is_refused(entry):
     with pytest.raises(AlignmentError, match="video_sources: every source needs a name"):
         source_rules({"video_sources": [entry]})
+
+
+def clean(scope="clock_mapping", **changes):
+    return {"scope": scope, "identity": 1, "breaks": [], "known": True, **changes}
+
+
+def test_only_a_clock_mapping_scope_is_accepted_as_continuity_evidence():
+    assert alignment.ACCEPTED_CONTINUITY_SCOPES == ("clock_mapping",)
+
+
+def test_clean_clock_mapping_evidence_for_every_source_is_accepted():
+    assert check_continuity({"cam": clean(), "arm": clean()}, ["cam", "arm"]) == []
+
+
+def test_evidence_for_sources_that_are_not_asked_about_is_ignored():
+    assert check_continuity({"cam": clean(), "other": clean(known=False)}, ["cam"]) == []
+
+
+def test_no_evidence_at_all_is_one_problem_not_a_clean_pass():
+    assert check_continuity(None, ["cam", "arm"]) == ["no continuity evidence was recorded for this episode"]
+
+
+def test_a_source_without_an_entry_is_refused():
+    assert check_continuity({"cam": clean()}, ["cam", "arm"]) == ["arm: no continuity evidence"]
+
+
+def test_an_entry_that_is_not_a_mapping_is_refused():
+    assert check_continuity({"cam": [1, 2]}, ["cam"]) == ["cam: no continuity evidence"]
+
+
+@pytest.mark.parametrize("known", [False, None, "yes", 1])
+def test_continuity_that_is_not_exactly_known_true_is_unknown(known):
+    assert check_continuity({"cam": clean(known=known)}, ["cam"]) == ["cam: continuity is unknown"]
+
+
+def test_a_missing_known_flag_is_unknown():
+    entry = clean()
+    del entry["known"]
+    assert check_continuity({"cam": entry}, ["cam"]) == ["cam: continuity is unknown"]
+
+
+@pytest.mark.parametrize("scope", ["capture_session", None, "other"])
+def test_a_scope_that_does_not_cover_the_source_is_refused(scope):
+    # Transport continuity says the connection stayed up, not that the device behind it did not restart.
+    (problem,) = check_continuity({"cam": clean(scope)}, ["cam"])
+    assert problem.startswith("cam: its continuity evidence (") and f"{scope!r}" in problem
+
+
+def test_a_break_is_reported_with_its_rows():
+    problems = check_continuity({"cam": clean(breaks=[4, 9])}, ["cam"])
+    assert problems == ["cam: has a restart inside the episode (rows [4, 9])"]
+
+
+def test_every_refused_source_is_reported_at_once():
+    evidence = {
+        "a": clean(breaks=[2]),
+        "b": clean("capture_session"),
+        "c": clean(known=False),
+        "ok": clean(),
+    }
+    problems = check_continuity(evidence, ["a", "b", "c", "ok", "missing"])
+    assert [p.split(":")[0] for p in problems] == ["a", "b", "c", "missing"]

@@ -17,6 +17,7 @@ fabricate a usable pose).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 
 import numpy as np
@@ -321,7 +322,10 @@ def test_validate_tracking_descriptor_rejects_mismatched_fields():
 
 
 class _FakeCameraImage:
-    def __init__(self, rgb: np.ndarray, capture_time_ns: int, receive_time_ns: int, name: str = "cam"):
+    def __init__(
+        self, rgb: np.ndarray, capture_time_ns: int, receive_time_ns: int, name: str = "cam", session_id: str = "s"
+    ):
+        self.session_id = session_id
         self._rgb = rgb
         self.capture_time_ns = capture_time_ns
         self.receive_time_ns = receive_time_ns
@@ -340,6 +344,12 @@ def test_convert_camera_image_is_rgb8_with_seconds_timestamps():
     assert sample.capture_time == pytest.approx(2.0)
     assert sample.receive_time == pytest.approx(3.0)
     assert sample.image is rgb
+
+
+def test_convert_camera_image_records_the_transport_session_as_its_continuity():
+    image = _FakeCameraImage(np.zeros((4, 4, 3), dtype=np.uint8), 1, 2, session_id="sess-a")
+    sample = convert_camera_image(image, "head_human_camera")  # type: ignore[arg-type]
+    assert sample.continuity == ("capture_session", "sess-a")
 
 
 # --- bounded ingress -----------------------------------------------------------
@@ -836,3 +846,18 @@ def test_tracking_specs_name_the_frame_types_that_select_their_alignment_rules()
     assert PICO_CONTROLLER_SPEC.frame_type == "PicoTrackingFrame"
     assert MANUS_GLOVE_SPEC.frame_type == "ManusFrame"
     assert {PICO_CONTROLLER_SPEC.frame_type, MANUS_GLOVE_SPEC.frame_type} <= set(FRAME_FIELD_RULES)
+
+
+def test_every_tracking_sample_of_a_frame_carries_the_transport_session_as_its_continuity():
+    # The transport session does not vouch for the devices behind it, so the scope says exactly that.
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_000_100_000)
+    samples = _convert_raw_item(frame)
+    assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
+    assert [s.continuity for s in samples] == [("capture_session", "s")] * 2
+
+
+def test_a_new_transport_session_changes_the_continuity_identity():
+    first = _convert_raw_item(_tracking_frame(1_000_000_000, 1_000_100_000))
+    other = dataclasses.replace(_tracking_frame(2_000_000_000, 2_000_100_000), session_id="t")
+    assert {s.continuity for s in _convert_raw_item(other)} == {("capture_session", "t")}
+    assert {s.continuity for s in first} == {("capture_session", "s")}

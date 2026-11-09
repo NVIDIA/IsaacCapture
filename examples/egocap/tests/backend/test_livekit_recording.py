@@ -112,12 +112,17 @@ class FakeClockSync:
         self.uncertainty_ns = uncertainty_ns
         self.discontinuity = False
         self.available = True
+        self.epoch = 1
 
     def mapping(self) -> ClockMapping | None:
         if not self.available:
             return None
         return ClockMapping(
-            epoch=1, offset_ns=self.offset_ns, rtt_ns=2_000, uncertainty_ns=self.uncertainty_ns, accepted_at_ns=0
+            epoch=self.epoch,
+            offset_ns=self.offset_ns,
+            rtt_ns=2_000,
+            uncertainty_ns=self.uncertainty_ns,
+            accepted_at_ns=0,
         )
 
 
@@ -193,6 +198,27 @@ async def test_mapping_offset_places_capture_time_on_the_local_clock():
     clock.offset_ns = -20_000_000_000  # a later mapping applies to later frames only
     await feed.stop()
     assert [m.capture_time for m in ingress.offered] == [11.0]
+
+
+async def test_each_frame_carries_the_epoch_of_the_mapping_that_placed_it():
+    clock = FakeClockSync()
+    frames = [_received(16, 1_000_000), _received(16, 2_000_000), _received(16, 3_000_000)]
+    ingress = FakeIngress()
+
+    def new_epoch(c):
+        c.epoch = 5
+
+    # The mapping is replaced (new epoch, same offset) while the second frame is being served.
+    receiver = _FlipAfterFirst({16: frames}, clock, new_epoch)
+    feed = _feed(receiver, [_stream(16, "Head left")], ingress, {16: "head_left"})
+    feed.start()
+    await _settle()
+    await feed.stop()
+    assert [m.continuity for m in ingress.offered] == [
+        ("clock_mapping", 1),
+        ("clock_mapping", 5),
+        ("clock_mapping", 5),
+    ]
 
 
 @pytest.mark.parametrize(
