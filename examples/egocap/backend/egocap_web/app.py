@@ -464,6 +464,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             aligner.submit(result)
 
         coordinator.on_episode_result = on_result
+        aligner.recover()
         aligner_task = asyncio.create_task(aligner.run())
     visualization: VisualizationScene | None = None
     try:

@@ -744,11 +744,15 @@ class _FakeAligner:
     def __init__(self, output_root, index_source):
         self.output_root, self.index_source = output_root, index_source
         self.submitted = []
+        self.recovered = False
         self.cancelled = False
         _FakeAligner.instances.append(self)
 
     def submit(self, result):
         self.submitted.append(result)
+
+    def recover(self):
+        self.recovered = True
 
     async def run(self):
         import asyncio
@@ -786,6 +790,7 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
         (aligner,) = _FakeAligner.instances
         await asyncio.sleep(0)  # let the worker start so its cancellation is observable
         assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
+        assert aligner.recovered
     await asyncio.sleep(0)
     assert aligner.cancelled
 
