@@ -178,7 +178,8 @@ def write_aligned_episode(
     rules = source_rules(config)
     cameras = [e["name"] for e in config.get("video_sources") or []]
     key = f"episode_{episode_index}"
-    raw_episode = zarr.open_group(str(raw_session), mode="r")[key]
+    # The episode group is opened on its own: the raw session's root need not have metadata of its own.
+    raw_episode = zarr.open_group(str(raw_session / key), mode="r")
 
     # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
     present = [name for name in rules if name in raw_episode]
