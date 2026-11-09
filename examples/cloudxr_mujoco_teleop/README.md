@@ -24,9 +24,8 @@ Assumes IsaacTeleop is already built and installed in this tree.
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-   With `isaaccapture` built from this tree already installed in the active
-   environment (for example
-   `uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`),
+   With the venv set up and `isaaccapture` installed as in
+   [Running an example](../README.md#running-an-example),
    install the example once; this pulls its Python dependencies
    (`mujoco`, `numpy`, `scipy` — see `pyproject.toml`):
    ```bash
