@@ -521,12 +521,13 @@ class LiveKitRecordingSource:
             # Per recorded source: what its saved time means and whether it is a qualified event time. A camera is
             # qualified only when its time is the sensor's capture event; a frame-ready time is not.
             "event_time": {
+                # A stream is recorded under its own name (see start()), which is the key readers look it up by.
                 **{
-                    self._source_names[stream_id]: {
+                    s.name: {
                         "meaning": _RECORDABLE_BASES[s.timestamp_basis],
                         "qualified": _RECORDABLE_BASES[s.timestamp_basis] == "sensor_capture",
                     }
-                    for stream_id, s in self._streams.items()
+                    for s in self._streams
                 },
                 **_TRACKING_EVENT_TIME,
             },

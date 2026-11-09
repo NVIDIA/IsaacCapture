@@ -17,6 +17,7 @@ atomic.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
 from collections.abc import Mapping
@@ -249,11 +250,45 @@ def publish_aligned_episode(
     leaves either the staging tree, which the next run discards, or, if it stopped between the two renames,
     the previous episode under a ``.replaced`` name, which the next run puts back before anything else.
     Arguments and refusals are those of :func:`write_aligned_episode`.
+
+    Publication contract: one publisher at a time per aligned session (an exclusive lock on a file beside it is held
+    throughout, so concurrent runs queue instead of discarding each other's staging); a reader sees the previous
+    episode, the new one, or, in the instant between the two renames of a re-publication, no episode, and never a
+    partial one. The rename pair is crash-recoverable, not a single atomic replacement.
     """
     _check_separate(raw_session, aligned_session)
     key = f"episode_{episode_index}"
     staging = aligned_session.with_name(f".{aligned_session.name}.staging")
     _check_separate(raw_session, staging)
+    lock_path = aligned_session.with_name(f".{aligned_session.name}.lock")
+    # The lock file sits beside the aligned session, not in it, so a refused run still creates nothing inside.
+    with open(lock_path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _publish_locked(
+            raw_session,
+            aligned_session,
+            staging,
+            key,
+            episode_index,
+            index_source,
+            downsample,
+            qualified,
+            continuity,
+        )
+
+
+def _publish_locked(
+    raw_session: Path,
+    aligned_session: Path,
+    staging: Path,
+    key: str,
+    episode_index: int,
+    index_source: str,
+    downsample: int,
+    qualified: Mapping[str, bool],
+    continuity: Mapping[str, Mapping[str, object]] | None,
+) -> AlignedEpisode:
+    """The body of :func:`publish_aligned_episode`, run while its lock is held."""
     final, replaced = aligned_session / key, aligned_session / f".{key}.replaced"
 
     # Leftovers of an interrupted run: a half-built staging tree is discarded, and an episode set aside by an
