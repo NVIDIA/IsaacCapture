@@ -48,6 +48,7 @@ recording:
         task_description=None,
         data_dir=tmp_path / "recordings",
         cameras=(),
+        latency={},
     )
 
 
@@ -256,3 +257,30 @@ def test_the_shipped_template_resolves_a_real_station_label():
     assert resolved.station_id == "station_01"
     assert resolved.station_label == "Station 01"
     assert resolved.auto_fill_operator_name is False
+
+
+def _latency_yaml(*sources):
+    lines = ["numeric_sources:"]
+    for name, latency in sources:
+        lines += [f"  - name: {name}", f"    latency: {latency}"]
+    return "\n".join(lines) + "\n"
+
+
+def test_tracking_source_latencies_are_resolved_in_seconds(tmp_path):
+    path = _write(tmp_path, _latency_yaml(("pico_controller", 0.05), ("manus_glove", 1)))
+    assert load_station_config(path).latency == {"pico_controller": 0.05, "manus_glove": 1.0}
+
+
+def test_non_tracking_and_latency_free_numeric_sources_are_not_in_latency(tmp_path):
+    path = _write(
+        tmp_path,
+        "numeric_sources:\n  - name: other\n    latency: 0.1\n  - name: manus_glove\n  - just_a_string\n",
+    )
+    assert load_station_config(path).latency == {}
+
+
+@pytest.mark.parametrize("value", ["true", "'0.1'", "-0.1", ".inf", ".nan", "[1]"])
+def test_an_invalid_tracking_latency_is_a_station_config_error(tmp_path, value):
+    path = _write(tmp_path, _latency_yaml(("pico_controller", value)))
+    with pytest.raises(StationConfigError, match="pico_controller latency must be"):
+        load_station_config(path)

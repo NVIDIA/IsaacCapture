@@ -848,16 +848,15 @@ def test_tracking_specs_name_the_frame_types_that_select_their_alignment_rules()
     assert {PICO_CONTROLLER_SPEC.frame_type, MANUS_GLOVE_SPEC.frame_type} <= set(FRAME_FIELD_RULES)
 
 
-def test_every_tracking_sample_of_a_frame_carries_the_transport_session_as_its_continuity():
-    # The transport session does not vouch for the devices behind it, so the scope says exactly that.
+def test_every_tracking_sample_of_a_frame_carries_the_host_clock_connection_as_its_continuity():
     frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_000_100_000)
     samples = _convert_raw_item(frame)
     assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
-    assert [s.continuity for s in samples] == [("capture_session", "s")] * 2
+    assert [s.continuity for s in samples] == [("host_clock", "s")] * 2
 
 
-def test_a_new_transport_session_changes_the_continuity_identity():
+def test_a_new_capture_connection_changes_the_tracking_continuity_identity():
     first = _convert_raw_item(_tracking_frame(1_000_000_000, 1_000_100_000))
     other = dataclasses.replace(_tracking_frame(2_000_000_000, 2_000_100_000), session_id="t")
-    assert {s.continuity for s in _convert_raw_item(other)} == {("capture_session", "t")}
-    assert {s.continuity for s in first} == {("capture_session", "s")}
+    assert {s.continuity for s in _convert_raw_item(other)} == {("host_clock", "t")}
+    assert {s.continuity for s in first} == {("host_clock", "s")}

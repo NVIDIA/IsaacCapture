@@ -468,8 +468,12 @@ def clean(scope="clock_mapping", **changes):
     return {"scope": scope, "identity": 1, "breaks": [], "known": True, **changes}
 
 
-def test_only_a_clock_mapping_scope_is_accepted_as_continuity_evidence():
-    assert alignment.ACCEPTED_CONTINUITY_SCOPES == ("clock_mapping",)
+def test_only_clock_mapping_and_host_clock_scopes_are_accepted_as_continuity_evidence():
+    assert alignment.ACCEPTED_CONTINUITY_SCOPES == ("clock_mapping", "host_clock")
+
+
+def test_clean_host_clock_evidence_is_accepted():
+    assert check_continuity({"arm": clean("host_clock")}, ["arm"]) == []
 
 
 def test_clean_clock_mapping_evidence_for_every_source_is_accepted():

@@ -167,8 +167,9 @@ class NumericSample:
     receive_time: float
     fields: Mapping[str, Any]
     #: What stretch of the source this sample belongs to, as (scope, identity): the scope says what the identity
-    #: covers (``"clock_mapping"``: the mapping epoch that placed the time; ``"capture_session"``: the transport
-    #: session, which says nothing about the device behind it). A change of identity within a take is a break. None
+    #: covers (``"clock_mapping"``: the mapping epoch that placed the time; ``"host_clock"``: the capture
+    #: connection of a source stamped on this host's clock; ``"capture_session"``: the transport session, which
+    #: says nothing about the device behind it). A change of identity within a take is a break. None
     #: means the producer gave no evidence, which is not a claim of continuity.
     continuity: tuple[str, str | int] | None = None
 

@@ -171,6 +171,12 @@ def validate_aligned_episode(aligned_session: Path, episode_index: int, index_so
     return problems
 
 
+def _latencies(config: Mapping[str, Any]) -> dict[str, float]:
+    """The per-source latency (seconds) that the session's ``config.yaml`` declares."""
+    entries = [e for section in ("video_sources", "numeric_sources") for e in config.get(section) or []]
+    return {e["name"]: float(e["latency"]) for e in entries if "latency" in e}
+
+
 def write_aligned_episode(
     raw_session: Path,
     aligned_session: Path,
@@ -183,10 +189,10 @@ def write_aligned_episode(
 ) -> AlignedEpisode:
     """Align one recorded episode and write it into ``aligned_session``; returns the alignment.
 
-    ``qualified`` says, per source, whether its recorded capture time is a qualified event time; a source that is
-    not qualified (or not listed) refuses the alignment, so nothing is written for it. The times aligned on are
-    the recorded capture times. ``continuity`` is the episode's stored per-source continuity evidence (None if it
-    recorded none): a source whose evidence is missing, unknown or records a break refuses the alignment too.
+    ``qualified`` says, per source, whether its recorded capture time is a qualified event time; one that is not
+    (or not listed) is aligned on receive time minus its configured latency, or refuses the alignment when it has
+    none, so nothing is written for it. ``continuity`` is the episode's stored per-source continuity evidence
+    (None if it recorded none): a source whose evidence is missing, unknown or records a break refuses it too.
     Raises ``AlignedWriteError`` if the written episode does not validate.
     """
     _check_separate(raw_session, aligned_session)
@@ -199,10 +205,18 @@ def write_aligned_episode(
 
     # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
     present = [name for name in rules if name in raw_episode]
-    unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
-    if unqualified:
-        raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
-    times = {name: raw_episode[name]["capture_time"][:] for name in present}
+    # A source with a configured latency but no qualified event time is aligned on receive time minus that
+    # latency, an estimate of when the device measured it.
+    latency = _latencies(config)
+    unusable = [n for n in [index_source, *present] if not (qualified.get(n, False) or n in latency)]
+    if unusable:
+        raise AlignedWriteError(f"sources without a qualified event time or a latency: {sorted(set(unusable))}")
+    times = {
+        name: raw_episode[name]["capture_time"][:]
+        if qualified.get(name, False)
+        else raw_episode[name]["receive_time"][:] - latency[name]
+        for name in present
+    }
     # The evidence is checked against the rows actually written: a break at a row the source lacks is refused.
     broken = check_continuity(continuity, [index_source, *present], {name: len(t) for name, t in times.items()})
     if broken:

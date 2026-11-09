@@ -340,9 +340,8 @@ def convert_capture_frame(frame: CaptureFrame) -> list[NumericSample]:
     tracking = capture_protocol.decode_tracking_frame(frame.payload)
     capture_time = frame.capture_time_ns / 1e9
     receive_time = frame.receive_time_ns / 1e9
-    # Only the transport session is known here: it does not establish that the controller or glove itself ran
-    # without a restart, so this is recorded as transport continuity and not as a device epoch.
-    continuity = ("capture_session", frame.session_id)
+    # Stamped on this host's clock, so only the capture connection can break; a new connection is a break.
+    continuity = ("host_clock", frame.session_id)
     samples: list[NumericSample] = []
     pico_fields = build_pico_controller_fields(tracking)
     if pico_fields is not None:

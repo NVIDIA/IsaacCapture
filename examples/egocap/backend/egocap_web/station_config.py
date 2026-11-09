@@ -17,8 +17,8 @@ the operator fills in themselves.
 Only the fields in :class:`ResolvedStation` are consumed; everything else in the YAML (hardware,
 visualization, or any other section) is read by nobody here and never passed downstream. The
 ``cameras`` field is itself a small ``name``/``type`` projection of ``video_sources`` -- the
-fuller per-source declaration (``frame_type``, ``latency``, ``params``) is reference data for
-other tooling, not consumed here.
+fuller per-source declaration (``frame_type``, ``params``) is reference data for other tooling, not consumed
+here; the one exception is a tracking source's ``latency`` under ``numeric_sources``.
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ _DEFAULT_FLAT_STATION_ID = "station_01"
 #: Matches capture_server.protocol's own BeginRequest.cameras limit -- checked here too so an
 #: over-limit YAML is a configuration error, not a later capture-startup failure.
 _MAX_CAMERAS = 3
+#: The tracking sources the recorder takes a latency for.
+_TRACKING_SOURCES = ("pico_controller", "manus_glove")
 
 
 class StationConfigError(ValueError):
@@ -57,6 +59,9 @@ class ResolvedStation:
     task_description: str | None
     data_dir: Path | None
     cameras: tuple[p.CameraSelection, ...]
+    #: Seconds of device-to-host delay per tracking source, from ``numeric_sources[].latency``; a source without
+    #: one is recorded without a latency and cannot be time-aligned.
+    latency: dict[str, float]
 
 
 class _DuplicateKeyLoader(yaml.SafeLoader):
@@ -130,6 +135,21 @@ def _resolve_cameras(station_id: str, entry: dict) -> tuple[p.CameraSelection, .
     return tuple(cameras)
 
 
+def _resolve_latency(station_id: str, entry: dict) -> dict[str, float]:
+    """The finite, non-negative ``latency`` each recorded tracking source declares in ``numeric_sources``."""
+    latency: dict[str, float] = {}
+    for source in entry.get("numeric_sources") or []:
+        if not isinstance(source, dict) or source.get("name") not in _TRACKING_SOURCES or "latency" not in source:
+            continue
+        seconds = source["latency"]
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 <= seconds < float("inf"):
+            raise StationConfigError(
+                f"station {station_id!r}: {source['name']} latency must be a finite number of seconds >= 0"
+            )
+        latency[source["name"]] = float(seconds)
+    return latency
+
+
 def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> ResolvedStation:
     """Build a :class:`ResolvedStation` from one station's parsed mapping."""
     if not isinstance(entry, dict):
@@ -162,6 +182,7 @@ def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> Resol
         task_description=_str_field(meta, "task_description"),
         data_dir=data_dir,
         cameras=_resolve_cameras(station_id, entry),
+        latency=_resolve_latency(station_id, entry),
     )
 
 

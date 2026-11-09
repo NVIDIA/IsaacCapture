@@ -6,8 +6,9 @@
 # backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
 # consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,
 # meta.task_description, recording.data_dir, and each video_sources entry's name/type (as the
-# cameras requested from CaptureServer). numeric_sources and the rest of each video_sources entry
-# (frame_type, latency, params) are reference data for other tooling, not consumed here --
+# cameras requested from CaptureServer) and each numeric_sources entry's latency (the recorder aligns a
+# tracking source on receive time minus it). The rest of each video_sources entry (frame_type, latency,
+# params) is reference data for other tooling, not consumed here --
 # CaptureServer owns actually opening the selected cameras/devices. Each video_sources name MUST
 # match one of the names the running CaptureServer instance actually knows about (its own
 # --camera list, mock or real) -- an unknown name rejects the whole capture session, not just
