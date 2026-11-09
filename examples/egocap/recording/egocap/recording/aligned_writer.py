@@ -365,7 +365,7 @@ def check_kept_episode(raw_session: Path, episode_index: int, manifest: EpisodeM
     try:
         episode = zarr.open_group(str(episode_dir), mode="r")
         for name, count in manifest.counts.items():
-            if name in episode and len(episode[name]["capture_time"]) != count.get("written"):
+            if name in episode and int(episode[name]["capture_time"].shape[0]) != count.get("written"):
                 problems.append(f"{name}: the rows on disk differ from the sealed count")
     except (OSError, zarr.errors.GroupNotFoundError) as exc:
         problems.append(f"the episode cannot be read: {exc}")
