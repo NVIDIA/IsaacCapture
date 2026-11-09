@@ -1,0 +1,272 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Time alignment of a recorded episode, producing the aligned-dataset arrays downstream consumers read.
+
+The recorded sources are resampled onto one camera's frame times (the index source). The rules are fixed by the
+aligned dataset format and are reproduced here exactly, because consumers read the result by array name and
+expect these values:
+
+* the valid range runs from the latest first time to the earliest last time over all sources; an index frame is
+  kept when it is in that range and on the downsampling stride (``valid_indices``, ``valid_timestamps``);
+* a camera other than the index source contributes the position of its frame nearest each kept time
+  (``aligned_frame_indices``), found by one forward walk, so the earlier frame wins a tie and a frame may serve
+  two kept times;
+* the index source's own fields are only filtered by ``valid_indices``; every other source's fields are
+  interpolated at the kept times by their declared rule, written as ``<field>_interp``: ``pose`` (4x4
+  transforms: linear position, slerp rotation), ``linear`` (element-wise, also used for a 4x4 field with extra
+  leading dimensions) or ``nearest`` (the value at the nearest sample); ``raw`` fields are not resampled.
+
+There is no file access here. The times passed in are the ones to align on: a source's recorded capture time, or
+its receive time minus a configured latency, chosen by the caller and never adjusted here.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Literal
+
+import numpy as np
+from scipy import interpolate
+from scipy.spatial import transform as st
+
+__all__ = [
+    "AlignedEpisode",
+    "AlignedSource",
+    "AlignmentError",
+    "FieldRule",
+    "InsufficientSamplesError",
+    "TRACKING_FIELD_RULES",
+    "align_episode",
+    "find_nearest_timestamp_indices",
+    "interpolate_field",
+    "qualified_sources",
+]
+
+#: How one field is resampled onto the kept times.
+FieldRule = Literal["pose", "linear", "nearest", "raw"]
+
+
+class AlignmentError(ValueError):
+    """The episode cannot be aligned: bad input, or no frame of the index source in the common range."""
+
+
+class InsufficientSamplesError(AlignmentError):
+    """Fewer than two samples with strictly increasing times remain, so nothing can be interpolated."""
+
+
+def qualified_sources(
+    timing: Mapping[str, object] | None, cameras: Sequence[str], tracking: Sequence[str]
+) -> dict[str, bool]:
+    """Which sources' recorded times are qualified event times, from an episode's ``timing`` attribute.
+
+    A camera is qualified only when its entry in ``clock_mapping.streams`` says its time is the sensor's capture
+    event (``time_meaning == "sensor_capture"``); a clock mapping alone says which clock a time is on, not what it
+    measures, and a ``frame_ready`` time is not a capture event. A tracking source is qualified only when
+    ``tracking_semantics.physical_alignment`` says a measurement time is available; it says ``unavailable: ...``
+    while tracking carries the host's poll time. Anything the attribute does not vouch for is False. A caller that
+    aligns on ``receive_time - latency`` instead states that choice itself; this says nothing about it.
+    """
+    timing = timing or {}
+    # Cameras: a stream whose time means the sensor's capture event (a non-list vouches for nothing).
+    mapping = timing.get("clock_mapping")
+    streams = mapping.get("streams") if isinstance(mapping, Mapping) else None
+    mapped = (
+        {s.get("name") for s in streams if isinstance(s, Mapping) and s.get("time_meaning") == "sensor_capture"}
+        if isinstance(streams, (list, tuple))
+        else set()
+    )
+    # Tracking: qualified only if the recording says a measurement time exists.
+    semantics = timing.get("tracking_semantics")
+    alignment = semantics.get("physical_alignment") if isinstance(semantics, Mapping) else None
+    tracking_ok = isinstance(alignment, str) and alignment.startswith("available")
+    return {**{name: name in mapped for name in cameras}, **{name: tracking_ok for name in tracking}}
+
+
+def find_nearest_timestamp_indices(source_times: np.ndarray, target_times: np.ndarray) -> np.ndarray:
+    """Position in ``source_times`` of the sample nearest each target, by one forward walk.
+
+    Both arrays are sorted. The walk only moves forward, and advances only when the next sample is strictly closer,
+    so a tie keeps the earlier sample and one sample can be nearest to several targets.
+    """
+    m, n = len(source_times), len(target_times)
+    indices = np.empty(n, dtype=int)
+    j = 0
+    for i in range(n):
+        # Move on only for a strictly closer sample; equal distance stays on the earlier one.
+        while j < m - 1 and abs(source_times[j + 1] - target_times[i]) < abs(source_times[j] - target_times[i]):
+            j += 1
+        indices[i] = j
+    return indices
+
+
+def _clean(times: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Drop each sample whose time is not later than the sample before it, as recorded."""
+    drop = [i for i in range(1, len(times)) if times[i] <= times[i - 1]]
+    if drop:
+        times, values = np.delete(times, drop), np.delete(values, drop, axis=0)
+    # An interpolator needs two distinct times to span anything.
+    if len(times) < 2:
+        raise InsufficientSamplesError(
+            f"interpolation needs at least 2 samples with strictly increasing times; {len(times)} remain"
+        )
+    return times, values
+
+
+def _linear(times: np.ndarray, values: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """Element-wise linear interpolation along the first axis; targets outside the sample range are an error."""
+    times, values = _clean(times, values)
+    return interpolate.interp1d(times, values, kind="linear", axis=0)(targets)
+
+
+def _pose(times: np.ndarray, values: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """Rigid transforms ``(N, 4, 4)``: linear position and slerp rotation, with a bottom row of [0, 0, 0, 1]."""
+    times, values = _clean(times, values)
+    positions = interpolate.interp1d(times, values[:, :3, 3], kind="linear", axis=0)(targets)
+    rotations = st.Slerp(times, st.Rotation.from_matrix(values[:, :3, :3]))(targets).as_matrix()
+    out = np.zeros((len(targets), 4, 4))
+    out[:, :3, :3], out[:, :3, 3], out[:, 3, 3] = rotations, positions, 1.0
+    return out
+
+
+def interpolate_field(
+    rule: FieldRule, times: np.ndarray, values: np.ndarray, targets: np.ndarray
+) -> np.ndarray | None:
+    """One field resampled at ``targets``; None for a ``raw`` field, which is not resampled.
+
+    A ``pose`` field that is not a plain ``(N, 4, 4)`` array is interpolated linearly instead, element by element.
+    Targets outside the range of ``times`` are an error (they cannot occur for the kept times of an alignment).
+    """
+    times, values = np.asarray(times, dtype=np.float64), np.asarray(values)
+    if rule == "raw":
+        return None
+    if rule == "nearest":
+        return values[find_nearest_timestamp_indices(times, targets)]
+    # A pose rule only applies to a plain stack of transforms; any other shape falls back to element-wise.
+    if rule == "pose" and values.ndim == 3 and values.shape[1:] == (4, 4):
+        return _pose(times, values, targets)
+    if rule in ("pose", "linear"):
+        return _linear(times, values, targets)
+    raise AlignmentError(f"unknown field rule {rule!r}")
+
+
+@dataclass(frozen=True)
+class AlignedSource:
+    """What the alignment adds for one source."""
+
+    #: For a camera: positions of the frames matched to the kept times (the index source's own kept positions).
+    aligned_frame_indices: np.ndarray | None = None
+    #: ``<field>`` -> values at the kept times; written as ``<field>_interp``.
+    interpolated: dict[str, np.ndarray] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AlignedEpisode:
+    """The result of aligning one episode."""
+
+    index_source: str
+    #: Boolean mask over the index source's frames: in the valid range and on the downsampling stride.
+    valid_indices: np.ndarray
+    #: The index source's times at the kept frames.
+    valid_timestamps: np.ndarray
+    #: The valid range that was used, as (first, last).
+    valid_range: tuple[float, float]
+    sources: dict[str, AlignedSource]
+
+
+#: How each field of the station's tracking sources is resampled. Head and controller poses are rigid transforms
+#: (slerp); the glove's 25 joint transforms per hand are interpolated element-wise; triggers are continuous; the
+#: buttons are not resampled, so they stay raw.
+TRACKING_FIELD_RULES: dict[str, dict[str, FieldRule]] = {
+    "pico_controller": {
+        "head_pose": "pose",
+        "left_pose": "pose",
+        "right_pose": "pose",
+        "left_trigger": "linear",
+        "right_trigger": "linear",
+    },
+    "manus_glove": {"left_hand_pose": "linear", "right_hand_pose": "linear"},
+}
+
+
+def _check_inputs(index_source: str, times: Mapping[str, np.ndarray], downsample: int) -> None:
+    """Refuse input that cannot be aligned: a missing index source, a bad stride, or unusable times."""
+    if index_source not in times:
+        raise AlignmentError(f"the index source {index_source!r} has no times")
+    if downsample < 1:
+        raise AlignmentError("downsample must be at least 1")
+    for name, source_times in times.items():
+        arr = np.asarray(source_times)
+        # The forward walk and the range logic assume sorted, finite times.
+        if arr.ndim != 1 or arr.size == 0 or not np.all(np.isfinite(arr)):
+            raise AlignmentError(f"{name}: needs a non-empty list of finite times")
+        if np.any(np.diff(arr) < 0):
+            raise AlignmentError(f"{name}: times go backwards")
+
+
+def align_episode(
+    index_source: str,
+    times: Mapping[str, np.ndarray],
+    cameras: Sequence[str],
+    fields: Mapping[str, Mapping[str, np.ndarray]],
+    rules: Mapping[str, Mapping[str, FieldRule]],
+    *,
+    downsample: int = 1,
+    epochs: Mapping[str, np.ndarray] | None = None,
+) -> AlignedEpisode:
+    """Align every source in ``times`` onto ``index_source``.
+
+    ``times`` maps each source to the times to align on (sorted, finite); ``cameras`` names the sources that are
+    cameras; ``fields[source][name]`` are a source's arrays and ``rules[source][name]`` how each is resampled (a
+    field with no rule is not resampled). Raises ``AlignmentError`` if the index source has no frame in the valid
+    range, so an alignment is never an empty success. ``epochs`` optionally labels each sample of a source with the
+    unbroken stretch it belongs to (the label changes at a restart, a reconnect or an invalid interval); a source
+    with more than one label is refused, since interpolating across the break would produce values the sensor
+    never reported.
+    """
+    _check_inputs(index_source, times, downsample)
+    for name, labels in (epochs or {}).items():
+        # The aligned numbers stay those of the reference rules; a break is refused, not handled differently.
+        if name not in times or len(labels) != len(times[name]):
+            raise AlignmentError(f"{name}: epoch labels must be one per sample of a source being aligned")
+        if len(np.unique(labels)) > 1:
+            raise AlignmentError(f"{name}: has a restart or invalid interval inside the episode")
+    index_times = np.asarray(times[index_source], dtype=np.float64)
+
+    # The valid range: every source has data on both sides of a kept time.
+    lo = max(float(np.min(t)) for t in times.values())
+    hi = min(float(np.max(t)) for t in times.values())
+    in_range = (index_times >= lo) & (index_times <= hi)
+    # Downsampling keeps every n-th index frame, counted from the first frame (not from the first kept one).
+    stride = np.zeros_like(in_range, dtype=bool)
+    stride[::downsample] = True
+    valid = in_range & stride
+    kept = index_times[valid]
+    if kept.size == 0:
+        raise AlignmentError(f"no frame of {index_source!r} is in the common range [{lo}, {hi}]")
+
+    sources: dict[str, AlignedSource] = {}
+    for name, source_times in times.items():
+        source_times = np.asarray(source_times, dtype=np.float64)
+        interpolated: dict[str, np.ndarray] = {}
+        for field_name, rule in rules.get(name, {}).items():
+            # A rule for a field that was not recorded, or a raw field, adds nothing.
+            if field_name not in fields.get(name, {}) or rule == "raw":
+                continue
+            values = np.asarray(fields[name][field_name])
+            if name == index_source:
+                # The index source already sits on the kept times: only filter it.
+                interpolated[field_name] = values[valid]
+            else:
+                interpolated[field_name] = interpolate_field(rule, source_times, values, kept)
+        frames = None
+        if name in cameras:
+            frames = (
+                np.flatnonzero(valid)
+                if name == index_source
+                else find_nearest_timestamp_indices(source_times, kept)
+            )
+        sources[name] = AlignedSource(frames, interpolated)
+    return AlignedEpisode(index_source, valid, kept, (lo, hi), sources)
