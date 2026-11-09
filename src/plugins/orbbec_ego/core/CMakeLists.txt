@@ -3,6 +3,11 @@
 
 set(ego_camera_core_sources
     ego_camera.cpp
+    ego_camera_impl.hpp
+    ego_camera_video.cpp
+    ego_camera_recovery.cpp
+    ego_camera_controls.cpp
+    ego_camera_auxiliary.cpp
     frame_liveness.hpp
     calibration.cpp
     calibration.hpp
