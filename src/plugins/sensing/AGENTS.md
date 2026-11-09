@@ -28,3 +28,5 @@ must join the worker threads and drop the held frames, not only normal stop.
 A camera session that will not stop ends the process; do not retry in-process.
 Only a camera's owner thread calls its buffer stream; a frame lease posts its
 buffer to that owner's mailbox and makes no SDK call.
+Check an SDK call's return type before testing it for success: Argus
+stopRepeat returns a capture-id range, not a Status.

@@ -516,7 +516,9 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
         bool stop_capture() override
         {
             auto* session = Argus::interface_cast<Argus::ICaptureSession>(m_camera.session);
-            return timed("stopRepeat", m_camera.info.id, [&] { return session->stopRepeat(); }) == Argus::STATUS_OK;
+            // stopRepeat returns the range of capture ids it queued, not a Status: a nonempty range is not a failure.
+            timed("stopRepeat", m_camera.info.id, [&] { return session->stopRepeat(); });
+            return true;
         }
 
         bool wait_idle() override
