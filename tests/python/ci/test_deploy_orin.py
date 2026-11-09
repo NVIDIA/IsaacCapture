@@ -233,19 +233,51 @@ class UnitRenderTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=/opt/ic/current/plugins/sensing_camera", text)
         self.assertIsNone(re.search(r"@[A-Z_]+@", text))
 
+    @staticmethod
+    def _unit_sections(text):
+        sections = {}
+        current = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                current = sections.setdefault(line, [])
+            elif current is not None and line and not line.startswith("#"):
+                current.append(line)
+        return sections
+
     def test_render_unit_restarts_on_failure_with_start_limit(self):
         text = deploy_orin.render_unit({"args": [STREAM]}, "/opt/ic", "bob", "video")
-        lines = text.splitlines()
-        service = lines[lines.index("[Service]") + 1 :]
-        for line in (
-            "Restart=on-failure",
-            "RestartSec=5",
-            "StartLimitIntervalSec=120",
-            "StartLimitBurst=5",
-        ):
+        sections = self._unit_sections(text)
+        unit, service = sections["[Unit]"], sections["[Service]"]
+        for line in ("Restart=on-failure", "RestartSec=5"):
             self.assertEqual(service.count(line), 1, line)
-        self.assertNotIn("Restart=always", lines)
+        # systemd reads the start limit from [Unit] and ignores it in [Service].
+        for line in ("StartLimitIntervalSec=120", "StartLimitBurst=5"):
+            self.assertEqual(unit.count(line), 1, line)
+            self.assertNotIn(line, service)
+        self.assertNotIn("Restart=always", unit + service)
         self.assertIsNone(re.search(r"@[A-Z_]+@", text))
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd-analyze not found")
+    def test_render_unit_passes_systemd_analyze_verify(self):
+        import getpass
+
+        text = deploy_orin.render_unit(
+            {"args": [STREAM]}, "/opt/ic", getpass.getuser(), "video"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            unit = Path(tmp) / "isaaccapture-producer.service"
+            unit.write_text(text)
+            result = subprocess.run(
+                ["systemd-analyze", "verify", str(unit)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        output = result.stdout + result.stderr
+        # verify exits 0 even when it ignores a key, so read the diagnostics.
+        for diagnostic in ("Unknown key name", "ignoring"):
+            self.assertNotIn(diagnostic, output)
 
     def test_render_unit_env_lines_follow_ld_library_path_in_order(self):
         config = {"args": [STREAM], "env": {"ZED": "1", "ALPHA": "two"}}
