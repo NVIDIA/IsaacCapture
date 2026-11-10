@@ -35,6 +35,17 @@ std::optional<CameraBackend> parse_camera_backend(const std::string& text);
 const char* camera_backend_name(CameraBackend backend);
 
 /**
+ * @brief Whether the cameras a backend found include every requested one.
+ *
+ * Sets `probe.matches`, and `probe.detail` when it does not match. With no camera requested (a listing), any camera
+ * counts; none found never matches. `label` names the backend in the reason.
+ */
+void match_requested_cameras(const std::vector<CameraInfo>& found,
+                             const std::vector<uint32_t>& requested,
+                             const std::string& label,
+                             BackendProbe& probe);
+
+/**
  * @brief The backend to open.
  *
  * An explicit request must match or the call throws with that backend's own reason: it never falls back to the

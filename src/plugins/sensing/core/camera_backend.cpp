@@ -48,6 +48,25 @@ std::string describe(const BackendProbe& probe)
 
 } // namespace
 
+void match_requested_cameras(const std::vector<CameraInfo>& found,
+                             const std::vector<uint32_t>& requested,
+                             const std::string& label,
+                             BackendProbe& probe)
+{
+    probe.matches = !found.empty();
+    if (found.empty())
+        probe.detail = label + " reports no camera devices";
+    for (uint32_t id : requested)
+    {
+        const bool present = std::any_of(found.begin(), found.end(), [id](const CameraInfo& c) { return c.id == id; });
+        if (!present)
+        {
+            probe.matches = false;
+            probe.detail = "no " + label + " camera device " + std::to_string(id);
+        }
+    }
+}
+
 CameraBackend select_camera_backend(CameraBackend requested, const std::vector<BackendProbe>& probes)
 {
     if (requested != CameraBackend::Auto)

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -14,7 +15,9 @@
 using Catch::Matchers::ContainsSubstring;
 using plugins::sensing::BackendProbe;
 using plugins::sensing::CameraBackend;
+using plugins::sensing::CameraInfo;
 using plugins::sensing::FrameLease;
+using plugins::sensing::match_requested_cameras;
 using plugins::sensing::parse_camera_backend;
 using plugins::sensing::select_camera_backend;
 
@@ -164,4 +167,37 @@ TEST_CASE("A default FrameLease releases nothing", "[sensing][lease]")
 {
     FrameLease lease;
     lease.reset();
+}
+
+TEST_CASE("Requested cameras must all be found", "[sensing][backend]")
+{
+    CameraInfo a;
+    a.id = 0;
+    CameraInfo b;
+    b.id = 4;
+    BackendProbe p;
+
+    SECTION("every requested id present matches")
+    {
+        match_requested_cameras({ a, b }, { 0, 4 }, "Argus", p);
+        CHECK(p.matches);
+        CHECK(p.detail.empty());
+    }
+    SECTION("a missing id names it and does not match")
+    {
+        match_requested_cameras({ a, b }, { 0, 8 }, "Argus", p);
+        CHECK_FALSE(p.matches);
+        CHECK_THAT(p.detail, ContainsSubstring("no Argus camera device 8"));
+    }
+    SECTION("with none requested any camera matches")
+    {
+        match_requested_cameras({ a }, {}, "Argus", p);
+        CHECK(p.matches);
+    }
+    SECTION("no cameras found never matches")
+    {
+        match_requested_cameras({}, {}, "Argus", p);
+        CHECK_FALSE(p.matches);
+        CHECK_THAT(p.detail, ContainsSubstring("reports no camera devices"));
+    }
 }

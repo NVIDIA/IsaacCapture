@@ -124,45 +124,44 @@ static std::string default_platform_config()
 
 static void print_usage(const char* program_name)
 {
-    std::cout
-        << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
-        << "\n"
-        << "Publishes each SENSING sensor as a LiveKit camera track: SIPL or Argus capture, hardware H.264,\n"
-        << "sent as it is.\n"
-        << "\n"
-        << "Streams (repeat for each sensor):\n"
-        << "  --add-stream=sensor=N,livekit=NAME   camera N (SIPL pipeline or Argus device index), published as track NAME\n"
-        << "  --list-sensors                       print the cameras, then exit\n"
-        << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
-        << "                                       (a backend must also be built in)\n"
-        << "  --argus-mode=N                       Argus sensor mode index (default: 0)\n"
-        << "\n"
-        << "Platform:\n"
-        << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
-        << "                          binary)\n"
-        << "  --config-name=NAME      named config inside it (default: SHW5G_2)\n"
-        << "  --link-masks='M M'      one mask per deserializer (default: '0x0000 0x1100')\n"
-        << "  --nito-dir=DIR          ISP tuning directory (default: /var/nvidia/nvcam/settings/sipl)\n"
-        << "\n"
-        << "LiveKit:\n"
-        << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
-        << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
-        << "                            participant identity\n"
-        << "  --livekit-fps=N           publication rate cap (default: 30)\n"
-        << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
-        << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
-        << "  --gop=N                   IDR period in frames (default: fps*5)\n"
-        << "\n"
-        << "Other:\n"
-        << "  --gpu-id=N          CUDA device index (default: 0)\n"
-        << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
-        << "  --full-range        full-range YUV\n"
-        << "  --swap-uv           swap the chroma planes\n"
-        << "\n"
-        << "Example:\n"
-        << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
-        << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
-        << "      --add-stream=sensor=1,livekit=sensing-right\n";
+    std::cout << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
+              << "\n"
+              << "Publishes each SENSING sensor as a LiveKit camera track: SIPL or Argus capture, hardware H.264,\n"
+              << "sent as it is.\n"
+              << "\n"
+              << "Streams (repeat for each sensor):\n"
+              << "  --add-stream=sensor=N,livekit=NAME   camera N (SIPL or Argus device), published as track NAME\n"
+              << "  --list-sensors                       print the cameras, then exit\n"
+              << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
+              << "                                       (a backend must also be built in)\n"
+              << "  --argus-mode=N                       Argus sensor mode index (default: 0)\n"
+              << "\n"
+              << "Platform:\n"
+              << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
+              << "                          binary)\n"
+              << "  --config-name=NAME      named config inside it (default: SHW5G_2)\n"
+              << "  --link-masks='M M'      one mask per deserializer (default: '0x0000 0x1100')\n"
+              << "  --nito-dir=DIR          ISP tuning directory (default: /var/nvidia/nvcam/settings/sipl)\n"
+              << "\n"
+              << "LiveKit:\n"
+              << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
+              << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
+              << "                            participant identity\n"
+              << "  --livekit-fps=N           publication rate cap (default: 30)\n"
+              << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
+              << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
+              << "  --gop=N                   IDR period in frames (default: fps*5)\n"
+              << "\n"
+              << "Other:\n"
+              << "  --gpu-id=N          CUDA device index (default: 0)\n"
+              << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
+              << "  --full-range        full-range YUV\n"
+              << "  --swap-uv           swap the chroma planes\n"
+              << "\n"
+              << "Example:\n"
+              << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
+              << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
+              << "      --add-stream=sensor=1,livekit=sensing-right\n";
 }
 
 // =============================================================================
@@ -344,19 +343,7 @@ try
         {
             argus_cameras = ArgusCapture::query(camera_config.argus_sensor_mode);
             // Every requested camera must exist; with none requested (--list-sensors) any camera counts.
-            argus_probe.matches = !argus_cameras.empty();
-            for (uint32_t id : camera_ids)
-            {
-                const bool found = std::any_of(
-                    argus_cameras.begin(), argus_cameras.end(), [id](const CameraInfo& c) { return c.id == id; });
-                if (!found)
-                {
-                    argus_probe.matches = false;
-                    argus_probe.detail = "no Argus camera device " + std::to_string(id);
-                }
-            }
-            if (argus_cameras.empty())
-                argus_probe.detail = "Argus reports no camera devices";
+            match_requested_cameras(argus_cameras, camera_ids, "Argus", argus_probe);
         }
         catch (const std::exception& e)
         {
