@@ -13,8 +13,8 @@ Start with the [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/d
 for supported hardware, installation, container usage, and troubleshooting.
 That guide owns the operating instructions; this README maps the source tree.
 
-- [`scripts/`](scripts/): host setup, validation, diagnostics, and the Bash
-  compatibility Docker launcher. Each entry point exposes `--help`.
+- [`scripts/`](scripts/): host setup, validation, diagnostics, the Bash
+  compatibility Docker launcher, and `setup_orin_crosscompile.py` for building on a PC. Each entry point exposes `--help`.
 - [`docker/`](docker/): example image, image-side group configuration, and
   host-side container setup.
 - [`configs/`](configs/): the platform configuration and its provenance.
