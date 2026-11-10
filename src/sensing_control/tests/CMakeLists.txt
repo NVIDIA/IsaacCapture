@@ -19,3 +19,17 @@ target_link_libraries(sensing_control_tests
 )
 
 catch_discover_tests(sensing_control_tests)
+
+# The mock producer end to end: needs the built binaries, so it is skipped (not failed) when they are absent, and it
+# needs the PC relay, which exists only in a build with BUILD_VIDEO_STAGE.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND AND TARGET video_stage_worker)
+    add_test(
+        NAME sensing_mock_producer_e2e
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_mock_producer_e2e.py
+    )
+    set_tests_properties(sensing_mock_producer_e2e PROPERTIES
+        ENVIRONMENT "SENSING_MOCK_PRODUCER=$<TARGET_FILE:sensing_mock_producer>;VIDEO_STAGE_WORKER=$<TARGET_FILE:video_stage_worker>"
+        TIMEOUT 120
+    )
+endif()

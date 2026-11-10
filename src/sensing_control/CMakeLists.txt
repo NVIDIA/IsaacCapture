@@ -47,6 +47,8 @@ target_link_libraries(sensing_control
         nlohmann_json::nlohmann_json
 )
 
+add_subdirectory(mock_producer)
+
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

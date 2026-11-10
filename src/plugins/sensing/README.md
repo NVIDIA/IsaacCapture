@@ -76,3 +76,6 @@ request gets an error reply with a code and a sentence. The token goes in `Autho
 src/sensing_control/tools/orin_control.py ORIN_HOST --token-file control.token status
 src/sensing_control/tools/orin_control.py ORIN_HOST --token-file control.token set-target sensing-left 192.168.1.205 5600
 ```
+
+`sensing_mock_producer` (on a PC, configure with `-DBUILD_SENSING_CONTROL=ON`) runs the same channel, retry loop and direct sender over looped H.264 files, with
+`--simulate-fault-seconds=N` to show the unplugged-camera path, so the PC side can be tried without an Orin.

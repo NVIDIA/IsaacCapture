@@ -30,8 +30,8 @@ endif()
 if(BUILD_VIDEO_STAGE)
     add_subdirectory(livekit_publisher)
     add_subdirectory(video_stage)
-elseif(BUILD_PLUGIN_SENSING)
-    # The camera producer sends AVS1 records to the video stage and needs only its record codec and sender.
+elseif(BUILD_PLUGIN_SENSING OR BUILD_SENSING_CONTROL)
+    # The camera producer and its mock send AVS1 records to the video stage and need only its record codec and sender.
     add_subdirectory(video_stage/wire)
     add_subdirectory(video_stage/sender)
 endif()
