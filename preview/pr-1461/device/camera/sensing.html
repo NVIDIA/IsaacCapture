@@ -642,6 +642,23 @@ use a <code class="docutils literal notranslate"><span class="pre">wss://</span>
 a second, as separate uncalibrated samples. The counter’s units are unconfirmed, so
 do not subtract or fit them.</p>
 </section>
+<section id="cross-compile-on-a-pc">
+<h2>Cross-compile on a PC<a class="headerlink" href="#cross-compile-on-a-pc" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">scripts/setup_orin_crosscompile.py</span></code> builds the producer for the Orin on an x86 Ubuntu PC, without sudo and
+without touching the Orin. Everything goes under one directory (<code class="docutils literal notranslate"><span class="pre">--root</span></code>, default <code class="docutils literal notranslate"><span class="pre">~/orin-cross-39.2.1</span></code>).</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/setup_orin_crosscompile.py<span class="w"> </span>doctor<span class="w">   </span><span class="c1"># what is present, what is missing</span>
+src/plugins/sensing/scripts/setup_orin_crosscompile.py<span class="w"> </span>fetch<span class="w">    </span><span class="c1"># sysroot and aarch64 compiler</span>
+src/plugins/sensing/scripts/setup_orin_crosscompile.py<span class="w"> </span>syntax<span class="w">   </span><span class="c1"># type-check every source in seconds</span>
+src/plugins/sensing/scripts/setup_orin_crosscompile.py<span class="w"> </span>build<span class="w">    </span><span class="c1"># camera_plugin_sensing for aarch64</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">fetch</span></code> unpacks the L4T libraries from the Jetson Linux archive, and the SIPL API, from the SDK Manager
+download directory (<code class="docutils literal notranslate"><span class="pre">--sdk-downloads</span></code>). It takes the Multimedia API from there or from NVIDIA’s apt repository,
+the C library and EGL/V4L2 libraries from Ubuntu 24.04, spdlog at the revision the repository pins, and Arm’s
+GNU toolchain; each download is checked against the publisher’s SHA-256. <code class="docutils literal notranslate"><span class="pre">build</span></code> also needs the CUDA toolkit
+with its aarch64 cross target (<code class="docutils literal notranslate"><span class="pre">cuda-cross-sbsa</span></code>) and uses that toolkit’s own <code class="docutils literal notranslate"><span class="pre">nvcc</span></code>. The result is the same
+binary a build on the Orin produces, but it has not been run: deploy it and test it on the Orin.</p>
+</section>
 </section>
 
 
@@ -699,6 +716,7 @@ do not subtract or fit them.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-details">Setup details</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build-and-run-the-livekit-publisher">Build and run the LiveKit publisher</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cross-compile-on-a-pc">Cross-compile on a PC</a></li>
 </ul>
   </nav></div>
 

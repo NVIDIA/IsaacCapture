@@ -204,3 +204,23 @@ use a ``wss://`` endpoint on any other network.
 ``SENSING_TSC_PROBE=1`` logs the SIPL capture counter beside the host clocks twice
 a second, as separate uncalibrated samples. The counter's units are unconfirmed, so
 do not subtract or fit them.
+
+Cross-compile on a PC
+---------------------
+
+``scripts/setup_orin_crosscompile.py`` builds the producer for the Orin on an x86 Ubuntu PC, without sudo and
+without touching the Orin. Everything goes under one directory (``--root``, default ``~/orin-cross-39.2.1``).
+
+.. code-block:: bash
+
+   src/plugins/sensing/scripts/setup_orin_crosscompile.py doctor   # what is present, what is missing
+   src/plugins/sensing/scripts/setup_orin_crosscompile.py fetch    # sysroot and aarch64 compiler
+   src/plugins/sensing/scripts/setup_orin_crosscompile.py syntax   # type-check every source in seconds
+   src/plugins/sensing/scripts/setup_orin_crosscompile.py build    # camera_plugin_sensing for aarch64
+
+``fetch`` unpacks the L4T libraries from the Jetson Linux archive, and the SIPL API, from the SDK Manager
+download directory (``--sdk-downloads``). It takes the Multimedia API from there or from NVIDIA's apt repository,
+the C library and EGL/V4L2 libraries from Ubuntu 24.04, spdlog at the revision the repository pins, and Arm's
+GNU toolchain; each download is checked against the publisher's SHA-256. ``build`` also needs the CUDA toolkit
+with its aarch64 cross target (``cuda-cross-sbsa``) and uses that toolkit's own ``nvcc``. The result is the same
+binary a build on the Orin produces, but it has not been run: deploy it and test it on the Orin.
