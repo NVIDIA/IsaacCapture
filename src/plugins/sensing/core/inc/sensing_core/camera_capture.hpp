@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "core/sensor_clock.hpp"
+#include "sensor_clock.hpp"
 
 #include <cstddef>
 #include <cstdint>

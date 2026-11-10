@@ -4,8 +4,8 @@
 #include "livekit_video_output.hpp"
 
 #include "inc/sensing_core/jetson_encoder.hpp"
+#include "inc/sensing_core/sensor_clock.hpp"
 #include "rgba_box_downscale.cuh"
-#include "sensor_clock.hpp"
 
 #include <algorithm>
 #include <atomic>

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "core/sensor_clock.hpp"
+#include "core/inc/sensing_core/sensor_clock.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
