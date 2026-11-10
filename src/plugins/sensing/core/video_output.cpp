@@ -643,6 +643,11 @@ std::string VideoOutput::failure() const
     return m_impl->failure_message;
 }
 
+void VideoOutput::set_direct_target(const std::string& host, uint16_t port)
+{
+    m_impl->direct->set_target(host, port);
+}
+
 DirectLinkStatus VideoOutput::direct_status() const
 {
     return { m_impl->direct->host(), m_impl->direct->port(), m_impl->direct->connected(), m_impl->direct->last_error() };

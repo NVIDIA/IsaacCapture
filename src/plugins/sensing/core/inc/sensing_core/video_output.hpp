@@ -101,6 +101,8 @@ public:
 
     VideoOutputStats stats() const;
 
+    /// Send the encoded video to host:port from now on, or stop the direct link when host is empty. Thread-safe.
+    void set_direct_target(const std::string& host, uint16_t port);
     DirectLinkStatus direct_status() const;
 
     bool failed() const;

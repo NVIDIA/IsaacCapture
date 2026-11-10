@@ -133,6 +133,35 @@ void SensingCamera::update()
     }
 }
 
+std::vector<StreamFigures> SensingCamera::figures() const
+{
+    std::vector<StreamFigures> out;
+    for (const auto& stream : m_streams)
+    {
+        StreamFigures figures;
+        figures.track = stream.track;
+        figures.sensor_id = stream.sensor_id;
+        figures.frames = stream.frame_count;
+        figures.published = stream.output->stats().published;
+        figures.direct = stream.output->direct_status();
+        out.push_back(std::move(figures));
+    }
+    return out;
+}
+
+bool SensingCamera::set_direct_target(const std::string& track, const std::string& host, uint16_t port)
+{
+    for (auto& stream : m_streams)
+    {
+        if (stream.track == track)
+        {
+            stream.output->set_direct_target(host, port);
+            return true;
+        }
+    }
+    return false;
+}
+
 void SensingCamera::flush()
 {
     for (auto& stream : m_streams)

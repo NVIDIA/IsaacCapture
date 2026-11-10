@@ -37,7 +37,7 @@ elseif(BUILD_PLUGIN_SENSING)
 endif()
 
 # The camera producer's management channel: no video stage, camera SDK or GPU dependency.
-if(BUILD_SENSING_CONTROL)
+if(BUILD_PLUGIN_SENSING OR BUILD_SENSING_CONTROL)
     add_subdirectory(sensing_control)
 endif()
 

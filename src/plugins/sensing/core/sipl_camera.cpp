@@ -95,12 +95,46 @@ void init_sipl_trace()
     }
 }
 
+/// The enumerator name for the statuses whose meaning is known; every other value is reported by number only.
+const char* status_name(SIPLStatus status)
+{
+    // The order of NvSIPLCommon.hpp's SIPLStatus.
+    switch (static_cast<int>(status))
+    {
+    case 1:
+        return "bad argument";
+    case 2:
+        return "not supported";
+    case 3:
+        return "out of memory";
+    case 4:
+        return "resource error";
+    case 5:
+        return "timed out";
+    case 6:
+        return "invalid state";
+    case 7:
+        return "end of stream";
+    case 8:
+        // Init() reports this when some cameras started and at least one did not.
+        return "not initialized: some cameras failed to start";
+    case 9:
+        return "fault state";
+    case 10:
+        return "error: no cause given";
+    default:
+        return nullptr;
+    }
+}
+
 void check_sipl(SIPLStatus status, const char* what)
 {
     if (status != NVSIPL_STATUS_OK)
     {
         std::ostringstream oss;
         oss << what << " failed with SIPLStatus " << static_cast<int>(status);
+        if (const char* name = status_name(status))
+            oss << " (" << name << ")";
         throw std::runtime_error(oss.str());
     }
 }
@@ -385,6 +419,9 @@ struct SiplCamera::Impl
     struct Sensor
     {
         SensorInfo info;
+        /// Event thread only: notifications in a row that mean the camera is not delivering.
+        uint32_t consecutive_capture_timeouts = 0;
+        uint32_t consecutive_control_failures = 0;
         nvsipl::NvSIPLPipelineConfiguration pipeline_config{};
         nvsipl::NvSIPLPipelineQueues queues{};
 
@@ -934,6 +971,52 @@ void SiplCamera::Impl::frame_loop(Sensor& sensor)
     }
 }
 
+namespace
+{
+
+/// What a pipeline or device-block notification means for streaming. Values are those of
+/// NvSIPLPipelineNotifier::NotificationType in the SIPL reference; the four device-block errors that were already
+/// matched by name keep their enumerators, the rest are matched by value so an older header still compiles.
+struct NotificationKind
+{
+    bool fatal = false;
+    const char* text = nullptr; ///< words the producer's fault table recognises; null for notifications to ignore
+};
+
+NotificationKind describe_notification(int type)
+{
+    switch (type)
+    {
+    case 200:
+        return { true, "camera input stream failure (bad input stream)" };
+    case 201:
+        return { true, "camera input stream failure (capture failure)" };
+    case 203:
+        return { true, "image processing failure" };
+    case 204:
+        return { true, "auto control processing failure" };
+    case 220:
+    case 221:
+        return { true, "interrupt localization failure" };
+    case 202:
+        return { false, "embedded data parse failure" };
+    case 205:
+        return { false, "sensor control write failure" };
+    case 210:
+        return { false, "recoverable image processing failure" };
+    case 100:
+        return { false, "frame dropped" };
+    case 101:
+        return { false, "frame sequence discontinuity" };
+    case 102:
+        return { false, "capture timeout" };
+    default:
+        return {};
+    }
+}
+
+} // namespace
+
 void SiplCamera::Impl::event_loop(Sensor& sensor)
 {
     // A GMSL link drop arrives here and nowhere else. Without this drain the
@@ -954,16 +1037,62 @@ void SiplCamera::Impl::event_loop(Sensor& sensor)
         case Notif::NOTIF_ERROR_SENSOR_FAILURE:
         case Notif::NOTIF_ERROR_INTERNAL_FAILURE:
         {
+            // The kind is named in words the producer's fault table recognises: a lost link and a failing sensor
+            // call for different checks.
+            const char* kind = data.eNotifType == Notif::NOTIF_ERROR_DESERIALIZER_FAILURE ? "deserializer failure" :
+                               data.eNotifType == Notif::NOTIF_ERROR_SERIALIZER_FAILURE   ? "serializer failure" :
+                               data.eNotifType == Notif::NOTIF_ERROR_SENSOR_FAILURE       ? "sensor failure" :
+                                                                                            "internal failure";
             std::ostringstream oss;
-            oss << "SIPL sensor " << sensor.info.id << " pipeline error, notification "
-                << static_cast<int>(data.eNotifType);
+            oss << "SIPL sensor " << sensor.info.id << " pipeline error: " << kind << " (notification "
+                << static_cast<int>(data.eNotifType) << ")";
             std::cerr << "[sipl] " << oss.str() << std::endl;
             set_failure(oss.str());
             running.store(false);
             break;
         }
         default:
+        {
+            const int type = static_cast<int>(data.eNotifType);
+            if (type == 0) // ICP processing done: the camera is delivering
+            {
+                sensor.consecutive_capture_timeouts = 0;
+                sensor.consecutive_control_failures = 0;
+                break;
+            }
+            const NotificationKind kind = describe_notification(type);
+            if (kind.text == nullptr)
+                break;
+            std::ostringstream oss;
+            oss << "SIPL sensor " << sensor.info.id << ": " << kind.text << " (notification " << type << ")";
+            if (kind.fatal)
+            {
+                std::cerr << "[sipl] " << oss.str() << std::endl;
+                set_failure(oss.str());
+                running.store(false);
+                break;
+            }
+            // A warning once is routine; the same one repeating means the camera has stopped delivering.
+            if (type == 102 && ++sensor.consecutive_capture_timeouts >= 3)
+            {
+                std::ostringstream failure;
+                failure << "SIPL sensor " << sensor.info.id
+                        << ": no frame for 3 capture timeouts in a row (the camera stopped sending)";
+                std::cerr << "[sipl] " << failure.str() << std::endl;
+                set_failure(failure.str());
+                running.store(false);
+            }
+            else if (type == 205 && ++sensor.consecutive_control_failures >= 10)
+            {
+                std::ostringstream failure;
+                failure << "SIPL sensor " << sensor.info.id
+                        << ": sensor control write failure repeated 10 times (its control bus is not answering)";
+                std::cerr << "[sipl] " << failure.str() << std::endl;
+                set_failure(failure.str());
+                running.store(false);
+            }
             break;
+        }
         }
     }
 }

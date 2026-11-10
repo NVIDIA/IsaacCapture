@@ -24,6 +24,16 @@ namespace sensing
  * per-camera capture object to hold). Each update() polls every sensor's latest frame and hands a new frame
  * to that sensor's encoder and direct link to the PC. Geometry is per sensor and comes from the capture backend.
  */
+/// Live figures for one stream, for the management channel.
+struct StreamFigures
+{
+    std::string track;
+    uint32_t sensor_id = 0;
+    uint64_t frames = 0;
+    uint64_t published = 0;
+    DirectLinkStatus direct;
+};
+
 class SensingCamera
 {
 public:
@@ -43,6 +53,15 @@ public:
 
     /** @brief Flush each stream's encoder. */
     void flush();
+
+    /** @brief Per-stream figures. Call from the thread that calls update(). */
+    std::vector<StreamFigures> figures() const;
+
+    /**
+     * @brief Send stream `track` to host:port from now on (empty host stops the direct link).
+     * @return false if no stream has that track name. Thread-safe against update().
+     */
+    bool set_direct_target(const std::string& track, const std::string& host, uint16_t port);
 
     /** @brief Print per-sensor frame counts to stdout. */
     void print_stats() const;

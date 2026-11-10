@@ -26,7 +26,6 @@ target_link_libraries(sensing_buffer_owner_tests PRIVATE Catch2::Catch2WithMain 
 
 catch_discover_tests(sensing_buffer_owner_tests)
 
-
 # The sensor-clock mapping is header-only and injectable, so it needs no SDK.
 add_executable(sensing_sensor_clock_tests
     test_sensor_clock.cpp
