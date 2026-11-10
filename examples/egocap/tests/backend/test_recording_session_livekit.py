@@ -13,7 +13,14 @@ from pathlib import Path
 import pytest
 
 from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator
-from recording_service import FieldSpec, NumericSourceSpec, RecordingPhase, RecordingService, ServiceConfig
+from recording_service import (
+    Disposition,
+    FieldSpec,
+    NumericSourceSpec,
+    RecordingPhase,
+    RecordingService,
+    ServiceConfig,
+)
 
 NUMERIC = NumericSourceSpec("s", (FieldSpec("v", "float64"),))
 
@@ -193,4 +200,42 @@ async def test_the_sources_timing_evidence_is_given_to_the_service_once_before_s
     two = await coordinator.start_episode()
     await coordinator.stop_episode(two.episode_id)
     assert calls == [(one.episode_id, first)]  # the second take's source had none; nothing carried over
+    await coordinator.close()
+
+
+async def test_a_discarded_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
+    events: list[str] = []
+    calls = spy_on_service(monkeypatch, events)
+    discarded = {"clock_mapping": {"mappings": ["discarded take"]}}
+    coordinator = make_coordinator(tmp_path, EvidenceSource(events, [discarded, None]))
+    await coordinator.open()
+    coordinator.set_task("t")
+
+    one = await coordinator.start_episode()
+    await coordinator.discard_episode(one.episode_id)
+    two = await coordinator.start_episode()
+    await coordinator.stop_episode(two.episode_id)
+
+    assert calls == []  # the second take's source had none, and nothing was inherited from the discarded one
+    await coordinator.close()
+
+
+async def test_an_interrupted_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
+    events: list[str] = []
+    calls = spy_on_service(monkeypatch, events)
+    interrupted = {"clock_mapping": {"mappings": ["interrupted take"]}}
+    coordinator = make_coordinator(tmp_path, EvidenceSource(events, [interrupted, None]))
+    await coordinator.open()
+    coordinator.set_task("t")
+
+    one = await coordinator.start_episode()
+    coordinator._readiness_check = lambda: (False, "the camera went away")
+    interrupted_result = await coordinator.stop_episode(one.episode_id)
+    assert interrupted_result.disposition is not Disposition.KEPT
+    _ = await coordinator.discard_pending(one.episode_id)  # a retained take must be settled before another starts
+    coordinator._readiness_check = lambda: (True, None)
+    two = await coordinator.start_episode()
+    await coordinator.stop_episode(two.episode_id)
+
+    assert calls == []
     await coordinator.close()

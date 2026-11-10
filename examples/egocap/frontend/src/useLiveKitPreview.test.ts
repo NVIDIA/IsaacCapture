@@ -23,7 +23,7 @@ vi.mock("livekit-client", async () => {
   };
 });
 
-// The real sync busy-waits on performance.now(), which fake timers freeze.
+// Stands in for the real clock sync, which sends requests on a timer and would add unrelated traffic to these tests.
 const syncs: Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; room: unknown; publisher: string }> = [];
 vi.mock("./liveKitClockSync", () => ({
   LiveKitClockSync: class {

@@ -42,7 +42,7 @@ def _b64url(data: bytes) -> str:
 
 
 def subscriber_token(*, api_key: str, signing_key: str, room: str, now: int, ttl_s: int = TOKEN_TTL_S) -> str:
-    """A signed LiveKit access token that may join ``room`` and subscribe, but not publish."""
+    """A signed LiveKit token that may join ``room``, subscribe and send data messages, but not publish media."""
     header = {"alg": "HS256", "typ": "JWT"}
     claims = {
         "iss": api_key,
@@ -55,7 +55,8 @@ def subscriber_token(*, api_key: str, signing_key: str, room: str, now: int, ttl
             "roomJoin": True,
             "canSubscribe": True,
             "canPublish": False,
-            # Data messages only, for the clock-sync exchange with the publisher; it still cannot publish media.
+            # Data messages only, for the clock-sync exchange with the publisher. Any holder of this token can send
+            # data messages into the room, so the publisher must act only on well-formed clock-sync requests.
             "canPublishData": True,
         },
     }
@@ -69,10 +70,11 @@ def subscriber_token(*, api_key: str, signing_key: str, room: str, now: int, ttl
 
 @router.get("/api/livekit-token")
 async def get_livekit_token(request: Request, room: str = "") -> JSONResponse:
-    """A fresh subscribe-only token for ``room``, which must be one the current session's LiveKit cameras offer.
+    """A fresh viewer token for ``room``, which must be one the current session's LiveKit cameras offer.
 
     Like the camera preview routes this is unauthenticated: anyone who can reach the backend can watch the
-    cameras, which is why the token cannot publish and is only issued for rooms CaptureServer offers.
+    cameras and send data messages into the room. The token cannot publish media, and it is only issued for
+    rooms CaptureServer offers.
     """
     headers = {"Cache-Control": "no-store"}
     started = request.app.state.monitor.native.started

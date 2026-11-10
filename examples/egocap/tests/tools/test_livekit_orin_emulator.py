@@ -39,7 +39,7 @@ def test_parse_valid_streams_and_defaults(token_file):
         1280,
         720,
         30.0,
-        "capture_monotonic_us",
+        "monotonic_us",
     )
 
 
@@ -239,7 +239,9 @@ def test_banner_never_shows_token(token_file, capsys):
 
 
 async def test_stamps_are_taken_together_before_the_frame_is_synthesized(token_file, fake_rtc, monkeypatch):
-    args = emu.parse_args(argv(token_file, "--add-stream=sensor=0,livekit=a", "--fps=200"))
+    args = emu.parse_args(
+        argv(token_file, "--add-stream=sensor=0,livekit=a", "--fps=200", "--timestamp-basis=capture_monotonic_us")
+    )
     args.width, args.height = 4, 4
     now_us = [1_000]
 

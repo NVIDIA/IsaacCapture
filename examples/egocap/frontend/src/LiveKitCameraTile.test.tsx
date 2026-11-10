@@ -347,7 +347,7 @@ describe("LiveKitCameraTile latency", () => {
     expect(statsTexts().some((t) => /\d ms latency/.test(t))).toBe(false);
   });
 
-  it("lists the sorted frame-callback fields in the latency tooltip", () => {
+  it("explains the latency tooltip without listing the browser's frame-callback fields", () => {
     renderTile();
     presentFrame(1, { rtpTimestamp: 1, expectedDisplayTime: 2 });
     act(() => {
@@ -357,17 +357,9 @@ describe("LiveKitCameraTile latency", () => {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    const span = document.querySelectorAll(".camera-stats")[1];
-    expect(span.getAttribute("title")).toContain("reports: expectedDisplayTime, presentationTime, presentedFrames, rtpTimestamp.");
-  });
-
-  it("has no reports text in the tooltip before any frame", () => {
-    renderTile();
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-    const span = document.querySelectorAll(".camera-stats")[1];
-    expect(span?.getAttribute("title") ?? "").not.toContain("reports:");
+    const title = document.querySelectorAll(".camera-stats")[1].getAttribute("title") ?? "";
+    expect(title).toContain("per-frame stamp");
+    expect(title).not.toContain("reports:");
   });
 
   it("keeps the fixed latency span beside 0 FPS for a stale stream", () => {

@@ -413,7 +413,7 @@ async def test_frame_without_publisher_timestamp_fails():
     await _settle()
     await feed.stop()
     assert ingress.offered == []
-    assert "without the publisher's capture timestamp" in feed.failure
+    assert "without the publisher's frame timestamp" in feed.failure
     assert reasons == [feed.failure]
 
 

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Capture-to-display latency of one presented video frame: the publisher's capture stamp for exactly that frame,
- * matched by the frame's RTP timestamp, against the frame's expected display time, both expressed on the
+ * Stamp-to-display latency of one presented video frame: the publisher's stamp for exactly that frame (frame-ready
+ * or sensor capture, whichever the stream's timestamp basis declares), matched by the frame's RTP timestamp,
+ * against the frame's expected display time, both expressed on the
  * publisher's clock through the four-timestamp mapping. A frame with no matching stamp, or with no current
  * mapping, has no latency: nothing is ever matched to the nearest frame.
  */

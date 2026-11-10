@@ -141,9 +141,7 @@ async def test_unrelated_or_malformed_replies_are_ignored(sync, case):
     sync.room.deliver(data, **kwargs)
     assert sync.client.mapping() is None
     assert sync.client.rejected == 0
-    if case == "wrong t1":
-        return  # the client discards the outstanding request on a t1 mismatch, so a later genuine reply is dropped
-    # The request is still outstanding: the genuine reply is accepted afterwards.
+    # The request is still outstanding, even after a reply with the wrong t1: the genuine reply is accepted.
     answer(sync)
     assert sync.client.mapping() is not None
 

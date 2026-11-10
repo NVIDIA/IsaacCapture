@@ -417,6 +417,10 @@ class RecordingSessionCoordinator:
             # construct a new ingress over it; the old consumer thread
             # would be left with nothing owning it.
             raise CoordinatorBusyError("a previous take's ingress has not yet settled")
+        # A take that was discarded or interrupted never consumed its evidence; it must not describe this take.
+        # Operations run one at a time and an unsettled take's ingress is still current (refused above), so no
+        # pending stop can still need the evidence cleared here.
+        self._timing_evidence = None
         if self._livekit_source is None:
             return await self._start_episode_with_storage(frozen_context)
         # LiveKit video must be flowing before any storage is opened, so a missing camera fails the start itself.

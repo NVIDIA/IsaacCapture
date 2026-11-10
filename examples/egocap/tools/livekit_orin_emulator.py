@@ -88,10 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timestamp-basis",
         choices=("capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"),
-        default="capture_monotonic_us",
-        help="what user_timestamp carries: the emulated Orin's monotonic time at frame generation, which for "
-        "synthetic frames is their capture event (the recordable basis, mapped by clock-sync); or the Unix time "
-        "of it; or the Unix time declared as processing time; or monotonic processing time",
+        default="monotonic_us",
+        help="what user_timestamp carries: monotonic_us is the emulated Orin's monotonic time when the frame is "
+        "ready (what the native sender stamps by default; recordable, mapped by clock-sync); "
+        "capture_monotonic_us is the same clock declared as the sensor capture event (also recordable); "
+        "capture_unix_us and processing_unix_us are Unix-time stamps, which cannot be recorded",
     )
     parser.add_argument(
         "--clock-offset-ms",
@@ -104,7 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--clock-drift-ppm",
         type=float,
         default=0.0,
-        help="the emulated Orin clock gains this many microseconds per second of run time (Unix bases only)",
+        help="the emulated Orin clock gains this many microseconds per second of run time "
+        "(every basis, and the clock-sync replies)",
     )
     parser.add_argument(
         "--pipeline-delay-ms",

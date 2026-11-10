@@ -61,7 +61,7 @@ export function LiveKitCameraTile({
   primary: boolean;
   /** Maps the publisher's monotonic clock onto this browser's; latency needs it. */
   clock?: LiveKitClockSync | null;
-  /** What the stream's frame timestamp means; only a capture event on the publisher's monotonic clock counts. */
+  /** What the stream's frame timestamp means; only a basis on the publisher's monotonic clock (frame-ready or sensor capture) gives a latency. */
   basis?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -72,13 +72,10 @@ export function LiveKitCameraTile({
   const basisRef = useRef<number>(basis);
   basisRef.current = basis;
   const lastFrameAtRef = useRef<number | null>(null);
-  // Cumulative presented-frame count of the newest frame callback, and the count at the start of the window.
   // The newest frame callback's cumulative presented-frame count and that frame's own presentation time (ms).
   const presentedRef = useRef<{ presented: number; at: number } | null>(null);
+  // The same fields at the start of the current window, for the displayed rate.
   const baselineRef = useRef<{ presented: number; at: number } | null>(null);
-  // Which fields this browser's frame callback reports (it varies by browser), to read off for the latency work.
-  const frameFieldsRef = useRef<string>("");
-  const [frameFields, setFrameFields] = useState<string>("");
   // Latency of each presented frame in the current window, and the label shown for the last full window.
   const latencySamplesRef = useRef<LatencySample[]>([]);
   const [latencyLabel, setLatencyLabel] = useState<string>(NO_LATENCY);
@@ -121,7 +118,6 @@ export function LiveKitCameraTile({
       if (stopped) return;
       callbackId = element.requestVideoFrameCallback((now, metadata) => {
         presentedRef.current = { presented: metadata.presentedFrames, at: metadata.presentationTime ?? now };
-        frameFieldsRef.current = Object.keys(metadata).sort().join(", ");
         // The publisher's stamp for exactly this frame, by its RTP timestamp, against its expected display time.
         const rtp = (metadata as { rtpTimestamp?: number }).rtpTimestamp;
         if (MONOTONIC_TIMESTAMP_BASES.includes(basisRef.current) && typeof rtp === "number" && "lookupFrameMetadata" in track) {
@@ -147,7 +143,6 @@ export function LiveKitCameraTile({
       const last = lastFrameAtRef.current;
       const isStale = last !== null && now - last > FRAME_STALE_AFTER_MS;
       if (isStale) setStale(true);
-      if (frameFieldsRef.current !== "") setFrameFields(frameFieldsRef.current);
       // Displayed rate: the change in the browser's own presented-frame count over the window, not a callback tally.
       const latest = presentedRef.current;
       // The window's latency samples are summarized once and cleared; only those made under the clock mapping's
@@ -213,10 +208,8 @@ export function LiveKitCameraTile({
             className="camera-stats"
             title={
               latencyLabel === NO_LATENCY
-                ? `No latency for the displayed frame: it needs the publisher's per-frame capture stamp (matched by RTP timestamp), a current clock mapping to the publisher, and a stream whose timestamp is a capture event on the publisher's monotonic clock.${
-                    frameFields === "" ? "" : ` This browser's frame callback reports: ${frameFields}.`
-                  }`
-                : `Capture event on the publisher's clock to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is half the clock-exchange round trip plus this browser's timer resolution`
+                ? "No latency for the displayed frame: it needs the publisher's per-frame stamp (matched by RTP timestamp), a current clock mapping to the publisher, and a stream whose timestamp is on the publisher's monotonic clock."
+                : `The publisher's frame stamp (frame-ready or sensor capture, per the stream) to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is half the clock-exchange round trip, the drift the exchange's age allows, and this browser's timer resolution`
             }
           >
             {latencyLabel}

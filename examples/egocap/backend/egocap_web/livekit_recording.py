@@ -249,7 +249,7 @@ class LiveKitRecordingFeed:
                 self._fail(f"{stream.name}: the camera's publication was replaced during the take")
                 return
             if frame.user_timestamp_us is None:
-                self._fail(f"{stream.name}: a frame arrived without the publisher's capture timestamp")
+                self._fail(f"{stream.name}: a frame arrived without the publisher's frame timestamp")
                 return
             # A mapping that jumped during the take, or went missing or stale, ends it: frames already recorded
             # keep the mapping they were made under, and none after is recorded with a guessed one.
@@ -272,7 +272,7 @@ class LiveKitRecordingFeed:
             receive_time = frame.receive_time_ns / 1e9
             age = receive_time - capture_time
             if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
-                # A coarse validity check: a capture time far from this host's clock is not a capture time here.
+                # A coarse validity check: a frame time far from this host's clock is not a frame time here.
                 self._fail(
                     f"{stream.name}: the publisher's clock disagrees with this host's (frame age {age:+.3f} s)"
                 )
@@ -293,7 +293,8 @@ class LiveKitRecordingFeed:
 def recordable_livekit_streams(started: Any) -> tuple[p.LiveKitCameraStream, ...]:
     """The LiveKit streams of a started session that a recording may include.
 
-    A stream is recordable when its timestamps are a capture time and its geometry is configured: the recording
+    A stream is recordable when its timestamps are on the publisher's monotonic clock (frame-ready or sensor
+    capture time) and its geometry is configured: the recording
     schema fixes each source's size and rate when the session opens. The rest remain preview-only.
     """
     if started is None:
@@ -334,6 +335,8 @@ class LiveKitRecordingSource:
         self._streams: tuple[p.LiveKitCameraStream, ...] = ()
         self._receiver: LiveKitFrameReceiver | None = None
         self._feed: LiveKitRecordingFeed | None = None
+        # Read from the environment once in prepare(), so the feed and the saved evidence use the same figure.
+        self._budget_ns = int(_DEFAULT_BUDGET_MS * 1e6)
 
     async def prepare(self) -> None:
         """Join the room and wait for a usable first frame from every stream; raises if one never arrives.
@@ -344,6 +347,8 @@ class LiveKitRecordingSource:
         self._streams = tuple(self._recordable_streams())
         if not self._streams:
             return
+        # A bad budget setting fails the start here, before the room is joined and storage and ingress are live.
+        self._budget_ns = uncertainty_budget_ns()
         receiver = LiveKitFrameReceiver(self._streams, self._make_token(self._streams[0].room), clock_sync=True)
         self._receiver = receiver
         try:
@@ -412,15 +417,32 @@ class LiveKitRecordingSource:
 
         task.add_done_callback(_done)
 
-    async def _wait_for_mapping(self, receiver: LiveKitFrameReceiver) -> None:
-        """Wait for the publisher's first clock mapping; without one its capture times cannot be placed."""
+    def _mapping_problem(self, receiver: LiveKitFrameReceiver) -> str | None:
+        """Why the publisher's clock mapping cannot be used to start a take right now, or None when it can."""
         clock_sync = receiver.clock_sync
+        mapping = None if clock_sync is None else clock_sync.mapping()
+        if clock_sync is None or mapping is None:
+            return "the publisher did not answer clock-sync requests, so its frame times cannot be placed"
+        if clock_sync.discontinuity:
+            return "the publisher's clock mapping jumped before the take started"
+        if mapping.uncertainty_ns > self._budget_ns:
+            return (
+                f"the clock mapping is uncertain by {mapping.uncertainty_ns / 1e6:.2f} ms, "
+                f"over the {self._budget_ns / 1e6:.2f} ms budget ({BUDGET_ENV})"
+            )
+        return None
+
+    async def _wait_for_mapping(self, receiver: LiveKitFrameReceiver) -> None:
+        """Wait for a usable clock mapping: present, continuous and within the uncertainty budget.
+
+        A mapping the feed would reject on its first frame refuses the start instead, with the reason, rather
+        than opening a take that ends at once. The mapping may improve while waiting, so the check repeats until
+        the deadline.
+        """
         deadline = asyncio.get_running_loop().time() + self._first_frame_timeout_s
-        while clock_sync is None or clock_sync.mapping() is None:
+        while (problem := self._mapping_problem(receiver)) is not None:
             if asyncio.get_running_loop().time() >= deadline:
-                raise RuntimeError(
-                    "the publisher did not answer clock-sync requests, so its capture times cannot be used"
-                )
+                raise RuntimeError(problem)
             await asyncio.sleep(0.05)
 
     def start(self, ingress: RecordingIngress, on_failure: Callable[[str], None]) -> None:
@@ -431,7 +453,12 @@ class LiveKitRecordingSource:
         self._receiver.clear_queued()
         source_names = {s.stream_id: s.name for s in self._streams}
         self._feed = LiveKitRecordingFeed(
-            self._receiver, self._streams, ingress, source_names, on_failure=on_failure
+            self._receiver,
+            self._streams,
+            ingress,
+            source_names,
+            on_failure=on_failure,
+            max_uncertainty_ns=self._budget_ns,
         )
         self._feed.start()
 
@@ -439,7 +466,7 @@ class LiveKitRecordingSource:
         """The clock mappings this take's video was placed on the PC's clock with, for the take's attributes.
 
         None when there is no clock sync (nothing LiveKit was recorded). Read before ``stop()``, which leaves the
-        room.
+        room. A long take keeps only the newest mappings; ``mappings_omitted_oldest`` counts the rest.
         """
         receiver = self._receiver
         clock_sync = None if receiver is None else receiver.clock_sync
@@ -448,7 +475,8 @@ class LiveKitRecordingSource:
         # The estimator re-reports one exchange with a growing age allowance while no newer one arrives; keep the
         # first report of each exchange.
         unique = {(m.epoch, m.accepted_at_ns): m for m in reversed(clock_sync.estimator.history)}
-        mappings = sorted(unique.values(), key=lambda m: (m.accepted_at_ns, m.epoch))[-_MAX_EVIDENCE_MAPPINGS:]
+        ordered = sorted(unique.values(), key=lambda m: (m.accepted_at_ns, m.epoch))
+        mappings = ordered[-_MAX_EVIDENCE_MAPPINGS:]
         return {
             "clock_mapping": {
                 "method": "four_timestamp_exchange",
@@ -472,7 +500,9 @@ class LiveKitRecordingSource:
                     }
                     for m in mappings
                 ],
-                "uncertainty_budget_ns": uncertainty_budget_ns(),
+                # A long take keeps only the newest mappings; this counts the older ones left out.
+                "mappings_omitted_oldest": len(ordered) - len(mappings),
+                "uncertainty_budget_ns": self._budget_ns,
                 "discontinuity": clock_sync.discontinuity,
                 "exchanges_rejected": clock_sync.rejected,
                 "mapping_current_at_stop": clock_sync.mapping() is not None,

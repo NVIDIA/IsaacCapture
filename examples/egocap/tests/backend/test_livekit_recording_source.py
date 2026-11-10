@@ -267,6 +267,32 @@ async def test_a_mapping_that_arrives_late_still_lets_the_take_start():
     await source.stop()
 
 
+async def test_a_mapping_over_the_uncertainty_budget_refuses_the_start_with_the_reason(monkeypatch):
+    monkeypatch.setenv(lrec.BUDGET_ENV, "0.0005")  # 500 ns, below the fake mapping's 1000 ns
+    streams = [livekit_stream(16)]
+    source = make_source(streams, timeout=0.2)
+    with pytest.raises(RuntimeError, match=f"uncertain by .*{lrec.BUDGET_ENV}"):
+        await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_mapping_that_already_jumped_refuses_the_start_with_the_reason(monkeypatch):
+    monkeypatch.setattr(FakeClockSync, "discontinuity", True)
+    streams = [livekit_stream(16)]
+    source = make_source(streams, timeout=0.2)
+    with pytest.raises(RuntimeError, match="jumped"):
+        await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_bad_budget_setting_fails_prepare_before_the_room_is_joined(monkeypatch):
+    monkeypatch.setenv(lrec.BUDGET_ENV, "not-a-number")
+    source = make_source([livekit_stream(16)])
+    with pytest.raises(ValueError, match=lrec.BUDGET_ENV):
+        await source.prepare()
+    assert FakeReceiver.instances == []
+
+
 async def test_a_failing_join_leaves_the_room_and_propagates():
     FakeReceiver.start_error = ConnectionError("no route")
     source = make_source([livekit_stream(16)])
@@ -447,6 +473,7 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
                 }
                 for m in history
             ],
+            "mappings_omitted_oldest": 0,
             "uncertainty_budget_ns": 5_000_000,
             "discontinuity": True,
             "exchanges_rejected": 4,
@@ -470,11 +497,13 @@ async def test_timing_evidence_carries_only_the_newest_mappings():
     history = history_of(lrec._MAX_EVIDENCE_MAPPINGS + 36)
     receiver.clock_sync = clock_sync_with(history)
 
-    mappings = source.timing_evidence()["clock_mapping"]["mappings"]
+    clock_mapping = source.timing_evidence()["clock_mapping"]
+    mappings = clock_mapping["mappings"]
 
     assert [m["accepted_at_ns"] for m in mappings] == [
         m.accepted_at_ns for m in history[-lrec._MAX_EVIDENCE_MAPPINGS :]
     ]
+    assert clock_mapping["mappings_omitted_oldest"] == 36
 
 
 async def test_an_exchange_reported_again_with_more_uncertainty_is_listed_once_as_first_reported():
@@ -490,9 +519,5 @@ async def test_an_exchange_reported_again_with_more_uncertainty_is_listed_once_a
     assert [(m["epoch"], m["accepted_at_ns"], m["uncertainty_ns"]) for m in mappings] == [
         (1, 100, 1_000),
         (2, 100, 1_000),
-        (1, 200, 1_000),
-    ] or [(m["epoch"], m["accepted_at_ns"], m["uncertainty_ns"]) for m in mappings] == [
-        (2, 100, 1_000),
-        (1, 100, 1_000),
         (1, 200, 1_000),
     ]
