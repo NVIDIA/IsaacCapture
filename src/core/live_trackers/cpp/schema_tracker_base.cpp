@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "inc/live_trackers/schema_tracker_base.hpp"
@@ -147,6 +147,7 @@ bool SchemaTrackerBase::ensure_collection()
         if (!m_target_collection || i != m_target_collection->index ||
             coll_props.tensorCollectionId != m_target_collection->id)
         {
+            read_published_tensor_identifier(i);
             m_last_sample_index.reset();
             m_logger->info("Found target collection at index {}", i);
         }
@@ -181,6 +182,30 @@ bool SchemaTrackerBase::read_all_samples(std::vector<SampleResult>& samples)
     return true;
 }
 
+void SchemaTrackerBase::read_published_tensor_identifier(uint32_t collection_index)
+{
+    // A name only hints at the layout: senders may choose it (haptic commands), and one table can be published under
+    // several (the full-body vendors). So a different name is a warning; samples are verified before use instead.
+    XrTensorPropertiesNV tensor_props{ XR_TYPE_TENSOR_PROPERTIES_NV };
+    m_published_tensor_identifier.clear();
+    if (m_get_tensor_props_fn(m_tensor_list, collection_index, 0, &tensor_props) == XR_SUCCESS)
+    {
+        m_published_tensor_identifier.assign(
+            tensor_props.data.identifier, strnlen(tensor_props.data.identifier, XR_MAX_TENSOR_IDENTIFIER_SIZE));
+    }
+    if (!m_published_tensor_identifier.empty() && !m_config.tensor_identifier.empty() &&
+        m_published_tensor_identifier != m_config.tensor_identifier)
+    {
+        m_logger->warn("SchemaTracker: collection '{}' publishes '{}' data, but {} reads '{}'", m_config.collection_id,
+                       m_published_tensor_identifier, m_config.localized_name, m_config.tensor_identifier);
+    }
+}
+
+const std::string& SchemaTrackerBase::published_tensor_identifier() const
+{
+    return m_published_tensor_identifier;
+}
+
 const SchemaTrackerConfig& SchemaTrackerBase::config() const
 {
     return m_config;
@@ -196,6 +221,8 @@ void SchemaTrackerBase::initialize_tensor_data_functions()
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_list_props_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorCollectionPropertiesNV",
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_coll_props_fn));
+    loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorPropertiesNV",
+                          reinterpret_cast<PFN_xrVoidFunction*>(&m_get_tensor_props_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorDataNV",
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_data_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrUpdateTensorListNV",

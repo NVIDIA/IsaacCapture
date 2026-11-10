@@ -11,6 +11,8 @@
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
 
 namespace core
 {
@@ -67,7 +69,8 @@ public:
      *            last-known sample is retained); emptied when the collection is absent.
      * @param record False reads the samples without writing them to MCAP.
      * @throws std::runtime_error On critical OpenXR/tensor API failures propagated
-     *         from SchemaTrackerBase.
+     *         from SchemaTrackerBase, and when a sample fails FlatBuffers
+     *         verification as `DataTableT`.
      * @note Missing collection, temporary collection loss, and "no new sample"
      *       are treated as common non-fatal conditions and do not throw.
      */
@@ -83,6 +86,21 @@ public:
                 out.reset();
             }
             return;
+        }
+
+        // Unverified bytes of the wrong layout would be read past their end, by the decode below or by whoever reads
+        // the published handle. Valid data of this table always passes.
+        for (const auto& sample : samples_)
+        {
+            flatbuffers::Verifier verifier(sample.buffer.data(), sample.buffer.size());
+            if (!verifier.VerifyBuffer<DataTableT>(nullptr))
+            {
+                const std::string& published = published_tensor_identifier();
+                throw std::runtime_error("SchemaTracker: a sample in collection '" + config().collection_id + "'" +
+                                         (published.empty() ? "" : " (published as '" + published + "')") +
+                                         " is not valid '" + config().tensor_identifier + "' data for " +
+                                         config().localized_name + "; check its collection_id and its publisher");
+            }
         }
 
         if (mcap_channels_ && record)

@@ -55,11 +55,12 @@ public:
         return handles;
     }
 
-    //! Creates `collection_id` with samples of `sample_size` bytes, as a producer starting up does.
-    void create(const std::string& collection_id, uint32_t sample_size)
+    //! Creates `collection_id` with samples of `sample_size` bytes, as a producer starting up does. Its tensor is
+    //! named `tensor_identifier`; empty leaves it unnamed.
+    void create(const std::string& collection_id, uint32_t sample_size, const std::string& tensor_identifier = {})
     {
-        m_collections.push_back(
-            std::make_shared<Collection>(Collection{ collection_id, sample_size, m_next_collection_id++ }));
+        m_collections.push_back(std::make_shared<Collection>(
+            Collection{ collection_id, sample_size, m_next_collection_id++, tensor_identifier }));
         ++m_generation;
     }
 
@@ -98,6 +99,7 @@ private:
         std::string id;
         uint32_t sample_size;
         XrTensorCollectionIDNV instance_id;
+        std::string tensor_identifier;
         std::vector<Sample> samples{};
         int64_t next_index = 0;
         bool destroyed = false;
@@ -166,6 +168,27 @@ private:
         return XR_SUCCESS;
     }
 
+    static XrResult XRAPI_CALL tensor_properties(XrTensorListNV list,
+                                                 uint32_t collection_index,
+                                                 uint32_t tensor_index,
+                                                 XrTensorPropertiesNV* properties)
+    {
+        const Collection& collection = *listed(list).at(collection_index);
+        if (collection.destroyed)
+        {
+            return XR_ERROR_TENSOR_LOST_NV;
+        }
+        if (tensor_index != 0)
+        {
+            return XR_ERROR_VALIDATION_FAILURE;
+        }
+        properties->data = {};
+        properties->data.dataTypeSize = collection.sample_size;
+        std::strncpy(
+            properties->data.identifier, collection.tensor_identifier.c_str(), XR_MAX_TENSOR_IDENTIFIER_SIZE - 1);
+        return XR_SUCCESS;
+    }
+
     //! Writes the first sample at or after the requested index, one per call.
     static XrResult XRAPI_CALL get_data(XrTensorListNV list, const XrTensorDataRetrievalInfoNV* info, XrTensorDataNV* data)
     {
@@ -219,6 +242,7 @@ private:
             { "xrUpdateTensorListNV", reinterpret_cast<PFN_xrVoidFunction>(&update_list) },
             { "xrGetTensorListPropertiesNV", reinterpret_cast<PFN_xrVoidFunction>(&list_properties) },
             { "xrGetTensorCollectionPropertiesNV", reinterpret_cast<PFN_xrVoidFunction>(&collection_properties) },
+            { "xrGetTensorPropertiesNV", reinterpret_cast<PFN_xrVoidFunction>(&tensor_properties) },
             { "xrGetTensorDataNV", reinterpret_cast<PFN_xrVoidFunction>(&get_data) },
             { "xrDestroyTensorListNV", reinterpret_cast<PFN_xrVoidFunction>(&destroy_list) },
             { "xrConvertTimespecTimeToTimeKHR", reinterpret_cast<PFN_xrVoidFunction>(&timespec_to_time) },
