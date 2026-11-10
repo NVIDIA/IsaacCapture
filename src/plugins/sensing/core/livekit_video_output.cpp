@@ -3,7 +3,7 @@
 
 #include "livekit_video_output.hpp"
 
-#include "jetson_encoder.hpp"
+#include "inc/sensing_core/jetson_encoder.hpp"
 #include "rgba_box_downscale.cuh"
 
 #include <algorithm>

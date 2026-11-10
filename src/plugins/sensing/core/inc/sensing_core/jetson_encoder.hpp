@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "inc/sensing_core/camera_capture.hpp"
+#include "camera_capture.hpp"
 
 #include <cstdint>
 #include <memory>

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "jetson_encoder.hpp"
+#include "inc/sensing_core/jetson_encoder.hpp"
 
 #include "rgba_to_nv12.cuh"
 

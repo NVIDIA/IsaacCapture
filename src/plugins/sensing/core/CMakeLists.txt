@@ -14,6 +14,7 @@ add_library(sensing_core STATIC
     inc/sensing_core/camera_backend.hpp
     inc/sensing_core/camera_capture.hpp
     inc/sensing_core/capture_factory.hpp
+    inc/sensing_core/jetson_encoder.hpp
     inc/sensing_core/sensing_camera.hpp
     inc/sensing_core/sensing_types.hpp
     inc/sensing_core/sipl_camera.hpp
