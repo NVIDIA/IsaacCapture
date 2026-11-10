@@ -46,7 +46,7 @@ void signal_handler(int signal)
 // Argument parsers
 // =============================================================================
 
-/// "sensor=N,livekit=NAME" -> one sensor and the track that carries it.
+/// "sensor=N,name=NAME[,direct=HOST:PORT]" -> one sensor and the stream that carries it.
 static StreamConfig parse_stream_arg(const std::string& arg)
 {
     StreamConfig cfg{};
@@ -68,9 +68,19 @@ static StreamConfig parse_stream_arg(const std::string& arg)
             cfg.sensor_id = static_cast<uint32_t>(std::stoul(val));
             has_sensor = true;
         }
-        else if (key == "livekit")
+        else if (key == "name")
         {
-            cfg.livekit_track = val;
+            // What the PC, the management channel and the logs call this stream.
+            cfg.name = val;
+        }
+        else if (key == "direct")
+        {
+            // HOST:PORT of this stream's PC video-stage port; the producer connects and reconnects.
+            const auto colon = val.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 == val.size())
+                throw std::runtime_error("--add-stream direct= must be HOST:PORT");
+            cfg.direct_host = val.substr(0, colon);
+            cfg.direct_port = static_cast<uint16_t>(std::stoul(val.substr(colon + 1)));
         }
         else
         {
@@ -78,8 +88,8 @@ static StreamConfig parse_stream_arg(const std::string& arg)
         }
     }
 
-    if (!has_sensor || cfg.livekit_track.empty())
-        throw std::runtime_error("--add-stream requires sensor=<camera-index>,livekit=<track>");
+    if (!has_sensor || cfg.name.empty())
+        throw std::runtime_error("--add-stream requires sensor=<camera-index>,name=<stream name>");
 
     return cfg;
 }
@@ -125,13 +135,15 @@ static std::string default_platform_config()
 static void print_usage(const char* program_name)
 {
     std::cout
-        << "Usage: " << program_name << " --livekit-url=URL --livekit-token-file=PATH --add-stream=... [options]\n"
+        << "Usage: " << program_name << " --add-stream=... [options]\n"
         << "\n"
-        << "Publishes each SENSING sensor as a LiveKit camera track: SIPL or Argus capture, hardware H.264,\n"
-        << "sent as it is.\n"
+        << "Captures each SENSING sensor (SIPL or Argus), encodes it as H.264 on the hardware encoder and sends\n"
+        << "it over TCP to the PC video stage, which publishes it onwards.\n"
         << "\n"
         << "Streams (repeat for each sensor):\n"
-        << "  --add-stream=sensor=N,livekit=NAME   camera N (SIPL or Argus device), published as track NAME\n"
+        << "  --add-stream=sensor=N,name=NAME[,direct=HOST:PORT]\n"
+        << "                                       camera N (SIPL or Argus device), called NAME;\n"
+        << "                                       direct= is where the PC video stage listens for it\n"
         << "  --list-sensors                       print the cameras, then exit\n"
         << "  --camera-backend=auto|sipl|argus     auto picks the one backend that matches (default);\n"
         << "                                       (a backend must also be built in)\n"
@@ -144,18 +156,18 @@ static void print_usage(const char* program_name)
         << "  --link-masks='M M'      one mask per deserializer (default: '0x0000 0x1100')\n"
         << "  --nito-dir=DIR          ISP tuning directory (default: /var/nvidia/nvcam/settings/sipl)\n"
         << "\n"
-        << "LiveKit:\n"
-        << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
-        << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
-        << "                            participant identity\n"
-        << "  --livekit-fps=N           publication rate cap (default: 30)\n"
-        << "  --livekit-scale-div=N     reduce every track by this integer divisor (default: 1)\n"
+        << "Encoding:\n"
+        << "  --fps=N                   frame rate cap of each stream (default: 30)\n"
+        << "  --scale-div=N             reduce every stream by this integer divisor (default: 1)\n"
         << "  --timestamp-basis=B       what each frame's timestamp is: monotonic_us (default) is this host's\n"
         << "                            monotonic clock when the frame was ready to encode; capture_monotonic_us\n"
         << "                            (UNVERIFIED on hardware) is the sensor's capture event on that clock and fails\n"
-        << "                            the stream if it cannot be placed; processing_unix_us is Unix processing time.\n"
+        << "                            the stream if it cannot be placed. The direct link carries this clock only.\n"
         << "                            The streams file on the PC must declare the same basis.\n"
-        << "  --livekit-bitrate=N       target bitrate of each track's encoder in bps (default: 8000000)\n"
+        << "  --frame-correlation=C     how an encoded unit is matched to its capture: stamp (default) by the stamp the\n"
+        << "                            encoder returns, sending a unit that matches none without a capture time; fifo\n"
+        << "                            assumes one unit per input in order (approximate; not for recording)\n"
+        << "  --bitrate=N               target bitrate of each stream's encoder in bps (default: 8000000)\n"
         << "  --gop=N                   IDR period in frames (default: fps*5)\n"
         << "\n"
         << "Other:\n"
@@ -165,9 +177,8 @@ static void print_usage(const char* program_name)
         << "  --swap-uv           swap the chroma planes\n"
         << "\n"
         << "Example:\n"
-        << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
-        << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
-        << "      --add-stream=sensor=1,livekit=sensing-right\n";
+        << "  " << program_name << " --add-stream=sensor=0,name=sensing-left,direct=192.168.1.205:5600 \\\n"
+        << "      --add-stream=sensor=1,name=sensing-right,direct=192.168.1.205:5601\n";
 }
 
 // =============================================================================
@@ -179,7 +190,6 @@ try
 {
     SensingConfig camera_config;
     std::map<uint32_t, StreamConfig> stream_map;
-    std::string livekit_token_file;
     bool list_sensors = false;
     CameraBackend requested_backend = CameraBackend::Auto;
 
@@ -232,41 +242,45 @@ try
             }
             requested_backend = *parsed;
         }
-        else if (arg.find("--livekit-url=") == 0)
+        else if (arg.find("--fps=") == 0)
         {
-            camera_config.livekit.url = arg.substr(14);
-        }
-        else if (arg.find("--livekit-token-file=") == 0)
-        {
-            livekit_token_file = arg.substr(21);
-        }
-        else if (arg.find("--livekit-fps=") == 0)
-        {
-            camera_config.livekit.fps = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+            camera_config.encode.fps = static_cast<uint32_t>(std::stoul(arg.substr(6)));
         }
         else if (arg.find("--timestamp-basis=") == 0)
         {
             const std::string basis = arg.substr(18);
             if (basis == "monotonic_us")
-                camera_config.livekit.timestamp_basis = TimestampBasis::FrameReadyMonotonic;
+                camera_config.encode.timestamp_basis = TimestampBasis::FrameReadyMonotonic;
             else if (basis == "capture_monotonic_us")
-                camera_config.livekit.timestamp_basis = TimestampBasis::SensorCaptureMonotonic;
-            else if (basis == "processing_unix_us")
-                camera_config.livekit.timestamp_basis = TimestampBasis::ProcessingUnix;
+                camera_config.encode.timestamp_basis = TimestampBasis::SensorCaptureMonotonic;
             else
             {
-                std::cerr << "Error: --timestamp-basis must be monotonic_us, capture_monotonic_us or processing_unix_us."
-                          << std::endl;
+                std::cerr
+                    << "Error: --timestamp-basis must be monotonic_us or capture_monotonic_us: the direct link carries the sender's monotonic clock only."
+                    << std::endl;
                 return 1;
             }
         }
-        else if (arg.find("--livekit-bitrate=") == 0)
+        else if (arg.find("--frame-correlation=") == 0)
         {
-            camera_config.livekit.bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(18)));
+            const std::string how = arg.substr(20);
+            if (how == "stamp")
+                camera_config.encode.correlation = FrameCorrelation::Stamp;
+            else if (how == "fifo")
+                camera_config.encode.correlation = FrameCorrelation::Fifo;
+            else
+            {
+                std::cerr << "Error: --frame-correlation must be stamp or fifo." << std::endl;
+                return 1;
+            }
         }
-        else if (arg.find("--livekit-scale-div=") == 0)
+        else if (arg.find("--bitrate=") == 0)
         {
-            camera_config.livekit.scale_div = static_cast<uint32_t>(std::stoul(arg.substr(20)));
+            camera_config.encode.bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(10)));
+        }
+        else if (arg.find("--scale-div=") == 0)
+        {
+            camera_config.encode.scale_div = static_cast<uint32_t>(std::stoul(arg.substr(12)));
         }
         else if (arg.find("--gop=") == 0)
         {
@@ -405,22 +419,18 @@ try
     }
 
     // Check the settings that need no hardware or network before anything is opened.
-    if (camera_config.livekit.url.empty() || livekit_token_file.empty())
-        throw std::runtime_error("--livekit-url and --livekit-token-file are required");
-    if (camera_config.livekit.fps == 0)
-        throw std::runtime_error("--livekit-fps must be at least 1");
-    if (camera_config.livekit.bitrate_bps < 100'000)
-        throw std::runtime_error("--livekit-bitrate must be at least 100000");
-
-    // The token is read from a file so it never appears in a process listing, and is not printed.
-    std::ifstream token_file(livekit_token_file);
-    if (!token_file)
-        throw std::runtime_error("cannot read --livekit-token-file " + livekit_token_file);
-    std::getline(token_file, camera_config.livekit.token);
-    const auto last = camera_config.livekit.token.find_last_not_of(" \t\r\n");
-    camera_config.livekit.token.erase(last == std::string::npos ? 0 : last + 1);
-    if (camera_config.livekit.token.empty())
-        throw std::runtime_error("--livekit-token-file " + livekit_token_file + " is empty");
+    if (camera_config.encode.fps == 0)
+        throw std::runtime_error("--fps must be at least 1");
+    if (camera_config.encode.bitrate_bps < 100'000)
+        throw std::runtime_error("--bitrate must be at least 100000");
+    {
+        const bool any_direct = std::any_of(
+            stream_configs.begin(), stream_configs.end(), [](const StreamConfig& s) { return !s.direct_host.empty(); });
+        if (!any_direct)
+            std::cerr << "Warning: no stream has a direct=HOST:PORT destination: nothing will receive the video. "
+                         "Give --add-stream a direct=HOST:PORT."
+                      << std::endl;
+    }
 
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);

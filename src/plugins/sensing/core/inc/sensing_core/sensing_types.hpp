@@ -15,40 +15,51 @@ namespace plugins
 namespace sensing
 {
 
-/// One captured sensor and the LiveKit track that carries it.
+/// One captured sensor and the stream that carries it to the PC.
 struct StreamConfig
 {
+    /// Send every encoded unit of this stream to the PC video stage at host:port (AVS1 over TCP); empty means no
+    /// destination yet (one can be set over the management channel). Each stream needs its own port on the PC.
+    std::string direct_host;
+    uint16_t direct_port = 0;
     /// The selected backend's own camera index (SIPL pipeline or Argus device), validated at startup.
     uint32_t sensor_id = 0;
-    /// Name of the LiveKit camera track carrying this sensor.
-    std::string livekit_track;
+    /// The stream's name: what the PC, the management channel and the logs call this sensor.
+    std::string name;
 };
 
-/// Where and how the tracks are published.
-/// The clock and event a published frame's application timestamp is read from.
+/// The clock and event a frame's application timestamp is read from.
 enum class TimestampBasis
 {
     /// CLOCK_MONOTONIC when the frame was ready to encode (`monotonic_us`); recordable.
     FrameReadyMonotonic,
     /// The sensor's capture event converted to CLOCK_MONOTONIC (`capture_monotonic_us`); unverified on hardware.
     SensorCaptureMonotonic,
-    /// CLOCK_REALTIME when the frame finished conversion (`processing_unix_us`); not recordable.
-    ProcessingUnix,
 };
 
-struct LiveKitConfig
+/// How an encoded unit is matched to the capture it came from.
+enum class FrameCorrelation
 {
-    std::string url;
-    /// The join token itself, not a path. It names the room and the participant. Never logged.
-    std::string token;
-    /// Publication rate cap, independent of the capture rate.
+    /// By the stamp the encoder hands back with the unit (the stamp it was given with the input). A unit whose stamp
+    /// matches no submitted frame carries no capture timestamp, and inputs the encoder never returned are counted.
+    Stamp,
+    /// By order: the encoder is assumed to return one unit per input, in order. Not verifiable; an input the encoder
+    /// skips shifts every later timestamp. For when the encoder does not return the stamp and approximate timing is
+    /// acceptable (a live preview), never for recording.
+    Fifo,
+};
+
+struct EncodeConfig
+{
+    /// Rate cap of the encoded stream, independent of the capture rate.
     uint32_t fps = 30;
-    /// Output-only uniform reduction of every track; 1 publishes the sensor's native size.
+    /// Output-only uniform reduction of every stream; 1 sends the sensor's native size.
     uint32_t scale_div = 1;
-    /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again.
+    /// Target bitrate of each stream's hardware encoder; the VBR ceiling is half as much again.
     uint32_t bitrate_bps = 8'000'000;
     /// What each frame's application timestamp is; the receiving side's streams file must declare the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::FrameReadyMonotonic;
+    FrameCorrelation correlation = FrameCorrelation::Stamp;
 };
 
 struct SensingConfig
@@ -74,7 +85,7 @@ struct SensingConfig
     /// Argus only: the sensor mode index applied to every camera.
     uint32_t argus_sensor_mode = 0;
 
-    LiveKitConfig livekit;
+    EncodeConfig encode;
 };
 
 } // namespace sensing

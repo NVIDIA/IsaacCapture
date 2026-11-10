@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ==============================================================================
-# SENSING Camera Plugin: Jetson SIPL capture, hardware H.264 encode, LiveKit publication
+# SENSING Camera Plugin: Jetson SIPL capture, hardware H.264 encode, direct streaming to the PC video stage
 # ==============================================================================
-# Two leaf targets, one per directory (cmake/cmake-structure.md rule 1); the LiveKit wrapper is src/livekit_publisher:
+# Two leaf targets, one per directory (cmake/cmake-structure.md rule 1):
 #   core/     sensing_core          -- SIPL capture, encoder, conversion, track output
 #   app/      camera_plugin_sensing
 #

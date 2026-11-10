@@ -156,17 +156,18 @@ on the side that fails for a read-only runtime report:
      - Check the Jetson power mode. Maximum performance can be selected with
        ``sudo nvpmodel -m 0 && sudo jetson_clocks``.
 
-Build and run the LiveKit publisher
------------------------------------
+Build and run the camera producer
+---------------------------------
 
 ``camera_plugin_sensing`` runs on the Orin. It captures the GMSL cameras with
-SIPL, encodes H.264 on the hardware encoder and publishes one LiveKit video
-track per camera. CaptureServer, the egocap backend, recording and the browser
-run on the PC.
+SIPL, encodes H.264 on the hardware encoder and sends each camera's video over a
+direct TCP link to the PC video stage (``video_stage_worker``), which publishes it
+to LiveKit. The producer has no LiveKit client of its own. CaptureServer, the
+egocap backend, recording and the browser run on the PC.
 
 Prerequisites: an AGX Orin on JetPack 7.2.1 / L4T R39.2.1 with the SENSING
-drivers installed and the cameras working, CUDA, CMake, and network access to
-the LiveKit server. The build also needs two header trees; neither is fetched
+drivers installed and the cameras working, CUDA, CMake, and a network path to the
+PC running ``video_stage_worker``. The build also needs two header trees; neither is fetched
 by ``setup.sh``:
 
 - ``JETSON_MMAPI_DIR``: the Jetson Multimedia API tree, containing
@@ -179,9 +180,7 @@ by ``setup.sh``:
 
 .. code-block:: bash
 
-   # Build. The LiveKit SDK v1.12.4 prebuilt is downloaded and hash-checked; use
-   # -DLIVEKIT_SDK_DIR=... for a local copy (it needs LICENSE and NOTICE files in that
-   # directory, or -DLIVEKIT_SDK_LICENSE_FILE / -DLIVEKIT_SDK_NOTICE_FILE).
+   # Build.
    cmake -B build -DBUILD_PLUGIN_SENSING=ON -DBUILD_VIZ=OFF -DBUILD_EXAMPLES=OFF \
      -DBUILD_TESTING=OFF -DBUILD_PYTHON_BINDINGS=OFF \
      -DSIPL_API_DIR=... -DJETSON_MMAPI_DIR=...
@@ -190,16 +189,16 @@ by ``setup.sh``:
    # Check the cameras are visible.
    build/src/plugins/sensing/app/camera_plugin_sensing --list-sensors
 
-   # Publish. The token file is a LiveKit token for the room and publisher identity
-   # named in the PC's streams file.
+   # Send. Each stream's direct= is the PC address and port its video_stage_worker
+   # --stream=PORT:TRACK listens on; start the worker first.
    build/src/plugins/sensing/app/camera_plugin_sensing \
-     --livekit-url=ws://LIVEKIT_HOST:7880 --livekit-token-file=join.token \
-     --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right
+     --add-stream=sensor=0,name=sensing-left,direct=PC_HOST:5600 \
+     --add-stream=sensor=1,name=sensing-right,direct=PC_HOST:5601
 
-The ``livekit=`` names must equal the ``track`` names in the PC's streams file.
-Stop with Ctrl-C. ``--help`` lists every option. The example uses plain ``ws://``
-for a LiveKit server on a trusted LAN; the join token is sent in the clear, so
-use a ``wss://`` endpoint on any other network.
+The ``direct=`` ports must match the ``--stream`` ports of the PC's
+``video_stage_worker``, whose ``TRACK`` names must equal the ``track`` names in
+the PC's streams file. Stop with Ctrl-C. ``--help`` lists every option. The direct
+link is plain TCP: use a wired link or a trusted network.
 
 ``SENSING_TSC_PROBE=1`` logs the SIPL capture counter beside the host clocks twice
 a second, as separate uncalibrated samples. The counter's units are unconfirmed, so

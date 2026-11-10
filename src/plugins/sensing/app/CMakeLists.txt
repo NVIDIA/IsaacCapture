@@ -24,16 +24,6 @@ install(DIRECTORY "${SENSING_CONFIGS_DIR}/"
     DESTINATION plugins/sensing_camera/configs
 )
 
-# The plugin links the LiveKit runtime, whose RUNPATH points into the build tree; ship it beside the
-# binary, where INSTALL_RPATH=$ORIGIN (and liblivekit.so's own $ORIGIN) finds it.
-install(FILES
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit.so"
-    "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
-    DESTINATION plugins/sensing_camera
-)
-install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
-    DESTINATION plugins/sensing_camera/licenses/livekit-sdk
-)
 # The vendored encoder classes are compiled into the binary, so their license text ships with it.
 install(FILES "${SENSING_MMAPI_VENDORED_DIR}/LICENSE"
     DESTINATION plugins/sensing_camera/licenses/jetson-multimedia-api

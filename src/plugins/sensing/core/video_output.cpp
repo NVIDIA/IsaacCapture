@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "livekit_video_output.hpp"
+#include "inc/sensing_core/video_output.hpp"
 
 #include "inc/sensing_core/jetson_encoder.hpp"
 #include "inc/sensing_core/sensor_clock.hpp"
 #include "rgba_box_downscale.cuh"
+
+#include <log_bridge/logger.hpp>
+#include <video_stage/direct_sender.hpp>
+#include <video_stage/frame_correlator.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -32,51 +36,64 @@ namespace
 void check_cuda(cudaError_t err, const char* what)
 {
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("LiveKit output: ") + what + ": " + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("Video output: ") + what + ": " + cudaGetErrorString(err));
 }
 
 // Congestion control never drives the encoder below this.
 constexpr uint32_t kMinBitrateBps = 100'000;
+/// Forced keyframes (the PC asking, or a dropped link recovering) are at least this far apart.
+constexpr std::chrono::milliseconds kMinIdrInterval{ 1000 };
+/// How often the link is judged, how far the bitrate falls back, and how long it must stay calm before it rises.
+constexpr std::chrono::milliseconds kAdaptInterval{ 1000 };
+constexpr uint32_t kFloorBitrateBps = 1'500'000;
+constexpr uint32_t kCalmBeforeRaise = 5;
 // A target is applied only when it differs from the current one by this fraction, and this long after
 // the last change.
-constexpr double kMinBitrateChange = 0.25;
-constexpr std::chrono::seconds kMinBitrateInterval{ 3 };
 
 } // namespace
 
-struct LiveKitVideoOutput::Impl
+struct VideoOutput::Impl
 {
     struct Slot
     {
         uint8_t* ptr = nullptr;
         size_t pitch = 0;
         uint64_t timestamp_ns = 0;
-        uint64_t unix_ns = 0;
         uint64_t capture_monotonic_ns = 0;
         uint64_t capture_tsc = 0;
         uint64_t sequence = 0;
     };
 
-    Impl(std::unique_ptr<VideoTrackSink> track, const LiveKitOutputConfig& cfg) : sink(std::move(track)), config(cfg)
+    explicit Impl(const VideoOutputConfig& cfg)
+        : config(cfg),
+          correlator(cfg.correlation == FrameCorrelation::Stamp ? video_stage::FrameCorrelator::Mode::Stamp :
+                                                                  video_stage::FrameCorrelator::Mode::Fifo)
     {
         validate_geometry(config.source_width, config.source_height, config.scale_div);
         if (config.fps == 0)
-            throw std::runtime_error("LiveKit output: the publication rate must be at least 1 fps");
+            throw std::runtime_error("Video output: the publication rate must be at least 1 fps");
         out_width = config.source_width / config.scale_div;
         out_height = config.source_height / config.scale_div;
-        if (sink->width() != out_width || sink->height() != out_height)
-            throw std::runtime_error("LiveKit output: the track size does not match the output size");
         if (config.input == PixelKind::DmaBufNv12 && config.scale_div != 1)
-            throw std::runtime_error("LiveKit output: DMA-BUF input cannot be reduced (scale_div must be 1)");
+            throw std::runtime_error("Video output: DMA-BUF input cannot be reduced (scale_div must be 1)");
         period_ns = 1'000'000'000ull / config.fps;
+        // Always present: with no host the sender idles, and a management client can give it one at runtime.
+        {
+            DirectSenderConfig direct_config;
+            direct_config.host = config.direct_host;
+            direct_config.port = config.direct_port;
+            direct_config.width = out_width;
+            direct_config.height = out_height;
+            direct_config.fps = config.fps;
+            direct = std::make_unique<DirectSender>(direct_config);
+        }
         if (config.bitrate_bps < kMinBitrateBps)
         {
-            throw std::runtime_error("LiveKit output: the bitrate must be at least " + std::to_string(kMinBitrateBps) +
+            throw std::runtime_error("Video output: the bitrate must be at least " + std::to_string(kMinBitrateBps) +
                                      " bps");
         }
         // Congestion control moves the target between the floor and the ceiling; the configured target
         // is never below the floor, so the range is never inverted.
-        max_bitrate = std::max(config.bitrate_bps, config.peak_bitrate_bps);
 
         // A constructor that throws never runs the destructor, so free what was allocated here.
         try
@@ -88,13 +105,13 @@ struct LiveKitVideoOutput::Impl
             encoder_config.width = out_width;
             encoder_config.height = out_height;
             encoder_config.bitrate_bps = config.bitrate_bps;
+            current_bitrate = config.bitrate_bps;
             encoder_config.peak_bitrate_bps = config.peak_bitrate_bps;
             encoder_config.fps = config.fps;
             encoder_config.gop = config.gop;
             encoder_config.full_range = config.full_range;
             encoder_config.input = config.input;
             encoder = std::make_unique<JetsonEncoder>(encoder_config);
-            applied_bitrate = config.bitrate_bps;
 
             for (auto& slot : slots)
             {
@@ -162,7 +179,7 @@ struct LiveKitVideoOutput::Impl
         const auto* rgba = std::get_if<CudaRgbaPixels>(&frame.pixels);
         if (dma ? !std::holds_alternative<DmaBufNv12Pixels>(frame.pixels) : rgba == nullptr)
         {
-            fail("LiveKit output: the frame's pixel type does not match the encoder input");
+            fail("Video output: the frame's pixel type does not match the encoder input");
             return;
         }
         ++offered;
@@ -247,7 +264,6 @@ struct LiveKitVideoOutput::Impl
             check_cuda(cudaStreamSynchronize(snapshot_stream), "snapshot sync");
 
             slot.timestamp_ns = frame.monotonic_ns;
-            slot.unix_ns = frame.unix_ns;
             slot.capture_monotonic_ns = frame.capture_monotonic_ns;
             slot.capture_tsc = frame.sensor_time;
             slot.sequence = frame.sequence;
@@ -279,7 +295,7 @@ struct LiveKitVideoOutput::Impl
                     std::unique_lock<std::mutex> lock(mutex);
                     // Frames in the encoder come out a little later: poll for them soon, and otherwise
                     // wake now and then to pick up the receiving side's requests.
-                    const auto wait = in_encoder.empty() ? std::chrono::milliseconds(100) : std::chrono::milliseconds(2);
+                    const auto wait = correlator.empty() ? std::chrono::milliseconds(100) : std::chrono::milliseconds(2);
                     wake.wait_for(lock, wait, [&] { return stopping || pending >= 0 || pending_dma || flush_requested; });
                     if (stopping)
                         return;
@@ -290,8 +306,6 @@ struct LiveKitVideoOutput::Impl
                     pending_dma.reset();
                     flush_now = flush_requested;
                 }
-
-                apply_feedback();
                 if (dma)
                 {
                     encode_dma(*dma);
@@ -308,8 +322,7 @@ struct LiveKitVideoOutput::Impl
                     for (auto& unit : encoder->drain())
                         publish_unit(unit);
                     // Anything still unreturned once the encoder is drained is not coming back.
-                    encoder_dropped += in_encoder.size();
-                    in_encoder.clear();
+                    encoder_dropped += correlator.in_flight();
                     std::lock_guard<std::mutex> lock(mutex);
                     flush_requested = false;
                     flushed.notify_all();
@@ -329,29 +342,48 @@ struct LiveKitVideoOutput::Impl
         }
     }
 
-    // Worker thread: what the receiving side asked for since the last frame.
-    void apply_feedback()
+    // A keyframe is several times the size of an ordinary frame. A link that is struggling makes the PC ask for
+    // keyframes over and over, and each one adds to the load that caused the request, so forced keyframes are spaced.
+    bool idr_allowed()
     {
-        const EncoderFeedback feedback = sink->take_feedback();
-        if (feedback.keyframe_requested)
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_forced_idr < kMinIdrInterval)
+            return false;
+        last_forced_idr = now;
+        return true;
+    }
+
+    // Worker thread: follow the link. Frames the direct sender had to drop mean the network could not carry the
+    // stream, so lower the bitrate; after a calm stretch raise it again, never above the configured target.
+    void adapt_to_link()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_adapt < kAdaptInterval)
+            return;
+        last_adapt = now;
+        const uint64_t dropped = direct->dropped();
+        // Drops while nothing is connected say the destination is absent, not that the network is slow.
+        const bool congested = dropped != last_dropped && direct->connected();
+        last_dropped = dropped;
+
+        uint32_t target = current_bitrate;
+        if (congested)
         {
-            ++keyframes_requested;
-            keyframe_wanted = true;
+            calm_intervals = 0;
+            target = std::max<uint32_t>(kFloorBitrateBps, static_cast<uint32_t>(current_bitrate * 0.7));
         }
-        if (feedback.target_bitrate_bps)
+        else if (++calm_intervals >= kCalmBeforeRaise)
         {
-            const uint32_t target = std::clamp(*feedback.target_bitrate_bps, kMinBitrateBps, max_bitrate);
-            // Congestion control re-estimates all the time. Follow it only for a real change, and not
-            // more than every few seconds: a change reopens the encoder session.
-            const auto now = std::chrono::steady_clock::now();
-            const double change = std::abs(static_cast<double>(target) - applied_bitrate) / applied_bitrate;
-            if (change >= kMinBitrateChange && now - last_bitrate_change >= kMinBitrateInterval &&
-                encoder->set_bitrate(target))
-            {
-                applied_bitrate = target;
-                last_bitrate_change = now;
-            }
+            calm_intervals = 0;
+            target = std::min<uint32_t>(config.bitrate_bps, static_cast<uint32_t>(current_bitrate * 1.15));
         }
+        target = std::min(target, config.bitrate_bps);
+        if (target == current_bitrate || !encoder->set_bitrate(target))
+            return;
+        isaaccapture::Logger::get("isaaccapture.plugins.sensing.VideoOutput")
+            ->info("link {}: video bitrate {} -> {} kbit/s", congested ? "congested" : "recovering",
+                   current_bitrate / 1000, target / 1000);
+        current_bitrate = target;
     }
 
     // Worker thread.
@@ -371,7 +403,13 @@ struct LiveKitVideoOutput::Impl
             pitch = scaled_pitch;
         }
 
-        if (keyframe_wanted)
+        if (direct && direct->take_keyframe_request())
+        {
+            ++keyframes_requested;
+            keyframe_wanted = true;
+        }
+        adapt_to_link();
+        if (keyframe_wanted && idr_allowed())
         {
             encoder->request_keyframe();
             keyframe_wanted = false;
@@ -385,13 +423,19 @@ struct LiveKitVideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(slot.sequence), slot.capture_tsc,
-                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns, slot.unix_ns));
+                        application_stamp_us(slot.timestamp_ns, slot.capture_monotonic_ns), stamp_ns);
     }
 
     // Worker thread: a leased DMA-BUF frame goes to the encoder as it is, and its lease stays with the encoder.
     void encode_dma(CaptureFrame& frame)
     {
-        if (keyframe_wanted)
+        if (direct && direct->take_keyframe_request())
+        {
+            ++keyframes_requested;
+            keyframe_wanted = true;
+        }
+        adapt_to_link();
+        if (keyframe_wanted && idr_allowed())
         {
             encoder->request_keyframe();
             keyframe_wanted = false;
@@ -403,7 +447,8 @@ struct LiveKitVideoOutput::Impl
             return;
         }
         track_in_flight(static_cast<uint32_t>(frame.sequence), frame.sensor_time,
-                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns, frame.unix_ns));
+                        application_stamp_us(frame.monotonic_ns, frame.capture_monotonic_ns),
+                        static_cast<int64_t>(frame.monotonic_ns));
     }
 
     /// Polling thread: the frame's capture event on CLOCK_MONOTONIC. The sensor clock's anchor is built from the
@@ -411,7 +456,7 @@ struct LiveKitVideoOutput::Impl
     uint64_t capture_time_ns(const CaptureFrame& frame)
     {
         if (frame.sensor_domain == SensorTimeDomain::None || frame.sensor_time == 0)
-            throw std::runtime_error("LiveKit output: the camera backend reports no sensor timestamp to publish");
+            throw std::runtime_error("Video output: the camera backend reports no sensor timestamp to publish");
         if (!clock_map)
         {
             SensorClockMap::Config map;
@@ -432,7 +477,7 @@ struct LiveKitVideoOutput::Impl
     }
 
     /// The application timestamp published with a frame, in microseconds.
-    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns, uint64_t unix_ns) const
+    uint64_t application_stamp_us(uint64_t ready_monotonic_ns, uint64_t capture_monotonic_ns) const
     {
         switch (config.timestamp_basis)
         {
@@ -440,100 +485,69 @@ struct LiveKitVideoOutput::Impl
             return ready_monotonic_ns / 1000;
         case TimestampBasis::SensorCaptureMonotonic:
             return capture_monotonic_ns / 1000;
-        case TimestampBasis::ProcessingUnix:
-            return unix_ns / 1000;
         }
         throw std::logic_error("unknown timestamp basis");
     }
 
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
-    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t unix_us)
+    void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t stamp_us, int64_t submitted_ns)
     {
-        in_encoder.push_back({ sequence, capture_tsc, monotonic_us, unix_us });
+        correlator.submitted({ sequence, capture_tsc, stamp_us, submitted_ns / 1000 });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
     // of the capture it came from.
     void publish_unit(const EncodedUnit& unit)
     {
-        // The Jetson encoder does not return the stamp it was given: it numbers its units from its own frame
-        // rate (0, 1/fps, ...). Units pair with captures by order, and a jump in that numbering is the only
-        // evidence of frames the encoder consumed without returning a unit. Metadata is retired only by a
-        // matched unit or by such a jump; a jump that leaves no frame for this unit, or a numbering that goes
-        // backwards, is not trusted and just resets the baseline.
-        const int64_t index = std::llround(static_cast<double>(unit.timestamp_ns) * config.fps / 1e9);
-        if (have_unit_index)
+        const int64_t stamp_us = unit.timestamp_ns / 1000;
+        // Which capture is this unit? See FrameCorrelator: by the stamp the encoder hands back, so a frame it never
+        // returned is detected, and a unit that matches nothing is sent without a capture time instead of an assumed
+        // one. Fifo is an explicit choice for approximate timing only.
+        const auto result = correlator.returned(stamp_us);
+        if (!result)
         {
-            const int64_t gap = index - last_unit_index - 1;
-            if (gap > 0 && static_cast<uint64_t>(gap) < in_encoder.size())
-            {
-                in_encoder.erase(in_encoder.begin(), in_encoder.begin() + gap);
-                encoder_dropped += static_cast<uint64_t>(gap);
-            }
-        }
-        last_unit_index = index;
-        have_unit_index = true;
-
-        // A unit with no frame to pair with is skipped rather than published with someone else's metadata.
-        if (in_encoder.empty())
-        {
-            ++unmatched_units;
+            // A unit with no capture to pair with is skipped, not published with someone else's metadata.
+            ++unmatched;
             return;
         }
-        const FrameMeta meta = in_encoder.front();
-        in_encoder.pop_front();
-
-        // After a refusal the stream is only usable from its next keyframe.
-        if (awaiting_keyframe && !unit.keyframe)
-            return;
+        const bool identified = result->identified;
+        const video_stage::InFlightFrame& meta = result->frame;
+        encoder_dropped += result->skipped;
+        if (config.correlation == FrameCorrelation::Stamp)
+            ++(identified ? matched : unmatched);
 
         EncodedVideoFrame frame;
         frame.data = unit.data.data();
         frame.size = unit.data.size();
         frame.keyframe = unit.keyframe;
         frame.timestamp_us = static_cast<uint64_t>(stamp_us);
-        frame.frame_id = meta.sequence;
-        frame.capture_tsc = meta.capture_tsc;
-        frame.user_timestamp_us = meta.unix_us;
-        if (sink->submit(frame))
-        {
-            awaiting_keyframe = false;
-            ++published;
-        }
-        else
-        {
-            ++rejected;
-            awaiting_keyframe = true;
-            keyframe_wanted = true;
-        }
+        // Zero identity and time when the unit could not be tied to a capture: the receiver treats that as unknown.
+        frame.frame_id = identified ? meta.sequence : 0;
+        frame.capture_tsc = identified ? meta.capture_tsc : 0;
+        frame.user_timestamp_us = identified ? meta.stamp_us : 0;
+        // The direct link keeps its own queue and keyframe bookkeeping and never blocks this thread.
+        direct->submit(frame);
+        ++published;
     }
 
-    std::unique_ptr<VideoTrackSink> sink;
-    LiveKitOutputConfig config;
+    std::unique_ptr<DirectSender> direct; ///< optional second destination: the PC video stage
+    VideoOutputConfig config;
     uint32_t out_width = 0;
     uint32_t out_height = 0;
     uint64_t period_ns = 0;
 
-    struct FrameMeta
-    {
-        uint32_t sequence = 0;
-        uint64_t capture_tsc = 0;
-        /// The frame's application timestamp: capture time when publishing it, else processing-time Unix.
-        uint64_t unix_us = 0;
-    };
 
     std::unique_ptr<JetsonEncoder> encoder;
-    uint32_t max_bitrate = 0;
 
     // Worker thread only.
     std::optional<SensorClockMap> clock_map; ///< Polling thread only.
-    std::deque<FrameMeta> in_encoder; ///< Submitted to the encoder, no unit back yet.
-    int64_t last_unit_index = 0; ///< The encoder's own number of the last unit returned.
-    bool have_unit_index = false;
+    video_stage::FrameCorrelator correlator; ///< Submitted to the encoder, no unit back yet.
     bool keyframe_wanted = false;
-    bool awaiting_keyframe = false;
-    uint32_t applied_bitrate = 0;
-    std::chrono::steady_clock::time_point last_bitrate_change = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_forced_idr{};
+    std::chrono::steady_clock::time_point last_adapt = std::chrono::steady_clock::now();
+    uint64_t last_dropped = 0;
+    uint32_t calm_intervals = 0;
+    uint32_t current_bitrate = 0;
 
     Slot slots[2];
     /// DMA-BUF input only: the newest accepted frame, waiting for the worker. Guarded by `mutex`.
@@ -562,84 +576,85 @@ struct LiveKitVideoOutput::Impl
     std::atomic<uint64_t> replaced{ 0 };
     std::atomic<uint64_t> snapshots{ 0 };
     std::atomic<uint64_t> published{ 0 };
-    std::atomic<uint64_t> encoder_busy{ 0 };
-    std::atomic<uint64_t> rejected{ 0 };
-    std::atomic<uint64_t> keyframes_requested{ 0 };
+    std::atomic<uint64_t> matched{ 0 };
+    std::atomic<uint64_t> unmatched{ 0 };
     std::atomic<uint64_t> encoder_dropped{ 0 };
-    std::atomic<uint64_t> unmatched_units{ 0 };
+    std::atomic<uint64_t> encoder_busy{ 0 };
+    std::atomic<uint64_t> keyframes_requested{ 0 };
 
     std::mutex failure_mutex;
     std::string failure_message;
     std::atomic<bool> failed_flag{ false };
 };
 
-void LiveKitVideoOutput::validate_geometry(uint32_t width, uint32_t height, uint32_t divisor)
+void VideoOutput::validate_geometry(uint32_t width, uint32_t height, uint32_t divisor)
 {
     if (divisor == 0)
-        throw std::runtime_error("LiveKit output: the scale divisor must be at least 1");
+        throw std::runtime_error("Video output: the scale divisor must be at least 1");
     if (width == 0 || height == 0)
-        throw std::runtime_error("LiveKit output: the source size is empty");
+        throw std::runtime_error("Video output: the source size is empty");
     if (width % divisor != 0 || height % divisor != 0)
     {
-        throw std::runtime_error("LiveKit output: divisor " + std::to_string(divisor) + " does not divide " +
+        throw std::runtime_error("Video output: divisor " + std::to_string(divisor) + " does not divide " +
                                  std::to_string(width) + "x" + std::to_string(height) + " exactly");
     }
     if ((width / divisor) % 2 != 0 || (height / divisor) % 2 != 0)
     {
-        throw std::runtime_error("LiveKit output: " + std::to_string(width / divisor) + "x" +
+        throw std::runtime_error("Video output: " + std::to_string(width / divisor) + "x" +
                                  std::to_string(height / divisor) + " is not even; NV12 needs even dimensions");
     }
 }
 
-LiveKitVideoOutput::LiveKitVideoOutput(std::unique_ptr<VideoTrackSink> sink, const LiveKitOutputConfig& config)
-    : m_impl(std::make_unique<Impl>(std::move(sink), config))
+VideoOutput::VideoOutput(const VideoOutputConfig& config) : m_impl(std::make_unique<Impl>(config))
 {
 }
 
-LiveKitVideoOutput::~LiveKitVideoOutput() = default;
+VideoOutput::~VideoOutput() = default;
 
-void LiveKitVideoOutput::submit(CaptureFrame& frame)
+void VideoOutput::submit(CaptureFrame& frame)
 {
     m_impl->submit(frame);
 }
 
-LiveKitOutputStats LiveKitVideoOutput::stats() const
+VideoOutputStats VideoOutput::stats() const
 {
-    LiveKitOutputStats s;
+    VideoOutputStats s;
     s.offered = m_impl->offered.load();
     s.paced_out = m_impl->paced_out.load();
     s.replaced = m_impl->replaced.load();
     s.snapshots = m_impl->snapshots.load();
     s.published = m_impl->published.load();
-    s.encoder_busy = m_impl->encoder_busy.load();
-    s.rejected = m_impl->rejected.load();
-    s.keyframes_requested = m_impl->keyframes_requested.load();
+    s.matched = m_impl->matched.load();
+    s.unmatched = m_impl->unmatched.load();
     s.encoder_dropped = m_impl->encoder_dropped.load();
-    s.unmatched_units = m_impl->unmatched_units.load();
+    s.encoder_busy = m_impl->encoder_busy.load();
+    s.keyframes_requested = m_impl->keyframes_requested.load();
     return s;
 }
 
-bool LiveKitVideoOutput::failed() const
+bool VideoOutput::failed() const
 {
     return m_impl->failed_flag.load();
 }
 
-std::string LiveKitVideoOutput::failure() const
+std::string VideoOutput::failure() const
 {
     std::lock_guard<std::mutex> lock(m_impl->failure_mutex);
     return m_impl->failure_message;
 }
 
-std::string LiveKitVideoOutput::describe()
+DirectLinkStatus VideoOutput::direct_status() const
 {
-    std::string text = std::string(JetsonEncoder::backend_name()) + ", pre-encoded passthrough";
-    const std::string transport = m_impl->sink->describe();
-    if (!transport.empty())
-        text += "; transport: " + transport;
+    return { m_impl->direct->host(), m_impl->direct->port(), m_impl->direct->connected(), m_impl->direct->last_error() };
+}
+
+std::string VideoOutput::describe()
+{
+    std::string text = std::string(JetsonEncoder::backend_name()) + ", H.264 to the PC video stage";
     return text;
 }
 
-void LiveKitVideoOutput::flush()
+void VideoOutput::flush()
 {
     std::unique_lock<std::mutex> lock(m_impl->mutex);
     m_impl->flush_requested = true;

@@ -124,7 +124,7 @@ struct CaptureFrame
     uint64_t sensor_time = 0;
     /// What `sensor_time` counts; the claim is checked at run time by SensorClockMap, not trusted.
     SensorTimeDomain sensor_domain = SensorTimeDomain::None;
-    /// CLOCK_MONOTONIC ns of the sensor's capture event, set by the LiveKit output when it publishes capture
+    /// CLOCK_MONOTONIC ns of the sensor's capture event, set by the video output when it stamps capture
     /// time; zero otherwise.
     uint64_t capture_monotonic_ns = 0;
     std::variant<CudaRgbaPixels, DmaBufNv12Pixels> pixels;

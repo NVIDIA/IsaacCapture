@@ -39,11 +39,11 @@ before replacing it; do not hand-edit the board wiring. Its CSI ports, I2C
 buses, deserializer addresses, GPIOs, and link modes must match the installed
 SIPL drivers.
 
-## Orin: LiveKit publisher
+## Orin: camera producer
 
-`camera_plugin_sensing` (built from [`app/`](app/), [`core/`](core/) and
-[`livekit/`](livekit/)) captures the cameras with SIPL, encodes H.264 on the
-hardware encoder and publishes one LiveKit video track per camera. The
+`camera_plugin_sensing` (built from [`app/`](app/) and [`core/`](core/)) captures the cameras with SIPL, encodes H.264
+on the hardware encoder and sends each camera's video over a direct TCP link to the PC video stage (`src/video_stage`),
+which publishes it to LiveKit. The producer has no LiveKit client of its own. The
 [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/device/camera/sensing.html)
 has the build and run steps.
 
@@ -53,4 +53,4 @@ guessing). SIPL is built by default (`-DSENSING_WITH_SIPL=OFF` for an Argus-only
 (`-DSENSING_WITH_ARGUS=ON`, Argus device index with `--add-stream=sensor=N,...`, `--argus-mode=K`) captures NV12 into
 DMA-BUFs that the hardware encoder reads without a copy. **The Argus code has never been built or run: there is no
 Argus SDK or Argus camera available to the author.** Argus DMA-BUF input cannot be combined with
-`--livekit-scale-div` above 1. An Argus-only build (`-DSENSING_WITH_SIPL=OFF -DSENSING_WITH_ARGUS=ON`) also builds on JetPack 6.2 / L4T R36.4.3.
+`--scale-div` above 1. An Argus-only build (`-DSENSING_WITH_SIPL=OFF -DSENSING_WITH_ARGUS=ON`) also builds on JetPack 6.2 / L4T R36.4.3.
