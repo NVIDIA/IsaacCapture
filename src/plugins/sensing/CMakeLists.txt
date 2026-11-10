@@ -107,8 +107,32 @@ endif()
 message(STATUS "SENSING plugin: Jetson Multimedia API=${JETSON_MMAPI_DIR}")
 
 set(_mmapi_classes "${JETSON_MMAPI_DIR}/samples/common/classes")
+
+# NvVideoEncoder.cpp prints both pixel-format codes with cout in setBitrate() and setPeakBitrate(), which puts bare
+# integers on stdout at every encoder start. /usr/src is not ours to edit, so compile a copy without those lines.
+file(READ "${_mmapi_classes}/NvVideoEncoder.cpp" _nv_encoder_source)
+set(_nv_debug_print "[ \t]*cout[ \t]*<<[ \t]*(capture|output)_plane_pixfmt[ \t]*<<[ \t]*endl;[^\n]*\n")
+string(REGEX REPLACE "${_nv_debug_print}" "" _nv_encoder_quiet "${_nv_encoder_source}")
+# The matched lines contain ';', so count the printed values before and after instead of the matches.
+string(REGEX MATCHALL "_plane_pixfmt[ \t]*<<" _nv_before "${_nv_encoder_source}")
+string(REGEX MATCHALL "_plane_pixfmt[ \t]*<<" _nv_after "${_nv_encoder_quiet}")
+list(LENGTH _nv_before _nv_before_count)
+list(LENGTH _nv_after _nv_after_count)
+math(EXPR _nv_debug_print_count "${_nv_before_count} - ${_nv_after_count}")
+set(_nv_encoder_quiet_file "${CMAKE_CURRENT_BINARY_DIR}/NvVideoEncoder.cpp")
+set(_nv_encoder_previous "")
+if(EXISTS "${_nv_encoder_quiet_file}")
+    file(READ "${_nv_encoder_quiet_file}" _nv_encoder_previous)
+endif()
+# Write only on a change, so an unchanged source does not rebuild; a changed sample source reconfigures.
+if(NOT _nv_encoder_previous STREQUAL _nv_encoder_quiet)
+    file(WRITE "${_nv_encoder_quiet_file}" "${_nv_encoder_quiet}")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mmapi_classes}/NvVideoEncoder.cpp")
+message(STATUS "SENSING plugin: removed ${_nv_debug_print_count} debug print(s) from the NvVideoEncoder.cpp copy")
+
 set(JETSON_MMAPI_SOURCES
-    "${_mmapi_classes}/NvVideoEncoder.cpp"
+    "${_nv_encoder_quiet_file}"
     "${_mmapi_classes}/NvV4l2Element.cpp"
     "${_mmapi_classes}/NvV4l2ElementPlane.cpp"
     "${_mmapi_classes}/NvElement.cpp"
