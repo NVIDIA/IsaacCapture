@@ -72,6 +72,7 @@ option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetc
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
 option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
 option(BUILD_PLUGIN_SENSING "Build SENSING GMSL camera plugin (Jetson only; requires SIPL, NVENC and the LiveKit SDK)" OFF)
+option(BUILD_VIDEO_STAGE "Build the video stage: the Orin-to-PC video transport and the PC relay" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)

@@ -25,6 +25,10 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
+if(BUILD_VIDEO_STAGE)
+    add_subdirectory(video_stage)
+endif()
+
 if(BUILD_PLUGINS)
     add_subdirectory(plugins)
 endif()
