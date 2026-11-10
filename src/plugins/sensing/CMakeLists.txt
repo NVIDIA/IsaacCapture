@@ -150,18 +150,11 @@ set(JETSON_MMAPI_SOURCES
     "${SENSING_MMAPI_VENDORED_DIR}/classes/NvElementProfiler.cpp"
     "${SENSING_MMAPI_VENDORED_DIR}/classes/NvBuffer.cpp"
     "${SENSING_MMAPI_VENDORED_DIR}/classes/NvLogging.cpp"
-    # The NvBufSurf allocation wrapper is not vendored: the Argus backend takes it from the installed tree.
-    "${JETSON_MMAPI_DIR}/samples/common/classes/NvBufSurface.cpp"
 )
 
 find_library(NVBUFSURFACE_LIBRARY NAMES nvbufsurface PATHS ${_tegra_lib_dirs})
 if(NOT NVBUFSURFACE_LIBRARY)
     message(FATAL_ERROR "libnvbufsurface not found. Install nvidia-l4t-multimedia.")
-endif()
-# The NvBufSurf allocation wrapper in samples/common/classes/NvBufSurface.cpp also calls the transform API.
-find_library(NVBUFSURFTRANSFORM_LIBRARY NAMES nvbufsurftransform PATHS ${_tegra_lib_dirs})
-if(NOT NVBUFSURFTRANSFORM_LIBRARY)
-    message(FATAL_ERROR "libnvbufsurftransform not found. Install nvidia-l4t-multimedia.")
 endif()
 
 # NVIDIA's patched libv4l2 carries the Tegra M2M encoder ioctls, so search the

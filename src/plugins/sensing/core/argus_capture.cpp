@@ -15,7 +15,7 @@
 #include <EGL/egl.h>
 #include <log_bridge/logger.hpp>
 
-#include <NvBufSurface.h>
+#include <nvbufsurface.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -357,17 +357,20 @@ struct ArgusCapture::Impl : std::enable_shared_from_this<ArgusCapture::Impl>
     {
         auto buffer = std::make_unique<CaptureBuffer>();
         buffer->index = static_cast<uint32_t>(camera.pool.size());
-        NvBufSurf::NvCommonAllocateParams params;
+        // The driver's own allocator (libnvbufsurface), not the Multimedia API sample wrapper around it.
+        NvBufSurfaceAllocateParams params;
         std::memset(&params, 0, sizeof(params));
         params.memtag = NvBufSurfaceTag_CAMERA;
-        params.width = camera.info.width;
-        params.height = camera.info.height;
-        params.colorFormat = NVBUF_COLOR_FORMAT_NV12;
-        params.layout = NVBUF_LAYOUT_BLOCK_LINEAR;
-        params.memType = NVBUF_MEM_SURFACE_ARRAY;
-        if (NvBufSurf::NvAllocate(&params, 1, &buffer->fd) != 0 ||
-            NvBufSurfaceFromFd(buffer->fd, reinterpret_cast<void**>(&buffer->surface)) != 0 || !buffer->surface)
+        params.params.width = camera.info.width;
+        params.params.height = camera.info.height;
+        params.params.colorFormat = NVBUF_COLOR_FORMAT_NV12;
+        params.params.layout = NVBUF_LAYOUT_BLOCK_LINEAR;
+        params.params.memType = NVBUF_MEM_SURFACE_ARRAY;
+        if (NvBufSurfaceAllocate(&buffer->surface, 1, &params) != 0 || !buffer->surface)
             throw std::runtime_error("Argus: allocating a capture DMA-BUF failed");
+        // One buffer, one filled surface; its DMA-BUF fd is what the encoder takes.
+        buffer->surface->numFilled = 1;
+        buffer->fd = buffer->surface->surfaceList[0].bufferDesc;
         if (NvBufSurfaceMapEglImage(buffer->surface, 0) != 0)
             throw std::runtime_error("Argus: mapping a capture DMA-BUF to an EGL image failed");
         buffer->egl_mapped = true;
