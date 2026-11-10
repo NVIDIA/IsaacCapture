@@ -61,9 +61,9 @@ and the `.inc` fragments.
   mangle `@KEY@` on save. Conditionals stay in Python (pick which template to load)
   or as `#if @FLAG@` for optional fragments within one shape (e.g. `@HAS_TENSOR_IDENTIFIER@`). Do
   **not** merge `push/` with `pull/` via shared `#if`/`#else` — those control flows are different
-  enough that separate templates stay clearer. `*.hpp.template` / `*.cpp.template` carry SPDX
-  headers for REUSE; `template_renderer` strips them before prepending the emit-time COPYRIGHT /
-  AUTO-GENERATED banner.
+  enough that separate templates stay clearer. Every template, `fragments/*.template` included,
+  carries an SPDX header for REUSE, and `template_renderer` strips it. Body templates then get the
+  emit-time COPYRIGHT / AUTO-GENERATED banner; fragments go into the `.inc` files without one.
 - **One-line aggregators** (includes, dispatch rows, factory decls, cmake source lists, Python
   `__all__`) remain `yield` loops in `generate_trackers.py` joined with `"\n"`.
 - Generated C++ is **not** covered by the format gate (`cmake/ClangFormat.cmake` globs only
