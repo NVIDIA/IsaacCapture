@@ -87,8 +87,12 @@ uv run uvicorn egocap_web.app:app --app-dir backend --port 8000
 - The browser asks `GET /api/livekit-token` for a viewer token, only for a room the current session
   offers, and shows the stream in the camera grid. The token can subscribe and send data messages (the clock-sync
   exchange needs them) but cannot publish media. The route is unauthenticated, so anyone who can reach the
-  backend can send data messages into the room: the publisher must act only on well-formed
-  `isaaccapture.clock-sync` requests and ignore everything else, and should rate-limit its replies. Without the key pair the backend answers 503 and the page
+  backend can send data messages into the room, so the publisher must act only on well-formed
+  `isaaccapture.clock-sync` requests. Both publishers do: a packet is answered only if its topic is
+  `isaaccapture.clock-sync` and it is exactly a 13-byte request starting with `Q`; everything else is ignored, and a
+  reply goes only to the requester. The native sender keeps at most 16 pending requests and drops the oldest when
+  more arrive. Neither has a per-second rate limit, and the emulator has no bound on pending replies, so keep the
+  LiveKit room and the backend on a trusted network. Without the key pair the backend answers 503 and the page
   reports the preview as unavailable.
 - Recording joins the room with its own viewer-capability token signed with the same key pair. It starts only
   when every offered stream is recordable (see step 1) and stops with a reason if a frame cannot be recorded
