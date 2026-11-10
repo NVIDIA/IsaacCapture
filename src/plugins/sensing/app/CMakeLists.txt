@@ -34,3 +34,7 @@ install(FILES
 install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
     DESTINATION plugins/sensing_camera/licenses/livekit-sdk
 )
+# The vendored encoder classes are compiled into the binary, so their license text ships with it.
+install(FILES "${SENSING_MMAPI_VENDORED_DIR}/LICENSE"
+    DESTINATION plugins/sensing_camera/licenses/jetson-multimedia-api
+)

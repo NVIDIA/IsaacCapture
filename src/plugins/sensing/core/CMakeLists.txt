@@ -33,6 +33,8 @@ target_include_directories(sensing_core
         # NvMedia and X11-style macros.
         ${SIPL_INCLUDE_DIRS}
         ${EGL_INCLUDE_DIRS}
+        # The vendored encoder headers come first, so they win over the installed tree's copies of the same names.
+        ${SENSING_MMAPI_VENDORED_DIR}/include
         ${JETSON_MMAPI_DIR}/include
 )
 

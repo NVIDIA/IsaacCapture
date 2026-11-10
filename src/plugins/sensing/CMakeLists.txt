@@ -88,16 +88,16 @@ endif()
 # Jetson V4L2 encoder
 # ==============================================================================
 # Jetson has no libnvidia-encode (the Video Codec SDK is dGPU-only), so H.264
-# comes from the V4L2 M2M engine via NvVideoEncoder in the Multimedia API.
+# comes from the V4L2 M2M engine via NvVideoEncoder, vendored from the Multimedia API (see below).
 if(NOT JETSON_MMAPI_DIR)
-    find_path(JETSON_MMAPI_DIR include/NvVideoEncoder.h
+    find_path(JETSON_MMAPI_DIR include/nvbufsurface.h
         PATHS "/usr/src/jetson_multimedia_api"
     )
 endif()
 if(NOT JETSON_MMAPI_DIR)
     message(FATAL_ERROR
         "================================================================================\n"
-        "SENSING camera plugin requires the Jetson Multimedia API encoder sources.\n"
+        "SENSING camera plugin requires the Jetson Multimedia API headers (nvbufsurface.h).\n"
         "\n"
         "Unpack the version matching /etc/nv_tegra_release and point CMake at it:\n"
         "  cmake -B build -DJETSON_MMAPI_DIR=/path/to/jetson_multimedia_api\n"
@@ -106,39 +106,18 @@ if(NOT JETSON_MMAPI_DIR)
 endif()
 message(STATUS "SENSING plugin: Jetson Multimedia API=${JETSON_MMAPI_DIR}")
 
-set(_mmapi_classes "${JETSON_MMAPI_DIR}/samples/common/classes")
-
-# NvVideoEncoder.cpp prints both pixel-format codes with cout in setBitrate() and setPeakBitrate(), which puts bare
-# integers on stdout at every encoder start. /usr/src is not ours to edit, so compile a copy without those lines.
-file(READ "${_mmapi_classes}/NvVideoEncoder.cpp" _nv_encoder_source)
-set(_nv_debug_print "[ \t]*cout[ \t]*<<[ \t]*(capture|output)_plane_pixfmt[ \t]*<<[ \t]*endl;[^\n]*\n")
-string(REGEX REPLACE "${_nv_debug_print}" "" _nv_encoder_quiet "${_nv_encoder_source}")
-# The matched lines contain ';', so count the printed values before and after instead of the matches.
-string(REGEX MATCHALL "_plane_pixfmt[ \t]*<<" _nv_before "${_nv_encoder_source}")
-string(REGEX MATCHALL "_plane_pixfmt[ \t]*<<" _nv_after "${_nv_encoder_quiet}")
-list(LENGTH _nv_before _nv_before_count)
-list(LENGTH _nv_after _nv_after_count)
-math(EXPR _nv_debug_print_count "${_nv_before_count} - ${_nv_after_count}")
-set(_nv_encoder_quiet_file "${CMAKE_CURRENT_BINARY_DIR}/NvVideoEncoder.cpp")
-set(_nv_encoder_previous "")
-if(EXISTS "${_nv_encoder_quiet_file}")
-    file(READ "${_nv_encoder_quiet_file}" _nv_encoder_previous)
-endif()
-# Write only on a change, so an unchanged source does not rebuild; a changed sample source reconfigures.
-if(NOT _nv_encoder_previous STREQUAL _nv_encoder_quiet)
-    file(WRITE "${_nv_encoder_quiet_file}" "${_nv_encoder_quiet}")
-endif()
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mmapi_classes}/NvVideoEncoder.cpp")
-message(STATUS "SENSING plugin: removed ${_nv_debug_print_count} debug print(s) from the NvVideoEncoder.cpp copy")
-
+# NVIDIA's encoder classes are vendored (BSD-3-Clause; third_party/jetson_multimedia_api/README.md), so they build the
+# same on every JetPack and carry no stdout debug prints. The installed Multimedia API tree supplies only what is not
+# vendored: nvbufsurface.h, libv4l2.h, v4l2_nv_extensions.h and the Argus headers.
+set(SENSING_MMAPI_VENDORED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/jetson_multimedia_api")
 set(JETSON_MMAPI_SOURCES
-    "${_nv_encoder_quiet_file}"
-    "${_mmapi_classes}/NvV4l2Element.cpp"
-    "${_mmapi_classes}/NvV4l2ElementPlane.cpp"
-    "${_mmapi_classes}/NvElement.cpp"
-    "${_mmapi_classes}/NvElementProfiler.cpp"
-    "${_mmapi_classes}/NvBuffer.cpp"
-    "${_mmapi_classes}/NvLogging.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvVideoEncoder.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvV4l2Element.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvV4l2ElementPlane.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvElement.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvElementProfiler.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvBuffer.cpp"
+    "${SENSING_MMAPI_VENDORED_DIR}/classes/NvLogging.cpp"
 )
 
 find_library(NVBUFSURFACE_LIBRARY NAMES nvbufsurface PATHS ${_tegra_lib_dirs})

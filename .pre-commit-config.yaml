@@ -14,6 +14,8 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        # NVIDIA's copied sources keep their upstream bytes (see the directory's README.md).
+        exclude: ^src/plugins/sensing/third_party/jetson_multimedia_api/(classes|include)/
       - id: check-symlinks
       - id: destroyed-symlinks
       - id: check-added-large-files
@@ -25,7 +27,7 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
         # These LFS SVGs are assets; rewriting their final byte creates new LFS objects.
-        exclude: ^(docs/source/_static/camera-viz-controls|examples/vehicle_teleop/assets/vehicle_teleop_flow)\.svg$
+        exclude: ^(docs/source/_static/camera-viz-controls|examples/vehicle_teleop/assets/vehicle_teleop_flow)\.svg$|^src/plugins/sensing/third_party/jetson_multimedia_api/(classes|include)/
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
       - id: debug-statements

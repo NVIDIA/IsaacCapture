@@ -91,6 +91,9 @@ To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.git
 The default license is [Apache-2.0](LICENSE.md).
 EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
 Third-party materials may carry their own licenses.
+The Jetson encoder classes under `src/plugins/sensing/third_party/jetson_multimedia_api` are NVIDIA's
+[BSD-3-Clause](src/plugins/sensing/third_party/jetson_multimedia_api/LICENSE) sample sources, copied from the Jetson
+Multimedia API; see that directory's README.
 
 ### Separately retrieved optional materials
 
