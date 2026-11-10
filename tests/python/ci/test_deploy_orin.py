@@ -155,6 +155,33 @@ class LoadConfigTests(TempDirTestCase):
         with self.assertRaisesRegex(DeployError, "absolute"):
             self.load(self.valid(token_file="join.token"))
 
+    def test_token_source_is_resolved_against_the_config_directory(self):
+        (self.tmp / "join.token").write_text("tok\n")
+        config = self.load(self.valid(token_source="join.token"))
+        self.assertEqual(
+            config["token_source"], str((self.tmp / "join.token").resolve())
+        )
+
+    def test_token_source_must_be_an_existing_nonempty_file(self):
+        (self.tmp / "empty.token").write_text("\n")
+        for source, message in (
+            ("missing.token", "is not a file"),
+            ("empty.token", "is empty"),
+            ("", "non-empty string"),
+        ):
+            with (
+                self.subTest(source=source),
+                self.assertRaisesRegex(DeployError, message),
+            ):
+                self.load(self.valid(token_source=source))
+
+    def test_token_source_belongs_to_livekit_mode(self):
+        (self.tmp / "join.token").write_text("tok")
+        with self.assertRaisesRegex(DeployError, "belong to"):
+            self.load(
+                {"mode": "direct", "token_source": "join.token", "args": [STREAM]}
+            )
+
     def test_rejects_missing_add_stream(self):
         for args in ([], ["--other=1"]):
             with (
@@ -520,6 +547,61 @@ class FakeOrin:
         }
         with mock.patch.object(deploy_orin, "repo_root", return_value=root):
             deploy_orin.run_deploy(args, config, self.target)
+
+
+class TokenSourceDeployTests(TempDirTestCase):
+    def deploy(self, **extra):
+        root, _ = git_repo(self, {"src/a.cpp": "a\n"})
+        token = self.tmp / "join.token"
+        token.write_text("SECRET-TOKEN-VALUE")
+        orin = FakeOrin()
+        config = {
+            "mode": "livekit",
+            "livekit_url": "ws://x",
+            "token_file": "/home/u/lk/join.token",
+            "token_source": str(token),
+            "args": [STREAM],
+        }
+        return orin, root, config
+
+    def test_token_is_uploaded_private_and_moved_into_place_before_the_readable_check(
+        self,
+    ):
+        orin, root, config = self.deploy()
+        orin.run(root, config=config)
+        puts = [v for k, v in orin.events if k == "put" and v.startswith("/home/u/lk/")]
+        self.assertEqual(puts, ["/home/u/lk/join.token.new"])
+        commands = [c.args[0] for c in orin.target.capture.call_args_list]
+        make = next(c for c in commands if "umask 077" in c)
+        move = next(c for c in commands if "mv -f" in c)
+        self.assertIn("mkdir -p /home/u/lk", make)
+        self.assertIn("chmod 600 /home/u/lk/join.token.new", move)
+        self.assertIn("/home/u/lk/join.token", move)
+        self.assertLess(commands.index(make), commands.index(move))
+
+    def test_the_token_value_never_appears_in_any_command(self):
+        orin, root, config = self.deploy()
+        orin.run(root, config=config)
+        everything = [str(c) for c in orin.target.mock_calls] + [
+            str(e) for e in orin.events
+        ]
+        self.assertFalse([e for e in everything if "SECRET-TOKEN-VALUE" in e])
+
+    def test_a_different_service_user_is_refused_before_anything_is_uploaded(self):
+        orin, root, config = self.deploy()
+        with self.assertRaisesRegex(DeployError, "service-user"):
+            orin.run(root, "--service-user", "other", config=config)
+        self.assertEqual(
+            [e for e in orin.events if e[0] == "put" and "join.token" in e[1]], []
+        )
+
+    def test_no_token_source_uploads_nothing(self):
+        orin, root, config = self.deploy()
+        del config["token_source"]
+        orin.run(root, config=config)
+        self.assertEqual(
+            [e for e in orin.events if e[0] == "put" and "join.token" in e[1]], []
+        )
 
 
 class DeployOrderTests(TempDirTestCase):

@@ -57,7 +57,8 @@ has the build and run steps.
 Write a config naming the producer's own options. `"mode"` says what the producer does and so how readiness is
 judged: `"direct"` (the default) for a producer that sends only over TCP to the PC video stage, or `"livekit"` for one
 that publishes to LiveKit itself, which also needs `livekit_url` and `token_file` (the token file stays on the Orin;
-only its path is used). Everything else goes in `args`, spelled as the deployed source's producer expects.
+only its path is used). Add `"token_source": "join.token"` (a local file, relative to the config) and the deploy uploads
+it to `token_file` with mode 0600 before anything is stopped, so no separate copy step is needed. Everything else goes in `args`, spelled as the deployed source's producer expects.
 
 ```json
 {"args": ["--link-masks=0x0000 0x1100",

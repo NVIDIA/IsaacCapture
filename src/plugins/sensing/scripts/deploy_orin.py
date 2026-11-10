@@ -14,7 +14,8 @@ The config is JSON with the producer's own options, nothing else:
 
     {"args": ["--add-stream=sensor=0,livekit=sensing-left", "--add-stream=sensor=1,livekit=sensing-right"]}
 
-The token file stays on the Orin, outside the release; only its path is passed. Nothing is built, stopped or
+The token file stays on the Orin, outside the release; only its path is passed. With "token_source" (a local file)
+the deploy first uploads it to "token_file" on the Orin with mode 0600. Nothing is built, stopped or
 replaced until the target passes its checks. A build or transfer failure leaves the running producer alone.
 The same file runs on the target (`deploy_orin.py remote ...`) from the source snapshot it copied there.
 """
@@ -27,6 +28,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import pwd
 import re
 import shlex
@@ -44,7 +46,15 @@ BIN_REL = "plugins/sensing_camera/camera_plugin_sensing"
 UNIT_TEMPLATE = Path(__file__).with_name("isaaccapture-producer.service.in")
 CACHE = "~/.cache/isaaccapture-deploy"
 MODES = ("direct", "livekit")
-CONFIG_KEYS = {"mode", "livekit_url", "token_file", "args", "env", "cameras"}
+CONFIG_KEYS = {
+    "mode",
+    "livekit_url",
+    "token_file",
+    "token_source",
+    "args",
+    "env",
+    "cameras",
+}
 # With "cameras": "auto" the deploy finds the cameras and supplies these, so the config must not.
 DETECTED_ARGS = ("--platform-config", "--config-name", "--link-masks")
 PLATFORM_FILE = (
@@ -197,10 +207,12 @@ def load_config(path: Path) -> dict:
     mode = config.get("mode", "direct")
     if mode not in MODES:
         raise DeployError(f'{path}: "mode" must be one of {", ".join(MODES)}')
-    has_livekit = "livekit_url" in config or "token_file" in config
+    has_livekit = any(
+        k in config for k in ("livekit_url", "token_file", "token_source")
+    )
     if mode == "direct" and has_livekit:
         raise DeployError(
-            f'{path}: livekit_url and token_file belong to "mode": "livekit"; a direct producer has no LiveKit settings'
+            f'{path}: livekit_url, token_file and token_source belong to "mode": "livekit"; a direct producer has no LiveKit settings'
         )
     if mode == "livekit" and not ("livekit_url" in config and "token_file" in config):
         raise DeployError(f'{path}: "mode": "livekit" needs livekit_url and token_file')
@@ -234,7 +246,39 @@ def load_config(path: Path) -> dict:
             raise DeployError(
                 f"{path}: token_file must be an absolute path on the Orin"
             )
+    if "token_source" in config:
+        source = config["token_source"]
+        if not isinstance(source, str) or not source:
+            raise DeployError(f"{path}: token_source must be a non-empty string")
+        # A relative source is relative to the config file, so a config and its token can move together.
+        local = Path(source).expanduser()
+        if not local.is_absolute():
+            local = path.parent / local
+        if not local.is_file():
+            raise DeployError(f"{path}: token_source {local} is not a file")
+        if not local.read_text().strip():
+            raise DeployError(f"{path}: token_source {local} is empty")
+        config["token_source"] = str(local.resolve())
     return config
+
+
+def install_token(target: "Target", local: Path, remote: str) -> None:
+    """Upload a local token file to ``remote`` on the Orin, readable only by the ssh user, replacing any older one.
+
+    The token is never part of an argument list, the release or the output: it travels by scp into a staging file
+    created with mode 0600, and moves into place only once complete, so the service never reads half a token.
+    """
+    staging = f"{remote}.new"
+    quoted_remote, quoted_staging = shlex.quote(remote), shlex.quote(staging)
+    # Create the staging file private before any bytes arrive; scp keeps an existing file's mode.
+    target.capture(
+        f"mkdir -p {shlex.quote(posixpath.dirname(remote))} && umask 077 && rm -f {quoted_staging} && : > {quoted_staging}"
+    )
+    target.put(local, staging)
+    target.capture(
+        f"chmod 600 {quoted_staging} && mv -f {quoted_staging} {quoted_remote}"
+    )
+    print(f"  uploaded the LiveKit token to {remote} (mode 0600)")
 
 
 def systemd_quote(arg: str) -> str:
@@ -831,6 +875,14 @@ def deploy_source(
 
     step(2, f"Preflight on {target.host}")
     cache = target.capture(f"mkdir -p {CACHE} && cd {CACHE} && pwd")
+    if config.get("token_source"):
+        # The file is owned by the ssh user with mode 0600, so only a service running as that user can read it.
+        if args.service_user and args.service_user != target.capture("id -un"):
+            raise DeployError(
+                "token_source uploads the token readable by the ssh user only; "
+                "with a different --service-user, place the token file yourself"
+            )
+        install_token(target, Path(config["token_source"]), config["token_file"])
     if config.get("mode") == "livekit" and not target.readable(config["token_file"]):
         raise DeployError(
             f"the token file {config['token_file']} is not readable on the Orin"
