@@ -4,6 +4,10 @@
 #include "livekit_output.hpp"
 #include "stream_worker.hpp"
 
+#ifdef VIDEO_STAGE_GPU
+#    include <video_stage/cuda_context.hpp>
+#endif
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -32,11 +36,13 @@ void usage(const char* program)
     std::cout
         << "Usage: " << program << " --stream=PORT:TRACK ... --livekit-url=URL --livekit-token-file=PATH\n"
         << "       " << program << " --stream=PORT:file=PATH.h264 ...\n"
-        << "       [--bitrate=BPS] [--max-upstream-uncertainty-ms=MS] [--stats-interval=S] [--once]\n"
+        << "       [--operation=none|sine-warp] [--amplitude=PX] [--bitrate=BPS] [--idr-period=N] [--max-upstream-uncertainty-ms=MS] [--stats-interval=S] [--once]\n"
         << "One --stream per camera. Each listens on PORT for the Orin's direct connection (AVS1 H.264 records plus a\n"
         << "control link) and publishes the access units as LiveKit track TRACK (all tracks under one participant) or\n"
-        << "writes them to a file. The Orin's access units are forwarded untouched, with no decode, encode or GPU. Serves\n"
-        << "one Orin session after another unless --once. Prints a summary at the end.\n";
+        << "writes them to a file. By default (--operation=none) the Orin's access units are forwarded untouched, with no\n"
+        << "decode, encode or GPU. --operation=sine-warp decodes on NVDEC, applies the example sine warp and re-encodes on\n"
+        << "NVENC, as a test of the GPU stage (a build with -DBUILD_VIDEO_STAGE_GPU=ON). Serves one Orin\n"
+        << "session after another unless --once. Prints per-stage percentiles at the end.\n";
 }
 
 std::string read_token(const std::string& path)
@@ -87,8 +93,33 @@ try
             stats_interval_s = std::stoi(arg.substr(17));
         else if (arg == "--once")
             settings.once = true;
+        else if (arg.rfind("--operation=", 0) == 0)
+        {
+            const std::string name = arg.substr(12);
+            if (name == "none")
+                settings.operation = Operation::None;
+            else if (name == "sine-warp")
+                settings.operation = Operation::SineWarp;
+            else
+            {
+                std::cerr << "--operation must be none or sine-warp\n";
+                return 1;
+            }
+        }
         else if (arg.rfind("--bitrate=", 0) == 0)
-            settings.livekit.max_bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(10)));
+        {
+            const auto bitrate = static_cast<uint32_t>(std::stoul(arg.substr(10)));
+            settings.livekit.max_bitrate_bps = bitrate;
+#ifdef VIDEO_STAGE_GPU
+            settings.pipeline.bitrate_bps = bitrate;
+#endif
+        }
+#ifdef VIDEO_STAGE_GPU
+        else if (arg.rfind("--amplitude=", 0) == 0)
+            settings.warp.amplitude_px = std::stof(arg.substr(12));
+        else if (arg.rfind("--idr-period=", 0) == 0)
+            settings.pipeline.idr_period = static_cast<uint32_t>(std::stoul(arg.substr(13)));
+#endif
         else if (arg.rfind("--max-upstream-uncertainty-ms=", 0) == 0)
             settings.livekit.max_upstream_uncertainty_ns = static_cast<int64_t>(std::stod(arg.substr(30)) * 1e6);
         else
@@ -111,14 +142,36 @@ try
         return 1;
     }
 
+    // Only an operation that uses the GPU needs a CUDA context; the default forwards the Orin's access units untouched.
+#ifdef VIDEO_STAGE_GPU
+    std::unique_ptr<CudaContext> context;
+    if (settings.operation != Operation::None)
+    {
+        context = std::make_unique<CudaContext>();
+        std::cout << "GPU: " << context->device_name() << "\n";
+    }
+#else
+    if (settings.operation != Operation::None)
+    {
+        std::cerr << "this build has no GPU stage; configure with -DBUILD_VIDEO_STAGE_GPU=ON\n";
+        return 1;
+    }
+    CudaContext* const context = nullptr;
+#endif
     // One LiveKit participant for every stream, as the Orin producer joins once for all its cameras.
     std::unique_ptr<SharedLiveKit> livekit;
     if (any_livekit)
         livekit = std::make_unique<SharedLiveKit>(livekit_url, read_token(token_file));
 
+#ifdef VIDEO_STAGE_GPU
+    CudaContext* const context_ptr = context.get();
+#else
+    CudaContext* const context_ptr = context;
+#endif
     std::vector<std::unique_ptr<StreamWorker>> workers;
     for (const StreamSpec& spec : specs)
-        workers.push_back(std::make_unique<StreamWorker>(spec, settings, spec.file.empty() ? livekit.get() : nullptr));
+        workers.push_back(
+            std::make_unique<StreamWorker>(context_ptr, spec, settings, spec.file.empty() ? livekit.get() : nullptr));
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);

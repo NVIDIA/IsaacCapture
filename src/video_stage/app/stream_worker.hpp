@@ -5,6 +5,13 @@
 
 #include "livekit_output.hpp"
 
+#ifdef VIDEO_STAGE_GPU
+#    include "pipeline.hpp"
+
+#    include <video_stage/cuda_context.hpp>
+#    include <video_stage/sine_warp.hpp>
+#endif
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -13,6 +20,10 @@
 
 namespace video_stage
 {
+
+#ifndef VIDEO_STAGE_GPU
+class CudaContext; // only ever null in a build without the GPU stage
+#endif
 
 /// One camera's stream: where the Orin connects, and where the processed video goes.
 struct StreamSpec
@@ -24,8 +35,24 @@ struct StreamSpec
     std::string file;
 };
 
+/// What happens to each picture between the Orin and LiveKit.
+enum class Operation
+{
+    /// Nothing: the Orin's encoded access units go to LiveKit as they are. No decode, no encode, no GPU; the lowest
+    /// latency and no quality loss. The default.
+    None,
+    /// Decode on NVDEC, apply the example sine-wave warp, re-encode on NVENC. For testing the GPU stage and as the
+    /// template for the fisheye rectification.
+    SineWarp,
+};
+
 struct StreamSettings
 {
+    Operation operation = Operation::None;
+#ifdef VIDEO_STAGE_GPU
+    PipelineConfig pipeline;
+    SineWarpParams warp;
+#endif
     LiveKitOutputConfig livekit;
     bool once = false; ///< serve one Orin session, then finish
 };
@@ -33,13 +60,14 @@ struct StreamSettings
 /**
  * @brief One stream's thread: accept an Orin session, run it to its end, accept the next.
  *
- * Owns that stream's receiver, control channel and output. When publishing, streams share one LiveKit participant and
- * otherwise run independently, so one camera's trouble stays its own. The Orin's access units go on as they are.
+ * Owns that stream's receiver, control channel, optional GPU pipeline and output. Streams share the CUDA context and,
+ * when publishing, one LiveKit participant, and otherwise run independently so one camera's trouble stays its own.
  */
 class StreamWorker
 {
 public:
-    StreamWorker(const StreamSpec& spec, const StreamSettings& settings, SharedLiveKit* livekit);
+    /// `context` is needed only for an operation that uses the GPU (null for Operation::None).
+    StreamWorker(CudaContext* context, const StreamSpec& spec, const StreamSettings& settings, SharedLiveKit* livekit);
     ~StreamWorker();
 
     StreamWorker(const StreamWorker&) = delete;

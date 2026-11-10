@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # Video stage
 
 Moves camera video from the Orin to the PC and on to LiveKit. The Orin sends its encoded H.264 access units to the PC
-over a direct link; the PC relay (`video_stage_worker`) hands them, untouched, to LiveKit or a file. There is no decode,
-encode or GPU in the relay, and it builds without CUDA.
+over a direct link; the PC relay (`video_stage_worker`) hands them, untouched, to LiveKit or a file. By default there is no decode,
+encode or GPU in the relay, and it builds without CUDA; an optional GPU stage is described below.
 
 ```text
 Orin producer --DATA (AVS1 records, H.264)--> PC relay --> LiveKit track (or an Annex-B file)
@@ -62,6 +62,49 @@ hello order, retry, keyframe start, bounded queue with drop-to-keyframe, keyfram
 offset clock), and feeds it Jetson-style H.264 (no AUDs, IDR every 5 s, constant bitrate). One `--port` per camera. Run it
 against a relay writing a file, then check the file with `ffprobe`.
 
+## The GPU stage (optional)
+
+Built only with `-DBUILD_VIDEO_STAGE_GPU=ON` (needs a CUDA toolkit; the tests need a CUDA GPU). `video_stage_worker --operation=sine-warp` then decodes each picture on NVDEC, keeps it in GPU memory through one GPU operation, and re-encodes it on NVENC, instead of forwarding the Orin's access units untouched. A build without it rejects `--operation=sine-warp` with a clear message and relays exactly as before.
+
+### The operation contract
+
+`core/inc/video_stage/gpu_operation.hpp` defines `GpuOperation`: NV12 in, NV12 out, fixed geometry.
+
+- `prepare(input_geometry)` runs once, outside the frame loop. Build and upload anything per-geometry here (a
+  rectification map, for example). Nothing in `enqueue` allocates or uploads.
+- `enqueue(in, out, stream)` only queues kernels on `stream` and returns. It does not synchronise the device or the
+  stream. After it returns, the caller records a CUDA event on `stream`; whoever reads `out` waits on that event.
+- `in` and `out` are different surfaces (the operation is not in-place). `out` has `output_geometry(in.geometry)` and
+  keeps the input's color description. Both are `Nv12View`s: device pointers, byte pitches, size.
+- Frame identity and timestamps are not the operation's concern; they travel with the frame.
+
+### The example: `SineWarp`
+
+`core/sine_warp.cu` is a horizontal sine ripple, `source_x = x + A*sin(2*pi*y/wavelength + phase)`,
+`source_y = y`, sampled bilinearly, with the border fill for the declared range (Y=16 limited, 0 full; chroma 128).
+Amplitude 0 is an identity. It is an example, not calibrated rectification: the warped picture does not keep the
+source camera's projection.
+
+The stage assumes the decoder's NV12 uses the H.264 default chroma siting described below; a stream that signals a
+different siting must be rejected at the decoder, not warped with the wrong sample positions.
+
+Chroma is not sampled at the luma coordinate divided by two. A chroma sample of H.264 NV12 sits on an even luma column
+and half way between two luma rows, so the kernel maps that luma-space position, then converts back to chroma-plane
+coordinates. Keep that when substituting an operation.
+
+### Substituting the fisheye rectification
+
+Replace the mapping, keep the rest: a class deriving from `GpuOperation` whose `prepare` generates the destination-to-
+source maps once (on the CPU, uploaded once) and whose `enqueue` launches a kernel that reads `map_x/map_y` instead of
+computing the sine. Sample luma at the map position and chroma at the position derived from the same map with the
+siting above. `output_geometry` returns the rectified output size. Nothing else in the stage changes.
+
+### Identity and overload
+
+Each picture carries a key through NVDEC and NVENC, and the source frame number and stamp are looked up by that key, so
+metadata follows its own frame through loss. A picture arriving while every encoder input surface is busy is dropped and
+counted, never queued.
+
 ## Build
 
 ```bash
@@ -69,5 +112,7 @@ cmake -B build -DBUILD_VIDEO_STAGE=ON -DBUILD_PLUGINS=OFF -DBUILD_VIZ=OFF -DBUIL
   -DBUILD_PYTHON_BINDINGS=OFF
 cmake --build build && ctest --test-dir build -R 'video_stage|avs1|clock'
 ```
+
+Add `-DBUILD_VIDEO_STAGE_GPU=ON` for the GPU stage and its tests.
 
 The LiveKit SDK is fetched, or taken from `LIVEKIT_SDK_DIR`.

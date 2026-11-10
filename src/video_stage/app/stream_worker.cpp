@@ -108,6 +108,13 @@ private:
     bool m_closed = false;
 };
 
+// What a stream without a GPU pipeline reports for the pipeline's own stages: nothing.
+const PipelineStats& no_pipeline_stats()
+{
+    static const PipelineStats empty;
+    return empty;
+}
+
 void print_stage(std::ostream& out, const char* name, const DurationStats& s)
 {
     char line[160];
@@ -120,14 +127,21 @@ void print_stage(std::ostream& out, const char* name, const DurationStats& s)
 
 struct StreamWorker::Impl
 {
+    CudaContext* context;
     StreamSpec spec;
     StreamSettings settings;
     SharedLiveKit* livekit;
 
+#ifdef VIDEO_STAGE_GPU
+    std::unique_ptr<SineWarp> operation; ///< null for Operation::None
+#endif
     std::unique_ptr<TcpReceiver> receiver;
     std::atomic<ControlChannel*> active_control{ nullptr };
     std::unique_ptr<PacketSink> sink;
     LiveKitOutput* livekit_output = nullptr;
+#ifdef VIDEO_STAGE_GPU
+    std::unique_ptr<Pipeline> pipeline;
+#endif
 
     std::thread thread;
     std::atomic<bool> stop{ false };
@@ -140,12 +154,23 @@ struct StreamWorker::Impl
     std::atomic<uint64_t> clock_rejected{ 0 };
     std::atomic<uint64_t> clock_discontinuities{ 0 };
     DurationStats backlog_bytes;
-    // The picture size from the last sequence header, and a count.
+    // Pass-through state (Operation::None): the picture size from the last sequence header, and a count.
     Geometry passthrough_geometry;
     std::atomic<uint64_t> passthrough_records{ 0 };
 
-    Impl(const StreamSpec& s, const StreamSettings& st, SharedLiveKit* lk) : spec(s), settings(st), livekit(lk)
+    Impl(CudaContext* ctx, const StreamSpec& s, const StreamSettings& st, SharedLiveKit* lk)
+        : context(ctx), spec(s), settings(st), livekit(lk)
     {
+        if (settings.operation == Operation::SineWarp)
+        {
+#ifdef VIDEO_STAGE_GPU
+            if (context == nullptr)
+                throw std::runtime_error("the sine warp needs a GPU context");
+            operation = std::make_unique<SineWarp>(settings.warp);
+#else
+            throw std::runtime_error("this build has no GPU stage; configure with -DBUILD_VIDEO_STAGE_GPU=ON");
+#endif
+        }
         if (livekit != nullptr)
         {
             LiveKitOutputConfig out = settings.livekit;
@@ -159,7 +184,14 @@ struct StreamWorker::Impl
                 },
                 [this]
                 {
-                    // A subscriber needs a keyframe: only the Orin's encoder can make one.
+            // A subscriber needs a keyframe: ask this stage's encoder, or, with nothing in between, the Orin's.
+#ifdef VIDEO_STAGE_GPU
+                    if (pipeline)
+                    {
+                        pipeline->request_idr();
+                        return;
+                    }
+#endif
                     receiver->request_keyframe();
                 });
             livekit_output = output.get();
@@ -169,11 +201,33 @@ struct StreamWorker::Impl
         {
             sink = std::make_unique<FileSink>(spec.file);
         }
+#ifdef VIDEO_STAGE_GPU
+        if (operation)
+            pipeline = std::make_unique<Pipeline>(*context, *operation, *sink, settings.pipeline);
+#endif
         receiver = std::make_unique<TcpReceiver>(spec.port);
     }
 
-    // The access unit goes to the sink untouched. The picture size comes from the stream's own sequence header;
-    // nothing is published before the first one.
+    bool has_pipeline() const
+    {
+#ifdef VIDEO_STAGE_GPU
+        return pipeline != nullptr;
+#else
+        return false;
+#endif
+    }
+
+    const PipelineStats& pipeline_stats() const
+    {
+#ifdef VIDEO_STAGE_GPU
+        if (pipeline)
+            return pipeline->stats();
+#endif
+        return no_pipeline_stats();
+    }
+
+    // Operation::None: the access unit goes to the sink untouched. The picture size comes from the stream's own
+    // sequence header; nothing is published before the first one.
     void forward(const avs1::Record& record, int64_t arrived_ns)
     {
         const bool keyframe = avs1::contains_idr(record.payload, record.payload_size);
@@ -258,6 +312,13 @@ struct StreamWorker::Impl
                 const auto record = avs1::parse(item.bytes.data(), item.bytes.size(), error);
                 if (!record)
                     throw std::runtime_error("bad AVS1 record: " + error);
+#ifdef VIDEO_STAGE_GPU
+                if (pipeline)
+                {
+                    pipeline->process(*record, item.arrived_ns);
+                    continue;
+                }
+#endif
                 forward(*record, item.arrived_ns);
             }
         }
@@ -289,6 +350,10 @@ struct StreamWorker::Impl
                     // over.
                     if (livekit_output)
                         livekit_output->end_session();
+#ifdef VIDEO_STAGE_GPU
+                    if (pipeline)
+                        pipeline->reset_session();
+#endif
                     passthrough_geometry = Geometry{};
                     epoch_base += 1'000'000;
                     ControlChannel control(*receiver, epoch_base + 1);
@@ -316,8 +381,11 @@ struct StreamWorker::Impl
     }
 };
 
-StreamWorker::StreamWorker(const StreamSpec& spec, const StreamSettings& settings, SharedLiveKit* livekit)
-    : m_impl(std::make_unique<Impl>(spec, settings, livekit))
+StreamWorker::StreamWorker(CudaContext* context,
+                           const StreamSpec& spec,
+                           const StreamSettings& settings,
+                           SharedLiveKit* livekit)
+    : m_impl(std::make_unique<Impl>(context, spec, settings, livekit))
 {
 }
 
@@ -349,9 +417,17 @@ bool StreamWorker::join()
 void StreamWorker::print_live(std::ostream& out) const
 {
     const Impl& d = *m_impl;
+    const PipelineStats& s = d.pipeline_stats();
     char line[512];
-    int n = std::snprintf(line, sizeof(line), "[%u] backlog p99 %lld B", static_cast<unsigned>(d.spec.port),
-                          static_cast<long long>(d.backlog_bytes.percentile(99)));
+    int n = std::snprintf(
+        line, sizeof(line),
+        "[%u] queue age p50 %.1f p99 %.1f ms | backlog p99 %lld B | decoder lag p50 %lld p99 %lld frames | "
+        "submit->picture p50 %.1f p99 %.1f ms | warp+encode p50 %.1f p99 %.1f ms",
+        static_cast<unsigned>(d.spec.port), s.queue_age_ns.percentile(50) / 1e6, s.queue_age_ns.percentile(99) / 1e6,
+        static_cast<long long>(d.backlog_bytes.percentile(99)), static_cast<long long>(s.decode_lag.percentile(50)),
+        static_cast<long long>(s.decode_lag.percentile(99)), s.decode_ns.percentile(50) / 1e6,
+        s.decode_ns.percentile(99) / 1e6, s.process_encode_ns.percentile(50) / 1e6,
+        s.process_encode_ns.percentile(99) / 1e6);
     if (d.livekit_output && n > 0 && n < static_cast<int>(sizeof(line)))
     {
         std::snprintf(
@@ -372,15 +448,18 @@ void StreamWorker::print_live(std::ostream& out) const
 void StreamWorker::print_summary(std::ostream& out) const
 {
     const Impl& d = *m_impl;
+    const PipelineStats& s = d.pipeline_stats();
     char line[256];
     std::snprintf(
         line, sizeof(line),
-        "stream %u: sessions %llu, records %llu\n"
+        "stream %u: sessions %llu, records %llu, pictures %llu, dropped (no surface) %llu, gaps %llu, metadata lost %llu\n"
         "  overflows %llu, records discarded %llu, clock exchanges %llu (rejected %llu, discontinuities %llu)\n",
         static_cast<unsigned>(d.spec.port), static_cast<unsigned long long>(d.sessions.load()),
-        static_cast<unsigned long long>(d.passthrough_records.load()),
-        static_cast<unsigned long long>(d.overflows.load()), static_cast<unsigned long long>(d.discarded.load()),
-        static_cast<unsigned long long>(d.clock_exchanges.load()),
+        static_cast<unsigned long long>(d.has_pipeline() ? s.records.load() : d.passthrough_records.load()),
+        static_cast<unsigned long long>(d.has_pipeline() ? s.pictures.load() : d.passthrough_records.load()),
+        static_cast<unsigned long long>(s.dropped_no_surface.load()), static_cast<unsigned long long>(s.gaps.load()),
+        static_cast<unsigned long long>(s.metadata_lost.load()), static_cast<unsigned long long>(d.overflows.load()),
+        static_cast<unsigned long long>(d.discarded.load()), static_cast<unsigned long long>(d.clock_exchanges.load()),
         static_cast<unsigned long long>(d.clock_rejected.load()),
         static_cast<unsigned long long>(d.clock_discontinuities.load()));
     out << line;
@@ -407,6 +486,18 @@ void StreamWorker::print_summary(std::ostream& out) const
         print_stage(out, "Orin -> PC arrival", d.livekit_output->uplink_ns());
         print_stage(out, "Orin -> publish", d.livekit_output->source_to_publish_ns());
     }
+    print_stage(out, "queue age", s.queue_age_ns);
+    {
+        char lag[160];
+        std::snprintf(lag, sizeof(lag), "  decoder lag (frames)   p50 %lld  p99 %lld  max %lld\n",
+                      static_cast<long long>(s.decode_lag.percentile(50)),
+                      static_cast<long long>(s.decode_lag.percentile(99)),
+                      static_cast<long long>(s.decode_lag.percentile(100)));
+        out << lag;
+    }
+    print_stage(out, "decode", s.decode_ns);
+    print_stage(out, "warp + encode", s.process_encode_ns);
+    print_stage(out, "receive -> output", s.receive_to_output_ns);
 }
 
 } // namespace video_stage

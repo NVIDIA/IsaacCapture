@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -60,6 +61,22 @@ private:
     size_t m_overflow = 0;
     mutable std::mutex m_mutex;
     std::vector<int64_t> m_samples;
+};
+
+struct PipelineStats
+{
+    // Written by the processing thread and read by the statistics thread, so the counters are atomic.
+    std::atomic<uint64_t> records{ 0 };
+    std::atomic<uint64_t> pictures{ 0 };
+    std::atomic<uint64_t> dropped_no_surface{ 0 };
+    std::atomic<uint64_t> gaps{ 0 }; ///< records whose frame number did not increase
+    std::atomic<uint64_t> metadata_lost{ 0 }; ///< pictures whose metadata entry had been overwritten
+    DurationStats queue_age_ns; ///< from intake to the start of processing
+    DurationStats decode_ns; ///< from handing an access unit to the decoder to its picture appearing
+    DurationStats decode_lag; ///< records handed to the decoder after this picture's own record, before it appeared
+                              ///< (frames)
+    DurationStats process_encode_ns;
+    DurationStats receive_to_output_ns;
 };
 
 } // namespace video_stage
