@@ -34,6 +34,11 @@ APIs (``xrLocateSpace``, ``xrSyncActions``, etc.):
 **SchemaTracker-based trackers** -- create new device type by defining a FlatBuffer schema and
 reading it from OpenXR tensor collections via the
 :code-file:`SchemaTracker <src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp>` utility.
+Such a tracker verifies each sample as its FlatBuffer table before using it: a sample that fails,
+for example from a pedal collection read by a ``JointSe3PoseTracker`` through a wrong
+``collection_id``, makes the session update raise an error naming the collection and the
+publisher's ``tensor_identifier``. A ``tensor_identifier`` other than the tracker's only logs a
+warning, since valid data can be published under any name.
 
 - :code-file:`FrameMetadataTrackerOak <src/core/deviceio_trackers/trackers.toml>` -- frame metadata for one OAK camera stream (generated)
 - :code-file:`Generic3AxisPedalTracker <src/core/deviceio_trackers/trackers.toml>` -- foot pedal axis values (generated)

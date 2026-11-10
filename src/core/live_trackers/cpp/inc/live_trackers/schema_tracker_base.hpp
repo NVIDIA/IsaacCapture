@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -115,6 +115,9 @@ public:
      */
     const SchemaTrackerConfig& config() const;
 
+    //! The name the publisher gave the found collection's tensor; empty when unnamed or none was found.
+    const std::string& published_tensor_identifier() const;
+
 protected:
     //! Runtime identity of the discovered collection, distinct from its reusable list index.
     std::optional<XrTensorCollectionIDNV> collection_instance_id() const
@@ -130,6 +133,8 @@ private:
     void initialize_tensor_data_functions();
     void create_tensor_list();
     bool ensure_collection();
+    //! Reads the name the publisher gave the collection's tensor; logs a warning when it differs from config's.
+    void read_published_tensor_identifier(uint32_t collection_index);
     bool read_next_sample(SampleResult& out);
 
     OpenXRSessionHandles m_handles;
@@ -143,6 +148,7 @@ private:
     PFN_xrCreateTensorListNV m_create_list_fn{ nullptr };
     PFN_xrGetTensorListPropertiesNV m_get_list_props_fn{ nullptr };
     PFN_xrGetTensorCollectionPropertiesNV m_get_coll_props_fn{ nullptr };
+    PFN_xrGetTensorPropertiesNV m_get_tensor_props_fn{ nullptr };
     PFN_xrGetTensorDataNV m_get_data_fn{ nullptr };
     PFN_xrUpdateTensorListNV m_update_list_fn{ nullptr };
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };
@@ -159,6 +165,7 @@ private:
     uint64_t m_cached_generation{ 0 };
 
     std::optional<int64_t> m_last_sample_index;
+    std::string m_published_tensor_identifier;
 };
 
 } // namespace core
