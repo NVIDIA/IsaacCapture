@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 1044" width="980" height="1044" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text x="490.0" y="26" text-anchor="middle" font-size="19" font-weight="600" fill="#14213D">Jetson AGX Orin &#8594; SN65HVD230 &#8594; reBot B601-RS</text>
+<rect x="56" y="86" width="838" height="76" rx="7" fill="#F2F4F7" stroke="#C6CCD6" stroke-width="1.5"/>
+<circle cx="76" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="76" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">39</text>
+<circle cx="76" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="76" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">40</text>
+<circle cx="118" cy="108" r="9" fill="#1F6FB2" stroke="#1F6FB2" stroke-width="2.5"/>
+<circle cx="118" cy="108" r="14" fill="none" stroke="#1F6FB2" stroke-width="1.5" opacity="0.4"/>
+<circle cx="118" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="118" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">38</text>
+<circle cx="160" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="160" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">35</text>
+<circle cx="160" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="160" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">36</text>
+<circle cx="202" cy="108" r="9" fill="#1B7F3B" stroke="#1B7F3B" stroke-width="2.5"/>
+<circle cx="202" cy="108" r="14" fill="none" stroke="#1B7F3B" stroke-width="1.5" opacity="0.4"/>
+<circle cx="202" cy="140" r="9" fill="#2B2B2B" stroke="#2B2B2B" stroke-width="2.5"/>
+<circle cx="202" cy="140" r="14" fill="none" stroke="#2B2B2B" stroke-width="1.5" opacity="0.4"/>
+<circle cx="244" cy="108" r="9" fill="#1B7F3B" stroke="#1B7F3B" stroke-width="2.5"/>
+<circle cx="244" cy="108" r="14" fill="none" stroke="#1B7F3B" stroke-width="1.5" opacity="0.4"/>
+<circle cx="244" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="244" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">32</text>
+<circle cx="286" cy="108" r="9" fill="#1F6FB2" stroke="#1F6FB2" stroke-width="2.5"/>
+<circle cx="286" cy="108" r="14" fill="none" stroke="#1F6FB2" stroke-width="1.5" opacity="0.4"/>
+<circle cx="286" cy="140" r="9" fill="#2B2B2B" stroke="#2B2B2B" stroke-width="2.5"/>
+<circle cx="286" cy="140" r="14" fill="none" stroke="#2B2B2B" stroke-width="1.5" opacity="0.4"/>
+<circle cx="328" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="328" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">27</text>
+<circle cx="328" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="328" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">28</text>
+<circle cx="370" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="370" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">25</text>
+<circle cx="370" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="370" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">26</text>
+<circle cx="412" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="412" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">23</text>
+<circle cx="412" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="412" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">24</text>
+<circle cx="454" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="454" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">21</text>
+<circle cx="454" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="454" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">22</text>
+<circle cx="496" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="496" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">19</text>
+<circle cx="496" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="496" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">20</text>
+<circle cx="538" cy="108" r="9" fill="#D7263D" stroke="#D7263D" stroke-width="2.5"/>
+<circle cx="538" cy="108" r="14" fill="none" stroke="#D7263D" stroke-width="1.5" opacity="0.4"/>
+<circle cx="538" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="538" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">18</text>
+<circle cx="580" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="580" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">15</text>
+<circle cx="580" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="580" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">16</text>
+<circle cx="622" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="622" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">13</text>
+<circle cx="622" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="622" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">14</text>
+<circle cx="664" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="664" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">11</text>
+<circle cx="664" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="664" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">12</text>
+<circle cx="706" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="706" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">9</text>
+<circle cx="706" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="706" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">10</text>
+<circle cx="748" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="748" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">7</text>
+<circle cx="748" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="748" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">8</text>
+<circle cx="790" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="790" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">5</text>
+<circle cx="790" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="790" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">6</text>
+<circle cx="832" cy="108" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="832" y="82" text-anchor="middle" font-size="9.5" fill="#98A2B3">3</text>
+<circle cx="832" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="832" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">4</text>
+<circle cx="874" cy="108" r="9" fill="#D7263D" stroke="#D7263D" stroke-width="2.5"/>
+<circle cx="874" cy="108" r="14" fill="none" stroke="#D7263D" stroke-width="1.5" opacity="0.4"/>
+<circle cx="874" cy="140" r="9" fill="#FFFFFF" stroke="#98A2B3" stroke-width="1.2"/>
+<text x="874" y="176" text-anchor="middle" font-size="9.5" fill="#98A2B3">2</text>
+<text x="486" y="238" text-anchor="end" font-size="11.5" font-weight="600" fill="#5A6472">J30 &#8212; 40-pin header, viewed from above &#183;</text>
+<text x="494" y="238" font-size="11.5" font-weight="700" fill="#14213D">pin 1 is at the top right</text>
+<text x="100" y="38" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1F6FB2">37 &#183; CAN1_DIN</text>
+<path d="M118,99 L118,70 L100,70 L100,44" fill="none" stroke="#1F6FB2" stroke-width="1.2" opacity="0.7"/>
+<text x="175" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1B7F3B">33 &#183; CAN1_DOUT</text>
+<path d="M202,99 L202,70 L175,70 L175,66" fill="none" stroke="#1B7F3B" stroke-width="1.2" opacity="0.7"/>
+<text x="256" y="38" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1B7F3B">31 &#183; CAN0_DOUT</text>
+<path d="M244,99 L244,70 L256,70 L256,44" fill="none" stroke="#1B7F3B" stroke-width="1.2" opacity="0.7"/>
+<text x="348" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1F6FB2">29 &#183; CAN0_DIN</text>
+<path d="M286,99 L286,70 L348,70 L348,66" fill="none" stroke="#1F6FB2" stroke-width="1.2" opacity="0.7"/>
+<text x="538" y="38" text-anchor="middle" font-size="10.5" font-weight="700" fill="#D7263D">17 &#183; 3.3 V</text>
+<path d="M538,99 L538,70 L538,70 L538,44" fill="none" stroke="#D7263D" stroke-width="1.2" opacity="0.7"/>
+<text x="874" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#D7263D">1 &#183; 3.3 V</text>
+<path d="M874,99 L874,70 L874,70 L874,66" fill="none" stroke="#D7263D" stroke-width="1.2" opacity="0.7"/>
+<text x="150" y="216" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2B2B2B">34 &#183; GND</text>
+<path d="M202,149 L202,190 L150,190 L150,202" fill="none" stroke="#2B2B2B" stroke-width="1.2" opacity="0.7"/>
+<text x="340" y="216" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2B2B2B">30 &#183; GND</text>
+<path d="M286,149 L286,190 L340,190 L340,202" fill="none" stroke="#2B2B2B" stroke-width="1.2" opacity="0.7"/>
+<text x="664" y="400" font-size="12.5" font-weight="700" fill="#14213D">Bus 1 &#8212; can0</text>
+<path d="M244,108 C232,124 223,150 223,210 C223,330 230,330 230,420" fill="none" stroke="#1B7F3B" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M286,108 C274,124 265,150 265,215 C265,340 284,340 284,420" fill="none" stroke="#1F6FB2" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M286,140 C286,250 338,330 338,420" fill="none" stroke="#2B2B2B" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M538,108 C550,124 559,150 559,220 C559,350 392,350 392,420" fill="none" stroke="#D7263D" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="200" y="420" width="232" height="124" rx="9" fill="#1D5C9E" stroke="#164A80" stroke-width="2"/>
+<rect x="260" y="466" width="84" height="38" rx="4" fill="#111826" opacity="0.9"/>
+<text x="302" y="490" text-anchor="middle" font-size="10" fill="#E8EDF5" font-weight="600">SN65HVD230</text>
+<text x="316.0" y="534" text-anchor="middle" font-size="10" fill="#CFE0F5">3.3 V CAN transceiver</text>
+<circle cx="230" cy="420" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="230" y="446" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">TX</text>
+<circle cx="284" cy="420" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="284" y="446" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">RX</text>
+<circle cx="338" cy="420" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="338" y="446" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">GND</text>
+<circle cx="392" cy="420" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="392" y="446" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">3V3</text>
+<rect x="422" y="452" width="20" height="20" rx="3" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="414" y="466" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF">CANH</text>
+<rect x="422" y="494" width="20" height="20" rx="3" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="414" y="508" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF">CANL</text>
+<rect x="664" y="410" width="236" height="150" rx="9" fill="#F7F9FC" stroke="#14213D" stroke-width="2"/>
+<text x="782.0" y="442" text-anchor="middle" font-size="14" font-weight="700" fill="#14213D">reBot B601-RS</text>
+<text x="782.0" y="548" text-anchor="middle" font-size="10" fill="#5A6472">7 RobStride motors, one CAN bus</text>
+<circle cx="664" cy="462" r="6" fill="#E07B00"/>
+<text x="678" y="466" font-size="10.5" font-weight="600" fill="#E07B00">CAN_H</text>
+<circle cx="664" cy="504" r="6" fill="#7B3FA0"/>
+<text x="678" y="508" font-size="10.5" font-weight="600" fill="#7B3FA0">CAN_L</text>
+<path d="M442,462 C520,462 580,462 664,462" fill="none" stroke="#E07B00" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M442,504 C520,504 580,504 664,504" fill="none" stroke="#7B3FA0" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="553" y="444" text-anchor="middle" font-size="10" font-style="italic" fill="#5A6472">~60 &#937; across CAN_H&#8211;CAN_L (bus off)</text>
+<rect x="664" y="590" width="236" height="54" rx="8" fill="#FFF6F7" stroke="#D7263D" stroke-width="2"/>
+<text x="782.0" y="613" text-anchor="middle" font-size="12" font-weight="700" fill="#D7263D">24&#8211;48 V motor supply</text>
+<text x="782.0" y="631" text-anchor="middle" font-size="10" fill="#5A6472">not included with the arm</text>
+<path d="M744,590 L744,560" fill="none" stroke="#D7263D" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M820,590 L820,560" fill="none" stroke="#2B2B2B" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="664" y="710" font-size="12.5" font-weight="700" fill="#14213D">Bus 2 &#8212; can1</text>
+<text x="763" y="710" font-size="11" fill="#5A6472">(optional second arm)</text>
+<path d="M202,108 C182,132 62,168 62,236 L62,656 C62,690 140,700 230,700 L230,730" fill="none" stroke="#1B7F3B" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M118,108 C108,130 96,160 96,240 L96,666 C96,700 180,710 284,710 L284,730" fill="none" stroke="#1F6FB2" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M202,140 C186,170 130,200 130,260 L130,676 C130,706 230,716 338,716 L338,730" fill="none" stroke="#2B2B2B" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M874,108 C890,126 944,150 944,220 L944,660 C944,678 920,684 890,684 L440,684 C410,684 392,700 392,714 L392,730" fill="none" stroke="#D7263D" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="200" y="730" width="232" height="124" rx="9" fill="#1D5C9E" stroke="#164A80" stroke-width="2"/>
+<rect x="260" y="776" width="84" height="38" rx="4" fill="#111826" opacity="0.9"/>
+<text x="302" y="800" text-anchor="middle" font-size="10" fill="#E8EDF5" font-weight="600">SN65HVD230</text>
+<text x="316.0" y="844" text-anchor="middle" font-size="10" fill="#CFE0F5">3.3 V CAN transceiver</text>
+<circle cx="230" cy="730" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="230" y="756" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">TX</text>
+<circle cx="284" cy="730" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="284" y="756" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">RX</text>
+<circle cx="338" cy="730" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="338" y="756" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">GND</text>
+<circle cx="392" cy="730" r="6.5" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="392" y="756" text-anchor="middle" font-size="10.5" font-weight="700" fill="#FFFFFF">3V3</text>
+<rect x="422" y="762" width="20" height="20" rx="3" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="414" y="776" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF">CANH</text>
+<rect x="422" y="804" width="20" height="20" rx="3" fill="#F5C518" stroke="#164A80" stroke-width="1.5"/>
+<text x="414" y="818" text-anchor="end" font-size="10.5" font-weight="700" fill="#FFFFFF">CANL</text>
+<rect x="664" y="720" width="236" height="150" rx="9" fill="#F7F9FC" stroke="#14213D" stroke-width="2"/>
+<text x="782.0" y="752" text-anchor="middle" font-size="14" font-weight="700" fill="#14213D">reBot B601-RS</text>
+<text x="782.0" y="858" text-anchor="middle" font-size="10" fill="#5A6472">7 RobStride motors, one CAN bus</text>
+<circle cx="664" cy="772" r="6" fill="#E07B00"/>
+<text x="678" y="776" font-size="10.5" font-weight="600" fill="#E07B00">CAN_H</text>
+<circle cx="664" cy="814" r="6" fill="#7B3FA0"/>
+<text x="678" y="818" font-size="10.5" font-weight="600" fill="#7B3FA0">CAN_L</text>
+<path d="M442,772 C520,772 580,772 664,772" fill="none" stroke="#E07B00" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M442,814 C520,814 580,814 664,814" fill="none" stroke="#7B3FA0" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="553" y="754" text-anchor="middle" font-size="10" font-style="italic" fill="#5A6472">~60 &#937; across CAN_H&#8211;CAN_L (bus off)</text>
+<rect x="664" y="900" width="236" height="54" rx="8" fill="#FFF6F7" stroke="#D7263D" stroke-width="2"/>
+<text x="782.0" y="923" text-anchor="middle" font-size="12" font-weight="700" fill="#D7263D">24&#8211;48 V motor supply</text>
+<text x="782.0" y="941" text-anchor="middle" font-size="10" fill="#5A6472">not included with the arm</text>
+<path d="M744,900 L744,870" fill="none" stroke="#D7263D" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M820,900 L820,870" fill="none" stroke="#2B2B2B" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="56" y="886" width="448" height="112" rx="7" fill="#FFFBEB" stroke="#E0B44A" stroke-width="1.5"/>
+<text x="72" y="910" font-size="11.5" font-weight="700" fill="#8A6100">Straight through &#8212; do not cross TX and RX</text>
+<text x="72" y="931" font-size="10.5" fill="#6B5220">can0: pin 31 (DOUT) &#8594; TX&#160;&#160;&#183;&#160;&#160;pin 29 (DIN) &#8594; RX</text>
+<text x="72" y="949" font-size="10.5" fill="#6B5220">can1: pin 33 (DOUT) &#8594; TX&#160;&#160;&#183;&#160;&#160;pin 37 (DIN) &#8594; RX</text>
+<text x="72" y="969" font-size="10.5" fill="#6B5220">Power the boards from 3.3 V, never 5 V.&#160;&#160;No motor power &#8658; no CAN replies.</text>
+<text x="72" y="988" font-size="10" fill="#8A7340">Pad order is schematic &#8212; match the silkscreen (TX / RX may read CTX / CRX).</text>
+<text x="56" y="1024" font-size="10.5" fill="#5A6472">Pin 1 is at the top right of J30. 3.3 V is on pins 1 and 17 only; grounds are on 6, 9, 14, 20, 25, 30, 34, 39.</text>
+</svg>
