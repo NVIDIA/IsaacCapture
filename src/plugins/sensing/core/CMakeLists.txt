@@ -10,6 +10,9 @@ add_library(sensing_core STATIC
     yuv_to_rgba.cu
     rgba_to_nv12.cu
     rgba_box_downscale.cu
+    inc/sensing_core/sensing_camera.hpp
+    inc/sensing_core/sensing_types.hpp
+    inc/sensing_core/sipl_camera.hpp
     ${JETSON_MMAPI_SOURCES}
 )
 add_library(sensing::core ALIAS sensing_core)
@@ -23,8 +26,8 @@ set_target_properties(sensing_core PROPERTIES
 )
 
 target_include_directories(sensing_core
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/..
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
     PRIVATE
         # sipl_camera.hpp pimpls the SIPL and NvSci types away, so these stay private: they drag in
         # NvMedia and X11-style macros.

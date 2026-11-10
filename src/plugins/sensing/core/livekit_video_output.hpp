@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "sipl_camera.hpp"
+#include "inc/sensing_core/sipl_camera.hpp"
 
 #include <sensing_livekit/video_track_sink.hpp>
 

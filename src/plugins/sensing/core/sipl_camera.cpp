@@ -5,7 +5,7 @@
 // (/usr/src/jetson_multimedia_api/samples/unittest_samples/), BSD-3-Clause,
 // Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 
-#include "sipl_camera.hpp"
+#include "inc/sensing_core/sipl_camera.hpp"
 
 #include "yuv_to_rgba.cuh"
 

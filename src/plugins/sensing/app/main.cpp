@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "core/sensing_camera.hpp"
-#include "core/sipl_camera.hpp"
+#include <sensing_core/sensing_camera.hpp>
+#include <sensing_core/sipl_camera.hpp>
 
 #include <algorithm>
 #include <atomic>

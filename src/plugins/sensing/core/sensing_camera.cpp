@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "sensing_camera.hpp"
+#include "inc/sensing_core/sensing_camera.hpp"
 
 #include "livekit_video_output.hpp"
 
