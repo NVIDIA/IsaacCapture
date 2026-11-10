@@ -1,5 +1,5 @@
 // Copyright 2026, NVIDIA CORPORATION.
-// SPDX-License-Identifier: Apache-2.0 or MIT
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 /*!
  * @file
  * @brief Header for OpenXR push tensor interface.
