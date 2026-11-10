@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";

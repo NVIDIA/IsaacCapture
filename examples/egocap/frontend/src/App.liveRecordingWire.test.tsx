@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * End-to-end evidence that a real command produced by RecordingPanel
  * reaches the wire in the exact shape backend/egocap_web/

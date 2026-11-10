@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /** The 3D view panel: it renders nothing when the feature is off, embeds one stable iframe when ready, and
  * never reloads that iframe for anything but a changed URL/backend or an explicit retry. */
 import { afterEach, describe, expect, it } from "vitest";

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Voice-command behavior through the real RecordingPanel: Space toggling,
  * duplicate/invalid dispatch guards, the phase-conditional task-draft
