@@ -473,7 +473,7 @@ synchronized bundle.
 | Camera busy or preview cannot open | Stop other processes using that EGO. |
 | Recording waits after disconnect | Reconnect the same physical camera within `--reconnect-timeout`; UID may change after USB re-enumeration. |
 | Nonzero exit or `.partial` remains | Preserve capture and logs; check metadata queue loss, write/output failures, reconnect timeout, and control restoration. |
-| Warnings about dropped video frame sets or sequence gaps | The recording was kept; frames are missing between the logged sequence numbers. Reduce host CPU/disk load or bitrate if they recur. Gap counts are in `logs/capture.log` and the verification report; dropped frame sets are also in the capture summary. |
+| Warnings about dropped video frame sets or sequence gaps | The recording was kept; frames are missing between the logged sequence numbers. Reduce host CPU/disk load or bitrate if they recur. Gap counts are in `logs/capture.log`, the verification report, and the capture summary; dropped frame sets are also in the capture summary. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
 | Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](https://nvidia.github.io/IsaacCapture/main/references/cloudxr.html#cloudxr-form-factor-unavailable). Ctrl-C does not interrupt this wait; PluginManager stops the plugin after its shutdown timeout. |
