@@ -1,0 +1,19 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Build from Source](build_from_source/index.md): This page describes how to build Isaac Capture from source, including core libraries, plugins, and
+- [Build WebXR Client](build_from_source/webxr.md): A prebuilt CloudXR web client is available at https://nvidia.github.io/IsaacCapture/client/main/.
+- [Televiz](televiz.md): Televiz (&#96;isaaccapture.viz&#96;) is the shared visualization module for Isaac Capture. It composites wha...
+- [Migrating to &#96;isaaccapture&#96;](migration.md): In 1.6 the Python import package and the distribution were both renamed from
+- [Contributing](contributing.md): We welcome contributions. Please see the repository’s CONTRIBUTING.md for:
+- [License](license.md): Unless otherwise noted, the code in this repository is licensed under the
+
+## Optional
+
+- [Top-level llms.txt](../llms.txt): Complete documentation index.

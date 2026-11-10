@@ -1,0 +1,31 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [System Requirements](requirements.md): Isaac Teleop can be used for teleoperation of robots, data collection, and human-centric data
+- [Build System](build.md): The layout below reflects the actual &#96;CMakeLists.txt&#96; hierarchy (root &#96;CMakeLists.txt&#96; and &#96;src/core...
+- [Wheel contents SBOM and license evidence](sbom.md): Every published &#96;isaaccapture&#96; wheel lists what it redistributes and carries the license
+- [Generated Tracker Code](generated_trackers.md): Trackers whose live impl only moves a FlatBuffer between a plugin and the host via
+- [Retargeting Interface](retargeting/index.md): Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from &#42;&#42;...
+- [Retargeter: Manus to Sharpa](retargeting/sharpa.md): &#96;SharpaHandRetargeter&#96; maps live hand-tracking poses from a Manus glove (or any other source feeding...
+- [Retargeters: SO-101 (5-DOF arm)](retargeting/so101.md): The SO-101 is a low-cost 5-DOF arm with a single-jaw gripper. The controller is meant to feel
+- [Retargeter: Joint-Space Device](retargeting/joint_space.md): &#96;JointStateRetargeter&#96; maps a name-keyed joint-state input (from
+- [Retargeter: Wuji Glove to Wuji Hand](retargeting/wuji.md): &#96;WujiHandRetargeter&#96; maps hand tracking from any OpenXR
+- [Device provider monitoring](device_provider_monitoring.md): &#96;TeleopSession&#96; exposes a read-only snapshot of the providers and devices in
+- [Camera Streaming](camera_streaming.md): &#96;camera_viz&#96; is the reference camera-streaming sample built on Televiz (&#96;isaaccapture.viz&#96;). It capt...
+- [MCAP Recording &amp; Replay](mcap_record_replay.md): Isaac Capture supports recording live tracking data to MCAP
+- [CloudXR Service](cloudxr.md): A host runs &#42;&#42;one&#42;&#42; CloudXR runtime, and the CloudXR service owns it, together
+- [Out-of-Band Teleop Control](oob_teleop_control.md): The &#42;&#42;OOB (out-of-band) teleop control hub&#42;&#42; lets you coordinate Isaac Teleop
+- [Haptic Feedback](haptic_feedback.md): Drive a haptic actuator from a simulator signal through the existing Isaac Teleop
+- [Egocentric Hand Reconstruction](egocentric_hand_reconstruction.md): This page has moved to EgoHand.
+- [License](license.md): This page has moved to License.
+- [Migrating to &#96;isaaccapture&#96;](migration.md): This page has moved to Migrating to isaaccapture.
+
+## Optional
+
+- [Top-level llms.txt](../llms.txt): Complete documentation index.

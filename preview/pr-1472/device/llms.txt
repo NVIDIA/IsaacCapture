@@ -1,0 +1,46 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [XR headsets](xr/index.md): XR headsets provide head poses and controller or hand input.
+- [Hand tracking](hand_tracking/index.md): Hand tracking includes native XR hand poses and vendor devices such as gloves
+- [MANUS Gloves](hand_tracking/manus.md): A Linux-only plugin for integrating MANUS gloves
+- [Wuji Glove](hand_tracking/wuji_glove.md): A Linux-only plugin for integrating Wuji
+- [Sharpa AvatarExo Glove](hand_tracking/sharpa_avatar.md): A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
+- [Haptikos Exoskeletons](hand_tracking/haptikos.md): &lt;div style="margin-top: 1rem;"&gt;&lt;/div&gt;!&#91;Haptikos exoskeletons used with Isaac Teleop&#93;(&#95;static/haptiko...
+- [Body Tracking](body_tracking/index.md): Isaac Teleop supports streaming full-body tracking data from an XR headset
+- [SOMA Pose Transport](body_tracking/soma.md): Isaac Capture can transport SOMA body and hand data through FlatBuffers and
+- [Cameras](cameras/index.md): Camera plugins publish image and frame data through DeviceIO. For transmitting
+- [OAK Camera Plugin](cameras/oak.md): C++ plugin that captures H.264 video from OAK cameras and saves to raw H.264
+- [SENSING GMSL Camera](camera/sensing.md): SENSING GMSL2 cameras connect to a Jetson through the SG8A carrier and stream
+- [Generic Joint-Space Device](joint_space/index.md): A reusable device path for any &#42;&#42;joint-encoder source&#42;&#42; – leader arms, exoskeletons, haptic
+- [Tactile devices](tactile/index.md): Tactile devices capture contact measurements. For actuator output, see
+- [OGLO Tactile Glove Plugin](tactile/oglo.md): C++ plugin that streams &#42;&#42;OGLO&#42;&#42; tactile gloves over BLE into the standard
+- [Spatial controllers](spatial_controllers/index.md): Spatial controllers provide motion input for teleoperation. The SpaceMouse
+- [SpaceMouse Plugin](spatial_controllers/spacemouse.md): C++ plugin that streams a &#42;&#42;3Dconnexion SpaceMouse&#42;&#42; (a 6-DoF cap plus buttons) into the
+- [Gamepads](gamepads/index.md): Gamepads provide button, stick, and trigger input through the DeviceIO path.
+- [Gamepad Plugin](gamepad.md): C++ plugin that streams a &#42;&#42;gamepad&#42;&#42; (USB or Bluetooth) into the standard DeviceIO path in one
+- [Spatial Trackers and Device Data](trackers/index.md): Spatial tracking includes headset and controller poses, articulated hands and
+- [VIVE Ultimate Tracker](trackers/vive_ultimate_tracker.md): Use HTC VIVE Ultimate Trackers
+- [Add a New Device](add_device.md): For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
+- [Body Tracking](body_tracking.md): This page has moved to Body Tracking.
+- [Haptic Feedback](haptic_feedback.md): This page has moved to Haptic Feedback.
+- [Haptikos Exoskeletons](haptikos.md): This page has moved to Haptikos Exoskeletons.
+- [Generic Joint-Space Device](joint_space.md): This page has moved to Generic Joint-Space Device.
+- [MANUS Gloves](manus.md): This page has moved to MANUS Gloves.
+- [OAK Camera Plugin](oak.md): This page has moved to OAK Camera Plugin.
+- [OGLO Tactile Glove Plugin](oglo.md): This page has moved to OGLO Tactile Glove Plugin.
+- [Sharpa AvatarExo Glove](sharpa_avatar.md): This page has moved to Sharpa AvatarExo Glove.
+- [SOMA Pose Transport](soma.md): This page has moved to SOMA Pose Transport.
+- [SpaceMouse Plugin](spacemouse.md): This page has moved to SpaceMouse Plugin.
+- [Spatial Trackers and Device Data](trackers.md): This page has moved to Spatial Trackers and Device Data.
+- [Wuji Glove](wuji_glove.md): This page has moved to Wuji Glove.
+
+## Optional
+
+- [Top-level llms.txt](../llms.txt): Complete documentation index.

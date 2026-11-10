@@ -1,0 +1,15 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Spatial controllers](index.md): Spatial controllers provide motion input for teleoperation. The SpaceMouse
+- [SpaceMouse Plugin](spacemouse.md): C++ plugin that streams a &#42;&#42;3Dconnexion SpaceMouse&#42;&#42; (a 6-DoF cap plus buttons) into the
+
+## Optional
+
+- [Top-level llms.txt](../../llms.txt): Complete documentation index.

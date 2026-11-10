@@ -1,0 +1,18 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Retargeting Interface](index.md): Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from &#42;&#42;...
+- [Retargeter: Manus to Sharpa](sharpa.md): &#96;SharpaHandRetargeter&#96; maps live hand-tracking poses from a Manus glove (or any other source feeding...
+- [Retargeters: SO-101 (5-DOF arm)](so101.md): The SO-101 is a low-cost 5-DOF arm with a single-jaw gripper. The controller is meant to feel
+- [Retargeter: Joint-Space Device](joint_space.md): &#96;JointStateRetargeter&#96; maps a name-keyed joint-state input (from
+- [Retargeter: Wuji Glove to Wuji Hand](wuji.md): &#96;WujiHandRetargeter&#96; maps hand tracking from any OpenXR
+
+## Optional
+
+- [Top-level llms.txt](../../llms.txt): Complete documentation index.

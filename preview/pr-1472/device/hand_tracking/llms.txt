@@ -1,0 +1,18 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Hand tracking](index.md): Hand tracking includes native XR hand poses and vendor devices such as gloves
+- [MANUS Gloves](manus.md): A Linux-only plugin for integrating MANUS gloves
+- [Wuji Glove](wuji_glove.md): A Linux-only plugin for integrating Wuji
+- [Sharpa AvatarExo Glove](sharpa_avatar.md): A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
+- [Haptikos Exoskeletons](haptikos.md): &lt;div style="margin-top: 1rem;"&gt;&lt;/div&gt;!&#91;Haptikos exoskeletons used with Isaac Teleop&#93;(&#95;static/haptiko...
+
+## Optional
+
+- [Top-level llms.txt](../../llms.txt): Complete documentation index.

@@ -1,0 +1,15 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Cameras](index.md): Camera plugins publish image and frame data through DeviceIO. For transmitting
+- [OAK Camera Plugin](oak.md): C++ plugin that captures H.264 video from OAK cameras and saves to raw H.264
+
+## Optional
+
+- [Top-level llms.txt](../../llms.txt): Complete documentation index.

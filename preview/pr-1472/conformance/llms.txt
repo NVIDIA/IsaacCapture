@@ -1,0 +1,18 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [Device Conformance Testing](overview.md): You have integrated a device that publishes hand or full-body poses into Isaac Capture. The
+- [Set Up the Tools](setup.md): This page gets a workstation ready to record: the repository built, the CTS tool environments
+- [Hand Suite](hand.md): The hand tolerances are provisional and not yet calibrated against glove
+- [Full-Body Suite](full_body.md): The full-body suite records one take of ten standing poses and motions, then checks the
+- [Submit Your Results](submit.md): This page shows how to package a checked take and send it through the submission form for your
+
+## Optional
+
+- [Top-level llms.txt](../llms.txt): Complete documentation index.

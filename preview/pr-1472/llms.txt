@@ -1,0 +1,108 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages
+
+- [Welcome to Isaac Capture](index.md): Default: Apache-2.0 EgoPost: OpenMDW-1.1
+- [Architecture](overview/architecture.md): Isaac Capture provides shared capture infrastructure for teleoperation and
+- [Isaac Teleop](overview/isaac_teleop.md): &#42;&#42;Isaac Teleop&#42;&#42; is the teleoperation component of Isaac Capture.
+- [Ecosystem](overview/ecosystem.md): The Isaac Capture ecosystem brings together the input devices, data services, and cloud
+- [Quick Start](teleop/quick_start.md): This guide walks through running a teleoperation session with an XR headset using CloudXR. By the
+- [Synthetic XR Teleoperation](teleop/synthetic_xr.md): &#42;&#42;Build and automate teleoperation from your desktop, without an XR headset.&#42;&#42;
+- [OVXR installation](getting_started/ovxr.md): OVXR provides optional XR presentation for applications that use Isaac Capture
+- [Teleop Session](teleop/teleop_session.md): TeleopSessionManager provides a declarative, configuration-based API for
+- [Teleop Control State Machine](teleop/control_state_machine.md): This page describes the default teleop control state machine used by
+- [EgoHand](ego_post_processing/egohand.md): EgoHand reconstructs SOMA hand poses, 3D joints, and meshes from egocentric
+- [Build from Source](development/build_from_source/index.md): This page describes how to build Isaac Capture from source, including core libraries, plugins, and
+- [Build WebXR Client](development/build_from_source/webxr.md): A prebuilt CloudXR web client is available at https://nvidia.github.io/IsaacCapture/client/main/.
+- [Televiz](development/televiz.md): Televiz (&#96;isaaccapture.viz&#96;) is the shared visualization module for Isaac Capture. It composites wha...
+- [Migrating to &#96;isaaccapture&#96;](development/migration.md): In 1.6 the Python import package and the distribution were both renamed from
+- [Contributing](development/contributing.md): We welcome contributions. Please see the repository’s CONTRIBUTING.md for:
+- [License](development/license.md): Unless otherwise noted, the code in this repository is licensed under the
+- [Isaac Lab &amp; Sim](integrations/isaac_lab_sim.md): This integration guide is being prepared.
+- [Isaac ROS](integrations/isaac_ros.md): This integration guide is being prepared.
+- [LeRobot and SO-101](integrations/lerobot/index.md): With Isaac Teleop, we got an end-to-end data collection and training pipeline for SO-101 in both sim...
+- [Supported Teleop devices](integrations/lerobot/devices.md): Isaac Teleop drives the SO-101 from two input devices today. Both command the same SO-101 follower
+- [Data Collection in Real](integrations/lerobot/data_collection_real.md): Record demonstrations on a physical SO-101 into a LeRobot dataset, driving the follower with either ...
+- [Data Collection in Sim](integrations/lerobot/data_collection_sim.md): Collect SO-101 demonstrations in simulation with NVIDIA Isaac Lab, on the cube-stacking task. You dr...
+- [Model Training with GR00T](integrations/lerobot/training_groot.md): With a LeRobot dataset collected on real hardware (Data Collection in Real) or in simulation
+- [reBot B601-RS on Jetson AGX Orin](integrations/lerobot/rebot.md): The reBot B601-RS is a 6-DOF arm built from
+- [XR headsets](device/xr/index.md): XR headsets provide head poses and controller or hand input.
+- [Hand tracking](device/hand_tracking/index.md): Hand tracking includes native XR hand poses and vendor devices such as gloves
+- [MANUS Gloves](device/hand_tracking/manus.md): A Linux-only plugin for integrating MANUS gloves
+- [Wuji Glove](device/hand_tracking/wuji_glove.md): A Linux-only plugin for integrating Wuji
+- [Sharpa AvatarExo Glove](device/hand_tracking/sharpa_avatar.md): A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
+- [Haptikos Exoskeletons](device/hand_tracking/haptikos.md): &lt;div style="margin-top: 1rem;"&gt;&lt;/div&gt;!&#91;Haptikos exoskeletons used with Isaac Teleop&#93;(&#95;static/haptiko...
+- [Body Tracking](device/body_tracking/index.md): Isaac Teleop supports streaming full-body tracking data from an XR headset
+- [SOMA Pose Transport](device/body_tracking/soma.md): Isaac Capture can transport SOMA body and hand data through FlatBuffers and
+- [Cameras](device/cameras/index.md): Camera plugins publish image and frame data through DeviceIO. For transmitting
+- [OAK Camera Plugin](device/cameras/oak.md): C++ plugin that captures H.264 video from OAK cameras and saves to raw H.264
+- [SENSING GMSL Camera](device/camera/sensing.md): SENSING GMSL2 cameras connect to a Jetson through the SG8A carrier and stream
+- [Generic Joint-Space Device](device/joint_space/index.md): A reusable device path for any &#42;&#42;joint-encoder source&#42;&#42; – leader arms, exoskeletons, haptic
+- [Tactile devices](device/tactile/index.md): Tactile devices capture contact measurements. For actuator output, see
+- [OGLO Tactile Glove Plugin](device/tactile/oglo.md): C++ plugin that streams &#42;&#42;OGLO&#42;&#42; tactile gloves over BLE into the standard
+- [Spatial controllers](device/spatial_controllers/index.md): Spatial controllers provide motion input for teleoperation. The SpaceMouse
+- [SpaceMouse Plugin](device/spatial_controllers/spacemouse.md): C++ plugin that streams a &#42;&#42;3Dconnexion SpaceMouse&#42;&#42; (a 6-DoF cap plus buttons) into the
+- [Gamepads](device/gamepads/index.md): Gamepads provide button, stick, and trigger input through the DeviceIO path.
+- [Gamepad Plugin](device/gamepad.md): C++ plugin that streams a &#42;&#42;gamepad&#42;&#42; (USB or Bluetooth) into the standard DeviceIO path in one
+- [Spatial Trackers and Device Data](device/trackers/index.md): Spatial tracking includes headset and controller poses, articulated hands and
+- [VIVE Ultimate Tracker](device/trackers/vive_ultimate_tracker.md): Use HTC VIVE Ultimate Trackers
+- [Add a New Device](device/add_device.md): For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
+- [Device Conformance Testing](conformance/overview.md): You have integrated a device that publishes hand or full-body poses into Isaac Capture. The
+- [Set Up the Tools](conformance/setup.md): This page gets a workstation ready to record: the repository built, the CTS tool environments
+- [Hand Suite](conformance/hand.md): The hand tolerances are provisional and not yet calibrated against glove
+- [Full-Body Suite](conformance/full_body.md): The full-body suite records one take of ten standing poses and motions, then checks the
+- [Submit Your Results](conformance/submit.md): This page shows how to package a checked take and send it through the submission form for your
+- [System Requirements](references/requirements.md): Isaac Teleop can be used for teleoperation of robots, data collection, and human-centric data
+- [Build System](references/build.md): The layout below reflects the actual &#96;CMakeLists.txt&#96; hierarchy (root &#96;CMakeLists.txt&#96; and &#96;src/core...
+- [Wheel contents SBOM and license evidence](references/sbom.md): Every published &#96;isaaccapture&#96; wheel lists what it redistributes and carries the license
+- [Generated Tracker Code](references/generated_trackers.md): Trackers whose live impl only moves a FlatBuffer between a plugin and the host via
+- [Retargeting Interface](references/retargeting/index.md): Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from &#42;&#42;...
+- [Retargeter: Manus to Sharpa](references/retargeting/sharpa.md): &#96;SharpaHandRetargeter&#96; maps live hand-tracking poses from a Manus glove (or any other source feeding...
+- [Retargeters: SO-101 (5-DOF arm)](references/retargeting/so101.md): The SO-101 is a low-cost 5-DOF arm with a single-jaw gripper. The controller is meant to feel
+- [Retargeter: Joint-Space Device](references/retargeting/joint_space.md): &#96;JointStateRetargeter&#96; maps a name-keyed joint-state input (from
+- [Retargeter: Wuji Glove to Wuji Hand](references/retargeting/wuji.md): &#96;WujiHandRetargeter&#96; maps hand tracking from any OpenXR
+- [Device provider monitoring](references/device_provider_monitoring.md): &#96;TeleopSession&#96; exposes a read-only snapshot of the providers and devices in
+- [Camera Streaming](references/camera_streaming.md): &#96;camera_viz&#96; is the reference camera-streaming sample built on Televiz (&#96;isaaccapture.viz&#96;). It capt...
+- [MCAP Recording &amp; Replay](references/mcap_record_replay.md): Isaac Capture supports recording live tracking data to MCAP
+- [CloudXR Service](references/cloudxr.md): A host runs &#42;&#42;one&#42;&#42; CloudXR runtime, and the CloudXR service owns it, together
+- [Out-of-Band Teleop Control](references/oob_teleop_control.md): The &#42;&#42;OOB (out-of-band) teleop control hub&#42;&#42; lets you coordinate Isaac Teleop
+- [Haptic Feedback](references/haptic_feedback.md): Drive a haptic actuator from a simulator signal through the existing Isaac Teleop
+- [Body Tracking](device/body_tracking.md): This page has moved to Body Tracking.
+- [Haptic Feedback](device/haptic_feedback.md): This page has moved to Haptic Feedback.
+- [Haptikos Exoskeletons](device/haptikos.md): This page has moved to Haptikos Exoskeletons.
+- [Generic Joint-Space Device](device/joint_space.md): This page has moved to Generic Joint-Space Device.
+- [MANUS Gloves](device/manus.md): This page has moved to MANUS Gloves.
+- [OAK Camera Plugin](device/oak.md): This page has moved to OAK Camera Plugin.
+- [OGLO Tactile Glove Plugin](device/oglo.md): This page has moved to OGLO Tactile Glove Plugin.
+- [Sharpa AvatarExo Glove](device/sharpa_avatar.md): This page has moved to Sharpa AvatarExo Glove.
+- [SOMA Pose Transport](device/soma.md): This page has moved to SOMA Pose Transport.
+- [SpaceMouse Plugin](device/spacemouse.md): This page has moved to SpaceMouse Plugin.
+- [Spatial Trackers and Device Data](device/trackers.md): This page has moved to Spatial Trackers and Device Data.
+- [Wuji Glove](device/wuji_glove.md): This page has moved to Wuji Glove.
+- [Build from Source](getting_started/build_from_source/index.md): This page has moved to Build from Source.
+- [Build WebXR Client](getting_started/build_from_source/webxr.md): This page has moved to Build WebXR Client.
+- [Contributing](getting_started/contributing.md): This page has moved to Contributing.
+- [Data Collection in Real](getting_started/lerobot/data_collection_real.md): This page has moved to Data Collection in Real.
+- [Data Collection in Sim](getting_started/lerobot/data_collection_sim.md): This page has moved to Data Collection in Sim.
+- [Supported Teleop devices](getting_started/lerobot/devices.md): This page has moved to Supported Teleop devices.
+- [LeRobot and SO-101](getting_started/lerobot/index.md): This page has moved to LeRobot and SO-101.
+- [reBot B601-RS on Jetson AGX Orin](getting_started/lerobot/rebot.md): This page has moved to reBot B601-RS on Jetson AGX Orin.
+- [Model Training with GR00T](getting_started/lerobot/training_groot.md): This page has moved to Model Training with GR00T.
+- [Quick Start](getting_started/quick_start.md): This page has moved to Quick Start.
+- [Teleop Control State Machine](getting_started/teleop_control_state_machine.md): This page has moved to Teleop Control State Machine.
+- [Teleop Session](getting_started/teleop_session.md): This page has moved to Teleop Session.
+- [Televiz](getting_started/televiz.md): This page has moved to Televiz.
+- [Egocentric Hand Reconstruction](references/egocentric_hand_reconstruction.md): This page has moved to EgoHand.
+- [License](references/license.md): This page has moved to License.
+- [Migrating to &#96;isaaccapture&#96;](references/migration.md): This page has moved to Migrating to isaaccapture.
+- [Data Collection in Real](teleop/lerobot/data_collection_real.md): This page has moved to Data Collection in Real.
+- [Data Collection in Sim](teleop/lerobot/data_collection_sim.md): This page has moved to Data Collection in Sim.
+- [Supported Teleop devices](teleop/lerobot/devices.md): This page has moved to Supported Teleop devices.
+- [LeRobot and SO-101](teleop/lerobot/index.md): This page has moved to LeRobot and SO-101.
+- [reBot B601-RS on Jetson AGX Orin](teleop/lerobot/rebot.md): This page has moved to reBot B601-RS on Jetson AGX Orin.
+- [Model Training with GR00T](teleop/lerobot/training_groot.md): This page has moved to Model Training with GR00T.

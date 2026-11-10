@@ -1,0 +1,27 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [OVXR installation](ovxr.md): OVXR provides optional XR presentation for applications that use Isaac Capture
+- [Build from Source](build_from_source/index.md): This page has moved to Build from Source.
+- [Build WebXR Client](build_from_source/webxr.md): This page has moved to Build WebXR Client.
+- [Contributing](contributing.md): This page has moved to Contributing.
+- [Data Collection in Real](lerobot/data_collection_real.md): This page has moved to Data Collection in Real.
+- [Data Collection in Sim](lerobot/data_collection_sim.md): This page has moved to Data Collection in Sim.
+- [Supported Teleop devices](lerobot/devices.md): This page has moved to Supported Teleop devices.
+- [LeRobot and SO-101](lerobot/index.md): This page has moved to LeRobot and SO-101.
+- [reBot B601-RS on Jetson AGX Orin](lerobot/rebot.md): This page has moved to reBot B601-RS on Jetson AGX Orin.
+- [Model Training with GR00T](lerobot/training_groot.md): This page has moved to Model Training with GR00T.
+- [Quick Start](quick_start.md): This page has moved to Quick Start.
+- [Teleop Control State Machine](teleop_control_state_machine.md): This page has moved to Teleop Control State Machine.
+- [Teleop Session](teleop_session.md): This page has moved to Teleop Session.
+- [Televiz](televiz.md): This page has moved to Televiz.
+
+## Optional
+
+- [Top-level llms.txt](../llms.txt): Complete documentation index.

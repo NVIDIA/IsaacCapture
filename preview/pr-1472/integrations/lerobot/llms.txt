@@ -1,0 +1,19 @@
+# Isaac Capture
+
+> Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
+
+
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 10, 2026
+
+## Pages in this subsection
+
+- [LeRobot and SO-101](index.md): With Isaac Teleop, we got an end-to-end data collection and training pipeline for SO-101 in both sim...
+- [Supported Teleop devices](devices.md): Isaac Teleop drives the SO-101 from two input devices today. Both command the same SO-101 follower
+- [Data Collection in Real](data_collection_real.md): Record demonstrations on a physical SO-101 into a LeRobot dataset, driving the follower with either ...
+- [Data Collection in Sim](data_collection_sim.md): Collect SO-101 demonstrations in simulation with NVIDIA Isaac Lab, on the cube-stacking task. You dr...
+- [Model Training with GR00T](training_groot.md): With a LeRobot dataset collected on real hardware (Data Collection in Real) or in simulation
+- [reBot B601-RS on Jetson AGX Orin](rebot.md): The reBot B601-RS is a 6-DOF arm built from
+
+## Optional
+
+- [Top-level llms.txt](../../llms.txt): Complete documentation index.
