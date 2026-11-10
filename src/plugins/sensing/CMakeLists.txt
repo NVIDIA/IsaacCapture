@@ -44,10 +44,7 @@ if(NOT SIPL_API_DIR)
         "================================================================================\n"
         "SENSING camera plugin requires the Jetson SIPL API headers.\n"
         "\n"
-        "Run the container setup, which fetches them:\n"
-        "  src/plugins/sensing/scripts/setup.sh\n"
-        "\n"
-        "Or point CMake at an existing copy:\n"
+        "Install the SIPL API package for your L4T release and point CMake at it:\n"
         "  cmake -B build -DSIPL_API_DIR=/path/to/jetson_sipl_api\n"
         "\n"
         "Or disable this plugin:\n"
@@ -73,7 +70,7 @@ foreach(_lib nvsipl nvsipl_query nvscibuf nvscisync nvbufsurface_nvsci)
     if(NOT ${_upper}_LIBRARY)
         message(FATAL_ERROR
             "lib${_lib} not found. It is supplied by the L4T BSP and, in a container, by the "
-            "NVIDIA container runtime. Run src/plugins/sensing/verify.sh to see what is missing.")
+            "NVIDIA container runtime. Run src/plugins/sensing/scripts/verify.sh to see what is missing.")
     endif()
     list(APPEND SIPL_LIBRARIES ${${_upper}_LIBRARY})
 endforeach()
@@ -102,10 +99,7 @@ if(NOT JETSON_MMAPI_DIR)
         "================================================================================\n"
         "SENSING camera plugin requires the Jetson Multimedia API encoder sources.\n"
         "\n"
-        "setup_container.sh fetches the version matching /etc/nv_tegra_release:\n"
-        "  src/plugins/sensing/scripts/setup.sh\n"
-        "\n"
-        "Or point CMake at an existing tree:\n"
+        "Unpack the version matching /etc/nv_tegra_release and point CMake at it:\n"
         "  cmake -B build -DJETSON_MMAPI_DIR=/path/to/jetson_multimedia_api\n"
         "================================================================================\n"
     )
@@ -219,6 +213,9 @@ set(SENSING_LIVEKIT_SDK_DIR "${LIVEKIT_SDK_DIR}" CACHE INTERNAL "")
 # Targets
 # ==============================================================================
 message(STATUS "Building SENSING camera plugin")
+
+# The platform configs live beside this file; app/ stages and installs them from here.
+set(SENSING_CONFIGS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/configs")
 
 add_subdirectory(livekit)
 add_subdirectory(core)

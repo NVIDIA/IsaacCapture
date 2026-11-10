@@ -12,7 +12,7 @@ target_link_libraries(camera_plugin_sensing PRIVATE sensing::core)
 # tree -- otherwise it only works after `cmake --install`.
 add_custom_command(TARGET camera_plugin_sensing POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/../configs"
+            "${SENSING_CONFIGS_DIR}"
             "$<TARGET_FILE_DIR:camera_plugin_sensing>/configs"
     COMMENT "Staging SIPL platform configs beside camera_plugin_sensing"
 )
@@ -20,7 +20,7 @@ add_custom_command(TARGET camera_plugin_sensing POST_BUILD
 install(TARGETS camera_plugin_sensing
     RUNTIME DESTINATION plugins/sensing_camera
 )
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../configs/"
+install(DIRECTORY "${SENSING_CONFIGS_DIR}/"
     DESTINATION plugins/sensing_camera/configs
 )
 
