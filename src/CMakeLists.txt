@@ -25,8 +25,17 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
+# The LiveKit SDK and publisher library: the PC relay publishes to LiveKit; the camera producer still does until it sends
+# direct to the relay.
+if(BUILD_VIDEO_STAGE OR BUILD_PLUGIN_SENSING)
+    add_subdirectory(livekit_publisher)
+endif()
+
 if(BUILD_VIDEO_STAGE)
     add_subdirectory(video_stage)
+elseif(BUILD_PLUGIN_SENSING)
+    # The LiveKit library uses the record codec and clock-exchange helpers.
+    add_subdirectory(video_stage/wire)
 endif()
 
 if(BUILD_PLUGINS)

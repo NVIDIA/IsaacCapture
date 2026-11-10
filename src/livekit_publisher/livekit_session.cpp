@@ -3,11 +3,10 @@
 
 #include "inc/sensing_livekit/livekit_session.hpp"
 
-#include "inc/sensing_livekit/clock_sync.hpp"
-
 #include <livekit/encoded_video_source.h>
 #include <livekit/livekit.h>
 #include <log_bridge/logger.hpp>
+#include <video_stage/clock_sync.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -268,7 +267,10 @@ public:
         out.timestamp_us = static_cast<int64_t>(frame.timestamp_us);
         out.data.assign(frame.data, frame.data + frame.size);
         livekit::VideoFrameMetadata metadata;
-        metadata.user_timestamp_us = frame.user_timestamp_us;
+        // Zero means the publisher cannot vouch for a capture time: the frame is sent without one, and a consumer
+        // that needs a timestamp (a recording) says so instead of using a guessed one.
+        if (frame.user_timestamp_us != 0)
+            metadata.user_timestamp_us = frame.user_timestamp_us;
         metadata.frame_id = frame.frame_id;
         std::vector<uint8_t> tsc(8);
         for (int i = 0; i < 8; ++i)
