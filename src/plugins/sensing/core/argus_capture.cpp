@@ -58,7 +58,7 @@ constexpr std::chrono::seconds kStopDeadline{ 20 };
 // How long the owner may take to stop new captures (a stopRepeat) before that is treated as hung.
 constexpr std::chrono::seconds kStopAckTimeout{ 5 };
 
-std::shared_ptr<isaaccapture::Logger> logger()
+std::shared_ptr<spdlog::logger> logger()
 {
     return isaaccapture::Logger::get("isaaccapture.plugins.sensing.ArgusCapture");
 }
