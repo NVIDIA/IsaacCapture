@@ -449,7 +449,7 @@ struct LiveKitVideoOutput::Impl
     // Worker thread: remember the capture a submitted frame came from, for the unit that comes back.
     void track_in_flight(uint32_t sequence, uint64_t capture_tsc, uint64_t unix_us)
     {
-        in_encoder.push_back({ sequence, capture_tsc, monotonic_us, unix_us });
+        in_encoder.push_back({ sequence, capture_tsc, unix_us });
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
@@ -487,6 +487,8 @@ struct LiveKitVideoOutput::Impl
         if (awaiting_keyframe && !unit.keyframe)
             return;
 
+        // The transport timestamp is the encoder's own unit stamp; the application time travels in user_timestamp_us.
+        const int64_t stamp_us = unit.timestamp_ns / 1000;
         EncodedVideoFrame frame;
         frame.data = unit.data.data();
         frame.size = unit.data.size();
