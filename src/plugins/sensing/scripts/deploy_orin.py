@@ -1198,7 +1198,7 @@ def remote_build(args: argparse.Namespace) -> None:
     run(["rm", "-rf", args.stage])
     stage = Path(args.stage)
     stage_producer(build_dir, stage)
-    print(f"  staged {sum(1 for p in stage.rglob('*') if p.is_file())} files")
+    print(f"  staged {sum(len(files) for _, _, files in os.walk(stage))} files")
 
 
 def remote_apply(args: argparse.Namespace) -> None:
