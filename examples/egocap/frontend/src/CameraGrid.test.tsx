@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * CameraGrid's per-tile rate/latency readout: derived from successive snapshots' camera
  * sequence numbers, shown only for live fresh samples, and dashed until enough history exists.

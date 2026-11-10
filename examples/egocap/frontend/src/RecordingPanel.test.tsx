@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Component-level tests for RecordingPanel: the honest no-backend default
  * (never a fabricated success state), buttons/shortcuts sharing the same

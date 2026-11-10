@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Component-level tests for render/focus/image-event paths that reducer
  * and parser tests can't reach: CameraTile's retry-outcome ordering, the

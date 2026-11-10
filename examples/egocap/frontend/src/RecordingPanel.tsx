@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The Ego Capture UI live recording strip: s/w/a/t controls plus `r` for New
  * batch, rendered as a SIBLING of the existing generic capture

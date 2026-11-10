@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Selected-camera MJPEG tiles. Extracted from App.tsx into its own module;
  * App mounts this once as the one generic camera display -- the Ego Capture UI
