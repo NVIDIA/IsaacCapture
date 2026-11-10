@@ -57,9 +57,17 @@ struct JetsonEncoder::Impl
     std::deque<EncodedUnit> ready;
     bool eos_reached = false;
     bool eos_sent = false; // driving thread only
+    bool dq_thread_started = false;
 
     ~Impl()
     {
+        // The capture thread dereferences this object, so it must be joined here, not only in ~JetsonEncoder:
+        // a constructor that throws after starting it never runs ~JetsonEncoder.
+        if (encoder && dq_thread_started)
+        {
+            encoder->capture_plane.stopDQThread();
+            encoder->capture_plane.waitForDQThread(1000);
+        }
         if (d_y)
             cudaFree(d_y);
         if (d_uv)
@@ -166,6 +174,7 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
 
     enc->capture_plane.setDQThreadCallback(&Impl::capture_dq);
     enc->capture_plane.startDQThread(m_impl.get());
+    m_impl->dq_thread_started = true;
 
     // Prime the capture plane so the encoder always has somewhere to write.
     for (uint32_t i = 0; i < enc->capture_plane.getNumBuffers(); ++i)
@@ -186,14 +195,7 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
         "cudaMallocPitch(UV)");
 }
 
-JetsonEncoder::~JetsonEncoder()
-{
-    if (m_impl && m_impl->encoder)
-    {
-        m_impl->encoder->capture_plane.stopDQThread();
-        m_impl->encoder->capture_plane.waitForDQThread(1000);
-    }
-}
+JetsonEncoder::~JetsonEncoder() = default;
 
 bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_bytes, int64_t timestamp_ns)
 {
