@@ -161,6 +161,10 @@ void SensingCamera::print_stats() const
             std::cout << ", " << s.encoder_busy << " encoder busy";
         if (s.rejected)
             std::cout << ", " << s.rejected << " rejected";
+        if (s.encoder_dropped)
+            std::cout << ", " << s.encoder_dropped << " dropped in encoder";
+        if (s.unmatched_units)
+            std::cout << ", " << s.unmatched_units << " unmatched units";
         if (s.keyframes_requested)
             std::cout << ", " << s.keyframes_requested << " keyframes requested";
         const std::string encoder = stream.livekit->describe();

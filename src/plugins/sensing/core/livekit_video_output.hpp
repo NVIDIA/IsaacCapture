@@ -44,6 +44,8 @@ struct LiveKitOutputStats
     uint64_t encoder_busy = 0; ///< Snapshots the encoder had no input buffer for, dropped before encoding.
     uint64_t rejected = 0; ///< Encoded frames the SDK refused; a keyframe follows.
     uint64_t keyframes_requested = 0; ///< Keyframes the receiving side asked for.
+    uint64_t encoder_dropped = 0; ///< Accepted frames the encoder never returned; their metadata is retired.
+    uint64_t unmatched_units = 0; ///< Encoded units with no capture to pair with, skipped.
 };
 
 /**

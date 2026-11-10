@@ -241,6 +241,9 @@ struct LiveKitVideoOutput::Impl
                 {
                     for (auto& unit : encoder->drain())
                         publish_unit(unit);
+                    // Anything still unreturned once the encoder is drained is not coming back.
+                    encoder_dropped += in_encoder.size();
+                    in_encoder.clear();
                     std::lock_guard<std::mutex> lock(mutex);
                     flush_requested = false;
                     flushed.notify_all();
@@ -317,25 +320,36 @@ struct LiveKitVideoOutput::Impl
         }
         in_encoder.push_back(
             { stamp_ns / 1000, static_cast<uint32_t>(slot.sequence), slot.capture_tsc, slot.unix_ns / 1000 });
-        // The encoder holds a bounded number of frames, so a longer queue means it dropped some inside it.
-        // Trimming bounds how stale the oldest metadata can be; it does not resynchronise units with captures,
-        // so frame ids after an encoder-internal drop can be shifted until a supported per-frame correlation exists.
-        constexpr std::size_t kMaxInFlight = 12;
-        while (in_encoder.size() > kMaxInFlight)
-            in_encoder.pop_front();
     }
 
     // Worker thread: one encoded unit becomes one published frame, with the sequence and capture time
     // of the capture it came from.
     void publish_unit(const EncodedUnit& unit)
     {
-        const int64_t stamp_us = unit.timestamp_ns / 1000;
         // The Jetson encoder does not return the stamp it was given: it numbers its units from its own frame
-        // rate. It does return one unit per accepted frame in submission order, so units pair with captures
-        // by order; the unit's own stamp is for diagnostics only.
+        // rate (0, 1/fps, ...). Units pair with captures by order, and a jump in that numbering is the only
+        // evidence of frames the encoder consumed without returning a unit. Metadata is retired only by a
+        // matched unit or by such a jump; a jump that leaves no frame for this unit, or a numbering that goes
+        // backwards, is not trusted and just resets the baseline.
+        const int64_t index = std::llround(static_cast<double>(unit.timestamp_ns) * config.fps / 1e9);
+        if (have_unit_index)
+        {
+            const int64_t gap = index - last_unit_index - 1;
+            if (gap > 0 && static_cast<uint64_t>(gap) < in_encoder.size())
+            {
+                in_encoder.erase(in_encoder.begin(), in_encoder.begin() + gap);
+                encoder_dropped += static_cast<uint64_t>(gap);
+            }
+        }
+        last_unit_index = index;
+        have_unit_index = true;
+
+        // A unit with no frame to pair with is skipped rather than published with someone else's metadata.
         if (in_encoder.empty())
-            throw std::runtime_error("LiveKit output: the encoder returned a unit with no frame in flight (unit stamp_us=" +
-                                     std::to_string(stamp_us) + ")");
+        {
+            ++unmatched_units;
+            return;
+        }
         const FrameMeta meta = in_encoder.front();
         in_encoder.pop_front();
 
@@ -384,6 +398,8 @@ struct LiveKitVideoOutput::Impl
 
     // Worker thread only.
     std::deque<FrameMeta> in_encoder; ///< Submitted to the encoder, no unit back yet.
+    int64_t last_unit_index = 0; ///< The encoder's own number of the last unit returned.
+    bool have_unit_index = false;
     bool keyframe_wanted = false;
     bool awaiting_keyframe = false;
     uint32_t applied_bitrate = 0;
@@ -417,6 +433,8 @@ struct LiveKitVideoOutput::Impl
     std::atomic<uint64_t> encoder_busy{ 0 };
     std::atomic<uint64_t> rejected{ 0 };
     std::atomic<uint64_t> keyframes_requested{ 0 };
+    std::atomic<uint64_t> encoder_dropped{ 0 };
+    std::atomic<uint64_t> unmatched_units{ 0 };
 
     std::mutex failure_mutex;
     std::string failure_message;
@@ -464,6 +482,8 @@ LiveKitOutputStats LiveKitVideoOutput::stats() const
     s.encoder_busy = m_impl->encoder_busy.load();
     s.rejected = m_impl->rejected.load();
     s.keyframes_requested = m_impl->keyframes_requested.load();
+    s.encoder_dropped = m_impl->encoder_dropped.load();
+    s.unmatched_units = m_impl->unmatched_units.load();
     return s;
 }
 
