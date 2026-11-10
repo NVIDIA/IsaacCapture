@@ -7,7 +7,7 @@
 #pragma once
 
 #include "inc/sensing_core/camera_capture.hpp"
-#include "sipl_camera.hpp"
+#include "inc/sensing_core/sipl_camera.hpp"
 
 #include <memory>
 #include <vector>
