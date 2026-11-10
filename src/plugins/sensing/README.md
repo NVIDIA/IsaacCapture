@@ -46,3 +46,23 @@ SIPL drivers.
 hardware encoder and publishes one LiveKit video track per camera. The
 [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/device/camera/sensing.html)
 has the build and run steps.
+
+## Management channel and camera faults
+
+A camera that cannot start (no power cable, no GMSL link) does not end the producer. It reports the problem in plain
+words, retries every few seconds (`--retry-seconds`), and starts streaming once the cable is fixed. The same process
+can offer a WebSocket management channel, off unless `--control-token-file=PATH` names a file holding a shared secret:
+
+```bash
+camera_plugin_sensing ... --control-token-file=/etc/isaaccapture/control.token   # listens on 0.0.0.0:5610
+```
+
+Clients send one JSON object per message and get one reply; the producer also pushes `state_changed` and `error`
+events. `get_status` reports the state (`starting`, `streaming`, `camera_fault`, `error`, `stopping`), the fault with a
+code and what to check, and each stream's frame counts. This producer publishes to LiveKit, so `set_direct_target` is
+refused with `not_supported`. Every bad request gets an error reply with a code and a sentence. The token goes in
+`Authorization: Bearer ...` (or `?token=`).
+
+```bash
+src/sensing_control/tools/orin_control.py ORIN_HOST --token-file control.token status
+```

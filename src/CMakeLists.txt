@@ -25,8 +25,8 @@ if(BUILD_VIZ)
     add_subdirectory(viz)
 endif()
 
-# The camera producer's management channel: no video stage, camera SDK or GPU dependency.
-if(BUILD_SENSING_CONTROL)
+# The camera producer's management channel: no camera SDK or GPU dependency. The sensing plugin links it.
+if(BUILD_PLUGIN_SENSING OR BUILD_SENSING_CONTROL)
     add_subdirectory(sensing_control)
 endif()
 

@@ -5,7 +5,7 @@ add_executable(camera_plugin_sensing main.cpp)
 
 set_target_properties(camera_plugin_sensing PROPERTIES INSTALL_RPATH "$ORIGIN")
 
-target_link_libraries(camera_plugin_sensing PRIVATE sensing::core)
+target_link_libraries(camera_plugin_sensing PRIVATE sensing::core sensing::control)
 
 # The plugin resolves configs/shw5g.json relative to its own executable, so the
 # config has to sit beside the binary in the build tree as well as the install

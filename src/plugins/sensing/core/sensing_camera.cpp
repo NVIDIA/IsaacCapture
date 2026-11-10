@@ -99,6 +99,7 @@ SensingCamera::SensingCamera(const SensingConfig& config, const std::vector<Stre
 
         Stream stream;
         stream.sensor_id = found->id;
+        stream.track = spec.name;
         stream.livekit = std::make_unique<LiveKitVideoOutput>(m_livekit->publish_video(spec), output);
         m_streams.push_back(std::move(stream));
 
@@ -145,6 +146,15 @@ void SensingCamera::flush()
 {
     for (auto& stream : m_streams)
         stream.livekit->flush();
+}
+
+std::vector<StreamFigures> SensingCamera::figures() const
+{
+    std::vector<StreamFigures> out;
+    out.reserve(m_streams.size());
+    for (const auto& stream : m_streams)
+        out.push_back({ stream.track, stream.sensor_id, stream.frame_count, stream.livekit->stats().published });
+    return out;
 }
 
 void SensingCamera::print_stats() const
