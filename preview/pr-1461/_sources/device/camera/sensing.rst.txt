@@ -170,8 +170,8 @@ the LiveKit server. The build also needs two header trees; neither is fetched
 by ``setup.sh``:
 
 - ``JETSON_MMAPI_DIR``: the Jetson Multimedia API tree, containing
-  ``include/NvVideoEncoder.h`` and ``samples/common/classes/``. CMake searches
-  ``/usr/src/jetson_multimedia_api``.
+  ``include/nvbufsurface.h``. The encoder classes are copied into the repository
+  and are not taken from it. CMake searches ``/usr/src/jetson_multimedia_api``.
 - ``SIPL_API_DIR``: the Jetson SIPL API tree, containing
   ``sipl/include/NvSIPLCamera.hpp`` (the ``Jetson_SIPL_API_R<release>_aarch64.tbz2``
   package published with the L4T release). CMake searches ``/usr/src/jetson_sipl_api``,

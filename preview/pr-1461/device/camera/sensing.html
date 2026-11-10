@@ -609,8 +609,8 @@ the LiveKit server. The build also needs two header trees; neither is fetched
 by <code class="docutils literal notranslate"><span class="pre">setup.sh</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">JETSON_MMAPI_DIR</span></code>: the Jetson Multimedia API tree, containing
-<code class="docutils literal notranslate"><span class="pre">include/NvVideoEncoder.h</span></code> and <code class="docutils literal notranslate"><span class="pre">samples/common/classes/</span></code>. CMake searches
-<code class="docutils literal notranslate"><span class="pre">/usr/src/jetson_multimedia_api</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">include/nvbufsurface.h</span></code>. The encoder classes are copied into the repository
+and are not taken from it. CMake searches <code class="docutils literal notranslate"><span class="pre">/usr/src/jetson_multimedia_api</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">SIPL_API_DIR</span></code>: the Jetson SIPL API tree, containing
 <code class="docutils literal notranslate"><span class="pre">sipl/include/NvSIPLCamera.hpp</span></code> (the <code class="docutils literal notranslate"><span class="pre">Jetson_SIPL_API_R&lt;release&gt;_aarch64.tbz2</span></code>
 package published with the L4T release). CMake searches <code class="docutils literal notranslate"><span class="pre">/usr/src/jetson_sipl_api</span></code>,
