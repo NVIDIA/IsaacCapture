@@ -245,8 +245,13 @@ struct SiplCapture::Impl
         INvSIPLClient::INvSIPLBuffer* buffer = nullptr;
         const Slot* slot = nullptr;
         uint64_t sequence = 0;
-        uint64_t sensorTime = 0;
+        // The capture timestamp as a platform TSC in nanoseconds; 0 unless the mapping check passed.
+        uint64_t sensorTscNs = 0;
         uint64_t readyMonotonicNs = 0;
+        bool captureMapped = false;
+        int64_t captureMonotonicNs = 0;
+        int64_t captureUncertaintyNs = 0;
+        int64_t captureAnchorAgeNs = 0;
     };
 
     struct Sensor
@@ -263,6 +268,10 @@ struct SiplCapture::Impl
         NvSciSyncObj syncObj = nullptr;
         // One wait context can wait on only one fence at a time, so each sensor's frame thread has its own.
         NvSciSyncCpuWaitContext cpuWaitContext = nullptr;
+
+        // Places the sensor's capture timestamp on CLOCK_MONOTONIC; used on this sensor's frame thread only.
+        std::unique_ptr<SensorClockMap> clockMap;
+        std::string lastMappingReason;
 
         std::mutex mutex;
         bool hasPending = false;
@@ -290,6 +299,9 @@ struct SiplCapture::Impl
     // Signalled whenever a frame becomes pending or capture fails, so waitForFrame needs no polling.
     std::mutex wakeMutex;
     std::condition_variable wake;
+
+    // The platform counter's frequency, read once; 0 where it is not readable.
+    int64_t counterHz = 0;
 
     std::atomic<bool> running{ false };
     std::atomic<bool> failed{ false };
@@ -339,6 +351,7 @@ struct SiplCapture::Impl
 
 void SiplCapture::Impl::configure()
 {
+    counterHz = readCounterHz();
     checkSci(NvSciBufModuleOpen(&bufModule), "NvSciBufModuleOpen");
     checkSci(NvSciSyncModuleOpen(&syncModule), "NvSciSyncModuleOpen");
 
@@ -372,6 +385,9 @@ void SiplCapture::Impl::configure()
         std::unique_ptr<Sensor> sensor(new Sensor());
         sensor->info = info;
         checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &sensor->cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
+        SensorClockMap::Config clockConfig;
+        clockConfig.counterHz = counterHz;
+        sensor->clockMap.reset(new SensorClockMap(clockConfig, readCounterPair));
         // ISP0 only: ICP would double the capture bandwidth for a raw stream nothing here consumes.
         sensor->pipelineConfig.captureOutputRequested = false;
         sensor->pipelineConfig.isp0OutputRequested = true;
@@ -583,8 +599,32 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             next.buffer = buffer;
             next.slot = slot;
             // The capture counter in the SIPL clock domain, unscaled: the start-of-frame value, not end-of-frame.
-            next.sensorTime = nvm->GetImageData().frameCaptureStartTSC;
             next.readyMonotonicNs = monotonicNs();
+            // The start-of-frame value counts the platform counter's ticks (measured against CNTVCT_EL0 on the board);
+            // it is only reported as a TSC in nanoseconds while the mapping check passes.
+            if (sensor.clockMap)
+            {
+                const int64_t ready = static_cast<int64_t>(next.readyMonotonicNs);
+                const SensorTimeMapping mapping =
+                    sensor.clockMap->map(nvm->GetImageData().frameCaptureStartTSC, ready, ready);
+                if (mapping.valid)
+                {
+                    next.sensorTscNs = static_cast<uint64_t>(
+                        counterTicksToNs(static_cast<int64_t>(nvm->GetImageData().frameCaptureStartTSC), counterHz));
+                    next.captureMapped = true;
+                    next.captureMonotonicNs = mapping.captureMonotonicNs;
+                    next.captureUncertaintyNs = mapping.uncertaintyNs;
+                    next.captureAnchorAgeNs = mapping.anchorAgeNs;
+                    sensor.lastMappingReason.clear();
+                }
+                else if (mapping.reason != sensor.lastMappingReason)
+                {
+                    // Reported when the reason changes, not per frame: the frames still flow without a sensor time.
+                    std::fprintf(
+                        stderr, "[sipl] sensor %u: no capture time: %s\n", sensor.info.id, mapping.reason.c_str());
+                    sensor.lastMappingReason = mapping.reason;
+                }
+            }
 
             {
                 std::lock_guard<std::mutex> guard(sensor.mutex);
@@ -733,6 +773,8 @@ void SiplCapture::start()
     m_impl->running.store(true);
     for (auto& sensor : m_impl->sensors)
     {
+        if (sensor->clockMap)
+            sensor->clockMap->reset();
         Impl::Sensor* raw = sensor.get();
         raw->frameThread = std::thread([this, raw] { m_impl->frameLoop(*raw); });
         raw->eventThread = std::thread([this, raw] { m_impl->eventLoop(*raw); });
@@ -801,8 +843,12 @@ bool SiplCapture::acquireLatest(uint32_t cameraId, CaptureFrame* frame)
     out.sequence = taken.sequence;
     out.width = params.width;
     out.height = params.height;
-    out.sensorTime = taken.sensorTime;
-    out.sensorClock = SENSOR_CLOCK_RAW_COUNTER;
+    out.sensorTime = taken.sensorTscNs;
+    out.sensorClock = taken.captureMapped ? SENSOR_CLOCK_TSC_NS : SENSOR_CLOCK_NONE;
+    out.captureMapped = taken.captureMapped;
+    out.captureMonotonicNs = taken.captureMonotonicNs;
+    out.captureUncertaintyNs = taken.captureUncertaintyNs;
+    out.captureAnchorAgeNs = taken.captureAnchorAgeNs;
     out.readyMonotonicNs = taken.readyMonotonicNs;
     // bufferDesc is the surface's DMA-BUF descriptor; whether the encoder accepts it for this NvSci-backed buffer is
     // not established off the board.
