@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace camera_bridge
 {
@@ -32,6 +33,9 @@ struct WorkerConfig
     /// The IPC pictures are full-range (0-255) rather than limited-range (16-235); the encoded stream signals it. The
     /// receiver's IPC catalog does not carry the range, so the operator says it here.
     bool source_full_range = false;
+    /// GPU steps run, in order, on every picture before the downscale (see gpu_ops/gpu_step.hpp). Empty by default:
+    /// the picture is only copied or shrunk.
+    std::vector<std::string> gpu_steps;
     /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::MonotonicUs;
     /// Chrony evidence for capture_monotonic_us; shared by every stream and owned by the caller.
