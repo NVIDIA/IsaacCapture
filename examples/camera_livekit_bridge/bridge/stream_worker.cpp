@@ -3,6 +3,7 @@
 
 #include "stream_worker.hpp"
 
+#include <gpu_ops/box_downscale.hpp>
 #include <ipc_client/cuda_ipc_client.hpp>
 #include <nvenc/nvenc_encoder.hpp>
 #include <video_types/video_types.hpp>
@@ -71,7 +72,12 @@ struct StreamWorker::Impl
             throw std::runtime_error("the IPC publisher has no stream named '" + cfg.stream + "'");
         const IpcStream& stream = client.streams().front();
         layout = read_layout(stream);
-        geometry = { static_cast<uint32_t>(stream.width), static_cast<uint32_t>(stream.height) };
+        source = { static_cast<uint32_t>(stream.width), static_cast<uint32_t>(stream.height) };
+        if (!box_downscale_supported(source.width, source.height, cfg.scale_div))
+            throw std::runtime_error("stream '" + cfg.stream + "' is " + std::to_string(source.width) + "x" +
+                                     std::to_string(source.height) + " and cannot be shrunk by " +
+                                     std::to_string(cfg.scale_div) + " to an even size");
+        geometry = { source.width / cfg.scale_div, source.height / cfg.scale_div };
 
         PublishSpec spec;
         spec.name = cfg.track;
@@ -140,15 +146,25 @@ struct StreamWorker::Impl
             NvencEncoder::Surface surface;
             if (!encoder.acquire(surface))
                 throw std::runtime_error("no free encoder input surface");
+            // The picture goes from the IPC slot to the encoder input on the GPU: a plain copy at full size, or a block
+            // average that shrinks it. The encode below waits for this stream.
             const auto copy_status = [&]
             {
+                if (config.scale_div > 1)
+                {
+                    const Nv12Planes in{ base + layout.y_offset, base + layout.uv_offset, layout.y_pitch,
+                                         layout.uv_pitch };
+                    const Nv12PlanesOut out{ surface.view.y, surface.view.uv, surface.view.y_pitch,
+                                             surface.view.uv_pitch };
+                    return box_downscale_nv12(in, source.width, source.height, out, config.scale_div, copy_stream);
+                }
                 const auto y =
                     cudaMemcpy2DAsync(surface.view.y, surface.view.y_pitch, base + layout.y_offset, layout.y_pitch,
-                                      geometry.width, geometry.height, cudaMemcpyDeviceToDevice, copy_stream);
+                                      source.width, source.height, cudaMemcpyDeviceToDevice, copy_stream);
                 if (y != cudaSuccess)
                     return y;
                 return cudaMemcpy2DAsync(surface.view.uv, surface.view.uv_pitch, base + layout.uv_offset, layout.uv_pitch,
-                                         geometry.width, geometry.height / 2, cudaMemcpyDeviceToDevice, copy_stream);
+                                         source.width, source.height / 2, cudaMemcpyDeviceToDevice, copy_stream);
             }();
             if (copy_status != cudaSuccess)
             {
@@ -204,6 +220,7 @@ struct StreamWorker::Impl
     CudaContext& context;
     CudaIpcClient client;
     PlaneLayout layout;
+    Geometry source;
     Geometry geometry;
     std::unique_ptr<VideoTrackSink> sink;
     cudaStream_t copy_stream = nullptr;

@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.24)
-project(camera_livekit_bridge LANGUAGES CXX)
+project(camera_livekit_bridge LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+endif()
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -55,6 +58,7 @@ message(STATUS "LiveKit SDK=${LIVEKIT_SDK_DIR}")
 
 add_subdirectory(video_types)
 add_subdirectory(ipc_client)
+add_subdirectory(gpu_ops)
 add_subdirectory(nvenc)
 add_subdirectory(livekit_publisher)
 add_subdirectory(probe)
