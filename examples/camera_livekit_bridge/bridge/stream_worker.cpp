@@ -236,6 +236,20 @@ struct StreamWorker::Impl
             const uint64_t sensor_sof_ns = wall_is_realtime ? unsigned_field(notice.metadata, "sensor_sof_ns") : 0;
             frame.user_timestamp_us =
                 user_timestamp_us(config.timestamp_basis, sensor_sof_ns, ready_realtime_ns, ready_monotonic_ns);
+            if (sensor_sof_ns != 0)
+            {
+                const int64_t age_ns = ready_realtime_ns - static_cast<int64_t>(sensor_sof_ns);
+                if (age_ns >= 0 && age_ns <= kMaxCaptureAgeNs)
+                {
+                    const auto age_us = static_cast<uint32_t>(age_ns / 1000);
+                    stats.capture_to_ready_us_total += age_us;
+                    ++stats.capture_to_ready_samples;
+                    uint32_t seen = stats.capture_to_ready_max_us.load();
+                    while (age_us > seen && !stats.capture_to_ready_max_us.compare_exchange_weak(seen, age_us))
+                    {
+                    }
+                }
+            }
             // The source's own sequence keeps frames lost before the encoder visible to the consumer; a source without
             // one is numbered here.
             frame.frame_id = sequence != 0 ? static_cast<uint32_t>(sequence) : ++own_frame_id;

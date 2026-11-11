@@ -127,6 +127,149 @@ void test_decodable(const std::vector<uint8_t>& idr)
     std::remove(path.c_str());
 }
 
+void fill_noise(const NvencEncoder::Surface& s, uint32_t seed)
+{
+    const uint32_t w = s.view.geometry.width;
+    const uint32_t h = s.view.geometry.height;
+    std::vector<uint8_t> luma(static_cast<size_t>(w) * h);
+    uint32_t x = seed * 2654435761u + 1u;
+    for (uint8_t& v : luma)
+    {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        v = static_cast<uint8_t>(x >> 24);
+    }
+    CHECK(cudaMemcpy2D(s.view.y, s.view.y_pitch, luma.data(), w, w, h, cudaMemcpyHostToDevice) == cudaSuccess);
+    CHECK(cudaMemset2D(s.view.uv, s.view.uv_pitch, 128, w, h / 2) == cudaSuccess);
+    CHECK(cudaDeviceSynchronize() == cudaSuccess);
+}
+
+EncodedPacket encode_noise(NvencEncoder& enc, uint32_t seed, uint64_t key, bool force_idr)
+{
+    NvencEncoder::Surface s;
+    CHECK(enc.acquire(s));
+    fill_noise(s, seed);
+    return enc.encode(s, nullptr, key, force_idr);
+}
+
+EncodedPacket encode_flat(NvencEncoder& enc, uint64_t key, bool force_idr)
+{
+    NvencEncoder::Surface s;
+    CHECK(enc.acquire(s));
+    fill_surface(s, 100);
+    return enc.encode(s, nullptr, key, force_idr);
+}
+
+void test_bitrate_getter(NvencEncoder& enc, uint32_t configured)
+{
+    CHECK(enc.bitrate() == configured);
+    enc.set_bitrate(1'000'000);
+    CHECK(enc.bitrate() == 1'000'000);
+    enc.set_bitrate(6'000'000);
+    CHECK(enc.bitrate() == 6'000'000);
+}
+
+void test_zero_bitrate_rejected(NvencEncoder& enc)
+{
+    const uint32_t before = enc.bitrate();
+    bool threw = false;
+    try
+    {
+        enc.set_bitrate(0);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    CHECK(threw);
+    CHECK(enc.bitrate() == before);
+}
+
+void test_output_after_reconfigure(NvencEncoder& enc)
+{
+    // Start from an IDR so the following pictures are P-frames.
+    CHECK(encode_flat(enc, 500, true).keyframe);
+    enc.set_bitrate(2'000'000);
+    for (int i = 0; i < 4; ++i)
+    {
+        const uint64_t key = 501 + static_cast<uint64_t>(i);
+        EncodedPacket p = encode_flat(enc, key, false);
+        CHECK(!p.data.empty());
+        CHECK(starts_with_start_code(p.data));
+        CHECK(p.key == key);
+        CHECK(!p.keyframe);
+        const std::vector<int> types = nal_types(p.data);
+        CHECK(has_type(types, 1));
+        CHECK(!has_type(types, 5));
+    }
+    EncodedPacket idr = encode_flat(enc, 600, true);
+    const std::vector<int> types = nal_types(idr.data);
+    CHECK(idr.keyframe);
+    CHECK(idr.key == 600);
+    CHECK(has_type(types, 7) && has_type(types, 8) && has_type(types, 5));
+}
+
+double mean_noise_size(NvencEncoder& enc, int frames, int skip, uint32_t& seed)
+{
+    double total = 0;
+    int counted = 0;
+    for (int i = 0; i < frames; ++i)
+    {
+        EncodedPacket p = encode_noise(enc, seed++, 700 + static_cast<uint64_t>(seed), false);
+        CHECK(!p.data.empty());
+        if (i >= skip)
+        {
+            total += static_cast<double>(p.data.size());
+            ++counted;
+        }
+    }
+    return counted ? total / counted : 0.0;
+}
+
+void test_rate_changes_output_size(NvencEncoder& enc)
+{
+    uint32_t seed = 1;
+    CHECK(encode_noise(enc, seed++, 650, true).keyframe);
+    enc.set_bitrate(6'000'000);
+    const double high = mean_noise_size(enc, 30, 5, seed);
+    enc.set_bitrate(500'000);
+    const double low = mean_noise_size(enc, 30, 5, seed);
+    std::printf("noise mean packet size: high=%.0f B low=%.0f B ratio=%.3f\n", high, low, high > 0 ? low / high : 0.0);
+    CHECK(high > 0);
+    CHECK(low < 0.3 * high);
+}
+
+void test_decodable_across_reconfigure(NvencEncoder& enc)
+{
+    if (!ffmpeg_available())
+        return;
+    std::vector<uint8_t> stream;
+    auto append = [&stream](const EncodedPacket& p) { stream.insert(stream.end(), p.data.begin(), p.data.end()); };
+    uint32_t seed = 5000;
+    enc.set_bitrate(4'000'000);
+    append(encode_noise(enc, seed++, 800, true));
+    for (int i = 0; i < 5; ++i)
+        append(encode_noise(enc, seed++, 801 + static_cast<uint64_t>(i), false));
+    enc.set_bitrate(800'000);
+    for (int i = 0; i < 6; ++i)
+        append(encode_noise(enc, seed++, 810 + static_cast<uint64_t>(i), false));
+    enc.set_bitrate(3'000'000);
+    for (int i = 0; i < 6; ++i)
+        append(encode_noise(enc, seed++, 820 + static_cast<uint64_t>(i), false));
+
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string path =
+        std::string(tmp ? tmp : "/tmp") + "/test_nvenc_reconfig_" + std::to_string(::getpid()) + ".h264";
+    {
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(stream.data()), static_cast<std::streamsize>(stream.size()));
+    }
+    const int rc = std::system(("ffmpeg -v error -i " + path + " -f null - </dev/null").c_str());
+    CHECK(rc == 0);
+    std::remove(path.c_str());
+}
+
 } // namespace
 
 int main()
@@ -162,6 +305,8 @@ int main()
 
     test_invalid_geometry(*ctx);
     test_pool(*enc, kPool);
+    test_bitrate_getter(*enc, cfg.bitrate_bps);
+    test_zero_bitrate_rejected(*enc);
 
     std::vector<uint8_t> first_idr;
     constexpr int kFrames = 8;
@@ -217,6 +362,9 @@ int main()
     }
 
     test_decodable(first_idr);
+    test_output_after_reconfigure(*enc);
+    test_rate_changes_output_size(*enc);
+    test_decodable_across_reconfigure(*enc);
 
     if (g_failures != 0)
     {
