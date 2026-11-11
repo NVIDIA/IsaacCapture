@@ -110,15 +110,16 @@ struct Nv12Surface
 struct CaptureFrame
 {
     uint32_t cameraId = 0;
-    // Identifies one capture run of the backend; it changes whenever capture restarts, so (sessionEpoch, cameraId,
-    // sequence) names a frame and a clock mapping made in an earlier run is never applied to a later one.
+    // Identifies one capture run; it is the AVS1 bundle session id, so a frame is named by (sessionEpoch, cameraId,
+    // sequence) and a clock mapping made in an earlier run is never applied to a later one.
     uint64_t sessionEpoch = 0;
     // Per-camera, strictly increasing while the camera runs; a gap means frames were missed.
     uint64_t sequence = 0;
     uint32_t width = 0;
     uint32_t height = 0;
-    // The sensor's capture time, unscaled, in `sensorClock`. SENSOR_CLOCK_NONE (and 0) when the backend reports none;
-    // never invented.
+    // The sensor's capture time, unscaled, in `sensorClock`. Only SENSOR_CLOCK_TSC_NS may go into an AVS1 *_ns TSC
+    // field (with its valid flag); a SIPL counter must not until its units are declared. SENSOR_CLOCK_NONE (and 0) when
+    // the backend reports none; never invented.
     uint64_t sensorTime = 0;
     SensorClockDomain sensorClock = SENSOR_CLOCK_NONE;
     // CLOCK_MONOTONIC when the backend had the frame ready: processing time, not capture time.
