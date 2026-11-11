@@ -82,11 +82,17 @@ real Wuji hand. Install it from the repository root, in a venv set up as in
        --mode replay --replay my_take.pkl --model wuji_hand_2 --hand right
 
    # Drive real hardware and let TeleopSession launch the Wuji glove plugin
+   $ ./src/plugins/wuji_glove/install.sh
+   $ python -m isaaccapture.cloudxr.service start --accept-eula
+   $ source ~/.cloudxr/run/cloudxr.env
    $ python -m isaaccapture_examples.retargeting.wuji_hand_retargeter_demo \
        --mode drive --hand right --plugin-path build/src/plugins
 
 Drive mode needs a running CloudXR runtime, an OpenXR hand-tracking source, and
-a reachable Wuji hand.
+a reachable Wuji hand. ``install.sh`` builds the glove plugin and stages its
+``plugin.yaml`` under ``build/src/plugins``, where ``--plugin-path`` finds it;
+see :doc:`/device/hand_tracking/wuji_glove`. The demo does not start CloudXR
+itself, so load the service environment in the same shell.
 
 ``--model`` can be omitted: the model is detected from the connected hand, and
 passing one that disagrees with it is an error. A hand whose reported side
