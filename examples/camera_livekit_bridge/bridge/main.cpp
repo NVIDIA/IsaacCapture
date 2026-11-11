@@ -33,7 +33,7 @@ void usage()
 {
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
-           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N]\n"
+           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N]\n         [--timestamp-basis monotonic_us|capture_monotonic_us|capture_unix_us]\n"
            "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
 }
 
@@ -91,6 +91,16 @@ int main(int argc, char** argv)
             defaults.bitrate_bps = static_cast<uint32_t>(std::atof(next().c_str()) * 1e6);
         else if (arg == "--idr-period")
             defaults.idr_period = static_cast<uint32_t>(std::atoi(next().c_str()));
+        else if (arg == "--timestamp-basis")
+        {
+            const auto basis = parse_timestamp_basis(next());
+            if (!basis)
+            {
+                std::cerr << "--timestamp-basis must be monotonic_us, capture_monotonic_us or capture_unix_us\n";
+                return 2;
+            }
+            defaults.timestamp_basis = *basis;
+        }
         else if (arg == "--gpu")
             gpu = std::atoi(next().c_str());
         else if (arg == "--stream")

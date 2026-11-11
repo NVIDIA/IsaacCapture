@@ -9,6 +9,7 @@
 #include <video_types/video_types.hpp>
 
 #include <chrono>
+#include <ctime>
 #include <cuda_runtime_api.h>
 #include <mutex>
 #include <stdexcept>
@@ -195,9 +196,13 @@ struct StreamWorker::Impl
             frame.size = packet.data.size();
             frame.keyframe = packet.keyframe;
             frame.timestamp_us = static_cast<uint64_t>(monotonic_ns() / 1000);
-            // Capture time: the sensor start-of-frame in Unix nanoseconds when the receiver could derive one; zero
-            // tells consumers the frame has no capture time they can rely on.
-            frame.user_timestamp_us = unsigned_field(notice.metadata, "sensor_sof_ns") / 1000;
+            // The application timestamp on the configured basis; zero tells consumers the frame has no time the
+            // publisher can vouch for (for the capture bases, no usable sensor start-of-frame).
+            timespec realtime{};
+            clock_gettime(CLOCK_REALTIME, &realtime);
+            const int64_t realtime_ns = static_cast<int64_t>(realtime.tv_sec) * 1'000'000'000 + realtime.tv_nsec;
+            frame.user_timestamp_us = user_timestamp_us(
+                config.timestamp_basis, unsigned_field(notice.metadata, "sensor_sof_ns"), realtime_ns, monotonic_ns());
             // The source's own sequence keeps frames lost before the encoder visible to the consumer; a source without
             // one is numbered here.
             frame.frame_id = sequence != 0 ? static_cast<uint32_t>(sequence) : ++own_frame_id;

@@ -5,6 +5,7 @@
 
 #include <livekit_publisher/livekit_session.hpp>
 #include <nvenc/cuda_context.hpp>
+#include <video_types/timestamp_basis.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -27,6 +28,8 @@ struct WorkerConfig
     uint32_t idr_period = 30;
     /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
     uint32_t scale_div = 1;
+    /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
+    TimestampBasis timestamp_basis = TimestampBasis::CaptureUnixUs;
 };
 
 struct WorkerStats
