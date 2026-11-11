@@ -157,6 +157,10 @@ private:
     std::unique_ptr<plugin_utils::HandInjector> m_left_injector;
     std::unique_ptr<plugin_utils::HandInjector> m_right_injector;
     std::shared_ptr<core::ControllerTracker> m_controller_tracker;
+    // Controller aim pose -> wrist joint per hand; set in initialize() from the
+    // built-in offsets or their environment override.
+    XrPosef m_left_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+    XrPosef m_right_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
     std::shared_ptr<core::HandTracker> m_hand_tracker;
     // Inbound HapticCommand tensor; collection identity in
     // inc/manus/manus_glove_collection.hpp. Read each frame in update().
