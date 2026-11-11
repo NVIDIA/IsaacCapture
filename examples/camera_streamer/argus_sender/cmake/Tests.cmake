@@ -139,3 +139,8 @@ add_executable(argus_sender_test_capture_backend
     src/CaptureBackend.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_capture_backend capture_backend)
+
+add_executable(argus_sender_test_encoder_input_slots
+    tests/test_encoder_input_slots.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_encoder_input_slots encoder_input_slots)
