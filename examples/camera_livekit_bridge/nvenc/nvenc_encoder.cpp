@@ -41,6 +41,10 @@ struct NvencEncoder::Impl
         bool in_use = false;
     };
     std::vector<Slot> slots;
+    // Kept after configure() so the rate can be changed later with the same settings.
+    NV_ENC_CONFIG enc_config{};
+    NV_ENC_INITIALIZE_PARAMS init_params{};
+    uint32_t bitrate_bps = 0;
 
     Impl(CudaContext& ctx, const EncoderConfig& cfg) : context(ctx), config(cfg)
     {
@@ -119,18 +123,12 @@ struct NvencEncoder::Impl
         check_nv(fn.nvEncGetEncodePresetConfigEx(encoder, codec, preset, tuning, &preset_config),
                  "nvEncGetEncodePresetConfigEx");
 
-        NV_ENC_CONFIG enc_config = preset_config.presetCfg;
+        enc_config = preset_config.presetCfg;
         enc_config.version = NV_ENC_CONFIG_VER;
         enc_config.gopLength = config.idr_period;
         enc_config.frameIntervalP = 1; // no B-frames
         enc_config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
-        enc_config.rcParams.averageBitRate = config.bitrate_bps;
-        enc_config.rcParams.maxBitRate = config.bitrate_bps;
-        // A buffer of one frame's worth of bits keeps the output close to the instantaneous rate.
-        const uint32_t frame_bits = static_cast<uint32_t>(static_cast<uint64_t>(config.bitrate_bps) *
-                                                          config.fps_denominator / config.fps_numerator);
-        enc_config.rcParams.vbvBufferSize = frame_bits;
-        enc_config.rcParams.vbvInitialDelay = frame_bits;
+        apply_rate(config.bitrate_bps);
         enc_config.rcParams.lookaheadDepth = 0;
         NV_ENC_CONFIG_H264& h264 = enc_config.encodeCodecConfig.h264Config;
         h264.idrPeriod = config.idr_period;
@@ -140,7 +138,8 @@ struct NvencEncoder::Impl
         h264.h264VUIParameters.videoFormat = NV_ENC_VUI_VIDEO_FORMAT_UNSPECIFIED;
         h264.h264VUIParameters.videoFullRangeFlag = config.full_range ? 1 : 0;
 
-        NV_ENC_INITIALIZE_PARAMS init{};
+        NV_ENC_INITIALIZE_PARAMS& init = init_params;
+        init = {};
         init.version = NV_ENC_INITIALIZE_PARAMS_VER;
         init.encodeGUID = codec;
         init.presetGUID = preset;
@@ -156,6 +155,19 @@ struct NvencEncoder::Impl
         init.enablePTD = 1;
         init.encodeConfig = &enc_config;
         check_nv(fn.nvEncInitializeEncoder(encoder, &init), "nvEncInitializeEncoder");
+    }
+
+    // Sets the target bitrate, with a buffer of one frame's worth of bits so the output stays close to the
+    // instantaneous rate.
+    void apply_rate(uint32_t bps)
+    {
+        enc_config.rcParams.averageBitRate = bps;
+        enc_config.rcParams.maxBitRate = bps;
+        const uint32_t frame_bits =
+            static_cast<uint32_t>(static_cast<uint64_t>(bps) * config.fps_denominator / config.fps_numerator);
+        enc_config.rcParams.vbvBufferSize = frame_bits;
+        enc_config.rcParams.vbvInitialDelay = frame_bits;
+        bitrate_bps = bps;
     }
 
     void allocate_surfaces()
@@ -212,6 +224,27 @@ bool NvencEncoder::acquire(Surface& out)
         return true;
     }
     return false;
+}
+
+void NvencEncoder::set_bitrate(uint32_t bitrate_bps)
+{
+    Impl& e = *m_impl;
+    if (bitrate_bps == 0)
+        throw std::invalid_argument("NvencEncoder: the bitrate must be positive");
+    e.context.make_current();
+    e.apply_rate(bitrate_bps);
+    NV_ENC_RECONFIGURE_PARAMS reconfigure{};
+    reconfigure.version = NV_ENC_RECONFIGURE_PARAMS_VER;
+    reconfigure.reInitEncodeParams = e.init_params;
+    reconfigure.reInitEncodeParams.encodeConfig = &e.enc_config;
+    reconfigure.resetEncoder = 0;
+    reconfigure.forceIDR = 0;
+    check_nv(e.fn.nvEncReconfigureEncoder(e.encoder, &reconfigure), "nvEncReconfigureEncoder");
+}
+
+uint32_t NvencEncoder::bitrate() const
+{
+    return m_impl->bitrate_bps;
 }
 
 EncodedPacket NvencEncoder::encode(const Surface& surface, cudaStream_t stream, uint64_t key, bool force_idr)

@@ -39,6 +39,11 @@ struct WorkerStats
     std::atomic<uint64_t> keyframes{ 0 };
     std::atomic<uint64_t> rejected{ 0 };
     std::atomic<uint64_t> encode_us_total{ 0 };
+    /// The bitrate the encoder is configured for now, and how many times congestion feedback changed it.
+    std::atomic<uint32_t> bitrate_bps{ 0 };
+    std::atomic<uint64_t> rate_changes{ 0 };
+    /// The latest target the transport reported (0 until it reports one).
+    std::atomic<uint32_t> target_bps{ 0 };
 };
 
 /**

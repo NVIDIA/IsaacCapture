@@ -64,6 +64,14 @@ public:
     /// Throws std::runtime_error on an encoder error.
     EncodedPacket encode(const Surface& surface, cudaStream_t stream, uint64_t key, bool force_idr);
 
+    /// Changes the target bitrate (and the one-frame rate-control buffer with it) without restarting the stream or
+    /// forcing an IDR. Call between encode() calls, from the thread that encodes. Throws std::runtime_error on an
+    /// encoder error.
+    void set_bitrate(uint32_t bitrate_bps);
+
+    /// The bitrate the encoder is currently configured for.
+    uint32_t bitrate() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
