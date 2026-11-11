@@ -35,8 +35,6 @@ from recording_service import (
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
-from .livekit_latency import LiveKitLatencyProbe
-from .livekit_latency import router as livekit_latency_router
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
