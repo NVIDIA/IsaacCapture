@@ -21,7 +21,9 @@ a pre-encoded access unit. Pixels never reach host memory. The frame's source
 sequence is the track's `frame_id`, the sensor start time (when the receiver
 derived one) is the `user_timestamp` in Unix microseconds, and the sensor
 counter is the 8-byte `user_data`. The newest picture is encoded and older
-queued ones are skipped. The session also answers clock-sync requests that
+queued ones are skipped. The receiver overwrites a slot without notice once its ring wraps, so after the GPU copy the
+bridge checks for a newer notice for the same slot, or as many newer notices as the ring has other slots, and drops the
+picture instead of encoding it (counted as `slot overruns`). The session also answers clock-sync requests that
 arrive as LiveKit data messages.
 
 ## Build
@@ -54,7 +56,7 @@ LiveKit track `TRACK`, shrunk by the integer `DIV` on the GPU (the size must
 divide to even dimensions). Track names, the join token's identity and the
 published sizes must match the streams file egocap is given. The token needs
 publish permission. Every 5 s it prints each track's frame rate, keyframes,
-skipped and rejected frames and mean encode time.
+skipped, rejected and slot-overrun frames and mean encode time.
 
 `--timestamp-basis` sets what each frame's `user_timestamp` means, and the consumer's streams file must name
 the same basis:

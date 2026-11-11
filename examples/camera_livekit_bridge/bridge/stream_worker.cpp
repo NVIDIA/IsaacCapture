@@ -13,6 +13,7 @@
 #include <ctime>
 #include <cuda_runtime_api.h>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -134,9 +135,15 @@ struct StreamWorker::Impl
         uint32_t own_frame_id = 0;
         uint64_t last_session = 0;
         FrameNotice notice;
+        std::optional<FrameNotice> pending; // a newer notice seen while checking the last slot; used next
         while (running)
         {
-            if (!client.next_frame(notice, std::chrono::milliseconds(200)))
+            if (pending)
+            {
+                notice = std::move(*pending);
+                pending.reset();
+            }
+            else if (!client.next_frame(notice, std::chrono::milliseconds(200)))
                 continue;
             // Encode the newest picture: anything queued behind it is older, and a late frame is worse than a skipped
             // one.
@@ -177,6 +184,35 @@ struct StreamWorker::Impl
                 encoder.release(surface);
                 throw std::runtime_error(std::string("GPU copy from the IPC slot failed: ") +
                                          cudaGetErrorString(copy_status));
+            }
+
+            // The publisher overwrites a slot without notice once its ring wraps. The copy must have finished before
+            // that, and a newer notice for the same slot, or as many newer notices as the ring has other slots, means
+            // it may not have. Such a picture is dropped, never encoded.
+            if (cudaStreamSynchronize(copy_stream) != cudaSuccess)
+            {
+                encoder.release(surface);
+                throw std::runtime_error("GPU copy from the IPC slot did not complete");
+            }
+            {
+                bool overwritten = false;
+                std::size_t newer_count = 0;
+                FrameNotice newer;
+                while (client.next_frame(newer, std::chrono::milliseconds(0)))
+                {
+                    ++newer_count;
+                    if (newer.slot == notice.slot && newer.slot_generation > notice.slot_generation)
+                        overwritten = true;
+                    pending = std::move(newer);
+                }
+                if (stream.slots.size() > 1 && newer_count + 1 >= stream.slots.size())
+                    overwritten = true;
+                if (overwritten)
+                {
+                    encoder.release(surface);
+                    ++stats.slot_overruns;
+                    continue;
+                }
             }
 
             const uint64_t session_id = unsigned_field(notice.metadata, "session_id");

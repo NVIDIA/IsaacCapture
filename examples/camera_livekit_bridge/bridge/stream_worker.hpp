@@ -38,6 +38,8 @@ struct WorkerStats
     std::atomic<uint64_t> skipped{ 0 };
     std::atomic<uint64_t> keyframes{ 0 };
     std::atomic<uint64_t> rejected{ 0 };
+    /// Pictures dropped because the publisher may have overwritten the IPC slot during the copy.
+    std::atomic<uint64_t> slot_overruns{ 0 };
     std::atomic<uint64_t> encode_us_total{ 0 };
     /// The bitrate the encoder is configured for now, and how many times congestion feedback changed it.
     std::atomic<uint32_t> bitrate_bps{ 0 };
