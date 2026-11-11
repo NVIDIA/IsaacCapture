@@ -7,6 +7,8 @@
 #ifndef ARGUS_SENDER_CONFIG_H
 #define ARGUS_SENDER_CONFIG_H
 
+#include "CaptureBackend.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -116,6 +118,8 @@ struct RuntimeConfig
 struct AppConfig
 {
     uint32_t version = 1;
+    // Which camera SDK captures. auto picks the only backend this build includes.
+    CaptureBackendKind captureBackend = CAPTURE_BACKEND_AUTO;
     NetworkConfig network;
     RuntimeConfig runtime;
     AlignmentConfig alignment;

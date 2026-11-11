@@ -105,6 +105,20 @@ int main()
     TEST_CHECK(test, !loadText("version: 1\nstreams: []\nunknown: true\n", &invalid, &error));
     TEST_CHECK(test, error.find("unknown key") != std::string::npos);
 
+    {
+        argus_sender::AppConfig backend;
+        const std::string streams =
+            "streams:\n  - id: a\n    type: mono\n    cameras: [{device: 0, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n";
+        TEST_CHECK(test, loadText("version: 1\n" + streams, &backend, &error));
+        TEST_CHECK_EQ(
+            test, static_cast<int>(backend.captureBackend), static_cast<int>(argus_sender::CAPTURE_BACKEND_AUTO));
+        TEST_CHECK(test, loadText("version: 1\ncapture_backend: sipl\n" + streams, &backend, &error));
+        TEST_CHECK_EQ(
+            test, static_cast<int>(backend.captureBackend), static_cast<int>(argus_sender::CAPTURE_BACKEND_SIPL));
+        TEST_CHECK(test, !loadText("version: 1\ncapture_backend: gstreamer\n" + streams, &backend, &error));
+        TEST_CHECK(test, error.find("capture_backend") != std::string::npos);
+    }
+
     TEST_CHECK(test, !loadText("version: 1\n"
                                "streams:\n"
                                "  - {id: a, type: mono, cameras: [{device: 0}], output: {fps: 0}}\n"

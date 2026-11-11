@@ -132,3 +132,9 @@ if(ARGUS_SENDER_HARDWARE_TESTS)
         TIMEOUT 90
     )
 endif()
+
+add_executable(argus_sender_test_capture_backend
+    tests/test_capture_backend.cpp
+    src/CaptureBackend.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_capture_backend capture_backend)
