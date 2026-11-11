@@ -29,11 +29,29 @@ tick, as in the real sender.
 | `--pause NAME@START+SECONDS` | Stop one stream; it resumes at the next IDR. |
 | `--disconnect-at SECONDS` | Close the receiver connection after that long. |
 | `--clock-offset-ms`, `--clock-drift-ppm` | Offset and drift of the synthetic sender clock. |
+| `--fault NAME@START+SECONDS:CODE` | Report `camera_fault` with that code and stop the stream for the window. |
+| `--control-token-file FILE` | Serve the management channel (off without it). `--control-bind` (127.0.0.1), `--control-port` (5610), `--release`. |
 
 Timing fields come from the synthetic clock only. SOF/TSC and Argus frame
 timestamps are never marked valid, so consumers see `sof_delta=n/a`, and
 capture-to-consumer latencies include the clock offset. Nothing here measures
 real sensor timing. Frame numbers count published frames per stream.
+
+## Management channel
+
+With `--control-token-file`, the mock serves the camera producer's management
+channel from the start, whether or not a receiver is connected: an authenticated
+WebSocket (token in `Authorization: Bearer`) carrying one JSON object per text
+message. Requests are `ping` and `get_status`; `state_changed` and `error`
+events are pushed. Status and error codes use the `src/sensing_control` shapes,
+so its `orin_control.py` works against the mock unchanged. With no receiver
+connected the state is `starting`, with the configured streams still listed.
+
+The clock exchange is egocap's: a binary message `Q`, u32 sequence, i64 t1
+(little-endian, 13 bytes) is answered with `R`, sequence, t1, t2, t3 (29 bytes).
+The times are nanoseconds on the mock's synthetic clock, the same one that stamps
+the AVS1 sender fields, so a consumer can map those stamps. Any other binary
+message closes the channel; the real server would need to accept the same frames.
 
 Tests: `python3 -m unittest discover -s mock_sender/tests` and
 `python3 -m unittest tests.test_mock_sender_receiver_wire`, both from this

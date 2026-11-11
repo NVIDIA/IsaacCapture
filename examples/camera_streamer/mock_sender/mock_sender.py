@@ -26,6 +26,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import control
+
 logger = logging.getLogger("isaaccapture.camera_streamer.mock_sender")
 
 HEADER = struct.Struct("!4sHHIHHQQQQIIQ")  # 64 bytes
@@ -67,6 +69,23 @@ class Pause:
     stream: str
     start_s: float
     duration_s: float
+
+
+@dataclass(frozen=True)
+class Fault:
+    stream: str
+    start_s: float
+    duration_s: float
+    code: str
+
+
+def parse_fault(text: str) -> Fault:
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+)@([0-9.]+)\+([0-9.]+):([a-z_]+)", text)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            f"expected NAME@START+DURATION:CODE, got {text!r}"
+        )
+    return Fault(match[1], float(match[2]), float(match[3]), match[4])
 
 
 def parse_pause(text: str) -> Pause:
@@ -232,10 +251,14 @@ class MockSender:
         clock: MockClock,
         pauses: list[Pause],
         disconnects_s: list[float],
+        faults: list[Fault] | None = None,
+        status: control.ProducerStatus | None = None,
     ) -> None:
         self.specs = specs
         self.clock = clock
         self.pauses = pauses
+        self.faults = faults or []
+        self.status = status
         self.disconnects_s = sorted(disconnects_s)
         self._units = {
             spec: split_access_units(sources[spec].read_bytes()) for spec in specs
@@ -247,6 +270,7 @@ class MockSender:
     def serve(self, listener: socket.socket, duration_s: float = 0.0) -> None:
         """Accept receivers one at a time until stopped or duration_s elapses."""
         listener.settimeout(0.5)
+        address = listener.getsockname()[:2]
         started = time.monotonic()
         while not self.stop_event.is_set():
             if duration_s and time.monotonic() - started >= duration_s:
@@ -256,12 +280,30 @@ class MockSender:
             except socket.timeout:
                 continue
             logger.info("receiver connected from %s:%d", *peer[:2])
+            self._set_connected(True, address)
             try:
                 self._stream_to(conn)
             except OSError as exc:
                 logger.info("receiver connection ended: %s", exc)
             finally:
                 conn.close()
+                self._set_connected(False, address)
+
+    def _set_connected(self, connected: bool, address: tuple) -> None:
+        """No receiver means no capture pipeline, as in argus_sender: the state is 'starting'."""
+        if self.status is None:
+            return
+        for index in range(len(self.specs)):
+            self.status.update_stream(
+                index, host=address[0], port=address[1], connected=connected
+            )
+        self.status.set_state("streaming" if connected else "starting")
+
+    def _active_fault(self, elapsed: float) -> Fault | None:
+        return next(
+            (f for f in self.faults if f.start_s <= elapsed < f.start_s + f.duration_s),
+            None,
+        )
 
     def _stream_to(self, conn: socket.socket) -> None:
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -277,12 +319,24 @@ class MockSender:
                 return
             ready_ns = self.clock.now_ns()
             payloads: list[bytes | None] = []
-            for cursor in cursors:
+            fault = self._active_fault(elapsed)
+            if self.status is not None:
+                if fault:
+                    self.status.set_state(
+                        "camera_fault",
+                        {
+                            "code": fault.code,
+                            "message": f"injected fault on {fault.stream} (mock)",
+                        },
+                    )
+                else:
+                    self.status.set_state("streaming")
+            for index, cursor in enumerate(cursors):
                 paused = any(
                     p.stream == cursor.spec.name
                     and p.start_s <= elapsed < p.start_s + p.duration_s
                     for p in self.pauses
-                )
+                ) or bool(fault and fault.stream == cursor.spec.name)
                 if paused and not cursor.paused:
                     logger.info("pausing %s", cursor.spec.name)
                 if cursor.paused and not paused:
@@ -298,6 +352,8 @@ class MockSender:
                     if payload is not None:
                         cursor.stream_sequence += 1
                         cursor.frame_number += 1
+                        if self.status is not None:
+                            self.status.add_frames(index)
                 payloads.append(payload)
             tick += 1
             record = build_record(
@@ -350,6 +406,17 @@ def main(argv: list[str] | None = None) -> int:
         "--disconnect-at", type=float, action="append", default=[], metavar="SECONDS",
         help="close the receiver connection this long after it connects",
     )  # fmt: skip
+    parser.add_argument(
+        "--fault", type=parse_fault, action="append", default=[], metavar="NAME@START+SECONDS:CODE",
+        help="report a camera fault (for example camera_power_missing) and stop that stream",
+    )  # fmt: skip
+    parser.add_argument(
+        "--control-token-file", type=Path,
+        help="serve the management channel, with the secret in this file; off when omitted",
+    )  # fmt: skip
+    parser.add_argument("--control-bind", default="127.0.0.1")
+    parser.add_argument("--control-port", type=int, default=5610)
+    parser.add_argument("--release", default="mock")
     parser.add_argument("--duration", type=float, default=0.0)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
@@ -365,15 +432,36 @@ def main(argv: list[str] | None = None) -> int:
     names = [s.name for s in specs]
     if len(set(names)) != len(names):
         parser.error("stream names must be unique")
-    for pause in args.pause:
-        if pause.stream not in names:
-            parser.error(f"--pause names unknown stream {pause.stream!r}")
+    for item in (*args.pause, *args.fault):
+        if item.stream not in names:
+            parser.error(f"unknown stream {item.stream!r}")
+    clock = MockClock(int(args.clock_offset_ms * 1e6), args.clock_drift_ppm)
+    status = control.ProducerStatus(
+        args.release,
+        [control.StreamStatus(spec.name, index) for index, spec in enumerate(specs)],
+    )
+    channel = None
+    if args.control_token_file:
+        token = args.control_token_file.read_text().strip()
+        if not token:
+            parser.error(f"{args.control_token_file} is empty")
+        channel = control.ControlServer(
+            args.control_bind,
+            args.control_port,
+            token,
+            lambda text: control.handle_message(text, status),
+            clock.now_ns,
+        )
+        status.subscribe(channel.broadcast)
+        logger.info("management channel on %s:%d", args.control_bind, channel.port)
     sender = MockSender(
         specs,
         ensure_sources(specs, args.cache_dir),
-        MockClock(int(args.clock_offset_ms * 1e6), args.clock_drift_ppm),
+        clock,
         args.pause,
         args.disconnect_at,
+        args.fault,
+        status,
     )
     listener = socket.create_server((args.bind, args.port), reuse_port=False)
     logger.info(
@@ -385,6 +473,9 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         listener.close()
+        status.set_state("stopping")
+        if channel:
+            channel.close()
     return 0
 
 
