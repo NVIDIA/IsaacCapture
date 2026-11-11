@@ -1042,6 +1042,13 @@ class Avs1TcpReceiver:
             # Same value under the key the CUDA IPC consumer tools and other viewers
             # already read for their "sof_to_consumer_ms" column.
             "sof_wall_clock_ns": sample_sof_ns,
+            # Qualified sensor capture instant on the sender CLOCK_MONOTONIC (timing extension), with the sender's
+            # stated uncertainty and the age of its sensor anchor; None when the sender sent none or marked it invalid.
+            "sensor_capture_sm_ns": sample.sensor_capture_sm_ns,
+            "sensor_capture_uncertainty_ns": sample.capture_uncertainty_ns,
+            "sensor_anchor_age_ns": sample.capture_anchor_age_ns,
+            "sensor_capture_valid": sample.capture_valid,
+            "sender_capture_clock": ("monotonic" if sample.capture_valid else None),
             "sensor_sof_lag_ms": (
                 sof_lag_ns / 1.0e6 if sof_lag_ns is not None else None
             ),

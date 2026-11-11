@@ -21,12 +21,24 @@ VERSION = 1
 HEADER = struct.Struct("!4sHHIHHQQQQIIQ")
 STREAM = struct.Struct("!HHBBHIIIIQHHI")
 SAMPLE = struct.Struct("!HBBHHIIQQQQQQII")
+# Timing extension: one record per sample after the sample descriptors, present when BUNDLE_TIMING_EXT is set.
+# capture_sm_ns: the qualified sensor capture instant on the sender CLOCK_MONOTONIC; uncertainty_ns: the sender's
+# bound on the sensor-to-sender-clock mapping; anchor_age_ns: age of the sensor anchor when the frame was stamped;
+# flags bit0 VALID (otherwise every other field is zero and the frame carries no capture claim); clock_domain 1 =
+# CLOCK_MONOTONIC.
+TIMING = struct.Struct("!QIIHHI")
+TIMING_VALID = 1 << 0
+TIMING_DOMAIN_MONOTONIC = 1
 
 BUNDLE_SENDER_CLOCK_VALID = 1 << 0
 BUNDLE_SENDER_CLOCK_TAI = 1 << 1
 BUNDLE_SENDER_TSC_VALID = 1 << 2
+BUNDLE_TIMING_EXT = 1 << 3
 BUNDLE_KNOWN_FLAGS = (
-    BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_CLOCK_TAI | BUNDLE_SENDER_TSC_VALID
+    BUNDLE_SENDER_CLOCK_VALID
+    | BUNDLE_SENDER_CLOCK_TAI
+    | BUNDLE_SENDER_TSC_VALID
+    | BUNDLE_TIMING_EXT
 )
 
 # Sensor SOF -> sender capture-ready lag accepted by ``sensor_sof_ns``.
@@ -72,6 +84,11 @@ class Avs1Sample:
     payload_offset: int
     payload_length: int
     payload: memoryview
+    # From the timing extension; None/False when the bundle has none or the record is not valid.
+    sensor_capture_sm_ns: Optional[int] = None
+    capture_uncertainty_ns: Optional[int] = None
+    capture_anchor_age_ns: Optional[int] = None
+    capture_valid: bool = False
 
     @property
     def present(self) -> bool:
@@ -184,6 +201,8 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
         raise ValueError("invalid AVS1 bundle identity/count")
 
     expected_descriptors = stream_count * STREAM.size + sample_count * SAMPLE.size
+    if flags & BUNDLE_TIMING_EXT:
+        expected_descriptors += sample_count * TIMING.size
     if descriptor_bytes != expected_descriptors:
         raise ValueError("AVS1 descriptor byte count mismatch")
     expected_length = header_bytes + descriptor_bytes + payload_bytes
@@ -244,6 +263,11 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
         if fields[4] != 0:
             raise ValueError("AVS1 sample reserved field is nonzero")
         raw_samples.append(fields)
+    raw_timing = []
+    if flags & BUNDLE_TIMING_EXT:
+        for _ in range(sample_count):
+            raw_timing.append(TIMING.unpack_from(packet, offset))
+            offset += TIMING.size
 
     payload_start = header_bytes + descriptor_bytes
     streams: list[Avs1Stream] = []
@@ -321,6 +345,31 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
                     (payload_offset, payload_offset + payload_length)
                 )
             sender_timing_valid = bool(sample_flags & SAMPLE_SENDER_TIMING_VALID)
+            capture_sm_ns = capture_uncertainty_ns = capture_anchor_age_ns = None
+            capture_valid = False
+            if raw_timing:
+                (t_sm, t_unc, t_age, t_flags, t_domain, t_reserved) = raw_timing[
+                    first_sample + camera_index
+                ]
+                if t_reserved != 0 or t_flags & ~TIMING_VALID:
+                    raise ValueError("AVS1 timing record has reserved bits set")
+                if t_flags & TIMING_VALID:
+                    if not sample_present:
+                        raise ValueError(
+                            "AVS1 timing record is valid for an absent sample"
+                        )
+                    if t_domain != TIMING_DOMAIN_MONOTONIC or t_sm == 0:
+                        raise ValueError(
+                            "AVS1 valid timing record has no monotonic capture time"
+                        )
+                    capture_sm_ns, capture_uncertainty_ns, capture_anchor_age_ns = (
+                        int(t_sm),
+                        int(t_unc),
+                        int(t_age),
+                    )
+                    capture_valid = True
+                elif t_sm or t_unc or t_age or t_domain:
+                    raise ValueError("AVS1 invalid timing record carries values")
             samples.append(
                 Avs1Sample(
                     stream_index=stream_index,
@@ -350,6 +399,10 @@ def parse_avs1_record(record: bytes | bytearray | memoryview) -> Avs1Bundle:
                     payload_offset=int(payload_offset),
                     payload_length=int(payload_length),
                     payload=packet[begin:end],
+                    sensor_capture_sm_ns=capture_sm_ns,
+                    capture_uncertainty_ns=capture_uncertainty_ns,
+                    capture_anchor_age_ns=capture_anchor_age_ns,
+                    capture_valid=capture_valid,
                 )
             )
         streams.append(

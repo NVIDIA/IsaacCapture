@@ -64,12 +64,42 @@ the same basis:
 | Basis | Value |
 | --- | --- |
 | `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
+| `capture_monotonic_us` | The sensor capture instant from the sender's own timing record (AVS1 timing extension, on the sender's monotonic clock), moved onto this host's monotonic clock by a measured mapping. Needs `--sender-clock`; see below. |
 | `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
+
+### Capture time through a measured sender clock
+
+With `--timestamp-basis capture_monotonic_us --sender-clock IPV4:PORT`, the bridge measures the sender's monotonic
+clock against its own over the sender's UDP clock responder (a 13-byte request `Q`, u32 sequence, i64 t1 and a
+29-byte reply `R`, sequence, t1, t2, t3, little-endian, five times a second) and applies the mapping to each
+frame's capture instant. The responder is stateless and unauthenticated; the bridge accepts only a datagram from the
+sender's address, of exactly that size and tag, that answers the outstanding request and was sent since the last
+reset. A lost or late reply is a missed sample. A new capture session (a changed `session_id`) resets the mapping and
+voids the outstanding request, so a reply in flight across the change cannot seed the new epoch.
+
+A frame gets a capture `user_timestamp` only when all of these hold; otherwise it carries none, and frame-ready
+time is never offered in its place:
+
+- the sender marked the frame's timing record valid;
+- there is a current mapping (a reply within 5 s) with at least three accepted exchanges in its epoch, so a new
+  capture session or a detected step of the sender's clock waits for fresh exchanges;
+- the exchange uncertainty (half the round trip plus a 200 ppm drift allowance) plus the uncertainty the sender
+  states for its sensor mapping, both legs together, is within the budget (`--clock-uncertainty-budget-ms`,
+  default 5, or `EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS`). The budget covers the sensor-to-host chain only; egocap's own
+  publisher-to-recorder uncertainty adds to it;
+- the mapped capture time is not after the frame was ready or more than 1 s before it.
+
+A step of the sender's clock shows at the next exchange (a discontinuity, a new epoch, warm-up); frames mapped in
+between, at most one exchange interval, carry the old offset. A real monotonic clock does not step, so this
+exposure is the cost of not trusting a learned age level, which cannot tell a step from a stall.
+
+The `[stats]` line counts qualified frames and each reason frames were withheld, with the last combined
+uncertainty and the mapping epoch.
 
 `capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
 start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
-a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
-need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
+a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused without
+`--sender-clock`.
 
 `--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
 congestion control reports for each track (with 10% headroom, never above the maximum or below 0.5 Mbps), so a

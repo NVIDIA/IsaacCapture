@@ -134,6 +134,7 @@ struct StreamWorker::Impl
         bool need_idr = true;
         uint32_t own_frame_id = 0;
         uint64_t last_session = 0;
+        CaptureQualifier qualifier(config.clock_budget_ns);
         FrameNotice notice;
         std::optional<FrameNotice> pending; // a newer notice seen while checking the last slot; used next
         while (running)
@@ -221,6 +222,9 @@ struct StreamWorker::Impl
                 // A restarted source: start the track's picture sequence over at an IDR.
                 need_idr = true;
                 last_session = session_id;
+                // Nothing measured before the restart applies to the frames after it.
+                if (config.sender_clock != nullptr)
+                    config.sender_clock->begin_session(session_id);
             }
             const auto feedback = sink->take_feedback();
             const bool force_idr = need_idr || feedback.keyframe_requested;
@@ -272,6 +276,27 @@ struct StreamWorker::Impl
             const uint64_t sensor_sof_ns = wall_is_realtime ? unsigned_field(notice.metadata, "sensor_sof_ns") : 0;
             frame.user_timestamp_us =
                 user_timestamp_us(config.timestamp_basis, sensor_sof_ns, ready_realtime_ns, ready_monotonic_ns);
+            if (config.timestamp_basis == TimestampBasis::CaptureMonotonicUs)
+            {
+                // The capture time comes from the sender's own timing record, on its monotonic clock, moved onto this
+                // host's by the measured mapping. Without a qualified mapping no capture claim is made; the frame-ready
+                // time is never offered in its place.
+                const auto valid = notice.metadata.find("sensor_capture_valid");
+                CaptureInput input;
+                input.sender_valid = valid != notice.metadata.end() && valid->is_boolean() && valid->get<bool>();
+                input.capture_sm_ns = static_cast<int64_t>(unsigned_field(notice.metadata, "sensor_capture_sm_ns"));
+                input.upstream_uncertainty_ns =
+                    static_cast<int64_t>(unsigned_field(notice.metadata, "sensor_capture_uncertainty_ns"));
+                input.ready_monotonic_ns = ready_monotonic_ns;
+                const SenderClockSnapshot clock = config.sender_clock->snapshot();
+                const CaptureResult result = qualifier.qualify(input, clock.mapping, clock.accepted_in_epoch);
+                ++stats.verdicts[static_cast<std::size_t>(result.verdict)];
+                stats.last_uncertainty_ns = result.combined_uncertainty_ns;
+                stats.last_epoch = result.epoch;
+                frame.user_timestamp_us = result.verdict == CaptureVerdict::Qualified ?
+                                              static_cast<uint64_t>(result.capture_bridge_ns) / 1000 :
+                                              0;
+            }
             if (sensor_sof_ns != 0)
             {
                 const int64_t age_ns = ready_realtime_ns - static_cast<int64_t>(sensor_sof_ns);

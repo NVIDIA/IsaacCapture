@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <clock_exchange/capture_qualifier.hpp>
 #include <livekit_publisher/livekit_session.hpp>
 #include <nvenc/cuda_context.hpp>
+#include <sender_clock/sender_clock_client.hpp>
 #include <video_types/timestamp_basis.hpp>
 
 #include <atomic>
@@ -30,6 +32,11 @@ struct WorkerConfig
     uint32_t scale_div = 1;
     /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::CaptureUnixUs;
+    /// The sender's clock, measured over its management channel; required for capture_monotonic_us. Shared by every
+    /// stream (one sender, one clock) and owned by the caller.
+    SenderClockClient* sender_clock = nullptr;
+    /// The largest combined clock uncertainty a capture time may carry.
+    int64_t clock_budget_ns = 5'000'000;
 };
 
 struct WorkerStats
@@ -49,6 +56,11 @@ struct WorkerStats
     std::atomic<uint64_t> capture_to_ready_us_total{ 0 };
     std::atomic<uint64_t> capture_to_ready_samples{ 0 };
     std::atomic<uint32_t> capture_to_ready_max_us{ 0 };
+    /// capture_monotonic_us: how many frames got each verdict, and the last qualified frame's combined uncertainty and
+    /// the mapping epoch it used.
+    std::atomic<uint64_t> verdicts[8] = {};
+    std::atomic<int64_t> last_uncertainty_ns{ 0 };
+    std::atomic<uint64_t> last_epoch{ 0 };
     /// The latest target the transport reported (0 until it reports one).
     std::atomic<uint32_t> target_bps{ 0 };
 };

@@ -7,6 +7,7 @@
 
 #include <livekit_publisher/livekit_session.hpp>
 #include <nvenc/cuda_context.hpp>
+#include <sender_clock/sender_clock_client.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -67,6 +68,10 @@ int main(int argc, char** argv)
     std::vector<StreamSpec> streams;
     WorkerConfig defaults;
     int gpu = 0;
+    std::string sender_host;
+    uint16_t sender_port = 0;
+    if (const char* budget = std::getenv("EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"))
+        defaults.clock_budget_ns = static_cast<int64_t>(std::atof(budget) * 1e6);
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -99,15 +104,22 @@ int main(int argc, char** argv)
                 std::cerr << "--timestamp-basis must be monotonic_us, capture_monotonic_us or capture_unix_us\n";
                 return 2;
             }
-            if (*basis == TimestampBasis::CaptureMonotonicUs)
-            {
-                std::cerr
-                    << "--timestamp-basis capture_monotonic_us is not available: it needs a measured sender-to-host clock "
-                       "mapping, which is not implemented. Use monotonic_us (frame-ready time) or capture_unix_us.\n";
-                return 2;
-            }
             defaults.timestamp_basis = *basis;
         }
+        else if (arg == "--sender-clock")
+        {
+            const std::string endpoint = next();
+            const auto colon = endpoint.rfind(':');
+            if (colon == std::string::npos || colon == 0 || colon + 1 == endpoint.size())
+            {
+                std::cerr << "--sender-clock needs IPV4:PORT, got '" << endpoint << "'\n";
+                return 2;
+            }
+            sender_host = endpoint.substr(0, colon);
+            sender_port = static_cast<uint16_t>(std::atoi(endpoint.substr(colon + 1).c_str()));
+        }
+        else if (arg == "--clock-uncertainty-budget-ms")
+            defaults.clock_budget_ns = static_cast<int64_t>(std::atof(next().c_str()) * 1e6);
         else if (arg == "--gpu")
             gpu = std::atoi(next().c_str());
         else if (arg == "--stream")
@@ -142,6 +154,15 @@ int main(int argc, char** argv)
         return 2;
     }
 
+    if (defaults.timestamp_basis == TimestampBasis::CaptureMonotonicUs && sender_host.empty())
+    {
+        std::cerr
+            << "--timestamp-basis capture_monotonic_us needs --sender-clock IPV4:PORT: the "
+               "sender's capture time is only used through a measured mapping of its clock. Use monotonic_us for the "
+               "frame-ready time or capture_unix_us for a Unix-time sensor stamp.\n";
+        return 2;
+    }
+
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
@@ -149,6 +170,16 @@ int main(int argc, char** argv)
     {
         CudaContext context(gpu);
         auto session = LiveKitSession::connect(url, read_token(token_file));
+        std::unique_ptr<SenderClockClient> sender_clock;
+        if (!sender_host.empty())
+        {
+            SenderClockConfig clock_config;
+            clock_config.host = sender_host;
+            clock_config.port = sender_port;
+            sender_clock = std::make_unique<SenderClockClient>(clock_config);
+            sender_clock->start();
+            defaults.sender_clock = sender_clock.get();
+        }
         std::vector<std::unique_ptr<StreamWorker>> workers;
         for (const auto& spec : streams)
         {
@@ -205,6 +236,18 @@ int main(int argc, char** argv)
                         std::cerr << ", capture-to-ready "
                                   << static_cast<double>(stats.capture_to_ready_us_total.load()) / ready_samples / 1000.0
                                   << " ms mean " << stats.capture_to_ready_max_us.load() / 1000.0 << " ms max";
+                    }
+                    if (defaults.timestamp_basis == TimestampBasis::CaptureMonotonicUs)
+                    {
+                        std::cerr << ", capture claims: " << stats.verdicts[0].load() << " qualified";
+                        for (std::size_t v = 1; v < 7; ++v)
+                        {
+                            if (stats.verdicts[v].load() > 0)
+                                std::cerr << ", " << to_string(static_cast<CaptureVerdict>(v)) << " "
+                                          << stats.verdicts[v].load();
+                        }
+                        std::cerr << ", combined uncertainty " << stats.last_uncertainty_ns.load() / 1000.0
+                                  << " us, mapping epoch " << stats.last_epoch.load();
                     }
                     std::cerr << "\n";
                     last_frames[i] = frames;

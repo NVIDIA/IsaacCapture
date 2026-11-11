@@ -16,6 +16,7 @@ timestamps are never marked valid.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import random
 import re
@@ -28,6 +29,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import clock_responder
 
 logger = logging.getLogger("isaaccapture.camera_streamer.mock_sender")
 
@@ -43,6 +46,14 @@ SAMPLE_SOF_TSC_VALID = 0x0002
 BUNDLE_SENDER_CLOCK_VALID = 0x0001  # realtime domain; the TAI flag stays clear
 BUNDLE_SENDER_TSC_VALID = 0x0004
 TSC_BASE_NS = 7_000_000_000_000  # arbitrary origin of the synthetic TSC domain
+BUNDLE_TIMING_EXT = (
+    0x0008  # one TIMING record per sample follows the sample descriptors
+)
+TIMING_VALID = 0x0001
+CLOCK_DOMAIN_MONOTONIC = 1
+TIMING = struct.Struct(
+    "!QIIHHI"
+)  # 24 bytes: capture_sm_ns, uncertainty_ns, anchor_age_ns, flags, domain, reserved
 LOOP_SECONDS = 12
 GOP_SECONDS = 2
 
@@ -152,20 +163,79 @@ def split_access_units(data: bytes) -> list[tuple[bytes, bool]]:
 
 
 class MockClock:
-    """Synthetic sender clock: this host's wall clock plus an offset and a drift."""
+    """The mock sender's clocks, all derived from this host's CLOCK_MONOTONIC reading so that ground truth is exact.
 
-    def __init__(self, offset_ns: int, drift_ppm: float) -> None:
+    Wall: a synthetic Unix clock (the sender's wall clock) with an offset and a drift.
+    SM: the sender's CLOCK_MONOTONIC, a different machine's boot-relative clock, with its own offset and drift and
+    deterministic steps. The clock exchange is answered on SM and the transported capture timestamps are on SM.
+    TSC: the sensor counter domain, unrelated to either.
+    """
+
+    def __init__(
+        self,
+        offset_ns: int,
+        drift_ppm: float,
+        sm_offset_ns: int = 0,
+        sm_drift_ppm: float = 0.0,
+    ) -> None:
         self._t0 = time.monotonic_ns()
+        self._wall_epoch = time.time_ns() - self._t0
         self._offset = offset_ns
         self._drift = drift_ppm * 1e-6
+        self._sm_offset = sm_offset_ns
+        self._sm_drift = sm_drift_ppm * 1e-6
+        self._step_ns = 0
+        self._lock = threading.Lock()
+
+    def wall_at(self, mono_ns: int) -> int:
+        return (
+            mono_ns
+            + self._wall_epoch
+            + self._offset
+            + int((mono_ns - self._t0) * self._drift)
+        )
 
     def now_ns(self) -> int:
-        elapsed = time.monotonic_ns() - self._t0
-        return time.time_ns() + self._offset + int(elapsed * self._drift)
+        return self.wall_at(time.monotonic_ns())
+
+    def sm_at(self, mono_ns: int) -> int:
+        with self._lock:
+            step = self._step_ns
+        return (
+            mono_ns
+            + self._sm_offset
+            + int((mono_ns - self._t0) * self._sm_drift)
+            + step
+        )
+
+    def sm_ns(self) -> int:
+        return self.sm_at(time.monotonic_ns())
+
+    def step_sm(self, delta_ns: int) -> None:
+        """Step the sender's monotonic clock, as a suspend/resume or a clock fix would."""
+        with self._lock:
+            self._step_ns += delta_ns
+
+    def tsc_at(self, mono_ns: int) -> int:
+        return TSC_BASE_NS + mono_ns
 
     def tsc_ns(self) -> int:
         """The synthetic sensor TSC: monotonic, unrelated to the wall clock's value."""
-        return TSC_BASE_NS + time.monotonic_ns()
+        return self.tsc_at(time.monotonic_ns())
+
+
+@dataclass
+class TimingOptions:
+    """What the mock adds for the capture-time contract (see README: timing extension)."""
+
+    ext: bool = False
+    #: The bound the sender states for its sensor-to-SM mapping.
+    uncertainty_ns: int = 500_000
+    #: (start_s, duration_s) windows, since the receiver connected, in which records are not valid.
+    invalid_windows: list[tuple[float, float]] = field(default_factory=list)
+    #: (at_s, delta_ns) steps of the SM clock, since the receiver connected.
+    sm_steps: list[tuple[float, int]] = field(default_factory=list)
+    ground_truth: Path | None = None
 
 
 @dataclass
@@ -199,6 +269,7 @@ def build_record(
     enqueue_ns: int,
     ready_tsc_ns: int,
     sof_lag_ns: int,
+    timing_records: list[bytes] | None = None,
 ) -> bytes:
     """One length-prefixed AVS1 record: every stream has a descriptor, present or not."""
     streams, samples, body = [], [], b""
@@ -226,8 +297,12 @@ def build_record(
                 SAMPLE.pack(index, 0, 0, 0, 0, index, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             )
     descriptors = b"".join(streams) + b"".join(samples)
+    bundle_flags = BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_TSC_VALID
+    if timing_records is not None:
+        descriptors += b"".join(timing_records)
+        bundle_flags |= BUNDLE_TIMING_EXT
     header = HEADER.pack(
-        b"AVS1", 1, BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_TSC_VALID, HEADER.size,
+        b"AVS1", 1, bundle_flags, HEADER.size,
         len(streams), len(samples), bundle_sequence, session_id, ready_ns, enqueue_ns,
         len(descriptors), len(body), ready_tsc_ns,
     )  # fmt: skip
@@ -247,11 +322,13 @@ class MockSender:
         pauses: list[Pause],
         disconnects_s: list[float],
         sof_lag_ns: int = 20_000_000,
+        timing: TimingOptions | None = None,
     ) -> None:
         self.specs = specs
         self.clock = clock
         self.sof_lag_ns = sof_lag_ns
         self.pauses = pauses
+        self.timing = timing or TimingOptions()
         self.disconnects_s = sorted(disconnects_s)
         self._units = {
             spec: split_access_units(sources[spec].read_bytes()) for spec in specs
@@ -288,15 +365,43 @@ class MockSender:
         disconnects = list(self.disconnects_s)
         start = time.monotonic()
         tick = 0
+        steps = sorted(self.timing.sm_steps)
+        truth = (
+            self.timing.ground_truth.open("a", encoding="utf-8")
+            if self.timing.ground_truth is not None
+            else None
+        )
+        try:
+            self._stream_loop(
+                conn, cursors, session_id, disconnects, start, tick, steps, truth
+            )
+        finally:
+            if truth is not None:
+                truth.close()
+
+    def _stream_loop(
+        self, conn, cursors, session_id, disconnects, start, tick, steps, truth
+    ) -> None:
         while not self.stop_event.is_set():
             elapsed = time.monotonic() - start
             if disconnects and elapsed >= disconnects[0]:
                 logger.info("scripted disconnect at %.1fs", disconnects.pop(0))
                 return
-            ready_ns = self.clock.now_ns()
-            ready_tsc_ns = self.clock.tsc_ns()
+            while steps and elapsed >= steps[0][0]:
+                at_s, delta_ns = steps.pop(0)
+                logger.info(
+                    "stepping the sender monotonic clock by %.3f ms at %.1fs",
+                    delta_ns / 1e6,
+                    at_s,
+                )
+                self.clock.step_sm(delta_ns)
+            # One instant stamps every clock, so the ground truth is exact.
+            t_mono = time.monotonic_ns()
+            ready_ns = self.clock.wall_at(t_mono)
+            ready_tsc_ns = self.clock.tsc_at(t_mono)
+            ready_sm_ns = self.clock.sm_at(t_mono)
             payloads: list[bytes | None] = []
-            for cursor in cursors:
+            for index, cursor in enumerate(cursors):
                 paused = any(
                     p.stream == cursor.spec.name
                     and p.start_s <= elapsed < p.start_s + p.duration_s
@@ -319,15 +424,52 @@ class MockSender:
                         cursor.frame_number += 1
                 payloads.append(payload)
             tick += 1
+            timing_records = None
+            if self.timing.ext:
+                invalid = any(
+                    a <= elapsed < a + d for a, d in self.timing.invalid_windows
+                )
+                capture_sm_ns = ready_sm_ns - self.sof_lag_ns
+                # The sensor anchor is refreshed once a second since the connection started.
+                anchor_age_ns = int((elapsed * 1e9) % 1_000_000_000)
+                timing_records = [
+                    TIMING.pack(
+                        capture_sm_ns, self.timing.uncertainty_ns, anchor_age_ns,
+                        TIMING_VALID, CLOCK_DOMAIN_MONOTONIC, 0,
+                    )
+                    if payload is not None and not invalid
+                    else TIMING.pack(0, 0, 0, 0, 0, 0)
+                    for payload in payloads
+                ]  # fmt: skip
+            if truth is not None:
+                for cursor, payload in zip(cursors, payloads):
+                    if payload is None:
+                        continue
+                    truth.write(
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "stream": cursor.spec.name,
+                                "stream_sequence": cursor.stream_sequence,
+                                "true_capture_pc_mono_ns": t_mono - self.sof_lag_ns,
+                                "ready_pc_mono_ns": t_mono,
+                                "capture_sm_ns": ready_sm_ns - self.sof_lag_ns,
+                                "sm_minus_pc_mono_ns": ready_sm_ns - t_mono,
+                            }
+                        )
+                        + "\n"
+                    )
+                truth.flush()
             record = build_record(
                 cursors,
                 payloads,
                 tick,
                 session_id,
                 ready_ns,
-                self.clock.now_ns(),
+                self.clock.wall_at(time.monotonic_ns()),
                 ready_tsc_ns,
                 self.sof_lag_ns,
+                timing_records,
             )
             conn.sendall(record)
             self.bundles_sent += 1
@@ -380,6 +522,54 @@ def main(argv: list[str] | None = None) -> int:
         "--disconnect-at", type=float, action="append", default=[], metavar="SECONDS",
         help="close the receiver connection this long after it connects",
     )  # fmt: skip
+    parser.add_argument(
+        "--timing-ext", action="store_true",
+        help="emit the AVS1 timing extension (a qualified sensor capture time on the sender monotonic clock)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--sm-offset-ms",
+        type=float,
+        default=0.0,
+        help="sender monotonic clock offset from this host's",
+    )
+    parser.add_argument("--sm-drift-ppm", type=float, default=0.0)
+    parser.add_argument(
+        "--sm-step", action="append", default=[], metavar="AT_S:DELTA_MS",
+        help="step the sender monotonic clock by DELTA_MS this many seconds after the receiver connects; repeatable",
+    )  # fmt: skip
+    parser.add_argument(
+        "--sensor-uncertainty-us", type=float, default=500.0,
+        help="the bound the timing extension states for the sensor-to-sender-clock mapping",
+    )  # fmt: skip
+    parser.add_argument(
+        "--timing-invalid", action="append", default=[], metavar="START_S+DURATION_S",
+        help="mark the timing records not valid (no capture claim) in this window; repeatable",
+    )  # fmt: skip
+    parser.add_argument(
+        "--ground-truth", type=Path,
+        help="append one JSON line per published frame with the true capture instant on this host's monotonic clock",
+    )  # fmt: skip
+    parser.add_argument(
+        "--clock-port", type=int, default=0,
+        help="UDP port of the sender clock responder (0 disables); the bridge's --sender-clock points here",
+    )  # fmt: skip
+    parser.add_argument("--clock-bind", default="127.0.0.1")
+    parser.add_argument(
+        "--clock-mute", action="append", default=[], metavar="START_S+DURATION_S",
+        help="stop answering clock requests in this window, seconds after the mock starts; repeatable",
+    )  # fmt: skip
+    parser.add_argument(
+        "--clock-loss",
+        type=float,
+        default=0.0,
+        help="fraction of requests left unanswered",
+    )
+    parser.add_argument(
+        "--clock-reorder",
+        type=float,
+        default=0.0,
+        help="fraction of replies sent after the next one",
+    )
     parser.add_argument("--duration", type=float, default=0.0)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
@@ -395,18 +585,56 @@ def main(argv: list[str] | None = None) -> int:
     names = [s.name for s in specs]
     if len(set(names)) != len(names):
         parser.error("stream names must be unique")
-    for pause in args.pause:
-        if pause.stream not in names:
-            parser.error(f"--pause names unknown stream {pause.stream!r}")
+    for item in args.pause:
+        if item.stream not in names:
+            parser.error(f"unknown stream {item.stream!r}")
     if not 0.0 <= args.sof_lag_ms <= 500.0:
         parser.error("--sof-lag-ms must be in [0, 500]")
+    clock = MockClock(
+        int(args.clock_offset_ms * 1e6),
+        args.clock_drift_ppm,
+        int(args.sm_offset_ms * 1e6),
+        args.sm_drift_ppm,
+    )
+    timing = TimingOptions(
+        ext=args.timing_ext,
+        uncertainty_ns=int(args.sensor_uncertainty_us * 1000),
+        ground_truth=args.ground_truth,
+    )
+    for text in args.sm_step:
+        match = re.fullmatch(r"([0-9.]+):(-?[0-9.]+)", text)
+        if not match:
+            parser.error(f"--sm-step expects AT_S:DELTA_MS, got {text!r}")
+        timing.sm_steps.append((float(match[1]), int(float(match[2]) * 1e6)))
+    for text in args.timing_invalid:
+        match = re.fullmatch(r"([0-9.]+)\+([0-9.]+)", text)
+        if not match:
+            parser.error(f"--timing-invalid expects START_S+DURATION_S, got {text!r}")
+        timing.invalid_windows.append((float(match[1]), float(match[2])))
+    responder = None
+    if args.clock_port:
+        mute_windows = []
+        for text in args.clock_mute:
+            if not re.fullmatch(r"[0-9.]+\+[0-9.]+", text):
+                parser.error(f"--clock-mute expects START_S+DURATION_S, got {text!r}")
+            mute_windows.append(clock_responder.parse_window(text))
+        responder = clock_responder.ClockResponder(
+            args.clock_bind,
+            args.clock_port,
+            clock.sm_ns,
+            clock_responder.mute_predicate(mute_windows),
+            args.clock_loss,
+            args.clock_reorder,
+        )
+        logger.info("clock responder on udp %s:%d", args.clock_bind, responder.port)
     sender = MockSender(
         specs,
         ensure_sources(specs, args.cache_dir),
-        MockClock(int(args.clock_offset_ms * 1e6), args.clock_drift_ppm),
+        clock,
         args.pause,
         args.disconnect_at,
         int(args.sof_lag_ms * 1e6),
+        timing,
     )
     listener = socket.create_server((args.bind, args.port), reuse_port=False)
     logger.info(
@@ -418,6 +646,8 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         listener.close()
+        if responder:
+            responder.close()
     return 0
 
 

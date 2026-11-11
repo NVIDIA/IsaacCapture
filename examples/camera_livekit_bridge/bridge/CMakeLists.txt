@@ -12,6 +12,8 @@ target_link_libraries(camera_livekit_bridge
         camera_livekit_bridge::gpu_ops
         camera_livekit_bridge::nvenc
         camera_livekit_bridge::livekit_publisher
+        camera_livekit_bridge::sender_clock
+        camera_livekit_bridge::clock_exchange
         camera_livekit_bridge::video_types
         CUDA::cudart
         Threads::Threads
