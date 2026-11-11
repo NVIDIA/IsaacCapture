@@ -9,6 +9,7 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/PoseEngine.cmake)
 
 add_subdirectory(engine_api)
+add_subdirectory(camera_input)
 add_subdirectory(engines/stub)
 
 # Sets POSE_ENGINE_TARGET to the adapter that executables link, the one enabled adapter or the stub, and
