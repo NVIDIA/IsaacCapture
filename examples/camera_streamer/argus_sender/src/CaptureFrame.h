@@ -7,8 +7,8 @@
 #ifndef ARGUS_SENDER_CAPTURE_FRAME_H
 #define ARGUS_SENDER_CAPTURE_FRAME_H
 
-// The captured-frame boundary between a camera backend (Argus, SIPL) and the encoder. No vendor SDK type appears
-// here, so code above this seam builds without either SDK.
+// The captured-frame boundary between a camera backend and the encoder. No vendor SDK type appears here, so code
+// above this seam builds without any camera SDK.
 
 #include <cstdint>
 #include <functional>
@@ -23,16 +23,16 @@ enum SensorClockDomain
 {
     // The backend reports no sensor time; sensorTime is 0.
     SENSOR_CLOCK_NONE,
-    // Tegra TSC, nanoseconds (the Argus VI start-of-frame timestamp).
+    // The platform's TSC, in nanoseconds.
     SENSOR_CLOCK_TSC_NS,
-    // The SIPL capture counter in its own ticks. Not nanoseconds: map it before comparing with another clock.
-    SENSOR_CLOCK_SIPL_COUNTER
+    // A backend counter in its own ticks. Not nanoseconds: map it before comparing with another clock.
+    SENSOR_CLOCK_RAW_COUNTER
 };
 
 const char* sensorClockDomainName(SensorClockDomain domain);
 
-// One camera as a backend reports it. `id` is the backend's own index (an Argus device index or a SIPL pipeline
-// index); the two are unrelated, so configuration names cameras by logical stream, not by id.
+// One camera as a backend reports it. `id` is the backend's own index; indices of different backends are
+// unrelated, so configuration names cameras by logical stream, not by id.
 struct CameraDescriptor
 {
     uint32_t id = 0;
@@ -94,6 +94,13 @@ private:
     std::function<void()> m_release;
 };
 
+enum SurfaceColorRange
+{
+    COLOR_RANGE_UNKNOWN,
+    COLOR_RANGE_LIMITED,
+    COLOR_RANGE_FULL
+};
+
 // Native NV12 in a DMA-BUF. Contract: the producer has finished writing when the frame is returned. A backend that
 // cannot deliver that must wait or copy before returning, not describe a still-written surface here.
 struct Nv12Surface
@@ -103,6 +110,8 @@ struct Nv12Surface
     uint32_t offsetBytes[2] = { 0, 0 };
     // True for NvBuffer block-linear layout, false for pitch-linear.
     bool blockLinear = false;
+    // What the producer declares; UNKNOWN means it declares nothing and a consumer must not assume.
+    SurfaceColorRange colorRange = COLOR_RANGE_UNKNOWN;
 };
 
 // One captured frame. Pixels stay valid until `lease` is destroyed or reset, so an encoder that holds the buffer keeps
@@ -118,7 +127,7 @@ struct CaptureFrame
     uint32_t width = 0;
     uint32_t height = 0;
     // The sensor's capture time, unscaled, in `sensorClock`. Only SENSOR_CLOCK_TSC_NS may go into an AVS1 *_ns TSC
-    // field (with its valid flag); a SIPL counter must not until its units are declared. SENSOR_CLOCK_NONE (and 0) when
+    // field (with its valid flag); a raw counter must not until its units are declared. SENSOR_CLOCK_NONE (and 0) when
     // the backend reports none; never invented.
     uint64_t sensorTime = 0;
     SensorClockDomain sensorClock = SENSOR_CLOCK_NONE;
