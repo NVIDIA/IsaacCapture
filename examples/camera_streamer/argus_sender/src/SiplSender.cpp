@@ -200,6 +200,7 @@ bool runSiplSender(const AppConfig& config, bool* receiverDisconnected, bool app
     TcpPacketSenderSettings transportSettings;
     transportSettings.port = config.network.port;
     transportSettings.dumpWirePath = config.network.dumpWirePath;
+    transportSettings.sendBufferBytes = config.network.sendBufferKb * 1024U;
     for (size_t i = 0; i < config.streams.size(); ++i)
     {
         transportSettings.streamLabels.push_back(config.streams[i].id);
