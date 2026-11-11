@@ -69,12 +69,17 @@ start-of-frame (missing, in the future, older than 5 s, or on another clock doma
 a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
 need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
 
-Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and
-recording-feed checks (30 fps, head and one wrist): the head at 2560x1984 and
-8 Mbps and at 1280x992 both ran with no missing frames and a median
-capture-to-receive time of 65-85 ms. The head at 20 Mbps built a backlog of
-about 1.2 s, so keep the bitrate near 8 Mbps. The first frames after a consumer
-subscribes can be 1-2 s old.
+`--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
+congestion control reports for each track (with 10% headroom, never above the maximum or below 0.5 Mbps), so a
+fresh connection does not fill the sender's pacing queue. A fixed 8 Mbps start made the first frames 1-2 s old and
+growing; with the adaptive start they are about 60-150 ms old from the first frame and settle near 80 ms while
+the rate climbs to the maximum within roughly 20 s. The `[stats]` line shows the current rate, the transport's
+target and how many times the rate changed.
+
+Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
+and one wrist, local LiveKit server): the head at 2560x1984 and 8 Mbps and at 1280x992 both ran with no missing
+frames and a median capture-to-receive time of 65-85 ms. A fixed 20 Mbps head built a standing backlog of about
+1.2 s, so keep the maximum near 8 Mbps.
 
 ## Probe
 
