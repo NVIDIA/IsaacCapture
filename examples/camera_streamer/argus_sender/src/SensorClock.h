@@ -46,9 +46,10 @@ struct SensorTimeMapping
     std::string reason;
     // CLOCK_MONOTONIC ns of the sensor's capture event; meaningful only when valid.
     int64_t captureMonotonicNs = 0;
-    // The anchor pair's bracket plus the slew bound over the anchor's age: the mapping is no more certain than this.
+    // The anchor pair's bracket plus the slew bound over the distance from the anchor to the sensor event: the mapping
+    // is no more certain than this.
     int64_t uncertaintyNs = 0;
-    // How long ago the anchor was read, at the time of this conversion.
+    // How long ago the anchor was read, at the time of this conversion: its freshness, separate from the uncertainty.
     int64_t anchorAgeNs = 0;
 };
 
@@ -73,7 +74,7 @@ public:
         // Largest agreement error between consecutive anchors, on top of their brackets.
         int64_t stepThresholdNs = 2000000;
         // CLOCK_MONOTONIC is slewed by NTP against the counter, which Linux bounds at 500 ppm: the mapping's
-        // uncertainty grows by this much per second since the anchor was read.
+        // uncertainty grows by this much per second of distance between the anchor and the sensor event.
         int64_t slewPpm = 500;
     };
 
