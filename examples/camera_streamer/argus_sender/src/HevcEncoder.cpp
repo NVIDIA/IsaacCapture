@@ -66,6 +66,18 @@ DmaBuffer* DmaBuffer::create(const Argus::Size2D<uint32_t>& size,
     return buffer;
 }
 
+DmaBuffer* DmaBuffer::createExternal(int fd)
+{
+    if (fd < 0)
+        return NULL;
+    DmaBuffer* buffer = new DmaBuffer();
+    buffer->m_fd = fd;
+    buffer->m_ownsSurface = false;
+    buffer->planes[0].fd = fd;
+    buffer->planes[0].bytesused = 1;
+    return buffer;
+}
+
 int DmaBuffer::getFd() const
 {
     return m_fd;
@@ -74,6 +86,7 @@ int DmaBuffer::getFd() const
 DmaBuffer::DmaBuffer()
     : NvBuffer(0, 0),
       m_fd(-1),
+      m_ownsSurface(true),
       m_surface(NULL),
       m_eglImageMapped(false),
       m_argusStream(NULL),
@@ -86,6 +99,11 @@ DmaBuffer::~DmaBuffer()
 {
     if (m_fd < 0)
         return;
+    if (!m_ownsSurface)
+    {
+        m_fd = -1;
+        return;
+    }
     if (m_eglImageMapped && m_surface)
         NvBufSurfaceUnMapEglImage(m_surface, 0);
     if (m_surface)
