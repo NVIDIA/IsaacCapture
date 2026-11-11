@@ -153,10 +153,10 @@ def _station_calibration_assets() -> tuple[CalibrationAsset, ...]:
 
 def _recorder_livekit_token(room: str) -> str:
     """A subscribe-only token for the recorder's own LiveKit connection, signed with the backend's key pair."""
-    api_key, api_secret = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
-    if not api_key or not api_secret:
+    api_key, signing_key = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
+    if not api_key or not signing_key:
         raise RuntimeError(f"{API_KEY_ENV} and {API_SECRET_ENV} must be set to record LiveKit video")
-    return subscriber_token(api_key=api_key, api_secret=api_secret, room=room, now=int(time.time()))
+    return subscriber_token(api_key=api_key, signing_key=signing_key, room=room, now=int(time.time()))
 
 
 def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str | None, output_root: Path):

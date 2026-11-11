@@ -25,7 +25,7 @@ from egocap_web.livekit_preview import (
 )
 
 KEY = "APIkeyForTests"
-SECRET = "super-secret-signing-value-0123456789"
+SIGNING_KEY = "test-signing-value-0123456789"
 
 
 def _unb64(segment: str) -> bytes:
@@ -44,18 +44,18 @@ def _decode(token: str) -> tuple[dict, dict, bytes, bytes]:
     )
 
 
-def _hs256(secret: str, signing_input: bytes) -> bytes:
-    return hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+def _hs256(key: str, signing_input: bytes) -> bytes:
+    return hmac.new(key.encode(), signing_input, hashlib.sha256).digest()
 
 
 def test_token_header_is_hs256_jwt():
-    header, _, _, _ = _decode(subscriber_token(api_key=KEY, api_secret=SECRET, room="r", now=1000))
+    header, _, _, _ = _decode(subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="r", now=1000))
     assert header == {"alg": "HS256", "typ": "JWT"}
 
 
 def test_token_claims_name_issuer_validity_window_and_subscribe_only_grant():
     _, claims, _, _ = _decode(
-        subscriber_token(api_key=KEY, api_secret=SECRET, room="sensing-preview", now=1000, ttl_s=60)
+        subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="sensing-preview", now=1000, ttl_s=60)
     )
     assert claims["iss"] == KEY
     assert claims["nbf"] == 1000
@@ -71,27 +71,30 @@ def test_token_claims_name_issuer_validity_window_and_subscribe_only_grant():
 
 
 def test_token_default_ttl_is_one_hour():
-    _, claims, _, _ = _decode(subscriber_token(api_key=KEY, api_secret=SECRET, room="r", now=5))
+    _, claims, _, _ = _decode(subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="r", now=5))
     assert claims["exp"] - claims["nbf"] == 3600
 
 
 def test_every_token_gets_a_unique_viewer_identity():
     subs = {
-        _decode(subscriber_token(api_key=KEY, api_secret=SECRET, room="r", now=1))[1]["sub"] for _ in range(50)
+        _decode(subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="r", now=1))[1]["sub"]
+        for _ in range(50)
     }
     assert len(subs) == 50
 
 
 def test_signature_verifies_with_the_secret_and_not_with_another():
-    _, _, signature, signing_input = _decode(subscriber_token(api_key=KEY, api_secret=SECRET, room="r", now=1))
-    assert hmac.compare_digest(signature, _hs256(SECRET, signing_input))
-    assert not hmac.compare_digest(signature, _hs256("another-secret", signing_input))
+    _, _, signature, signing_input = _decode(
+        subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="r", now=1)
+    )
+    assert hmac.compare_digest(signature, _hs256(SIGNING_KEY, signing_input))
+    assert not hmac.compare_digest(signature, _hs256("another-key", signing_input))
 
 
 def test_token_never_contains_the_secret():
-    token = subscriber_token(api_key=KEY, api_secret=SECRET, room="r", now=1)
-    assert SECRET not in token
-    assert SECRET.encode() not in b"".join(_unb64(s) for s in token.split(".")[:2])
+    token = subscriber_token(api_key=KEY, signing_key=SIGNING_KEY, room="r", now=1)
+    assert SIGNING_KEY not in token
+    assert SIGNING_KEY.encode() not in b"".join(_unb64(s) for s in token.split(".")[:2])
 
 
 def _offer(room: str = "sensing-preview") -> p.LiveKitCameraStream:
@@ -122,7 +125,7 @@ def client_factory():
 @pytest.fixture
 def credentials(monkeypatch):
     monkeypatch.setenv(API_KEY_ENV, KEY)
-    monkeypatch.setenv(API_SECRET_ENV, SECRET)
+    monkeypatch.setenv(API_SECRET_ENV, SIGNING_KEY)
 
 
 URL = "/api/livekit-token?room=sensing-preview"
@@ -162,7 +165,7 @@ def test_old_route_is_gone(client_factory, credentials):
 @pytest.mark.parametrize("missing", [(API_KEY_ENV,), (API_SECRET_ENV,), (API_KEY_ENV, API_SECRET_ENV)])
 def test_missing_credentials_give_503_naming_variables_but_no_values(client_factory, monkeypatch, missing):
     monkeypatch.setenv(API_KEY_ENV, KEY)
-    monkeypatch.setenv(API_SECRET_ENV, SECRET)
+    monkeypatch.setenv(API_SECRET_ENV, SIGNING_KEY)
     for name in missing:
         monkeypatch.delenv(name)
     response = client_factory((_offer(),)).get(URL)
@@ -170,13 +173,13 @@ def test_missing_credentials_give_503_naming_variables_but_no_values(client_fact
     assert response.headers["cache-control"] == "no-store"
     detail = response.json()["detail"]
     assert API_KEY_ENV in detail and API_SECRET_ENV in detail
-    assert SECRET not in response.text
+    assert SIGNING_KEY not in response.text
     assert KEY not in response.text
 
 
 def test_empty_credentials_count_as_unset(client_factory, monkeypatch):
     monkeypatch.setenv(API_KEY_ENV, "")
-    monkeypatch.setenv(API_SECRET_ENV, SECRET)
+    monkeypatch.setenv(API_SECRET_ENV, SIGNING_KEY)
     assert client_factory((_offer(),)).get(URL).status_code == 503
 
 
@@ -190,7 +193,7 @@ def test_offered_room_gets_a_verifiable_subscribe_only_token(client_factory, cre
     assert claims["video"]["room"] == "sensing-preview"
     assert claims["video"]["canPublish"] is False
     assert claims["iss"] == KEY
-    assert hmac.compare_digest(signature, _hs256(SECRET, signing_input))
+    assert hmac.compare_digest(signature, _hs256(SIGNING_KEY, signing_input))
 
 
 def test_room_is_matched_among_several_offered_streams(client_factory, credentials):
@@ -200,8 +203,8 @@ def test_room_is_matched_among_several_offered_streams(client_factory, credentia
 
 def test_secret_is_never_in_the_response_body_or_headers(client_factory, credentials):
     response = client_factory((_offer(),)).get(URL)
-    assert SECRET not in response.text
-    assert SECRET not in str(dict(response.headers))
+    assert SIGNING_KEY not in response.text
+    assert SIGNING_KEY not in str(dict(response.headers))
 
 
 def test_each_request_gets_a_fresh_viewer_identity(client_factory, credentials):
