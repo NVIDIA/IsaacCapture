@@ -58,7 +58,8 @@ size, and a stream's own `:DIV` downscale shrinks the result afterwards.
 | --- | --- | --- |
 | `sine-warp` | `AMPLITUDE_PX,WAVELENGTH_PX,PHASE_RAD` (all optional) | An EXAMPLE horizontal ripple. It is not calibrated rectification; it exists to show the shape of a step. |
 
-A step is a class deriving from `GpuStep` (`gpu_ops/inc/gpu_ops/gpu_step.hpp`) with `prepare()` (once per picture size:
+The system and how to add a step (with a walk-through of writing lens rectification) are described in
+[`GPU_PROCESSING.md`](GPU_PROCESSING.md). A step is a class deriving from `GpuStep` (`gpu_ops/inc/gpu_ops/gpu_step.hpp`) with `prepare()` (once per picture size:
 allocate and upload) and `enqueue()` (per frame: launch kernels on the given stream). To add one, write the class and
 add a line to `make_gpu_step()` in `gpu_ops/gpu_pipeline.cpp`. `SineWarpStep` (`gpu_ops/inc/gpu_ops/sine_warp.hpp`) is
 the template, and its comment explains how lens rectification would be written the same way: a remap table computed
