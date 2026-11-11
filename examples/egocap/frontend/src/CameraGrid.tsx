@@ -9,11 +9,15 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { liveKitStreams } from "./captureProtocol";
 import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
 import { ROLE_LABELS } from "./settingsApi";
 import { roleOfCamera } from "./useOperatorSettings";
+import { LiveKitCameraTile } from "./LiveKitCameraTile";
+import { useLiveKitPreview } from "./useLiveKitPreview";
 
 const CAMERA_ERROR_RETRY_LIMIT = 3;
 
@@ -184,8 +188,11 @@ export function CameraGrid({
     rateTracker.current.retainOnly(keys);
   }
 
+  // Direct LiveKit tiles sit beside the CaptureServer ones; they have their own connection and readiness.
+  const livekit = useLiveKitPreview(liveKitStreams(snapshot?.started));
   const cameras = snapshot?.cameras ?? [];
-  if (cameras.length === 0) {
+  const livekitShown = livekit.tiles.length > 0 || livekit.phase === "error";
+  if (cameras.length === 0 && !livekitShown) {
     return (
       <section className="camera-grid">
         <h2 className="group-label">Cameras</h2>
@@ -198,10 +205,26 @@ export function CameraGrid({
   const egoIndex = cameras.findIndex((cam) => cam.name === cameraRoles?.ego);
   const headIndex = cameras.findIndex((cam) => /head/i.test(cam.name));
   const primaryIndex = egoIndex !== -1 ? egoIndex : headIndex === -1 ? 0 : headIndex;
+  // With only LiveKit video, every head camera is a main view of equal size; any other camera (a wrist camera)
+  // stacks smaller beside them. With no more than one named head, the first tile is the main view.
+  const liveKitOnly = cameras.length === 0;
+  const isHeadTile = (name: string): boolean => /head/i.test(name);
+  const headTiles = liveKitOnly ? livekit.tiles.filter((tile) => isHeadTile(tile.name)).length : 0;
+  const equalHeads = headTiles >= 2;
+  const sideTiles = livekit.tiles.length - headTiles;
+  const gridClass = equalHeads
+    ? `camera-grid-items--heads${sideTiles === 0 ? " camera-grid-items--heads-only" : ""}`
+    : `camera-grid-items--n${Math.min(cameras.length + livekit.tiles.length, 4)}`;
+  const gridStyle = equalHeads
+    ? ({ "--head-count": headTiles, "--side-count": Math.max(sideTiles, 1) } as CSSProperties)
+    : undefined;
   return (
     <section className="camera-grid">
       <h2 className="group-label">Cameras</h2>
-      <div className={`camera-grid-items camera-grid-items--n${Math.min(cameras.length, 4)}`}>
+      {livekit.phase === "error" && livekit.message !== null && (
+        <p className="empty-note">LiveKit preview unavailable: {livekit.message}</p>
+      )}
+      <div className={`camera-grid-items ${gridClass}`} style={gridStyle}>
         {cameras.map((cam, index) => {
           const effectiveAge = cam.age_ms === null ? null : cam.age_ms + elapsedSinceReceipt;
           // "Never had a sample" (sequence/age_ms both null) is a distinct,
@@ -236,6 +259,17 @@ export function CameraGrid({
             />
           );
         })}
+        {livekit.tiles.map((tile, index) => (
+          <LiveKitCameraTile
+            key={`livekit-${tile.name}`}
+            name={tile.name}
+            track={tile.track}
+            phase={livekit.phase}
+            // A LiveKit tile is a main view only when no CaptureServer camera claims that place: every head
+            // camera when there are several, otherwise the first tile.
+            primary={liveKitOnly && (equalHeads ? isHeadTile(tile.name) : index === 0)}
+          />
+        ))}
       </div>
     </section>
   );

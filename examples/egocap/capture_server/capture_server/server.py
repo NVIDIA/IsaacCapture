@@ -40,6 +40,7 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import json
 import logging
 import signal
@@ -180,9 +181,12 @@ class ServerConfig:
     # Manus glove calibration: the worker executable and the managed MCAL directory. None leaves calibration
     # unavailable (a StartCalibration is rejected) and capture unaffected.
     calibration: CalibrationConfig | None = None
+    # LiveKit video offered to clients in SessionInit. Video never passes through this server; the list only says
+    # where each stream is published.
+    livekit_streams: tuple[p.LiveKitCameraStream, ...] = ()
 
     def __post_init__(self) -> None:
-        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject duplicate physical cameras and unusable LiveKit streams."""
         # Resolved here, at construction, so no later request re-resolves it on the event loop.
         if self.manus_calibration_dir is not None:
             self.manus_calibration_dir = self.manus_calibration_dir.resolve()
@@ -197,6 +201,15 @@ class ServerConfig:
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
             if duplicates:
                 raise ValueError(f"physical camera(s) assigned to more than one logical name: {duplicates}")
+        # Fail at construction, not when a client first parses SessionInit.
+        try:
+            p.check_livekit_streams(self.livekit_streams)
+        except p.ProtocolError as exc:
+            raise ValueError(f"ServerConfig.livekit_streams: {exc}") from exc
+        jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
+        clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
+        if clashes:
+            raise ValueError(f"LiveKit stream name(s) equal to a camera name: {clashes}")
 
 
 @dataclass
@@ -586,8 +599,10 @@ class _Session:
         mode: p.CaptureMode,
         outbox: _Outbox,
         owner_ws: ServerConnection,
+        livekit_streams: tuple[p.LiveKitCameraStream, ...] = (),
     ) -> None:
         self.session_id = begin.session_id
+        self._livekit_streams = livekit_streams
         self.begin = begin
         # Which owner connection started this session -- a NEW owner
         # connecting later (because the old one disconnected while this
@@ -791,10 +806,12 @@ class _Session:
         exception here into a recorded diagnostic."""
         tracking_stream = self._tracking_stream()
         camera_streams = tuple(p.camera_stream_descriptor(c) for c in self._cameras)
-        streams: list[p.TrackingStream | p.CameraStream] = list(camera_streams)
+        streams: list[p.TrackingStream | p.CameraStream | p.LiveKitCameraStream] = list(camera_streams)
         if tracking_stream is not None:
             streams.insert(0, tracking_stream)
 
+        # Offered LiveKit cameras ride in the same registry; this server never produces frames for them.
+        streams.extend(self._livekit_streams)
         init = p.session_init_event(session_id=self.session_id, mode=self._mode, begin=self.begin, streams=streams)
         self.init_event = init  # cached for CaptureServer._handle_begin's replay path
         # The shared connection Outbox/writer is already running (started
@@ -1610,6 +1627,7 @@ class CaptureServer:
             self._mode,
             self._outbox,
             ws,
+            livekit_streams=self.config.livekit_streams,
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
@@ -1994,6 +2012,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "socket (tracking still comes from IsaacCapture via ISAAC_ROOT); cameras are named with --gmsl-camera",
     )
     parser.add_argument(
+        "--livekit-streams",
+        type=Path,
+        metavar="FILE",
+        help="YAML file naming the LiveKit video streams to offer clients in SessionInit (see livekit_streams.py)",
+    )
+    parser.add_argument(
         "--gmsl-camera",
         action="append",
         default=[],
@@ -2223,6 +2247,10 @@ async def _run_cli(args: argparse.Namespace) -> int:
             source_factory = build_source_factory(
                 config, scenario=args.scenario, seed=args.seed, faults=frozenset(args.fault)
             )
+        if args.livekit_streams is not None:
+            from .livekit_streams import load_livekit_streams
+
+            config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
     except (ValueError, NotImplementedError, OSError, RuntimeError) as exc:
         # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError; an
         # unreachable or malformed frame feed a FeedError (RuntimeError).

@@ -27,6 +27,7 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {

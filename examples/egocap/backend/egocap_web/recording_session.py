@@ -56,7 +56,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import partial
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.recording_adapter import RecordingIngress, validate_tracking_descriptor
@@ -68,6 +68,9 @@ from recording_service import (
     RecordingPhase,
     ServiceConfig,
 )
+
+if TYPE_CHECKING:
+    from egocap_web.livekit_recording import LiveKitRecordingSource
 from recording_service import RecordingService as _RecordingService
 from recording_service import RecordingSnapshot as ServiceSnapshot
 
@@ -180,11 +183,15 @@ class RecordingSessionCoordinator:
         config_factory: Callable[[], ServiceConfig],
         *,
         queue_capacity: int,
-        queue_bytes: int | None = None,
+        queue_bytes: int | Callable[[], int] | None = None,
         readiness_check: ReadinessCheck,
         initial_context: TaskContext | None = None,
+        livekit_source: LiveKitRecordingSource | None = None,
     ) -> None:
         self._config_factory = config_factory
+        # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
+        # before the ingress is retired.
+        self._livekit_source = livekit_source
         self._queue_capacity = queue_capacity
         self._queue_bytes = queue_bytes
         self._readiness_check = readiness_check
@@ -408,6 +415,21 @@ class RecordingSessionCoordinator:
             # construct a new ingress over it; the old consumer thread
             # would be left with nothing owning it.
             raise CoordinatorBusyError("a previous take's ingress has not yet settled")
+        if self._livekit_source is None:
+            return await self._start_episode_with_storage(frozen_context)
+        # LiveKit video must be flowing before any storage is opened, so a missing camera fails the start itself.
+        try:
+            await self._livekit_source.prepare()
+        except Exception as exc:  # noqa: BLE001 -- any prepare failure is a refused start, never a half-open take
+            raise CoordinatorBusyError(f"LiveKit video is not ready: {exc}") from exc
+        try:
+            return await self._start_episode_with_storage(frozen_context)
+        except BaseException:
+            # A start that fails or is cancelled after prepare must not leave the room joined.
+            await self._livekit_source.stop()
+            raise
+
+    async def _start_episode_with_storage(self, frozen_context: TaskContext) -> EpisodeInfo:
         service = await self._open_storage_if_needed()
         # Recheck readiness/closing intent right after storage finished
         # opening -- the same "don't trust state from before the last
@@ -438,14 +460,20 @@ class RecordingSessionCoordinator:
                 await service.discard_episode(episode.episode_id)
             raise CoordinatorBusyError("start was superseded before activation")
         episode_id = episode.episode_id
+        # A callable is resolved per take: LiveKit frame sizes are known only once the session has started.
         ingress = RecordingIngress(
             queue_capacity=self._queue_capacity,
-            queue_bytes=self._queue_bytes,
+            queue_bytes=self._queue_bytes() if callable(self._queue_bytes) else self._queue_bytes,
             submit=partial(service.submit_sample, episode_id),
             on_failure=lambda message: self._schedule_failure_settlement(service, episode_id, message),
         )
         await ingress.start()
         self._current_ingress = ingress
+        if self._livekit_source is not None:
+            # A feed failure settles the take through the same path as an ingress failure.
+            self._livekit_source.start(
+                ingress, lambda message: self._schedule_failure_settlement(service, episode_id, message)
+            )
         if self.on_episode_started is not None:
             self.on_episode_started()
         return episode
@@ -609,6 +637,9 @@ class RecordingSessionCoordinator:
         ingress = self._current_ingress
         if ingress is None:
             return _IngressRetirement(settled=True, failure=None)
+        if self._livekit_source is not None:
+            # The producer stops first, so nothing is offered to an ingress that is draining.
+            await self._livekit_source.stop()
         settled = await ingress.stop()
         if not settled:
             return _IngressRetirement(

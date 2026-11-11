@@ -21,6 +21,7 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 function snapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {

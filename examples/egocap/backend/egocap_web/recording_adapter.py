@@ -348,11 +348,15 @@ def convert_capture_frame(frame: CaptureFrame) -> list[NumericSample]:
 
 # --- bounded ingress queue/consumer -------------------------------------------
 
-RawItem = CaptureFrame | CameraImage
+RawItem = CaptureFrame | CameraImage | VideoSample
 
 
 def _raw_item_bytes(raw_item: RawItem) -> int:
-    """The memory one queued raw item pins: the compressed JPEG or the raw tracking blob."""
+    """The memory one queued raw item pins: the compressed JPEG, the raw tracking blob or a decoded frame."""
+    image = getattr(raw_item, "image", None)
+    if image is not None:
+        # A decoded frame (a VideoSample from LiveKit) pins its pixels, not a compressed payload.
+        return image.nbytes
     return len(raw_item.jpeg) if isinstance(raw_item, CameraImage) else len(raw_item.payload)
 
 
@@ -365,6 +369,9 @@ def _convert_raw_item(raw_item: RawItem) -> list[NumericSample | VideoSample]:
         return list(convert_capture_frame(raw_item))
     if isinstance(raw_item, CameraImage):
         return [convert_camera_image(raw_item, raw_item.name)]
+    if isinstance(raw_item, VideoSample):
+        # Already a decoded frame with its capture time (LiveKit video): nothing to convert.
+        return [raw_item]
     raise TypeError(f"unsupported raw item type: {type(raw_item).__name__}")
 
 

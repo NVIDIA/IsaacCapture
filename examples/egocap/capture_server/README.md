@@ -586,7 +586,7 @@ All enums are IntEnum classes. Supply enum members to the Python API; incoming n
 | `StartupStage` | `INITIALIZING=1`, `WAITING_FOR_HEADSET=2`, `CONNECTING=3`, `STARTING_SOURCES=4` |
 | `StopReason` | `REQUESTED=1`, `OWNER_DISCONNECTED=4`, `SERVER_SHUTDOWN=6`, `IC_ERROR=7`, `IC_EXITED=8`, `CAMERA_ERROR=9` |
 | `RejectionReason` | `INVALID_CONFIG=1`, `BUSY=2`, `UNKNOWN_SESSION=3` |
-| `StreamKind` | `TRACKING=1`, `IMAGE=2` |
+| `StreamKind` | `TRACKING=1`, `IMAGE=2`, `LIVEKIT_IMAGE=3` |
 | `BinaryKind` | `CAPTURE_FRAME=1`, `CAPTURE_IMAGE=2` |
 | `TrackingSchema` | `IC_TRACKING_V1=1` |
 | `WireDType` | `UINT8=1`, `FLOAT32_LE=2`, `FLOAT64_LE=3` |
@@ -594,6 +594,7 @@ All enums are IntEnum classes. Supply enum members to the Python API; incoming n
 | `ImageCodec` | `JPEG=1` |
 | `ClockDomain` | `CAPTURE_HOST_MONOTONIC=1` |
 | `TimeUnit` | `NANOSECONDS=1` |
+| `LiveKitTimestampBasis` | `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3` |
 | `SampleTimeSemantics` | `HOST_POLL=1` |
 | `PoseRepresentation` | `POSITION_QUATERNION=1` |
 | `QuaternionOrder` | `XYZW=1` |
@@ -928,7 +929,7 @@ This is a complete SessionInit for head, controllers and hands:
 | `clock.domain` | `ClockDomain`: `CAPTURE_HOST_MONOTONIC=1`. | Times use the capture computer's elapsed-time clock; they do not use Unix/calendar time or the client's elapsed-time clock. |
 | `clock.unit` | `TimeUnit`: `NANOSECONDS=1`. | An interval of 1,000,000,000 timestamp units means one second. |
 | `clock.sample_time_semantics` | `SampleTimeSemantics`: `HOST_POLL=1`. | The tracking timestamp describes the host's source-sampling step. It does not claim to be a sensor exposure time or an SDK callback timestamp. |
-| `streams` | Array of tracking and camera descriptor objects. | Defines the stream IDs, formats and tracking byte layout the client must register from SessionInit before any binary messages. An empty array is valid only when no streams were requested. |
+| `streams` | Array of tracking, camera and LiveKit camera descriptor objects. | Defines the stream IDs, formats and tracking byte layout the client must register from SessionInit before any binary messages. An empty array is valid only when no streams were requested. |
 
 The client validates and caches this decoding contract. A layout/format change requires a new session. Unknown camera intrinsics can initially be null; later measured intrinsics are metadata, not a byte-layout change.
 
@@ -1081,7 +1082,7 @@ Dotted field names preserve the public IC group/field identity. Dtype codes are 
 | Tracking descriptor field | Python enum and accepted values, or ordinary type | Meaning |
 |---|---|---|
 | `stream_id` | Not an enum: integer 0 for tracking. | Associates a binary message's header with this descriptor. |
-| `kind` | `StreamKind`: `TRACKING=1` for this descriptor; `IMAGE=2` for camera descriptors. | Selects the kind of decoder to use for the stream. |
+| `kind` | `StreamKind`: `TRACKING=1` for this descriptor; `IMAGE=2` for camera descriptors; `LIVEKIT_IMAGE=3` for LiveKit camera descriptors. | Selects the kind of decoder to use for the stream. |
 | `name` | String, `tracking` for this stream; no enum. | Provides a readable stream label. Routing uses stream\_id, not this label. |
 | `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Identifies the complete field contract, including presence/validity meanings and the 1995-byte layout. A client rejects an unsupported schema rather than interpreting a similar-looking blob. |
 | `sources` | `SourceType`: unique array drawn from `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. | Records the source channels selected for this tracking stream. Unselected channels retain inert slots in the fixed binary layout. |
@@ -1214,6 +1215,42 @@ The camera descriptor repeats name and type from the accepted request and adds t
 | `orientation.rotation_degrees` | Not an enum: integer 0. | Advertises no server-applied image rotation. A client must not assume a hidden quarter-turn correction. |
 | `orientation.mirrored` | Boolean false. | Advertises no server-applied mirror operation. |
 | `intrinsics` | Null or a finite numeric array of shape \[3,3\]; not an enum. | A camera projection matrix for these image dimensions. Its focal-length terms express how rays project into pixels, and its principal-point terms locate the image's optical center in pixel coordinates. Null means the server supplies no such calibration; it must not be interpreted as an identity camera matrix. |
+
+#### LiveKit camera descriptors
+
+A `streams` entry with `kind` `LIVEKIT_IMAGE=3` says where a camera's video is published in a LiveKit room. The server never sends these frames; each consumer joins the room itself and learns the actual dimensions and frame rate from the video. A descriptor does not mean frames are arriving. A client that does not know kind 3 rejects the whole SessionInit, so a server started with `--livekit-streams` cannot be used by older clients.
+
+| LiveKit descriptor field | Python enum and accepted values, or ordinary type | Meaning |
+|---|---|---|
+| `stream_id` | Not an enum: integer 16–23. | Identifies the entry in the one stream-id space shared with the tracking and JPEG camera streams. |
+| `kind` | `StreamKind`: `LIVEKIT_IMAGE=3`. | Selects this descriptor. |
+| `name` | Nonempty string of at most 512 characters. | Operator-facing camera name. It must differ from every other LiveKit entry's name and from every JPEG camera name. |
+| `url` | Nonempty string of at most 512 characters starting with `ws://` or `wss://`. | The LiveKit server to join. |
+| `room` | Nonempty string of at most 512 characters. | The room to join. |
+| `publisher` | Nonempty string of at most 512 characters. | The publishing participant's identity. |
+| `track` | Nonempty string of at most 512 characters. | The published track's name; unique per `publisher`. |
+| `timestamp_basis` | `LiveKitTimestampBasis`: `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`. | What the frame's `user_timestamp_us` means. Only `SENSOR_CAPTURE_UNIX_US` is a capture time; the other two are not recordable as one. |
+| `width`, `height` | Positive integer, or null (the key may be omitted). | The configured frame size, or null when not known. |
+| `fps` | Finite positive number, or null (the key may be omitted). | The configured frame rate, or null when not known. |
+
+At most 8 LiveKit entries are allowed, and all of them must share one `url`, `room` and `publisher`: consumers join a single room as a single publisher. Both the server (at startup) and the client (when parsing SessionInit) enforce these rules.
+
+##### The `--livekit-streams` file
+
+`--livekit-streams FILE` loads the entries from a YAML file. The server exits with code 2 and a message on stderr if the file cannot be read or is invalid. Stream ids are assigned 16, 17, ... in file order. Unknown keys are errors.
+
+```yaml
+livekit:
+  url: wss://LIVEKIT_HOST            # ws:// or wss://
+  room: sensing-preview
+  publisher: orin-sensing
+  timestamp_basis: capture_unix_us   # monotonic_us (default), processing_unix_us or capture_unix_us
+  streams:                           # may be empty
+    - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
+    - {name: Head right, track: sensing-right}   # width, height and fps are optional
+```
+
+`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_unix_us`=3). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a camera name configured with `--gmsl-camera` is rejected.
 
 Each WebSocket binary message consists of a 32-byte header followed immediately by a payload. For CaptureFrame, that payload is the packed tracking blob defined by SessionInit. For CaptureImage, it is the JPEG bytes. The header itself contains no JSON and no field-name strings.
 

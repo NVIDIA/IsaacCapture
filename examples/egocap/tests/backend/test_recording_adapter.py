@@ -23,10 +23,12 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as capture_protocol
-from capture_server.client import CaptureFrame
+from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.recording_adapter import (
     RecordingAdapterError,
     RecordingIngress,
+    _convert_raw_item,
+    _raw_item_bytes,
     build_manus_glove_fields,
     build_pico_controller_fields,
     button_pressed,
@@ -38,7 +40,7 @@ from egocap_web.recording_adapter import (
     pose7d_to_matrix,
     validate_tracking_descriptor,
 )
-from recording_service import NumericSample, SubmissionResult, SubmissionStatus, VideoSample
+from recording_service import NumericSample, PixelFormat, SubmissionResult, SubmissionStatus, VideoSample
 
 IDENTITY_QUAT = (0.0, 0.0, 0.0, 1.0)
 
@@ -583,3 +585,127 @@ def test_queue_bytes_bounds_the_queue_by_size_not_count():
 def test_queue_bytes_must_be_positive():
     with pytest.raises(ValueError):
         RecordingIngress(queue_capacity=1, queue_bytes=0, submit=lambda s: None)
+
+
+# --- raw item sizing -----------------------------------------------------------
+
+
+class _DecodedFrame:
+    """Anything with an ``image`` ndarray, to size by pixels without being a VideoSample."""
+
+    def __init__(self, image: np.ndarray) -> None:
+        self.image = image
+
+
+def test_raw_item_bytes_sizes_a_decoded_frame_by_its_pixels():
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((10, 20, 3), dtype=np.uint8))) == 600  # type: ignore[arg-type]
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((2, 2), dtype=np.uint16))) == 8  # type: ignore[arg-type]
+
+
+def test_raw_item_bytes_keeps_sizing_the_existing_types():
+    jpeg = CameraImage(
+        session_id="s", stream_id=1, sequence=0, capture_time_ns=0, receive_time_ns=0, name="c", jpeg=b"j" * 123
+    )
+    frame = CaptureFrame(
+        session_id="s",
+        description=None,
+        stream_id=0,
+        sequence=0,
+        capture_time_ns=0,
+        receive_time_ns=0,
+        payload=b"x" * 77,
+    )
+    assert _raw_item_bytes(jpeg) == 123
+    assert _raw_item_bytes(frame) == 77
+
+
+def test_decoded_frame_larger_than_the_byte_budget_overflows_the_ingress():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        small = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))  # 300 bytes
+        big = _DecodedFrame(np.zeros((20, 20, 3), dtype=np.uint8))  # 1200 bytes, over the budget on its own
+        assert ingress.offer(big) is False  # type: ignore[arg-type]
+        assert "byte budget" in ingress.failure
+        # A failed ingress admits nothing more, even a frame that would have fit.
+        assert ingress.offer(small) is False  # type: ignore[arg-type]
+
+    asyncio.run(run())
+
+
+def test_decoded_frames_within_the_budget_are_queued():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        frame = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))
+        assert [ingress.offer(frame) for _ in range(3)] == [True, True, True]  # type: ignore[arg-type]
+        assert ingress.offer(frame) is False  # type: ignore[arg-type]  # 1200 > 1000
+        assert ingress.failure is not None
+
+    asyncio.run(run())
+
+
+def _video_sample(shape=(10, 10, 3), source="head_left") -> VideoSample:
+    return VideoSample(
+        source=source,
+        image=np.zeros(shape, dtype=np.uint8),
+        pixel_format=PixelFormat.RGB8,
+        capture_time=1.0,
+        receive_time=2.0,
+    )
+
+
+def test_convert_raw_item_passes_a_video_sample_through_unchanged():
+    sample = _video_sample()
+    converted = _convert_raw_item(sample)
+    assert len(converted) == 1
+    assert converted[0] is sample
+
+
+def test_raw_item_bytes_sizes_a_video_sample_by_its_pixels():
+    assert _raw_item_bytes(_video_sample((10, 20, 3))) == 600
+
+
+def test_real_ingress_with_the_default_converter_submits_a_video_sample():
+    async def run():
+        submitted: list[VideoSample] = []
+
+        def submit(sample):
+            submitted.append(sample)
+            return SubmissionResult(SubmissionStatus.ACCEPTED, sample.source, None)
+
+        ingress = RecordingIngress(queue_capacity=4, submit=submit)  # no convert: the default converter
+        await ingress.start()
+        sample = _video_sample()
+        assert ingress.offer(sample) is True
+        for _ in range(50):
+            if submitted:
+                break
+            await asyncio.sleep(0.01)
+        await ingress.stop()
+        assert ingress.failure is None
+        assert len(submitted) == 1
+        assert submitted[0] is sample
+
+    asyncio.run(run())
+
+
+def test_real_ingress_enforces_the_byte_budget_on_video_samples():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+        )
+        assert ingress.offer(_video_sample((20, 20, 3))) is False  # 1200 bytes, over the budget on its own
+        assert "byte budget" in ingress.failure
+
+    asyncio.run(run())
