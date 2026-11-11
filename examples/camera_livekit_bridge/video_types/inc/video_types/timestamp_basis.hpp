@@ -16,7 +16,8 @@ enum class TimestampBasis
     /// The publisher's CLOCK_MONOTONIC when the frame is published (frame-ready time).
     MonotonicUs,
     /// The sensor's capture event on the publisher's CLOCK_MONOTONIC. The sensor time arrives as sender wall-clock
-    /// time, so this assumes the sender's clock agrees with this host's wall clock.
+    /// time, so this assumes the sender's clock agrees with this host's wall clock and carries no bound on that error.
+    /// The bridge does not offer it until a measured sender-to-host clock mapping exists.
     CaptureMonotonicUs,
     /// The sensor's capture event as Unix time on the sender's clock.
     CaptureUnixUs,

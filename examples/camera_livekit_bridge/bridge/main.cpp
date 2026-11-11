@@ -99,6 +99,13 @@ int main(int argc, char** argv)
                 std::cerr << "--timestamp-basis must be monotonic_us, capture_monotonic_us or capture_unix_us\n";
                 return 2;
             }
+            if (*basis == TimestampBasis::CaptureMonotonicUs)
+            {
+                std::cerr
+                    << "--timestamp-basis capture_monotonic_us is not available: it needs a measured sender-to-host clock "
+                       "mapping, which is not implemented. Use monotonic_us (frame-ready time) or capture_unix_us.\n";
+                return 2;
+            }
             defaults.timestamp_basis = *basis;
         }
         else if (arg == "--gpu")
