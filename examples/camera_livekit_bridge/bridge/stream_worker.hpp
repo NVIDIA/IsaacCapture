@@ -42,6 +42,11 @@ struct WorkerStats
     /// The bitrate the encoder is configured for now, and how many times congestion feedback changed it.
     std::atomic<uint32_t> bitrate_bps{ 0 };
     std::atomic<uint64_t> rate_changes{ 0 };
+    /// Sensor start-of-frame to frame-ready, from frames whose sensor time is on a realtime sender clock. Only as
+    /// good as the agreement between the sender's wall clock and this host's.
+    std::atomic<uint64_t> capture_to_ready_us_total{ 0 };
+    std::atomic<uint64_t> capture_to_ready_samples{ 0 };
+    std::atomic<uint32_t> capture_to_ready_max_us{ 0 };
     /// The latest target the transport reported (0 until it reports one).
     std::atomic<uint32_t> target_bps{ 0 };
 };
