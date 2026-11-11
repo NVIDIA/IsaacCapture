@@ -62,11 +62,12 @@ the same basis:
 | Basis | Value |
 | --- | --- |
 | `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
-| `capture_monotonic_us` | The sensor start-of-frame on this host's monotonic clock, derived as now minus the frame's age, so it assumes the sender's wall clock agrees with this host's. |
-| `monotonic_us` | This host's monotonic clock when the frame is published (frame-ready time). |
+| `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
 
-For the capture bases a frame with no usable sensor start-of-frame (missing, in the future, or older than 5 s)
-carries no `user_timestamp`, so a consumer that needs a capture time says so instead of using a guess.
+`capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
+start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
+a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
+need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
 
 Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and
 recording-feed checks (30 fps, head and one wrist): the head at 2560x1984 and

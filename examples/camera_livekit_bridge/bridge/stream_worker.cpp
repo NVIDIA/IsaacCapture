@@ -184,6 +184,14 @@ struct StreamWorker::Impl
             const auto feedback = sink->take_feedback();
             const bool force_idr = need_idr || feedback.keyframe_requested;
 
+            // The frame-ready instant: the picture is on the encoder's input, before any encoding delay. Both clocks
+            // are read together so the capture bases can move the sensor time between them.
+            timespec ready_realtime{};
+            clock_gettime(CLOCK_REALTIME, &ready_realtime);
+            const int64_t ready_realtime_ns =
+                static_cast<int64_t>(ready_realtime.tv_sec) * 1'000'000'000 + ready_realtime.tv_nsec;
+            const int64_t ready_monotonic_ns = monotonic_ns();
+
             const auto begin = std::chrono::steady_clock::now();
             EncodedPacket packet = encoder.encode(surface, copy_stream, 0, force_idr);
             stats.encode_us_total += static_cast<uint64_t>(
@@ -195,14 +203,15 @@ struct StreamWorker::Impl
             frame.data = packet.data.data();
             frame.size = packet.data.size();
             frame.keyframe = packet.keyframe;
-            frame.timestamp_us = static_cast<uint64_t>(monotonic_ns() / 1000);
-            // The application timestamp on the configured basis; zero tells consumers the frame has no time the
-            // publisher can vouch for (for the capture bases, no usable sensor start-of-frame).
-            timespec realtime{};
-            clock_gettime(CLOCK_REALTIME, &realtime);
-            const int64_t realtime_ns = static_cast<int64_t>(realtime.tv_sec) * 1'000'000'000 + realtime.tv_nsec;
-            frame.user_timestamp_us = user_timestamp_us(
-                config.timestamp_basis, unsigned_field(notice.metadata, "sensor_sof_ns"), realtime_ns, monotonic_ns());
+            frame.timestamp_us = static_cast<uint64_t>(ready_monotonic_ns / 1000);
+            // The sensor start-of-frame is wall-clock time on the sender; only a realtime (Unix) sender clock may be
+            // used as Unix time. Any other domain, or none, means the publisher cannot vouch for a capture time.
+            const auto wall_domain = notice.metadata.find("sender_wall_clock");
+            const bool wall_is_realtime = wall_domain != notice.metadata.end() && wall_domain->is_string() &&
+                                          wall_domain->get<std::string>() == "realtime";
+            const uint64_t sensor_sof_ns = wall_is_realtime ? unsigned_field(notice.metadata, "sensor_sof_ns") : 0;
+            frame.user_timestamp_us =
+                user_timestamp_us(config.timestamp_basis, sensor_sof_ns, ready_realtime_ns, ready_monotonic_ns);
             // The source's own sequence keeps frames lost before the encoder visible to the consumer; a source without
             // one is numbered here.
             frame.frame_id = sequence != 0 ? static_cast<uint32_t>(sequence) : ++own_frame_id;
