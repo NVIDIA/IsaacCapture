@@ -131,6 +131,7 @@ add_executable(argus_sender
     src/MixedRateScheduler.cpp
     src/CapturePriorityPolicy.cpp
     src/CaptureDomainPlan.cpp
+    src/ArgusFrameAdapter.cpp
     src/CaptureBackend.cpp
     src/CaptureManager.cpp
     src/FrameBundleAssembler.cpp
