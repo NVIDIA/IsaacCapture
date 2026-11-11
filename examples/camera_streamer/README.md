@@ -30,6 +30,7 @@ the same physical GPU; its handles cannot be sent to another machine.
 | [argus_sender](argus_sender/README.md) | Argus capture, stereo SOF pairing, mixed-rate streams, HEVC/NV12, optional sender remapping, TCP streaming and wire dumps |
 | [camera_receiver](camera_receiver/README.md) | Reconnecting TCP receiver, parallel stream processing, NVDEC decode, presentation rotation and GPU ring publication |
 | [cuda_ipc_consumer](cuda_ipc_consumer/README.md) | Stream subscription, NV12/RGBA preview, finite headless runs and latency CSV output |
+| [mock_sender](mock_sender/README.md) | Camera-free AVS1 HEVC sender for running the receiver and downstream consumers without a Jetson; synthetic clock, pause and disconnect scripts |
 | [argus_sender/remaps](argus_sender/remaps/README.md) | Bundled example wrist remaps, calibration, manifest and a standalone generator |
 | [tests](tests/) | Checks spanning sender and receiver configurations; component tests live inside their own folders |
 
