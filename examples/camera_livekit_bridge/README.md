@@ -48,6 +48,23 @@ to converge on the receiver backend's clock-mapping contract. With `capture_mono
 vouched for publishes no timestamp, and the frame-ready time is never offered in its place; a capture over the
 precision target keeps its timestamp. `monotonic_us` is a separate, declared basis.
 
+## GPU steps (per-frame image operations)
+
+Between the receiver's IPC buffer and the encoder the picture can pass through a series of GPU steps, with no host
+copy. None run by default. `--gpu-step NAME[=ARGS]` adds one, repeatable; steps run in the order given, at the source
+size, and a stream's own `:DIV` downscale shrinks the result afterwards.
+
+| Step | Arguments | Purpose |
+| --- | --- | --- |
+| `sine-warp` | `AMPLITUDE_PX,WAVELENGTH_PX,PHASE_RAD` (all optional) | An EXAMPLE horizontal ripple. It is not calibrated rectification; it exists to show the shape of a step. |
+
+A step is a class deriving from `GpuStep` (`gpu_ops/inc/gpu_ops/gpu_step.hpp`) with `prepare()` (once per picture size:
+allocate and upload) and `enqueue()` (per frame: launch kernels on the given stream). To add one, write the class and
+add a line to `make_gpu_step()` in `gpu_ops/gpu_pipeline.cpp`. `SineWarpStep` (`gpu_ops/inc/gpu_ops/sine_warp.hpp`) is
+the template, and its comment explains how lens rectification would be written the same way: a remap table computed
+once from the camera calibration and uploaded in `prepare()`, and a per-frame kernel that samples the source through it
+(luma and chroma), with the fill for positions outside the image.
+
 ## Build
 
 ```bash
