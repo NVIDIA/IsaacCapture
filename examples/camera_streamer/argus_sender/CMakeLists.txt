@@ -145,6 +145,7 @@ add_executable(argus_sender
     src/FrameAlignmentPolicy.cpp
     src/StereoAlignmentPolicy.cpp
     src/TcpTransport.cpp
+    src/ArgusBufferBinding.cpp
     src/HevcEncoder.cpp
     src/StereoTiming.cpp
     src/EGLGlobal.cpp

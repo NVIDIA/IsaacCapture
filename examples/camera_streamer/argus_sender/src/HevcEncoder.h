@@ -7,9 +7,8 @@
 #ifndef ARGUS_SENDER_HEVC_ENCODER_H
 #define ARGUS_SENDER_HEVC_ENCODER_H
 
-#include <Argus/Argus.h>
-#include <Argus/BufferStream.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <linux/videodev2.h>
 
 #include <NvBufSurface.h>
@@ -33,10 +32,21 @@ struct HevcEncoderSettings
 
 const uint32_t kEncoderOutputPlaneBuffers = 2;
 
+// A capture backend that lends buffers to the encoder implements this; release() hands a buffer back to it.
+class DmaBufferOwner
+{
+public:
+    virtual ~DmaBufferOwner()
+    {
+    }
+    virtual bool release() = 0;
+};
+
 class DmaBuffer : public NvBuffer
 {
 public:
-    static DmaBuffer* create(const Argus::Size2D<uint32_t>& size,
+    static DmaBuffer* create(uint32_t width,
+                             uint32_t height,
                              NvBufSurfaceColorFormat colorFormat,
                              NvBufSurfaceLayout layout = NVBUF_LAYOUT_BLOCK_LINEAR);
     // Wraps a DMA-BUF this process does not own, for the encoder's input queue. The caller keeps `fd` valid until the
@@ -48,13 +58,12 @@ public:
     bool mapEglImage();
     EGLImageKHR getEglImage() const;
 
-    // Bind this client-owned DMABUF to the Argus Buffer that writes it.
-    // A bound buffer is acquired by the application until releaseToArgus().
-    bool bindArgusBuffer(Argus::IBufferOutputStream* stream, Argus::Buffer* buffer);
-    bool markArgusAcquired(Argus::Buffer* buffer);
-    bool releaseToArgus();
-    bool isArgusBound() const;
-    Argus::Buffer* getArgusBuffer() const;
+    // The backend this buffer is on loan from, if any. releaseToOwner() hands it back and returns false when there is
+    // no owner or the owner refuses.
+    void setOwner(std::unique_ptr<DmaBufferOwner> owner);
+    DmaBufferOwner* owner() const;
+    bool hasOwner() const;
+    bool releaseToOwner();
 
 private:
     DmaBuffer();
@@ -63,9 +72,7 @@ private:
     bool m_ownsSurface;
     NvBufSurface* m_surface;
     bool m_eglImageMapped;
-    Argus::IBufferOutputStream* m_argusStream;
-    Argus::Buffer* m_argusBuffer;
-    std::atomic<bool> m_argusAcquired;
+    std::unique_ptr<DmaBufferOwner> m_owner;
 };
 
 class DirectHevcEncoder

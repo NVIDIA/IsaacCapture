@@ -8,8 +8,8 @@
 
 #include "EncodedFrameSink.h"
 #include "Error.h"
-#include "Runtime.h"
 #include "FrameTiming.h"
+#include "Runtime.h"
 
 #include <NvVideoEncoder.h>
 #include <atomic>
@@ -32,9 +32,7 @@ const uint32_t kEncodedBufferBytes = 16 * 1024 * 1024;
 
 } // namespace
 
-DmaBuffer* DmaBuffer::create(const Argus::Size2D<uint32_t>& size,
-                             NvBufSurfaceColorFormat colorFormat,
-                             NvBufSurfaceLayout layout)
+DmaBuffer* DmaBuffer::create(uint32_t width, uint32_t height, NvBufSurfaceColorFormat colorFormat, NvBufSurfaceLayout layout)
 {
     DmaBuffer* buffer = new DmaBuffer();
     if (!buffer)
@@ -43,8 +41,8 @@ DmaBuffer* DmaBuffer::create(const Argus::Size2D<uint32_t>& size,
     NvBufSurf::NvCommonAllocateParams params;
     std::memset(&params, 0, sizeof(params));
     params.memtag = NvBufSurfaceTag_CAMERA;
-    params.width = size.width();
-    params.height = size.height();
+    params.width = width;
+    params.height = height;
     params.colorFormat = colorFormat;
     params.layout = layout;
     params.memType = NVBUF_MEM_SURFACE_ARRAY;
@@ -83,15 +81,7 @@ int DmaBuffer::getFd() const
     return m_fd;
 }
 
-DmaBuffer::DmaBuffer()
-    : NvBuffer(0, 0),
-      m_fd(-1),
-      m_ownsSurface(true),
-      m_surface(NULL),
-      m_eglImageMapped(false),
-      m_argusStream(NULL),
-      m_argusBuffer(NULL),
-      m_argusAcquired(false)
+DmaBuffer::DmaBuffer() : NvBuffer(0, 0), m_fd(-1), m_ownsSurface(true), m_surface(NULL), m_eglImageMapped(false)
 {
 }
 
@@ -131,47 +121,24 @@ EGLImageKHR DmaBuffer::getEglImage() const
     return m_surface->surfaceList[0].mappedAddr.eglImage;
 }
 
-bool DmaBuffer::bindArgusBuffer(Argus::IBufferOutputStream* stream, Argus::Buffer* buffer)
+void DmaBuffer::setOwner(std::unique_ptr<DmaBufferOwner> owner)
 {
-    if (!stream || !buffer || m_argusStream || m_argusBuffer)
-        return false;
-    m_argusStream = stream;
-    m_argusBuffer = buffer;
-    m_argusAcquired.store(true);
-    return true;
+    m_owner = std::move(owner);
 }
 
-bool DmaBuffer::markArgusAcquired(Argus::Buffer* buffer)
+DmaBufferOwner* DmaBuffer::owner() const
 {
-    if (!m_argusStream || buffer != m_argusBuffer)
-        return false;
-    bool expected = false;
-    return m_argusAcquired.compare_exchange_strong(expected, true);
+    return m_owner.get();
 }
 
-bool DmaBuffer::releaseToArgus()
+bool DmaBuffer::hasOwner() const
 {
-    if (!m_argusStream || !m_argusBuffer)
-        return false;
-    bool expected = true;
-    if (!m_argusAcquired.compare_exchange_strong(expected, false))
-        return false;
-    if (m_argusStream->releaseBuffer(m_argusBuffer) != Argus::STATUS_OK)
-    {
-        m_argusAcquired.store(true);
-        return false;
-    }
-    return true;
+    return static_cast<bool>(m_owner);
 }
 
-bool DmaBuffer::isArgusBound() const
+bool DmaBuffer::releaseToOwner()
 {
-    return m_argusStream && m_argusBuffer;
-}
-
-Argus::Buffer* DmaBuffer::getArgusBuffer() const
-{
-    return m_argusBuffer;
+    return m_owner && m_owner->release();
 }
 
 class DirectHevcEncoder::Impl
