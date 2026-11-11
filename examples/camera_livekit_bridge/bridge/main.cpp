@@ -198,7 +198,15 @@ int main(int argc, char** argv)
                               << stats.skipped.load() << " skipped, " << stats.rejected.load() << " rejected, encode "
                               << mean_ms << " ms mean, bitrate " << stats.bitrate_bps.load() / 1000
                               << " kbps (transport target " << stats.target_bps.load() / 1000 << " kbps, "
-                              << stats.rate_changes.load() << " changes)\n";
+                              << stats.rate_changes.load() << " changes)";
+                    const uint64_t ready_samples = stats.capture_to_ready_samples.load();
+                    if (ready_samples > 0)
+                    {
+                        std::cerr << ", capture-to-ready "
+                                  << static_cast<double>(stats.capture_to_ready_us_total.load()) / ready_samples / 1000.0
+                                  << " ms mean " << stats.capture_to_ready_max_us.load() / 1000.0 << " ms max";
+                    }
+                    std::cerr << "\n";
                     last_frames[i] = frames;
                 }
                 last_report = now;

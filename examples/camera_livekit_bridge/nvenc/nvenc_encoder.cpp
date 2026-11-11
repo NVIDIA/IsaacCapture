@@ -232,6 +232,7 @@ void NvencEncoder::set_bitrate(uint32_t bitrate_bps)
     if (bitrate_bps == 0)
         throw std::invalid_argument("NvencEncoder: the bitrate must be positive");
     e.context.make_current();
+    const uint32_t previous = e.bitrate_bps;
     e.apply_rate(bitrate_bps);
     NV_ENC_RECONFIGURE_PARAMS reconfigure{};
     reconfigure.version = NV_ENC_RECONFIGURE_PARAMS_VER;
@@ -239,7 +240,16 @@ void NvencEncoder::set_bitrate(uint32_t bitrate_bps)
     reconfigure.reInitEncodeParams.encodeConfig = &e.enc_config;
     reconfigure.resetEncoder = 0;
     reconfigure.forceIDR = 0;
-    check_nv(e.fn.nvEncReconfigureEncoder(e.encoder, &reconfigure), "nvEncReconfigureEncoder");
+    try
+    {
+        check_nv(e.fn.nvEncReconfigureEncoder(e.encoder, &reconfigure), "nvEncReconfigureEncoder");
+    }
+    catch (...)
+    {
+        // The encoder kept its old rate, so the reported rate and the settings used for the next change must too.
+        e.apply_rate(previous);
+        throw;
+    }
 }
 
 uint32_t NvencEncoder::bitrate() const
