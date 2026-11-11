@@ -211,6 +211,7 @@ public:
             pending.timing.acquireSpreadNs = latestAcquiredSteadyNs - earliestAcquiredSteadyNs;
         }
 
+        std::lock_guard<std::mutex> sendLock(m_sendMutex);
         std::vector<ReadyBundle> ready;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -327,6 +328,7 @@ private:
         if (payload.empty())
             return setError("empty AVS1 sample payload");
         const uint64_t payloadDoneSteadyNs = steadyNowNs();
+        std::lock_guard<std::mutex> sendLock(m_sendMutex);
         std::vector<ReadyBundle> ready;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -444,6 +446,8 @@ private:
     uint64_t m_sessionId;
     std::vector<Avs1StreamRecord> m_streamTemplates;
     std::vector<std::vector<std::unique_ptr<SampleSink>>> m_sinks;
+    // Hold across ordered collection and enqueue. Lock order: send, then state.
+    std::mutex m_sendMutex;
     mutable std::mutex m_mutex;
     std::map<uint64_t, PendingBundle> m_pending;
     uint64_t m_nextSendSequence;
