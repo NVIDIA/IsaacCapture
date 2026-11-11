@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from capture_server import protocol as p
 from egocap_web.app import app as real_app
 from egocap_web.config import CaptureStatusConfig, VisualizationConfig
 from egocap_web.settings_routes import EffectiveSettings, router
@@ -131,6 +132,13 @@ def test_a_resolved_station_is_reported_with_its_cameras(monkeypatch, tmp_path):
     assert body["station"]["auto_fill_operator_name"] is True
     assert body["station"]["task_description"] == "Fold the towel"
     assert body["station"]["data_dir"] == str(tmp_path / "data")
+
+
+def test_configured_cameras_are_reported_by_name_and_type(monkeypatch):
+    _clear_env(monkeypatch)
+    cameras = (p.CameraSelection(name="head", type=p.CameraType.OAK_D_COLOR),)
+    body = _client(_snapshot(capture=CaptureStatusConfig(cameras=cameras))).get("/api/settings").json()
+    assert body["capture"]["cameras"] == [{"name": "head", "type": "oak_d_color"}]
 
 
 def test_the_real_application_reports_what_it_started_with(monkeypatch, unused_tcp_port):

@@ -68,7 +68,10 @@ class EffectiveSettings:
                 "profile_label": capture.profile_label,
                 "sources": [_enum_name(source) for source in capture.sources],
                 "plugins": [_enum_name(plugin) for plugin in capture.plugins],
-                "cameras": [{"name": camera.name, "type": _enum_name(camera.type)} for camera in capture.cameras],
+                # CameraSelection is a TypedDict, so keys are read by subscript, not attribute.
+                "cameras": [
+                    {"name": camera["name"], "type": _enum_name(camera["type"])} for camera in capture.cameras
+                ],
             },
             "preview": {"camera_sample_hz": CAMERA_SAMPLE_HZ, "tracking_sample_hz": TRACKING_SAMPLE_HZ},
             "station": {
