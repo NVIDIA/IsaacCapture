@@ -27,7 +27,8 @@ bool describeArgusFrame(DmaBuffer* buffer,
     if (NvBufSurfaceFromFd(buffer->getFd(), reinterpret_cast<void**>(&surface)) != 0 || !surface)
         return false;
     const NvBufSurfaceParams& params = surface->surfaceList[0];
-    if (params.planeParams.num_planes < 2)
+    // Exactly the layout the header promises; CaptureManager allocates NVBUF_COLOR_FORMAT_NV12.
+    if (params.colorFormat != NVBUF_COLOR_FORMAT_NV12 || params.planeParams.num_planes != 2)
         return false;
 
     CaptureFrame described;
