@@ -464,8 +464,6 @@ def include_dirs(layout: Layout, args: argparse.Namespace) -> list[Path]:
     sensing = sensing_dir()
     sysroot = layout.sysroot
     dirs = [
-        sensing,
-        sensing / "core",
         sensing / "core" / "inc",
         sensing / "livekit" / "inc",
         sensing / "third_party" / "jetson_multimedia_api" / "include",
