@@ -41,7 +41,7 @@ CMake reads `CMAKE_TOOLCHAIN_FILE` only on a build tree's **first** configure, s
 existing `build/` has to go — otherwise vcpkg is never picked up and configure fails.
 
 ```bash
-cd IsaacTeleop
+cd IsaacCapture
 
 rm -rf build   # required if build/ was configured without CMAKE_TOOLCHAIN_FILE
 cmake -B build -DBUILD_PLUGIN_OAK_CAMERA=ON \
@@ -110,7 +110,7 @@ from pathlib import Path
 from isaaccapture.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
 from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
 
-PLUGIN_ROOT = Path("build/src/plugins")  # or your installed plugin search path
+PLUGIN_ROOT = Path("install/plugins")  # after a full build and cmake --install build
 COLLECTION_PREFIX = "oak_camera"
 STREAM_NAMES = ["Color", "MonoLeft"]
 

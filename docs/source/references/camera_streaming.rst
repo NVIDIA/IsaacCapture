@@ -277,15 +277,16 @@ pass ``--accept-eula``). Open the printed client URL in your headset browser, ac
 certificate, and click **Connect**, following :ref:`connect-xr-headset`. On Jetson Orin, select
 **H.264** in the client's **Video Codec** setting before connecting.
 
-**You should see** the terminal report the session and the source coming up::
+**You should see** the terminal report the source coming up, followed by a live status panel
+headed with the display mode, source, and camera count::
 
-   camera_viz: source=local, mode=xr, xr=True, shapes=quad, 1 layer(s)
    [video] opening...
    [video] connected
    [video] streaming
+   camera_viz  xr · local · 1 camera
 
 and the clip looping on a plane in the headset once it connects — or in a desktop window
-(``mode=window, xr=False``) with the ``--mode window`` override, which starts no runtime.
+(``window · local · 1 camera``) with the ``--mode window`` override, which starts no runtime.
 
 .. _camera-streaming-first-session:
 
@@ -379,7 +380,20 @@ Running with a real camera
 Attach the camera to the machine that runs the viewer, keep ``source: local`` in the config, and
 run with the matching config. First edit its device, resolution, and frame rate to match your
 camera. In particular, ``v4l2.yaml`` defaults to a ZED Mini's 2560×720 UVC mode; a regular webcam
-needs values it supports (inspect them with ``v4l2-ctl --list-formats-ext``):
+needs values it supports (inspect them with ``v4l2-ctl --list-formats-ext``).
+
+``/dev/videoN`` numbering depends on what else is attached, and one camera can expose several
+nodes (a RealSense has separate depth, infrared, and color nodes), so check the ``device:`` in
+``v4l2.yaml`` or ``realsense.yaml`` before running. List the nodes each camera owns, then
+pick the one that offers the configured resolution and frame rate:
+
+.. code-block:: bash
+
+   v4l2-ctl --list-devices
+   v4l2-ctl --device=/dev/videoN --list-formats-ext   # repeat for each node of the camera
+
+A node without that mode fails to open, and the viewer logs
+``requested 1920x1080, got 1280x720`` (or similar) every few seconds with ``0.0 submit/s``.
 
 .. code-block:: bash
 
@@ -763,7 +777,8 @@ Two things to know when running it:
 
 - Use the config that matches the attached camera. ``configs/v4l2.yaml`` is a ZED Mini template
   (``/dev/video0``, 2560x720); on any other camera it fails to open and the viewer reports
-  ``submit/s 0.0``. For a RealSense, run ``configs/realsense.yaml``.
+  ``submit/s 0.0``. For a RealSense, run ``configs/realsense.yaml`` with its ``device:`` set
+  to the color node (see :ref:`camera-streaming-live-camera`).
 - ``loopback`` does not forward ``--mode``, so it opens in the YAML's ``display.mode`` (``xr`` by
   default). Set ``display.mode: window`` in the YAML for a desktop window.
 

@@ -136,7 +136,7 @@ controllers, etc.):
    from isaaccapture.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
    from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
 
-   PLUGIN_ROOT = Path("build/src/plugins")  # or your installed plugin search path
+   PLUGIN_ROOT = Path("install/plugins")  # after a full build and cmake --install build
    COLLECTION_PREFIX = "oak_camera"
    STREAM_NAMES = ["Color", "MonoLeft"]
 
@@ -176,14 +176,16 @@ The test script :code-file:`tests/python/xr_runtime/test_oak_camera.py` runs the
 same SchemaPusher flow with ``PluginManager`` and ``DeviceIOSession`` directly.
 It loads the plugin from ``install/plugins``, so it needs a full build and install
 of the tree configured above, not only ``camera_plugin_oak``. With ``isaaccapture``
-installed in the active environment (step 4 of :doc:`/development/build_from_source/index`)
-and the CloudXR environment loaded (see :ref:`load-cloudxr-environment-variables`),
-run from the repository root:
+installed in the active environment (step 4 of :doc:`/development/build_from_source/index`),
+start the CloudXR service and load its environment (see
+:ref:`load-cloudxr-environment-variables`), then run from the repository root:
 
 .. code-block:: bash
 
    cmake --build build --parallel
    cmake --install build
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
    python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 
 Configuration

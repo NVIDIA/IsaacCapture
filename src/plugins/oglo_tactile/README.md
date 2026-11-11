@@ -50,7 +50,13 @@ cmake --build build --target oglo_tactile_plugin --parallel
 
 ## Usage
 
+The plugin opens its OpenXR session once the glove connects, so start the CloudXR
+runtime and source its environment in the same shell first:
+
 ```bash
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
+source ~/.cloudxr/run/cloudxr.env
+
 # Push for a host OgloTactileTracker into a shared TeleopSession MCAP
 ./build/src/plugins/oglo_tactile/oglo_tactile_plugin --side right --collection-prefix=oglo
 ./build/src/plugins/oglo_tactile/oglo_tactile_plugin --side left  --collection-prefix=oglo
@@ -82,7 +88,7 @@ malformed-packet rejection:
 
 ```bash
 ctest --test-dir build -R oglo_packet_parser --output-on-failure
-# or standalone, no IsaacTeleop deps:
-cd src/plugins/oglo_tactile/tests
-g++ -std=c++20 -I.. test_oglo_packet_parser.cpp ../oglo_packet_parser.cpp -o t && ./t
+# or standalone from the repository root, no IsaacTeleop deps:
+g++ -std=c++20 -Isrc/plugins/oglo_tactile tests/cpp/plugins/oglo_tactile/test_oglo_packet_parser.cpp \
+    src/plugins/oglo_tactile/oglo_packet_parser.cpp -o /tmp/test_oglo_packet_parser && /tmp/test_oglo_packet_parser
 ```
