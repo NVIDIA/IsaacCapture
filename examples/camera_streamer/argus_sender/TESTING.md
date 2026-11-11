@@ -34,6 +34,13 @@ The deployment snapshot/restore checks run from `argus_sender/`:
 python3 -m pytest tests/test_deployment.py -q
 ```
 
+## Cross-compiling on a PC
+
+`cross_build.sh syntax` type-checks every sender source against the Orin's headers, and `cross_build.sh build`
+produces an aarch64 `argus_sender` that is linked but not run. Both use the sysroot and Arm toolchain from
+`ORIN_CROSS_ROOT`; the script header says what the sysroot must contain. Tests that include Argus headers compile
+this way but run only on the Orin.
+
 ## 120-frame hardware smoke test
 
 The opt-in test opens the devices in
