@@ -40,4 +40,5 @@ frames per stream.
 
 Tests: `python3 -m unittest discover -s mock_sender/tests` and
 `python3 -m unittest tests.test_mock_sender_receiver_wire`, both from this
-directory's parent.
+directory's parent. The full mock-to-CUDA-IPC pipeline (needs a GPU):
+`camera_receiver/.venv/bin/python -m unittest tests.test_mock_to_ipc_pipeline`.
