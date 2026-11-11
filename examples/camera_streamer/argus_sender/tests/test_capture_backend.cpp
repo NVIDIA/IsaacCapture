@@ -64,6 +64,6 @@ int main()
     }
     TEST_CHECK_EQ(test, released, 12);
 
-    TEST_CHECK_EQ(test, std::string(sensorClockDomainName(SENSOR_CLOCK_SIPL_COUNTER)), std::string("sipl_counter"));
+    TEST_CHECK_EQ(test, std::string(sensorClockDomainName(SENSOR_CLOCK_RAW_COUNTER)), std::string("raw_counter"));
     return test.finish();
 }
