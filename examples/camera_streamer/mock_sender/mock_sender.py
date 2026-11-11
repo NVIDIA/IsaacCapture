@@ -401,7 +401,7 @@ class MockSender:
             ready_tsc_ns = self.clock.tsc_at(t_mono)
             ready_sm_ns = self.clock.sm_at(t_mono)
             payloads: list[bytes | None] = []
-            for index, cursor in enumerate(cursors):
+            for cursor in cursors:
                 paused = any(
                     p.stream == cursor.spec.name
                     and p.start_s <= elapsed < p.start_s + p.duration_s
