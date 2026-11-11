@@ -32,9 +32,9 @@ void on_signal(int)
 void usage()
 {
     std::cerr
-        << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK [--stream ...]\n"
+        << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
            "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N]\n"
-           "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects.\n";
+           "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
 }
 
 std::string read_token(const std::string& path)
@@ -58,7 +58,13 @@ int main(int argc, char** argv)
     std::string url;
     std::string token_file;
     std::string socket_path = "/tmp/camera_receiver_avs1_cuda_ipc.sock";
-    std::vector<std::pair<std::string, std::string>> streams;
+    struct StreamSpec
+    {
+        std::string name;
+        std::string track;
+        uint32_t scale_div = 1;
+    };
+    std::vector<StreamSpec> streams;
     WorkerConfig defaults;
     int gpu = 0;
     for (int i = 1; i < argc; ++i)
@@ -89,14 +95,23 @@ int main(int argc, char** argv)
             gpu = std::atoi(next().c_str());
         else if (arg == "--stream")
         {
-            const std::string spec = next();
-            const auto eq = spec.find('=');
-            if (eq == std::string::npos || eq == 0 || eq + 1 == spec.size())
+            std::string spec = next();
+            StreamSpec parsed;
+            const auto colon = spec.rfind(':');
+            if (colon != std::string::npos)
             {
-                std::cerr << "--stream needs NAME=TRACK, got '" << spec << "'\n";
+                parsed.scale_div = static_cast<uint32_t>(std::atoi(spec.substr(colon + 1).c_str()));
+                spec.erase(colon);
+            }
+            const auto eq = spec.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == spec.size() || parsed.scale_div == 0)
+            {
+                std::cerr << "--stream needs NAME=TRACK or NAME=TRACK:DIV, got '" << spec << "'\n";
                 return 2;
             }
-            streams.emplace_back(spec.substr(0, eq), spec.substr(eq + 1));
+            parsed.name = spec.substr(0, eq);
+            parsed.track = spec.substr(eq + 1);
+            streams.push_back(parsed);
         }
         else
         {
@@ -118,11 +133,12 @@ int main(int argc, char** argv)
         CudaContext context(gpu);
         auto session = LiveKitSession::connect(url, read_token(token_file));
         std::vector<std::unique_ptr<StreamWorker>> workers;
-        for (const auto& [name, track] : streams)
+        for (const auto& spec : streams)
         {
             WorkerConfig config = defaults;
-            config.stream = name;
-            config.track = track;
+            config.stream = spec.name;
+            config.track = spec.track;
+            config.scale_div = spec.scale_div;
             config.socket_path = socket_path;
             workers.push_back(std::make_unique<StreamWorker>(config, context, *session));
         }

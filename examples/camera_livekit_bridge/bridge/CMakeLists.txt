@@ -9,6 +9,7 @@ add_executable(camera_livekit_bridge
 target_link_libraries(camera_livekit_bridge
     PRIVATE
         camera_livekit_bridge::ipc_client
+        camera_livekit_bridge::gpu_ops
         camera_livekit_bridge::nvenc
         camera_livekit_bridge::livekit_publisher
         camera_livekit_bridge::video_types
