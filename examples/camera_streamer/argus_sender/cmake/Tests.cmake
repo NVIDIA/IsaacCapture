@@ -28,6 +28,7 @@ endfunction()
 add_executable(argus_sender_test_config
     tests/test_config.cpp
     src/Config.cpp
+    src/CaptureBackend.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_config config)
 target_link_libraries(argus_sender_test_config PRIVATE yaml-cpp::yaml-cpp)
