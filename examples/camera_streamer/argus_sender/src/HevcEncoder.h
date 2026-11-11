@@ -39,6 +39,9 @@ public:
     static DmaBuffer* create(const Argus::Size2D<uint32_t>& size,
                              NvBufSurfaceColorFormat colorFormat,
                              NvBufSurfaceLayout layout = NVBUF_LAYOUT_BLOCK_LINEAR);
+    // Wraps a DMA-BUF this process does not own, for the encoder's input queue. The caller keeps `fd` valid until the
+    // encoder has dequeued the buffer; destroying the wrapper closes and frees nothing.
+    static DmaBuffer* createExternal(int fd);
     ~DmaBuffer();
 
     int getFd() const;
@@ -57,6 +60,7 @@ private:
     DmaBuffer();
 
     int m_fd;
+    bool m_ownsSurface;
     NvBufSurface* m_surface;
     bool m_eglImageMapped;
     Argus::IBufferOutputStream* m_argusStream;
