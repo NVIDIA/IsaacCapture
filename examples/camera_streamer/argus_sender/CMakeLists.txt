@@ -220,6 +220,8 @@ if(WITH_SIPL)
         ${NVBUFSURFACE_NVSCI_LIBRARY}
         Threads::Threads
     )
+    target_sources(argus_sender PRIVATE src/SiplSender.cpp)
+    target_compile_definitions(argus_sender PRIVATE SENDER_WITH_SIPL)
     target_link_libraries(argus_sender PRIVATE sipl_capture)
 endif()
 
