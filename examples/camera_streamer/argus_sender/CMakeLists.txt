@@ -136,6 +136,7 @@ add_executable(argus_sender
     src/CaptureDomainPlan.cpp
     src/ArgusFrameAdapter.cpp
     src/CaptureBackend.cpp
+    src/CaptureSender.cpp
     src/CaptureManager.cpp
     src/FrameBundleAssembler.cpp
     src/StreamProcessor.cpp

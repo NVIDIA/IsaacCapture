@@ -12,8 +12,8 @@ namespace argus_sender
 
 struct AppConfig;
 
-// The AVS1 sender fed by the SIPL backend: independent mono HEVC streams, each frame encoded from the ISP0 surface
-// and sent as its own bundle. Same return convention as runConfiguredCapture.
+// Resolves each stream to a SIPL pipeline and runs runCaptureSender on the SIPL backend: independent mono HEVC
+// streams, each frame encoded from the ISP0 surface. Same return convention as runConfiguredCapture.
 bool runSiplSender(const AppConfig& config, bool* receiverDisconnected, bool appendDump);
 
 } // namespace argus_sender
