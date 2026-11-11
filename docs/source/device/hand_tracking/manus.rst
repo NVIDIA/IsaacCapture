@@ -147,7 +147,7 @@ this shell, until you stop it with ``python -m isaaccapture.cloudxr.service stop
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start
+   python -m isaaccapture.cloudxr.service start --accept-eula
 
 In the shell you will use to run the plugin, source the environment file
 that the runtime writes on startup. This points the OpenXR loader at CloudXR:

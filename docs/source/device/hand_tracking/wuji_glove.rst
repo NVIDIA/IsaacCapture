@@ -80,7 +80,7 @@ the plugin:
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start   # runs in the background
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
    source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/wuji_glove/wuji_glove_plugin
 
