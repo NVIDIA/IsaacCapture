@@ -302,11 +302,20 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
     try
     {
         const YAML::Node root = YAML::LoadFile(path);
-        const std::set<std::string> rootAllowed = { "version", "network", "runtime", "alignment", "streams" };
+        const std::set<std::string> rootAllowed = { "version", "capture_backend", "network",
+                                                    "runtime", "alignment",       "streams" };
         if (!rejectUnknown(root, rootAllowed, "config", error))
             return false;
         if (!readUint32(root, "version", "config", &config->version, error))
             return false;
+        if (root["capture_backend"])
+        {
+            std::string backend;
+            if (!readOptional(root, "capture_backend", "config", &backend, error))
+                return false;
+            if (!parseCaptureBackend(backend, &config->captureBackend))
+                return fail(error, "config.capture_backend must be auto, argus or sipl");
+        }
 
         if (root["network"])
         {
