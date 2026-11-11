@@ -50,6 +50,7 @@ Bundle flags:
 | `0x0001` | `SENDER_CLOCK_VALID` | Sender timing fields are valid |
 | `0x0002` | `SENDER_CLOCK_TAI` | Valid sender fields use `CLOCK_TAI`; otherwise `CLOCK_REALTIME` |
 | `0x0004` | `SENDER_TSC_VALID` | `sender_capture_ready_tsc_ns` is valid |
+| `0x0008` | `TIMING_EXT` | One 24-byte timing record per sample follows the sample descriptors |
 
 `SENDER_CLOCK_TAI` is invalid unless `SENDER_CLOCK_VALID` is also set.
 
@@ -74,7 +75,7 @@ payload_bytes of sample data
 Therefore:
 
 ```text
-descriptor_bytes = stream_count * 40 + sample_count * 72
+descriptor_bytes = stream_count * 40 + sample_count * 72   (+ sample_count * 24 with TIMING_EXT)
 record_length = 64 + descriptor_bytes + payload_bytes
 ```
 
@@ -110,6 +111,39 @@ Stream flags:
 For a lower-rate stream on an absent tick, `PRESENT` is clear,
 `stream_sequence` is zero, and both stereo samples are absent atomically. The
 descriptor still reports codec, dimensions, FPS, and camera count.
+
+## Timing extension
+
+When `TIMING_EXT` is set, `descriptor_bytes` also counts one 24-byte timing record per sample descriptor, stored
+after all sample descriptors in the same flattened order, before the payload area. It states the sensor's capture
+instant on the sender's `CLOCK_MONOTONIC`, which is the clock the sender answers clock-exchange requests on, and how
+far to trust it.
+
+| Offset | Size | Field | Meaning |
+| ---: | ---: | --- | --- |
+| 0 | 8 | `sensor_capture_ns` | Sensor capture instant, `CLOCK_MONOTONIC` ns; zero unless `VALID` |
+| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_MONOTONIC` mapping: the anchor bracket plus 500 ppm of its age |
+| 12 | 4 | `anchor_age_ns` | Age of the mapping's anchor when the frame was stamped |
+| 16 | 2 | `flags` | `0x0001` `VALID`: the capture time passed the sender's checks |
+| 18 | 2 | `clock_domain` | `1` = `CLOCK_MONOTONIC`; zero unless `VALID` |
+| 20 | 4 | `reserved` | Zero |
+
+With `VALID` clear every other field must be zero and the sample makes no capture-time claim; a receiver must not
+substitute another time for it. `VALID` requires `clock_domain` 1 and a nonzero `sensor_capture_ns`. A new
+`session_id` invalidates every earlier mapping. Parsers reject a record count that does not match `descriptor_bytes`,
+unknown flags and nonzero reserved fields. A receiver that predates the flag rejects the bundle as an unknown bundle
+flag, so deploy the receiver before a sender that sets it.
+
+Golden record (hex), one stream, one sample, a three-byte payload, `VALID` with `sensor_capture_ns` 998000000,
+`uncertainty_ns` 3000 and `anchor_age_ns` 250000000:
+
+```text
+000000cb415653310001000d000000400001000100000000000000050102030405060708000000003b9aca0000000000
+3ba26b2000000088000000030000000077359400000000010101000000000040000000300000001e0000000100000000
+00000005000000010000000000000000000300000000000000000000000000000000004d000000007604670000000000
+000000000000000000000000000000000000000000000000000000000000000000000003000000003b7c458000000bb8
+0ee6b2800001000100000000000001
+```
 
 ## Sample descriptor
 
