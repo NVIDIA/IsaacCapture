@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Receiver config matching mock_sender's default streams: mono head plus two
+# mono wrists, all HEVC. Override receiver.host with --host.
+
+version: 1
+
+receiver:
+  host: 127.0.0.1
+  port: 5000
+  # Explicit CUDA device. Use null or omit this field to use the current device.
+  gpu_id: 0
+  max_record_bytes: 268435456
+  # Seconds between periodic decode/copy and IPC publish summaries. 0 disables
+  # only these recurring stats; startup, connection, warning, and error logs remain.
+  stats_log_interval_s: 5
+  # Warn separately when any configured logical AVS stream is received below
+  # this FPS over the warning interval. Set the threshold to 0 to disable.
+  receive_fps_warning_threshold: 0
+  receive_fps_warning_interval_s: 10.0
+
+ipc:
+  socket_path: /tmp/camera_receiver_avs1_cuda_ipc.sock
+  owner_name: camera_receiver_avs1
+  queue_size: 1024
+
+streams:
+  - index: 0
+    name: head
+    type: mono
+    width: 2560
+    height: 1984
+    output_format: nv12
+    ring_depth: 6
+    ipc:
+      mono: head
+
+  - index: 1
+    name: wrist1
+    type: mono
+    width: 640
+    height: 480
+    output_format: nv12
+    ring_depth: 6
+    ipc:
+      mono: wrist1
+
+  - index: 2
+    name: wrist2
+    type: mono
+    width: 640
+    height: 480
+    output_format: nv12
+    ring_depth: 6
+    ipc:
+      mono: wrist2
