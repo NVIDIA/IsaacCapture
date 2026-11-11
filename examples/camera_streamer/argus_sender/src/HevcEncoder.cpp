@@ -9,7 +9,7 @@
 #include "EncodedFrameSink.h"
 #include "Error.h"
 #include "Runtime.h"
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
 #include <NvVideoEncoder.h>
 #include <atomic>

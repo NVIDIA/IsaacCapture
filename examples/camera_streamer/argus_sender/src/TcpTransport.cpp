@@ -6,8 +6,8 @@
 
 #include "TcpTransport.h"
 
+#include "FrameTiming.h"
 #include "Runtime.h"
-#include "StereoTiming.h"
 
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
