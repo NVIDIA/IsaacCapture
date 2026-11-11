@@ -8,7 +8,7 @@
 #define ARGUS_SENDER_FRAME_BUNDLE_ASSEMBLER_H
 
 #include "Avs1Wire.h"
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
 #include <cstddef>
 #include <cstdint>

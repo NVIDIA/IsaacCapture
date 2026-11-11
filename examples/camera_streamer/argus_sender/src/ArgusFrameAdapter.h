@@ -8,7 +8,7 @@
 #define ARGUS_SENDER_ARGUS_FRAME_ADAPTER_H
 
 #include "CaptureFrame.h"
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
 #include <cstdint>
 #include <functional>
