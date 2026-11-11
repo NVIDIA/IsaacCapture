@@ -130,14 +130,17 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
             return result;
     }
     result.anchorAgeNs = nowMonotonicNs - m_anchorTakenNs;
-    result.uncertaintyNs = m_anchor.bracketNs + result.anchorAgeNs * m_config.slewPpm / 1000000;
     if (m_stepped)
     {
         result.reason = "the sensor counter and CLOCK_MONOTONIC disagree between anchors: a clock step";
         return result;
     }
-    const int64_t capture =
-        m_anchor.monotonicNs + counterTicksToNs(static_cast<int64_t>(sensorTicks) - m_anchor.source, m_config.counterHz);
+    // The mapping extrapolates from the anchor to the sensor event, in either direction, so the slew error accrues over
+    // that distance and not over how old the anchor is by the time the frame is handled.
+    const int64_t anchorToEventNs =
+        counterTicksToNs(static_cast<int64_t>(sensorTicks) - m_anchor.source, m_config.counterHz);
+    const int64_t capture = m_anchor.monotonicNs + anchorToEventNs;
+    result.uncertaintyNs = m_anchor.bracketNs + std::llabs(anchorToEventNs) * m_config.slewPpm / 1000000;
     if (capture > readyMonotonicNs)
     {
         result.reason = "the sensor timestamp is after the frame was ready: the assumed counter or rate is wrong";

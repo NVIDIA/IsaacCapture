@@ -122,7 +122,7 @@ far to trust it.
 | Offset | Size | Field | Meaning |
 | ---: | ---: | --- | --- |
 | 0 | 8 | `sensor_capture_ns` | Sensor capture instant, `CLOCK_MONOTONIC` ns; zero unless `VALID` |
-| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_MONOTONIC` mapping: the anchor bracket plus 500 ppm of its age |
+| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_MONOTONIC` mapping: the anchor's read bracket plus 500 ppm of the time between the anchor and the sensor event |
 | 12 | 4 | `anchor_age_ns` | Age of the mapping's anchor when the frame was stamped |
 | 16 | 2 | `flags` | `0x0001` `VALID`: the capture time passed the sender's checks |
 | 18 | 2 | `clock_domain` | `1` = `CLOCK_MONOTONIC`; zero unless `VALID` |

@@ -311,8 +311,9 @@ A camera backend that reports its sensor's capture timestamp can have the sender
 frame's timestamp from the difference. Every conversion is checked: a capture time after the frame was ready, an
 implausibly old one, a counter that cannot be read, an unknown frequency or a step between two consecutive anchors gives
 no capture time for that frame, never a substituted host-side stamp, and the reason is logged when it changes. A frame
-that passes also carries an uncertainty (the anchor's read bracket plus 500 ppm of its age, the bound on how far
-`CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age. The uncertainty bounds the mapping only; it
+that passes also carries an uncertainty (the anchor's read bracket plus 500 ppm of the time between the anchor and the
+sensor event, the bound on how far `CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age, which is
+reported separately as its freshness. The uncertainty bounds the mapping only; it
 does not include how closely the sensor's timestamp event matches the physical exposure.
 
 The SIPL backend reports its start-of-frame timestamp this way. On the board it was measured against the platform counter
