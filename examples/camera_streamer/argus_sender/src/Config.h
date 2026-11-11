@@ -103,6 +103,8 @@ struct NetworkConfig
     uint16_t port = 5000;
     uint32_t reconnectDelayMs = 1000;
     std::string dumpWirePath;
+    // UDP port answering the clock exchange for the life of the process (see ClockResponder.h); 0 turns it off.
+    uint16_t clockPort = 0;
 };
 
 struct RuntimeConfig

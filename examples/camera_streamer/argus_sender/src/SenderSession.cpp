@@ -7,16 +7,38 @@
 #include "SenderSession.h"
 
 #include "CaptureCoordinator.h"
+#include "ClockResponder.h"
 #include "Config.h"
 #include "Runtime.h"
 
 #include <cstdio>
+#include <memory>
+#include <stdexcept>
 
 namespace argus_sender
 {
 
 bool executeConfiguredSender(const AppConfig& config)
 {
+    // Answers clock requests for as long as the process runs, whether or not a receiver is connected.
+    std::unique_ptr<ClockResponder> clockResponder;
+    if (config.network.clockPort != 0)
+    {
+        try
+        {
+            ClockResponderConfig clockConfig;
+            clockConfig.bindHost = config.network.bindHost;
+            clockConfig.port = config.network.clockPort;
+            clockResponder.reset(new ClockResponder(clockConfig));
+        }
+        catch (const std::exception& e)
+        {
+            std::fprintf(stderr, "%s\n", e.what());
+            return false;
+        }
+        std::printf("Clock responder on UDP %s:%u\n", config.network.bindHost.c_str(), clockResponder->port());
+    }
+
     uint64_t reconnectSession = 0;
     while (!stopRequested())
     {

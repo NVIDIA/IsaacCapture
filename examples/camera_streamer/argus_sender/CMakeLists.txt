@@ -135,6 +135,8 @@ add_executable(argus_sender
     src/FrameBundleAssembler.cpp
     src/StreamProcessor.cpp
     src/CaptureCoordinator.cpp
+    src/ClockExchange.cpp
+    src/ClockResponder.cpp
     src/SenderSession.cpp
     src/Runtime.cpp
     src/CameraCatalog.cpp

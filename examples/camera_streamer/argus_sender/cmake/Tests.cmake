@@ -106,6 +106,20 @@ add_executable(argus_sender_test_tcp_transport
 argus_sender_add_cpp_test(argus_sender_test_tcp_transport tcp_transport)
 set_tests_properties(tcp_transport PROPERTIES LABELS "loopback")
 
+add_executable(argus_sender_test_clock_exchange
+    tests/test_clock_exchange.cpp
+    src/ClockExchange.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_clock_exchange clock_exchange)
+
+add_executable(argus_sender_test_clock_responder
+    tests/test_clock_responder.cpp
+    src/ClockExchange.cpp
+    src/ClockResponder.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_clock_responder clock_responder)
+set_tests_properties(clock_responder PROPERTIES LABELS "loopback")
+
 option(ARGUS_SENDER_HARDWARE_TESTS
        "Enable tests that capture from physical stereo cameras"
        OFF)

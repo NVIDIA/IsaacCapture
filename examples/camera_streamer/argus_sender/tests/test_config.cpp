@@ -75,6 +75,7 @@ int main()
     std::string error;
     TEST_CHECK(test, loadText(validConfig(), &config, &error));
     TEST_CHECK_EQ(test, config.streams.size(), static_cast<size_t>(2));
+    TEST_CHECK_EQ(test, config.network.clockPort, static_cast<uint16_t>(0));
     TEST_CHECK_EQ(test, config.alignment.warmupFrames, 17U);
     TEST_CHECK_EQ(test, config.alignment.intervalFrames, 29U);
     TEST_CHECK_EQ(test, config.runtime.logIntervalSeconds, 5U);
@@ -258,5 +259,15 @@ int main()
                                "      remap: {file: m.remap, capture_width: 2560, capture_height: 1984, supersample: 2}\n",
                                &invalid, &error));
     TEST_CHECK(test, error.find("unknown key") != std::string::npos);
+    {
+        const std::string streams = "streams:\n  - {id: a, type: mono, cameras: [{device: 0}], output: {fps: 30}}\n";
+        argus_sender::AppConfig clockConfig;
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {clock_port: 5611}\n" + streams, &clockConfig, &error));
+        TEST_CHECK_EQ(test, clockConfig.network.clockPort, static_cast<uint16_t>(5611));
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {clock_port: 65535}\n" + streams, &clockConfig, &error));
+        TEST_CHECK_EQ(test, clockConfig.network.clockPort, static_cast<uint16_t>(65535));
+        TEST_CHECK(test, !loadText("version: 1\nnetwork: {clock_port: 65536}\n" + streams, &clockConfig, &error));
+        TEST_CHECK(test, error.find("clock_port") != std::string::npos);
+    }
     return test.finish();
 }

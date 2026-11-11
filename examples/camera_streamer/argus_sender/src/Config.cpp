@@ -311,15 +311,17 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
         if (root["network"])
         {
             const YAML::Node network = root["network"];
-            const std::set<std::string> allowed = { "bind", "port", "reconnect_ms", "dump_wire" };
+            const std::set<std::string> allowed = { "bind", "port", "reconnect_ms", "dump_wire", "clock_port" };
             if (!rejectUnknown(network, allowed, "network", error) ||
                 !readOptional(network, "bind", "network", &config->network.bindHost, error))
             {
                 return false;
             }
             uint32_t port = config->network.port;
+            uint32_t clockPort = config->network.clockPort;
             if (!readUint32(network, "port", "network", &port, error) ||
                 !readUint32(network, "reconnect_ms", "network", &config->network.reconnectDelayMs, error) ||
+                !readUint32(network, "clock_port", "network", &clockPort, error) ||
                 !readOptional(network, "dump_wire", "network", &config->network.dumpWirePath, error))
             {
                 return false;
@@ -327,6 +329,9 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
             if (port > std::numeric_limits<uint16_t>::max())
                 return fail(error, "network.port must be in 1..65535");
             config->network.port = static_cast<uint16_t>(port);
+            if (clockPort > std::numeric_limits<uint16_t>::max())
+                return fail(error, "network.clock_port must be 0 (off) or in 1..65535");
+            config->network.clockPort = static_cast<uint16_t>(clockPort);
         }
 
         if (root["runtime"])
