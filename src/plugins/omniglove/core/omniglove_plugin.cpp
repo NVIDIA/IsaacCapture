@@ -189,17 +189,19 @@ void OmniglovePlugin::stream_callback(const omniglove_stream_sample_t* sample, v
 
 void OmniglovePlugin::on_sample(const omniglove_stream_sample_t& sample, bool is_left)
 {
-    if (sample.kind != OMNIGLOVE_STREAM_POST_DATA || sample.layout_version != OMNIGLOVE_STREAM_POST_LAYOUT_VERSION ||
-        sample.data.postdata == nullptr || sample.sample_monotonic_ns > std::numeric_limits<int64_t>::max())
+    // The SDK data union may only be read through the member selected by kind.
+    const bool post_data_present = sample.kind == OMNIGLOVE_STREAM_POST_DATA && sample.data.postdata != nullptr;
+    if (!post_data_present || sample.layout_version != OMNIGLOVE_STREAM_POST_LAYOUT_VERSION ||
+        sample.sample_monotonic_ns > std::numeric_limits<int64_t>::max())
     {
         std::lock_guard<std::mutex> lock(m_frame_mutex);
         auto& hand = m_hands[is_left ? 0 : 1];
         hand.frame.reset();
         if (!hand.sample_error_logged)
         {
-            m_logger->error("{} SDK sample contract mismatch: kind {}, layout {}, null data {}, timestamp {}",
+            m_logger->error("{} SDK sample contract mismatch: kind {}, layout {}, post data present {}, timestamp {}",
                             hand_name(is_left), static_cast<unsigned>(sample.kind), sample.layout_version,
-                            sample.data.postdata == nullptr, sample.sample_monotonic_ns);
+                            post_data_present, sample.sample_monotonic_ns);
             hand.sample_error_logged = true;
         }
         return;
