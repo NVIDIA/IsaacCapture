@@ -65,7 +65,7 @@ uv pip install -e ./examples/noitom
 python -m isaaccapture_examples.noitom.record_noitom_full_body \
   10 recordings/noitom_full_body.mcap
 
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
   recordings/noitom_full_body.mcap
 ```

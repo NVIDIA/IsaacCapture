@@ -372,10 +372,18 @@ differently:
 
 .. _build-from-source-editable-examples:
 
-An example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout replaces this
-wheel with an editable build of the checkout when you install it. Its first install compiles the
-extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
-``uv pip install -e ./examples/<name> --reinstall-package isaaccapture``.
+Install an example into this venv with ``--no-sources``:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/<name> --no-sources
+
+Without it, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
+replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
+an example that starts CloudXR stops with ``The CloudXR service exited during startup`` and the
+service log reads ``CloudXR SDK missing native/libcloudxr.so``. After a rebuild, run
+``cmake --install build`` so ``./install/wheels/`` holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
@@ -396,6 +404,12 @@ the released wheels) is unchanged, so the two coexist.
 
    pip install .            # build + install the compiled wheel from source
    pip install -e .         # editable / developer install
+
+.. warning::
+
+   Neither install carries the CloudXR runtime (``isaaccapture/cloudxr/native/``), so
+   ``python -m isaaccapture.cloudxr.service`` and every example that starts CloudXR fail under
+   this path. Use the wheel from step 4 for those.
 
 .. note::
 

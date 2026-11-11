@@ -27,7 +27,7 @@ cmake -B build \
   -DAVATAR_SDK_ROOT=/opt/avatar-sdk
 cmake --build build --parallel
 cmake --install build
-uv pip install -e ./examples/sharpa_avatar
+uv pip install -e ./examples/sharpa_avatar --no-sources
 python -m isaaccapture_examples.sharpa_avatar --print-health
 ```
 

@@ -19,15 +19,17 @@ rebuild to replace the installed wheel. `uv pip install` finds a repo-root
 terminal you run an example from.
 
 ```bash
-uv pip install -e ./examples/<name>
+uv pip install -e ./examples/<name> --no-sources
 python -m isaaccapture_examples.<name>
 ```
 
 Every example runs this way except camera_viz and vehicle_teleop, whose
-wrapper scripts call `.venv/bin/python` inside the example directory; their
-READMEs set up that venv. An example whose `pyproject.toml` points
-`[tool.uv.sources]` at this checkout installs an editable build instead of the
-wheel; [step 4][editable-examples] says how to rebuild it.
+wrapper scripts call `.venv/bin/python` inside the example directory, and
+manus_calibration, which runs from its directory on `PYTHONPATH`; their
+READMEs say how. `--no-sources` keeps the wheel installed: without it, an
+example whose `pyproject.toml` points `[tool.uv.sources]` at this checkout
+replaces the wheel with an editable build that cannot start CloudXR
+([step 4][editable-examples]).
 
 [install-step]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package
 [editable-examples]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#build-from-source-editable-examples

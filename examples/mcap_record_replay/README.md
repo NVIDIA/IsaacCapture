@@ -10,7 +10,7 @@ Live viewers are included for watching without recording. In a venv set up
 as in [Running an example](../README.md#running-an-example):
 
 ```bash
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 python -m isaaccapture_examples.mcap_record_replay.record_hand      # 5 s
 python -m isaaccapture_examples.mcap_record_replay.replay_hand      # newest take
 ```
