@@ -97,6 +97,7 @@ network:
   port: 5000
   reconnect_ms: 1000
   dump_wire: ""                 # optional exact TCP-record dump
+  clock_port: 0                 # UDP port that answers clock requests; 0 = off
 
 runtime:
   frames: 0                      # 0 = run until stopped/disconnected
@@ -290,6 +291,21 @@ raw streams immediately after its transform returns. It is not the later time
 at which the coordinator waits for that worker. These metrics are diagnostic
 metadata only and do not alter the AVS1 wire format.
 
+## Clock exchange
+
+With `network.clock_port` set, the sender answers clock requests over UDP on that port for as long as the process runs,
+whether or not a receiver is connected. A request is exactly 13 bytes (`Q`, `u32 seq`, `i64 t1`) and the reply 29 bytes
+(`R`, `u32 seq`, `i64 t1`, `i64 t2`, `i64 t3`), all little-endian. `t2` is the sender's `CLOCK_MONOTONIC` read as soon as
+the request arrives and `t3` the same clock read just before the reply is sent, in nanoseconds. A requester that records
+its own send time `t1` and receive time `t4` gets the round-trip delay `(t4 - t1) - (t3 - t2)` and the offset between the
+two clocks `((t2 - t1) + (t3 - t4)) / 2`, with an error up to half of any difference between the two network directions.
+Any other datagram is ignored.
+
+The responder keeps no state, has no authentication and returns nothing but the sender's own clock readings, like the AVS1
+stream beside it, so keep the port on a trusted camera network. A requester should accept only replies that match a
+request it still has outstanding, and should discard its outstanding requests and its estimate when the AVS1 `session_id`
+changes or the connection is re-established; the responder cannot tell a late reply from a current one.
+
 ## Wire dump
 
 Set `network.dump_wire` to save the exact length-prefixed AVS1 records that were
@@ -307,6 +323,7 @@ See [WIRE_FORMAT.md](WIRE_FORMAT.md) for the byte-level format.
 
 ## Source layout
 
+- `ClockExchange.*`, `ClockResponder.*`: the clock-exchange payloads and the UDP responder.
 - `Config.*`: YAML parsing and validation.
 - `CaptureManager.*` / `CaptureDomainPlan.*` / `PriorityFrameHandoff.h`: independent priority-eye acquisition and latest-frame slots, event-driven secondary Argus domains, configurable EGL mailbox/FIFO consumers, and timing.
 - `CapturePriorityPolicy.*`: priority-stream selection, startup synchronization tolerance, and secondary release timing.
