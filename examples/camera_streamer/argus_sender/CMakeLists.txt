@@ -14,6 +14,9 @@ option(DISABLE_MULTIPROCESS
     "Link the single-process Argus implementation instead of nvargus-daemon's socket client"
     OFF)
 
+option(WITH_SIPL "Build the SIPL capture backend (needs the SIPL API and NvSci libraries)" OFF)
+set(SIPL_ROOT "/usr/src/jetson_sipl_api/sipl" CACHE PATH "SIPL API root (WITH_SIPL=ON)")
+
 set(MMAPI_ROOT "/usr/src/jetson_multimedia_api" CACHE PATH
     "Jetson Multimedia API root")
 set(MMAPI_CLASS_DIR "${MMAPI_ROOT}/samples/common/classes" CACHE PATH
@@ -179,6 +182,46 @@ target_link_libraries(argus_sender PRIVATE
     yaml-cpp::yaml-cpp
     Threads::Threads
 )
+
+if(WITH_SIPL)
+    find_path(SIPL_INCLUDE_DIR NvSIPLCamera.hpp HINTS "${SIPL_ROOT}/include")
+    find_path(SIPL_QUERY_INCLUDE_DIR NvSIPLCameraQuery.hpp HINTS "${SIPL_ROOT}/include/query/include")
+    find_path(NVSCI_INCLUDE_DIR nvscibuf.h HINTS "${SIPL_ROOT}/include/nvsci")
+    find_library(NVSIPL_LIBRARY NAMES nvsipl HINTS ${NVIDIA_LIBRARY_DIRS})
+    find_library(NVSIPL_QUERY_LIBRARY NAMES nvsipl_query HINTS ${NVIDIA_LIBRARY_DIRS})
+    find_library(NVSCIBUF_LIBRARY NAMES nvscibuf HINTS ${NVIDIA_LIBRARY_DIRS})
+    find_library(NVSCISYNC_LIBRARY NAMES nvscisync HINTS ${NVIDIA_LIBRARY_DIRS})
+    find_library(NVBUFSURFACE_NVSCI_LIBRARY NAMES nvbufsurface_nvsci HINTS ${NVIDIA_LIBRARY_DIRS})
+    foreach(sipl_var SIPL_INCLUDE_DIR SIPL_QUERY_INCLUDE_DIR NVSCI_INCLUDE_DIR NVSIPL_LIBRARY NVSIPL_QUERY_LIBRARY
+                     NVSCIBUF_LIBRARY NVSCISYNC_LIBRARY NVBUFSURFACE_NVSCI_LIBRARY)
+        if(NOT ${sipl_var})
+            message(FATAL_ERROR "WITH_SIPL=ON but ${sipl_var} was not found")
+        endif()
+    endforeach()
+
+    # The SIPL headers need C++17; the rest of the sender stays C++14.
+    add_library(sipl_capture STATIC src/SiplCapture.cpp)
+    set_target_properties(sipl_capture PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_compile_options(sipl_capture PRIVATE -Wall -Wextra)
+    target_include_directories(sipl_capture PRIVATE
+        src
+        ${SIPL_INCLUDE_DIR}
+        ${SIPL_QUERY_INCLUDE_DIR}
+        ${NVSCI_INCLUDE_DIR}
+        ${MMAPI_INCLUDE_DIR}
+        ${CUDA_INCLUDE_DIR}
+    )
+    target_link_libraries(sipl_capture PUBLIC
+        ${NVSIPL_LIBRARY}
+        ${NVSIPL_QUERY_LIBRARY}
+        ${NVSCIBUF_LIBRARY}
+        ${NVSCISYNC_LIBRARY}
+        ${NVBUFSURFACE_LIBRARY}
+        ${NVBUFSURFACE_NVSCI_LIBRARY}
+        Threads::Threads
+    )
+    target_link_libraries(argus_sender PRIVATE sipl_capture)
+endif()
 
 if(BUILD_TESTING)
     include(cmake/Tests.cmake)
