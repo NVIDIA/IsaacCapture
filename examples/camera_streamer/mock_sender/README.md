@@ -28,12 +28,15 @@ tick, as in the real sender.
 | --- | --- |
 | `--pause NAME@START+SECONDS` | Stop one stream; it resumes at the next IDR. |
 | `--disconnect-at SECONDS` | Close the receiver connection after that long. |
-| `--clock-offset-ms`, `--clock-drift-ppm` | Offset and drift of the synthetic sender clock. |
+| `--clock-offset-ms`, `--clock-drift-ppm` | Offset (default 0, as with chrony-synced clocks) and drift of the synthetic sender clock. |
+| `--sof-lag-ms` | Synthetic sensor start-of-frame to capture-ready lag (default 20, range 0-500). |
 
-Timing fields come from the synthetic clock only. SOF/TSC and Argus frame
-timestamps are never marked valid, so consumers see `sof_delta=n/a`, and
-capture-to-consumer latencies include the clock offset. Nothing here measures
-real sensor timing. Frame numbers count published frames per stream.
+Timing fields come from the synthetic clock only. Every frame carries a
+synthetic sensor start-of-frame TSC, in a TSC domain of the mock's own, so the
+receiver derives `sensor_sof_ns` (capture-ready minus the lag) as it does for
+Argus. Argus frame timestamps are never marked valid, so `sof_delta` stays
+`n/a`. Nothing here measures real sensor timing. Frame numbers count published
+frames per stream.
 
 Tests: `python3 -m unittest discover -s mock_sender/tests` and
 `python3 -m unittest tests.test_mock_sender_receiver_wire`, both from this
