@@ -101,6 +101,16 @@ int main()
         TEST_CHECK(test, commandLine.checkConfig);
     }
 
+    {
+        argus_sender::AppConfig net;
+        const std::string streams =
+            "streams:\n  - id: a\n    type: mono\n    cameras: [{device: 0, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n";
+        TEST_CHECK(test, loadText("version: 1\n" + streams, &net, &error));
+        TEST_CHECK_EQ(test, net.network.sendBufferKb, 0U);
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {send_buffer_kb: 128}\n" + streams, &net, &error));
+        TEST_CHECK_EQ(test, net.network.sendBufferKb, 128U);
+    }
+
     argus_sender::AppConfig invalid;
     TEST_CHECK(test, !loadText("version: 1\nstreams: []\nunknown: true\n", &invalid, &error));
     TEST_CHECK(test, error.find("unknown key") != std::string::npos);

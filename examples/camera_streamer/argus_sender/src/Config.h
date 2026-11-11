@@ -105,6 +105,8 @@ struct NetworkConfig
     uint16_t port = 5000;
     uint32_t reconnectDelayMs = 1000;
     std::string dumpWirePath;
+    // Kernel TCP send buffer cap in KiB; 0 keeps the operating system's default.
+    uint32_t sendBufferKb = 0;
 };
 
 struct RuntimeConfig
