@@ -8,6 +8,7 @@
 #include <nvenc/nvenc_encoder.hpp>
 #include <video_types/video_types.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <cuda_runtime_api.h>
@@ -54,6 +55,8 @@ PlaneLayout read_layout(const IpcStream& stream)
         throw std::runtime_error("stream '" + stream.name + "' is not NV12 with y and uv planes; only NV12 is supported");
     return layout;
 }
+
+constexpr uint32_t kStartBitrateBps = 2'000'000;
 
 uint64_t unsigned_field(const nlohmann::json& metadata, const char* key)
 {
@@ -120,7 +123,9 @@ struct StreamWorker::Impl
         EncoderConfig encoder_config;
         encoder_config.geometry = geometry;
         encoder_config.fps_numerator = config.fps;
-        encoder_config.bitrate_bps = config.bitrate_bps;
+        // Start low: a fixed high rate sent into a connection whose bandwidth is not yet known queues behind the
+        // sender's pacer and ages every frame. The transport's target raises it toward the configured maximum.
+        encoder_config.bitrate_bps = std::min(config.bitrate_bps, kStartBitrateBps);
         encoder_config.idr_period = config.idr_period;
         NvencEncoder encoder(context, encoder_config);
 
@@ -183,6 +188,25 @@ struct StreamWorker::Impl
             }
             const auto feedback = sink->take_feedback();
             const bool force_idr = need_idr || feedback.keyframe_requested;
+            if (feedback.target_bitrate_bps)
+            {
+                // The congestion controller's target for this track, with headroom. A fixed rate above what the
+                // connection can carry only fills the sender's pacing queue and ages every frame behind it. Never
+                // above the configured rate, never below a floor that keeps the picture usable.
+                constexpr uint32_t kMinBitrateBps = 500'000;
+                stats.target_bps = *feedback.target_bitrate_bps;
+                const uint64_t shaded = static_cast<uint64_t>(*feedback.target_bitrate_bps) * 9 / 10;
+                const auto wanted =
+                    static_cast<uint32_t>(std::clamp<uint64_t>(shaded, kMinBitrateBps, config.bitrate_bps));
+                const uint32_t current = encoder.bitrate();
+                // Only a real change reconfigures: each one resets rate control inside the encoder.
+                if (wanted > current + current / 10 || wanted + wanted / 10 < current)
+                {
+                    encoder.set_bitrate(wanted);
+                    ++stats.rate_changes;
+                }
+            }
+            stats.bitrate_bps = encoder.bitrate();
 
             // The frame-ready instant: the picture is on the encoder's input, before any encoding delay. Both clocks
             // are read together so the capture bases can move the sensor time between them.
