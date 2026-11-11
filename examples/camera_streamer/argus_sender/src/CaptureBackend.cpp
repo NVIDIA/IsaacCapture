@@ -31,8 +31,8 @@ const char* sensorClockDomainName(SensorClockDomain domain)
     {
     case SENSOR_CLOCK_TSC_NS:
         return "tsc_ns";
-    case SENSOR_CLOCK_SIPL_COUNTER:
-        return "sipl_counter";
+    case SENSOR_CLOCK_RAW_COUNTER:
+        return "raw_counter";
     case SENSOR_CLOCK_NONE:
         break;
     }
