@@ -25,6 +25,8 @@ struct WorkerConfig
     uint32_t fps = 30;
     uint32_t bitrate_bps = 8'000'000;
     uint32_t idr_period = 30;
+    /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
+    uint32_t scale_div = 1;
 };
 
 struct WorkerStats
