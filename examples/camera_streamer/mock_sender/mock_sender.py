@@ -7,7 +7,10 @@ Like the real sender it is the TCP server, accepts one receiver at a time,
 rebuilds its stream state on every connection and starts each stream at an IDR.
 Imagery is a looped test pattern with a burned-in frame counter. All timing
 fields come from a synthetic clock (see --clock-offset-ms) and say nothing about
-real sensor timing: SOF/TSC and Argus frame timestamps are never marked valid.
+real sensor timing. Each frame carries a synthetic sensor start-of-frame TSC a
+fixed --sof-lag-ms before capture-ready, in a TSC domain of the mock's own, so a
+consumer can derive the sensor start time as it would from Argus; Argus frame
+timestamps are never marked valid.
 """
 
 from __future__ import annotations
@@ -36,7 +39,10 @@ PIXEL_NV12 = 1
 STREAM_PRESENT = 0x0001
 SAMPLE_PRESENT = 0x0001
 SAMPLE_SENDER_TIMING_VALID = 0x0008
-BUNDLE_SENDER_CLOCK_VALID = 0x0001  # realtime domain; TAI and TSC flags stay clear
+SAMPLE_SOF_TSC_VALID = 0x0002
+BUNDLE_SENDER_CLOCK_VALID = 0x0001  # realtime domain; the TAI flag stays clear
+BUNDLE_SENDER_TSC_VALID = 0x0004
+TSC_BASE_NS = 7_000_000_000_000  # arbitrary origin of the synthetic TSC domain
 LOOP_SECONDS = 12
 GOP_SECONDS = 2
 
@@ -157,6 +163,10 @@ class MockClock:
         elapsed = time.monotonic_ns() - self._t0
         return time.time_ns() + self._offset + int(elapsed * self._drift)
 
+    def tsc_ns(self) -> int:
+        """The synthetic sensor TSC: monotonic, unrelated to the wall clock's value."""
+        return TSC_BASE_NS + time.monotonic_ns()
+
 
 @dataclass
 class _Cursor:
@@ -187,6 +197,8 @@ def build_record(
     session_id: int,
     ready_ns: int,
     enqueue_ns: int,
+    ready_tsc_ns: int,
+    sof_lag_ns: int,
 ) -> bytes:
     """One length-prefixed AVS1 record: every stream has a descriptor, present or not."""
     streams, samples, body = [], [], b""
@@ -200,10 +212,11 @@ def build_record(
             )
         )  # fmt: skip
         if present:
-            flags = SAMPLE_PRESENT | SAMPLE_SENDER_TIMING_VALID
+            flags = SAMPLE_PRESENT | SAMPLE_SENDER_TIMING_VALID | SAMPLE_SOF_TSC_VALID
             samples.append(
                 SAMPLE.pack(
-                    index, 0, 0, flags, 0, index, 0, cursor.frame_number, 0, 0,
+                    index, 0, 0, flags, 0, index, 0, cursor.frame_number,
+                    ready_tsc_ns - sof_lag_ns, 0,
                     ready_ns, ready_ns, ready_ns, len(body), len(payload),
                 )
             )  # fmt: skip
@@ -214,8 +227,9 @@ def build_record(
             )
     descriptors = b"".join(streams) + b"".join(samples)
     header = HEADER.pack(
-        b"AVS1", 1, BUNDLE_SENDER_CLOCK_VALID, HEADER.size, len(streams), len(samples),
-        bundle_sequence, session_id, ready_ns, enqueue_ns, len(descriptors), len(body), 0,
+        b"AVS1", 1, BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_TSC_VALID, HEADER.size,
+        len(streams), len(samples), bundle_sequence, session_id, ready_ns, enqueue_ns,
+        len(descriptors), len(body), ready_tsc_ns,
     )  # fmt: skip
     record = header + descriptors + body
     return struct.pack("!I", len(record)) + record
@@ -232,9 +246,11 @@ class MockSender:
         clock: MockClock,
         pauses: list[Pause],
         disconnects_s: list[float],
+        sof_lag_ns: int = 20_000_000,
     ) -> None:
         self.specs = specs
         self.clock = clock
+        self.sof_lag_ns = sof_lag_ns
         self.pauses = pauses
         self.disconnects_s = sorted(disconnects_s)
         self._units = {
@@ -255,6 +271,8 @@ class MockSender:
                 conn, peer = listener.accept()
             except socket.timeout:
                 continue
+            except OSError:
+                return  # the listener was closed
             logger.info("receiver connected from %s:%d", *peer[:2])
             try:
                 self._stream_to(conn)
@@ -276,6 +294,7 @@ class MockSender:
                 logger.info("scripted disconnect at %.1fs", disconnects.pop(0))
                 return
             ready_ns = self.clock.now_ns()
+            ready_tsc_ns = self.clock.tsc_ns()
             payloads: list[bytes | None] = []
             for cursor in cursors:
                 paused = any(
@@ -301,7 +320,14 @@ class MockSender:
                 payloads.append(payload)
             tick += 1
             record = build_record(
-                cursors, payloads, tick, session_id, ready_ns, self.clock.now_ns()
+                cursors,
+                payloads,
+                tick,
+                session_id,
+                ready_ns,
+                self.clock.now_ns(),
+                ready_tsc_ns,
+                self.sof_lag_ns,
             )
             conn.sendall(record)
             self.bundles_sent += 1
@@ -340,7 +366,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path.home() / ".cache" / "camera_streamer_mock_sender",
     )
-    parser.add_argument("--clock-offset-ms", type=float, default=5000.0)
+    parser.add_argument("--clock-offset-ms", type=float, default=0.0)
+    parser.add_argument(
+        "--sof-lag-ms", type=float, default=20.0,
+        help="synthetic sensor start-of-frame to capture-ready lag; must be in [0, 500]",
+    )  # fmt: skip
     parser.add_argument("--clock-drift-ppm", type=float, default=0.0)
     parser.add_argument(
         "--pause", type=parse_pause, action="append", default=[], metavar="NAME@START+SECONDS",
@@ -368,12 +398,15 @@ def main(argv: list[str] | None = None) -> int:
     for pause in args.pause:
         if pause.stream not in names:
             parser.error(f"--pause names unknown stream {pause.stream!r}")
+    if not 0.0 <= args.sof_lag_ms <= 500.0:
+        parser.error("--sof-lag-ms must be in [0, 500]")
     sender = MockSender(
         specs,
         ensure_sources(specs, args.cache_dir),
         MockClock(int(args.clock_offset_ms * 1e6), args.clock_drift_ppm),
         args.pause,
         args.disconnect_at,
+        int(args.sof_lag_ms * 1e6),
     )
     listener = socket.create_server((args.bind, args.port), reuse_port=False)
     logger.info(
