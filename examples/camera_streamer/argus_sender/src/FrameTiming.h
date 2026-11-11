@@ -28,7 +28,7 @@ struct FrameTiming
     uint64_t frameNumberGap = 0;
     uint64_t frameTimeNs = 0;
     uint64_t acquiredSteadyNs = 0;
-    // Tegra TSC sampled immediately after the Argus acquire call returned.
+    // Tegra TSC sampled immediately after the frame was acquired.
     // This shares the VI SOF timestamp's clock domain on Orin.
     uint64_t acquiredTscNs = 0;
     uint64_t sensorExposureTimeNs = 0;
