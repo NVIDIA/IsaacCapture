@@ -44,44 +44,38 @@ standard ``HandsSource``.
 Installation
 ------------
 
-Install the USB rule on the host, then build in the Isaac Capture checkout:
+Install the USB rule on the host:
 
 .. code-block:: bash
 
    ./src/plugins/omniglove/install_udev_rules.sh
-   ./src/plugins/omniglove/install.sh
 
-The build script uses a sibling ``agilink_omniglove_sdk`` checkout when one is
-available. Set ``OMNIGLOVE_SDK_ROOT`` or pass ``--sdk-root`` for a different
-local checkout, which is not updated or reset. Otherwise it creates a managed
-checkout pinned to SDK commit
-``a2f899cd45c51ae01c9bbca9b893e4afba41c0d7``. Set ``OMNIGLOVE_SDK_REF`` or pass
-``--sdk-ref REF`` to select another managed commit, tag, or branch and bypass
-sibling discovery. Root and ref overrides cannot be combined. Tags and branches
-are fetched on each install; use a full commit SHA for reproducibility. Managed
-checkouts with local changes are rejected before fetching or switching commits.
-
-The script validates SDK files against that checkout's ``SHA256SUMS`` to detect
-corruption; this does not authenticate a user-selected SDK. It runs the API
-probe and conversion tests, and installs the executable, manifest, runtime
-libraries and license notices under ``install/plugins/omniglove``.
-
-For an existing Python 3.12 build used by CTS:
+CMake retrieves the pinned SDK into the build directory and validates its
+release checksums. The target architecture selects the SDK package. Runtime
+libraries and license notices are installed with the plugin.
 
 .. code-block:: bash
 
-   ./src/plugins/omniglove/install.sh --build-dir build-py312
+   cmake -S . -B out -DBUILD_PLUGIN_OMNIGLOVE=ON
+   cmake --build out
+   cmake --install out --component omniglove
+
+For an explicit local release, set
+``-DOMNIGLOVE_SDK_ROOT=/path/to/agilink_omniglove_sdk``; CMake does not modify it.
+``-DOMNIGLOVE_SDK_REF=<commit-or-ref>`` selects another managed release. Use a
+full commit SHA for a reproducible override. Source build options remain under
+the user's control.
 
 Running
 -------
 
-Start CloudXR in one terminal and connect the headset:
+Start CloudXR and connect the headset:
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service run
+   python -m isaaccapture.cloudxr.service start
 
-In another terminal, source the runtime environment, select the wrist source
+Source the runtime environment, select the wrist source
 as described below, and launch the installed plugin:
 
 .. code-block:: bash
@@ -117,10 +111,9 @@ in metres followed by a unit quaternion in ``(x, y, z, w)`` order:
    export OMNIGLOVE_AIM_TO_WRIST_LEFT="px,py,pz,qx,qy,qz,qw"
    export OMNIGLOVE_AIM_TO_WRIST_RIGHT="px,py,pz,qx,qy,qz,qw"
 
-These are format placeholders; replace them with measured values. Controller
-and Auto mode reject missing transforms. The tested mount's offsets and
-calibration evidence are in the :code-file:`validation record
-<src/plugins/omniglove/VALIDATION.md>`; those values apply only to that mount.
+These are format placeholders; replace them with measured values for the
+current mount. Controller and Auto mode reject missing transforms. Unknown
+modes and invalid offsets are errors. Optical mode does not read the offsets.
 
 Published collections and joint contract
 ----------------------------------------
@@ -134,7 +127,8 @@ the host records them as ``core.HandPoseRecord`` from ``hand.fbs``.
 - Palm and the four non-thumb metacarpals remain invalid because the SDK
   does not supply them. No neighbouring joint is copied into an absent slot.
 - Valid joints have both ``POSITION_VALID`` and ``ORIENTATION_VALID`` set.
-  Tracking bits additionally follow the validity of the world-space wrist.
+  Tracking bits additionally follow ``wrist.tracked``. A valid but untracked
+  wrist is still published with the tracking bits cleared.
 - Positions are metres and orientations are unit ``(x, y, z, w)``
   quaternions, in the base space passed to ``HandInjector``.
 - OpenXR joint ``+Z`` points away from the fingertip and ``+Y`` toward the
@@ -151,35 +145,17 @@ the host records them as ``core.HandPoseRecord`` from ``hand.fbs``.
 The plugin publishes the operator's skeleton. It emits no robot joint
 commands or hand ``JointStateOutput`` data and defines no vendor hand schema.
 
-Validation and CTS
-------------------
+Device status and CTS
+---------------------
 
-.. Keep dated take results and acceptance status in the plugin validation record.
+The shared device status publisher reports left and right hand availability
+under the configured plugin root. Stale SDK frames report a disconnected hand;
+a fresh frame without a usable wrist reports a degraded hand. A discovered
+glove that fails stream configuration or startup stops the plugin with an error.
 
-See the :code-file:`validation record <src/plugins/omniglove/VALIDATION.md>`
-for hardware test evidence and acceptance status.
-
-Follow :doc:`/conformance/setup` to prepare CTS. From a clean plugin commit
-already pushed to the integration PR, load the mount configuration and record:
-
-.. code-block:: bash
-
-   ./src/plugins/omniglove/record_cts.sh --wrist-config /path/to/mount.env
-
-Use ``--no-launch-cloudxr-runtime`` if CloudXR is already running. For
-development takes, ``--allow-dirty`` retains the recorder's dirty provenance.
-Use ``--note`` to record the headset and controller models.
-
-Review the take in the official panel, then package it using the panel's
-Submission button or the wrapper that uses the same bundle builder:
-
-.. code-block:: bash
-
-   src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel /path/to/take-hand.mcap
-   src/python/isaaccapture/cts/hand/checker/.venv/bin/python src/plugins/omniglove/package_cts.py /path/to/take-hand.mcap
-
-Follow :doc:`/conformance/submit` to upload the archive and associate it with
-the integration PR. Keep the archive outside the Git repository.
+Follow :doc:`/conformance/setup`, :doc:`/conformance/hand` and
+:doc:`/conformance/submit` for recording, review and submission. Keep the take
+summary and hardware evidence in the integration PR description.
 
 Troubleshooting
 ---------------

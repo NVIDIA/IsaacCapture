@@ -20,11 +20,12 @@ from hand_cts.panel.track import HandTee
 from hand_cts.report import run
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    """Build and verify one complete take without overwriting an existing archive."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recording", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     recording = args.recording.resolve()
     required = [
         recording,

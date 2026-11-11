@@ -12,8 +12,9 @@ target_include_directories(omniglove_plugin_core
 )
 
 target_link_libraries(omniglove_plugin_core
-    PUBLIC
+    PRIVATE
         OmnigloveSDK::api
+    PUBLIC
         Teleop::plugin_utils
         deviceio::deviceio_session
         deviceio::deviceio_trackers

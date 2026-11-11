@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <log_bridge/logger.hpp>
-#include <omniglove/omniglove_plugin.hpp>
+#include <omniglove_plugin/omniglove_plugin.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <exception>
-#include <memory>
 #include <string>
 #include <thread>
 
@@ -46,13 +45,13 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.omniglove.main");
-    auto plugin = std::make_unique<plugins::omniglove::OmniglovePlugin>(plugin_root_id);
-    while (!stop_requested.load(std::memory_order_relaxed) && plugin->is_running())
+    plugins::omniglove::OmniglovePlugin plugin(plugin_root_id);
+    while (!stop_requested.load(std::memory_order_relaxed))
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        plugin.update();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    return plugin->has_failed() ? 1 : 0;
+    return 0;
 }
 catch (const std::exception& error)
 {

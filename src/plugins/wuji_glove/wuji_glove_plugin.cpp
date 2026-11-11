@@ -153,67 +153,31 @@ bool convert_skeleton(const WujiHandSkeleton* frame,
     return true;
 }
 
-// Optional aim-to-wrist offset override.
-// WUJI_GLOVE_AIM_TO_WRIST_{LEFT,RIGHT}="px,py,pz,qx,qy,qz,qw" (meters + quat).
 XrPosef pose_from_env(const char* name, const XrPosef& fallback)
 {
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0')
+    try
     {
+        return plugin_utils::pose_from_env(name, fallback);
+    }
+    catch (const std::runtime_error& error)
+    {
+        isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main")
+            ->warn("{}; using the built-in offset", error.what());
         return fallback;
     }
-    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main");
-    XrPosef pose{};
-    if (std::sscanf(value, "%f,%f,%f,%f,%f,%f,%f", &pose.position.x, &pose.position.y, &pose.position.z,
-                    &pose.orientation.x, &pose.orientation.y, &pose.orientation.z, &pose.orientation.w) != 7)
-    {
-        logger->warn("could not parse {} ('{}', want px,py,pz,qx,qy,qz,qw); using the built-in offset", name, value);
-        return fallback;
-    }
-    // sscanf("%f") happily accepts "nan" and "inf"; a non-finite offset would
-    // poison every injected joint pose, and NaN also slips past the norm check
-    // below (every comparison against NaN is false).
-    if (!std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) || !std::isfinite(pose.position.z) ||
-        !std::isfinite(pose.orientation.x) || !std::isfinite(pose.orientation.y) ||
-        !std::isfinite(pose.orientation.z) || !std::isfinite(pose.orientation.w))
-    {
-        logger->warn("{} ('{}') has non-finite values; using the built-in offset", name, value);
-        return fallback;
-    }
-    const float norm = std::sqrt(pose.orientation.x * pose.orientation.x + pose.orientation.y * pose.orientation.y +
-                                 pose.orientation.z * pose.orientation.z + pose.orientation.w * pose.orientation.w);
-    if (norm < 1e-6f)
-    {
-        logger->warn("{} has a zero quaternion; using the built-in offset", name);
-        return fallback;
-    }
-    pose.orientation.x /= norm;
-    pose.orientation.y /= norm;
-    pose.orientation.z /= norm;
-    pose.orientation.w /= norm;
-    return pose;
 }
 
-// Wrist-source selection: WUJI_GLOVE_WRIST_SOURCE = auto (default) |
-// hand_tracking | controller.
 plugin_utils::WristSourceMode wrist_source_mode_from_env()
 {
-    const char* value = std::getenv("WUJI_GLOVE_WRIST_SOURCE");
-    if (value == nullptr || *value == '\0' || std::strcmp(value, "auto") == 0)
+    try
     {
+        return plugin_utils::wrist_source_mode_from_env("WUJI_GLOVE_WRIST_SOURCE", plugin_utils::WristSourceMode::Auto);
+    }
+    catch (const std::runtime_error& error)
+    {
+        isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main")->warn("{}; using 'auto'", error.what());
         return plugin_utils::WristSourceMode::Auto;
     }
-    if (std::strcmp(value, "hand_tracking") == 0)
-    {
-        return plugin_utils::WristSourceMode::HandTracking;
-    }
-    if (std::strcmp(value, "controller") == 0)
-    {
-        return plugin_utils::WristSourceMode::Controller;
-    }
-    isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main")
-        ->warn("unknown WUJI_GLOVE_WRIST_SOURCE '{}', using 'auto'", value);
-    return plugin_utils::WristSourceMode::Auto;
 }
 
 // Resolve the glove's hand side explicitly via the device's "hand_side" GET

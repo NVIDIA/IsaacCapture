@@ -17,37 +17,30 @@ Install the host USB rule once, outside a container:
 ./src/plugins/omniglove/install_udev_rules.sh
 ```
 
-Then build the plugin. The installer uses a sibling
-`../agilink_omniglove_sdk` checkout when present. Otherwise it creates a managed
-checkout in `.sdk/`, pinned to SDK commit
-`a2f899cd45c51ae01c9bbca9b893e4afba41c0d7`. Repeated installs reuse that commit
-without following upstream branch updates. A managed checkout with local
-changes is rejected before fetching or switching commits.
+Configure and build from the Isaac Capture repository root:
 
 ```bash
-./src/plugins/omniglove/install.sh
+cmake -S . -B out -DBUILD_PLUGIN_OMNIGLOVE=ON
+cmake --build out
+cmake --install out --component omniglove
 ```
 
-Set `OMNIGLOVE_SDK_ROOT` or pass `--sdk-root` to use another local SDK checkout;
-local checkouts are not updated or reset. Set `OMNIGLOVE_SDK_REF` or pass
-`--sdk-ref REF` to select a different managed SDK commit, tag, or branch,
-bypassing sibling checkout discovery. Root and ref overrides cannot be combined.
-Tags and branches are fetched on each install; use a full commit SHA for a
-reproducible override.
+CMake retrieves a pinned SDK release into the build directory, verifies its
+checksums, and selects the package for the target architecture. It installs
+runtime libraries and license notices with the plugin. Set
+`-DOMNIGLOVE_SDK_ROOT=/path/to/agilink_omniglove_sdk` to explicitly use a local
+release without modifying it, or `-DOMNIGLOVE_SDK_REF=<commit-or-ref>` to select
+a managed release. A full commit SHA makes an override reproducible.
 
-The installer verifies SDK files against that checkout's `SHA256SUMS` to detect
-corruption; this does not authenticate a user-selected SDK. The SDK package
-configuration selects its shared library, so a changed ABI version number
-alone is not a build blocker. Missing
-or changed required C APIs fail the compile/link compatibility probe. At
-runtime, a header/library ABI mismatch is rejected before device discovery.
+Missing or changed SDK APIs fail compilation or linking. At runtime, a
+header/library ABI mismatch is rejected before device discovery.
 
 ## Run
 
 Start CloudXR, load its environment, connect a calibrated glove, and run:
 
 ```bash
-python -m isaaccapture.cloudxr.service run
+python -m isaaccapture.cloudxr.service start
 source ~/.cloudxr/run/cloudxr.env
 ./install/plugins/omniglove/omniglove_plugin
 ```
@@ -64,9 +57,9 @@ export OMNIGLOVE_AIM_TO_WRIST_LEFT="px,py,pz,qx,qy,qz,qw"
 export OMNIGLOVE_AIM_TO_WRIST_RIGHT="px,py,pz,qx,qy,qz,qw"
 ```
 
-Replace these format placeholders with measured offsets. Controller and Auto
-mode reject missing transforms. For the tested mount's actual configuration
-and calibration evidence, see [VALIDATION.md](VALIDATION.md).
+Replace these placeholders with measured offsets for the current mount.
+Controller and Auto modes reject missing transforms. Unknown wrist modes and
+malformed offsets are errors; optical mode does not read the offsets.
 
 ## Data contract
 
@@ -80,37 +73,14 @@ and calibration evidence, see [VALIDATION.md](VALIDATION.md).
 - Unmapped, unconverged, invalid-bone-model, non-finite, zero-quaternion, and
   stale frames are not injected.
 
-## Validation status
+## Device status and CTS
 
-The API probe and hand-conversion contract test run during installation.
-Controller-wrist hardware qualification passed hand CTS (39 pass, zero fail)
-from a clean, pushed commit. Both hands' functional OpenXR hot-unplug/recovery
-was verified while the other hand remained active.
-See [VALIDATION.md](VALIDATION.md) for the evidence and remaining steps.
+The plugin publishes both hand states through the shared device status
+publisher under the supplied `--plugin-root-id`. A stale SDK frame makes a
+hand disconnected; a fresh frame without a usable wrist pose makes it degraded.
+A glove that is discovered but fails stream configuration or startup stops the
+plugin with an error.
 
-## Formal recording and packaging
-
-After committing and pushing the plugin, record from a clean checkout:
-
-```bash
-./src/plugins/omniglove/record_cts.sh --wrist-config /path/to/mount.env
-```
-
-The wrapper rejects uncommitted/unpushed code and changes to the official CTS.
-It records the installed binary's SHA-256 and the wrist configuration in
-provenance notes. `--allow-dirty` enables development takes with their original
-dirty provenance. `--note` records the headset and controller models; use
-`--no-launch-cloudxr-runtime` when CloudXR is already running.
-
-Review the take with the official viewer and package it with the same builder:
-
-```bash
-src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel /path/to/take-hand.mcap
-src/python/isaaccapture/cts/hand/checker/.venv/bin/python src/plugins/omniglove/package_cts.py /path/to/take-hand.mcap
-```
-
-Packaging reruns all official checks, preserves the original MCAP, labels,
-provenance and log, checks their hashes, and prints the archive hash. Existing
-archives are not overwritten. Upload the archive through the
-[CTS form](https://forms.gle/hLqAhNkae4bhAUX79) with the integration PR URL;
-keep recordings and archives outside Git.
+Follow the official [hand CTS procedure](https://nvidia.github.io/IsaacCapture/main/conformance/hand.html)
+and [submission procedure](https://nvidia.github.io/IsaacCapture/main/conformance/submit.html).
+Keep take results and hardware evidence in the integration PR description.

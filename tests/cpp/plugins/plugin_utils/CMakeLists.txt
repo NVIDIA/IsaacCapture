@@ -3,6 +3,7 @@
 
 add_executable(plugin_device_status_publisher_tests
     test_plugin_device_status_publisher.cpp
+    test_wrist_source_config.cpp
 )
 
 target_link_libraries(plugin_device_status_publisher_tests

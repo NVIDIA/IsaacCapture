@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <omniglove/omniglove_hand_conversion.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <omniglove/omniglove.h>
+#include <omniglove_plugin/omniglove_hand_conversion.hpp>
 #include <openxr/openxr.h>
 
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <limits>
 
 namespace
@@ -28,7 +29,7 @@ void fill_pose(omniglove_pose6_t& pose, float x, float y, float z, const XrQuate
 void fill_hand(omniglove_post_data_t& post, const XrQuaternionf& orientation = { 0.0F, 0.0F, 0.0F, 2.0F })
 {
     post.mapped = 1;
-    post.flags = (1U << 0U) | (1U << 2U);
+    post.flags = plugins::omniglove::kPostIkConverged | plugins::omniglove::kPostBoneModelValid;
     float x = 0.01F;
     auto fill = [&x, &orientation](omniglove_pose6_t& pose)
     {
@@ -115,67 +116,44 @@ bool openxr_axes(bool is_left, const XrQuaternionf& orientation)
     return true;
 }
 
-int fail(const char* message)
-{
-    std::cerr << message << '\n';
-    return 1;
-}
-
 } // namespace
 
-int main()
+TEST_CASE("OmniGlove conversion preserves its OpenXR hand contract", "[omniglove][conversion]")
 {
     omniglove_post_data_t post{};
     fill_hand(post);
     std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-
-    if (plugins::omniglove::convert_post_data(post, true, joints) != ConversionStatus::Success)
-    {
-        return fail("left hand conversion failed");
-    }
+    REQUIRE(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::Success);
     constexpr XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     int valid_count = 0;
     for (const auto& joint : joints)
     {
         valid_count += (joint.locationFlags & valid) == valid;
     }
-    if (valid_count != 21 || joints[XR_HAND_JOINT_PALM_EXT].locationFlags != 0 ||
-        joints[XR_HAND_JOINT_INDEX_METACARPAL_EXT].locationFlags != 0)
-    {
-        return fail("the required/optional joint set is wrong");
-    }
-    if (!near(joints[XR_HAND_JOINT_WRIST_EXT].pose.orientation.w, 1.0F))
-    {
-        return fail("quaternion was not normalized");
-    }
+    CHECK(valid_count == 21);
+    CHECK(joints[XR_HAND_JOINT_PALM_EXT].locationFlags == 0);
+    CHECK(joints[XR_HAND_JOINT_INDEX_METACARPAL_EXT].locationFlags == 0);
+    CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.orientation.w, 1.0F));
 
     for (bool is_left : { true, false })
     {
-        if (!openxr_axes(is_left, { 0.0F, 0.0F, 0.0F, 2.0F }) || !openxr_axes(is_left, { 1.0F, 2.0F, 3.0F, 4.0F }))
-        {
-            return fail("finger -Z/dorsal +Y or wrist axes do not follow OpenXR");
-        }
+        CHECK(openxr_axes(is_left, { 0.0F, 0.0F, 0.0F, 2.0F }));
+        CHECK(openxr_axes(is_left, { 1.0F, 2.0F, 3.0F, 4.0F }));
     }
-
     const XrPosef left_wrist = joints[XR_HAND_JOINT_WRIST_EXT].pose;
-    if (plugins::omniglove::convert_post_data(post, false, joints) != ConversionStatus::Success ||
-        !near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.x, -left_wrist.position.x) ||
-        !near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.y, -left_wrist.position.y) ||
-        !near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.z, left_wrist.position.z))
-    {
-        return fail("right-hand wrist-basis conversion is wrong");
-    }
+    REQUIRE(plugins::omniglove::convert_post_data(post, false, joints) == ConversionStatus::Success);
+    CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.x, -left_wrist.position.x));
+    CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.y, -left_wrist.position.y));
+    CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.z, left_wrist.position.z));
 
-    post.flags = 1U << 2U;
-    if (plugins::omniglove::convert_post_data(post, true, joints) != ConversionStatus::IkNotConverged)
-    {
-        return fail("unconverged IK was accepted");
-    }
+    post.flags = plugins::omniglove::kPostBoneModelValid;
+    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::IkNotConverged);
+    post.flags = plugins::omniglove::kPostIkConverged;
+    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::BoneModelInvalid);
+    fill_hand(post);
+    post.mapped = 0;
+    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::NotMapped);
     fill_hand(post);
     post.index.landmarks.mcp.position_m[0] = std::numeric_limits<float>::quiet_NaN();
-    if (plugins::omniglove::convert_post_data(post, true, joints) != ConversionStatus::InvalidPose)
-    {
-        return fail("non-finite pose was accepted");
-    }
-    return 0;
+    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::InvalidPose);
 }

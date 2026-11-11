@@ -1,18 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "inc/omniglove/omniglove_plugin.hpp"
+#include "inc/omniglove_plugin/omniglove_plugin.hpp"
 
+#include <omniglove/omniglove.h>
 #include <oxr_utils/math.hpp>
 #include <oxr_utils/os_time.hpp>
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iterator>
 #include <limits>
 #include <stdexcept>
 
@@ -22,62 +18,12 @@ namespace plugins::omniglove
 namespace
 {
 
-constexpr auto kWorkerPeriod = std::chrono::milliseconds(2);
-constexpr int64_t kStaleThresholdNs = 200'000'000;
+constexpr auto kSourceTimeout = std::chrono::milliseconds(200);
+constexpr int64_t kStaleThresholdNs = std::chrono::duration_cast<std::chrono::nanoseconds>(kSourceTimeout).count();
+constexpr uint32_t kSourceIntervalMs = 8;
+constexpr uint32_t kCallbackQueueCapacity = 64;
 constexpr XrSpaceLocationFlags kTrackedFlags =
     XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-
-plugin_utils::WristSourceMode wrist_source_mode_from_env()
-{
-    const char* value = std::getenv("OMNIGLOVE_WRIST_SOURCE");
-    if (value == nullptr || *value == '\0' || std::strcmp(value, "hand_tracking") == 0)
-    {
-        return plugin_utils::WristSourceMode::HandTracking;
-    }
-    if (std::strcmp(value, "auto") == 0)
-    {
-        return plugin_utils::WristSourceMode::Auto;
-    }
-    if (std::strcmp(value, "controller") == 0)
-    {
-        return plugin_utils::WristSourceMode::Controller;
-    }
-    isaaccapture::Logger::get("isaaccapture.plugins.omniglove.main")
-        ->warn("unknown OMNIGLOVE_WRIST_SOURCE '{}', using 'hand_tracking'", value);
-    return plugin_utils::WristSourceMode::HandTracking;
-}
-
-XrPosef pose_from_env(const char* name)
-{
-    XrPosef pose{ { 0.0F, 0.0F, 0.0F, 1.0F }, { 0.0F, 0.0F, 0.0F } };
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0')
-    {
-        return pose;
-    }
-    if (std::sscanf(value, "%f,%f,%f,%f,%f,%f,%f", &pose.position.x, &pose.position.y, &pose.position.z,
-                    &pose.orientation.x, &pose.orientation.y, &pose.orientation.z, &pose.orientation.w) != 7)
-    {
-        throw std::runtime_error(std::string(name) + " must be px,py,pz,qx,qy,qz,qw");
-    }
-    const float values[] = { pose.position.x,    pose.position.y,    pose.position.z,   pose.orientation.x,
-                             pose.orientation.y, pose.orientation.z, pose.orientation.w };
-    if (!std::all_of(std::begin(values), std::end(values), [](float component) { return std::isfinite(component); }))
-    {
-        throw std::runtime_error(std::string(name) + " contains a non-finite value");
-    }
-    const float norm = std::sqrt(pose.orientation.x * pose.orientation.x + pose.orientation.y * pose.orientation.y +
-                                 pose.orientation.z * pose.orientation.z + pose.orientation.w * pose.orientation.w);
-    if (norm < 1.0e-6F)
-    {
-        throw std::runtime_error(std::string(name) + " contains a zero quaternion");
-    }
-    pose.orientation.x /= norm;
-    pose.orientation.y /= norm;
-    pose.orientation.z /= norm;
-    pose.orientation.w /= norm;
-    return pose;
-}
 
 const char* hand_name(bool is_left)
 {
@@ -96,21 +42,13 @@ OmniglovePlugin::OmniglovePlugin(const std::string& plugin_root_id)
     m_logger->info("initializing with root {}", plugin_root_id);
 
     plugin_utils::WristSourceConfig wrist_config;
-    wrist_config.mode = wrist_source_mode_from_env();
+    wrist_config.mode =
+        plugin_utils::wrist_source_mode_from_env("OMNIGLOVE_WRIST_SOURCE", plugin_utils::WristSourceMode::HandTracking);
     if (wrist_config.mode != plugin_utils::WristSourceMode::HandTracking)
     {
-        // Controller aim is not a wrist pose without an explicit mount calibration.
-        for (const char* name : { "OMNIGLOVE_AIM_TO_WRIST_LEFT", "OMNIGLOVE_AIM_TO_WRIST_RIGHT" })
-        {
-            const char* value = std::getenv(name);
-            if (value == nullptr || *value == '\0')
-            {
-                throw std::runtime_error(std::string(name) + " is required for controller and auto wrist sources");
-            }
-        }
+        wrist_config.left_aim_to_wrist = plugin_utils::pose_from_env("OMNIGLOVE_AIM_TO_WRIST_LEFT");
+        wrist_config.right_aim_to_wrist = plugin_utils::pose_from_env("OMNIGLOVE_AIM_TO_WRIST_RIGHT");
     }
-    wrist_config.left_aim_to_wrist = pose_from_env("OMNIGLOVE_AIM_TO_WRIST_LEFT");
-    wrist_config.right_aim_to_wrist = pose_from_env("OMNIGLOVE_AIM_TO_WRIST_RIGHT");
     const char* wrist_mode = wrist_config.mode == plugin_utils::WristSourceMode::HandTracking ? "hand_tracking" :
                              wrist_config.mode == plugin_utils::WristSourceMode::Controller   ? "controller" :
                                                                                                 "auto";
@@ -122,49 +60,21 @@ OmniglovePlugin::OmniglovePlugin(const std::string& plugin_root_id)
     extensions.push_back(XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME);
     extensions.insert(extensions.end(), wrist_requirements.extensions.begin(), wrist_requirements.extensions.end());
 
-    m_session = std::make_shared<core::OpenXRSession>("Omniglove", extensions);
+    const auto status_extensions = plugin_utils::PluginDeviceStatusPublisher::get_required_extensions();
+    extensions.insert(extensions.end(), status_extensions.begin(), status_extensions.end());
+    m_session = std::make_unique<core::OpenXRSession>("Omniglove", extensions);
     const auto handles = m_session->get_handles();
     m_deviceio_session = core::DeviceIOSession::run(wrist_requirements.trackers, handles);
     m_wrist_source = std::make_unique<plugin_utils::WristPoseSource>(
         wrist_config, handles, m_deviceio_session.get(), wrist_requirements.controller_tracker);
-    m_time_converter = std::make_unique<core::XrTimeConverter>(handles);
+    m_time_converter.emplace(handles);
+    m_status_publisher.emplace(handles, plugin_root_id);
 
     start_device_streams();
-    m_running.store(true, std::memory_order_release);
-    try
-    {
-        m_worker = std::thread(&OmniglovePlugin::worker_thread, this);
-    }
-    catch (...)
-    {
-        m_running.store(false, std::memory_order_release);
-        throw;
-    }
     m_logger->info("initialized with {} glove stream(s)", m_streams.size());
 }
 
-OmniglovePlugin::~OmniglovePlugin()
-{
-    m_running.store(false, std::memory_order_release);
-    if (m_worker.joinable())
-    {
-        m_worker.join();
-    }
-    m_left_injector.reset();
-    m_right_injector.reset();
-    m_sdk_session.reset();
-    m_streams.clear();
-}
-
-bool OmniglovePlugin::is_running() const noexcept
-{
-    return m_running.load(std::memory_order_acquire);
-}
-
-bool OmniglovePlugin::has_failed() const noexcept
-{
-    return m_failed.load(std::memory_order_acquire);
-}
+OmniglovePlugin::~OmniglovePlugin() = default;
 
 void OmniglovePlugin::initialize_sdk()
 {
@@ -231,39 +141,34 @@ void OmniglovePlugin::start_device_streams()
             continue;
         }
 
-        auto stream = std::make_unique<DeviceStream>();
-        stream->device = device;
-        stream->context = { this, is_left };
+        // Own the callback context before starting the stream, including failure cleanup.
+        m_streams.push_back(std::make_unique<StreamContext>(StreamContext{ this, is_left }));
 
         omniglove_stream_config_t config{};
         config.struct_size = sizeof(config);
         config.kind = OMNIGLOVE_STREAM_POST_DATA;
         config.stream_mode = OMNIGLOVE_STREAM_MODE_DEFAULT;
         config.output_mode = OMNIGLOVE_STREAM_OUTPUT_DIRECT;
-        config.source_interval_ms = 8;
-        config.source_timeout_ms = 200;
+        config.source_interval_ms = kSourceIntervalMs;
+        config.source_timeout_ms = static_cast<uint32_t>(kSourceTimeout.count());
         config.callback = &OmniglovePlugin::stream_callback;
-        config.callback_user_data = &stream->context;
-        config.callback_queue_capacity = 64;
+        config.callback_user_data = m_streams.back().get();
+        config.callback_queue_capacity = kCallbackQueueCapacity;
 
         const auto configure_error = omniglove_device_stream_configure(device, &config);
         if (configure_error != OMNIGLOVE_STREAM_ERROR_NONE)
         {
-            m_logger->error("could not configure {} POST_DATA stream: {}", hand_name(is_left),
-                            static_cast<unsigned>(configure_error));
-            continue;
+            throw std::runtime_error(std::string("could not configure ") + hand_name(is_left) +
+                                     " POST_DATA stream: " + std::to_string(static_cast<unsigned>(configure_error)));
         }
         const auto start_error = omniglove_device_stream_start(device, OMNIGLOVE_STREAM_POST_DATA);
         if (start_error != OMNIGLOVE_STREAM_ERROR_NONE)
         {
-            m_logger->error(
-                "could not start {} POST_DATA stream: {}", hand_name(is_left), static_cast<unsigned>(start_error));
-            continue;
+            throw std::runtime_error(std::string("could not start ") + hand_name(is_left) +
+                                     " POST_DATA stream: " + std::to_string(static_cast<unsigned>(start_error)));
         }
-        stream->started = true;
         occupied = true;
         m_logger->info("started {} glove at {} Hz", hand_name(is_left), omniglove_device_nominal_source_rate_hz(device));
-        m_streams.push_back(std::move(stream));
     }
 
     if (m_streams.empty())
@@ -274,7 +179,7 @@ void OmniglovePlugin::start_device_streams()
 
 void OmniglovePlugin::stream_callback(const omniglove_stream_sample_t* sample, void* user_data)
 {
-    if (sample == nullptr || user_data == nullptr)
+    if (sample == nullptr)
     {
         return;
     }
@@ -287,7 +192,16 @@ void OmniglovePlugin::on_sample(const omniglove_stream_sample_t& sample, bool is
     if (sample.kind != OMNIGLOVE_STREAM_POST_DATA || sample.layout_version != OMNIGLOVE_STREAM_POST_LAYOUT_VERSION ||
         sample.data.postdata == nullptr || sample.sample_monotonic_ns > std::numeric_limits<int64_t>::max())
     {
-        invalidate_hand(is_left);
+        std::lock_guard<std::mutex> lock(m_frame_mutex);
+        auto& hand = m_hands[is_left ? 0 : 1];
+        hand.frame.reset();
+        if (!hand.sample_error_logged)
+        {
+            m_logger->error("{} SDK sample contract mismatch: kind {}, layout {}, null data {}, timestamp {}",
+                            hand_name(is_left), static_cast<unsigned>(sample.kind), sample.layout_version,
+                            sample.data.postdata == nullptr, sample.sample_monotonic_ns);
+            hand.sample_error_logged = true;
+        }
         return;
     }
 
@@ -299,30 +213,26 @@ void OmniglovePlugin::on_sample(const omniglove_stream_sample_t& sample, bool is
         m_logger->debug("{} POST_DATA rejected: {}", hand_name(is_left), conversion_status_name(status));
         return;
     }
-    converted.sample_monotonic_ns = sample.sample_monotonic_ns;
+    converted.sample_monotonic_ns = static_cast<int64_t>(sample.sample_monotonic_ns);
     converted.connection_generation = sample.connection_generation;
     converted.source_sequence = sample.source_sequence;
-    converted.valid = true;
 
     std::lock_guard<std::mutex> lock(m_frame_mutex);
-    (is_left ? m_left : m_right) = converted;
+    m_hands[is_left ? 0 : 1].frame = converted;
 }
 
 void OmniglovePlugin::invalidate_hand(bool is_left)
 {
     std::lock_guard<std::mutex> lock(m_frame_mutex);
-    (is_left ? m_left : m_right).valid = false;
+    m_hands[is_left ? 0 : 1].frame.reset();
 }
 
-void OmniglovePlugin::pump_hand(std::unique_ptr<plugin_utils::HandInjector>& injector,
-                                XrHandEXT hand,
-                                const HandFrame& frame,
-                                uint64_t& last_pushed_ns)
+void OmniglovePlugin::pump_hand(HandState& hand, bool is_left, const std::optional<HandFrame>& frame)
 {
-    const bool is_left = hand == XR_HAND_LEFT_EXT;
+    auto& injector = hand.injector;
     const int64_t now_ns = core::os_monotonic_now_ns();
-    const bool fresh = frame.valid && frame.sample_monotonic_ns <= static_cast<uint64_t>(now_ns) &&
-                       now_ns - static_cast<int64_t>(frame.sample_monotonic_ns) < kStaleThresholdNs;
+    const bool fresh =
+        frame && frame->sample_monotonic_ns <= now_ns && now_ns - frame->sample_monotonic_ns < kStaleThresholdNs;
     if (!fresh)
     {
         if (injector)
@@ -330,15 +240,16 @@ void OmniglovePlugin::pump_hand(std::unique_ptr<plugin_utils::HandInjector>& inj
             m_logger->info("{} hand inactive: SDK frame stale or invalid", hand_name(is_left));
         }
         injector.reset();
-        last_pushed_ns = 0;
+        hand.state = core::PluginDeviceState_DISCONNECTED;
+        hand.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
         return;
     }
-    if (frame.sample_monotonic_ns == last_pushed_ns)
+    if (frame->sample_monotonic_ns == hand.last_pushed_ns)
     {
         return;
     }
 
-    const XrTime time = m_time_converter->convert_monotonic_ns_to_xrtime(static_cast<int64_t>(frame.sample_monotonic_ns));
+    const XrTime time = m_time_converter->convert_monotonic_ns_to_xrtime(frame->sample_monotonic_ns);
     const plugin_utils::WristSample wrist = m_wrist_source->query(is_left, time);
     if (!wrist.valid)
     {
@@ -347,18 +258,21 @@ void OmniglovePlugin::pump_hand(std::unique_ptr<plugin_utils::HandInjector>& inj
             m_logger->info("{} hand inactive: wrist pose unavailable", hand_name(is_left));
         }
         injector.reset();
+        hand.state = core::PluginDeviceState_DEGRADED;
+        hand.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
         return;
     }
 
     if (!injector)
     {
         const auto handles = m_session->get_handles();
-        injector = std::make_unique<plugin_utils::HandInjector>(handles.instance, handles.session, hand, handles.space);
+        injector = std::make_unique<plugin_utils::HandInjector>(
+            handles.instance, handles.session, is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, handles.space);
         m_logger->info("{} hand active: connection generation {}, source sequence {}", hand_name(is_left),
-                       frame.connection_generation, frame.source_sequence);
+                       frame->connection_generation, frame->source_sequence);
     }
 
-    auto joints = frame.joints;
+    auto joints = frame->joints;
     for (auto& joint : joints)
     {
         if ((joint.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) == 0)
@@ -372,37 +286,24 @@ void OmniglovePlugin::pump_hand(std::unique_ptr<plugin_utils::HandInjector>& inj
         }
     }
     injector->push(joints.data(), time);
-    last_pushed_ns = frame.sample_monotonic_ns;
+    hand.last_pushed_ns = frame->sample_monotonic_ns;
+    hand.state = core::PluginDeviceState_CONNECTED;
+    hand.reason = core::PluginDeviceReason_NONE;
 }
 
-void OmniglovePlugin::worker_thread()
+void OmniglovePlugin::update()
 {
-    while (m_running.load(std::memory_order_acquire))
+    m_deviceio_session->update();
+    std::array<std::optional<HandFrame>, 2> frames;
     {
-        try
-        {
-            m_deviceio_session->update();
-            HandFrame left;
-            HandFrame right;
-            {
-                std::lock_guard<std::mutex> lock(m_frame_mutex);
-                left = m_left;
-                right = m_right;
-            }
-            pump_hand(m_left_injector, XR_HAND_LEFT_EXT, left, m_left_last_pushed_ns);
-            pump_hand(m_right_injector, XR_HAND_RIGHT_EXT, right, m_right_last_pushed_ns);
-        }
-        catch (const std::exception& error)
-        {
-            m_logger->error("update failed: {}", error.what());
-            m_left_injector.reset();
-            m_right_injector.reset();
-            m_failed.store(true, std::memory_order_release);
-            m_running.store(false, std::memory_order_release);
-            return;
-        }
-        std::this_thread::sleep_for(kWorkerPeriod);
+        std::lock_guard<std::mutex> lock(m_frame_mutex);
+        frames = { m_hands[0].frame, m_hands[1].frame };
     }
+    pump_hand(m_hands[0], true, frames[0]);
+    pump_hand(m_hands[1], false, frames[1]);
+    m_status_publisher->publish_if_changed({ { "/hand/left", m_hands[0].state, m_hands[0].reason, {} },
+                                             { "/hand/right", m_hands[1].state, m_hands[1].reason, {} } },
+                                           core::os_monotonic_now_ns());
 }
 
 } // namespace plugins::omniglove

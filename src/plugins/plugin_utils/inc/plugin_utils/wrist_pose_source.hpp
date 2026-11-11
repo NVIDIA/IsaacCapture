@@ -39,6 +39,15 @@ struct WristSourceConfig
     XrPosef right_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 };
 
+/** @brief Read a wrist mode; an unset variable uses fallback, an unknown value throws. */
+WristSourceMode wrist_source_mode_from_env(const char* name, WristSourceMode fallback);
+
+/** @brief Read and normalize px,py,pz,qx,qy,qz,qw; missing or invalid values throw. */
+XrPosef pose_from_env(const char* name);
+
+/** @brief Use fallback only for an unset variable; invalid values throw. */
+XrPosef pose_from_env(const char* name, const XrPosef& fallback);
+
 /** @brief One wrist query result, in the session base space. */
 struct WristSample
 {

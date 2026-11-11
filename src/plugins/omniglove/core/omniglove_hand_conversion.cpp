@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "inc/omniglove/omniglove_hand_conversion.hpp"
+#include "inc/omniglove_plugin/omniglove_hand_conversion.hpp"
+
+#include <omniglove/omniglove.h>
 
 #include <array>
 #include <cmath>
@@ -13,8 +15,6 @@ namespace plugins::omniglove
 namespace
 {
 
-constexpr uint32_t kPostIkConverged = 1U << 0U;
-constexpr uint32_t kPostBoneModelValid = 1U << 2U;
 constexpr float kJointRadiusM = 0.01F;
 constexpr XrSpaceLocationFlags kValidFlags =
     XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
