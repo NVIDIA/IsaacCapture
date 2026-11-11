@@ -17,6 +17,7 @@
 #include <NvSIPLTrace.hpp>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -282,6 +283,10 @@ struct SiplCapture::Impl
     std::vector<CameraDescriptor> descriptors;
     std::vector<std::unique_ptr<Sensor>> sensors;
 
+    // Signalled whenever a frame becomes pending or capture fails, so waitForFrame needs no polling.
+    std::mutex wakeMutex;
+    std::condition_variable wake;
+
     std::atomic<bool> running{ false };
     std::atomic<bool> failed{ false };
     std::mutex errorMutex;
@@ -303,6 +308,8 @@ struct SiplCapture::Impl
         if (failureMessage.empty())
             failureMessage = message;
         failed.store(true);
+        std::lock_guard<std::mutex> wakeGuard(wakeMutex);
+        wake.notify_all();
     }
 
     void throwIfFailed()
@@ -557,12 +564,16 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             next.sensorTime = nvm->GetImageData().frameCaptureStartTSC;
             next.readyMonotonicNs = monotonicNs();
 
-            std::lock_guard<std::mutex> guard(sensor.mutex);
-            if (sensor.hasPending)
-                sensor.pending.buffer->Release();
-            next.sequence = ++sensor.received;
-            sensor.pending = next;
-            sensor.hasPending = true;
+            {
+                std::lock_guard<std::mutex> guard(sensor.mutex);
+                if (sensor.hasPending)
+                    sensor.pending.buffer->Release();
+                next.sequence = ++sensor.received;
+                sensor.pending = next;
+                sensor.hasPending = true;
+            }
+            std::lock_guard<std::mutex> wakeGuard(wakeMutex);
+            wake.notify_all();
         }
     }
     catch (const std::exception& e)
@@ -718,6 +729,27 @@ void SiplCapture::stop()
         m_impl->dropPending(*sensor);
     if (m_impl->camera)
         m_impl->camera->Stop();
+}
+
+bool SiplCapture::waitForFrame(uint32_t timeoutMs)
+{
+    const auto anyPending = [this]()
+    {
+        if (m_impl->failed.load())
+            return true;
+        for (auto& sensor : m_impl->sensors)
+        {
+            std::lock_guard<std::mutex> guard(sensor->mutex);
+            if (sensor->hasPending)
+                return true;
+        }
+        return false;
+    };
+    std::unique_lock<std::mutex> lock(m_impl->wakeMutex);
+    m_impl->wake.wait_for(lock, std::chrono::milliseconds(timeoutMs), anyPending);
+    lock.unlock();
+    m_impl->throwIfFailed();
+    return anyPending();
 }
 
 bool SiplCapture::acquireLatest(uint32_t cameraId, CaptureFrame* frame)

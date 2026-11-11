@@ -53,6 +53,7 @@ public:
     void start() override;
     void stop() override;
     bool acquireLatest(uint32_t cameraId, CaptureFrame* frame) override;
+    bool waitForFrame(uint32_t timeoutMs) override;
 
 private:
     struct Impl;
