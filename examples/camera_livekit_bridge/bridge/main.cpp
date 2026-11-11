@@ -195,10 +195,10 @@ int main(int argc, char** argv)
                         frames == 0 ? 0.0 : static_cast<double>(stats.encode_us_total.load()) / frames / 1000.0;
                     std::cerr << "[stats] " << workers[i]->config().track << ": " << (frames - last_frames[i]) / seconds
                               << " fps, " << frames << " frames, " << stats.keyframes.load() << " keyframes, "
-                              << stats.skipped.load() << " skipped, " << stats.rejected.load() << " rejected, encode "
-                              << mean_ms << " ms mean, bitrate " << stats.bitrate_bps.load() / 1000
-                              << " kbps (transport target " << stats.target_bps.load() / 1000 << " kbps, "
-                              << stats.rate_changes.load() << " changes)";
+                              << stats.skipped.load() << " skipped, " << stats.rejected.load() << " rejected, "
+                              << stats.slot_overruns.load() << " slot overruns, encode " << mean_ms
+                              << " ms mean, bitrate " << stats.bitrate_bps.load() / 1000 << " kbps (transport target "
+                              << stats.target_bps.load() / 1000 << " kbps, " << stats.rate_changes.load() << " changes)";
                     const uint64_t ready_samples = stats.capture_to_ready_samples.load();
                     if (ready_samples > 0)
                     {
