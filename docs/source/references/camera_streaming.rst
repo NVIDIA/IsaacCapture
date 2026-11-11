@@ -922,7 +922,7 @@ Troubleshooting
      CUPY_COMPILE_WITH_PTX=1 ./camera_viz.sh run configs/synthetic.yaml
 
   This lets the driver compile the kernel for the GPU (`CuPy PTX option
-  <https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx>`__).
+  <https://docs.cupy.dev/en/stable/reference/environment.html#envvar-CUPY_COMPILE_WITH_PTX>`__).
 
 - **Not sure which side is stuck?** — set ``verbose: true`` at the top of the YAML for periodic
   per-source breadcrumbs on both ends.
