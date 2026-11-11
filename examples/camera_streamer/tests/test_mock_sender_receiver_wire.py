@@ -86,8 +86,13 @@ class MockSenderWireTest(unittest.TestCase):
             for stream in bundle.streams:
                 for sample in stream.samples:
                     if sample.present:
-                        self.assertIsNone(sample.sof_tsc_ns)
                         self.assertIsNone(sample.frame_timestamp_ns)
+                        # The synthetic start-of-frame maps to capture-ready minus the lag.
+                        sof = avs_wire.sensor_sof_ns(bundle, sample)
+                        self.assertEqual(
+                            sof, bundle.sender_capture_ready_ns - 20_000_000
+                        )
+                        self.assertEqual(bundle.sender_clock_domain, "realtime")
 
     def test_paused_stream_is_absent_and_resumes_at_idr(self):
         _, port = self._serve(pauses=[ms.Pause("head", 0.5, 1.0)])
