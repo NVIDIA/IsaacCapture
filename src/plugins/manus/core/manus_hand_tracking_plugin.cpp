@@ -158,7 +158,8 @@ XrPosef aim_to_wrist_from_env(const char* name, const XrPosef& fallback, spdlog:
     }
 
     XrQuaternionf& q = pose.orientation;
-    const float norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    const double norm = std::sqrt(static_cast<double>(q.x) * q.x + static_cast<double>(q.y) * q.y +
+                                  static_cast<double>(q.z) * q.z + static_cast<double>(q.w) * q.w);
     if (norm < 1e-6f)
     {
         logger.warn("Ignoring {}='{}': the quaternion is zero; using the built-in offset", name, value);
