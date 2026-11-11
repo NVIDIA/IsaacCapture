@@ -10,7 +10,10 @@
 #include "TestHarness.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -40,6 +43,60 @@ public:
 
     std::vector<std::vector<uint8_t>> packets;
     std::vector<argus_sender::PacketTiming> timings;
+};
+
+class BlockingPacketSink : public argus_sender::PacketSink
+{
+public:
+    bool enqueueFramed(std::vector<uint8_t>&& packet) override
+    {
+        argus_sender::Avs1Bundle bundle;
+        const char* error = NULL;
+        if (!argus_sender::parseAvs1WireRecord(packet.data(), packet.size(), &bundle, &error))
+            return false;
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (bundle.sequence == 1)
+        {
+            m_firstEntered = true;
+            m_cv.notify_all();
+            m_cv.wait(lock, [this] { return m_releaseFirst; });
+        }
+        sequences.push_back(bundle.sequence);
+        m_cv.notify_all();
+        return true;
+    }
+
+    bool hasError() const override
+    {
+        return false;
+    }
+
+    bool waitForFirst()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, std::chrono::seconds(2), [this] { return m_firstEntered; });
+    }
+
+    bool waitForOvertake()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cv.wait_for(lock, std::chrono::milliseconds(100), [this] { return !sequences.empty(); });
+    }
+
+    void releaseFirst()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_releaseFirst = true;
+        m_cv.notify_all();
+    }
+
+    std::vector<uint64_t> sequences;
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_firstEntered = false;
+    bool m_releaseFirst = false;
 };
 
 std::vector<argus_sender::Avs1StreamRecord> templates()
@@ -74,6 +131,76 @@ argus_sender::FrameTiming timing(uint64_t frame, uint64_t tsc)
     result.sensorSofTimestampTscNs = tsc;
     result.hasSensorSofTimestampTsc = true;
     return result;
+}
+
+void checkConcurrentEnqueueOrder(TestContext& test, bool emptyBundles)
+{
+    BlockingPacketSink sink;
+    std::vector<argus_sender::Avs1StreamRecord> streams = templates();
+    streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
+    argus_sender::FrameBundleAssembler assembler(&sink, 77, streams);
+    std::vector<argus_sender::BundleStreamInput> inputs(2);
+    const uint8_t payload[] = { 0, 0, 1, 0x26 };
+    if (!emptyBundles)
+    {
+        inputs[0].present = true;
+        inputs[0].sequence = 1;
+        inputs[0].timings.push_back(timing(10, 1000));
+        inputs[0].timings.push_back(timing(11, 1004));
+        inputs[1].present = true;
+        inputs[1].sequence = 1;
+        inputs[1].timings.push_back(timing(20, 1000));
+        TEST_CHECK(test, assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0));
+        inputs[0].sequence = 2;
+        inputs[1].present = false;
+        inputs[1].sequence = 0;
+        TEST_CHECK(test, assembler.beginBundle(2, inputs, 3000, 3100, argus_sender::SENDER_CLOCK_REALTIME, 0));
+        for (size_t camera = 0; camera < 2; ++camera)
+        {
+            TEST_CHECK(test, assembler.encodedSink(0, camera)->enqueueEncoded(
+                                 payload, sizeof(payload), 1, 2200, argus_sender::SENDER_CLOCK_REALTIME));
+        }
+    }
+
+    bool firstOk = false;
+    bool secondOk = false;
+    std::thread first(
+        [&]
+        {
+            firstOk = emptyBundles ?
+                          assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0) :
+                          assembler.encodedSink(1, 0)->enqueueEncoded(
+                              payload, sizeof(payload), 1, 2200, argus_sender::SENDER_CLOCK_REALTIME);
+        });
+    TEST_CHECK(test, sink.waitForFirst());
+    std::thread second(
+        [&]
+        {
+            if (emptyBundles)
+            {
+                secondOk = assembler.beginBundle(2, inputs, 3000, 3100, argus_sender::SENDER_CLOCK_REALTIME, 0);
+            }
+            else
+            {
+                secondOk = assembler.encodedSink(0, 0)->enqueueEncoded(
+                    payload, sizeof(payload), 2, 3200, argus_sender::SENDER_CLOCK_REALTIME);
+                secondOk = assembler.encodedSink(0, 1)->enqueueEncoded(
+                               payload, sizeof(payload), 2, 3200, argus_sender::SENDER_CLOCK_REALTIME) &&
+                           secondOk;
+            }
+        });
+    TEST_CHECK(test, !sink.waitForOvertake());
+    sink.releaseFirst();
+    first.join();
+    second.join();
+    TEST_CHECK(test, firstOk);
+    TEST_CHECK(test, secondOk);
+    TEST_CHECK_EQ(test, sink.sequences.size(), static_cast<size_t>(2));
+    if (sink.sequences.size() == 2)
+    {
+        TEST_CHECK_EQ(test, sink.sequences[0], 1ULL);
+        TEST_CHECK_EQ(test, sink.sequences[1], 2ULL);
+    }
 }
 
 } // namespace
@@ -181,5 +308,7 @@ int main()
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID));
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_TSC_VALID));
     TEST_CHECK_EQ(test, parsed.senderCaptureReadyTscNs, 0ULL);
+    checkConcurrentEnqueueOrder(test, false);
+    checkConcurrentEnqueueOrder(test, true);
     return test.finish();
 }
