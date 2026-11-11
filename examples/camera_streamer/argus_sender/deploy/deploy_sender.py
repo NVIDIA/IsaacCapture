@@ -8,7 +8,7 @@ Run on the desktop:
     deploy_sender.py user@orin check                       read-only: release, camera processes, disk
     deploy_sender.py user@orin discover                    read-only: platform files, tuning files, camera units
     deploy_sender.py user@orin deploy [--with-sipl] [--name NAME]
-    deploy_sender.py user@orin run --name NAME --config FILE [--seconds N]
+    deploy_sender.py user@orin run --name NAME --config FILE [--seconds N] [--env NAME=VALUE]
     deploy_sender.py user@orin stop                        stop the senders that `run` started
     deploy_sender.py user@orin linktest [--mb N]           TCP throughput from the target to this machine
 
@@ -16,7 +16,8 @@ Run on the desktop:
 ~/camera-streamer/releases/ on the target, configures and builds it there and runs the unit tests that need no camera.
 It never stops, replaces or starts a service and never opens a camera; a release directory that already exists is
 refused rather than overwritten. `run` starts a built release for a bounded time with a config from this machine and
-opens the cameras; it prints a note, and does not stop anything, if another camera process is running.
+opens the cameras; it prints a note, and does not stop anything, if another camera process is running. `run` succeeds when the
+sender ends at its time limit and fails with the sender's own exit status otherwise; `deploy` fails if any unit test fails.
 """
 
 from __future__ import annotations
@@ -81,7 +82,7 @@ head -1 /etc/nv_tegra_release 2>/dev/null || echo "no /etc/nv_tegra_release: not
 echo "--- processes that may own the cameras"
 ps -eo pid,etime,cmd | grep -Ei 'nvargus|argus_sender|sipl|camera' | grep -v grep | cut -c1-160 || true
 echo "--- SIPL and multimedia packages"
-for path in /usr/src/jetson_sipl_api /usr/src/jetson_multimedia_api; do [ -d "$path" ] && echo "present: $path" || echo "missing: $path"; done
+for path in /usr/src/jetson_sipl_api /usr/src/jetson_multimedia_api; do [[ -d "$path" ]] && echo "present: $path" || echo "missing: $path"; done
 echo "--- disk"
 df -h ~ | tail -1
 """,
@@ -160,7 +161,7 @@ def cmd_stop(target: str, dry_run: bool) -> None:
         target,
         r"""
 pids=$(pgrep -f "^\./build/argus_sender --config run-config.yaml" || true)
-if [ -z "$pids" ]; then echo "no sender from ~/camera-streamer/releases is running"; exit 0; fi
+if [[ -z "$pids" ]]; then echo "no sender from ~/camera-streamer/releases is running"; exit 0; fi
 echo "signalling: $pids"
 kill -INT $pids
 for _ in $(seq 1 20); do
@@ -174,17 +175,23 @@ exit 1
     )
 
 
-def cmd_run(target: str, name: str, config: Path, seconds: int, dry_run: bool) -> None:
+def cmd_run(
+    target: str, name: str, config: Path, seconds: int, env: list[str], dry_run: bool
+) -> None:
     """Run a deployed release for a bounded time, in the foreground, with a config from this machine."""
     if not NAME.fullmatch(name):
         raise DeployError(f"release name {name!r} is not a plain file name")
     if not config.is_file():
         raise DeployError(f"{config} is not a file")
     directory = f"{RELEASES}/{name}"
+    for item in env:
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.:/-]*", item):
+            raise DeployError(f"--env {item!r} is not NAME=VALUE with a plain value")
+    env_prefix = "env " + " ".join(env) + " " if env else ""
     guard = f"""
 set -e
 d={directory}
-[ -x $d/build/argus_sender ] || {{ echo "no built sender in $d" >&2; exit 1; }}
+[[ -x $d/build/argus_sender ]] || {{ echo "no built sender in $d" >&2; exit 1; }}
 # Taking the cameras is intended; say who else may hold them, but do not stop anything.
 if systemctl is-active --quiet camera-argus-sender.service 2>/dev/null; then
     echo "note: camera-argus-sender.service is active and may hold the cameras" >&2
@@ -206,7 +213,11 @@ fi
         + f"""
 cd $d
 # SIGINT first: the sender drains its encoder and returns every camera buffer on SIGINT/SIGTERM.
-timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config run-config.yaml || echo "sender exited with status $?"
+status=0
+{env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config run-config.yaml || status=$?
+# 124 is the time limit this command set; any other nonzero status is the sender's own and fails the run.
+if [[ $status -eq 124 ]]; then echo "sender stopped at its {seconds} s time limit"; exit 0; fi
+if [[ $status -ne 0 ]]; then echo "sender exited with status $status" >&2; exit $status; fi
 """,
         dry_run,
     )
@@ -227,7 +238,7 @@ def cmd_deploy(target: str, with_sipl: bool, name: str | None, dry_run: bool) ->
     print(f"==> [1/3] preparing {directory} on {target} (commit {commit})", flush=True)
     remote(
         target,
-        f'set -e; d={directory}; [ ! -e $d ] || {{ echo "release $d already exists" >&2; exit 1; }}; mkdir -p $d/src',
+        f'set -e; d={directory}; [[ ! -e $d ]] || {{ echo "release $d already exists" >&2; exit 1; }}; mkdir -p $d/src',
         dry_run,
     )
 
@@ -254,10 +265,9 @@ set -e
 cd {directory}
 cmake -S src -B build {options} -DBUILD_TESTING=ON
 cmake --build build -j "$(nproc)"
-# Only the tests that need no camera; ctest does not open any device.
-(cd build && ctest --output-on-failure) || echo "some tests failed (see above); the build itself succeeded"
-./build/argus_sender --help >/dev/null 2>&1 || true
-echo "built: {directory}/build/argus_sender  (not activated, no camera opened)"
+# Only the tests that need no camera; ctest does not open any device. A failing test fails the deploy.
+(cd build && ctest --output-on-failure)
+echo "built and tested: {directory}/build/argus_sender  (not activated, no camera opened)"
 """,
         dry_run,
     )
@@ -280,6 +290,13 @@ def main(argv: list[str] | None = None) -> int:
         "--config", required=True, type=Path, help="sender config to upload"
     )
     run.add_argument("--seconds", type=int, default=60, help="stop after this long")
+    run.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="environment variable for the sender (repeatable)",
+    )
     deploy = sub.add_parser("deploy", help="copy, build and test; never activates")
     deploy.add_argument(
         "--with-sipl", action="store_true", help="also build the SIPL backend"
@@ -297,7 +314,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "linktest":
             cmd_linktest(args.target, args.mb, args.dry_run)
         elif args.command == "run":
-            cmd_run(args.target, args.name, args.config, args.seconds, args.dry_run)
+            cmd_run(
+                args.target,
+                args.name,
+                args.config,
+                args.seconds,
+                args.env,
+                args.dry_run,
+            )
         elif args.command == "discover":
             cmd_discover(args.target, args.dry_run)
         else:
