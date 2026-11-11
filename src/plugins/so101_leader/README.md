@@ -73,7 +73,7 @@ is the plain-text format above.
 ```bash
 # Use an existing LeRobot calibration directly:
 ./install/plugins/so101_leader/so101_leader_plugin /dev/ttyACM0 so101_leader \
-    ~/.cache/huggingface/lerobot/calibration/teleoperators/so101_leader/<id>.json
+    ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/<id>.json
 ```
 
 Mapping: LeRobot's `range_min`/`range_max` → our range (reads are clamped to it), the range midpoint
