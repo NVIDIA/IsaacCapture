@@ -302,7 +302,7 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
     try
     {
         const YAML::Node root = YAML::LoadFile(path);
-        const std::set<std::string> rootAllowed = { "version", "capture_backend", "network",
+        const std::set<std::string> rootAllowed = { "version", "capture_backend", "sipl",   "network",
                                                     "runtime", "alignment",       "streams" };
         if (!rejectUnknown(root, rootAllowed, "config", error))
             return false;
@@ -315,6 +315,22 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
                 return false;
             if (!parseCaptureBackend(backend, &config->captureBackend))
                 return fail(error, "config.capture_backend must be auto, argus or sipl");
+        }
+
+        if (root["sipl"])
+        {
+            const YAML::Node sipl = root["sipl"];
+            const std::set<std::string> allowed = { "platform_config_json", "platform_config_name", "link_masks",
+                                                    "nito_dir", "isp0_buffers" };
+            if (!rejectUnknown(sipl, allowed, "sipl", error) ||
+                !readOptional(sipl, "platform_config_json", "sipl", &config->sipl.platformConfigJson, error) ||
+                !readOptional(sipl, "platform_config_name", "sipl", &config->sipl.platformConfigName, error) ||
+                !readOptional(sipl, "link_masks", "sipl", &config->sipl.linkMasks, error) ||
+                !readOptional(sipl, "nito_dir", "sipl", &config->sipl.nitoDir, error) ||
+                !readUint32(sipl, "isp0_buffers", "sipl", &config->sipl.isp0Buffers, error))
+            {
+                return false;
+            }
         }
 
         if (root["network"])
@@ -397,6 +413,24 @@ bool validateConfig(const AppConfig& config, std::string* error)
         return fail(error, "at least one stream is required");
     if (config.streams.size() > std::numeric_limits<uint16_t>::max())
         return fail(error, "too many streams for AVS1");
+    if (config.captureBackend == CAPTURE_BACKEND_SIPL)
+    {
+        if (config.sipl.platformConfigJson.empty() || config.sipl.platformConfigName.empty())
+            return fail(error, "capture_backend sipl needs sipl.platform_config_json and sipl.platform_config_name");
+        if (config.sipl.linkMasks.empty())
+            return fail(error, "capture_backend sipl needs sipl.link_masks");
+        if (config.sipl.isp0Buffers < 2)
+            return fail(error, "sipl.isp0_buffers must be at least 2");
+        for (size_t i = 0; i < config.streams.size(); ++i)
+        {
+            const StreamConfig& stream = config.streams[i];
+            if (stream.type != STREAM_TYPE_MONO || stream.output.codec != CODEC_HEVC || stream.output.remap.enabled())
+            {
+                return fail(error, "streams[" + std::to_string(i) +
+                                       "]: the sipl backend supports mono hevc streams without a remap");
+            }
+        }
+    }
 
     std::set<std::string> ids;
     std::set<uint32_t> devices;

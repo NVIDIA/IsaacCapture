@@ -115,11 +115,23 @@ struct RuntimeConfig
     bool benchEncode = false;
 };
 
+// SIPL platform description (capture_backend: sipl). Stream `device` then names a SIPL pipeline index.
+struct SiplSettings
+{
+    std::string platformConfigJson;
+    std::string platformConfigName;
+    // One mask per deserializer, in transport order.
+    std::vector<uint32_t> linkMasks;
+    std::string nitoDir = "/var/nvidia/nvcam/settings/sipl";
+    uint32_t isp0Buffers = 6;
+};
+
 struct AppConfig
 {
     uint32_t version = 1;
     // Which camera SDK captures. auto picks the only backend this build includes.
     CaptureBackendKind captureBackend = CAPTURE_BACKEND_AUTO;
+    SiplSettings sipl;
     NetworkConfig network;
     RuntimeConfig runtime;
     AlignmentConfig alignment;
