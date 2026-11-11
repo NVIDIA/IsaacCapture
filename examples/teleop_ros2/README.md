@@ -10,9 +10,10 @@ Reference ROS 2 publisher for Isaac Teleop data.
 ## Prerequisite: Foot Pedal For `hand_teleop`
 
 `hand_teleop` uses `Generic3AxisPedalSource` + `FootPedalRootCmdRetargeter` for
-`xr_teleop/root_twist` and `xr_teleop/root_pose`. Start `foot_pedal_reader`,
-`pedal_pusher`, or a compatible pedal plugin so pedal data is available through
-the matching collection ID.
+`xr_teleop/root_twist` and `xr_teleop/root_pose`. Start
+`generic_3axis_pedal_plugin` (installed under `install/plugins/generic_3axis_pedal/`),
+the `pedal_pusher` schema IO example, or a compatible pedal plugin so pedal data
+is available through the matching collection ID.
 
 The default collection ID is `generic_3axis_pedal`. Override it with
 `--ros-args -p pedal_collection_id:=<your_collection_id>` when your pedal
@@ -78,11 +79,12 @@ the plugin environment. A non-native provider requires `hand_teleop`, or
 
 #### MANUS glove input
 
-Follow the [MANUS device guide](../../docs/source/device/manus.rst) to install
+Follow the [MANUS device guide](../../docs/source/device/hand_tracking/manus.rst) to install
 host USB permissions, the MANUS SDK, and the MANUS plugin.
 
-After the ROS node starts, run the following from the IsaacTeleop repository
-root in the environment where the MANUS plugin was built:
+For manual launch (`use_external_hand_tracking_plugin:=true`), after the ROS
+node starts, run the following from the repository root in the environment
+where the MANUS plugin was built:
 
 ```bash
 source "$HOME/.cloudxr/run/cloudxr.env"
@@ -97,7 +99,8 @@ Build the Wuji glove plugin from the repository root:
 ./src/plugins/wuji_glove/install.sh
 ```
 
-After the ROS node starts, attach the plugin to the same CloudXR runtime:
+For manual launch (`use_external_hand_tracking_plugin:=true`), after the ROS
+node starts, attach the plugin to the same CloudXR runtime:
 
 ```bash
 source "$HOME/.cloudxr/run/cloudxr.env"
@@ -181,14 +184,27 @@ docker run --rm --gpus all --net=host --ipc=host \
   teleop_ros2_ref --ros-args -p cloudxr_accept_eula:=true
 ```
 
+On Jetson (for example AGX Thor), Docker rejects `--gpus all` with
+`invoking the NVIDIA Container Runtime Hook directly (e.g. specifying the docker --gpus flag) is not supported`.
+Replace `--gpus all` with `--runtime=nvidia` in every `docker run` command in
+this README.
+
 All device plugins used with Docker must run in the `teleop_ros2_ref`
 container. The node starts managed hand-tracking plugins automatically; launch
-external plugins such as `foot_pedal_reader` in the running container with
-`docker exec`.
+external plugins in the running container with `docker exec`. For example, for
+a foot pedal at `/dev/input/js0`, add `--device /dev/input/js0` to the
+`docker run` command, then run:
+
+```bash
+docker exec -it teleop_ros2_ref bash -c \
+  'source /root/.cloudxr/run/cloudxr.env && /opt/isaaccapture/install/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin'
+```
 
 Select the hand provider independently from the robot-hand retargeter. The node
 starts the selected plugin automatically:
 
+- Wuji gloves driving Wuji Hand 2 (`wuji_hand_model:=wuji_hand` for Wuji Hand):
+  `-p hand_tracking_provider:=wuji -p hand_retargeter:=wuji -p wuji_hand_model:=wuji_hand_2`
 - Wuji gloves driving Sharpa hands:
   `-p hand_tracking_provider:=wuji -p hand_retargeter:=dexpilot`
 - MANUS gloves driving Wuji Hand 2:
@@ -197,7 +213,7 @@ starts the selected plugin automatically:
 Wuji gloves must be reachable through the container's host network. Pass Wuji
 configuration overrides into the container with `docker run -e <name>=<value>`.
 MANUS also requires the
-[host udev setup](../../docs/source/device/manus.rst) and USB access; add
+[host udev setup](../../docs/source/device/hand_tracking/manus.rst) and USB access; add
 `-v /dev/bus/usb:/dev/bus/usb` to the MANUS `docker run` command.
 
 ### Overriding parameters and remapping topics
@@ -296,7 +312,15 @@ reference for the hub HTTP/WebSocket API, ADB automation, and USB-local details.
 ### MCAP Replay
 
 Set `mcap_replay_path` to run the same ROS 2 publisher from recorded DeviceIO
-tracker data instead of live OpenXR/DeviceIO inputs:
+tracker data instead of live OpenXR/DeviceIO inputs. To try it without a
+recording, write a fixture with the installed integration test utility first:
+
+```bash
+docker run --rm -v /tmp:/tmp --entrypoint bash teleop_ros2_ref -c \
+  "source /usr/local/bin/teleop-env-setup && /opt/isaaccapture/install/examples/teleop_ros2/cpp/integration_tests/teleop_ros2_mcap_generator /tmp/teleop_ros2_input.mcap"
+```
+
+Then run the node on it:
 
 ```bash
 docker run --rm --net=host --ipc=host \
@@ -306,10 +330,8 @@ docker run --rm --net=host --ipc=host \
   -p mcap_replay_path:=/tmp/teleop_ros2_input.mcap
 ```
 
-The installed integration test utility
-`examples/teleop_ros2/cpp/integration_tests/teleop_ros2_mcap_generator` creates a
-deterministic fixture with controller, hand, pedal, and full-body samples for CI
-coverage.
+The fixture is deterministic and holds controller, hand, pedal, and full-body
+samples, so every `mode` has input to publish.
 
 ## Echo Topics
 
