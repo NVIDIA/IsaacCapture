@@ -63,3 +63,8 @@ add_subdirectory(nvenc)
 add_subdirectory(livekit_publisher)
 add_subdirectory(probe)
 add_subdirectory(bridge)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

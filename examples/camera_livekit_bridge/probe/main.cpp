@@ -6,6 +6,7 @@
 
 #include <ipc_client/cuda_ipc_client.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <iostream>
@@ -17,8 +18,8 @@ namespace
 
 std::uint64_t first_row_checksum(const camera_bridge::IpcSlot& slot)
 {
-    std::vector<unsigned char> host(4096);
-    if (cudaMemcpy(host.data(), slot.device_ptr, host.size(), cudaMemcpyDeviceToHost) != cudaSuccess)
+    std::vector<unsigned char> host(std::min<std::size_t>(4096, slot.nbytes));
+    if (host.empty() || cudaMemcpy(host.data(), slot.device_ptr, host.size(), cudaMemcpyDeviceToHost) != cudaSuccess)
         return 0;
     std::uint64_t sum = 0;
     for (const unsigned char byte : host)
