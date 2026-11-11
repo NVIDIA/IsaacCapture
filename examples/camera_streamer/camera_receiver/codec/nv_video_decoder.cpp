@@ -132,7 +132,9 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            // Each packet is one complete access unit; without this flag the parser
+            // holds a picture back until the next packet begins.
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
@@ -225,7 +227,9 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            // Each packet is one complete access unit; without this flag the parser
+            // holds a picture back until the next packet begins.
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
