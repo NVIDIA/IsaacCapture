@@ -346,7 +346,7 @@ From the repository root:
 
 .. code-block:: bash
 
-   # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
+   # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip commands below.
    uv venv --python 3.11 --seed .venv
    source .venv/bin/activate
 
@@ -357,18 +357,26 @@ Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is t
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
 selects your build for the venv's Python, so a newer published ``isaaccapture`` cannot replace it.
 ``--find-links`` supplies the ``isaacteleop`` transition wheel and the other dependencies come
-from the package index, so do not add ``--no-index``. The two tools name the reinstall option
-differently:
+from the package index, so do not add ``--no-index``. Run it with ``uv`` from the repository
+root. Viser, which ``ui`` installs, caps ``websockets`` below the 17.3 that ``cloudxr`` requires,
+and only uv reading the root :code-file:`pyproject.toml` ignores that cap, so ``pip`` (and ``uv``
+run from another directory) fails with ``ResolutionImpossible`` / ``No solution found``.
 
 .. code-block:: bash
 
-   # Replace X.Y with your build's version. --force-reinstall replaces an existing install.
-   pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --force-reinstall
-
-.. code-block:: bash
-
+   # Replace X.Y with your build's version.
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
+
+.. admonition:: ``retargeters`` extra on aarch64 (Jetson / DGX)
+
+   The full ``retargeters`` extra does **not** resolve on ``aarch64`` (some of its
+   pinned dependencies have no aarch64 wheels). On Jetson/DGX-class robotics
+   targets, install the ``retargeters-lite`` extra instead:
+
+   .. code-block:: bash
+
+      uv pip install "isaaccapture[retargeters-lite,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
 .. _build-from-source-editable-examples:
 
@@ -455,16 +463,6 @@ What this path does and how it differs from the classic flow:
    ``pip install -e .``) first.
 
 See :doc:`/references/build` for the full build-system reference.
-
-.. admonition:: ``retargeters`` extra on aarch64 (Jetson / DGX)
-
-   The full ``retargeters`` extra does **not** resolve on ``aarch64`` (some of its
-   pinned dependencies have no aarch64 wheels). On Jetson/DGX-class robotics
-   targets, install the ``retargeters-lite`` extra instead:
-
-   .. code-block:: bash
-
-      pip install "isaaccapture[retargeters-lite]"
 
 .. toctree::
    :hidden:

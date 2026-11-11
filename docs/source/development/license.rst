@@ -31,4 +31,10 @@ explicit third-party exceptions. Review and stage any automatic edits before
 committing. Checked-in third-party files record upstream's terms; see *What stops
 the Release build* in :code-file:`scripts/sbom/README.md`.
 
-You can also run ``reuse spdx -o project.spdx`` to generate an SPDX report for the project.
+To generate an SPDX report for the project, run this from the repository root. It uses the
+``reuse`` version pinned in :code-file:`scripts/sbom/pyproject.toml`, so you do not install
+``reuse`` yourself:
+
+.. code-block:: bash
+
+   uv run --project scripts/sbom reuse spdx -o project.spdx
