@@ -384,7 +384,7 @@ not create a fatal snapshot.
        the rate operator intent reaches the robot.
    * - ``render``
      - ``latency.xr_pose_age_ms``
-     - Age of the XR pose at send time.
+     - Age of the displayed frame's pose at render time.
    * - ``frame``
      - ``streaming.framerate``
      - Streamed video rate (FPS), rolling average.
@@ -420,28 +420,30 @@ not create a fatal snapshot.
      - Round-trip time.
    * - ``network``
      - ``network.packet_loss``
-     - Packet loss ratio.
+     - Cumulative count of lost packets, not a ratio.
    * - ``network``
      - ``network.avg_decode_time_ms``
      - Average video decode time.
    * - ``network``
      - ``network.quality_score``
-     - Composite network quality, 0-4.
+     - Composite network quality, 0-100: the lowest of the three component scores,
+       smoothed.
    * - ``network``
      - ``network.bandwidth_score``
-     - Bandwidth component of the quality score, 0-4.
+     - Bandwidth component of the quality score, 0-100.
    * - ``network``
      - ``network.network_loss_score``
-     - Loss component of the quality score, 0-4.
+     - Loss component of the quality score, 0-100.
    * - ``network``
      - ``network.latency_score``
-     - Latency component of the quality score, 0-4.
+     - Latency component of the quality score, 0-100.
    * - ``network``
      - ``session.quality``
      - Overall session quality, 0-4. Also drives the in-XR quality bars.
 
-Score metrics use the SDK's ``QualityScore`` scale: 0 NoData, 1 Unsustainable,
-2 Degraded, 3 Good, 4 Excellent.
+The four ``network.*_score`` metrics run from 0 to 100; higher is better. Only
+``session.quality`` uses the SDK's ``QualityScore`` scale: 0 NoData,
+1 Unsustainable, 2 Degraded, 3 Good, 4 Excellent.
 
 Metrics are cleared when the stream stops, so a new session never reports the previous
 session's last known values.
@@ -815,7 +817,3 @@ internet, this fails and ``--usb-local`` aborts.
 ``/client/<version>/`` directory) into the static dir, then re-run.  The
 launcher only downloads missing or empty files.  Override the target directory
 via ``TELEOP_WEB_CLIENT_STATIC_DIR``.
-
-**Fix:** Set the SDK versions in ``deps/cloudxr/.env`` (copy from
-``.env.default``) so the download script can resolve the right version,
-or stage ``nvidia-cloudxr-<version>.tgz`` in ``deps/cloudxr/`` manually.
