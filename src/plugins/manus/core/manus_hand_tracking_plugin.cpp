@@ -125,7 +125,8 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
     return data;
 }
 
-// MANUS_GLOVE_AIM_TO_WRIST_{LEFT,RIGHT}="px,py,pz,qx,qy,qz,qw" (meters, then quaternion) replaces that hand's  controller-to-wrist offset
+// MANUS_GLOVE_AIM_TO_WRIST_{LEFT,RIGHT}="px,py,pz,qx,qy,qz,qw" (meters, then quaternion) replaces that hand's
+// controller-to-wrist offset
 XrPosef aim_to_wrist_from_env(const char* name, const XrPosef& fallback, spdlog::logger& logger)
 {
     const char* value = std::getenv(name);
