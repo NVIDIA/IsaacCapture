@@ -26,8 +26,8 @@ Use the `Haptikos <https://haptikos.tech/>`_ Exoskeletons with the Isaac Capture
 Components
 ----------
 
-- **Core library** (``haptikos_core``) — wraps the Haptikos Core App(``libHaptikosCore.so``) and provides access to per-joint tracking data and haptics.
-- **Plugin executable** (``haptikos_plugin``) — the primary plugin binary that enables integration with the Teleop system via CloudXR and OpenXR.
+- **Haptikos API** (``libHaptikosAPI.so`` and ``libHaptikosCore.so`` from ``HaptikosCpp_API_Shared/lib``) — the vendor libraries that read per-joint tracking data from the Haptikos Core App.
+- **Plugin executable** (``haptikos_hands_plugin``) — the plugin binary that injects the hand tracking data into the Teleop system via CloudXR and OpenXR.
 
 Prerequisites
 -------------
@@ -65,12 +65,12 @@ The Haptikos API must be downloaded separately due to licensing. Check our `webs
 Step 2: Build the plugin
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
+From the repository root:
+
 .. code-block:: bash
 
-   cd ../../..  # Navigate to TeleopCore root
    cmake -S . -B build
-   cd build
-   make haptikos_hands_plugin
+   cmake --build build --target haptikos_hands_plugin
 
 Step 3: Build the entire project
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -101,7 +101,6 @@ In the shell that runs the plugin, source the environment file that the runtime 
 
 .. code-block:: bash
 
-   cd IsaacCapture/
    source ~/.cloudxr/run/cloudxr.env
 
 In the same terminal, run the plugin with the following:
@@ -117,7 +116,7 @@ Important Information
 
 2. The orientation calibration defines the direction the Haptikos gloves define as forward. This needs to be aligned with the Head Mounted Display's forward direction.
 
-3. To inject the hand tracking data and haptic feedback, the controllers, the Haptikos App and the exoskeletons need to be active.
+3. To inject the hand tracking data, the controllers, the Haptikos App and the exoskeletons need to be active.
 
 4. The executable will be located in the ``build/src/plugins/haptikos``. If you installed the project by running ``cmake --install build`` the executable will also be found in the ``install/plugins/haptikos`` folder.
 
