@@ -232,7 +232,13 @@ TEST_CASE("Human skeleton geometry, calibration, and wrist continuity", "[realha
     for (std::size_t sensor = 0; sensor < kNumSensors; ++sensor)
     {
         sensors.fill(0.0f);
-        sensors[sensor] = 0.7f;
+        if (sensor < 5)
+        {
+            // Roll changes a curled thumb's chord, but not a straight chain's endpoint.
+            sensors[2] = sensors[4] = 0.3f;
+        }
+        const auto reference = *model.reconstruct(sensors, HandSide::Left);
+        sensors[sensor] += 0.7f;
         const auto moved = *model.reconstruct(sensors, HandSide::Left);
         const std::size_t digit = sensor < 5 ? 0 : 1 + (sensor - 5) / 4;
         const std::size_t first = digit == 0 ? 2 : 6 + (digit - 1) * 5;
@@ -241,13 +247,13 @@ TEST_CASE("Human skeleton geometry, calibration, and wrist continuity", "[realha
         {
             if (joint < first || joint > last)
             {
-                check(same(open[joint], moved[joint]), "each sensor affects only its own digit");
+                check(same(reference[joint], moved[joint]), "each sensor affects only its own digit");
             }
         }
         const bool unused = sensor == 3 || (sensor >= 5 && (sensor - 5) % 4 == 2);
         if (!unused)
         {
-            check(!same(open[last], moved[last]), "every supported sensor has motion response");
+            check(!same(reference[last], moved[last]), "every supported sensor has motion response");
         }
     }
     for (float sign : { -1.0f, 1.0f })
@@ -346,7 +352,7 @@ coefficients:
 }
 
 
-TEST_CASE("Opposed thumb flexion preserves endpoints and rigid bone frames", "[realhand_ffg_skeleton]")
+TEST_CASE("Geometric thumb chain preserves endpoints and rigid bone frames", "[realhand_ffg_skeleton]")
 {
     CalibrationFile file;
     file.save(calibration());
@@ -394,15 +400,81 @@ TEST_CASE("Opposed thumb flexion preserves endpoints and rigid bone frames", "[r
                                 const auto relative = oxr_utils::multiply_poses(
                                     { { -parent.x, -parent.y, -parent.z, parent.w }, { 0, 0, 0 } },
                                     { root.orientation, { 0, 0, 0 } });
-                                const float angle = bone == 1 ? c : d;
-                                check(std::abs(relative.orientation.x - std::sin(angle / 2)) < 1e-6f &&
+                                const float angle = 2.0f * std::atan2(relative.orientation.x, relative.orientation.w);
+                                check(angle >= -1e-6f && angle <= 1.8f + 1e-6f &&
                                           std::abs(relative.orientation.y) < 1e-6f &&
                                           std::abs(relative.orientation.z) < 1e-6f &&
-                                          std::abs(relative.orientation.w - std::cos(angle / 2)) < 1e-6f,
+                                          std::abs(relative.orientation.x * relative.orientation.x +
+                                                   relative.orientation.w * relative.orientation.w - 1.0f) < 1e-6f,
                                       "thumb flexion is positive local X on either hand");
+                                check(bone == 1 ? angle <= c + 1e-6f : angle >= d - 1e-6f,
+                                      "posture prior moves curvature from MCP toward IP without changing reach");
+                                if (d == 0.0f && c >= 1.0f)
+                                {
+                                    check(bone == 1 ? angle < 1.1f : angle > 0.0f,
+                                          "MCP-heavy input shares curvature without saturating either bend");
+                                }
+                            }
+                        }
+                        const auto& base = hand[2].pose.position;
+                        const auto& tip = hand[5].pose.position;
+                        const float reach = distance(tip, base);
+                        const XrVector3f axis{ (tip.x - base.x) / reach, (tip.y - base.y) / reach,
+                                               (tip.z - base.z) / reach };
+                        const float radial_length = std::sqrt(axis.y * axis.y + axis.z * axis.z);
+                        const XrVector3f radial{ mirror * radial_length, -mirror * axis.x * axis.y / radial_length,
+                                                 -mirror * axis.x * axis.z / radial_length };
+                        for (std::size_t j = 3; j <= 4; ++j)
+                        {
+                            const auto& p = hand[j].pose.position;
+                            const XrVector3f v{ p.x - base.x, p.y - base.y, p.z - base.z };
+                            const float along = v.x * axis.x + v.y * axis.y + v.z * axis.z;
+                            const XrVector3f bow{ v.x - along * axis.x, v.y - along * axis.y, v.z - along * axis.z };
+                            const float height = bow.x * radial.x + bow.y * radial.y + bow.z * radial.z;
+                            check(height >= -1e-6f, "thumb bow uses the same radial branch on both hands");
+                            check(distance(bow, { height * radial.x, height * radial.y, height * radial.z }) < 1e-6f,
+                                  "MCP and IP lie in the thumb chord/radial plane");
+                            if (c + d > 0.5f)
+                            {
+                                check(height > 1e-7f, "curled bones do not collapse onto the chord");
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+
+TEST_CASE("Thumb opposition plane preserves mirrored anatomy", "[realhand_ffg_skeleton]")
+{
+    CalibrationFile file;
+    file.save(calibration());
+    const HumanHandSkeleton model(file.path.string());
+    for (float opposition : { 0.0f, 0.5f, 1.0f })
+    {
+        for (int mcp = 0; mcp <= 10; ++mcp)
+        {
+            for (int ip = 0; ip <= 10; ++ip)
+            {
+                std::array<float, kNumSensors> sensors{};
+                sensors[0] = sensors[1] = opposition;
+                sensors[2] = mcp / 10.0f;
+                sensors[4] = ip / 10.0f;
+                const auto left = *model.reconstruct(sensors, HandSide::Left);
+                const auto right = *model.reconstruct(sensors, HandSide::Right);
+                for (std::size_t joint = 2; joint <= 5; ++joint)
+                {
+                    const auto& a = left[joint].pose;
+                    const auto& b = right[joint].pose;
+                    check(distance(b.position, { -a.position.x, a.position.y, a.position.z }) < 1e-6f,
+                          "thumb plane and positions mirror across the sagittal plane");
+                    check(std::abs(a.orientation.x - b.orientation.x) < 1e-6f &&
+                              std::abs(a.orientation.y + b.orientation.y) < 1e-6f &&
+                              std::abs(a.orientation.z + b.orientation.z) < 1e-6f &&
+                              std::abs(a.orientation.w - b.orientation.w) < 1e-6f,
+                          "mirrored thumb frames preserve local flexion axes");
                 }
             }
         }

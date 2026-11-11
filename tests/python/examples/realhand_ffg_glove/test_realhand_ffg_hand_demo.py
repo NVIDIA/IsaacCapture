@@ -235,17 +235,26 @@ def test_opposed_thumb_preserves_endpoints_and_bone_lengths_throughout_joint_ran
 @pytest.mark.parametrize(
     "mcp,ip", ((0.2, 0.3), (0.9, 0.0), (0.0, 0.6), (1.1, 1.2), (1.8, 1.8))
 )
-def test_thumb_bend_normal_follows_positive_local_x(mcp, ip):
+def test_thumb_bone_posture_uses_its_chord_and_radial_plane(mcp, ip):
     for a, b in np.random.default_rng(30).uniform(
         _THUMB.LOWER[:2], _THUMB.UPPER[:2], (20, 2)
     ):
         points = _THUMB.thumb_joints((a, b, mcp, ip))
         bones = np.diff(points, axis=0)
         normal = np.cross(bones[0], bones[1]) + np.cross(bones[1], bones[2])
-        expected = (_THUMB._rotation(a, 1) @ _THUMB._rotation(b, 2))[:, 0]
+        along = points[-1] - points[0]
+        along /= np.linalg.norm(along)
+        radial = np.array((1.0, 0, 0)) - along[0] * along
+        radial /= np.linalg.norm(radial)
+        expected = np.cross(radial, along)
         np.testing.assert_allclose(
             normal / np.linalg.norm(normal), expected, atol=1e-12
         )
+        for point in points[1:3]:
+            v = point - points[0]
+            bow = v - np.dot(v, along) * along
+            assert np.dot(bow, radial) > 0
+            np.testing.assert_allclose(bow / np.linalg.norm(bow), radial, atol=1e-12)
 
 
 def test_opposed_thumb_preserves_straight_pose_and_is_continuous_near_zero_curl():
@@ -260,6 +269,42 @@ def test_opposed_thumb_preserves_straight_pose_and_is_continuous_near_zero_curl(
         for epsilon in (1e-3, 1e-5, 1e-8):
             curled = _THUMB.thumb_joints((a, 0.25, epsilon, epsilon))
             assert np.max(np.linalg.norm(curled - straight, axis=1)) < epsilon * 0.3
+
+
+@pytest.mark.parametrize("mcp,ip", ((73, 13), (83, 0), (94, 0), (100, 1.4)))
+def test_mcp_heavy_thumb_flexion_is_shared_without_moving_endpoint(mcp, ip):
+    angles = np.r_[0.2, -0.4, np.deg2rad((mcp, ip))]
+    points = _THUMB.thumb_joints(angles)
+    bones = np.diff(points, axis=0)
+    turns = np.arccos(
+        np.clip(
+            np.sum(bones[:-1] * bones[1:], axis=1)
+            / np.linalg.norm(bones[:-1], axis=1)
+            / np.linalg.norm(bones[1:], axis=1),
+            -1,
+            1,
+        )
+    )
+    assert np.rad2deg(turns[0]) < 65
+    assert 20 < np.rad2deg(turns[1]) < 65
+    root = bones[0] / np.linalg.norm(bones[0])
+    assert abs(root[1]) < np.sin(np.deg2rad(60))
+    np.testing.assert_allclose(
+        points[-1], _THUMB.thumb_tip_positions(angles[None])[0], atol=1e-12
+    )
+
+
+def test_thumb_posture_regularization_preserves_ip_only_motion_and_stays_continuous():
+    for ip in np.linspace(0, 1.8, 50):
+        assert _THUMB.regularized_thumb_flexion(0, ip) == (0, ip)
+    for ip in (0.0, 0.5, 1.8):
+        points = np.array(
+            [
+                _THUMB.thumb_joints((0.2, -0.4, mcp, ip))
+                for mcp in np.linspace(0, 1.8, 1801)
+            ]
+        )
+        assert np.max(np.linalg.norm(np.diff(points, axis=0), axis=-1)) < 0.0002
 
 
 def test_sensor_gain_constraint_invalidates_cached_coefficients(

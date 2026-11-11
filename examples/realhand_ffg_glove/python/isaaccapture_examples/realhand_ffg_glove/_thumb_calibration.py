@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 import numpy as np
 from scipy.optimize import least_squares, minimize
@@ -133,20 +134,63 @@ def finger_tip(poses, values, finger, side="left"):
     return finger_joints(poses, values, finger, side)[-1]
 
 
+def regularized_thumb_flexion(mcp, ip, lengths=LENGTHS):
+    """Choose bone curvature at the fitted reach; fit parameters are not measured joint angles."""
+    mcp, ip = float(mcp), float(ip)
+    if mcp == 0:
+        return mcp, ip
+    l0, l1, l2 = map(float, lengths)
+
+    def deficit(c, d):
+        return 4 * (
+            l0 * l1 * math.sin(c / 2) ** 2
+            + l1 * l2 * math.sin(d / 2) ** 2
+            + l0 * l2 * math.sin((c + d) / 2) ** 2
+        )
+
+    # Contact does not measure joint angles; use a soft posture prior, not a claimed anatomical limit.
+    target = deficit(mcp, ip)
+    selected = mcp / (1 + (mcp / 1.1) ** 8) ** 0.125
+    max_ip = float(UPPER[3])
+    if deficit(selected, max_ip) < target:
+        low, high = selected, mcp
+        for _ in range(40):
+            mid = (low + high) / 2
+            if deficit(mid, max_ip) < target:
+                low = mid
+            else:
+                high = mid
+        selected = high
+    low, high = ip, max_ip
+    for _ in range(40):
+        mid = (low + high) / 2
+        if deficit(selected, mid) < target:
+            low = mid
+        else:
+            high = mid
+    return selected, (low + high) / 2
+
+
 def thumb_joints(angles, base=BASE, lengths=LENGTHS):
-    rotation = _rotation(angles[0], 1) @ _rotation(angles[1], 2)
-    chord_y = lengths[1] * np.sin(angles[2]) + lengths[2] * np.sin(
-        angles[2] + angles[3]
+    mcp, ip = regularized_thumb_flexion(angles[2], angles[3], lengths)
+    target = thumb_tip_positions(np.asarray(angles)[None], lengths)[0] - BASE
+    elevation = math.atan2(target[1], -target[2])
+    lateral = math.atan2(-target[0], math.hypot(target[1], target[2]))
+    chord = math.atan2(
+        lengths[1] * math.sin(mcp) + lengths[2] * math.sin(mcp + ip),
+        lengths[0] + lengths[1] * math.cos(mcp) + lengths[2] * math.cos(mcp + ip),
     )
-    chord_forward = (
-        lengths[0]
-        + lengths[1] * np.cos(angles[2])
-        + lengths[2] * np.cos(angles[2] + angles[3])
+    # Construct the chain in the plane spanned by its chord and wrist radial axis.
+    # Do not flip a fitted chain and hide the bend with a large root compensation.
+    # Unobserved bone posture remains a geometric prior, not an additional measurement.
+    rotation = (
+        _rotation(elevation, 0)
+        @ _rotation(math.pi / 2, 2)
+        @ _rotation(lateral - chord, 0)
     )
-    rotation = rotation @ _rotation(-2 * np.arctan2(chord_y, chord_forward), 0)
     point = np.asarray(base, dtype=float).copy()
     points = [point.copy()]
-    for bend, length in zip((0, angles[2], angles[3]), lengths):
+    for bend, length in zip((0, mcp, ip), lengths):
         rotation = rotation @ _rotation(bend, 0)
         point += rotation @ np.array((0, 0, -length))
         points.append(point.copy())
@@ -155,7 +199,7 @@ def thumb_joints(angles, base=BASE, lengths=LENGTHS):
 
 def thumb_tip_positions(angles, lengths=LENGTHS):
     """Batched equivalent of thumb_joints(...)[-1]."""
-    # Root compensation leaves the endpoint formula and fitted sensor coefficients unchanged.
+    # The sensor fit defines endpoints; bone posture is reconstructed separately at the same reach.
     a, b, c, d = np.asarray(angles).T
     y = -lengths[1] * np.sin(c) - lengths[2] * np.sin(c + d)
     z = -lengths[0] - lengths[1] * np.cos(c) - lengths[2] * np.cos(c + d)

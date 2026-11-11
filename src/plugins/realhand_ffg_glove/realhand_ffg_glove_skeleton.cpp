@@ -117,6 +117,54 @@ float response(float value, float origin, float endpoint)
     return std::clamp(delta / span, 0.0f, 1.0f);
 }
 
+std::array<double, 2> regularized_thumb_flexion(double mcp, double ip, const std::array<float, 3>& lengths)
+{
+    if (mcp == 0.0)
+    {
+        return { mcp, ip };
+    }
+    const auto deficit = [&](double c, double d)
+    {
+        const double a = std::sin(c * 0.5), b = std::sin(d * 0.5), e = std::sin((c + d) * 0.5);
+        return 4.0 * (lengths[0] * double(lengths[1]) * a * a + lengths[1] * double(lengths[2]) * b * b +
+                      lengths[0] * double(lengths[2]) * e * e);
+    };
+    // Tip contact alone leaves MCP/IP posture ambiguous. This soft posture prior is not a measured joint limit.
+    // Preserve reach and independent digits rather than concentrating the bend in MCP with a straight IP.
+    const double target = deficit(mcp, ip);
+    double selected = mcp / std::pow(1.0 + std::pow(mcp / 1.1, 8.0), 0.125);
+    constexpr double max_ip = 1.8;
+    if (deficit(selected, max_ip) < target)
+    {
+        double low = selected, high = mcp;
+        for (int i = 0; i < 40; ++i)
+        {
+            const double mid = (low + high) * 0.5;
+            if (deficit(mid, max_ip) < target)
+                low = mid;
+            else
+                high = mid;
+        }
+        selected = high;
+    }
+    double low = ip, high = max_ip;
+    for (int i = 0; i < 40; ++i)
+    {
+        const double mid = (low + high) * 0.5;
+        if (deficit(selected, mid) < target)
+            low = mid;
+        else
+            high = mid;
+    }
+    return { selected, (low + high) * 0.5 };
+}
+
+double thumb_chord_angle(double mcp, double ip, const std::array<float, 3>& lengths)
+{
+    return std::atan2(lengths[1] * std::sin(mcp) + lengths[2] * std::sin(mcp + ip),
+                      lengths[0] + lengths[1] * std::cos(mcp) + lengths[2] * std::cos(mcp + ip));
+}
+
 XrPosef rotate(float angle, int axis)
 {
     XrPosef pose{ { 0.0f, 0.0f, 0.0f, std::cos(angle * 0.5f) }, {} };
@@ -314,21 +362,29 @@ std::optional<HandJoints> HumanHandSkeleton::reconstruct(const std::array<float,
         base = mapping.base;
         thumb_lengths = mapping.lengths;
     }
+    const float y = -thumb_lengths[1] * std::sin(angles[2]) - thumb_lengths[2] * std::sin(angles[2] + angles[3]);
+    const float z =
+        -thumb_lengths[0] - thumb_lengths[1] * std::cos(angles[2]) - thumb_lengths[2] * std::cos(angles[2] + angles[3]);
+    const auto direction = oxr_utils::multiply_poses(
+                               oxr_utils::multiply_poses(rotate(mirror * angles[0], 1), rotate(mirror * angles[1], 2)),
+                               { identity.orientation, { 0.0f, y, z } })
+                               .position;
+    const auto flexion = regularized_thumb_flexion(angles[2], angles[3], thumb_lengths);
+    const float elevation = std::atan2(direction.y, -direction.z);
+    const float azimuth = std::atan2(-mirror * direction.x, std::hypot(direction.y, direction.z));
+    const float chord = static_cast<float>(thumb_chord_angle(flexion[0], flexion[1], thumb_lengths));
+    // Construct the chain in its chord/radial plane; do not flip it and hide the bend with root compensation.
+    // This is a thumb-only bone-posture prior, not a measured extra DOF or an anatomical joint limit.
     XrPosef thumb{ identity.orientation, { mirror * base[0] * scale, base[1] * scale, base[2] * scale } };
-    thumb = oxr_utils::multiply_poses(thumb, rotate(mirror * angles[0], 1));
-    thumb = oxr_utils::multiply_poses(thumb, rotate(mirror * angles[1], 2));
-    // Reverse thumb flexion and rotate its root to preserve the complete base-to-tip vector.
-    // This thumb-local convention must not depend on contacts or other fingers.
-    const float chord_y = thumb_lengths[1] * std::sin(angles[2]) + thumb_lengths[2] * std::sin(angles[2] + angles[3]);
-    const float chord_forward =
-        thumb_lengths[0] + thumb_lengths[1] * std::cos(angles[2]) + thumb_lengths[2] * std::cos(angles[2] + angles[3]);
-    thumb = oxr_utils::multiply_poses(thumb, rotate(-2.0f * std::atan2(chord_y, chord_forward), 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(elevation, 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(mirror * kPi * 0.5f, 2));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(azimuth - chord, 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_METACARPAL_EXT, thumb, 0.012f * scale);
     thumb = advance(thumb, thumb_lengths[0] * scale);
-    thumb = oxr_utils::multiply_poses(thumb, rotate(angles[2], 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(static_cast<float>(flexion[0]), 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_PROXIMAL_EXT, thumb, 0.010f * scale);
     thumb = advance(thumb, thumb_lengths[1] * scale);
-    thumb = oxr_utils::multiply_poses(thumb, rotate(angles[3], 0));
+    thumb = oxr_utils::multiply_poses(thumb, rotate(static_cast<float>(flexion[1]), 0));
     set_joint(joints, XR_HAND_JOINT_THUMB_DISTAL_EXT, thumb, 0.009f * scale);
     thumb = advance(thumb, thumb_lengths[2] * scale);
     set_joint(joints, XR_HAND_JOINT_THUMB_TIP_EXT, thumb, 0.007f * scale);
