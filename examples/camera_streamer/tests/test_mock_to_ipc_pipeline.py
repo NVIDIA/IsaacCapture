@@ -44,9 +44,7 @@ STREAMS = [("head", 640, 480), ("wrist", 320, 240)]
 SOF_LAG_NS = 20_000_000
 FRAMES = 60
 SESSION_TIMEOUT_S = 30.0
-# NVDEC returns no picture for the first access unit of a session, so the first
-# published stream_sequence is 2.
-_FIRST_SEQ = (1, 2)
+LEVEL_LOOP = 90
 
 
 def _free_port() -> int:
@@ -71,6 +69,24 @@ class MockToIpcPipelineTest(unittest.TestCase):
         cls.tmp = Path(cls._dir.name)
         specs = [ms.StreamSpec(n, w, h, 30) for n, w, h in STREAMS]
         ms.ensure_sources(specs, cls.tmp / "cache")
+        # Flat frames whose luma is 16 + (frame index) % LEVEL_LOOP.
+        levels = cls.tmp / "levels"
+        levels.mkdir()
+        for n, w, h in STREAMS:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    f"nullsrc=size={w}x{h}:rate=30,format=yuv420p,"
+                    f"geq=lum='16+mod(N,{LEVEL_LOOP})':cb=128:cr=128",
+                    "-frames:v", str(LEVEL_LOOP), "-c:v", "libx265",
+                    "-preset", "ultrafast", "-x265-params",
+                    "keyint=300:min-keyint=300:scenecut=0:bframes=0:repeat-headers=1:"
+                    "aud=1:rc-lookahead=0:no-open-gop=1:log-level=error",
+                    "-b:v", "2M", "-pix_fmt", "yuv420p", "-f", "hevc",
+                    str(levels / f"{n}_{w}x{h}_30.hevc"),
+                ],
+                check=True,
+            )  # fmt: skip
 
     @classmethod
     def tearDownClass(cls):
@@ -107,7 +123,7 @@ class MockToIpcPipelineTest(unittest.TestCase):
             parts.append(f"--- {name} ---\n" + "\n".join(tail))
         return "\n".join(parts)
 
-    def _start_pipeline(self, *mock_args: str) -> None:
+    def _start_pipeline(self, *mock_args: str, cache: str = "cache") -> None:
         port = _free_port()
         sock = str(self.tmp / "ipc.sock")
         config = {
@@ -146,7 +162,7 @@ class MockToIpcPipelineTest(unittest.TestCase):
             "--port",
             str(port),
             "--cache-dir",
-            str(self.tmp / "cache"),
+            str(self.tmp / cache),
             "--duration",
             "60",
         ]
@@ -204,7 +220,7 @@ class MockToIpcPipelineTest(unittest.TestCase):
             mine = [(m, s) for name, m, s in frames if name == n][:FRAMES]
             with self.subTest(stream=n):
                 seqs = [m["stream_sequence"] for m, _ in mine]
-                self.assertIn(seqs[0], _FIRST_SEQ, self._logs())
+                self.assertEqual(seqs[0], 1, self._logs())
                 self.assertEqual(seqs, list(range(seqs[0], seqs[0] + len(seqs))))
                 numbers = [m["frame_number"] for m, _ in mine]
                 self.assertEqual(numbers, sorted(set(numbers)))
@@ -229,6 +245,18 @@ class MockToIpcPipelineTest(unittest.TestCase):
                     f"pattern does not move: {means}",
                 )
 
+    def test_pixels_match_frame_number(self):
+        self._start_pipeline(cache="levels")
+        frames = self._collect(lambda f: sum(n == "head" for n, _, _ in f) >= 60)
+        for n, _, _ in STREAMS:
+            mine = [(m, s) for name, m, s in frames if name == n][:60]
+            with self.subTest(stream=n):
+                offsets = {
+                    round(s[0]) - (16 + (m["frame_number"] - 1) % LEVEL_LOOP)
+                    for m, s in mine
+                }
+                self.assertEqual(offsets, {0}, self._logs())
+
     def test_reconnect_starts_new_session(self):
         self._start_pipeline("--disconnect-at", "3")
 
@@ -251,7 +279,7 @@ class MockToIpcPipelineTest(unittest.TestCase):
         # Decoders restart at the sender's IDR, so the counters restart and the
         # first published picture is real.
         seqs = [m["stream_sequence"] for m, _ in second[:10]]
-        self.assertIn(seqs[0], _FIRST_SEQ, self._logs())
+        self.assertEqual(seqs[0], 1, self._logs())
         self.assertEqual(seqs, list(range(seqs[0], seqs[0] + len(seqs))))
         self.assertGreater(second[0][1][1], 1.0, "first frame after reconnect blank")
 
