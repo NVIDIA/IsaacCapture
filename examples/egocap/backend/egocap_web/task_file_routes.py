@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from . import task_files
 from .operator_settings import OperatorSettingsError
 from .recording_command import control_token_valid
+from .request_body import read_authorized_json
 
 router = APIRouter()
 
@@ -43,14 +44,16 @@ _IMPORT_STATUS = {**_STATUS, task_files.TaskFileTooLarge: 400, task_files.Malfor
 
 def _failure(exc: task_files.TaskFileError, status: dict[type, int] = _STATUS) -> JSONResponse:
     """The error response for a task-file error: its status, a concise reason, never a path."""
-    return JSONResponse({"detail": str(exc)}, status_code=status[type(exc)], headers=_NO_STORE)
+    return JSONResponse({"detail": exc.public_message}, status_code=status[type(exc)], headers=_NO_STORE)
 
 
 def _detail(message: str, status: int) -> JSONResponse:
+    """Expose only a deliberately selected operator-facing message."""
     return JSONResponse({"detail": message}, status_code=status, headers=_NO_STORE)
 
 
 def _imported_root(request: Request) -> Path | None:
+    """Find the configured writable catalog root, if imports are enabled."""
     return getattr(request.app.state, "imported_task_file_root", None)
 
 
@@ -90,15 +93,10 @@ async def _authorised_body(request: Request) -> tuple[dict[str, Any] | None, JSO
     recording_context = getattr(request.app.state, "recording_context", None)
     if recording_context is None:
         return None, _detail("task file imports are not available yet", 503)
-    try:
-        body = await request.json()
-    except ValueError:
-        return None, _detail("body must be JSON", 400)
-    if not isinstance(body, dict):
-        return None, _detail("body must be an object", 400)
-    if not control_token_valid(body.get("control_token"), recording_context.control_token):
-        return None, _detail("control token rejected", 403)
-    return body, None
+    # JSON escaping can expand a valid CSV byte into six bytes; parsing still enforces the CSV limit.
+    return await read_authorized_json(
+        request, recording_context.control_token, 6 * task_files.MAX_FILE_BYTES + 1024
+    )
 
 
 @router.post("/api/task-files/import")

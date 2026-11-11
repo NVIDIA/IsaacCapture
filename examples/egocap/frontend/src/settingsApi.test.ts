@@ -62,9 +62,10 @@ describe("task catalog calls", () => {
     const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/task-files/import");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ control_token: "tok", name: "Mid.csv", content: "a,b" });
+    expect(new Headers(init.headers).get("X-Control-Token")).toBe("tok");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Mid.csv", content: "a,b" });
     await importTaskFile("tok", { name: "G.csv", content: "a,b" });
-    expect(JSON.parse((fn.mock.calls[1] as unknown as [string, RequestInit])[1].body as string)).toEqual({ control_token: "tok", name: "G.csv", content: "a,b" });
+    expect(JSON.parse((fn.mock.calls[1] as unknown as [string, RequestInit])[1].body as string)).toEqual({ name: "G.csv", content: "a,b" });
   });
 
   it("removes an imported catalog with DELETE and the token in a header", async () => {
@@ -89,7 +90,8 @@ describe("task catalog calls", () => {
     await saveOperatorSettings("tok", { task_file: "Kitchen.csv" });
     const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(init.body as string)).toEqual({ control_token: "tok", task_file: "Kitchen.csv" });
+    expect(new Headers(init.headers).get("X-Control-Token")).toBe("tok");
+    expect(JSON.parse(init.body as string)).toEqual({ task_file: "Kitchen.csv" });
   });
 
   it("rejects a malformed listing or catalog", async () => {

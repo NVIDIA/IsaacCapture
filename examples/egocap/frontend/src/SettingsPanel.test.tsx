@@ -305,3 +305,40 @@ describe("Deployment credential", () => {
     expect(await screen.findByRole("region", { name: "Capture" })).toBeTruthy();
   });
 });
+
+describe("SettingsPanel focus ownership", () => {
+  it("moves focus inside, wraps Tab both ways and restores the invoking control", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const { rerender, props } = renderPanel();
+    const dialog = screen.getByRole("dialog");
+    expect(document.activeElement).toBe(dialog);
+    await screen.findByText("Camera type");
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(tab("Station"));
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]'))
+      .filter((element) => element.tabIndex >= 0 && !element.matches(":disabled"));
+    fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(controls.at(-1));
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(document.activeElement).toBe(controls[0]);
+    trigger.focus();
+    expect(document.activeElement).toBe(dialog);
+    // Updating callbacks must not lose ownership of the original invoking element.
+    rerender(<SettingsPanel {...props} onClose={vi.fn()} />);
+    rerender(<SettingsPanel {...props} open={false} />);
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
+  it("restores the invoking control on unmount", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const { unmount } = renderPanel();
+    unmount();
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+});

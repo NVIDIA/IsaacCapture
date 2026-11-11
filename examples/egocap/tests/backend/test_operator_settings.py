@@ -346,3 +346,29 @@ def test_real_application_uses_hidden_settings_and_catalog_storage_by_default(
         assert real_app.state.operator_settings_store.path == tmp_path / ".egocap" / "operator_settings.json"
         assert real_app.state.imported_task_file_root == tmp_path / ".egocap" / "taskfiles"
         assert (tmp_path / ".egocap" / "operator_settings.json").is_file()
+
+
+def test_header_authenticated_update_and_oversize_do_not_mutate_storage(tmp_path):
+    client = _client(tmp_path)
+    headers = {"X-Control-Token": TOKEN}
+    saved = client.put("/api/operator-settings", headers=headers, json={"camera_type": "oak_d"})
+    assert saved.status_code == 200
+    oversized = client.put("/api/operator-settings", headers=headers, json={"camera_type": "x" * (16 * 1024)})
+    assert oversized.status_code == 413
+    assert client.app.state.operator_settings_store.load().camera_type == "oak_d"
+
+
+def test_storage_failures_are_logged_without_exposing_paths_in_responses(tmp_path, monkeypatch, caplog):
+    client = _client(tmp_path)
+
+    def fail_save(settings):
+        raise OSError("permission denied at /private/station-secret/operator.json")
+
+    monkeypatch.setattr(client.app.state.operator_settings_store, "save", fail_save)
+    response = client.put(
+        "/api/operator-settings", headers={"X-Control-Token": TOKEN}, json={"camera_type": "oak_d"}
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "could not save operator settings"}
+    assert "station-secret" not in response.text
+    assert "station-secret" in caplog.text

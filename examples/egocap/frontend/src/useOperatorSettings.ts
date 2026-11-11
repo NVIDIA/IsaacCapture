@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { fetchOperatorSettings, type OperatorSettings } from "./settingsApi";
 
+/** Refresh persisted camera roles while discarding requests from an earlier refresh. */
 export function useOperatorSettings(refreshKey: number, load: (signal: AbortSignal) => Promise<OperatorSettings> = fetchOperatorSettings): OperatorSettings | null {
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
   useEffect(() => {

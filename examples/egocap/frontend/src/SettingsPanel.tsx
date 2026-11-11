@@ -87,6 +87,7 @@ export interface SettingsPanelProps {
 
 type Loaded<T> = { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; value: T };
 
+/** Turn unknown request failures into a concise operator-facing explanation. */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -107,6 +108,7 @@ function useLoaded<T>(open: boolean, load: (signal: AbortSignal) => Promise<T>):
     );
     return () => controller.abort();
   }, [open, load]);
+  /** Apply successful local changes only after initial setup has loaded. */
   const update = (change: (value: T) => T) => setState((current) => (current.kind === "loaded" ? { kind: "loaded", value: change(current.value) } : current));
   return [state, update];
 }
@@ -116,14 +118,17 @@ function orDash(value: string | number | null | undefined): string {
   return value === null || value === undefined || value === "" ? "—" : String(value);
 }
 
+/** Display boolean deployment settings in human-readable form. */
 function onOff(value: boolean): string {
   return value ? "On" : "Off";
 }
 
+/** Display a list without leaving an empty settings value. */
 function list(values: readonly string[]): string {
   return values.length === 0 ? "none" : values.join(", ");
 }
 
+/** Render a labelled read-only setting with optional monospace text. */
 function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
@@ -144,6 +149,7 @@ function Card({ title, lead, children }: { title: string; lead?: string; childre
   );
 }
 
+/** Explain why station changes require the recording control token. */
 function TokenHint({ controlToken }: { controlToken: string | null }) {
   if (controlToken !== null) return null;
   return <p className="settings-note settings-note--hint">Enter the control token in the recording panel to change these.</p>;
@@ -153,6 +159,7 @@ function TokenHint({ controlToken }: { controlToken: string | null }) {
 function useAction(): [{ busy: boolean; failure: string | null }, (work: () => Promise<void>) => void] {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  /** Keep request failures visible and prevent duplicate submissions. */
   const run = (work: () => Promise<void>) => {
     setBusy(true);
     setFailure(null);
@@ -169,6 +176,7 @@ function useAction(): [{ busy: boolean; failure: string | null }, (work: () => P
 
 // --- Station ---------------------------------------------------------------------------------------------------
 
+/** Offer persistent camera setup and explain which roles are currently available. */
 function StationTab({
   setup,
   controlToken,
@@ -238,7 +246,9 @@ function CameraRoles({
   const [{ busy, failure }, run] = useAction();
   const dirty = operator.roles.some((role) => roles[role] !== operator.camera_roles[role]);
   const options = [...new Set([...cameraSources, ...Object.values(roles).filter((name): name is string => name !== null)])];
+  /** Exclude cameras assigned to another role from this selector. */
   const taken = (role: string) => new Set(operator.roles.filter((other) => other !== role).map((other) => roles[other]));
+  /** Swap both wrists in one local update so assignments stay unique. */
   const swapWrists = () => setRoles((current) => ({ ...current, wrist_left: current.wrist_right ?? null, wrist_right: current.wrist_left ?? null }));
   return (
     <>
@@ -278,6 +288,7 @@ function CameraRoles({
   );
 }
 
+/** Group the label and control for a single camera role. */
 function FragmentRow({ role, children }: { role: string; children: ReactNode }) {
   return (
     <>
@@ -287,6 +298,7 @@ function FragmentRow({ role, children }: { role: string; children: ReactNode }) 
   );
 }
 
+/** Edit the station camera type while keeping unsaved choices local. */
 function CameraTypeChoice({
   operator,
   controlToken,
@@ -331,6 +343,7 @@ function CameraTypeChoice({
 
 // --- Tasks -----------------------------------------------------------------------------------------------------
 
+/** Manage the selected catalog, task defaults and browser uploads. */
 function TasksTab({
   setup,
   controlToken,
@@ -393,6 +406,7 @@ function TasksTab({
   );
 }
 
+/** List catalogs and allow removal only after the selected catalog is released. */
 function CatalogList({
   listing,
   chosen,
@@ -445,6 +459,7 @@ function CatalogList({
   );
 }
 
+/** Upload a browser-selected CSV through the authenticated catalog API. */
 function ImportCatalog({
   canChange,
   doImport,
@@ -457,6 +472,7 @@ function ImportCatalog({
   const [done, setDone] = useState<string | null>(null);
   const [{ busy, failure }, run] = useAction();
   const fileInput = useRef<HTMLInputElement | null>(null);
+  /** Refresh the catalog listing after a successful upload. */
   const finish = (result: TaskFileListing & { file: TaskFileContents }) => {
     onImported(result);
     setDone(`Imported ${result.file.name}: ${result.file.tasks.length} task${result.file.tasks.length === 1 ? "" : "s"}.`);
@@ -489,6 +505,7 @@ function ImportCatalog({
   );
 }
 
+/** Choose a default from the tasks in the selected catalog. */
 function PreselectedTask({
   fileName,
   current,
@@ -540,6 +557,7 @@ function PreselectedTask({
 
 // --- Tools -----------------------------------------------------------------------------------------------------
 
+/** Show calibration tools and the reason unavailable tools are disabled. */
 function ToolsTab({ setup }: { setup: Loaded<StationSetup> }) {
   if (setup.kind !== "loaded") return <LoadState state={setup} what="Tools" />;
   const { tools, operator } = setup.value;
@@ -581,6 +599,7 @@ const SHORTCUTS: ReadonlyArray<[string, string]> = [
   ["Enter / Esc", "Save / cancel the task editor"],
 ];
 
+/** Explain local layout controls and restore the default sidebar width. */
 function DisplayTab({ sidebarWidth, sidebarDefault, onResetSidebar }: { sidebarWidth: number; sidebarDefault: number; onResetSidebar: () => void }) {
   return (
     <>
@@ -613,6 +632,7 @@ function DisplayTab({ sidebarWidth, sidebarDefault, onResetSidebar }: { sidebarW
 
 // --- Advanced --------------------------------------------------------------------------------------------------
 
+/** Show authenticated deployment details without exposing secrets. */
 function AdvancedTab({ deployment }: { deployment: Loaded<EffectiveSettings> }) {
   if (deployment.kind !== "loaded") return <LoadState state={deployment} what="Deployment settings" />;
   const { capture, preview, station, recording, visualization, recordings_browser, task_files, origins } = deployment.value;
@@ -678,12 +698,53 @@ function AdvancedTab({ deployment }: { deployment: Loaded<EffectiveSettings> }) 
 
 // --- Shell -----------------------------------------------------------------------------------------------------
 
+/** Explain an incomplete request without presenting stale controls. */
 function LoadState<T>({ state, what }: { state: Loaded<T>; what: string }) {
   if (state.kind === "loading") return <p className="settings-note">Loading…</p>;
   if (state.kind === "error") return <p className="settings-note tone-warning">{what} unavailable: {state.message}</p>;
   return null;
 }
 
+/** Own keyboard focus for the dialog lifetime and return it to the invoking control. */
+function useModalFocus(open: boolean) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open || !dialogRef.current) return;
+    const dialog = dialogRef.current;
+    const previous = document.activeElement;
+    /** Recompute controls because loading, tab changes and saves can change their availability. */
+    const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, a[href], [tabindex]',
+    )).filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[hidden], [inert]"));
+    /** Programmatic focus and pointer interaction must also respect the modal boundary. */
+    const containFocus = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) dialog.focus();
+    };
+    /** Cycle only the current dialog controls, including wraparound in either direction. */
+    const onTab = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+      const available = controls();
+      const current = available.indexOf(document.activeElement as HTMLElement);
+      const next = event.shiftKey
+        ? (current <= 0 ? available.length - 1 : current - 1)
+        : (current + 1) % available.length;
+      event.preventDefault();
+      (available[next] ?? dialog).focus();
+    };
+    document.addEventListener("focusin", containFocus);
+    document.addEventListener("keydown", onTab);
+    dialog.focus();
+    return () => {
+      // Release containment before restoring focus; rerenders must not recapture the invoking control.
+      document.removeEventListener("focusin", containFocus);
+      document.removeEventListener("keydown", onTab);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [open]);
+  return dialogRef;
+}
+
+/** Present station settings in a modal that owns focus until it closes. */
 export function SettingsPanel({
   open,
   onClose,
@@ -695,7 +756,9 @@ export function SettingsPanel({
   initialTab = "station",
   backend = REAL_SETTINGS_BACKEND,
 }: SettingsPanelProps) {
+  const dialogRef = useModalFocus(open);
   const [tab, setTab] = useState<SettingsTab>(initialTab);
+  /** Reload restricted details when the active credential changes. */
   const loadDeployment = useCallback((signal: AbortSignal) => backend.loadDeployment(signal, controlToken), [backend, controlToken]);
   const [deployment] = useLoaded(open && controlToken !== null, loadDeployment);
   const [setup, updateSetup] = useLoaded(open, backend.loadStationSetup);
@@ -703,6 +766,7 @@ export function SettingsPanel({
   // Escape closes, as for any dialog.
   useEffect(() => {
     if (!open) return;
+    /** Let Escape release the dialog from any focused control. */
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -712,12 +776,13 @@ export function SettingsPanel({
 
   if (!open) return null;
 
+  /** Keep all tabs in sync with the persisted station setup. */
   const setOperator = (operator: OperatorSettings) => updateSetup((value) => ({ ...value, operator }));
 
   return (
     <>
       <div className="settings-backdrop" onClick={onClose} aria-hidden="true" />
-      <div className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
+      <div ref={dialogRef} tabIndex={-1} className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
         <nav className="settings-nav" aria-label="Settings sections">
           <h2>Settings</h2>
           {TABS.map((entry) => (

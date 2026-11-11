@@ -30,7 +30,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .recording_command import control_token_valid
+from .request_body import read_authorized_json
 from .task_files import is_catalog_name
 
 logger = logging.getLogger("isaaccapture.egocap.operator_settings")
@@ -84,7 +84,12 @@ TOOLS: tuple[dict[str, Any], ...] = (
 
 
 class OperatorSettingsError(ValueError):
-    """The stored settings file exists but cannot be used (not JSON, not an object, or an unknown value)."""
+    """A validation failure with an intentionally public, path-free explanation."""
+
+    def __init__(self, public_message: str) -> None:
+        """Keep the safe domain message separate from chained implementation exceptions."""
+        super().__init__(public_message)
+        self.public_message = public_message
 
 
 @dataclass(frozen=True)
@@ -205,7 +210,7 @@ class OperatorSettingsStore:
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise OperatorSettingsError(f"{self.path} is not valid JSON: {exc}") from exc
+            raise OperatorSettingsError("operator settings are not valid JSON") from exc
         return _parse(raw)
 
     def save(self, settings: OperatorSettings) -> None:
@@ -242,7 +247,7 @@ class OperatorSettingsStore:
                 try:
                     catalog = read_available_task_file(root, imported, settings.task_file)
                 except TaskFileError as exc:
-                    raise OperatorSettingsError(str(exc)) from exc
+                    raise OperatorSettingsError(exc.public_message) from exc
                 if settings.preselected_task is not None and not any(
                     task.name == settings.preselected_task for task in catalog.tasks
                 ):
@@ -287,23 +292,16 @@ async def read_operator_settings(request: Request) -> JSONResponse:
 
 @router.put("/api/operator-settings")
 async def write_operator_settings(request: Request) -> JSONResponse:
-    """Change the operator settings. The body carries ``control_token`` and the fields to change (the rest keep
-    their stored value); a wrong token is 403 before the values are even looked at, and an invalid value is 400
-    with the reason."""
+    """Save a bounded partial update authenticated by a header or legacy body token."""
     store = _store(request)
     recording_context = getattr(request.app.state, "recording_context", None)
     if store is None or recording_context is None:
         return JSONResponse(
             {"detail": "operator settings are not available yet"}, status_code=503, headers=_NO_STORE
         )
-    try:
-        body = await request.json()
-    except ValueError:
-        return JSONResponse({"detail": "body must be JSON"}, status_code=400, headers=_NO_STORE)
-    if not isinstance(body, dict):
-        return JSONResponse({"detail": "body must be an object"}, status_code=400, headers=_NO_STORE)
-    if not control_token_valid(body.get("control_token"), recording_context.control_token):
-        return JSONResponse({"detail": "control token rejected"}, status_code=403, headers=_NO_STORE)
+    body, refused = await read_authorized_json(request, recording_context.control_token, 16 * 1024)
+    if body is None:
+        return refused  # type: ignore[return-value]
     try:
         settings = await asyncio.to_thread(
             store.update,
@@ -312,11 +310,10 @@ async def write_operator_settings(request: Request) -> JSONResponse:
             getattr(request.app.state, "imported_task_file_root", None),
         )
     except OperatorSettingsError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400, headers=_NO_STORE)
-    except OSError as exc:
-        return JSONResponse(
-            {"detail": f"could not save operator settings: {exc}"}, status_code=503, headers=_NO_STORE
-        )
+        return JSONResponse({"detail": exc.public_message}, status_code=400, headers=_NO_STORE)
+    except OSError:
+        logger.exception("Could not save operator settings")
+        return JSONResponse({"detail": "could not save operator settings"}, status_code=503, headers=_NO_STORE)
     return JSONResponse(settings.to_json(), headers=_NO_STORE)
 
 

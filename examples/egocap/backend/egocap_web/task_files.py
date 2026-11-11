@@ -35,7 +35,12 @@ _MID_TRAIN_OPTIONAL = ("primitive(s)", "props", "left hand grasp", "right hand g
 
 
 class TaskFileError(Exception):
-    """Base for every error this module raises on purpose."""
+    """Base for domain errors whose public explanation contains no implementation details."""
+
+    def __init__(self, public_message: str) -> None:
+        """Retain a safe validation message independently of any chained I/O exception."""
+        super().__init__(public_message)
+        self.public_message = public_message
 
 
 class InvalidTaskFileName(TaskFileError):
@@ -177,7 +182,7 @@ def parse_task_file(name: str, raw: bytes) -> TaskFileContents:
     try:
         records = list(csv.reader(io.StringIO(text, newline=""), strict=True))
     except csv.Error as exc:
-        raise MalformedTaskFile(f"{name} is not valid CSV: {exc}") from exc
+        raise MalformedTaskFile(f"{name} is not valid CSV") from exc
     return _parse(name, records)
 
 

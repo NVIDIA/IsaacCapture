@@ -117,6 +117,7 @@ export interface ToolInfo {
   unavailable_reason: string | null;
 }
 
+/** Extract an intentionally public API error, falling back to the HTTP status. */
 async function failureOf(response: Response): Promise<SettingsHttpError> {
   let detail = `HTTP ${response.status}`;
   try {
@@ -128,6 +129,7 @@ async function failureOf(response: Response): Promise<SettingsHttpError> {
   return new SettingsHttpError(detail);
 }
 
+/** Check the station setup fields required by the settings controls. */
 function parseOperatorSettings(value: unknown): OperatorSettings {
   if (typeof value !== "object" || value === null) throw new SettingsParseError("operator settings must be an object");
   const record = value as Record<string, unknown>;
@@ -141,6 +143,7 @@ function parseOperatorSettings(value: unknown): OperatorSettings {
   return value as OperatorSettings;
 }
 
+/** Load the persisted operator setup with cancellation support. */
 export async function fetchOperatorSettings(signal?: AbortSignal): Promise<OperatorSettings> {
   const response = await fetch("/api/operator-settings", { signal });
   if (!response.ok) throw await failureOf(response);
@@ -160,11 +163,12 @@ export type OperatorSettingsChange = Partial<Pick<OperatorSettings, "camera_type
   camera_roles?: Record<string, string | null>;
 };
 
+/** Persist a partial setup change using header authentication. */
 export async function saveOperatorSettings(controlToken: string, changes: OperatorSettingsChange): Promise<OperatorSettings> {
   const response = await fetch("/api/operator-settings", {
     method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ control_token: controlToken, ...changes }),
+    headers: { "content-type": "application/json", "X-Control-Token": controlToken },
+    body: JSON.stringify(changes),
   });
   if (!response.ok) throw await failureOf(response);
   return parseOperatorSettings(await response.json());
@@ -197,18 +201,21 @@ export interface TaskFileListing {
 /** A CSV file selected in this browser. */
 export type TaskFileSource = { name: string; content: string };
 
+/** Validate the catalog names and imported-file markers returned by the backend. */
 function parseListing(value: unknown): TaskFileListing {
   const record = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   if (!Array.isArray(record.files) || !Array.isArray(record.imported)) throw new SettingsParseError("task file listing is malformed");
   return { files: record.files as string[], imported: record.imported as string[] };
 }
 
+/** Load the available shipped and imported catalog names. */
 export async function fetchTaskFiles(signal?: AbortSignal): Promise<TaskFileListing> {
   const response = await fetch("/api/task-files", { signal });
   if (!response.ok) throw await failureOf(response);
   return parseListing(await response.json());
 }
 
+/** Load the tasks from one selected catalog. */
 export async function fetchTaskFile(name: string, signal?: AbortSignal): Promise<TaskFileContents> {
   const response = await fetch(`/api/task-files/${encodeURIComponent(name)}`, { signal });
   if (!response.ok) throw await failureOf(response);
@@ -217,17 +224,19 @@ export async function fetchTaskFile(name: string, signal?: AbortSignal): Promise
   return body as TaskFileContents;
 }
 
+/** Upload a browser-selected CSV using header authentication. */
 export async function importTaskFile(controlToken: string, source: TaskFileSource): Promise<TaskFileListing & { file: TaskFileContents }> {
   const response = await fetch("/api/task-files/import", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ control_token: controlToken, ...source }),
+    headers: { "content-type": "application/json", "X-Control-Token": controlToken },
+    body: JSON.stringify(source),
   });
   if (!response.ok) throw await failureOf(response);
   const body = (await response.json()) as Record<string, unknown>;
   return { ...parseListing(body), file: body.file as TaskFileContents };
 }
 
+/** Remove an unselected imported catalog using header authentication. */
 export async function removeTaskFile(controlToken: string, name: string): Promise<TaskFileListing> {
   const response = await fetch(`/api/task-files/${encodeURIComponent(name)}`, {
     method: "DELETE",
@@ -237,6 +246,7 @@ export async function removeTaskFile(controlToken: string, name: string): Promis
   return parseListing(await response.json());
 }
 
+/** Load calibration tool availability for this build. */
 export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
   const response = await fetch("/api/tools", { signal });
   if (!response.ok) throw await failureOf(response);
@@ -245,6 +255,7 @@ export async function fetchTools(signal?: AbortSignal): Promise<ToolInfo[]> {
   return body.tools as ToolInfo[];
 }
 
+/** Load deployment details using the current control credential. */
 export async function fetchSettings(signal?: AbortSignal, controlToken?: string | null): Promise<EffectiveSettings> {
   const response = await fetch("/api/settings", { signal, headers: controlToken ? { "X-Control-Token": controlToken } : {} });
   if (!response.ok) throw await failureOf(response);

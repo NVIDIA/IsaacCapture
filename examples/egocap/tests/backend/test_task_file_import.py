@@ -165,7 +165,8 @@ def test_selected_catalog_removal_is_refused_even_when_it_shadows_a_shipped_file
     assert (tmp_path / "imported" / "Kitchen.csv").read_text() == MID_TRAIN
     assert store.load().task_file == "Kitchen.csv"
     store.update({"task_file": None}, client.app.state.task_file_root, client.app.state.imported_task_file_root)
-    assert client.delete("/api/task-files/Kitchen.csv", headers={"X-Control-Token": TOKEN}).status_code == 200
+    removed = client.delete("/api/task-files/Kitchen.csv", headers={"X-Control-Token": TOKEN})
+    assert removed.status_code == 200
     assert client.get("/api/task-files/Kitchen.csv").json()["format"] == "studio_csv"
 
 
@@ -193,3 +194,18 @@ def test_import_cannot_replace_the_selected_catalog_and_invalidate_its_task(tmp_
     assert response.status_code == 409
     assert not (tmp_path / "imported" / "Kitchen.csv").exists()
     assert client.get("/api/task-files/Kitchen.csv").json()["format"] == "studio_csv"
+
+
+def test_header_upload_is_bounded_before_catalog_parsing(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    headers = {"X-Control-Token": TOKEN}
+    uploaded = client.post(
+        "/api/task-files/import", headers=headers, json={"name": "Mid.csv", "content": MID_TRAIN}
+    )
+    assert uploaded.status_code == 200
+    monkeypatch.setattr(task_files, "MAX_FILE_BYTES", 128)
+    rejected = client.post(
+        "/api/task-files/import", headers=headers, json={"name": "Huge.csv", "content": "x" * 2000}
+    )
+    assert rejected.status_code == 413
+    assert not (tmp_path / "imported" / "Huge.csv").exists()

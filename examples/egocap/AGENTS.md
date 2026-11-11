@@ -68,3 +68,7 @@ Run all three test suites per "Run the tests yourself" above — check each pack
 - Prepare and update the PR for testing, report the exact tested commit and remaining validation limits, then wait for the user's test results.
 
 - Settings on main must not import modules or describe active services that exist only in unmerged dependency branches.
+
+- Bound mutation request streams before JSON parsing, even when Content-Length is absent or false; return only deliberate public error messages.
+- Dialogs must move, contain and restore focus as well as suppress recording shortcuts.
+- Concurrent coverage runs must use separate `COVERAGE_FILE` paths so one suite cannot overwrite another suite’s measurements.
