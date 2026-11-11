@@ -170,6 +170,19 @@ A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
   same channel base name as ``FullBodySource``, so the resulting file replays
   with ``replay_full_body``.
 
+The C++ recorder does not start CloudXR, so start the runtime and source its
+environment first. With no output argument it writes to the current directory;
+pass ``recordings/`` so ``replay_full_body`` finds the take. From the repo root,
+after ``cmake --install`` and with the example package installed as in
+`Live preview`_:
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+   python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+
 Live preview
 ^^^^^^^^^^^^
 
@@ -230,10 +243,13 @@ Replay repeats until Ctrl+C — no headset required:
 Open the printed URL (default ``http://localhost:8080``) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.
 
-The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
-``replay_full_body`` module pairs use the same CLI (positional MCAP path,
-``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
-``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
+``record_controller`` and ``record_full_body`` take the same arguments as
+``record_hand`` (duration, output path, and the CloudXR launcher flags such as
+``--accept-eula``). ``replay_controller`` and ``replay_full_body`` take the
+same arguments as ``replay_hand`` (MCAP path, ``--host``, ``--port``) and
+default to the newest ``controllers_*.mcap`` or ``full_body_*.mcap`` under
+``./recordings/``. ``live_full_body`` accepts ``--host``, ``--port``, and the
+CloudXR launcher flags.
 
 API Reference
 -------------
