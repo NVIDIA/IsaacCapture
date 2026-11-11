@@ -12,6 +12,8 @@ import { useEffect, useRef, useState } from "react";
 import type { PreviewSnapshot } from "./captureProtocol";
 import { TRACKING_STALE_AFTER_MS } from "./CaptureTree";
 import { CameraRateTracker, formatCameraStats } from "./cameraRates";
+import { ROLE_LABELS } from "./settingsApi";
+import { roleOfCamera } from "./useOperatorSettings";
 
 const CAMERA_ERROR_RETRY_LIMIT = 3;
 
@@ -24,8 +26,10 @@ function CameraTile({
   stale,
   stats,
   primary,
+  role,
 }: {
   camera: PreviewSnapshot["cameras"][number];
+  role: string | null;
   /** The one camera the layout gives the most room (the operator's main view). */
   primary: boolean;
   live: boolean;
@@ -131,6 +135,7 @@ function CameraTile({
       )}
       <figcaption>
         {camera.name}
+        {role !== null && <span className="camera-role">{ROLE_LABELS[role] ?? role}</span>}
         {stats !== null && (
           <span className="camera-stats" aria-label={`${camera.name} frame rate and latency`}>
             {stats}
@@ -147,10 +152,13 @@ export function CameraGrid({
   snapshot,
   live,
   receivedAtMonotonic,
+  cameraRoles = null,
 }: {
   snapshot: PreviewSnapshot | null;
   live: boolean;
   receivedAtMonotonic: number | null;
+  /** The assigned ego camera owns the primary tile when it is available. */
+  cameraRoles?: Record<string, string | null> | null;
 }) {
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -186,9 +194,10 @@ export function CameraGrid({
     );
   }
   const elapsedSinceReceipt = receivedAtMonotonic === null ? 0 : performance.now() - receivedAtMonotonic;
-  // The head camera is the operator's main view when there is one by that name; otherwise the first camera is.
+  // A present ego assignment wins; an offline assignment retains the usual head-camera fallback.
+  const egoIndex = cameras.findIndex((cam) => cam.name === cameraRoles?.ego);
   const headIndex = cameras.findIndex((cam) => /head/i.test(cam.name));
-  const primaryIndex = headIndex === -1 ? 0 : headIndex;
+  const primaryIndex = egoIndex !== -1 ? egoIndex : headIndex === -1 ? 0 : headIndex;
   return (
     <section className="camera-grid">
       <h2 className="group-label">Cameras</h2>
@@ -223,6 +232,7 @@ export function CameraGrid({
               live={live}
               stale={stale}
               stats={stats}
+              role={roleOfCamera(cameraRoles, cam.name)}
             />
           );
         })}

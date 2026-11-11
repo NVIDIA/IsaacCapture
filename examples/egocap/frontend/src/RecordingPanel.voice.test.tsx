@@ -475,3 +475,34 @@ describe("RecordingPanel voice commands", () => {
     expect(voiceFeedbackText()).toMatch(/voice command target is unknown or changed/i);
   });
 });
+
+describe("Settings owns voice commands", () => {
+  it("blocks Space under the modal and restores it after close", () => {
+    const props = { ...defaultOperatorProps, recordingSnapshot: activeSnapshot() };
+    const { rerender } = render(<RecordingPanel {...props} interactionBlocked />);
+    fireEvent.keyDown(window, { key: " " });
+    expect(FakeRecognition.instances).toHaveLength(0);
+    rerender(<RecordingPanel {...props} interactionBlocked={false} />);
+    fireEvent.keyDown(window, { key: " " });
+    expect(FakeRecognition.instances).toHaveLength(1);
+  });
+
+  it("ignores voice results behind Settings and retires utterances crossing its open boundary", () => {
+    const onStartEpisode = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    const props = { ...defaultOperatorProps, recordingSnapshot: activeSnapshot(), actions: { onStartEpisode } };
+    const { rerender } = render(<RecordingPanel {...props} />);
+    const recognizer = enableVoice();
+    act(() => recognizer.emitStart());
+    act(() => recognizer.emitInterim("record"));
+    rerender(<RecordingPanel {...props} interactionBlocked />);
+    act(() => recognizer.finalizeLast("record"));
+    act(() => recognizer.speak("record"));
+    act(() => recognizer.emitInterim("record"));
+    expect(onStartEpisode).not.toHaveBeenCalled();
+    rerender(<RecordingPanel {...props} interactionBlocked={false} />);
+    act(() => recognizer.finalizeLast("record"));
+    expect(onStartEpisode).not.toHaveBeenCalled();
+    act(() => recognizer.speak("record"));
+    expect(onStartEpisode).toHaveBeenCalledTimes(1);
+  });
+});

@@ -54,3 +54,21 @@ with its history can still work on it.
 Inspect changed paths against the intended MR base and audit path/install/dependency references. If an external configuration or CI edit is actually required, identify its exact path and purpose and obtain explicit user authorization before editing it. Do not silently broaden scope or duplicate files outside the allowed tree.
 
 Run all three test suites per "Run the tests yourself" above — check each package's own coverage target, not one combined number (see `pyproject.toml`'s `[tool.coverage.run]` comment for why).
+
+## Settings and catalog verification
+
+- When replaying settings changes, preserve the base branch's task-details field in fixtures and submit calls.
+- Inject non-UTF-8 directory entries in catalog tests: macOS filesystems reject their creation.
+- Keep generated backend test recordings out of the index before running the full pre-commit hook set.
+- Modal ownership must suspend recording keyboard and voice commands regardless of the focused element.
+
+## Human testing before merge
+
+- Do not merge a PR or enable auto-merge until the user has tested the changes personally and explicitly approved the merge. Passing automated checks does not satisfy this requirement.
+- Prepare and update the PR for testing, report the exact tested commit and remaining validation limits, then wait for the user's test results.
+
+- Settings on main must not import modules or describe active services that exist only in unmerged dependency branches.
+
+- Bound mutation request streams before JSON parsing, even when Content-Length is absent or false; return only deliberate public error messages.
+- Dialogs must move, contain and restore focus as well as suppress recording shortcuts.
+- Concurrent coverage runs must use separate `COVERAGE_FILE` paths so one suite cannot overwrite another suite’s measurements.
