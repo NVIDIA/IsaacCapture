@@ -50,6 +50,12 @@ struct FrameTiming
     bool hasSourceIndex = false;
     uint64_t sensorTimestampNs = 0;
     bool hasSensorTimestamp = false;
+    // The sensor's capture instant on the sender's CLOCK_MONOTONIC, with the mapping's uncertainty and anchor age;
+    // present only when a checked mapping produced it.
+    bool hasCaptureMonotonic = false;
+    int64_t captureMonotonicNs = 0;
+    int64_t captureUncertaintyNs = 0;
+    int64_t captureAnchorAgeNs = 0;
     uint64_t sensorSofTimestampTscNs = 0;
     bool hasSensorSofTimestampTsc = false;
 };

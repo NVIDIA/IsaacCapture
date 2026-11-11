@@ -205,9 +205,56 @@ void checkConcurrentEnqueueOrder(TestContext& test, bool emptyBundles)
 
 } // namespace
 
+// With the timing extension a bundle carries a record per sample: valid for a frame whose capture time was mapped,
+// all zero for one whose was not.
+void checkTimingExtension(TestContext& test)
+{
+    FakePacketSink sink;
+    std::vector<argus_sender::Avs1StreamRecord> streams = templates();
+    streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
+    argus_sender::FrameBundleAssembler assembler(&sink, 88, streams, true);
+    std::vector<argus_sender::BundleStreamInput> inputs(2);
+    inputs[0].present = true;
+    inputs[0].sequence = 1;
+    inputs[0].timings.push_back(timing(10, 1000));
+    inputs[0].timings.push_back(timing(11, 1004));
+    inputs[0].timings[0].hasCaptureMonotonic = true;
+    inputs[0].timings[0].captureMonotonicNs = 123456789;
+    inputs[0].timings[0].captureUncertaintyNs = 2500;
+    inputs[0].timings[0].captureAnchorAgeNs = 400000000;
+    // A second sample whose uncertainty does not fit the 32-bit field makes no capture claim.
+    inputs[0].timings[1].hasCaptureMonotonic = true;
+    inputs[0].timings[1].captureMonotonicNs = 123456790;
+    inputs[0].timings[1].captureUncertaintyNs = 5000000000LL;
+    TEST_CHECK(test, assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0));
+    const uint8_t payload[] = { 0, 0, 1, 0x26 };
+    for (size_t camera = 0; camera < 2; ++camera)
+    {
+        TEST_CHECK(test, assembler.encodedSink(0, camera)->enqueueEncoded(
+                             payload, sizeof(payload), 1, 2200, argus_sender::SENDER_CLOCK_REALTIME));
+    }
+    TEST_CHECK_EQ(test, sink.packets.size(), static_cast<size_t>(1));
+    if (sink.packets.size() != 1)
+        return;
+    argus_sender::Avs1Bundle bundle;
+    const char* error = NULL;
+    TEST_CHECK(test, argus_sender::parseAvs1WireRecord(sink.packets[0].data(), sink.packets[0].size(), &bundle, &error));
+    TEST_CHECK(test, (bundle.flags & argus_sender::AVS1_BUNDLE_TIMING_EXT) != 0);
+    const argus_sender::Avs1TimingRecord& mapped = bundle.streams[0].samples[0].timing;
+    TEST_CHECK_EQ(test, mapped.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+    TEST_CHECK_EQ(test, mapped.sensorCaptureNs, static_cast<uint64_t>(123456789));
+    TEST_CHECK_EQ(test, mapped.uncertaintyNs, static_cast<uint32_t>(2500));
+    TEST_CHECK_EQ(test, mapped.anchorAgeNs, static_cast<uint32_t>(400000000));
+    TEST_CHECK_EQ(test, bundle.streams[0].samples[1].timing.flags, static_cast<uint16_t>(0));
+    TEST_CHECK_EQ(test, bundle.streams[0].samples[1].timing.sensorCaptureNs, static_cast<uint64_t>(0));
+    // The absent stream carries an all-zero record.
+    TEST_CHECK_EQ(test, bundle.streams[1].samples[0].timing.flags, static_cast<uint16_t>(0));
+}
+
 int main()
 {
     TestContext test("bundle_assembler");
+    checkTimingExtension(test);
     FakePacketSink sink;
     argus_sender::FrameBundleAssembler assembler(&sink, 77, templates());
 

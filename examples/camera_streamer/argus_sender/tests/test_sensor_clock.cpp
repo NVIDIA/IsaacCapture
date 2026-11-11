@@ -115,6 +115,8 @@ int main()
         now += 400 * kMs;
         const SensorTimeMapping aged = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
         TEST_CHECK_EQ(test, aged.anchorAgeNs, 400 * kMs);
+        // The bracket plus 500 ppm of the anchor's age.
+        TEST_CHECK_EQ(test, aged.uncertaintyNs, clocks.bracketNs + 200000);
     }
 
     // A clock step between anchors invalidates the mapping until the next consistent refresh.

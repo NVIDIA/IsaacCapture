@@ -109,6 +109,9 @@ int main()
         TEST_CHECK_EQ(test, net.network.sendBufferKb, 0U);
         TEST_CHECK(test, loadText("version: 1\nnetwork: {send_buffer_kb: 128}\n" + streams, &net, &error));
         TEST_CHECK_EQ(test, net.network.sendBufferKb, 128U);
+        TEST_CHECK(test, !net.network.timingExtension);
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {timing_extension: true}\n" + streams, &net, &error));
+        TEST_CHECK(test, net.network.timingExtension);
     }
 
     argus_sender::AppConfig invalid;

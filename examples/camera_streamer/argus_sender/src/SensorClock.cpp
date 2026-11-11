@@ -129,8 +129,8 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         if (!refresh(nowMonotonicNs, &result.reason))
             return result;
     }
-    result.uncertaintyNs = m_anchor.bracketNs;
     result.anchorAgeNs = nowMonotonicNs - m_anchorTakenNs;
+    result.uncertaintyNs = m_anchor.bracketNs + result.anchorAgeNs * m_config.slewPpm / 1000000;
     if (m_stepped)
     {
         result.reason = "the sensor counter and CLOCK_MONOTONIC disagree between anchors: a clock step";

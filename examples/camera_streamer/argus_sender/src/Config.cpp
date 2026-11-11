@@ -336,7 +336,8 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
         if (root["network"])
         {
             const YAML::Node network = root["network"];
-            const std::set<std::string> allowed = { "bind", "port", "reconnect_ms", "dump_wire", "send_buffer_kb" };
+            const std::set<std::string> allowed = { "bind",      "port",           "reconnect_ms",
+                                                    "dump_wire", "send_buffer_kb", "timing_extension" };
             if (!rejectUnknown(network, allowed, "network", error) ||
                 !readOptional(network, "bind", "network", &config->network.bindHost, error))
             {
@@ -346,7 +347,8 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
             if (!readUint32(network, "port", "network", &port, error) ||
                 !readUint32(network, "reconnect_ms", "network", &config->network.reconnectDelayMs, error) ||
                 !readUint32(network, "send_buffer_kb", "network", &config->network.sendBufferKb, error) ||
-                !readOptional(network, "dump_wire", "network", &config->network.dumpWirePath, error))
+                !readOptional(network, "dump_wire", "network", &config->network.dumpWirePath, error) ||
+                !readOptional(network, "timing_extension", "network", &config->network.timingExtension, error))
             {
                 return false;
             }

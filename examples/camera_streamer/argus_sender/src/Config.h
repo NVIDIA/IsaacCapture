@@ -107,6 +107,9 @@ struct NetworkConfig
     std::string dumpWirePath;
     // Kernel TCP send buffer cap in KiB; 0 keeps the operating system's default.
     uint32_t sendBufferKb = 0;
+    // Sets the AVS1 timing extension on every bundle; a receiver that predates it rejects those bundles, so it is off
+    // until the receiver is updated.
+    bool timingExtension = false;
 };
 
 struct RuntimeConfig
