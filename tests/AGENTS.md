@@ -47,6 +47,8 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   multiline layout.
 - Format changed Python tests before staging; if pre-commit rewrites a file,
   restage the result and rerun the full hook set.
+- Changes to OOB wake/recovery policy must run the full CloudXR test leaf;
+  USB health tests also cover preserved-browser recovery.
 - Use raw strings for regular-expression patterns passed to
   ``pytest.raises(..., match=...)``; Ruff rejects escaped metacharacters in
   ordinary strings.

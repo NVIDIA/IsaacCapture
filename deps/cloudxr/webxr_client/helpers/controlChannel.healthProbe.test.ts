@@ -76,6 +76,42 @@ it('answers a generation probe with cached stream and metric metadata', () => {
   }
 });
 
+it.each([-3600000, 3600000])('reports cached sample age despite wall clock offset %i', offset => {
+  jest.useFakeTimers();
+  jest.setSystemTime(10000000 + offset);
+  const originalWebSocket = globalThis.WebSocket;
+  let socket: FakeWebSocket | undefined;
+  globalThis.WebSocket = class extends FakeWebSocket {
+    constructor(url: string) {
+      super(url);
+      socket = this;
+    }
+  } as unknown as typeof WebSocket;
+  let channel: HeadsetControlChannel | undefined;
+  try {
+    const observedAt = performance.now();
+    channel = new HeadsetControlChannel({
+      url: 'wss://example.test/oob/v1/ws',
+      onConfig: () => {},
+      getMetricsSnapshot: () => [{ cadence: 'network', metrics: { rtt: 2 }, observedAt }],
+    });
+    channel.connect();
+    socket?.onopen?.();
+    jest.advanceTimersByTime(500);
+    expect(
+      socket?.sent.filter(message => message.type === 'clientMetrics').at(-1)?.payload
+    ).toMatchObject({ sampleAgeMs: 500 });
+    jest.advanceTimersByTime(6000);
+    expect(
+      socket?.sent.filter(message => message.type === 'clientMetrics').at(-1)?.payload
+    ).toMatchObject({ sampleAgeMs: 6500 });
+  } finally {
+    channel?.dispose();
+    globalThis.WebSocket = originalWebSocket;
+    jest.useRealTimers();
+  }
+});
+
 it('keeps one terminal event stable across idle and replay, then clears it for retry', () => {
   jest.useFakeTimers();
   const originalWebSocket = globalThis.WebSocket;

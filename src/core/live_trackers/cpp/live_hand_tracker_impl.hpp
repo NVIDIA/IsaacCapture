@@ -67,6 +67,7 @@ private:
                      std::optional<HandPoseT>& tracked);
     bool try_update_hand(XrHandTrackerEXT tracker, XrTime time, std::optional<HandPoseT>& tracked);
 
+    OpenXRSessionHandles handles_;
     XrTimeConverter time_converter_;
     XrSession session_;
     XrSpace base_space_;

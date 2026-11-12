@@ -31,6 +31,7 @@ std::unique_ptr<HeadMcapChannels> LiveHeadTrackerImpl::create_mcap_channels(mcap
 LiveHeadTrackerImpl::LiveHeadTrackerImpl(const OpenXRSessionHandles& handles,
                                          std::unique_ptr<HeadMcapChannels> mcap_channels)
     : core_funcs_(OpenXRCoreFunctions::load(handles.instance, handles.xrGetInstanceProcAddr)),
+      handles_(handles),
       time_converter_(handles),
       base_space_(handles.space),
       view_space_(createReferenceSpace(core_funcs_,
@@ -48,6 +49,11 @@ void LiveHeadTrackerImpl::update(int64_t monotonic_time_ns)
     // can leave a caller reading last frame's pose.
     tracked_.reset();
     last_update_time_ = monotonic_time_ns;
+
+    if (!handles_.is_running())
+    {
+        return;
+    }
 
     const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(monotonic_time_ns);
 

@@ -42,6 +42,7 @@ public:
 
 private:
     const OpenXRCoreFunctions core_funcs_;
+    OpenXRSessionHandles handles_;
     XrTimeConverter time_converter_;
     XrSpace base_space_;
     XrSpacePtr view_space_;
