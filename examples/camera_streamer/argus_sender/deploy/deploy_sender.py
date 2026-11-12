@@ -10,6 +10,8 @@ Run on the desktop:
     deploy_sender.py user@orin deploy [--with-sipl] [--name NAME]
     deploy_sender.py user@orin run --name NAME --config FILE [--seconds N] [--env NAME=VALUE]
     deploy_sender.py user@orin stop                        stop the senders that `run` started
+    deploy_sender.py user@orin reset [--reboot]            restart nvargus-daemon (or reboot) to free a stuck camera
+    deploy_sender.py user@orin remove-producer             uninstall the sensing camera producer service and its releases
     deploy_sender.py user@orin linktest [--mb N]           TCP throughput from the target to this machine
 
 `deploy` copies the committed source of argus_sender (git archive of HEAD) into a new release directory under
@@ -18,6 +20,10 @@ It never stops, replaces or starts a service and never opens a camera; a release
 refused rather than overwritten. `run` starts a built release for a bounded time with a config from this machine and
 opens the cameras; it prints a note, and does not stop anything, if another camera process is running. `run` succeeds when the
 sender ends at its time limit and fails with the sender's own exit status otherwise; `deploy` fails if any unit test fails.
+`reset` is the one command that changes the target's state: it needs passwordless sudo there, refuses while a sender started
+by `run` is alive, and otherwise restarts nvargus-daemon (or, with --reboot, reboots and waits for ssh to return).
+`remove-producer` also needs passwordless sudo: it stops and disables isaaccapture-producer.service, deletes its unit file
+and /opt/isaaccapture/{current,releases}, and leaves /opt/isaaccapture/camera-platform.json and everything else alone.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 RELEASES = "~/camera-streamer/releases"
@@ -175,6 +182,88 @@ exit 1
     )
 
 
+def cmd_reset(target: str, reboot: bool, dry_run: bool) -> None:
+    """Free a camera that will not initialise: restart nvargus-daemon, or reboot the target.
+
+    Needs passwordless sudo on the target (`sudo -n`), so a missing password fails at once instead of hanging. Refuses
+    while a sender started by `run` is alive, because restarting the daemon under it would kill its capture.
+    """
+    guard = r"""
+if pgrep -f "^\./build/argus_sender --config run-config.yaml" >/dev/null; then
+    echo "a sender from ~/camera-streamer/releases is running; run 'stop' first" >&2
+    exit 1
+fi
+sudo -n true || { echo "passwordless sudo is required on the target" >&2; exit 1; }
+"""
+    if not reboot:
+        remote(
+            target,
+            guard
+            + r"""
+sudo -n systemctl restart nvargus-daemon.service
+for _ in $(seq 1 20); do
+    systemctl is-active --quiet nvargus-daemon.service && { echo "nvargus-daemon is active"; exit 0; }
+    sleep 1
+done
+echo "nvargus-daemon did not become active within 20 s" >&2
+exit 1
+""",
+            dry_run,
+        )
+        return
+    # The connection drops as the target goes down, so the reboot command's own exit status says nothing.
+    remote_ignoring_exit = ssh_command(
+        target, "bash -lc " + shlex.quote(guard + "sudo -n systemctl reboot")
+    )
+    if dry_run:
+        print("DRY-RUN", shlex.join(remote_ignoring_exit))
+        return
+    result = subprocess.run(remote_ignoring_exit, check=False)
+    if result.returncode not in (0, 255):
+        raise DeployError(f"could not start the reboot (exit code {result.returncode})")
+    # Wait for the target to go away, then for ssh to answer again, so the next command does not race the boot.
+    time.sleep(20)
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        if (
+            subprocess.run(
+                ssh_command(target, "true"), check=False, capture_output=True
+            ).returncode
+            == 0
+        ):
+            print("target is back")
+            return
+        time.sleep(5)
+    raise DeployError("the target did not answer ssh within 5 minutes of the reboot")
+
+
+def cmd_remove_producer(target: str, dry_run: bool) -> None:
+    """Uninstall the sensing camera producer so the cameras belong to this sender alone.
+
+    Removes only what the producer's own deploy creates: the service, its unit file and the release tree. The SIPL platform
+    file next to them is shared with this sender and stays.
+    """
+    remote(
+        target,
+        r"""
+sudo -n true || { echo "passwordless sudo is required on the target" >&2; exit 1; }
+unit=isaaccapture-producer.service
+echo "before:"; ls -la /opt/isaaccapture /etc/systemd/system/$unit 2>&1 | sed 's/^/  /'
+sudo -n systemctl stop $unit || true
+sudo -n systemctl disable $unit || true
+sudo -n rm -f /etc/systemd/system/$unit /opt/isaaccapture/current /opt/isaaccapture/current.new
+sudo -n rm -rf /opt/isaaccapture/releases
+sudo -n systemctl daemon-reload
+sudo -n systemctl reset-failed $unit 2>/dev/null || true
+echo "after:"; ls -la /opt/isaaccapture 2>&1 | sed 's/^/  /'
+systemctl list-unit-files "$unit" --no-legend | grep -q . && { echo "$unit is still installed" >&2; exit 1; }
+pgrep -x camera_plugin_s >/dev/null && { echo "camera_plugin_sensing is still running" >&2; exit 1; }
+echo "producer removed"
+""",
+        dry_run,
+    )
+
+
 def cmd_run(
     target: str, name: str, config: Path, seconds: int, env: list[str], dry_run: bool
 ) -> None:
@@ -282,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "stop", help="stop the senders started from ~/camera-streamer/releases"
     )
+    reset = sub.add_parser(
+        "reset", help="restart nvargus-daemon (or reboot) to free a stuck camera"
+    )
+    reset.add_argument(
+        "--reboot", action="store_true", help="reboot the target instead"
+    )
+    sub.add_parser(
+        "remove-producer", help="uninstall the sensing camera producer service"
+    )
     link = sub.add_parser("linktest", help="TCP throughput from the target to this PC")
     link.add_argument("--mb", type=int, default=32, help="megabytes to send")
     run = sub.add_parser("run", help="run a deployed release for a bounded time")
@@ -311,6 +409,10 @@ def main(argv: list[str] | None = None) -> int:
             cmd_check(args.target, args.dry_run)
         elif args.command == "stop":
             cmd_stop(args.target, args.dry_run)
+        elif args.command == "reset":
+            cmd_reset(args.target, args.reboot, args.dry_run)
+        elif args.command == "remove-producer":
+            cmd_remove_producer(args.target, args.dry_run)
         elif args.command == "linktest":
             cmd_linktest(args.target, args.mb, args.dry_run)
         elif args.command == "run":
