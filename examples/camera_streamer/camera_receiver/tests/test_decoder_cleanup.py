@@ -87,13 +87,16 @@ inline cudaError_t cudaMemcpy2DAsync(void*, std::size_t, const void*, std::size_
 _NVDEC = r"""
 #pragma once
 #include "cuda.h"
+constexpr int CUVID_PKT_ENDOFPICTURE = 0x08;
 enum cudaVideoCodec { cudaVideoCodec_H264, cudaVideoCodec_HEVC };
 enum cudaVideoSurfaceFormat { cudaVideoSurfaceFormat_NV12, cudaVideoSurfaceFormat_P016 };
 class NvDecoder {
 public:
     template <typename... Args> explicit NvDecoder(Args...) {}
-    int Decode(const uint8_t*, int) {
+    int Decode(const uint8_t*, int, int flags = 0) {
         state.events.push_back("decode");
+        if (!(flags & CUVID_PKT_ENDOFPICTURE))
+            throw std::runtime_error("access unit lacks end-of-picture flag");
         if (state.fault == "decode") throw std::runtime_error("injected decode error");
         return state.fault == "no_frame" ? 0 : 1;
     }

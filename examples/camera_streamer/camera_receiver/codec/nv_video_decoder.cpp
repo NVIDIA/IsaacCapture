@@ -132,7 +132,8 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            // AVS1 samples are complete access units; do not wait for the next sample.
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
@@ -225,7 +226,7 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
