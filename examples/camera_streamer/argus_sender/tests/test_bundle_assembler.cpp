@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -258,9 +259,11 @@ bool emitTimed(bool setClock, argus_sender::Avs1TimingClockDomain clock, int64_t
     FakePacketSink sink;
     std::vector<argus_sender::Avs1StreamRecord> streams = templates();
     streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
-    argus_sender::FrameBundleAssembler assembler =
-        setClock ? argus_sender::FrameBundleAssembler(&sink, 89, streams, true, clock) :
-                   argus_sender::FrameBundleAssembler(&sink, 89, streams, true);
+    // The assembler cannot be copied, so each construction is made in place.
+    std::unique_ptr<argus_sender::FrameBundleAssembler> owned(
+        setClock ? new argus_sender::FrameBundleAssembler(&sink, 89, streams, true, clock) :
+                   new argus_sender::FrameBundleAssembler(&sink, 89, streams, true));
+    argus_sender::FrameBundleAssembler& assembler = *owned;
     std::vector<argus_sender::BundleStreamInput> inputs(2);
     inputs[0].present = true;
     inputs[0].sequence = 1;
