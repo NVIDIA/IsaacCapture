@@ -9,6 +9,8 @@
 
 #include "SiplCapture.h"
 
+#include "ScopedRelease.h"
+
 #include <NvSIPLCamera.hpp>
 #include <NvSIPLCameraQuery.hpp>
 #include <NvSIPLClient.hpp>
@@ -527,12 +529,11 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             if (!buffer)
                 continue;
 
+            // The buffer belongs to SIPL until it is handed to `pending`; any failure before that returns it.
+            ScopedRelease<INvSIPLClient::INvSIPLBuffer> owned(buffer);
             INvSIPLClient::INvSIPLNvMBuffer* nvm = dynamic_cast<INvSIPLClient::INvSIPLNvMBuffer*>(buffer);
             if (!nvm)
-            {
-                buffer->Release();
                 throw std::runtime_error("ISP0 buffer is not an INvSIPLNvMBuffer");
-            }
 
             // The ISP is still writing until this fence clears.
             NvSciSyncFence fence = NvSciSyncFenceInitializer;
@@ -552,10 +553,7 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
                 }
             }
             if (!slot)
-            {
-                buffer->Release();
                 throw std::runtime_error("ISP0 delivered a buffer this process never registered");
-            }
 
             Pending next;
             next.buffer = buffer;
@@ -571,6 +569,8 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
                 next.sequence = ++sensor.received;
                 sensor.pending = next;
                 sensor.hasPending = true;
+                // `pending` owns the buffer now, and its release path (a replacement or stop) takes over.
+                owned.dismiss();
             }
             std::lock_guard<std::mutex> wakeGuard(wakeMutex);
             wake.notify_all();

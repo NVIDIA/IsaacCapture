@@ -144,3 +144,8 @@ add_executable(argus_sender_test_encoder_input_slots
     tests/test_encoder_input_slots.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_encoder_input_slots encoder_input_slots)
+
+add_executable(argus_sender_test_scoped_release
+    tests/test_scoped_release.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_scoped_release scoped_release)
