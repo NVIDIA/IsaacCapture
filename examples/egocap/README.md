@@ -106,15 +106,16 @@ Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the
 for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
 cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
 LiveKit server and the bridge are not in this tree, so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`,
-`EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4 address, because the bridge measures the sender's
-clock at that address.
+`EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4 address, because the bridge finds the sender's chrony by it. The launcher starts an
+unprivileged chronyd on this PC that measures the Orin's clock and configures the Orin's chrony through
+`src/core/timesync/tools/timesync_tool.py`; see that module's README.
 
 The page needs the frontend built once (`cd frontend && npm install && npm run build`); the launcher refuses to start
-without `frontend/dist`.
+without `frontend/dist`. For the default receiver, the launcher runs the receiver's `setup.sh` (venv, requirements,
+native decoder) when the venv or decoder is missing.
 
-The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC,
-timing extension and clock responder on). Pass another file with `--sender-config`, or override single values with
-`--fps`, `--bitrate-mbps`, `--clock-port` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
+The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC). Pass another file with `--sender-config`, or override single values with
+`--fps`, `--bitrate-mbps` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
 built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
 setting and lists every key.
 
