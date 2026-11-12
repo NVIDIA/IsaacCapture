@@ -144,9 +144,7 @@ bool runCaptureSender(const AppConfig& config,
         return false;
     }
 
-    FrameBundleAssembler assembler(
-        &tcpSender, sessionId, templates, config.network.timingExtension,
-        config.network.timingClockRealtime ? AVS1_TIMING_CLOCK_REALTIME : AVS1_TIMING_CLOCK_MONOTONIC);
+    FrameBundleAssembler assembler(&tcpSender, sessionId, templates, config.network.timingExtension);
     HevcEncoderSettings encoderSettings;
     encoderSettings.kpi = config.runtime.kpi;
     encoderSettings.logIntervalSeconds = config.runtime.logIntervalSeconds;

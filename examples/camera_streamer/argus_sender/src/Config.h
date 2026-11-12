@@ -107,12 +107,10 @@ struct NetworkConfig
     std::string dumpWirePath;
     // Kernel TCP send buffer cap in KiB; 0 keeps the operating system's default.
     uint32_t sendBufferKb = 0;
-    // Sets the AVS1 timing extension on every bundle; a receiver that predates it rejects those bundles, so it is off
-    // until the receiver is updated.
+    // Sets the AVS1 timing extension on every bundle: each sample's record states the sensor start-of-frame time in the
+    // sender's CLOCK_REALTIME. A receiver that predates it rejects those bundles, so it is off until the receiver is
+    // updated.
     bool timingExtension = false;
-    // Which clock the timing record's capture time is stated in: false for the sender CLOCK_MONOTONIC, true for
-    // CLOCK_REALTIME. Realtime needs a receiver that knows that domain and requires the extension.
-    bool timingClockRealtime = false;
 };
 
 struct RuntimeConfig

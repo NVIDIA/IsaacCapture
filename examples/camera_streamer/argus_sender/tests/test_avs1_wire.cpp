@@ -81,7 +81,7 @@ const char kGoldenHex[] =
     "3ba26b2000000088000000030000000077359400000000010101000000000040000000300000001e0000000100000000"
     "00000005000000010000000000000000000300000000000000000000000000000000004d000000007604670000000000"
     "000000000000000000000000000000000000000000000000000000000000000000000003000000003b7c458000000bb8"
-    "0ee6b2800001000100000000000001";
+    "0ee6b2800001000200000000000001";
 
 } // namespace
 
@@ -177,7 +177,7 @@ int main()
         timed.flags |= argus_sender::AVS1_BUNDLE_TIMING_EXT;
         argus_sender::Avs1TimingRecord good;
         good.flags = argus_sender::AVS1_TIMING_VALID;
-        good.clockDomain = argus_sender::AVS1_TIMING_CLOCK_MONOTONIC;
+        good.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
         good.sensorCaptureNs = 40505284984832ULL;
         good.uncertaintyNs = 4321;
         good.anchorAgeNs = 987654;
@@ -197,10 +197,9 @@ int main()
         argus_sender::Avs1Bundle claimed = mixedBundle();
         claimed.streams[0].samples[0].timing = good;
         TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(claimed, &timedWire, &error));
-        // The realtime domain round-trips like the monotonic one.
+        // A realistic realtime capture time round-trips.
         {
             argus_sender::Avs1Bundle realtime = timed;
-            realtime.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
             realtime.streams[0].samples[0].timing.sensorCaptureNs = 1762900000123456789ULL;
             std::vector<uint8_t> realtimeWire;
             TEST_CHECK(test, argus_sender::buildAvs1WireRecord(realtime, &realtimeWire, &error));
@@ -216,9 +215,10 @@ int main()
             noValid.streams[0].samples[0].timing.flags = 0;
             noValid.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
             TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(noValid, &realtimeWire, &error));
-            // An unknown domain with VALID is refused, on build and on parse.
-            const uint16_t unknownDomains[] = { 0, 3, 0xFFFF };
-            for (size_t i = 0; i < 3; ++i)
+            // Any domain but realtime (including the reserved monotonic value 1) with VALID is refused, on build and on
+            // parse.
+            const uint16_t unknownDomains[] = { 0, 1, 3, 0xFFFF };
+            for (size_t i = 0; i < 4; ++i)
             {
                 argus_sender::Avs1Bundle unknown = timed;
                 unknown.streams[0].samples[0].timing.clockDomain = unknownDomains[i];
@@ -228,7 +228,7 @@ int main()
             const size_t domainOffset = 4 + 64 + 2 * 40 + 3 * 72 + 18;
             std::vector<uint8_t> goodWire;
             TEST_CHECK(test, argus_sender::buildAvs1WireRecord(timed, &goodWire, &error));
-            for (size_t i = 0; i < 3; ++i)
+            for (size_t i = 0; i < 4; ++i)
             {
                 std::vector<uint8_t> patched = goodWire;
                 patched[domainOffset] = static_cast<uint8_t>(unknownDomains[i] >> 8);
@@ -240,7 +240,7 @@ int main()
             patched[domainOffset + 1] = 2;
             TEST_CHECK(test, argus_sender::parseAvs1WireRecord(patched.data(), patched.size(), &realtimeParsed, &error));
         }
-        // VALID needs the monotonic or realtime domain and a nonzero time; without VALID everything must be zero.
+        // VALID needs the realtime domain and a nonzero time; without VALID everything must be zero.
         argus_sender::Avs1Bundle bad = timed;
         bad.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_NONE;
         TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));
@@ -287,7 +287,7 @@ int main()
         one.sofTscNs = 1980000000ULL;
         one.payload = { 0x00, 0x00, 0x01 };
         one.timing.flags = argus_sender::AVS1_TIMING_VALID;
-        one.timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_MONOTONIC;
+        one.timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
         one.timing.sensorCaptureNs = 998000000ULL;
         one.timing.uncertaintyNs = 3000;
         one.timing.anchorAgeNs = 250000000U;

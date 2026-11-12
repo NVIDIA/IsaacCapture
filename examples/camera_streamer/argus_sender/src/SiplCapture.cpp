@@ -574,28 +574,6 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             if (!slot)
                 throw std::runtime_error("ISP0 delivered a buffer this process never registered");
 
-            // CAMERA_SENDER_SIPL_TSC_PROBE=1 logs about once a second the raw SIPL capture timestamps beside the
-            // platform counter and CLOCK_MONOTONIC, so the timestamp's units and event can be established from the
-            // numbers.
-            static const bool tscProbe = std::getenv("CAMERA_SENDER_SIPL_TSC_PROBE") != nullptr;
-            if (tscProbe)
-            {
-                static thread_local uint64_t probeCount = 0;
-                if ((probeCount++ % 30) == 0)
-                {
-                    const nvsipl::INvSIPLClient::ImageMetaData& probeMeta = nvm->GetImageData();
-                    ClockPair now;
-                    const bool haveCounter = readCounterPair(&now);
-                    std::fprintf(stderr,
-                                 "[sipl-tsc] sensor=%u start=%llu end=%llu counter=%lld counter_hz=%lld "
-                                 "monotonic_ns=%lld counter_readable=%d\n",
-                                 sensor.info.id, static_cast<unsigned long long>(probeMeta.frameCaptureStartTSC),
-                                 static_cast<unsigned long long>(probeMeta.frameCaptureTSC),
-                                 static_cast<long long>(now.source), static_cast<long long>(readCounterHz()),
-                                 static_cast<long long>(now.monotonicNs), haveCounter ? 1 : 0);
-                }
-            }
-
             Pending next;
             next.buffer = buffer;
             next.slot = slot;

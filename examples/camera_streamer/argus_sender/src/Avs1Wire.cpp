@@ -62,8 +62,8 @@ bool validateTiming(const Avs1TimingRecord& timing, bool extension, const char**
         return fail(error, "unknown AVS1 timing flags");
     if (timing.flags & AVS1_TIMING_VALID)
     {
-        if (timing.clockDomain != AVS1_TIMING_CLOCK_MONOTONIC && timing.clockDomain != AVS1_TIMING_CLOCK_REALTIME)
-            return fail(error, "AVS1 valid timing record needs the monotonic or the realtime clock domain");
+        if (timing.clockDomain != AVS1_TIMING_CLOCK_REALTIME)
+            return fail(error, "AVS1 valid timing record needs the realtime clock domain");
         if (timing.sensorCaptureNs == 0)
             return fail(error, "AVS1 valid timing record needs a nonzero capture time");
         return true;

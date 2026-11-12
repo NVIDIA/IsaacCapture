@@ -110,8 +110,7 @@ network:
   port: 5000
   reconnect_ms: 1000
   dump_wire: ""                 # optional exact TCP-record dump
-  timing_extension: false       # AVS1 sensor capture-time record; receivers must support it
-  timing_clock: monotonic       # monotonic | realtime; clock of the capture time, realtime needs timing_extension
+  timing_extension: false       # AVS1 sensor capture-time record (sender CLOCK_REALTIME); receivers must support it
 
 runtime:
   frames: 0                      # 0 = run until stopped/disconnected
@@ -307,28 +306,29 @@ metadata only and do not alter the AVS1 wire format.
 
 ## Sensor capture time
 
-A camera backend that reports its sensor's capture timestamp can have the sender place it on the sender's
-`CLOCK_MONOTONIC`. `SensorClockMap` pairs the platform counter with `CLOCK_MONOTONIC` once a second and converts each
-frame's timestamp from the difference. Every conversion is checked: a capture time after the frame was ready, an
-implausibly old one, a counter that cannot be read, an unknown frequency or a step between two consecutive anchors gives
+A camera backend that reports its sensor's capture timestamp can have the sender state it in the sender's
+`CLOCK_REALTIME`, so another host whose wall clock is synchronised can compare it with its own. `SensorClockMap` reads the
+platform counter, `CLOCK_MONOTONIC` and `CLOCK_REALTIME` in one bracket once a second and converts each frame's timestamp
+from the difference: counter to `CLOCK_MONOTONIC` through the anchor, then to `CLOCK_REALTIME` through the anchor's
+realtime-minus-monotonic offset. Every conversion is checked: a capture time after the frame was ready, an
+implausibly old one, a counter or clock that cannot be read, an unknown frequency, or a step between two consecutive
+anchors (the counter against `CLOCK_MONOTONIC`, or `CLOCK_REALTIME` against `CLOCK_MONOTONIC`) gives
 no capture time for that frame, never a substituted host-side stamp, and the reason is logged when it changes. A frame
 that passes also carries an uncertainty (the anchor's read bracket plus 500 ppm of the time between the anchor and the
 sensor event, the bound on how far `CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age, which is
 reported separately as its freshness. The uncertainty bounds the mapping only; it
-does not include how closely the sensor's timestamp event matches the physical exposure.
+does not include how closely the sensor's timestamp event matches the physical exposure, or how well the two hosts'
+wall clocks agree.
 
 The SIPL backend reports its start-of-frame timestamp this way. On the board it was measured against the platform counter
 (`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads
 the moment the frame is dequeued by about 22 ms. That is one board and one camera, not vendor documentation.
-`CAMERA_SENDER_SIPL_TSC_PROBE=1` logs the raw SIPL timestamps beside the counter and `CLOCK_MONOTONIC` about once a second
-to repeat the measurement.
 
 With `network.timing_extension: true` every AVS1 bundle carries one timing record per sample (see
-[WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant, the uncertainty and the anchor age, valid only for frames that
-passed the checks. A receiver that predates the extension rejects those bundles, so leave it off until the receiver is
-updated. `network.timing_clock` selects the clock the capture time is stated in: `monotonic` (default, domain 1) or
-`realtime` (domain 2, sender `CLOCK_REALTIME`); `realtime` requires `timing_extension` and a receiver that knows domain
-2. A new `session_id` invalidates every earlier mapping.
+[WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant in the sender's `CLOCK_REALTIME` (clock domain 2), the
+uncertainty and the anchor age, valid only for frames that passed the checks. A receiver that predates the extension, or
+that does not know domain 2, rejects those bundles, so leave it off until the receiver is updated. A new `session_id`
+invalidates every earlier mapping.
 
 ## Wire dump
 
@@ -347,7 +347,7 @@ See [WIRE_FORMAT.md](WIRE_FORMAT.md) for the byte-level format.
 
 ## Source layout
 
-- `SensorClock.*`: the counter-to-`CLOCK_MONOTONIC` mapping and its checks.
+- `SensorClock.*`: the counter-to-`CLOCK_REALTIME` mapping (through `CLOCK_MONOTONIC`) and its checks.
 - `Config.*`: YAML parsing and validation.
 - `CaptureManager.*` / `CaptureDomainPlan.*` / `PriorityFrameHandoff.h`: independent priority-eye acquisition and latest-frame slots, event-driven secondary Argus domains, configurable EGL mailbox/FIFO consumers, and timing.
 - `CapturePriorityPolicy.*`: priority-stream selection, startup synchronization tolerance, and secondary release timing.
