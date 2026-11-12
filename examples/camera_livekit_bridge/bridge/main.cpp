@@ -9,6 +9,7 @@
 #include <nvenc/cuda_context.hpp>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -34,6 +35,8 @@ void usage()
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
            "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us|capture_unix_us]\n"
+           "         capture_monotonic_us: --chrony-sender HOST[:PORT] --chrony-sender-refid HEX [--chrony-pc-port PORT]\n"
+           "           [--chronyc PATH]\n"
            "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
 }
 
@@ -67,6 +70,8 @@ int main(int argc, char** argv)
     std::vector<StreamSpec> streams;
     WorkerConfig defaults;
     int gpu = 0;
+    ChronyCaptureClockConfig chrony_config;
+    bool use_chrony = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -101,15 +106,32 @@ int main(int argc, char** argv)
                 std::cerr << "--timestamp-basis must be monotonic_us, capture_monotonic_us or capture_unix_us\n";
                 return 2;
             }
-            if (*basis == TimestampBasis::CaptureMonotonicUs)
-            {
-                std::cerr
-                    << "--timestamp-basis capture_monotonic_us is not available: it needs a measured sender-to-host clock "
-                       "mapping, which is not implemented. Use monotonic_us (frame-ready time) or capture_unix_us.\n";
-                return 2;
-            }
             defaults.timestamp_basis = *basis;
         }
+        else if (arg == "--chrony-sender")
+        {
+            const std::string endpoint = next();
+            const auto colon = endpoint.rfind(':');
+            chrony_config.sender_host = colon == std::string::npos ? endpoint : endpoint.substr(0, colon);
+            if (colon != std::string::npos)
+                chrony_config.sender_port = std::atoi(endpoint.substr(colon + 1).c_str());
+            if (chrony_config.sender_host.empty())
+            {
+                std::cerr << "--chrony-sender needs HOST or HOST:PORT, got '" << endpoint << "'\n";
+                return 2;
+            }
+            use_chrony = true;
+        }
+        else if (arg == "--chrony-sender-refid")
+        {
+            chrony_config.expected_sender_reference_id = next();
+            for (auto& c : chrony_config.expected_sender_reference_id)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        else if (arg == "--chrony-pc-port")
+            chrony_config.pc_port = std::atoi(next().c_str());
+        else if (arg == "--chronyc")
+            chrony_config.chronyc_path = next();
         else if (arg == "--gpu")
             gpu = std::atoi(next().c_str());
         else if (arg == "--stream")
@@ -144,6 +166,21 @@ int main(int argc, char** argv)
         return 2;
     }
 
+    if (defaults.timestamp_basis == TimestampBasis::CaptureMonotonicUs && !use_chrony)
+    {
+        std::cerr
+            << "--timestamp-basis capture_monotonic_us needs --chrony-sender HOST: the sender's capture time is only "
+               "used with chrony evidence for both hosts. Use monotonic_us for the frame-ready time or "
+               "capture_unix_us for a Unix-time sensor stamp.\n";
+        return 2;
+    }
+    if (use_chrony && chrony_config.expected_sender_reference_id.empty())
+    {
+        std::cerr << "--chrony-sender needs --chrony-sender-refid HEX: the reference id chronyd shows for its source "
+                     "(chronyc tracking), so a host following another source is refused.\n";
+        return 2;
+    }
+
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
@@ -151,6 +188,14 @@ int main(int argc, char** argv)
     {
         CudaContext context(gpu);
         auto session = LiveKitSession::connect(url, read_token(token_file));
+        std::unique_ptr<ChronyCaptureClock> chrony_clock;
+        if (use_chrony)
+        {
+            chrony_clock = std::make_unique<ChronyCaptureClock>(chrony_config);
+            chrony_clock->poll_once();
+            chrony_clock->start();
+            defaults.chrony_clock = chrony_clock.get();
+        }
         std::vector<std::unique_ptr<StreamWorker>> workers;
         for (const auto& spec : streams)
         {
@@ -207,6 +252,25 @@ int main(int argc, char** argv)
                         std::cerr << ", capture-to-ready "
                                   << static_cast<double>(stats.capture_to_ready_us_total.load()) / ready_samples / 1000.0
                                   << " ms mean " << stats.capture_to_ready_max_us.load() / 1000.0 << " ms max";
+                    }
+                    if (defaults.timestamp_basis == TimestampBasis::CaptureMonotonicUs)
+                    {
+                        std::cerr
+                            << ", capture claims: "
+                            << stats
+                                   .chrony_verdicts[static_cast<std::size_t>(isaaccapture::timesync::Verdict::Qualified)]
+                                   .load()
+                            << " qualified";
+                        for (std::size_t v = 1; v < 10; ++v)
+                        {
+                            if (stats.chrony_verdicts[v].load() > 0)
+                                std::cerr
+                                    << ", "
+                                    << isaaccapture::timesync::to_string(static_cast<isaaccapture::timesync::Verdict>(v))
+                                    << " " << stats.chrony_verdicts[v].load();
+                        }
+                        std::cerr << ", combined uncertainty " << stats.last_uncertainty_ns.load() / 1000.0
+                                  << " us, clock generation " << stats.last_generation.load();
                     }
                     std::cerr << "\n";
                     last_frames[i] = frames;

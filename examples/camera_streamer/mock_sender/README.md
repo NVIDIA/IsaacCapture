@@ -30,6 +30,7 @@ tick, as in the real sender.
 | `--disconnect-at SECONDS` | Close the receiver connection after that long. |
 | `--clock-offset-ms`, `--clock-drift-ppm` | Offset (default 0, as with chrony-synced clocks) and drift of the synthetic sender clock. |
 | `--sof-lag-ms` | Synthetic sensor start-of-frame to capture-ready lag (default 20, range 0-500). |
+| `--timing-ext`, `--sensor-uncertainty-us` | Send the AVS1 timing record on every bundle: the synthetic sensor start of frame (capture-ready minus the lag) on the mock's wall clock, with the stated uncertainty (default 500 us). The mock's wall clock is this host's clock plus `--clock-offset-ms` and `--clock-drift-ppm`. |
 
 Timing fields come from the synthetic clock only. Every frame carries a
 synthetic sensor start-of-frame TSC, in a TSC domain of the mock's own, so the

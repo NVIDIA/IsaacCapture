@@ -80,11 +80,30 @@ the same basis:
 | --- | --- |
 | `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
 | `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
+| `capture_monotonic_us` | The sensor start-of-frame on this host's monotonic clock, converted from the sender's `CLOCK_REALTIME` with chrony evidence for both hosts (below). |
 
 `capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
 start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
-a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
-need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
+a consumer that needs a capture time says so instead of using a guess.
+
+`capture_monotonic_us` uses the sensor start-of-frame that the receiver reads from the sender's AVS1 timing record
+(`sensor_capture_realtime_ns`, `sensor_capture_uncertainty_ns`, `sensor_capture_valid`) and the time-sync library in
+`src/core/timesync`. Each frame is converted from the sender's `CLOCK_REALTIME` to this host's monotonic clock, or
+refused with a typed reason, using chronyd's own report for both hosts, a bracketed read of this host's clocks, and the
+sender's stated uncertainty. A refused frame is published without a timestamp, and the frame-ready time is never
+offered in its place. It needs:
+
+| Option | Meaning |
+| --- | --- |
+| `--chrony-sender HOST[:PORT]` | The camera host's chronyd, read over chrony's monitoring interface (it must `cmdallow` this host). |
+| `--chrony-sender-refid HEX` | The reference id this host's chronyd must have selected (an NTP source's reference id is its IPv4 address in hex). |
+| `--chrony-pc-port PORT` | Read this host's chronyd on that command port over loopback, for a dedicated instance next to the system one. |
+| `--chronyc PATH` | The `chronyc` binary (default `chronyc` on `PATH`). |
+
+`src/core/timesync/README.md` describes the arrangement (this host measures the camera host, which serves its own clock) and how to set it up with `timesync_tool.py`. The
+`[stats]` line gains the number of frames that qualified, a count per refusal reason, the last combined uncertainty and
+the clock generation the frame was converted under. The caller of a recording should treat a frame without a
+timestamp as a timing fault.
 
 `--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
 then signals full range, so players and recordings keep the black and white levels. Without it the stream signals

@@ -442,23 +442,6 @@ class BridgeTimingTest(unittest.TestCase):
         self._check_clock("monotonic_us")
         self._check_feed("monotonic_us")
 
-    def test_capture_monotonic_us_is_refused_by_bridge(self):
-        # Needs a measured sender-to-PC clock mapping the bridge does not have, so it must fail at startup.
-        token = self._tmp / "refuse.token"
-        token.write_text(make_token("unused", "bridge-refuse", True))
-        cmd = [
-            str(BRIDGE_BIN), "--livekit-url", "ws://127.0.0.1:1", "--livekit-token-file", str(token),
-            "--socket", str(self._tmp / "none.sock"), "--stream", "head=head_track",
-            "--timestamp-basis", "capture_monotonic_us",
-        ]  # fmt: skip
-        started = time.monotonic()
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, check=False, timeout=30
-        )
-        self.assertLess(time.monotonic() - started, 15)
-        self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
-        self.assertIn("monotonic_us", out.stderr)
-
     def test_capture_unix_us_is_refused_by_egocap(self):
         reason = self.refuse["reason"]
         self.assertIsNotNone(
@@ -466,6 +449,43 @@ class BridgeTimingTest(unittest.TestCase):
         )
         self.assertIn("monotonic clock", reason)
         self.assertEqual(self.refuse["recordable"], 0)
+
+
+@unittest.skipUnless(
+    BRIDGE_BIN and Path(str(BRIDGE_BIN)).exists(), "camera_livekit_bridge not built"
+)
+class BridgeCaptureBasisCliTest(unittest.TestCase):
+    """Startup refusals; the bridge exits before connecting, so no servers or GPU."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory(prefix="bridge_cli_")
+        self.addCleanup(self._td.cleanup)
+        self._tmp_dir = Path(self._td.name)
+
+    def _run_bridge_cli(self, name: str, *extra: str):
+        token = self._tmp_dir / f"{name}.token"
+        token.write_text(make_token("unused", f"bridge-{name}", True))
+        cmd = [
+            str(BRIDGE_BIN), "--livekit-url", "ws://127.0.0.1:1", "--livekit-token-file", str(token),
+            "--socket", str(self._tmp_dir / "none.sock"), "--stream", "head=head_track",
+            "--timestamp-basis", "capture_monotonic_us", *extra,
+        ]  # fmt: skip
+        started = time.monotonic()
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=30
+        )
+        self.assertLess(time.monotonic() - started, 15)
+        return out
+
+    def test_capture_monotonic_us_requires_chrony_sender(self):
+        out = self._run_bridge_cli("no-sender")
+        self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+        self.assertIn("--chrony-sender", out.stderr)
+
+    def test_capture_monotonic_us_requires_sender_refid(self):
+        out = self._run_bridge_cli("no-refid", "--chrony-sender", "127.0.0.1")
+        self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+        self.assertIn("--chrony-sender-refid", out.stderr)
 
 
 if __name__ == "__main__":
