@@ -139,6 +139,7 @@ class SenderSettings:
     fps: int
     bitrate_mbps: int
     stream_id: str
+    full_range: bool
 
 
 def load_sender_config(
@@ -193,6 +194,8 @@ def sender_settings(config: dict) -> SenderSettings:
         fps=int(output["fps"]),
         bitrate_mbps=int(output.get("bitrate_mbps", 0)),
         stream_id=str(stream["id"]),
+        # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
+        full_range=config.get("capture_backend") == "sipl",
     )
 
 
@@ -459,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     TIMESTAMP_BASIS,
                     "--sender-clock",
                     f"{orin_host}:{sender.clock_port}",
+                    *(["--source-full-range"] if sender.full_range else []),
                 ],
             )
         url = f"http://127.0.0.1:{args.backend_port}/"

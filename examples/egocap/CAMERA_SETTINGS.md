@@ -69,7 +69,10 @@ The page shows latency from the sensor's capture time only when all of these hol
 1. The sender runs with `network.timing_extension: true` and `network.clock_port` set (the default profile does both),
    from a release that includes the timing extension and the clock responder.
 2. The receiver passes the timing records through to the CUDA IPC output.
-3. The bridge runs with `--timestamp-basis capture_monotonic_us --sender-clock ORIN_HOST:CLOCK_PORT`.
+3. The bridge runs with `--timestamp-basis capture_monotonic_us --sender-clock ORIN_HOST:CLOCK_PORT`. For a SIPL profile
+   the launcher also passes `--source-full-range`, because SIPL pictures use the full 0-255 range; without it the
+   encoded stream signals limited range and the page's blacks and whites are wrong. The bridge binary must support
+   that flag.
 4. The CaptureServer descriptor declares `timestamp_basis: capture_monotonic_us`.
 5. The bridge answers the browser's clock exchange, so the page can map the publisher's clock onto its own.
 

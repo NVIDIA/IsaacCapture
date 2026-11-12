@@ -77,14 +77,19 @@ def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5000, clock_port=5611, fps=30, bitrate_mbps=4, stream_id="head"
+        port=5000, clock_port=5611, fps=30, bitrate_mbps=4, stream_id="head", full_range=True
     )
+
+
+def test_argus_backend_is_not_full_range():
+    config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    assert ss.sender_settings(config).full_range is False
 
 
 def test_overrides_replace_only_their_values():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 6000, 5100)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5100, clock_port=6000, fps=60, bitrate_mbps=9, stream_id="head"
+        port=5100, clock_port=6000, fps=60, bitrate_mbps=9, stream_id="head", full_range=True
     )
     partial = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, fps=15))
     assert (partial.fps, partial.bitrate_mbps, partial.clock_port, partial.port) == (15, 4, 5611, 5000)
