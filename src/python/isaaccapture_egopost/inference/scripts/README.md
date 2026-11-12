@@ -171,8 +171,8 @@ pointed at different roots.
 | Code | Description |
 | ---- | ----------- |
 | `0` | Success |
-| `1` | Runtime failure, such as GPU failure, codec failure, and other unexpected errors |
-| `2` | Invalid inputs, such as invalid arguments, input video not found, read-only output folder, invalid camera intrinsics or detector config |
+| `1` | Runtime failure, such as GPU failure, video decode failure, and other unexpected errors |
+| `2` | Invalid inputs, such as invalid arguments, input video not found, unsupported video codec, read-only output folder, invalid camera intrinsics or detector config |
 
 ## Output layout
 

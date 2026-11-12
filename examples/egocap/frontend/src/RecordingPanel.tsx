@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The Ego Capture UI live recording strip: s/w/a/t controls plus `r` for New
  * batch, rendered as a SIBLING of the existing generic capture
@@ -24,6 +28,7 @@ import { INITIAL_RECORDING_UI_STATE, recordingUiReducer, type CommandPhase, type
 import { RecordingCommandUncertainError } from "./useCaptureSession";
 import { useVoiceRecognition, type VoiceRecognitionStatus } from "./useVoiceRecognition";
 import { parseVoicePhrase } from "./voiceCommands";
+import { loadTaskCatalog as defaultLoadTaskCatalog, useTaskCatalog, type LoadTaskCatalog, type TaskCatalog } from "./taskCatalog";
 import type {
   RecordingActions,
   RecordingBatchIdentity,
@@ -64,6 +69,10 @@ export interface RecordingPanelProps {
   /** Told whenever this panel's own interaction phase changes (including the in-flight "stopping"/"starting" ones the
    * backend's snapshot does not show until the command finishes), so the page can mirror it in its status bar. */
   onPhaseChange?: (phase: RecordingPhase) => void;
+  /** How the task editor's catalog is fetched; tests inject a fake, the page uses the backend. */
+  loadTaskCatalog?: LoadTaskCatalog;
+  /** Settings owns keyboard and voice commands while its modal is open. */
+  interactionBlocked?: boolean;
 }
 
 const NO_CONTROL_TOKEN_REASON = "Enter the recording control token before using recording controls";
@@ -127,6 +136,8 @@ export function RecordingPanel({
   setControlToken,
   clearControlToken,
   onPhaseChange,
+  loadTaskCatalog = defaultLoadTaskCatalog,
+  interactionBlocked = false,
 }: RecordingPanelProps) {
   const [ui, dispatch] = useReducer(recordingUiReducer, INITIAL_RECORDING_UI_STATE);
   useEffect(() => {
@@ -351,11 +362,16 @@ export function RecordingPanel({
   // unreachable in practice; kept as a cheap defensive backstop.
   const utteranceTargetRef = useRef<{ batchId: string | null; episodeId: string | null } | "invalid" | null>(null);
   const handleUtteranceStart = useCallback(() => {
+    if (interactionBlocked) return;
     utteranceTargetRef.current =
       utteranceTargetRef.current !== null
         ? "invalid"
         : { batchId: recordingSnapshotRef.current?.batchId ?? null, episodeId: recordingSnapshotRef.current?.currentEpisodeId ?? null };
-  }, []);
+  }, [interactionBlocked]);
+  // Opening Settings retires an utterance that might otherwise finish after the dialog closes.
+  useEffect(() => {
+    if (interactionBlocked) utteranceTargetRef.current = null;
+  }, [interactionBlocked]);
   // A recognizer SESSION boundary (initial enable, or any restart-after-end/disable/error) always
   // clears a leftover unfinished binding -- without this, an utterance that began but never
   // reached a final result before the session ended (e.g. Space disabled voice mid-utterance)
@@ -385,6 +401,10 @@ export function RecordingPanel({
 
   const handleVoiceResult = useCallback(
     (rawText: string) => {
+      if (interactionBlocked) {
+        utteranceTargetRef.current = null;
+        return;
+      }
       const intent = parseVoicePhrase(rawText);
 
       if (intent?.kind === "stopListening") {
@@ -523,7 +543,7 @@ export function RecordingPanel({
     // (useVoiceRecognition needs this callback to construct it), but its identity is stable
     // across renders (see useVoiceRecognition's own useCallback), so omitting it from these deps
     // never leaves a stale closure.
-    [eligibility, batchId, handleStart, handleStopSave, handleDiscard, submitTaskEdit, cancelTaskEdit],
+    [interactionBlocked, eligibility, batchId, handleStart, handleStopSave, handleDiscard, submitTaskEdit, cancelTaskEdit],
   );
 
   const { status: voiceStatus, enabled: voiceEnabled, toggle: voiceToggle, errorMessage: voiceErrorMessage } = useVoiceRecognition(handleVoiceResult, {
@@ -546,6 +566,8 @@ export function RecordingPanel({
   // browser -- there is no toggle to flip and no reason shown, so
   // swallowing Space here would be pure interference.
   useEffect(() => {
+    // Modal ownership does not depend on where the browser left focus.
+    if (interactionBlocked) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== " " || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
       if (voiceStatus === "unsupported") return;
@@ -555,7 +577,7 @@ export function RecordingPanel({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [voiceToggle, voiceStatus]);
+  }, [interactionBlocked, voiceToggle, voiceStatus]);
 
 
   // Buttons and shortcuts call the same guarded handlers above; this
@@ -565,6 +587,8 @@ export function RecordingPanel({
   // editor owns Enter/Escape itself, so this listener is skipped entirely
   // while it is open.
   useEffect(() => {
+    // Modal ownership does not depend on where the browser left focus.
+    if (interactionBlocked) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
       if (ui.phase === "editingTask" || ui.phase === "savingTask" || focusOwnedByInput()) return;
@@ -591,7 +615,7 @@ export function RecordingPanel({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [ui.phase, handleStart, handleStopSave, handleDiscard, beginTaskEdit, handleNewBatch]);
+  }, [interactionBlocked, ui.phase, handleStart, handleStopSave, handleDiscard, beginTaskEdit, handleNewBatch]);
 
   // Live elapsed = the backend's own monotonic figure as of its snapshot,
   // plus local time elapsed since THIS browser received that snapshot --
@@ -604,6 +628,15 @@ export function RecordingPanel({
       : (recordingSnapshot?.lastResult?.durationMs ?? null);
   const taskEditBatchChanged = ui.taskEditBatchId !== null && batchId !== null && ui.taskEditBatchId !== batchId;
   const editingTask = ui.phase === "editingTask" || ui.phase === "savingTask";
+  // The operator's catalog, fetched when the editor opens. A preselected task fills an empty draft once, so a
+  // station with a standing task needs one keypress (Enter) instead of a retype; an existing task is left alone.
+  const taskCatalog = useTaskCatalog(editingTask, loadTaskCatalog);
+  useEffect(() => {
+    if (ui.phase !== "editingTask" || taskCatalog?.preselected == null || ui.taskDraft !== "") return;
+    dispatch({ type: "UPDATE_TASK_DRAFT", value: taskCatalog.preselected.instruction });
+    // Only the arrival of the catalog or the opening of the editor should prefill; typing must not re-trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskCatalog, ui.phase]);
   // `ui.phase` is this component's own interaction state machine, which
   // has no RECOVERY_REQUIRED value of its own -- with no command in
   // flight it reads "idle" even while the backend has a genuinely
@@ -802,6 +835,7 @@ export function RecordingPanel({
                       : null
               }
               batchChanged={taskEditBatchChanged}
+              catalog={taskCatalog}
               onChange={(value) => dispatch({ type: "UPDATE_TASK_DRAFT", value })}
               onDetailsChange={(value) => dispatch({ type: "UPDATE_DETAILS_DRAFT", value })}
               onSubmit={submitTaskEdit}
@@ -855,6 +889,7 @@ function InlineTaskEditor({
   pending,
   saveBlockedReason,
   batchChanged,
+  catalog,
   onChange,
   onDetailsChange,
   onSubmit,
@@ -868,6 +903,8 @@ function InlineTaskEditor({
    * different operator actions to fix. */
   saveBlockedReason: string | null;
   batchChanged: boolean;
+  /** The operator's chosen catalog, offered as a picker above the text; null keeps the editor free text. */
+  catalog: TaskCatalog | null;
   onChange: (value: string) => void;
   onDetailsChange: (value: string) => void;
   onSubmit: () => void;
@@ -885,8 +922,29 @@ function InlineTaskEditor({
       onCancel();
     }
   };
+  // The picker fills the text field rather than replacing it: an operator can still adjust the wording.
+  const pickedIndex = catalog === null ? -1 : catalog.tasks.findIndex((task) => task.instruction === draft);
   return (
     <span className="recording-task-editor">
+      {catalog !== null && catalog.tasks.length > 0 && (
+        <select
+          className="recording-task-editor-select"
+          aria-label={`Task from ${catalog.fileName}`}
+          value={pickedIndex}
+          disabled={pending}
+          onChange={(e) => {
+            const task = catalog.tasks[Number(e.target.value)];
+            if (task !== undefined) onChange(task.instruction);
+          }}
+        >
+          <option value={-1}>{pickedIndex === -1 ? `Pick from ${catalog.fileName}…` : "Custom text"}</option>
+          {catalog.tasks.map((task, index) => (
+            <option key={task.name} value={index}>
+              {task.name} — {task.instruction}
+            </option>
+          ))}
+        </select>
+      )}
       <input
         type="text"
         className="recording-task-editor-input"

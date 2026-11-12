@@ -14,11 +14,13 @@
 #include <schema/full_body_generated.h>
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -32,19 +34,19 @@ namespace jmex
 namespace
 {
 
-//! Names the OpenXR instance and the collection's pushing application. One constant because the
-//! runtime reports them separately and two spellings of the same plugin read as two plugins.
-constexpr const char* APP_NAME = "JmexPlugin";
+//! Names the OpenXR instance and the collection's pushing application.
+constexpr const char* kAppName = "JmexPlugin";
 
-//! How long to wait before each attempt to re-establish a lost session, in milliseconds: short
-//! first, then 4 s.
-constexpr int SESSION_BACKOFF_MS[] = { 500, 1000, 2000, 4000, 4000, 4000, 4000, 4000 };
+//! How long to wait before each attempt to re-establish a lost session, in milliseconds.
+constexpr int kSessionBackoffMs[] = { 500, 1000, 2000, 4000, 4000, 4000, 4000, 4000 };
 
-//! How many times a lost session is re-established before the plugin gives up: one per wait.
-constexpr int SESSION_RECOVERY_ATTEMPTS = static_cast<int>(std::size(SESSION_BACKOFF_MS));
+//! How many attempts one recovery makes to re-establish a lost session before giving up: one per wait.
+constexpr int kSessionRecoveryAttempts = static_cast<int>(std::size(kSessionBackoffMs));
+
+constexpr int kBackoffBudgetMs = std::accumulate(std::begin(kSessionBackoffMs), std::end(kSessionBackoffMs), 0);
 
 //! A backoff is slept in slices this long, so a stop request costs at most one of them.
-constexpr int BACKOFF_SLICE_MS = 50;
+constexpr int kBackoffSliceMs = 50;
 
 spdlog::logger& logger()
 {
@@ -53,28 +55,16 @@ spdlog::logger& logger()
     return *instance;
 }
 
-//! The whole schedule added up, for the message that reports giving up.
-int backoff_budget_ms()
-{
-    int total = 0;
-    for (const int wait_ms : SESSION_BACKOFF_MS)
-    {
-        total += wait_ms;
-    }
-    return total;
-}
-
 //! The BackoffWait a publisher gets when none is passed in: @a total_ms, slept a slice at a time.
 bool wait_unless_stopped(int total_ms, const std::atomic<bool>& stop)
 {
-    for (int remaining = total_ms; remaining > 0; remaining -= BACKOFF_SLICE_MS)
+    for (int remaining = total_ms; remaining > 0; remaining -= kBackoffSliceMs)
     {
         if (stop.load(std::memory_order_relaxed))
         {
             return false;
         }
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(remaining < BACKOFF_SLICE_MS ? remaining : BACKOFF_SLICE_MS));
+        std::this_thread::sleep_for(std::chrono::milliseconds(remaining < kBackoffSliceMs ? remaining : kBackoffSliceMs));
     }
     return !stop.load(std::memory_order_relaxed);
 }
@@ -85,14 +75,14 @@ bool wait_unless_stopped(int total_ms, const std::atomic<bool>& stop)
 struct OpenXRTransport
 {
     OpenXRTransport(const std::string& collection_id, bool wait_for_system)
-        : session(APP_NAME, core::SchemaPusher::get_required_extensions(), wait_for_system),
+        : session(kAppName, core::SchemaPusher::get_required_extensions(), wait_for_system),
           pusher(session.get_handles(),
                  core::SchemaPusherConfig{ .collection_id = collection_id,
-                                           .max_flatbuffer_size = FullBodyPublisher::MAX_FLATBUFFER_SIZE,
+                                           .max_flatbuffer_size = FullBodyPublisher::kMaxFlatbufferSize,
                                            // Must match what FullBodyTracker reads.
                                            .tensor_identifier = "full_body",
                                            .localized_name = "j-mex Full Body",
-                                           .app_name = APP_NAME })
+                                           .app_name = kAppName })
     {
     }
 
@@ -118,11 +108,16 @@ FullBodyPublisher::FullBodyPublisher(const std::string& collection_id, DeviceClo
 {
 }
 
-FullBodyPublisher::FullBodyPublisher(TransportFactory create_transport, DeviceClock device_clock, BackoffWait wait)
-    : create_transport_(std::move(create_transport)),
-      wait_(wait ? std::move(wait) : BackoffWait(wait_unless_stopped)),
-      device_clock_(device_clock)
+FullBodyPublisher::FullBodyPublisher(TransportFactory create_transport, DeviceClock device_clock)
+    : FullBodyPublisher(std::move(create_transport), device_clock, wait_unless_stopped)
 {
+}
+
+FullBodyPublisher::FullBodyPublisher(TransportFactory create_transport, DeviceClock device_clock, BackoffWait wait)
+    : create_transport_(std::move(create_transport)), wait_(std::move(wait)), device_clock_(device_clock)
+{
+    assert(create_transport_);
+    assert(wait_);
     establish_session(/*wait_for_system=*/true);
 }
 
@@ -136,9 +131,9 @@ void FullBodyPublisher::establish_session(bool wait_for_system)
 
 bool FullBodyPublisher::recover_session(const std::atomic<bool>& stop)
 {
-    for (int attempt = 0; attempt < SESSION_RECOVERY_ATTEMPTS; ++attempt)
+    for (int attempt = 0; attempt < kSessionRecoveryAttempts; ++attempt)
     {
-        if (!wait_(SESSION_BACKOFF_MS[attempt], stop))
+        if (!wait_(kSessionBackoffMs[attempt], stop))
         {
             return false;
         }
@@ -152,12 +147,11 @@ bool FullBodyPublisher::recover_session(const std::atomic<bool>& stop)
         }
         catch (const std::exception& e)
         {
-            // Expected while the runtime is down, so only the first and last attempts are
-            // reported rather than every one.
-            if (attempt == 0 || attempt == SESSION_RECOVERY_ATTEMPTS - 1)
+            // Expected while the runtime is down, so only the first and last attempts are reported.
+            if (attempt == 0 || attempt == kSessionRecoveryAttempts - 1)
             {
                 logger().warn(
-                    "session re-establish attempt {}/{} failed: {}", attempt + 1, SESSION_RECOVERY_ATTEMPTS, e.what());
+                    "session re-establish attempt {}/{} failed: {}", attempt + 1, kSessionRecoveryAttempts, e.what());
             }
         }
     }
@@ -168,30 +162,19 @@ bool FullBodyPublisher::recover_session(const std::atomic<bool>& stop)
 
 bool FullBodyPublisher::publish(const FullBodyFrame& frame, const std::atomic<bool>& stop)
 {
-    // Empty only after a recovery that gave up with a stop already pending, when the caller's loop
-    // is about to leave on the same flag.
-    if (!push_buffer_)
-    {
-        return false;
-    }
+    // Always set here: a failed recovery throws or returns with stop set, and the caller stops on either.
+    assert(push_buffer_);
 
     const int64_t sample_time_ns = core::os_monotonic_now_ns();
 
-    flatbuffers::FlatBufferBuilder builder(MAX_FLATBUFFER_SIZE);
+    flatbuffers::FlatBufferBuilder builder(kMaxFlatbufferSize);
     builder.Finish(core::CreateFullBodyPose(builder, &frame.joints, frame.all_joint_poses_tracked));
 
-    if (builder.GetSize() > MAX_FLATBUFFER_SIZE)
-    {
-        logger().warn(
-            "serialized FullBodyPose is {} bytes, over the {}-byte budget shared with the consumer's "
-            "FullBodyTracker. Sample dropped.",
-            builder.GetSize(), MAX_FLATBUFFER_SIZE);
-        return false;
-    }
+    // FullBodyPose has a fixed size (full_body.fbs).
+    assert(builder.GetSize() <= kMaxFlatbufferSize);
 
     // push_buffer throws when the push fails, and a restarted CloudXR runtime arrives as exactly
-    // that rather than as anything session-shaped. Not rate limited: every failure costs a backoff
-    // before anything is retried, so this cannot produce more than a line or two a second.
+    // that rather than as anything session-shaped.
     try
     {
         push_buffer_(builder.GetBufferPointer(), builder.GetSize(), sample_time_ns,
@@ -210,12 +193,11 @@ bool FullBodyPublisher::publish(const FullBodyFrame& frame, const std::atomic<bo
             {
                 return false; // stopping anyway; main's loop exits on the same flag
             }
-            throw std::runtime_error("OpenXR session unrecoverable after " + std::to_string(SESSION_RECOVERY_ATTEMPTS) +
-                                     " attempts over " + std::to_string(backoff_budget_ms() / 1000) +
+            throw std::runtime_error("OpenXR session unrecoverable after " + std::to_string(kSessionRecoveryAttempts) +
+                                     " attempts over " + std::to_string(kBackoffBudgetMs / 1000) +
                                      " s -- restart the CloudXR runtime, then restart this plugin");
         }
-        // Recovered. This frame's pose is stale by a backoff now, so it is not re-pushed; the next
-        // one Player delivers goes out on the new session.
+        // Recovered.
         return false;
     }
 }

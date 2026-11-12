@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The operator's status bar: what the take is doing, what the task is, how many are saved, how the last one went,
  * and whether every device and camera is healthy. Read-only -- the recording controls themselves stay in

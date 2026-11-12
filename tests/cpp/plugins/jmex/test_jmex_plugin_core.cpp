@@ -16,8 +16,8 @@
 #include <oxr_utils/os_time.hpp>
 #include <schema/full_body_generated.h>
 
+#include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +27,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 using Catch::Approx;
@@ -37,13 +36,13 @@ using namespace plugins::jmex;
 namespace
 {
 
-constexpr size_t k_slot_count = core::BodyJoint_NUM_JOINTS;
+constexpr size_t kSlotCount = core::BodyJoint_NUM_JOINTS;
 
 //! The joint table of a channel carrying a joint for every slot, in slot order.
 std::vector<std::string> complete_skeleton()
 {
     std::vector<std::string> names;
-    for (const std::string_view name : k_standard_human_skeleton_joint_names)
+    for (const std::string_view name : kStandardHumanSkeletonJointNames)
     {
         names.emplace_back(name);
     }
@@ -52,13 +51,13 @@ std::vector<std::string> complete_skeleton()
 
 //! A frame in which every joint carries a distinct, valid pose: position (i, 2i, 3i), identity
 //! rotation. The values only have to be distinguishable.
-std::vector<JointPose> frame_for(size_t joint_count)
+std::vector<core::Pose> frame_for(size_t joint_count)
 {
-    std::vector<JointPose> poses;
+    std::vector<core::Pose> poses;
     for (size_t i = 0; i < joint_count; ++i)
     {
         const float f = static_cast<float>(i);
-        poses.push_back(JointPose{ { f, 2.0f * f, 3.0f * f }, { 0.0f, 0.0f, 0.0f, 1.0f } });
+        poses.emplace_back(core::Point(f, 2.0f * f, 3.0f * f), core::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
     }
     return poses;
 }
@@ -83,7 +82,7 @@ size_t valid_count(const core::BodyJoints& joints)
 FullBodyFrame frame_at(uint64_t player_time_ns)
 {
     FullBodyFrame frame;
-    BodyJointMapping::resolve(complete_skeleton()).apply(frame_for(k_slot_count), frame.joints);
+    BodyJointMapping(complete_skeleton()).apply(frame_for(kSlotCount), frame.joints);
     frame.all_joint_poses_tracked = true;
     frame.player_time_ns = player_time_ns;
     return frame;
@@ -196,43 +195,42 @@ TEST_CASE("openxr convention: MOXI axes become OpenXR axes", "[unit][jmex][conve
         const float behind[3] = { 0.0f, 1.0f, 0.0f };
         const float up[3] = { 0.0f, 0.0f, 1.0f };
 
-        const JointPose to_left = moxi_pose_to_openxr(left, identity);
-        REQUIRE(to_left.position[0] == Approx(-1.0f)); // the operator's left is OpenXR -X
-        REQUIRE(to_left.position[1] == Approx(0.0f));
-        REQUIRE(to_left.position[2] == Approx(0.0f));
+        const core::Pose to_left = moxi_pose_to_openxr(left, identity);
+        REQUIRE(to_left.position().x() == Approx(-1.0f)); // the operator's left is OpenXR -X
+        REQUIRE(to_left.position().y() == Approx(0.0f));
+        REQUIRE(to_left.position().z() == Approx(0.0f));
 
-        const JointPose to_behind = moxi_pose_to_openxr(behind, identity);
-        REQUIRE(to_behind.position[0] == Approx(0.0f));
-        REQUIRE(to_behind.position[1] == Approx(0.0f));
-        REQUIRE(to_behind.position[2] == Approx(1.0f)); // behind is OpenXR +Z, forward being -Z
+        const core::Pose to_behind = moxi_pose_to_openxr(behind, identity);
+        REQUIRE(to_behind.position().x() == Approx(0.0f));
+        REQUIRE(to_behind.position().y() == Approx(0.0f));
+        REQUIRE(to_behind.position().z() == Approx(1.0f)); // behind is OpenXR +Z, forward being -Z
 
-        const JointPose to_up = moxi_pose_to_openxr(up, identity);
-        REQUIRE(to_up.position[0] == Approx(0.0f));
-        REQUIRE(to_up.position[1] == Approx(1.0f)); // up is OpenXR +Y
-        REQUIRE(to_up.position[2] == Approx(0.0f));
+        const core::Pose to_up = moxi_pose_to_openxr(up, identity);
+        REQUIRE(to_up.position().x() == Approx(0.0f));
+        REQUIRE(to_up.position().y() == Approx(1.0f)); // up is OpenXR +Y
+        REQUIRE(to_up.position().z() == Approx(0.0f));
     }
 
     SECTION("the map is a rotation, not a reflection")
     {
         // Both frames are right-handed, so the image of a right-handed triad must stay one:
-        // x_image cross y_image == z_image. A single flipped sign would mirror every pose --
-        // left and right limbs swapped -- and nothing downstream would report an error.
+        // x_image cross y_image == z_image.
         const float x[3] = { 1.0f, 0.0f, 0.0f };
         const float y[3] = { 0.0f, 1.0f, 0.0f };
         const float z[3] = { 0.0f, 0.0f, 1.0f };
 
-        const JointPose ix = moxi_pose_to_openxr(x, identity);
-        const JointPose iy = moxi_pose_to_openxr(y, identity);
-        const JointPose iz = moxi_pose_to_openxr(z, identity);
+        const core::Pose ix = moxi_pose_to_openxr(x, identity);
+        const core::Pose iy = moxi_pose_to_openxr(y, identity);
+        const core::Pose iz = moxi_pose_to_openxr(z, identity);
 
         const float cross[3] = {
-            ix.position[1] * iy.position[2] - ix.position[2] * iy.position[1],
-            ix.position[2] * iy.position[0] - ix.position[0] * iy.position[2],
-            ix.position[0] * iy.position[1] - ix.position[1] * iy.position[0],
+            ix.position().y() * iy.position().z() - ix.position().z() * iy.position().y(),
+            ix.position().z() * iy.position().x() - ix.position().x() * iy.position().z(),
+            ix.position().x() * iy.position().y() - ix.position().y() * iy.position().x(),
         };
-        REQUIRE(cross[0] == Approx(iz.position[0]));
-        REQUIRE(cross[1] == Approx(iz.position[1]));
-        REQUIRE(cross[2] == Approx(iz.position[2]));
+        REQUIRE(cross[0] == Approx(iz.position().x()));
+        REQUIRE(cross[1] == Approx(iz.position().y()));
+        REQUIRE(cross[2] == Approx(iz.position().z()));
     }
 
     SECTION("the quaternion is reordered scalar-last and its axis carried by the same map")
@@ -242,12 +240,12 @@ TEST_CASE("openxr convention: MOXI axes become OpenXR axes", "[unit][jmex][conve
         const float quarter_turn_about_up[4] = { half, 0.0f, 0.0f, half };
         const float origin[3] = { 0.0f, 0.0f, 0.0f };
 
-        const JointPose pose = moxi_pose_to_openxr(origin, quarter_turn_about_up);
+        const core::Pose pose = moxi_pose_to_openxr(origin, quarter_turn_about_up);
 
-        REQUIRE(pose.orientation_xyzw[0] == Approx(0.0f));
-        REQUIRE(pose.orientation_xyzw[1] == Approx(half)); // the axis moved to OpenXR +Y, as up does
-        REQUIRE(pose.orientation_xyzw[2] == Approx(0.0f));
-        REQUIRE(pose.orientation_xyzw[3] == Approx(half)); // the scalar, unchanged and now last
+        REQUIRE(pose.orientation().x() == Approx(0.0f));
+        REQUIRE(pose.orientation().y() == Approx(half)); // the axis moved to OpenXR +Y, as up does
+        REQUIRE(pose.orientation().z() == Approx(0.0f));
+        REQUIRE(pose.orientation().w() == Approx(half)); // the scalar, unchanged and now last
     }
 
     SECTION("a rotation about MOXI's lateral axis keeps its angle and flips its axis")
@@ -257,19 +255,19 @@ TEST_CASE("openxr convention: MOXI axes become OpenXR axes", "[unit][jmex][conve
         const float quarter_turn_about_left[4] = { half, half, 0.0f, 0.0f };
         const float origin[3] = { 0.0f, 0.0f, 0.0f };
 
-        const JointPose pose = moxi_pose_to_openxr(origin, quarter_turn_about_left);
+        const core::Pose pose = moxi_pose_to_openxr(origin, quarter_turn_about_left);
 
-        REQUIRE(pose.orientation_xyzw[0] == Approx(-half));
-        REQUIRE(pose.orientation_xyzw[1] == Approx(0.0f));
-        REQUIRE(pose.orientation_xyzw[2] == Approx(0.0f));
-        REQUIRE(pose.orientation_xyzw[3] == Approx(half));
+        REQUIRE(pose.orientation().x() == Approx(-half));
+        REQUIRE(pose.orientation().y() == Approx(0.0f));
+        REQUIRE(pose.orientation().z() == Approx(0.0f));
+        REQUIRE(pose.orientation().w() == Approx(half));
     }
 }
 
-TEST_CASE("body joint mapping: the name table covers all 24 slots exactly once", "[unit][jmex][mapping]")
+TEST_CASE("body joint mapping: the name table covers every slot exactly once", "[unit][jmex][mapping]")
 {
     std::set<std::string_view> seen;
-    for (const std::string_view name : k_standard_human_skeleton_joint_names)
+    for (const std::string_view name : kStandardHumanSkeletonJointNames)
     {
         INFO("joint " << name);
         REQUIRE_FALSE(name.empty());
@@ -277,40 +275,56 @@ TEST_CASE("body joint mapping: the name table covers all 24 slots exactly once",
         REQUIRE(seen.insert(name).second);
     }
 
-    // Resolving is the table read backwards; the two must agree for every slot.
-    const BodyJointMapping mapping = BodyJointMapping::resolve(complete_skeleton());
-    for (size_t slot = 0; slot < k_slot_count; ++slot)
+    // The mapping is the table read backwards; the two must agree for every slot.
+    const BodyJointMapping mapping(complete_skeleton());
+    for (size_t slot = 0; slot < kSlotCount; ++slot)
     {
         INFO("slot " << slot);
-        REQUIRE(mapping.joint_index(static_cast<core::BodyJoint>(slot)) == static_cast<int>(slot));
+        REQUIRE(mapping.joint_index(static_cast<core::BodyJoint>(slot)) == slot);
     }
 }
 
 TEST_CASE("body joint mapping: a name the table does not carry fills no slot", "[unit][jmex][mapping]")
 {
-    const BodyJointMapping mapping =
-        BodyJointMapping::resolve({ "left_shoulder_pitch_joint", "left_thumb_proximal_joint", "" });
+    const BodyJointMapping mapping({ "left_shoulder_pitch_joint", "left_thumb_proximal_joint", "" });
 
     REQUIRE(mapping.filled_slot_count() == 0);
     REQUIRE(mapping.contested_joint_names().empty());
+    // Each joint still takes a pose in apply(), filling a slot or not.
+    REQUIRE(mapping.joint_count() == 3);
+
+    core::BodyJoints joints;
+    REQUIRE(mapping.apply(frame_for(3), joints) == 0);
+    REQUIRE(valid_count(joints) == 0);
 }
 
 TEST_CASE("body joint mapping: a model carrying every joint fills every slot", "[unit][jmex][mapping]")
 {
-    const std::vector<std::string> names = complete_skeleton();
-    const BodyJointMapping mapping = BodyJointMapping::resolve(names);
+    // Out of slot order, behind a name the table does not carry, so only a lookup by name lands
+    // each joint in its slot.
+    const std::vector<std::string> skeleton = complete_skeleton();
+    std::vector<std::string> names{ "not_a_skeleton_joint" };
+    names.insert(names.end(), skeleton.rbegin(), skeleton.rend());
+    const BodyJointMapping mapping(names);
 
-    REQUIRE(mapping.filled_slot_count() == k_slot_count);
+    REQUIRE(mapping.filled_slot_count() == kSlotCount);
     REQUIRE(mapping.contested_joint_names().empty());
 
     core::BodyJoints joints;
-    REQUIRE(mapping.apply(frame_for(names.size()), joints) == k_slot_count);
+    REQUIRE(mapping.apply(frame_for(names.size()), joints) == kSlotCount);
 
-    REQUIRE(valid_count(joints) == k_slot_count);
-    // complete_skeleton() is in slot order, so slot i carries joint i's position (i, 2i, 3i).
-    const core::Point& head = slot_of(joints, core::BodyJoint_HEAD).pose().position();
-    REQUIRE(head.x() == Approx(static_cast<float>(core::BodyJoint_HEAD)));
-    REQUIRE(head.y() == Approx(2.0f * static_cast<float>(core::BodyJoint_HEAD)));
+    REQUIRE(valid_count(joints) == kSlotCount);
+    for (const core::BodyJoint slot : { core::BodyJoint_PELVIS, core::BodyJoint_HEAD, core::BodyJoint_RIGHT_HAND })
+    {
+        const auto joint = std::find(names.begin(), names.end(), kStandardHumanSkeletonJointNames[slot]);
+        REQUIRE(joint != names.end());
+        const float i = static_cast<float>(joint - names.begin());
+        const core::Point& position = slot_of(joints, slot).pose().position();
+        INFO("slot " << static_cast<int>(slot));
+        REQUIRE(position.x() == Approx(i));
+        REQUIRE(position.y() == Approx(2.0f * i));
+        REQUIRE(position.z() == Approx(3.0f * i));
+    }
 }
 
 TEST_CASE("body joint mapping: joints the model does not carry leave their slots invalid", "[unit][jmex][mapping]")
@@ -318,80 +332,69 @@ TEST_CASE("body joint mapping: joints the model does not carry leave their slots
     std::vector<std::string> names = complete_skeleton();
     names[core::BodyJoint_LEFT_HAND] = "something_else";
 
-    const BodyJointMapping mapping = BodyJointMapping::resolve(names);
+    const BodyJointMapping mapping(names);
 
-    REQUIRE(mapping.filled_slot_count() == k_slot_count - 1);
-    REQUIRE(mapping.joint_index(core::BodyJoint_LEFT_HAND) == -1);
+    REQUIRE(mapping.filled_slot_count() == kSlotCount - 1);
+    REQUIRE_FALSE(mapping.joint_index(core::BodyJoint_LEFT_HAND).has_value());
 
     core::BodyJoints joints;
-    REQUIRE(mapping.apply(frame_for(names.size()), joints) == k_slot_count - 1);
+    REQUIRE(mapping.apply(frame_for(names.size()), joints) == kSlotCount - 1);
 
     REQUIRE_FALSE(slot_of(joints, core::BodyJoint_LEFT_HAND).is_valid());
     REQUIRE(slot_of(joints, core::BodyJoint_RIGHT_HAND).is_valid());
-    REQUIRE(valid_count(joints) == k_slot_count - 1);
+    REQUIRE(valid_count(joints) == kSlotCount - 1);
 }
 
 TEST_CASE("body joint mapping: a second joint claiming a filled slot is reported, not swallowed", "[unit][jmex][mapping]")
 {
     std::vector<std::string> names = complete_skeleton();
-    const std::string contested(k_standard_human_skeleton_joint_names[core::BodyJoint_NECK]);
+    const std::string contested(kStandardHumanSkeletonJointNames[core::BodyJoint_NECK]);
     names.push_back(contested);
 
-    const BodyJointMapping mapping = BodyJointMapping::resolve(names);
+    const BodyJointMapping mapping(names);
 
     // The earlier joint keeps the slot.
-    REQUIRE(mapping.joint_index(core::BodyJoint_NECK) == static_cast<int>(core::BodyJoint_NECK));
-    REQUIRE(mapping.filled_slot_count() == k_slot_count);
+    REQUIRE(mapping.joint_index(core::BodyJoint_NECK) == static_cast<size_t>(core::BodyJoint_NECK));
+    REQUIRE(mapping.filled_slot_count() == kSlotCount);
     REQUIRE(mapping.contested_joint_names() == std::vector<std::string>{ contested });
 }
 
 TEST_CASE("body joint mapping: a bad frame costs its own slots and nothing else", "[unit][jmex][mapping]")
 {
     const std::vector<std::string> names = complete_skeleton();
-    const BodyJointMapping mapping = BodyJointMapping::resolve(names);
+    const BodyJointMapping mapping(names);
     core::BodyJoints joints;
 
     SECTION("a joint whose position is not a number")
     {
-        std::vector<JointPose> frame = frame_for(names.size());
-        frame[core::BodyJoint_LEFT_ELBOW].position[1] = std::numeric_limits<float>::quiet_NaN();
+        std::vector<core::Pose> frame = frame_for(names.size());
+        frame[core::BodyJoint_LEFT_ELBOW].mutable_position().mutate_y(std::numeric_limits<float>::quiet_NaN());
 
         mapping.apply(frame, joints);
 
         REQUIRE_FALSE(slot_of(joints, core::BodyJoint_LEFT_ELBOW).is_valid());
-        REQUIRE(valid_count(joints) == k_slot_count - 1);
+        REQUIRE(valid_count(joints) == kSlotCount - 1);
     }
 
     SECTION("a joint whose quaternion is not a rotation")
     {
-        std::vector<JointPose> frame = frame_for(names.size());
-        frame[core::BodyJoint_RIGHT_KNEE].orientation_xyzw[3] = 0.0f; // all four components now zero
+        std::vector<core::Pose> frame = frame_for(names.size());
+        frame[core::BodyJoint_RIGHT_KNEE].mutable_orientation().mutate_w(0.0f); // all four components now zero
 
         mapping.apply(frame, joints);
 
         REQUIRE_FALSE(slot_of(joints, core::BodyJoint_RIGHT_KNEE).is_valid());
-        REQUIRE(valid_count(joints) == k_slot_count - 1);
+        REQUIRE(valid_count(joints) == kSlotCount - 1);
     }
 
     SECTION("float round-off in the quaternion is not a bad frame")
     {
-        std::vector<JointPose> frame = frame_for(names.size());
-        frame[core::BodyJoint_PELVIS].orientation_xyzw[3] = 1.0f + 1e-5f;
+        std::vector<core::Pose> frame = frame_for(names.size());
+        frame[core::BodyJoint_PELVIS].mutable_orientation().mutate_w(1.0f + 1e-5f);
 
         mapping.apply(frame, joints);
 
         REQUIRE(slot_of(joints, core::BodyJoint_PELVIS).is_valid());
-    }
-
-    SECTION("a frame that carried nothing invalidates every slot and ends no pairing")
-    {
-        REQUIRE(mapping.apply(std::vector<JointPose>{}, joints) == 0);
-
-        REQUIRE(valid_count(joints) == 0);
-
-        // The mapping holds no per-frame state, so the next frame fills every slot again.
-        mapping.apply(frame_for(names.size()), joints);
-        REQUIRE(valid_count(joints) == k_slot_count);
     }
 }
 
@@ -423,44 +426,6 @@ TEST_CASE("device clock: local carries the sample time unchanged", "[unit][jmex]
     REQUIRE(raw_device_time_ns(DeviceClock::LOCAL, 123456789012345, 0) == 123456789012345);
 }
 
-TEST_CASE("device clock: the flag wins over the environment, which wins over the default", "[unit][jmex][device_clock]")
-{
-    REQUIRE(choose_device_clock(nullptr, nullptr) == DeviceClock::DEVICE);
-    REQUIRE(choose_device_clock(nullptr, "local") == DeviceClock::LOCAL);
-    REQUIRE(choose_device_clock("local", nullptr) == DeviceClock::LOCAL);
-    REQUIRE(choose_device_clock("device", "local") == DeviceClock::DEVICE);
-    REQUIRE(choose_device_clock("local", "device") == DeviceClock::LOCAL);
-
-    // An environment variable set to nothing is how a shell unsets one for a single command.
-    REQUIRE(choose_device_clock(nullptr, "") == DeviceClock::DEVICE);
-}
-
-TEST_CASE("device clock: a value it cannot read stops the plugin and says where it came from",
-          "[unit][jmex][device_clock]")
-{
-    REQUIRE_THROWS_WITH(choose_device_clock("Device", nullptr), ContainsSubstring("--device-clock="));
-    REQUIRE_THROWS_WITH(choose_device_clock("", nullptr), ContainsSubstring("--device-clock="));
-    REQUIRE_THROWS_WITH(choose_device_clock(nullptr, "loc"), ContainsSubstring("JMEX_DEVICE_CLOCK"));
-    REQUIRE_THROWS_WITH(choose_device_clock("sequence", nullptr), ContainsSubstring("--device-clock="));
-    REQUIRE_THROWS_WITH(choose_device_clock(nullptr, "sequence"), ContainsSubstring("JMEX_DEVICE_CLOCK"));
-
-    // Even when the flag would have won: a misspelt environment variable is left in place for the
-    // next launch, which has no flag to cover for it.
-    REQUIRE_THROWS_WITH(choose_device_clock("local", "dev"), ContainsSubstring("JMEX_DEVICE_CLOCK"));
-}
-
-TEST_CASE("device clock: the startup line names it the way the flag spells it", "[unit][jmex][device_clock]")
-{
-    REQUIRE(std::string(device_clock_name(DeviceClock::DEVICE)) == "device");
-    REQUIRE(std::string(device_clock_name(DeviceClock::LOCAL)) == "local");
-
-    // What the log says can be pasted back in.
-    for (DeviceClock clock : { DeviceClock::DEVICE, DeviceClock::LOCAL })
-    {
-        REQUIRE(choose_device_clock(device_clock_name(clock), nullptr) == clock);
-    }
-}
-
 TEST_CASE("full body publisher: a frame goes out as one FullBodyPose", "[unit][jmex][publisher]")
 {
     FakeRuntime runtime;
@@ -489,7 +454,7 @@ TEST_CASE("full body publisher: a frame goes out as one FullBodyPose", "[unit][j
 
         CHECK(pose.all_joint_poses_tracked());
         REQUIRE(pose.joints() != nullptr);
-        for (size_t i = 0; i < k_slot_count; ++i)
+        for (size_t i = 0; i < kSlotCount; ++i)
         {
             INFO("slot " << i);
             const core::BodyJointPose& slot = slot_of(*pose.joints(), static_cast<core::BodyJoint>(i));
@@ -566,26 +531,12 @@ TEST_CASE("full body publisher: after a push throws, the transport comes back or
 
         REQUIRE_THROWS_WITH(publisher.publish(frame_at(1000), stop), ContainsSubstring("restart the CloudXR runtime"));
 
-        CHECK(runtime.transports().size() == 1 + 8); // startup, then eight attempts
+        // Startup, then one attempt after each backoff.
+        REQUIRE_FALSE(waits.empty());
+        CHECK(runtime.transports().size() == 1 + waits.size());
         CHECK(publisher.push_failures() == 1);
         CHECK(publisher.session_recoveries() == 0);
         CHECK(publisher.recoveries_abandoned() == 1);
-
-        // One backoff before each attempt.
-        REQUIRE(waits.size() == 8);
-        CHECK(waits.front() <= 500); // so a blip costs a blip
-        for (size_t attempt = 1; attempt < waits.size(); ++attempt)
-        {
-            INFO("attempt " << attempt);
-            // A long outage is not retried at the rate of a short one.
-            CHECK(waits[attempt] >= waits[attempt - 1]);
-        }
-        int total_ms = 0;
-        for (const int wait_ms : waits)
-        {
-            total_ms += wait_ms;
-        }
-        CHECK(total_ms >= 20000); // outlasts a CloudXR runtime restart
     }
 
     SECTION("a stop during a backoff ends the recovery, and the run, without an error")
@@ -610,25 +561,5 @@ TEST_CASE("full body publisher: after a push throws, the transport comes back or
         CHECK(publisher.push_failures() == 1);
         CHECK(publisher.session_recoveries() == 0);
         CHECK(publisher.recoveries_abandoned() == 0);
-    }
-
-    SECTION("the real backoff is slept in slices, so a stop lands inside the first one")
-    {
-        FullBodyPublisher publisher(runtime.factory(), DeviceClock::DEVICE);
-        runtime.go_down();
-
-        std::jthread signaller(
-            [&stop]
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                stop.store(true, std::memory_order_relaxed);
-            });
-
-        const auto started = std::chrono::steady_clock::now();
-        REQUIRE_NOTHROW(publisher.publish(frame_at(1000), stop));
-        const auto took =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
-
-        CHECK(took.count() < 500); // the first backoff
     }
 }

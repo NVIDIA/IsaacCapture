@@ -8,7 +8,6 @@ listing/download behavior, and the real app's page-serving mount."""
 from __future__ import annotations
 
 import importlib
-import os
 import re
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from egocap_web import recordings as recordings_module
 
 def _reload(monkeypatch, *, enabled: bool) -> object:
     """Re-imports recordings.py with the given env so its module-level
-    ``if _enabled():`` route registration (and ``_FRONTEND_DIST`` mount) is
+    ``if enabled():`` route registration (and ``_FRONTEND_DIST`` mount) is
     re-evaluated -- the routes only exist on the module at import time, so a
     live env var change alone wouldn't affect an already-imported module."""
     monkeypatch.setenv("EGOCAP_RECORDINGS_ENABLED", "1" if enabled else "0")
@@ -95,8 +94,14 @@ def test_listing_shape_dirs_first_ordering_and_no_store_header(monkeypatch, tmp_
 
 def test_a_file_with_a_name_that_is_not_valid_utf8_does_not_break_the_listing(monkeypatch, tmp_path):
     (tmp_path / "ok.mp4").write_bytes(b"x")
-    with open(os.path.join(os.fsencode(tmp_path), b"bad\xff.mp4"), "wb") as handle:
-        handle.write(b"x")
+    original_iterdir = Path.iterdir
+
+    # macOS refuses these filenames on disk; the directory entry still exercises the filter.
+    def entries(path):
+        found = list(original_iterdir(path))
+        return iter([*found, path / "bad\udcff.mp4"] if path == tmp_path else found)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
     client = _client(monkeypatch, enabled=True, root=tmp_path)
     response = client.get("/recordings/api/list")
     assert response.status_code == 200
@@ -231,3 +236,18 @@ def test_the_real_application_serves_the_recordings_page_despite_the_router_moun
         monkeypatch.delenv("EGOCAP_RECORDINGS_ENABLED", raising=False)
         importlib.reload(recordings_module)
         importlib.reload(app_module)
+
+
+def test_default_settings_and_imported_catalogs_are_hidden_from_the_recordings_browser(monkeypatch, tmp_path):
+    from egocap_web.operator_settings import OperatorSettings, OperatorSettingsStore, operator_settings_path
+    from egocap_web.task_files import import_task_file
+
+    monkeypatch.delenv("EGOCAP_OPERATOR_SETTINGS_FILE", raising=False)
+    store = OperatorSettingsStore(operator_settings_path(tmp_path))
+    store.save(OperatorSettings(camera_type="oak_d"))
+    import_task_file(store.path.parent / "taskfiles", "Tasks.csv", b"Task Name,Task Description\nfold,Fold\n")
+    client = _client(monkeypatch, enabled=True, root=tmp_path)
+    assert client.get("/recordings/api/list").json()["entries"] == []
+    assert client.get("/recordings/api/list", params={"path": ".egocap"}).status_code == 404
+    for path in (".egocap/operator_settings.json", ".egocap/taskfiles/Tasks.csv"):
+        assert client.get(f"/recordings/files/{path}").status_code == 404

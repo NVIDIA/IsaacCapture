@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 j-mex. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# The j-mex G1 retargeting example's Python tests. They need only the staged isaaccapture
-# package -- no Isaac Sim, no Isaac Lab, no device.
+# The j-mex G1 retargeting example's Python tests; examples/jmex/README.md says what they need.
 
 file(GLOB TEST_FILES
     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"

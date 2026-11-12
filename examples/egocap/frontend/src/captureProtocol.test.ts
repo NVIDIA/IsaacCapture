@@ -10,6 +10,7 @@ import {
   PREVIEW_VERSION,
   SNAPSHOT_TYPE,
   parseBinaryHeader,
+  liveKitStreams,
   parseSnapshot,
 } from "./captureProtocol";
 
@@ -62,6 +63,74 @@ function cameraStreamJson(overrides: Record<string, unknown> = {}): Record<strin
 function startedWith(streams: unknown[]): Record<string, unknown> {
   return { session_id: "s1", running: false, mode: 0, streams };
 }
+
+const LIVEKIT_STREAM = {
+  kind: 3,
+  stream_id: 16,
+  name: "Head left",
+  url: "wss://lk",
+  room: "r",
+  publisher: "orin",
+  track: "left",
+  timestamp_basis: 1,
+  width: 2560,
+  height: 1984,
+  fps: 30,
+};
+
+function snapshotWithStarted(started: Record<string, unknown>): Record<string, unknown> {
+  return validSnapshot({
+    capture: { connecting: false, started, status: null, stopped: null, error_message: null, binary_generation: null },
+  });
+}
+
+describe("parseSnapshot LiveKit camera streams", () => {
+  it("parses a kind-3 entry in streams into a livekit_camera descriptor", () => {
+    const parsed = parseSnapshot(snapshotWithStarted(startedWith([trackingStreamJson(), LIVEKIT_STREAM])));
+    expect(parsed.started?.streams[1]).toEqual({
+      kind: "livekit_camera",
+      stream_id: 16,
+      name: "Head left",
+      url: "wss://lk",
+      room: "r",
+      publisher: "orin",
+      track: "left",
+    });
+  });
+
+  it("liveKitStreams returns only the LiveKit entries, in order", () => {
+    const parsed = parseSnapshot(
+      snapshotWithStarted(
+        startedWith([trackingStreamJson(), cameraStreamJson(), LIVEKIT_STREAM, { ...LIVEKIT_STREAM, stream_id: 17, name: "Head right", track: "right" }]),
+      ),
+    );
+    expect(liveKitStreams(parsed.started).map((s) => s.name)).toEqual(["Head left", "Head right"]);
+  });
+
+  it("liveKitStreams is empty when there is no session or no LiveKit entry", () => {
+    expect(liveKitStreams(null)).toEqual([]);
+    expect(liveKitStreams(undefined)).toEqual([]);
+    const parsed = parseSnapshot(snapshotWithStarted(startedWith([cameraStreamJson()])));
+    expect(liveKitStreams(parsed.started)).toEqual([]);
+  });
+
+  it.each([
+    ["a missing url", { ...LIVEKIT_STREAM, url: undefined }],
+    ["a missing publisher", { ...LIVEKIT_STREAM, publisher: undefined }],
+    ["a numeric track", { ...LIVEKIT_STREAM, track: 3 }],
+    ["a numeric name", { ...LIVEKIT_STREAM, name: 3 }],
+    ["a non-numeric stream_id", { ...LIVEKIT_STREAM, stream_id: "16" }],
+    ["a zero stream_id", { ...LIVEKIT_STREAM, stream_id: 0 }],
+  ])("rejects %s", (_label, entry) => {
+    expect(() => parseSnapshot(snapshotWithStarted(startedWith([entry])))).toThrow(CapturePreviewParseError);
+  });
+
+  it("still rejects an unknown stream kind", () => {
+    expect(() => parseSnapshot(snapshotWithStarted(startedWith([{ ...LIVEKIT_STREAM, kind: 4 }])))).toThrow(
+      CapturePreviewParseError,
+    );
+  });
+});
 
 describe("parseSnapshot", () => {
   it("accepts a minimal well-formed snapshot", () => {

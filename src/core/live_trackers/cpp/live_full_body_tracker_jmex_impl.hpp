@@ -24,7 +24,7 @@ namespace core
 using FullBodyMcapChannels = McapTrackerChannels<FullBodyPoseRecord>;
 using FullBodyJmexSchemaTracker = SchemaTracker<FullBodyPoseRecord, FullBodyPose>;
 
-// Live full-body impl for the "body.jmex" vendor: the j-mex plugin resolves the 24 slots from the
+// Live full-body impl for the "body.jmex" vendor: the j-mex plugin resolves every slot from the
 // standard human skeleton MOXI Player has loaded and pushes them on a tensor collection, already
 // in OpenXR axes, so this side only reads.
 class LiveFullBodyTrackerJmexImpl : public IFullBodyTrackerImpl

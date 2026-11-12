@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Component-level tests for RecordingPanel: the honest no-backend default
  * (never a fabricated success state), buttons/shortcuts sharing the same
@@ -794,5 +798,23 @@ describe("RecordingPanel", () => {
 
     expect(setOperatorToken).not.toHaveBeenCalled();
     expect((screen.getByLabelText("Operator") as HTMLInputElement).value).toBe("");
+  });
+});
+
+describe("Settings owns recording shortcuts", () => {
+  it.each(["IDLE", "RECORDING"] as const)("blocks commands with %s behind the modal, then restores shortcuts", (episodePhase) => {
+    const command = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    const actions = { onSetTask: command, onStartEpisode: command, onStopEpisode: command, onDiscardEpisode: command, onNewBatch: command };
+    const recordingSnapshot = activeSnapshot({ episodePhase, currentEpisodeId: episodePhase === "RECORDING" ? "e1" : null });
+    const { rerender } = render(<><button>Settings tab</button><RecordingPanel {...defaultOperatorProps} recordingSnapshot={recordingSnapshot} actions={actions} interactionBlocked /></>);
+    screen.getByRole("button", { name: "Settings tab" }).focus();
+    for (const key of ["s", "w", "a", "r", "t"]) fireEvent.keyDown(window, { key });
+    (document.activeElement as HTMLElement).blur();
+    for (const key of ["s", "w", "a", "r", "t"]) fireEvent.keyDown(window, { key });
+    expect(command).not.toHaveBeenCalled();
+    expect(document.querySelector(".recording-task-editor-input")).toBeNull();
+    rerender(<RecordingPanel {...defaultOperatorProps} recordingSnapshot={recordingSnapshot} actions={actions} interactionBlocked={false} />);
+    fireEvent.keyDown(window, { key: episodePhase === "RECORDING" ? "w" : "s" });
+    expect(command).toHaveBeenCalledTimes(1);
   });
 });

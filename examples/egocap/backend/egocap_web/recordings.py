@@ -46,7 +46,7 @@ def _hidden(name: str) -> bool:
     return name.startswith(".") or name.endswith(".pending")
 
 
-def _enabled() -> bool:
+def enabled() -> bool:
     """Whether the whole feature is turned on -- see the module docstring's
     off-by-default rationale."""
     return os.environ.get("EGOCAP_RECORDINGS_ENABLED", "").lower() in ("1", "true", "yes")
@@ -98,7 +98,7 @@ def _hidden_path(base: Path, target: Path) -> bool:
 _NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 
-if _enabled():
+if enabled():
 
     @router.get("/recordings/api/list", response_model=None)
     @router.get("/recordings/api/list/{path:path}", response_model=None)

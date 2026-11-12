@@ -9,7 +9,8 @@ add_executable(jmex_plugin
 
 target_link_libraries(jmex_plugin
     PRIVATE
-        isaac::jmex_plugin_core
+        jmex::jmex_plugin_core
+        # Static (libmoxi_receiver.a): the installed executable loads no shared library from the SDK.
         Moxi::Receiver
         log_bridge::log_bridge_core
 )

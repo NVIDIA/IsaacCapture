@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 :root {
   --canvas: #0b1018;
   --surface: #121a26;
@@ -86,6 +89,403 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+.settings-button {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-chip);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-button:hover {
+  border-color: var(--accent);
+}
+
+.settings-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Settings dialog: a tabbed modal over the page; the page underneath stays as it was ----------------------- */
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+}
+
+.settings-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(920px, 96vw);
+  height: min(680px, 92vh);
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  z-index: 41;
+}
+
+.settings-nav {
+  flex: none;
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-3);
+  background: var(--canvas);
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav h2 {
+  margin: 0 var(--space-3) var(--space-4);
+  font-size: 16px;
+}
+
+.settings-tab {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  color: var(--text-main);
+  background: var(--surface);
+}
+
+.settings-tab--on {
+  color: var(--text-main);
+  background: var(--surface-raised);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.settings-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-content-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-content-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.settings-card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.settings-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings-lead {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.settings-note {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-note--hint {
+  color: var(--accent);
+}
+
+/* Long paths and URLs wrap inside the value column instead of widening the dialog. */
+.settings-modal .kv-list dd {
+  max-width: 62%;
+  overflow-wrap: anywhere;
+}
+
+.settings-shortcuts kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  font-size: 12px;
+}
+
+.settings-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-choice--on {
+  border-color: var(--accent);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.settings-actions .settings-note {
+  margin: 0;
+}
+
+.settings-primary,
+.settings-quiet {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+  font-weight: 600;
+}
+
+.settings-quiet {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-main);
+}
+
+.settings-primary:disabled,
+.settings-quiet:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-primary:focus-visible,
+.settings-quiet:focus-visible,
+.settings-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-input {
+  height: 32px;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.settings-import-row .settings-input {
+  flex: 1 1 260px;
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  font-size: 13px;
+}
+
+.settings-list-item--on {
+  border-color: var(--accent);
+}
+
+.settings-list-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  cursor: pointer;
+}
+
+.settings-list-main--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  cursor: default;
+}
+
+.settings-list-main--stacked .settings-note {
+  margin: 0;
+}
+
+.settings-list-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.settings-badge {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.settings-badge--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-roles {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.settings-roles label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.settings-ready {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--canvas);
+  font-size: 13px;
+}
+
+.settings-ready-item--ok {
+  color: var(--text-main);
+}
+
+.settings-ready-item--todo {
+  color: var(--text-secondary);
+}
+
+/* The role a camera fills, shown in the tile caption beside its name. */
+.camera-role {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .settings-modal {
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    border-radius: 0;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-3);
+  }
+
+  .settings-nav h2 {
+    flex-basis: 100%;
+    margin-bottom: var(--space-2);
+  }
 }
 
 .mode-badge {
@@ -892,6 +1292,18 @@ below for the narrow/stacked layout). */
   font: inherit;
 }
 
+.recording-task-editor-select {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
 .recording-task-editor-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -1517,6 +1929,21 @@ below for the narrow/stacked layout). */
   grid-row: 1 / -1;
 }
 
+/* Several head cameras share the main area in equal columns; other cameras stack smaller in the last column. */
+.op-stage .camera-grid-items--heads {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 2fr)) minmax(0, 1fr);
+  grid-template-rows: repeat(var(--side-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads-only {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads .camera-tile--primary {
+  grid-column: auto;
+  grid-row: 1 / -1;
+}
+
 .op-stage .camera-tile {
   display: flex;
   flex-direction: column;
@@ -1905,4 +2332,26 @@ below for the narrow/stacked layout). */
     flex: 1 1 0;
     min-width: 0;
   }
+}
+
+/* Direct LiveKit preview tiles: a <video> sized like the MJPEG <img>, with any status text laid over it. */
+.camera-tile video {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.op-stage .camera-tile video {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.camera-tile video + .camera-placeholder {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  background: rgba(0, 0, 0, 0.6);
 }

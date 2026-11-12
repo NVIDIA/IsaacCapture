@@ -1,30 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 j-mex. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The IO contract of the j-mex G1 action source, on synthetic frames."""
+"""The j-mex G1 retargeter at ``BaseRetargeter.compute``, fed synthetic ``FullBodyInput`` frames."""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from isaaccapture.retargeting_engine.interface import ComputeContext, TensorGroup
-from isaaccapture.schema import BodyJoint, BodyJoints, FullBodyPose
+from isaaccapture.retargeting_engine.interface import (
+    ComputeContext,
+    GraphTime,
+    OptionalTensorGroup,
+    TensorGroup,
+)
+from isaaccapture.retargeting_engine.tensor_types import (
+    FullBodyInput,
+    FullBodyInputIndex,
+)
+from isaaccapture.retargeters import LocomotionFixedRootCmdRetargeterConfig
+from isaaccapture.schema import BodyJoint
 
 from isaaccapture_examples.jmex.jmex_g1_retargeting import (
     ACTION_OUTPUT,
-    FULL_BODY_INPUT,
     POSE_DIM,
-    STANDING_LOCOMOTION_COMMAND,
     FrameTargetCfg,
     G1ActionLayout,
-    JmexG1ActionSource,
+    JmexG1Retargeter,
+    JmexG1Settings,
     PelvisPose,
     arm_frame_targets,
     forearm_frame,
+    g1_locomanipulation_pipeline,
     left_wrist_chain,
     right_wrist_chain,
 )
@@ -114,6 +125,15 @@ _ISAAC_LEFT = -_ISAAC_RIGHT
 _LEANING_FORWARD = _ISAAC_LEFT
 _BENDING_RIGHT = _ISAAC_FORWARD
 _TWISTING_LEFT = _ISAAC_UP
+
+
+@dataclass
+class _Body:
+    """One frame's ``FullBodyInput`` arrays, in the plugin's OpenXR axes."""
+
+    positions: np.ndarray
+    orientations: np.ndarray
+    valid: np.ndarray
 
 
 def _identity_pelvis() -> PelvisPose:
@@ -254,7 +274,7 @@ def _wrist_orientation(
     return Rotation.from_matrix(matrix).as_quat()
 
 
-def _straight_arm_frame(direction_openxr: np.ndarray, **kwargs) -> FullBodyPose:
+def _straight_arm_frame(direction_openxr: np.ndarray, **kwargs) -> _Body:
     """One frame whose two arms run straight out from the shoulder along ``direction_openxr``."""
     return _arm_frame(direction_openxr, direction_openxr, **kwargs)
 
@@ -271,7 +291,7 @@ def _arm_frame(
     pelvis_position_openxr: np.ndarray | None = None,
     shoulder_direction_openxr: np.ndarray = _OPENXR_UP,
     hinge_openxr: np.ndarray | None = None,
-) -> FullBodyPose:
+) -> _Body:
     """One frame whose two arms run along ``upper_arm_openxr``, then ``forearm_openxr``.
 
     The operator faces -Z. The spine runs ``shoulder_direction_openxr`` from the pelvis, each
@@ -293,7 +313,6 @@ def _arm_frame(
     )
     to_shoulder, upper_arm, forearm = human_segments
 
-    joints = BodyJoints()
     positions = np.zeros((int(BodyJoint.NUM_JOINTS), 3), dtype=np.float32)
     orientations = np.zeros((int(BodyJoint.NUM_JOINTS), 4), dtype=np.float32)
     orientations[:, 3] = 1.0
@@ -320,27 +339,28 @@ def _arm_frame(
         orientations[int(wrist_slot)] = _wrist_orientation(
             wrist_slot, arm, hinge_openxr
         )
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[:] = 1
-    return FullBodyPose(joints, True)
+    return _Body(
+        positions=positions,
+        orientations=orientations,
+        valid=np.ones(int(BodyJoint.NUM_JOINTS), dtype=np.uint8),
+    )
 
 
-def _twist_wrists(frame: FullBodyPose, degrees: float) -> FullBodyPose:
+def _twist_wrists(frame: _Body, degrees: float) -> _Body:
     """Turn ``frame``'s two WRIST slots in place about their own forearms, and return it."""
-    positions = np.asarray(frame.joints.positions, dtype=np.float64)
+    positions = np.asarray(frame.positions, dtype=np.float64)
     for _, elbow, wrist in _OPERATOR_ARMS:
         forearm = _unit(positions[int(wrist)] - positions[int(elbow)])
         twisted = Rotation.from_rotvec(
             np.radians(degrees) * forearm
-        ) * Rotation.from_quat(frame.joints.orientations[int(wrist)])
-        frame.joints.orientations[int(wrist)] = twisted.as_quat()
+        ) * Rotation.from_quat(frame.orientations[int(wrist)])
+        frame.orientations[int(wrist)] = twisted.as_quat()
     return frame
 
 
 def _turned(
-    frame: FullBodyPose, degrees: float, *, about_openxr: np.ndarray | None = None
-) -> FullBodyPose:
+    frame: _Body, degrees: float, *, about_openxr: np.ndarray | None = None
+) -> _Body:
     """Turn the whole of ``frame``, hips and all, about the vertical through ``about_openxr``.
 
     Positions go round that line and every slot's orientation turns with them, the way an
@@ -348,20 +368,20 @@ def _turned(
     """
     turn = Rotation.from_rotvec(np.radians(degrees) * _OPENXR_UP)
     about = np.zeros(3) if about_openxr is None else np.asarray(about_openxr)
-    positions = np.asarray(frame.joints.positions, dtype=np.float64)
-    frame.joints.positions[:] = about + turn.apply(positions - about)
-    frame.joints.orientations[:] = (
-        turn * Rotation.from_quat(np.asarray(frame.joints.orientations))
+    positions = np.asarray(frame.positions, dtype=np.float64)
+    frame.positions[:] = about + turn.apply(positions - about)
+    frame.orientations[:] = (
+        turn * Rotation.from_quat(np.asarray(frame.orientations))
     ).as_quat()
     return frame
 
 
 def _tilted(
-    frame: FullBodyPose,
+    frame: _Body,
     turn_isaac: Rotation,
     *,
     slots: tuple[BodyJoint, ...] | None = None,
-) -> FullBodyPose:
+) -> _Body:
     """Turn ``slots`` of ``frame`` -- all of them unless told -- about the operator's pelvis.
 
     ``turn_isaac`` is given in Isaac's axes; positions and orientations turn with it alike.
@@ -369,36 +389,59 @@ def _tilted(
     """
     turn = _in_openxr(turn_isaac)
     indices = [int(slot) for slot in (slots or range(int(BodyJoint.NUM_JOINTS)))]
-    positions = np.asarray(frame.joints.positions, dtype=np.float64)
-    orientations = np.asarray(frame.joints.orientations, dtype=np.float64)
+    positions = np.asarray(frame.positions, dtype=np.float64)
+    orientations = np.asarray(frame.orientations, dtype=np.float64)
     about = positions[int(BodyJoint.PELVIS)].copy()
     positions[indices] = about + turn.apply(positions[indices] - about)
     orientations[indices] = (turn * Rotation.from_quat(orientations[indices])).as_quat()
-    frame.joints.positions[:] = positions
-    frame.joints.orientations[:] = orientations
+    frame.positions[:] = positions
+    frame.orientations[:] = orientations
     return frame
 
 
-def _run(source: JmexG1ActionSource, frame: FullBodyPose | None) -> np.ndarray:
-    group = TensorGroup(source.input_spec()[FULL_BODY_INPUT])
-    group[0] = frame
-    outputs = source({FULL_BODY_INPUT: group}, ComputeContext())
-    return np.asarray(outputs[ACTION_OUTPUT][0])
+def _full_body(frame: _Body | None) -> OptionalTensorGroup:
+    """``frame`` as the retargeter's ``full_body`` input; absent for None."""
+    full_body = OptionalTensorGroup(FullBodyInput())
+    if frame is not None:
+        full_body[FullBodyInputIndex.JOINT_POSITIONS] = frame.positions.copy()
+        full_body[FullBodyInputIndex.JOINT_ORIENTATIONS] = frame.orientations.copy()
+        full_body[FullBodyInputIndex.JOINT_VALID] = frame.valid.copy()
+    return full_body
 
 
-def _target_pose(action: np.ndarray, task_index: int) -> tuple[np.ndarray, np.ndarray]:
+def _context(real_time_ns: int = 0) -> ComputeContext:
+    return ComputeContext(
+        graph_time=GraphTime(sim_time_ns=0, real_time_ns=real_time_ns)
+    )
+
+
+def _run(
+    retargeter: JmexG1Retargeter, frame: _Body | None, real_time_ns: int = 0
+) -> np.ndarray:
+    """One compute step on ``frame``, or on an absent ``full_body`` for None; the frame poses."""
+    poses = JmexG1Retargeter.FRAME_POSES
+    outputs = {poses: TensorGroup(retargeter.output_spec()[poses])}
+    retargeter.compute(
+        {JmexG1Retargeter.FULL_BODY: _full_body(frame)},
+        outputs,
+        _context(real_time_ns),
+    )
+    return np.asarray(outputs[poses][0])
+
+
+def _target_pose(poses: np.ndarray, task_index: int) -> tuple[np.ndarray, np.ndarray]:
     start = task_index * POSE_DIM
-    return action[start : start + 3], action[start + 3 : start + POSE_DIM]
+    return poses[start : start + 3], poses[start + 3 : start + POSE_DIM]
 
 
 def _robot_forearm_axes(
-    action: np.ndarray, task_index: int, layout: G1ActionLayout, *, wxyz: bool = False
+    poses: np.ndarray, task_index: int, layout: G1ActionLayout, *, wxyz: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Where the target puts the robot's forearm and elbow hinge, read from the action.
+    """Where the target puts the robot's forearm and elbow hinge, read from the poses.
 
     ``wxyz`` reads the orientation field scalar-first instead, as an Isaac Lab 2.x copy would.
     """
-    _, quaternion = _target_pose(action, task_index)
+    _, quaternion = _target_pose(poses, task_index)
     if wxyz:
         quaternion = np.roll(quaternion, -1)
     target = Rotation.from_quat(quaternion) * Rotation.from_quat(
@@ -412,12 +455,12 @@ def test_a_straight_arm_reaches_exactly_the_robots_arm_length_from_its_shoulder(
     """Per-segment reconstruction: the operator's angles, the robot's lengths."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
+    poses = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD))
 
     for task_index, shoulder in enumerate(_robot_shoulders_in_world(pelvis)):
-        position, _ = _target_pose(action, task_index)
+        position, _ = _target_pose(poses, task_index)
         reach = np.linalg.norm(position - shoulder)
         assert reach == pytest.approx(sum(_ROBOT_SEGMENTS), abs=1e-5)
 
@@ -426,10 +469,10 @@ def test_the_arm_hangs_from_the_robots_own_shoulder_never_from_the_operators():
     """The torso lies straight ahead, so the operator's shoulder is nowhere near the robot's."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(
-        source,
+    poses = _run(
+        retargeter,
         _straight_arm_frame(_OPENXR_FORWARD, shoulder_direction_openxr=_OPENXR_FORWARD),
     )
 
@@ -437,8 +480,8 @@ def test_the_arm_hangs_from_the_robots_own_shoulder_never_from_the_operators():
     for side, turned in zip(
         ("left", "right"), _robot_shoulders_in_world(pelvis, lying_forward)
     ):
-        shoulder, _ = _target_pose(action, _task_index(layout, f"{side}_shoulder"))
-        wrist, _ = _target_pose(action, _task_index(layout, f"{side}_wrist"))
+        shoulder, _ = _target_pose(poses, _task_index(layout, f"{side}_shoulder"))
+        wrist, _ = _target_pose(poses, _task_index(layout, f"{side}_wrist"))
         np.testing.assert_allclose(shoulder, turned, atol=1e-5)
         assert np.linalg.norm(wrist - shoulder) <= sum(_ROBOT_SEGMENTS) + 1e-6
 
@@ -448,14 +491,14 @@ def test_the_elbow_target_follows_the_operators_upper_arm_through_the_swing(swin
     """With the hand held still the operator's elbow can still go round; the target follows it."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     upper_arm, forearm = _swung_bent_arm(swing_deg)
 
-    action = _run(source, _arm_frame(upper_arm, forearm))
+    poses = _run(retargeter, _arm_frame(upper_arm, forearm))
 
     turn = Rotation.from_quat(pelvis.orientation_xyzw)
     for side, shoulder in zip(("left", "right"), _robot_shoulders_in_world(pelvis)):
-        elbow, _ = _target_pose(action, _task_index(layout, f"{side}_elbow"))
+        elbow, _ = _target_pose(poses, _task_index(layout, f"{side}_elbow"))
         np.testing.assert_allclose(
             elbow,
             shoulder + _ROBOT_SEGMENTS[0] * turn.apply(_in_isaac_axes(upper_arm)),
@@ -467,15 +510,15 @@ def test_the_wrist_target_is_one_robot_forearm_on_from_the_elbow_target():
     """Both are points of one rebuilt arm, so the IK is never handed a pair it cannot reach."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    action = _run(source, _arm_frame(upper_arm, forearm))
+    poses = _run(retargeter, _arm_frame(upper_arm, forearm))
 
     turn = Rotation.from_quat(pelvis.orientation_xyzw)
     for side in ("left", "right"):
-        elbow, _ = _target_pose(action, _task_index(layout, f"{side}_elbow"))
-        wrist, _ = _target_pose(action, _task_index(layout, f"{side}_wrist"))
+        elbow, _ = _target_pose(poses, _task_index(layout, f"{side}_elbow"))
+        wrist, _ = _target_pose(poses, _task_index(layout, f"{side}_wrist"))
         np.testing.assert_allclose(
             wrist - elbow,
             _ROBOT_SEGMENTS[1] * turn.apply(_in_isaac_axes(forearm)),
@@ -487,21 +530,21 @@ def test_standing_in_the_reference_pose_hangs_each_arm_from_where_the_robots_sho
     """Upright and facing ahead is a torso pose of zero."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    action = _run(source, _arm_frame(upper_arm, forearm))
+    poses = _run(retargeter, _arm_frame(upper_arm, forearm))
 
     _assert_arms_hang_from_shoulders_turned_by(
-        action, layout, pelvis, Rotation.identity(), upper_arm, forearm
+        poses, layout, pelvis, Rotation.identity(), upper_arm, forearm
     )
     for side, rest in zip(("left", "right"), _robot_shoulders_in_world(pelvis)):
-        shoulder, _ = _target_pose(action, _task_index(layout, f"{side}_shoulder"))
+        shoulder, _ = _target_pose(poses, _task_index(layout, f"{side}_shoulder"))
         np.testing.assert_allclose(shoulder, rest, atol=1e-6)
 
 
 def _assert_arms_hang_from_shoulders_turned_by(
-    action: np.ndarray,
+    poses: np.ndarray,
     layout: G1ActionLayout,
     pelvis: PelvisPose,
     torso: Rotation,
@@ -514,9 +557,9 @@ def _assert_arms_hang_from_shoulders_turned_by(
     for side, turned in zip(
         ("left", "right"), _robot_shoulders_in_world(pelvis, torso)
     ):
-        shoulder, _ = _target_pose(action, _task_index(layout, f"{side}_shoulder"))
-        elbow, _ = _target_pose(action, _task_index(layout, f"{side}_elbow"))
-        wrist, _ = _target_pose(action, _task_index(layout, f"{side}_wrist"))
+        shoulder, _ = _target_pose(poses, _task_index(layout, f"{side}_shoulder"))
+        elbow, _ = _target_pose(poses, _task_index(layout, f"{side}_elbow"))
+        wrist, _ = _target_pose(poses, _task_index(layout, f"{side}_wrist"))
         np.testing.assert_allclose(shoulder, turned, atol=1e-5)
         np.testing.assert_allclose(
             elbow,
@@ -548,15 +591,15 @@ def test_leaning_turns_the_shoulders_about_the_waist_and_the_arms_hang_from_them
     """The whole operator tips, pelvis and all, the way a bend from the hips does."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     torso = _torso_turn(axis, degrees)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    action = _run(source, _tilted(_arm_frame(upper_arm, forearm), torso))
+    poses = _run(retargeter, _tilted(_arm_frame(upper_arm, forearm), torso))
 
     tipped = _in_openxr(torso)
     _assert_arms_hang_from_shoulders_turned_by(
-        action, layout, pelvis, torso, tipped.apply(upper_arm), tipped.apply(forearm)
+        poses, layout, pelvis, torso, tipped.apply(upper_arm), tipped.apply(forearm)
     )
 
 
@@ -570,16 +613,16 @@ def test_a_lean_from_the_spine_alone_counts_the_same_as_one_from_the_hips(
 ):
     """Leaning is measured from upright, not from the operator's pelvis."""
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
     torso = _torso_turn(axis, degrees)
     tipped = _in_openxr(torso)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    from_the_hips = _run(source, _tilted(_arm_frame(upper_arm, forearm), torso))
+    from_the_hips = _run(retargeter, _tilted(_arm_frame(upper_arm, forearm), torso))
     from_the_spine = _run(
-        source,
+        retargeter,
         _arm_frame(
             tipped.apply(upper_arm),
             tipped.apply(forearm),
@@ -600,17 +643,17 @@ def test_twisting_turns_the_shoulders_about_the_vertical(degrees):
     """The hips stay; the shoulders and everything above them turn."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     torso = _torso_turn(_TWISTING_LEFT, degrees)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    action = _run(
-        source, _tilted(_arm_frame(upper_arm, forearm), torso, slots=_UPPER_BODY)
+    poses = _run(
+        retargeter, _tilted(_arm_frame(upper_arm, forearm), torso, slots=_UPPER_BODY)
     )
 
     turned = _in_openxr(torso)
     _assert_arms_hang_from_shoulders_turned_by(
-        action, layout, pelvis, torso, turned.apply(upper_arm), turned.apply(forearm)
+        poses, layout, pelvis, torso, turned.apply(upper_arm), turned.apply(forearm)
     )
 
 
@@ -618,10 +661,10 @@ def test_twisting_turns_the_shoulders_about_the_vertical(degrees):
 def test_a_lean_past_the_waists_range_is_passed_on_whole(degrees):
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     torso = _torso_turn(_LEANING_FORWARD, degrees)
 
-    action = _run(source, _tilted(_straight_arm_frame(-_OPENXR_UP), torso))
+    poses = _run(retargeter, _tilted(_straight_arm_frame(-_OPENXR_UP), torso))
 
     pivot = pelvis.place(np.asarray(_ROBOT_WAIST_PIVOT))
     axis = pelvis.rotation.apply(_LEANING_FORWARD)
@@ -630,7 +673,7 @@ def test_a_lean_past_the_waists_range_is_passed_on_whole(degrees):
         return _unit(vector - np.dot(vector, axis) * axis)
 
     for side, rest in zip(("left", "right"), _robot_shoulders_in_world(pelvis)):
-        shoulder, _ = _target_pose(action, _task_index(layout, f"{side}_shoulder"))
+        shoulder, _ = _target_pose(poses, _task_index(layout, f"{side}_shoulder"))
         swept = np.arccos(
             np.dot(
                 square_to_the_axis(shoulder - pivot), square_to_the_axis(rest - pivot)
@@ -639,7 +682,7 @@ def test_a_lean_past_the_waists_range_is_passed_on_whole(degrees):
         assert np.degrees(swept) == pytest.approx(degrees, abs=1e-3)
     hanging = _in_openxr(torso).apply(-_OPENXR_UP)
     _assert_arms_hang_from_shoulders_turned_by(
-        action, layout, pelvis, torso, hanging, hanging
+        poses, layout, pelvis, torso, hanging, hanging
     )
 
 
@@ -647,12 +690,14 @@ def test_a_lean_after_a_quarter_turn_is_still_a_lean():
     """Leaning is read against the operator's own heading, so it never becomes a side bend."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     torso = _torso_turn(_LEANING_FORWARD, 25.0)
     upper_arm, forearm = _swung_bent_arm(30.0)
 
-    facing = _run(source, _tilted(_arm_frame(upper_arm, forearm), torso))
-    turned = _run(source, _turned(_tilted(_arm_frame(upper_arm, forearm), torso), 90.0))
+    facing = _run(retargeter, _tilted(_arm_frame(upper_arm, forearm), torso))
+    turned = _run(
+        retargeter, _turned(_tilted(_arm_frame(upper_arm, forearm), torso), 90.0)
+    )
 
     np.testing.assert_allclose(turned, facing, atol=1e-6)
     tipped = _in_openxr(torso)
@@ -664,13 +709,14 @@ def test_a_lean_after_a_quarter_turn_is_still_a_lean():
 def test_reach_does_not_move_when_the_operator_gets_longer_arms():
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
     short = _run(
-        source, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.4, 0.2, 0.2))
+        retargeter, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.4, 0.2, 0.2))
     )
     tall = _run(
-        source, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.8, 0.5, 0.45))
+        retargeter,
+        _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.8, 0.5, 0.45)),
     )
 
     np.testing.assert_allclose(short, tall, atol=1e-6)
@@ -679,11 +725,11 @@ def test_reach_does_not_move_when_the_operator_gets_longer_arms():
 def test_an_operator_standing_away_from_the_world_origin_retargets_to_the_same_target():
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    centred = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
+    centred = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD))
     displaced = _run(
-        source,
+        retargeter,
         _straight_arm_frame(
             _OPENXR_FORWARD, pelvis_position_openxr=np.array([1.5, 0.0, -2.0])
         ),
@@ -692,11 +738,11 @@ def test_an_operator_standing_away_from_the_world_origin_retargets_to_the_same_t
     np.testing.assert_allclose(centred, displaced, atol=1e-6)
 
 
-def _swung_arms_twisted_hands() -> FullBodyPose:
+def _swung_arms_twisted_hands() -> _Body:
     return _twist_wrists(_arm_frame(*_swung_bent_arm(50.0)), 35.0)
 
 
-def _reaching_across_with_a_tilted_hinge() -> FullBodyPose:
+def _reaching_across_with_a_tilted_hinge() -> _Body:
     return _straight_arm_frame(
         _OPENXR_FORWARD - 0.6 * _OPENXR_UP + 0.3 * _OPENXR_RIGHT,
         hinge_openxr=_OPENXR_RIGHT + 0.4 * _OPENXR_UP,
@@ -716,10 +762,10 @@ def test_turning_moves_no_target(pose, degrees, about_openxr):
     """Turning round a point across the room also covers walking in a circle."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    facing = _run(source, pose())
-    turned = _run(source, _turned(pose(), degrees, about_openxr=about_openxr))
+    facing = _run(retargeter, pose())
+    turned = _run(retargeter, _turned(pose(), degrees, about_openxr=about_openxr))
 
     np.testing.assert_allclose(turned, facing, atol=1e-6)
 
@@ -736,39 +782,37 @@ def test_a_frame_whose_hips_give_no_heading_holds_every_target(hips):
     """No level line between the hips, no heading: nothing moves, orientations included."""
     seen = []
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout,
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
     )
 
-    tracked = _run(source, _straight_arm_frame(_OPENXR_UP))
+    tracked = _run(retargeter, _straight_arm_frame(_OPENXR_UP))
     frame = _swung_arms_twisted_hands()
     for slot, position in hips.items():
-        frame.joints.positions[int(slot)] = position
-    held = _run(source, frame)
+        frame.positions[int(slot)] = position
+    held = _run(retargeter, frame)
 
     np.testing.assert_allclose(held, tracked, atol=1e-6)
     # Nor is there a way to face the skeleton on the robot.
     assert len(seen[-1].skeleton) == 0
 
 
-def _spine_folded(frame: FullBodyPose) -> None:
-    frame.joints.positions[int(BodyJoint.SPINE3)] = frame.joints.positions[
-        int(BodyJoint.SPINE1)
-    ]
+def _spine_folded(frame: _Body) -> None:
+    frame.positions[int(BodyJoint.SPINE3)] = frame.positions[int(BodyJoint.SPINE1)]
 
 
-def _shoulders_one_point(frame: FullBodyPose) -> None:
-    frame.joints.positions[int(BodyJoint.RIGHT_SHOULDER)] = frame.joints.positions[
+def _shoulders_one_point(frame: _Body) -> None:
+    frame.positions[int(BodyJoint.RIGHT_SHOULDER)] = frame.positions[
         int(BodyJoint.LEFT_SHOULDER)
     ]
 
 
-def _shoulders_on_the_spines_line(frame: FullBodyPose) -> None:
-    pelvis = np.asarray(frame.joints.positions[int(BodyJoint.PELVIS)])
-    frame.joints.positions[int(BodyJoint.LEFT_SHOULDER)] = pelvis + 0.6 * _OPENXR_UP
-    frame.joints.positions[int(BodyJoint.RIGHT_SHOULDER)] = pelvis + 0.5 * _OPENXR_UP
+def _shoulders_on_the_spines_line(frame: _Body) -> None:
+    pelvis = np.asarray(frame.positions[int(BodyJoint.PELVIS)])
+    frame.positions[int(BodyJoint.LEFT_SHOULDER)] = pelvis + 0.6 * _OPENXR_UP
+    frame.positions[int(BodyJoint.RIGHT_SHOULDER)] = pelvis + 0.5 * _OPENXR_UP
 
 
 @pytest.mark.parametrize(
@@ -776,14 +820,14 @@ def _shoulders_on_the_spines_line(frame: FullBodyPose) -> None:
 )
 def test_a_frame_whose_upper_body_gives_no_torso_pose_holds_every_target(spoil):
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
-    tracked = _run(source, _straight_arm_frame(_OPENXR_UP))
+    tracked = _run(retargeter, _straight_arm_frame(_OPENXR_UP))
     frame = _swung_arms_twisted_hands()
     spoil(frame)
-    held = _run(source, frame)
+    held = _run(retargeter, frame)
 
     np.testing.assert_allclose(held, tracked, atol=1e-6)
 
@@ -801,12 +845,12 @@ def test_arm_direction_is_preserved_through_the_change_of_basis(
 ):
     layout = _g1_layout()
     pelvis = _identity_pelvis()
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(source, _straight_arm_frame(direction_openxr))
+    poses = _run(retargeter, _straight_arm_frame(direction_openxr))
 
     for task_index, shoulder in enumerate(_robot_shoulders_in_world(pelvis)):
-        position, _ = _target_pose(action, task_index)
+        position, _ = _target_pose(poses, task_index)
         np.testing.assert_allclose(
             _unit(position - shoulder), expected_isaac, atol=1e-5
         )
@@ -815,12 +859,12 @@ def test_arm_direction_is_preserved_through_the_change_of_basis(
 def test_an_arm_hanging_at_the_side_points_the_robots_forearm_down():
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(source, _straight_arm_frame(-_OPENXR_UP))
+    poses = _run(retargeter, _straight_arm_frame(-_OPENXR_UP))
 
     for task_index in range(2):
-        forearm, _ = _robot_forearm_axes(action, task_index, layout)
+        forearm, _ = _robot_forearm_axes(poses, task_index, layout)
         np.testing.assert_allclose(forearm, _ISAAC_UP * -1.0, atol=1e-5)
 
 
@@ -829,36 +873,36 @@ def test_the_robots_forearm_and_hinge_turn_where_the_operators_do_and_the_field_
     scalar-first reading of the field can pass by accident."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     reaching = _unit(_OPENXR_FORWARD - 0.6 * _OPENXR_UP + 0.3 * _OPENXR_RIGHT)
     hinge = _OPENXR_RIGHT + 0.4 * _OPENXR_UP
 
-    action = _run(source, _straight_arm_frame(reaching, hinge_openxr=hinge))
+    poses = _run(retargeter, _straight_arm_frame(reaching, hinge_openxr=hinge))
 
     turn = Rotation.from_quat(pelvis.orientation_xyzw)
     hinge_across = _unit(hinge - np.dot(hinge, reaching) * reaching)
     for task_index in range(2):
-        _, quaternion = _target_pose(action, task_index)
+        _, quaternion = _target_pose(poses, task_index)
         assert np.linalg.norm(quaternion) == pytest.approx(1.0, abs=1e-6)
-        forearm, robot_hinge = _robot_forearm_axes(action, task_index, layout)
+        forearm, robot_hinge = _robot_forearm_axes(poses, task_index, layout)
         np.testing.assert_allclose(
             forearm, turn.apply(_in_isaac_axes(reaching)), atol=1e-5
         )
         np.testing.assert_allclose(
             robot_hinge, turn.apply(_in_isaac_axes(hinge_across)), atol=1e-5
         )
-        misread, _ = _robot_forearm_axes(action, task_index, layout, wxyz=True)
+        misread, _ = _robot_forearm_axes(poses, task_index, layout, wxyz=True)
         assert not np.allclose(misread, forearm, atol=1e-2)
 
 
 def test_turning_the_forearm_turns_the_target_about_it_and_nothing_else():
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     reaching = _OPENXR_FORWARD - _OPENXR_UP
 
-    before = _run(source, _straight_arm_frame(reaching))
-    after = _run(source, _twist_wrists(_straight_arm_frame(reaching), 40.0))
+    before = _run(retargeter, _straight_arm_frame(reaching))
+    after = _run(retargeter, _twist_wrists(_straight_arm_frame(reaching), 40.0))
 
     for task_index in range(2):
         np.testing.assert_allclose(
@@ -887,39 +931,39 @@ def test_bending_the_wrist_bends_the_target_off_the_forearms_line():
     """WRIST is read whole: a hand bent across the forearm is followed, not straightened."""
     layout = _g1_layout()
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
     reaching = _OPENXR_FORWARD - _OPENXR_UP
     bend = Rotation.from_rotvec(np.radians(20.0) * _OPENXR_RIGHT)
     frame = _straight_arm_frame(reaching)
     for _, _, wrist in _OPERATOR_ARMS:
-        frame.joints.orientations[int(wrist)] = (
-            bend * Rotation.from_quat(frame.joints.orientations[int(wrist)])
+        frame.orientations[int(wrist)] = (
+            bend * Rotation.from_quat(frame.orientations[int(wrist)])
         ).as_quat()
 
-    action = _run(source, frame)
+    poses = _run(retargeter, frame)
 
     hand = Rotation.from_quat(pelvis.orientation_xyzw).apply(
         _in_isaac_axes(bend.apply(_unit(reaching)))
     )
     for task_index in range(2):
-        forearm, _ = _robot_forearm_axes(action, task_index, layout)
+        forearm, _ = _robot_forearm_axes(poses, task_index, layout)
         np.testing.assert_allclose(forearm, hand, atol=1e-5)
 
 
 def test_the_hand_slots_orientation_does_not_reach_the_target():
     """HAND is rigid on WRIST in the skeleton; whatever it says, WRIST already said."""
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
-    plain = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
+    plain = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD))
     frame = _straight_arm_frame(_OPENXR_FORWARD)
     for slot in (BodyJoint.LEFT_HAND, BodyJoint.RIGHT_HAND):
-        frame.joints.orientations[int(slot)] = Rotation.from_euler(
+        frame.orientations[int(slot)] = Rotation.from_euler(
             "xyz", [70.0, -40.0, 25.0], degrees=True
         ).as_quat()
-    turned_hands = _run(source, frame)
+    turned_hands = _run(retargeter, frame)
 
     np.testing.assert_allclose(turned_hands, plain, atol=1e-6)
 
@@ -928,44 +972,62 @@ def test_elbow_and_shoulder_targets_keep_the_robots_rest_orientation_whatever_th
     rest = Rotation.from_euler("xyz", [10.0, -20.0, 30.0], degrees=True)
     layout = _g1_layout(neutral_orientation_xyzw=tuple(rest.as_quat()))
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(
-        source, _twist_wrists(_straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP), 40.0)
+    poses = _run(
+        retargeter,
+        _twist_wrists(_straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP), 40.0),
     )
 
     expected = Rotation.from_quat(pelvis.orientation_xyzw) * rest
     for name in ("left_elbow", "right_elbow", "left_shoulder", "right_shoulder"):
-        _, quaternion = _target_pose(action, _task_index(layout, name))
+        _, quaternion = _target_pose(poses, _task_index(layout, name))
         assert (Rotation.from_quat(quaternion) * expected.inv()).magnitude() < 1e-6
 
 
 def test_every_orientation_field_is_a_unit_quaternion_even_where_the_ik_ignores_it():
     """The action term divides every field by its squared norm, position-only tasks' too."""
     layout = _g1_layout(neutral_orientation_xyzw=(0.0, 0.0, 3.0, 3.0))
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
     for frame in (None, _straight_arm_frame(_OPENXR_FORWARD)):
-        action = _run(source, frame)
+        poses = _run(retargeter, frame)
         for task_index in range(len(layout.frame_targets)):
-            _, quaternion = _target_pose(action, task_index)
+            _, quaternion = _target_pose(poses, task_index)
             assert np.linalg.norm(quaternion) == pytest.approx(1.0, abs=1e-6)
 
 
 @pytest.mark.parametrize(
+    "orientation",
+    [(0.0, 0.0, 0.0, 0.0), (np.nan, 0.0, 0.0, 1.0)],
+    ids=["zero", "nan"],
+)
+@pytest.mark.parametrize(
     "field", ["neutral_orientation_xyzw", "forearm_frame_in_task_xyzw"]
 )
-def test_a_zero_orientation_is_refused_at_construction(field):
+def test_a_zero_or_nan_orientation_is_refused_at_construction(field, orientation):
     orientations = {"forearm_frame_in_task_xyzw": _ROBOT_FOREARM_IN_TASK}
-    orientations[field] = (0.0, 0.0, 0.0, 0.0)
+    orientations[field] = orientation
     with pytest.raises(ValueError, match="non-zero quaternion"):
         _frame_target(
             "left_wrist",
             left_wrist_chain(),
             anchor=_ROBOT_LEFT_SHOULDER,
             **orientations,
+        )
+
+
+@pytest.mark.parametrize("length", [0.0, np.nan], ids=["zero", "nan"])
+def test_a_zero_or_nan_link_length_is_refused_at_construction(length):
+    with pytest.raises(ValueError, match="link lengths must be"):
+        _frame_target(
+            "left_elbow",
+            left_wrist_chain()[:2],
+            anchor=_ROBOT_LEFT_SHOULDER,
+            forearm_frame_in_task_xyzw=None,
+            segments=(length,),
         )
 
 
@@ -1015,24 +1077,19 @@ def test_a_forearm_frame_belongs_to_a_chain_that_ends_at_a_wrist_and_no_other(
         )
 
 
-@pytest.mark.parametrize(
-    ("task_count", "action_length"),
-    [(2, 32), (4, 46), (6, 60)],
-    ids=["wrists", "and-elbows", "and-shoulders"],
-)
-def test_the_action_grows_by_seven_with_each_frame_task(task_count, action_length):
-    """Then 14 fingers and 4 locomotion: the G1's 32 and 60 are what that comes to."""
+@pytest.mark.parametrize("task_count", [2, 4, 6])
+def test_each_frame_task_adds_one_pose(task_count):
     layout = G1ActionLayout(
         frame_targets=_g1_layout().frame_targets[:task_count],
         waist_pivot_pelvis=_ROBOT_WAIST_PIVOT,
     )
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
+    poses = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD))
 
-    assert action.shape == (action_length,)
+    assert poses.shape == (task_count * POSE_DIM,)
 
 
 def test_a_waist_pivot_is_a_point():
@@ -1053,50 +1110,31 @@ def test_an_arm_needs_a_rest_pose_for_every_slot():
         )
 
 
-def test_a_layout_without_fingers_leaves_them_out_of_the_action():
-    layout = G1ActionLayout(
-        frame_targets=_g1_layout().frame_targets[:2],
-        waist_pivot_pelvis=_ROBOT_WAIST_PIVOT,
-        num_hand_joints=0,
-    )
-    source = JmexG1ActionSource(
-        layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
-    )
-
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
-
-    assert action.shape == (18,)
-
-
-def test_lower_body_is_the_agreed_standing_command():
+def test_the_action_is_the_frame_poses_then_zeroed_fingers_then_a_standing_command():
+    """The order Isaac Lab's Pink IK action term reads, then its lower-body term's four."""
     layout = _g1_layout()
-    source = JmexG1ActionSource(
-        layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
+    pelvis = _yawed_pelvis(90.0)
+    frame = _straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    pipeline = g1_locomanipulation_pipeline(
+        retargeter.output(JmexG1Retargeter.FRAME_POSES), layout, num_hand_joints=3
+    )
+    poses = _run(
+        JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis), frame
     )
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
-
-    np.testing.assert_allclose(
-        action[-layout.num_locomotion :], STANDING_LOCOMOTION_COMMAND, atol=0.0
-    )
-    assert STANDING_LOCOMOTION_COMMAND[:3] == (0.0, 0.0, 0.0)
-    assert STANDING_LOCOMOTION_COMMAND[3] > 0.0
-
-
-def test_fingers_are_zero_and_the_action_is_finite():
-    layout = _g1_layout()
-    source = JmexG1ActionSource(
-        layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
+    result = pipeline.execute_pipeline(
+        {retargeter.name: {JmexG1Retargeter.FULL_BODY: _full_body(frame)}},
+        _context(),
     )
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
-
-    assert action.dtype == np.float32
+    action = np.asarray(result[ACTION_OUTPUT][0])
+    assert action.shape == (len(poses) + 3 + 4,)
     assert np.all(np.isfinite(action))
-    finger_start = len(layout.frame_targets) * POSE_DIM
-    np.testing.assert_array_equal(
-        action[finger_start : finger_start + layout.num_hand_joints], 0.0
-    )
+    np.testing.assert_allclose(action[: len(poses)], poses, atol=1e-6)
+    np.testing.assert_array_equal(action[len(poses) : len(poses) + 3], 0.0)
+    hip_height = LocomotionFixedRootCmdRetargeterConfig().hip_height
+    np.testing.assert_allclose(action[-4:], (0.0, 0.0, 0.0, hip_height), atol=1e-6)
 
 
 def test_before_pairing_the_targets_are_the_robots_own_neutral_pose():
@@ -1107,14 +1145,14 @@ def test_before_pairing_the_targets_are_the_robots_own_neutral_pose():
         neutral_orientation_xyzw=tuple(neutral.as_quat()),
     )
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
-    action = _run(source, None)
+    poses = _run(retargeter, None)
 
     turn = Rotation.from_quat(pelvis.orientation_xyzw)
     expected = pelvis.position + turn.apply((0.21, 0.19, 0.11))
     for task_index in range(len(layout.frame_targets)):
-        position, quaternion = _target_pose(action, task_index)
+        position, quaternion = _target_pose(poses, task_index)
         np.testing.assert_allclose(position, expected, atol=1e-5)
         assert (
             Rotation.from_quat(quaternion) * (turn * neutral).inv()
@@ -1133,11 +1171,11 @@ def _told(caplog, level: int = logging.NOTSET) -> list[str]:
 def test_with_the_logging_system_off_the_info_lines_still_print(monkeypatch, capsys):
     """``ISAACCAPTURE_LOGGING=off`` attaches no handler, so an info record shows nowhere."""
     monkeypatch.setenv("ISAACCAPTURE_LOGGING", "off")
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(), pelvis_pose_provider=_identity_pelvis
     )
 
-    _run(source, _straight_arm_frame(_OPENXR_UP))
+    _run(retargeter, _straight_arm_frame(_OPENXR_UP))
 
     printed = capsys.readouterr().out
     assert "paired" in printed
@@ -1145,26 +1183,29 @@ def test_with_the_logging_system_off_the_info_lines_still_print(monkeypatch, cap
 
 
 def test_the_operator_is_told_the_plugin_has_not_paired(caplog):
-    source = JmexG1ActionSource(
-        layout=_g1_layout(), pelvis_pose_provider=_identity_pelvis
+    retargeter = JmexG1Retargeter(
+        layout=_g1_layout(),
+        pelvis_pose_provider=_identity_pelvis,
+        settings=JmexG1Settings(collection_id="bench_suit", channel=7),
     )
 
-    _run(source, None)
+    _run(retargeter, None)
 
     warnings = "\n".join(_told(caplog, logging.WARNING))
     assert "not paired" in warnings
-    assert source.settings.collection_id in warnings
+    assert "'bench_suit'" in warnings
+    assert "channel 7" in warnings
 
 
 @pytest.mark.parametrize(
     "tasks", [slice(0, 2), slice(4, 6)], ids=["wrists", "shoulders-alone"]
 )
 def test_a_lost_pairing_keeps_saying_the_last_target_is_held(caplog, tasks):
-    """The repeat 300 frames later still describes what the robot is doing, not rest.
+    """The repeat still describes what the robot is doing, not rest.
 
     Shoulder chains are one point whether rebuilt or at rest: chain length cannot tell which.
     """
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=G1ActionLayout(
             frame_targets=_g1_layout().frame_targets[tasks],
             waist_pivot_pelvis=_ROBOT_WAIST_PIVOT,
@@ -1172,75 +1213,102 @@ def test_a_lost_pairing_keeps_saying_the_last_target_is_held(caplog, tasks):
         pelvis_pose_provider=_identity_pelvis,
     )
 
-    _run(source, _straight_arm_frame(_OPENXR_UP))
-    for _ in range(301):
-        _run(source, None)
+    _run(retargeter, _straight_arm_frame(_OPENXR_UP))
+    reports: list[str] = []
+    frames = 0
+    while len(reports) < 2:  # the first report, then its repeat
+        _run(retargeter, None)
+        frames += 1
+        assert frames < 100_000, "the report was never repeated"
+        reports = [
+            line for line in _told(caplog, logging.WARNING) if "not paired" in line
+        ]
 
-    reports = [line for line in _told(caplog, logging.WARNING) if "not paired" in line]
-    assert len(reports) == 2
     assert all("last target" in line for line in reports)
 
 
-def test_operator_segment_lengths_are_measured_from_the_first_frame():
-    layout = _g1_layout()
-    source = JmexG1ActionSource(
-        layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
-    )
-    assert source.operator_segment_lengths is None
-
-    _run(
-        source, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.61, 0.33, 0.26))
+def test_the_targets_are_reported_from_the_first_paired_frame_then_once_a_period(
+    caplog,
+):
+    retargeter = JmexG1Retargeter(
+        layout=_g1_layout(),
+        pelvis_pose_provider=_identity_pelvis,
+        settings=JmexG1Settings(status_period_s=2.0),
     )
 
-    measured = source.operator_segment_lengths
-    assert measured is not None
+    for real_time_s in (0, 1, 2):
+        _run(retargeter, _straight_arm_frame(_OPENXR_UP), real_time_s * 1_000_000_000)
+
+    reports = [line for line in _told(caplog) if line.startswith("frame=")]
+    assert len(reports) == 2  # at 0 s and at 2 s
+
+
+def _measured(caplog, chain: str) -> list[str]:
+    """The operator measurements logged for ``chain``, in order."""
+    return [
+        line for line in _told(caplog) if line.startswith(f"measured operator {chain} ")
+    ]
+
+
+def test_the_operators_segment_lengths_are_logged_once_from_the_first_frame(caplog):
+    retargeter = JmexG1Retargeter(
+        layout=_g1_layout(), pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
+    )
+
+    for _ in range(2):
+        _run(
+            retargeter,
+            _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.61, 0.33, 0.26)),
+        )
+
     # Upper arm and forearm: the chain starts at the shoulder.
-    np.testing.assert_allclose(measured["left_wrist"], (0.33, 0.26), atol=1e-4)
-    # And they are not what drove the output.
-    assert not np.allclose(measured["left_wrist"], _ROBOT_SEGMENTS)
+    (line,) = _measured(caplog, "left_wrist")
+    assert "chain [0.330, 0.260] m" in line
+    assert "robot [0.220, 0.190] m" in line
 
 
 def test_losing_the_pairing_holds_the_last_target_rather_than_dropping_the_arms():
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
-    tracked = _run(source, _straight_arm_frame(_OPENXR_UP))
-    unpaired = _run(source, None)
+    tracked = _run(retargeter, _straight_arm_frame(_OPENXR_UP))
+    unpaired = _run(retargeter, None)
 
     np.testing.assert_allclose(unpaired, tracked, atol=1e-6)
 
 
-def test_the_measurement_is_taken_again_after_a_re_pairing():
-    """Measured per pairing, not once per process -- Player may come back with another skeleton."""
-    source = JmexG1ActionSource(
+def test_the_measurement_is_taken_again_after_the_body_pose_went_absent(caplog):
+    """Measured each time the body pose arrives after an absent one, not once per process."""
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(), pelvis_pose_provider=_identity_pelvis
     )
 
     _run(
-        source, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.61, 0.33, 0.26))
+        retargeter,
+        _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.61, 0.33, 0.26)),
     )
-    _run(source, None)
-    assert source.operator_segment_lengths is None
-
+    _run(retargeter, None)
     _run(
-        source, _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.50, 0.28, 0.22))
+        retargeter,
+        _straight_arm_frame(_OPENXR_FORWARD, human_segments=(0.50, 0.28, 0.22)),
     )
-    np.testing.assert_allclose(
-        source.operator_segment_lengths["left_wrist"], (0.28, 0.22), atol=1e-4
-    )
+
+    first, again = _measured(caplog, "left_wrist")
+    assert "chain [0.330, 0.260] m" in first
+    assert "chain [0.280, 0.220] m" in again
 
 
 def test_a_frame_missing_any_slot_holds_every_target():
     """A missing foot holds both arms, orientation and all, though their own slots arrived."""
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
 
-    tracked = _run(source, _straight_arm_frame(_OPENXR_UP))
-    held = _run(source, _twist_wrists(_model_without(BodyJoint.LEFT_FOOT), 60.0))
+    tracked = _run(retargeter, _straight_arm_frame(_OPENXR_UP))
+    held = _run(retargeter, _twist_wrists(_model_without(BodyJoint.LEFT_FOOT), 60.0))
 
     np.testing.assert_allclose(held, tracked, atol=1e-6)
 
@@ -1248,24 +1316,24 @@ def test_a_frame_missing_any_slot_holds_every_target():
 def test_a_wrist_that_cannot_be_rebuilt_holds_its_elbow_too():
     """Every slot valid, the upper arms moved, the forearms folded to nothing."""
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout, pelvis_pose_provider=lambda: _yawed_pelvis(90.0)
     )
-    tracked = _run(source, _arm_frame(*_swung_bent_arm(0.0)))
+    tracked = _run(retargeter, _arm_frame(*_swung_bent_arm(0.0)))
 
     folded = _arm_frame(*_swung_bent_arm(90.0))
     for _, elbow, wrist in _OPERATOR_ARMS:
-        folded.joints.positions[int(wrist)] = folded.joints.positions[int(elbow)]
-    held = _run(source, folded)
+        folded.positions[int(wrist)] = folded.positions[int(elbow)]
+    held = _run(retargeter, folded)
 
     np.testing.assert_allclose(held, tracked, atol=1e-6)
 
 
-def _model_without(*slots: BodyJoint) -> FullBodyPose:
+def _model_without(*slots: BodyJoint) -> _Body:
     """A frame from a model that has no joint for ``slots`` -- a robot URDF, say."""
     frame = _straight_arm_frame(_OPENXR_FORWARD)
     for slot in slots:
-        frame.joints.is_valid[int(slot)] = 0
+        frame.valid[int(slot)] = 0
     return frame
 
 
@@ -1280,13 +1348,13 @@ _TORSO_SLOTS = (
 
 
 def test_a_model_that_never_fills_every_slot_is_named_on_the_console(caplog):
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(), pelvis_pose_provider=_identity_pelvis
     )
     caplog.clear()
 
     for _ in range(60):
-        _run(source, _model_without(*_TORSO_SLOTS))
+        _run(retargeter, _model_without(*_TORSO_SLOTS))
 
     (warning,) = [line for line in _told(caplog, logging.WARNING) if "skeleton" in line]
     assert "standard human skeleton" in warning
@@ -1296,30 +1364,30 @@ def test_a_model_that_never_fills_every_slot_is_named_on_the_console(caplog):
     assert BodyJoint.LEFT_WRIST.name not in warning
 
 
-def test_the_wrong_model_leaves_the_robot_at_rest_even_with_its_arms_complete():
+def test_the_wrong_model_leaves_the_robot_at_rest_even_with_its_arms_complete(caplog):
     layout = _g1_layout(neutral_position=(0.21, 0.19, 0.11))
     pelvis = _identity_pelvis()
-    source = JmexG1ActionSource(layout=layout, pelvis_pose_provider=lambda: pelvis)
+    retargeter = JmexG1Retargeter(layout=layout, pelvis_pose_provider=lambda: pelvis)
 
     for _ in range(60):
-        action = _run(source, _model_without(*_TORSO_SLOTS))
+        poses = _run(retargeter, _model_without(*_TORSO_SLOTS))
 
     for task_index in range(len(layout.frame_targets)):
-        position, quaternion = _target_pose(action, task_index)
+        position, quaternion = _target_pose(poses, task_index)
         np.testing.assert_allclose(position, (0.21, 0.19, 0.11), atol=1e-6)
         np.testing.assert_allclose(quaternion, (0.0, 0.0, 0.0, 1.0), atol=1e-6)
-    assert source.operator_segment_lengths is None
+    assert not [line for line in _told(caplog) if "measured operator" in line]
 
 
 def test_a_single_bad_frame_is_not_reported_as_the_wrong_model(caplog):
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(), pelvis_pose_provider=_identity_pelvis
     )
 
-    _run(source, _straight_arm_frame(_OPENXR_UP))
-    _run(source, _model_without(BodyJoint.LEFT_ELBOW))
+    _run(retargeter, _straight_arm_frame(_OPENXR_UP))
+    _run(retargeter, _model_without(BodyJoint.LEFT_ELBOW))
     for _ in range(60):
-        _run(source, _straight_arm_frame(_OPENXR_UP))
+        _run(retargeter, _straight_arm_frame(_OPENXR_UP))
 
     assert not [line for line in _told(caplog) if "standard human skeleton" in line]
 
@@ -1327,13 +1395,13 @@ def test_a_single_bad_frame_is_not_reported_as_the_wrong_model(caplog):
 def test_the_overlay_draws_the_rebuilt_arm_from_the_robots_shoulder_to_the_ik_target():
     seen = []
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: pelvis,
         overlay_sink=seen.append,
     )
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP))
+    poses = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP))
 
     (overlay,) = seen
     shoulders = _robot_shoulders_in_world(pelvis)
@@ -1341,41 +1409,39 @@ def test_the_overlay_draws_the_rebuilt_arm_from_the_robots_shoulder_to_the_ik_ta
         shoulder, elbow, wrist = overlay.chains[name]
         np.testing.assert_allclose(shoulder, shoulders[task_index], atol=1e-6)
         assert np.linalg.norm(elbow - shoulder) == pytest.approx(_ROBOT_SEGMENTS[0])
-        np.testing.assert_allclose(
-            wrist, _target_pose(action, task_index)[0], atol=1e-5
-        )
+        np.testing.assert_allclose(wrist, _target_pose(poses, task_index)[0], atol=1e-5)
 
 
 def test_the_overlay_ends_every_tasks_chain_on_what_the_ik_is_told():
     """Wrist, elbow and shoulder alike, so each large dot drawn is an IK target."""
     seen = []
     layout = _g1_layout()
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=layout,
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
     )
 
-    action = _run(source, _arm_frame(*_swung_bent_arm(30.0)))
+    poses = _run(retargeter, _arm_frame(*_swung_bent_arm(30.0)))
 
     chains = seen[-1].chains
     for task_index, target in enumerate(layout.frame_targets):
         np.testing.assert_allclose(
-            chains[target.name][-1], _target_pose(action, task_index)[0], atol=1e-5
+            chains[target.name][-1], _target_pose(poses, task_index)[0], atol=1e-5
         )
 
 
 def test_the_overlay_draws_the_received_skeleton_unscaled_on_the_robots_pelvis():
     seen = []
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: pelvis,
         overlay_sink=seen.append,
     )
 
     _run(
-        source,
+        retargeter,
         _straight_arm_frame(
             _OPENXR_FORWARD, pelvis_position_openxr=np.array([1.5, 0.0, -2.0])
         ),
@@ -1404,14 +1470,14 @@ def test_the_overlay_draws_the_operator_facing_the_way_the_robot_does(degrees):
     """However the operator is turned, their left hip lands on the robot's left side."""
     seen = []
     pelvis = _yawed_pelvis(90.0)
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: pelvis,
         overlay_sink=seen.append,
     )
 
-    _run(source, _swung_arms_twisted_hands())
-    _run(source, _turned(_swung_arms_twisted_hands(), degrees))
+    _run(retargeter, _swung_arms_twisted_hands())
+    _run(retargeter, _turned(_swung_arms_twisted_hands(), degrees))
 
     facing, turned = seen
     assert facing.skeleton.keys() == turned.skeleton.keys()
@@ -1429,7 +1495,7 @@ def test_the_overlay_draws_the_operator_facing_the_way_the_robot_does(degrees):
 
 def test_each_rebuilt_segment_points_where_its_received_segment_points():
     seen = []
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
@@ -1437,9 +1503,9 @@ def test_each_rebuilt_segment_points_where_its_received_segment_points():
     bent = _straight_arm_frame(_OPENXR_FORWARD - _OPENXR_UP)
     forearm = _HUMAN_ELBOW_TO_WRIST * _unit(_OPENXR_RIGHT - _OPENXR_UP)
     for _, elbow, wrist in _OPERATOR_ARMS:
-        bent.joints.positions[int(wrist)] = bent.joints.positions[int(elbow)] + forearm
+        bent.positions[int(wrist)] = bent.positions[int(elbow)] + forearm
 
-    _run(source, bent)
+    _run(retargeter, bent)
 
     overlay = seen[-1]
     for name, arm in zip(("left_wrist", "right_wrist"), _OPERATOR_ARMS):
@@ -1453,35 +1519,35 @@ def test_each_rebuilt_segment_points_where_its_received_segment_points():
 def test_the_overlay_draws_no_skeleton_while_nothing_arrives():
     """Before the first pairing and after losing one; the held target is still drawn."""
     seen = []
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
     )
 
     for frame in (None, _straight_arm_frame(_OPENXR_UP), None):
-        action = _run(source, frame)
+        poses = _run(retargeter, frame)
         overlay = seen[-1]
         assert (len(overlay.skeleton) == 0) == (frame is None)
         for task_index, name in enumerate(("left_wrist", "right_wrist")):
             np.testing.assert_allclose(
                 overlay.chains[name][-1],
-                _target_pose(action, task_index)[0],
+                _target_pose(poses, task_index)[0],
                 atol=1e-5,
             )
 
 
 def test_an_unusable_slot_is_left_out_of_the_skeleton():
     seen = []
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
     )
     frame = _straight_arm_frame(_OPENXR_FORWARD)
-    frame.joints.is_valid[int(BodyJoint.LEFT_ELBOW)] = 0
+    frame.valid[int(BodyJoint.LEFT_ELBOW)] = 0
 
-    _run(source, frame)
+    _run(retargeter, frame)
 
     skeleton = seen[-1].skeleton
     assert int(BodyJoint.LEFT_ELBOW) not in skeleton
@@ -1491,22 +1557,22 @@ def test_an_unusable_slot_is_left_out_of_the_skeleton():
 def test_without_the_operators_pelvis_there_is_no_skeleton_to_place():
     """The skeleton is placed by its pelvis; the held arms are drawn all the same."""
     seen = []
-    source = JmexG1ActionSource(
+    retargeter = JmexG1Retargeter(
         layout=_g1_layout(),
         pelvis_pose_provider=lambda: _yawed_pelvis(90.0),
         overlay_sink=seen.append,
     )
 
-    action = _run(source, _straight_arm_frame(_OPENXR_FORWARD))
+    poses = _run(retargeter, _straight_arm_frame(_OPENXR_FORWARD))
     frame = _straight_arm_frame(_OPENXR_UP)
-    frame.joints.is_valid[int(BodyJoint.PELVIS)] = 0
-    _run(source, frame)
+    frame.valid[int(BodyJoint.PELVIS)] = 0
+    _run(retargeter, frame)
 
     overlay = seen[-1]
     assert len(overlay.skeleton) == 0
     for task_index, name in enumerate(("left_wrist", "right_wrist")):
         np.testing.assert_allclose(
-            overlay.chains[name][-1], _target_pose(action, task_index)[0], atol=1e-5
+            overlay.chains[name][-1], _target_pose(poses, task_index)[0], atol=1e-5
         )
 
 

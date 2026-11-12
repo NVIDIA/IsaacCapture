@@ -194,14 +194,6 @@ TEST_CASE("vendor validation: invalid configurations are rejected", "[live_track
         REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("does not support parameter"));
     }
 
-    SECTION("an unsupported j-mex vendor parameter is rejected")
-    {
-        VendorList vendors{
-            { body.get(), core::TrackerVendor{ "body.jmex", { { "unsupported", "value" } } } },
-        };
-        REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("does not support parameter"));
-    }
-
     SECTION("an invalid Xsens max flatbuffer size is rejected")
     {
         VendorList vendors{

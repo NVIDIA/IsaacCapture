@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from isaaccapture.cloudxr import CloudXRLauncher
-from isaaccapture.deviceio import McapRecordingConfig, TrackerVendor
+from isaaccapture.deviceio import McapRecordingConfig
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     ControllersSource,
     FullBodySource,
@@ -33,34 +33,19 @@ from isaaccapture.teleop_session_manager import (
     TeleopSessionConfig,
 )
 
-
-PLUGIN_NAME = "jmex"
-PLUGIN_ROOT_ID = "jmex"
-JMEX_VENDOR_ID = "body.jmex"
-
-# plugin.yaml's defaults.
-DEFAULT_COLLECTION_ID = "jmex_full_body"
-DEFAULT_CHANNEL = 1
-
-
-def _plugin_search_paths() -> list[Path]:
-    # The repository root: this file sits in examples/jmex/python/isaaccapture_examples/jmex/.
-    base = Path(__file__).resolve().parents[5]
-    candidates = [
-        base / "plugins",
-        base / "install" / "plugins",
-    ]
-    return [path for path in candidates if path.exists()]
+from .plugin import (
+    DEFAULT_CHANNEL,
+    DEFAULT_COLLECTION_ID,
+    full_body_source,
+    plugin_config,
+)
 
 
 def _build_pipeline(collection_id: str) -> OutputCombiner:
     controllers = ControllersSource(name="controllers")
-    full_body = FullBodySource(
-        name="full_body",
-        vendor=TrackerVendor(JMEX_VENDOR_ID, {"collection_id": collection_id}),
-    )
-    # The same three outputs common.build_full_body_pipeline() declares, so the pipeline the replay
-    # script builds finds every channel this recorded.
+    full_body = full_body_source(collection_id)
+    # The outputs common.build_full_body_pipeline() declares, so the pipeline the replay script
+    # builds finds every channel this recorded.
     return OutputCombiner(
         {
             "controller_left": controllers.output(ControllersSource.LEFT),
@@ -106,17 +91,16 @@ def main(argv: list[str]) -> int:
         type=int,
         default=DEFAULT_CHANNEL,
         help=(
-            "MOXI Player channel the plugin pairs on. Player's file replay is fixed on 255 "
-            f"(default: {DEFAULT_CHANNEL})"
+            f"MOXI Player channel the plugin pairs on (default: {DEFAULT_CHANNEL}). "
+            "Running in src/plugins/jmex/README.md names the one Player's file replay uses."
         ),
     )
     parser.add_argument(
         "--no-plugin",
         action="store_true",
         help=(
-            "Do not auto-launch jmex_plugin; use an already running one. Also how to pass the "
-            "receiver's other settings (--bind-ip, --broadcast-ip, --tcp-port, "
-            "--udp-start-port), which this script does not forward."
+            "Do not auto-launch jmex_plugin; use an already running one, started with the "
+            "flags you need (src/plugins/jmex/README.md, or jmex_plugin --help)."
         ),
     )
     CloudXRLauncher.add_launcher_arguments(parser)
@@ -125,26 +109,16 @@ def main(argv: list[str]) -> int:
     mcap_path = _resolve_output(args.output)
     plugins: list[PluginConfig] = []
     if not args.no_plugin:
-        search_paths = _plugin_search_paths()
-        if not search_paths:
-            sys.exit(
-                "[record] error: no installed plugin directory found. "
-                "Configure with -DBUILD_PLUGIN_JMEX=ON and run `cmake --install build`, "
-                "or pass `--no-plugin` for a manually "
-                "started plugin."
+        try:
+            plugins.append(
+                plugin_config(
+                    args.channel,
+                    args.collection_id,
+                    otherwise="pass `--no-plugin` for a manually started plugin.",
+                )
             )
-        plugins.append(
-            PluginConfig(
-                plugin_name=PLUGIN_NAME,
-                plugin_root_id=PLUGIN_ROOT_ID,
-                search_paths=search_paths,
-                plugin_args=[
-                    f"--channel={args.channel}",
-                    f"--collection-id={args.collection_id}",
-                ],
-                required=True,
-            )
-        )
+        except RuntimeError as e:
+            sys.exit(f"[record] error: {e}")
 
     config = TeleopSessionConfig(
         app_name="JmexFullBodyRecordExample",
@@ -163,8 +137,8 @@ def main(argv: list[str]) -> int:
                 f"[record] CloudXR runtime started (WSS log: {launcher.wss_log_path})"
             )
         with TeleopSession(config) as session:
-            start = time.time()
-            while time.time() - start < args.duration:
+            start = time.monotonic()
+            while time.monotonic() - start < args.duration:
                 result = session.step()
                 if session.frame_count % 60 == 0:
                     full_body = result["full_body"]
@@ -181,7 +155,7 @@ def main(argv: list[str]) -> int:
                         )
                     )
                     print(
-                        f"[record] t={time.time() - start:5.2f}s  "
+                        f"[record] t={time.monotonic() - start:5.2f}s  "
                         f"frame={session.frame_count}  "
                         f"joints={n_valid:02d}/{joint_count}"
                     )

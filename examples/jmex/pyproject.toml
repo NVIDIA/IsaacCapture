@@ -13,9 +13,8 @@ version = "0.0.0"  # Internal example - not versioned
 description = "j-mex AgileMaster full body: G1 upper-body teleop in Isaac Lab, MCAP recording"
 requires-python = ">=3.11,<3.14"
 # No version on isaaccapture: the example runs against the one built from this
-# checkout. What Isaac Lab's Python provides is left out on purpose:
-# jmex_g1_tasks runs inside that interpreter, and README.md installs this
-# example into it.
+# checkout. Isaac Lab's own packages are not listed: jmex_g1_tasks runs in
+# Isaac Lab's Python, which README.md installs this example into.
 dependencies = [
     "isaaccapture[cloudxr]",
     "numpy>=1.23.0",

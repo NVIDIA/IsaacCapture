@@ -13,27 +13,38 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Any, Callable, Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from isaaccapture.logging_config._core import logging_enabled
-from isaaccapture.retargeting_engine.deviceio_source_nodes import (
-    DeviceIOFullBodyPoseTracked,
-    IDeviceIOSource,
+from isaaccapture.retargeters import (
+    LocomotionFixedRootCmdRetargeter,
+    LocomotionFixedRootCmdRetargeterConfig,
+    TensorReorderer,
 )
 from isaaccapture.retargeting_engine.interface import (
+    BaseRetargeter,
     ComputeContext,
+    OptionalType,
+    OutputCombiner,
+    OutputSelector,
     RetargeterIO,
     RetargeterIOType,
-    TensorGroup,
     TensorGroupType,
 )
-from isaaccapture.retargeting_engine.tensor_types import DLDataType, NDArrayType
-from isaaccapture.schema import BodyJoint, FullBodyPose
+from isaaccapture.retargeting_engine.tensor_types import (
+    DLDataType,
+    FullBodyInput,
+    FullBodyInputIndex,
+    NDArrayType,
+)
+from isaaccapture.schema import BodyJoint
 
-logger = logging.getLogger("isaaccapture.jmex.jmex_g1_retargeting")
+from .plugin import DEFAULT_CHANNEL, DEFAULT_COLLECTION_ID
+
+logger = logging.getLogger("isaaccapture.examples.jmex.jmex_g1_retargeting")
 
 
 def info_or_print(log: logging.Logger, message: str, *args: object) -> None:
@@ -44,22 +55,13 @@ def info_or_print(log: logging.Logger, message: str, *args: object) -> None:
         print(message % args if args else message)
 
 
-#: Input this source polls from DeviceIO.
-FULL_BODY_INPUT = "deviceio_full_body"
-#: The one output. Isaac Lab's teleop device looks for an output literally named "action".
+#: The pipeline's output. Isaac Lab's teleop device looks for one literally named "action".
 ACTION_OUTPUT = "action"
 
 #: Position (3) plus orientation (4) per Pink frame task, in the order the action term reads.
 POSITION_DIM = 3
 ORIENTATION_DIM = 4
 POSE_DIM = POSITION_DIM + ORIENTATION_DIM
-
-#: The lower-body policy's command, ``[vx, vy, wz, hip_height]`` in the robot's body frame, in
-#: m/s, m/s, rad/s and m. It is a policy input, not a set-point: under a constant command the
-#: legs still counterbalance the arms. 0.72 is the
-#: ``LocomotionRootCmdRetargeterConfig(initial_hip_height=0.72)`` in the pipeline Isaac Lab builds
-#: for ``LocomanipulationG1EnvCfg``.
-STANDING_LOCOMOTION_COMMAND: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.72)
 
 #: Change of basis from the plugin's OpenXR axes (+X the operator's right, +Y up, -Z the way
 #: they face; src/plugins/jmex/core/openxr_convention.cpp) to Isaac's (+X forward, +Y left,
@@ -74,10 +76,10 @@ _OPENXR_TO_ISAAC = np.array(
 
 #: The ``forearm_frame`` in the axes of the standard human skeleton's ``WRIST`` slot, per arm.
 #: Columns: x out along the forearm, y the elbow's hinge, z = x cross y. In the slot's axes x is
-#: -X on the left arm and +X on the right, and the hinge is -Y and +Y. Measured: the wrist-to-hand
-#: offset is rigid in these axes, 55.2 mm (sd 0.000 mm), along x to 0.00 deg. A skeleton whose
-#: ``WRIST`` slot is laid out differently needs a new matrix, or the hands come out a quarter turn
-#: off; nothing in the stream reports it.
+#: -X on the left arm and +X on the right, and the hinge is -Y and +Y. Measured 2026-09-23: the
+#: wrist-to-hand offset is rigid in these axes, 55.2 mm (sd 0.000 mm), along x to 0.00 deg. A
+#: skeleton whose ``WRIST`` slot is laid out differently needs a new matrix, or the hands come
+#: out a quarter turn off; nothing in the stream reports it.
 _FOREARM_FRAME_IN_PUBLISHED_WRIST = {
     int(BodyJoint.LEFT_WRIST): np.array(
         [
@@ -101,8 +103,7 @@ _MIN_SEGMENT_LENGTH_M = 1e-4
 _SAME_MEASUREMENT_TOLERANCE_M = 1e-9
 
 #: Frames in a row that may miss a slot before the model, not a bad frame, is blamed. One frame
-#: is one simulation step, so live this is a few seconds: long enough that one dropped slot
-#: never says it, short enough that the wrong model is named while the operator is still looking.
+#: is one environment step.
 _INCOMPLETE_FRAMES_BEFORE_WARNING = 30
 #: How often a condition that persists is repeated on the console.
 _REPORT_EVERY_FRAMES = 300
@@ -135,12 +136,9 @@ def forearm_frame(
 ) -> Rotation:
     """The frame a hand is turned relative to, built from an arm resting with its elbow bent.
 
-    x runs elbow to wrist; y is ``elbow_axis`` made square to x and signed along
-    (upper arm x forearm), whichever way the model signs its joint; z completes it.
-
-    Raises:
-        ValueError: The forearm has no length, the elbow is straight, or the elbow's axis
-            runs along the forearm.
+    x runs elbow to wrist; y is ``elbow_axis`` made square to x and signed along (upper arm x
+    forearm), whichever way the model signs its joint; z completes it. Raises ``ValueError`` if
+    the forearm has no length, the elbow is straight, or the elbow's axis runs along the forearm.
     """
     shoulder, elbow, wrist = (
         np.asarray(point, dtype=np.float64) for point in (shoulder, elbow, wrist)
@@ -208,11 +206,10 @@ def _unit_quaternion(value: Sequence[float], *, what: str) -> np.ndarray:
         )
     norm = float(np.linalg.norm(quaternion))
     # The action term builds its rotation matrix by dividing by the squared norm, so a zero
-    # -- the obvious filler for a task whose orientation weight is zero -- reaches the IK
-    # solver as NaN rather than as "unconstrained".
-    if norm < _MIN_SEGMENT_LENGTH_M:
+    # reaches the IK solver as NaN rather than as "unconstrained".
+    if not np.isfinite(norm) or norm < _MIN_SEGMENT_LENGTH_M:
         raise ValueError(
-            f"{what} must be a non-zero quaternion, got {quaternion.tolist()}"
+            f"{what} must be a finite, non-zero quaternion, got {quaternion.tolist()}"
         )
     return quaternion / norm
 
@@ -222,8 +219,7 @@ class FrameTargetCfg:
     """One Pink ``FrameTask``, and the chain of body slots whose last point is its target.
 
     The robot's numbers are measured off the live pinocchio model by the wiring module, in
-    the pelvis frame at the robot's rest configuration, so switching robots changes no
-    constant here.
+    the pelvis frame at the robot's rest configuration.
     """
 
     name: str
@@ -254,8 +250,11 @@ class FrameTargetCfg:
                 f"{self.name}: {len(self.chain)} slots need "
                 f"{len(self.chain) - 1} link lengths, got {len(self.robot_segment_lengths)}"
             )
-        if any(length <= 0.0 for length in self.robot_segment_lengths):
-            raise ValueError(f"{self.name}: link lengths must be positive")
+        if not all(
+            np.isfinite(length) and length > 0.0
+            for length in self.robot_segment_lengths
+        ):
+            raise ValueError(f"{self.name}: link lengths must be finite and positive")
         # Raises here, at construction, rather than emitting a NaN target later.
         _unit_quaternion(
             self.neutral_orientation_pelvis_xyzw,
@@ -338,20 +337,15 @@ def arm_frame_targets(
 
 @dataclass(frozen=True)
 class G1ActionLayout:
-    """How the flat action tensor is laid out, and how long it is.
+    """The frame tasks the action starts with, in the controller's order, and the waist.
 
-    The length is counted from the frame tasks, not hard-coded, so adding a task resizes the
-    action. Frame tasks come first, in the controller's order, then everything else;
-    ``_leading_frame_tasks`` in ``jmex_g1_tasks.py`` enforces that order.
+    ``_leading_frame_tasks`` in ``jmex_g1_tasks.py`` enforces that the frame tasks come first.
     """
 
     frame_targets: tuple[FrameTargetCfg, ...]
     #: The point the robot's upper body turns about, in the pelvis frame at rest: where every
     #: anchor is turned through the operator's torso pose.
     waist_pivot_pelvis: tuple[float, float, float]
-    num_hand_joints: int = 14
-    num_locomotion: int = len(STANDING_LOCOMOTION_COMMAND)
-    locomotion_command: tuple[float, ...] = STANDING_LOCOMOTION_COMMAND
 
     def __post_init__(self) -> None:
         if not self.frame_targets:
@@ -360,11 +354,6 @@ class G1ActionLayout:
             raise ValueError(
                 "the waist pivot must be three numbers (x, y, z), got "
                 f"{np.shape(self.waist_pivot_pelvis)}"
-            )
-        if len(self.locomotion_command) != self.num_locomotion:
-            raise ValueError(
-                f"locomotion command is {len(self.locomotion_command)} long, "
-                f"but {self.num_locomotion} slots were declared"
             )
         # Slots two chains share are the same points of one arm. Rebuilt from different
         # anchors or lengths, an elbow and a wrist target need not be reachable together.
@@ -384,46 +373,20 @@ class G1ActionLayout:
                     f"{BodyJoint(target.chain[0]).name} but not its anchor and link lengths"
                 )
 
-    @property
-    def action_dim(self) -> int:
-        """(frame tasks) x 7 + fingers + locomotion."""
-        return (
-            len(self.frame_targets) * POSE_DIM
-            + self.num_hand_joints
-            + self.num_locomotion
-        )
-
 
 @dataclass(frozen=True)
 class JmexG1Settings:
     """Defaults for the j-mex G1 retargeting example."""
 
-    #: The collection the plugin publishes the body pose on, matching its plugin.yaml.
-    #: The two ends are paired by this string alone: an id that agrees with nothing simply
-    #: never delivers a sample.
-    collection_id: str = "jmex_full_body"
+    #: The collection the plugin publishes the body pose on.
+    collection_id: str = DEFAULT_COLLECTION_ID
     #: MOXI Player channel the plugin pairs on.
-    channel: int = 1
+    channel: int = DEFAULT_CHANNEL
     plugin_auto_launch: bool = True
     status_period_s: float = 1.0
 
 
 DEFAULT_JMEX_G1_SETTINGS = JmexG1Settings()
-
-
-def g1_locomanipulation_action_type(layout: G1ActionLayout) -> TensorGroupType:
-    """The flat action tensor this source produces."""
-    return TensorGroupType(
-        "g1_locomanipulation_action",
-        [
-            NDArrayType(
-                ACTION_OUTPUT,
-                shape=(layout.action_dim,),
-                dtype=DLDataType.FLOAT,
-                dtype_bits=32,
-            )
-        ],
-    )
 
 
 @dataclass(frozen=True)
@@ -439,37 +402,43 @@ class ReferenceOverlay:
     chains: dict[str, np.ndarray]
 
 
-class JmexG1ActionSource(IDeviceIOSource):
-    """One frame of the operator's body pose in, one flat G1 action out."""
+@dataclass
+class _Pairing:
+    """What the current pairing has seen. Dropped whole when the body pose stops arriving."""
+
+    operator_measured: bool = False
+    incomplete_frames: int = 0
+
+
+class JmexG1Retargeter(BaseRetargeter):
+    """One frame of the operator's body pose in, every frame task's target pose out.
+
+    The body pose is ``FullBodySource``'s ``full_body``, in the plugin's OpenXR axes. The poses
+    are one flat array, (x, y, z, qx, qy, qz, qw) per task in the layout's order.
+    """
+
+    FULL_BODY = "full_body"
+    FRAME_POSES = "frame_poses"
 
     def __init__(
         self,
-        name: str = "jmex_g1_action",
+        name: str = "jmex_g1",
         *,
         layout: G1ActionLayout,
         pelvis_pose_provider: Callable[[], PelvisPose],
         settings: JmexG1Settings = DEFAULT_JMEX_G1_SETTINGS,
         overlay_sink: Callable[[ReferenceOverlay], None] | None = None,
     ) -> None:
-        """Wire the source to a DeviceIO vendor, a layout, and a live pelvis.
+        """Wire the retargeter to a layout and a live pelvis.
 
-        Args:
-            name: Node name inside the retargeting pipeline.
-            layout: Frame tasks, their chains, and the robot numbers behind them.
-            pelvis_pose_provider: Called once per frame for the robot pelvis's live pose in
-                the per-env world frame. Targets are composed onto it, so they turn with
-                the robot's spawn yaw.
-            settings: Collection id and the rest of the pairing configuration.
-            overlay_sink: Called once per frame with what to draw over the robot.
+        ``pelvis_pose_provider`` gives the robot pelvis's pose in the per-env world frame, read once
+        per frame; targets are composed onto it. ``settings`` names the collection and channel in
+        console messages. ``overlay_sink`` gets what to draw over the robot each frame.
         """
-        import isaaccapture.deviceio as deviceio
-
         self._layout = layout
         self._settings = settings
         self._pelvis_pose_provider = pelvis_pose_provider
         self._overlay_sink = overlay_sink
-        self._tracker = deviceio.FullBodyTracker()
-        self._operator_segment_lengths: dict[str, tuple[float, ...]] | None = None
         # Held between frames so an unusable frame changes nothing rather than jumping.
         # Pelvis-frame, so a moving pelvis still carries the held target with it. Each is
         # the rebuilt chain, target last; before the first pairing it is the rest pose alone.
@@ -484,53 +453,29 @@ class JmexG1ActionSource(IDeviceIOSource):
         self._rebuilt_once = False
         self._frame_count = 0
         self._unpaired_frames = 0
-        self._incomplete_frames = 0
-        self._last_status_s = 0.0
-        self._paired = False
-        super().__init__(
-            name,
-            vendor=deviceio.TrackerVendor(
-                "body.jmex",
-                {"collection_id": settings.collection_id},
-            ),
-        )
-
-    @property
-    def settings(self) -> JmexG1Settings:
-        """The settings this source was built with."""
-        return self._settings
-
-    @property
-    def layout(self) -> G1ActionLayout:
-        """The action layout this source packs."""
-        return self._layout
-
-    @property
-    def operator_segment_lengths(self) -> dict[str, tuple[float, ...]] | None:
-        """Per-chain operator segment lengths in meters, measured once per pairing.
-
-        None until the pairing's first usable frame. Printed for diagnosis; the reconstruction
-        uses the robot's lengths, not these.
-        """
-        return self._operator_segment_lengths
-
-    def get_tracker(self) -> Any:
-        """The full-body tracker TeleopSession initializes for this source."""
-        return self._tracker
-
-    def poll_tracker(self, deviceio_session: Any) -> RetargeterIO:
-        """Read one body pose from the active DeviceIO session."""
-        group = TensorGroup(self.input_spec()[FULL_BODY_INPUT])
-        group[0] = self._tracker.get_body_pose(deviceio_session)
-        return {FULL_BODY_INPUT: group}
+        self._last_status_s: float | None = None
+        self._pairing: _Pairing | None = None
+        super().__init__(name)
 
     def input_spec(self) -> RetargeterIOType:
-        """Declare the raw full-body DeviceIO input."""
-        return {FULL_BODY_INPUT: DeviceIOFullBodyPoseTracked()}
+        """Declare the body pose input, absent while nothing is paired."""
+        return {self.FULL_BODY: OptionalType(FullBodyInput())}
 
     def output_spec(self) -> RetargeterIOType:
-        """Declare the flat G1 action output."""
-        return {ACTION_OUTPUT: g1_locomanipulation_action_type(self._layout)}
+        """Declare the flat frame-pose output."""
+        return {
+            self.FRAME_POSES: TensorGroupType(
+                self.FRAME_POSES,
+                [
+                    NDArrayType(
+                        self.FRAME_POSES,
+                        shape=(len(self._layout.frame_targets) * POSE_DIM,),
+                        dtype=DLDataType.FLOAT,
+                        dtype_bits=32,
+                    )
+                ],
+            )
+        }
 
     def _compute_fn(
         self,
@@ -538,31 +483,38 @@ class JmexG1ActionSource(IDeviceIOSource):
         outputs: RetargeterIO,
         context: ComputeContext,
     ) -> None:
-        """Reconstruct each frame task's target and pack the flat action."""
+        """Reconstruct each frame task's target and pack the flat poses."""
         self._frame_count += 1
-        frame: FullBodyPose | None = inputs[FULL_BODY_INPUT][0]
+        full_body = inputs[self.FULL_BODY]
         skeleton: dict[int, np.ndarray] = {}
 
-        if frame is None:
+        if full_body.is_none:
             self._on_unpaired()
         else:
-            self._announce_pairing()
-            positions, valid = _joint_positions_in_isaac_axes(frame)
-            whole = self._is_whole_skeleton(valid)
+            pairing = self._announce_pairing()
+            positions = (
+                np.asarray(
+                    full_body[FullBodyInputIndex.JOINT_POSITIONS], dtype=np.float64
+                )
+                @ _OPENXR_TO_ISAAC.T
+            )
+            orientations = full_body[FullBodyInputIndex.JOINT_ORIENTATIONS]
+            valid = np.asarray(
+                full_body[FullBodyInputIndex.JOINT_VALID], dtype=np.uint8
+            )
+            whole = self._is_whole_skeleton(pairing, valid)
             heading = _heading(positions, valid)
             # No heading, nothing to follow and no way to face the skeleton on the robot.
             if heading is not None:
                 # From here on every direction is the operator's own: turning is taken out.
                 positions = heading.inv().apply(positions)
-                torso = _torso_pose(positions, valid)
-                if whole and torso is not None:
-                    self._measure_operator(positions, valid)
+                if whole and (torso := _torso_pose(positions)) is not None:
+                    self._measure_operator(pairing, positions)
                     pivot = np.asarray(self._layout.waist_pivot_pelvis)
                     chains = [
                         _reconstruct(
                             target,
                             positions,
-                            valid,
                             anchor=pivot
                             + torso.apply(
                                 np.asarray(target.anchor_position_pelvis) - pivot
@@ -577,12 +529,12 @@ class JmexG1ActionSource(IDeviceIOSource):
                         for target, chain in zip(self._layout.frame_targets, chains):
                             self._held_chains[target.name] = chain
                             self._held_orientations[target.name] = _hand_orientation(
-                                target, frame, heading
+                                target, orientations, heading
                             )
                 skeleton = _received_skeleton(positions, valid)
 
         pelvis = self._pelvis_pose_provider()
-        outputs[ACTION_OUTPUT][0] = self._pack(pelvis)
+        outputs[self.FRAME_POSES][0] = self._pack(pelvis)
         if self._overlay_sink is not None:
             self._overlay_sink(
                 ReferenceOverlay(
@@ -598,32 +550,31 @@ class JmexG1ActionSource(IDeviceIOSource):
         self._report_status(context, pelvis)
 
     def _pack(self, pelvis: PelvisPose) -> np.ndarray:
-        action = np.zeros(self._layout.action_dim, dtype=np.float32)
-        for index, target in enumerate(self._layout.frame_targets):
+        poses = np.empty((len(self._layout.frame_targets), POSE_DIM), dtype=np.float32)
+        for row, target in zip(poses, self._layout.frame_targets):
             position, orientation_xyzw = pelvis.compose(
                 self._held_chains[target.name][-1],
                 self._held_orientations[target.name],
             )
-            start = index * POSE_DIM
-            action[start : start + POSITION_DIM] = position
-            action[start + POSITION_DIM : start + POSE_DIM] = orientation_xyzw
-        # Fingers stay zero: the body pose's slots carry no finger joints. See the README.
-        if self._layout.num_locomotion:
-            action[-self._layout.num_locomotion :] = self._layout.locomotion_command
-        return action
+            row[:POSITION_DIM] = position
+            row[POSITION_DIM:] = orientation_xyzw
+        return poses.ravel()
 
-    def _measure_operator(self, positions: np.ndarray, valid: np.ndarray) -> None:
-        """Take the operator's segment lengths off the first usable frame of a pairing."""
-        if self._operator_segment_lengths is not None:
+    def _measure_operator(self, pairing: _Pairing, positions: np.ndarray) -> None:
+        """Log the streamed skeleton's segment lengths off the first usable frame of a pairing.
+
+        For diagnosis only: the reconstruction uses the robot's lengths, not these.
+        """
+        if pairing.operator_measured:
             return
         measured: dict[str, tuple[float, ...]] = {}
         for target in self._layout.frame_targets:
-            lengths = _segment_lengths(target.chain, positions, valid)
+            lengths = _segment_lengths(target.chain, positions)
             if lengths is None:
-                # Wait for a frame that carries the whole chain rather than record part of it.
+                # A segment of no length: wait for a frame where every one has a length.
                 return
             measured[target.name] = lengths
-        self._operator_segment_lengths = measured
+        pairing.operator_measured = True
         for target in self._layout.frame_targets:
             if _extended_by_another(target, self._layout.frame_targets):
                 continue  # The longer chain's log line already has these lengths.
@@ -635,29 +586,30 @@ class JmexG1ActionSource(IDeviceIOSource):
                 _fmt_lengths(target.robot_segment_lengths),
             )
 
-    def _announce_pairing(self) -> None:
-        if self._paired:
-            return
-        self._paired = True
+    def _announce_pairing(self) -> _Pairing:
+        if self._pairing is not None:
+            return self._pairing
+        self._pairing = _Pairing()
         self._unpaired_frames = 0
         info_or_print(
             logger,
             "paired -- first body pose received on collection '%s'",
             self._settings.collection_id,
         )
+        return self._pairing
 
-    def _is_whole_skeleton(self, valid: np.ndarray) -> bool:
+    def _is_whole_skeleton(self, pairing: _Pairing, valid: np.ndarray) -> bool:
         """Does this frame carry every slot? Name the missing ones if that keeps not happening.
 
-        Only the standard human skeleton is driven from, and it fills every slot, so a frame
-        short of any is a bad frame or another model -- and neither is followed, even where
-        an arm's own slots all arrived. The README says what a robot URDF fills.
+        A frame short of any slot is not followed, even where an arm's own slots all arrived.
         """
         if all(valid):
-            self._incomplete_frames = 0
+            pairing.incomplete_frames = 0
             return True
-        self._incomplete_frames += 1
-        if not _report_due(self._incomplete_frames, _INCOMPLETE_FRAMES_BEFORE_WARNING):
+        pairing.incomplete_frames += 1
+        if not _report_due(
+            pairing.incomplete_frames, _INCOMPLETE_FRAMES_BEFORE_WARNING
+        ):
             return False
         missing = [BodyJoint(slot).name for slot, ok in enumerate(valid) if not ok]
         logger.warning(
@@ -667,7 +619,7 @@ class JmexG1ActionSource(IDeviceIOSource):
             self._settings.collection_id,
             len(missing),
             len(valid),
-            self._incomplete_frames,
+            pairing.incomplete_frames,
             ", ".join(missing),
             self._holding(),
         )
@@ -680,17 +632,13 @@ class JmexG1ActionSource(IDeviceIOSource):
         return "The robot is holding its own reset pose."
 
     def _on_unpaired(self) -> None:
-        """No sample on the collection. Say so, and forget what the last pairing measured.
+        """No body pose. Say so, and forget what the last pairing saw.
 
         A Player disconnect does not land here: the plugin keeps the collection, so the tracker
         goes on handing out the last frame.
         """
-        # Deliberately not restoring the held targets: dropping the robot's arms back to
-        # rest on a lost link is a larger movement than leaving them where they were told
-        # to go. Before the first pairing the held targets already are the rest pose.
-        self._paired = False
-        self._operator_segment_lengths = None
-        self._incomplete_frames = 0
+        # Do not reset the held targets to rest here: the arms stay where they were last sent.
+        self._pairing = None
         self._unpaired_frames += 1
         if not _report_due(self._unpaired_frames, 1):
             return
@@ -707,10 +655,13 @@ class JmexG1ActionSource(IDeviceIOSource):
         )
 
     def _report_status(self, context: ComputeContext, pelvis: PelvisPose) -> None:
-        if self._settings.status_period_s <= 0.0 or not self._paired:
+        if self._pairing is None:
             return
         now_s = context.graph_time.real_time_ns * 1.0e-9
-        if now_s - self._last_status_s < self._settings.status_period_s:
+        if (
+            self._last_status_s is not None
+            and now_s - self._last_status_s < self._settings.status_period_s
+        ):
             return
         self._last_status_s = now_s
         targets = " ".join(
@@ -726,29 +677,63 @@ class JmexG1ActionSource(IDeviceIOSource):
         )
 
 
+def g1_locomanipulation_pipeline(
+    frame_poses: OutputSelector, layout: G1ActionLayout, *, num_hand_joints: int
+) -> OutputCombiner:
+    """The G1 action: ``frame_poses``, then ``num_hand_joints`` fingers, then a standing command.
+
+    That is the order the Pink IK action term and then the lower-body action term read. No input
+    names a finger, so ``TensorReorderer`` leaves the fingers at zero.
+    """
+    standing = LocomotionFixedRootCmdRetargeter(
+        LocomotionFixedRootCmdRetargeterConfig(), name="standing_command"
+    )
+    (command,) = standing.output_spec()["root_command"].types
+    pose_names = [
+        f"{target.name}_{index}"
+        for target in layout.frame_targets
+        for index in range(POSE_DIM)
+    ]
+    finger_names = [f"finger_{index}" for index in range(num_hand_joints)]
+    command_names = [f"root_command_{index}" for index in range(command.shape[0])]
+    reorderer = TensorReorderer(
+        input_config={
+            JmexG1Retargeter.FRAME_POSES: pose_names,
+            "root_command": command_names,
+        },
+        output_order=pose_names + finger_names + command_names,
+        name="g1_action",
+        input_types={JmexG1Retargeter.FRAME_POSES: "array", "root_command": "array"},
+    )
+    info_or_print(
+        logger,
+        "the action is %d long -- %d for each of %s, then %d fingers and %d locomotion",
+        len(pose_names) + len(finger_names) + len(command_names),
+        POSE_DIM,
+        ", ".join(target.name for target in layout.frame_targets),
+        len(finger_names),
+        len(command_names),
+    )
+    connected = reorderer.connect(
+        {
+            JmexG1Retargeter.FRAME_POSES: frame_poses,
+            "root_command": standing.output("root_command"),
+        }
+    )
+    return OutputCombiner({ACTION_OUTPUT: connected.output("output")})
+
+
 def _report_due(frames: int, first: int) -> bool:
     """Say it on frame ``first`` of a condition, then every ``_REPORT_EVERY_FRAMES``."""
     return frames >= first and (frames - first) % _REPORT_EVERY_FRAMES == 0
-
-
-def _joint_positions_in_isaac_axes(
-    frame: FullBodyPose,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Read the 24 slots out of the frame and rebase them into Isaac's axes."""
-    joints = frame.joints
-    if joints is None:
-        count = int(BodyJoint.NUM_JOINTS)
-        return np.zeros((count, 3)), np.zeros(count, dtype=np.uint8)
-    positions = np.asarray(joints.positions, dtype=np.float64) @ _OPENXR_TO_ISAAC.T
-    return positions, np.asarray(joints.is_valid, dtype=np.uint8)
 
 
 def _heading(positions: np.ndarray, valid: np.ndarray) -> Rotation | None:
     """The way the operator faces, as a turn about Isaac's vertical from +X, or None.
 
     Read off the line between the hips, leveled, and not off the pelvis slot's orientation:
-    the standard human skeleton's pelvis axes have never been measured. None when a hip is
-    missing or the two have no level distance between them, one above the other.
+    the standard human skeleton's pelvis axes are unmeasured. None when a hip is missing or
+    the two have no level distance between them, one above the other.
     """
     left, right = int(BodyJoint.LEFT_HIP), int(BodyJoint.RIGHT_HIP)
     if not (valid[left] and valid[right]):
@@ -761,18 +746,15 @@ def _heading(positions: np.ndarray, valid: np.ndarray) -> Rotation | None:
     return Rotation.from_euler("z", np.arctan2(across[1], across[0]) - np.pi / 2.0)
 
 
-def _torso_pose(positions: np.ndarray, valid: np.ndarray) -> Rotation | None:
+def _torso_pose(positions: np.ndarray) -> Rotation | None:
     """The operator's upper body, turned from upright and facing their heading, or None.
 
     ``positions`` have the heading taken out, so upright and facing ahead -- MOXI Player's
-    reference pose -- is the identity. Read positions only: the spine slots' orientations
-    are unverified. None when a slot is missing, the spine has no length, or the shoulders
-    have no line across it.
+    reference pose -- is the identity. Read positions only: the spine slots' axes are
+    unmeasured. None when the spine has no length or the shoulders have no line across it.
     """
     spine1, spine3 = int(BodyJoint.SPINE1), int(BodyJoint.SPINE3)
     left, right = int(BodyJoint.LEFT_SHOULDER), int(BodyJoint.RIGHT_SHOULDER)
-    if not all(valid[slot] for slot in (spine1, spine3, left, right)):
-        return None
     up = positions[spine3] - positions[spine1]
     if np.linalg.norm(up) < _MIN_SEGMENT_LENGTH_M:
         return None
@@ -814,11 +796,9 @@ def _extended_by_another(
 
 
 def _segment_lengths(
-    chain: tuple[int, ...], positions: np.ndarray, valid: np.ndarray
+    chain: tuple[int, ...], positions: np.ndarray
 ) -> tuple[float, ...] | None:
-    """Meters between consecutive slots of ``chain``, or None if the chain is unusable."""
-    if not all(valid[slot] for slot in chain):
-        return None
+    """Meters between consecutive slots of ``chain``, or None if a segment has no length."""
     lengths = []
     for start, end in zip(chain, chain[1:]):
         length = float(np.linalg.norm(positions[end] - positions[start]))
@@ -850,7 +830,6 @@ def _received_skeleton(
 def _reconstruct(
     target: FrameTargetCfg,
     positions: np.ndarray,
-    valid: np.ndarray,
     *,
     anchor: np.ndarray,
 ) -> np.ndarray | None:
@@ -858,10 +837,8 @@ def _reconstruct(
 
     ``anchor`` is already turned with the operator's torso; ``positions`` have the heading
     taken out, so their directions read as the robot's pelvis frame. Returns the chain's
-    points in that frame, anchor first and target last, or None if this frame cannot drive it.
+    points in that frame, anchor first and target last, or None if a segment has no length.
     """
-    if not all(valid[slot] for slot in target.chain):
-        return None
     points = [np.asarray(anchor, dtype=np.float64)]
     for index, (start, end) in enumerate(zip(target.chain, target.chain[1:])):
         segment = positions[end] - positions[start]
@@ -875,7 +852,7 @@ def _reconstruct(
 
 
 def _hand_orientation(
-    target: FrameTargetCfg, frame: FullBodyPose, heading: Rotation
+    target: FrameTargetCfg, orientations: np.ndarray, heading: Rotation
 ) -> Rotation:
     """The operator's hand, turned onto ``target``'s task frame, in the pelvis frame.
 
@@ -890,7 +867,7 @@ def _hand_orientation(
         return target.neutral_rotation
     wrist = target.chain[-1]
     published = Rotation.from_quat(
-        np.asarray(frame.joints.orientations[wrist], dtype=np.float64)
+        np.asarray(orientations[wrist], dtype=np.float64)
     ).as_matrix()
     # The WRIST rotation in Isaac's axes is M R M^T, and the constant's columns move by M, so
     # the forearm frame in Isaac's world is (M R M^T)(M F) = M R F.
@@ -913,20 +890,18 @@ def _fmt_lengths(lengths: Sequence[float]) -> str:
 __all__ = [
     "ACTION_OUTPUT",
     "DEFAULT_JMEX_G1_SETTINGS",
-    "FULL_BODY_INPUT",
     "ORIENTATION_DIM",
     "POSE_DIM",
     "POSITION_DIM",
-    "STANDING_LOCOMOTION_COMMAND",
     "FrameTargetCfg",
     "G1ActionLayout",
-    "JmexG1ActionSource",
+    "JmexG1Retargeter",
     "JmexG1Settings",
     "PelvisPose",
     "ReferenceOverlay",
     "arm_frame_targets",
     "forearm_frame",
-    "g1_locomanipulation_action_type",
+    "g1_locomanipulation_pipeline",
     "left_wrist_chain",
     "right_wrist_chain",
 ]

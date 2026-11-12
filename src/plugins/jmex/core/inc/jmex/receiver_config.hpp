@@ -3,12 +3,19 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 namespace plugins
 {
 namespace jmex
 {
+
+//! Where the SDK sends channel advertisements when ReceiverConfig::broadcast_ip is unset.
+inline constexpr const char* kSdkDefaultBroadcastIp = "255.255.255.255";
+
+//! How logs and --help name an unset ReceiverConfig::bind_ip.
+inline constexpr const char* kEveryInterface = "every interface";
 
 /*!
  * @brief What the SDK needs from the host to bring a receiver up: the fields of the SDK's sample
@@ -18,27 +25,22 @@ namespace jmex
 struct ReceiverConfig
 {
     //! MOXI channel to open, one skeleton per channel. 0 is a suit connected over USB; 1..10 is
-    //! what a live capture assigns; 255 is what Player uses when it replays a recording.
+    //! what a live capture assigns; the plugin README names the one Player's file replay uses.
     int channel = 1;
 
     //! Local address the receiver's TCP server binds and sends channel advertisements from; Player
-    //! connects back to it. Empty means every interface, advertising from each broadcast-capable,
+    //! connects back to it. Unset means every interface, advertising from each broadcast-capable,
     //! non-loopback one.
-    std::string bind_ip;
+    std::optional<std::string> bind_ip;
 
-    //! Where channel advertisements are broadcast. Empty means 255.255.255.255, which every MOXI
-    //! Player on the subnet hears -- including ones on other machines, which then contend for the
-    //! same channel. Naming this host keeps a pairing local.
-    std::string broadcast_ip;
+    //! Where channel advertisements are broadcast. Unset means kSdkDefaultBroadcastIp.
+    std::optional<std::string> broadcast_ip;
 
     //! TCP port Player connects back on, advertised in every broadcast. Each receiver on one
     //! machine needs its own.
     int tcp_port = 7000;
 
-    //! Base of the per-channel data ports -- channel N receives on this + 1 + N. Only worth moving
-    //! to make those ports predictable, for a firewall rule or to tell two receivers apart; a
-    //! collision already relocates itself and announces where it landed. It does not move where
-    //! advertisements are sent, which Player fixes at 10100.
+    //! Base of the per-channel data ports the SDK opens. Advertisements still go to Player's fixed port.
     int udp_start_port = 10100;
 };
 

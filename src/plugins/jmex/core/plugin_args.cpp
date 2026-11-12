@@ -3,9 +3,12 @@
 
 #include "inc/jmex/plugin_args.hpp"
 
-#include <cstddef>
+#include <charconv>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 
 namespace plugins
 {
@@ -15,110 +18,113 @@ namespace jmex
 namespace
 {
 
-constexpr int k_max_port = 65535;
+constexpr int kMaxPort = 65535;
 // The SDK keeps a channel in one byte.
-constexpr int k_max_channel = 255;
+constexpr int kMaxChannel = 255;
 
-bool starts_with(const std::string& value, const std::string& prefix)
+//! The value of `--name=value` in @p arg, or nullopt when @p arg is another flag.
+std::optional<std::string> flag_value(std::string_view arg, std::string_view name)
 {
-    return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
+    if (arg.starts_with(name) && arg.size() > name.size() && arg[name.size()] == '=')
+    {
+        return std::string(arg.substr(name.size() + 1));
+    }
+    return std::nullopt;
 }
 
-//! The flag's value as a whole number in [min, max], or an error naming the flag and the value.
-//! Partially parsed values are rejected: "2.9" would otherwise select channel 2.
-int parse_whole_number(const std::string& flag, const std::string& value, int min, int max)
+//! The `--name=` part of @p arg, which errors name the flag by.
+std::string flag_name(const std::string& arg)
 {
-    const std::string rejection = flag + " takes a whole number from " + std::to_string(min) + " to " +
-                                  std::to_string(max) + ", got '" + value + "'";
+    return arg.substr(0, arg.find('=') + 1);
+}
+
+//! @p value as a whole number in [min, max], or an error naming the flag and the value.
+//! Partially parsed values are rejected: "2.9" would otherwise select channel 2.
+int parse_whole_number(const std::string& arg, const std::string& value, int min, int max)
+{
     int parsed = 0;
-    try
+    const char* begin = value.data();
+    const char* end = begin + value.size();
+    const auto [ptr, error] = std::from_chars(begin, end, parsed);
+    if (error != std::errc{} || ptr != end || parsed < min || parsed > max)
     {
-        std::size_t consumed = 0;
-        parsed = std::stoi(value, &consumed);
-        if (consumed != value.size())
-        {
-            throw std::invalid_argument("trailing characters after the number");
-        }
-    }
-    catch (const std::exception&)
-    {
-        throw std::runtime_error(rejection);
-    }
-    if (parsed < min || parsed > max)
-    {
-        throw std::runtime_error(rejection);
+        throw std::runtime_error(flag_name(arg) + " takes a whole number from " + std::to_string(min) + " to " +
+                                 std::to_string(max) + ", got '" + value + "'");
     }
     return parsed;
 }
 
-//! The flag's value; an empty one, which "--bind-ip=$IP" leaves when IP is unset, is an error naming
-//! the flag.
-std::string require_value(const std::string& flag, const std::string& value)
+//! @p value; an empty one, which "--bind-ip=$IP" leaves when IP is unset, is an error naming the flag.
+std::string require_value(const std::string& arg, const std::string& value)
 {
     if (value.empty())
     {
-        throw std::runtime_error(flag + " needs a value");
+        throw std::runtime_error(flag_name(arg) + " needs a value");
     }
     return value;
 }
 
+DeviceClock parse_device_clock(const std::string& arg, const std::string& value)
+{
+    if (value == "device")
+    {
+        return DeviceClock::DEVICE;
+    }
+    if (value == "local")
+    {
+        return DeviceClock::LOCAL;
+    }
+    throw std::runtime_error(flag_name(arg) + " takes 'device' or 'local', got '" + value + "'");
+}
+
 } // namespace
 
-PluginArgs parse_plugin_args(int argc, const char* const* argv, const char* device_clock_env)
+std::optional<PluginArgs> parse_plugin_args(int argc, const char* const* argv)
 {
-    PluginArgs args;
-
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h")
         {
-            args.help = true;
-            return args;
+            return std::nullopt;
         }
     }
 
-    args.device_clock = choose_device_clock(nullptr, device_clock_env);
-
+    PluginArgs args;
     // Do not add positional arguments: the PluginManager passes --plugin-root-id=<id> ahead of
     // plugin.yaml's and PluginConfig's.
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
-        if (starts_with(arg, "--channel="))
+        if (auto value = flag_value(arg, "--channel"))
         {
-            args.receiver.channel =
-                parse_whole_number("--channel=", arg.substr(std::string("--channel=").size()), 0, k_max_channel);
+            args.receiver.channel = parse_whole_number(arg, *value, 0, kMaxChannel);
         }
-        else if (starts_with(arg, "--tcp-port="))
+        else if (auto value = flag_value(arg, "--tcp-port"))
         {
-            args.receiver.tcp_port =
-                parse_whole_number("--tcp-port=", arg.substr(std::string("--tcp-port=").size()), 1, k_max_port);
+            args.receiver.tcp_port = parse_whole_number(arg, *value, 1, kMaxPort);
         }
-        else if (starts_with(arg, "--udp-start-port="))
+        else if (auto value = flag_value(arg, "--udp-start-port"))
         {
-            args.receiver.udp_start_port = parse_whole_number(
-                "--udp-start-port=", arg.substr(std::string("--udp-start-port=").size()), 1, k_max_port);
+            args.receiver.udp_start_port = parse_whole_number(arg, *value, 1, kMaxPort);
         }
-        else if (starts_with(arg, "--bind-ip="))
+        else if (auto value = flag_value(arg, "--bind-ip"))
         {
-            args.receiver.bind_ip = require_value("--bind-ip=", arg.substr(std::string("--bind-ip=").size()));
+            args.receiver.bind_ip = require_value(arg, *value);
         }
-        else if (starts_with(arg, "--broadcast-ip="))
+        else if (auto value = flag_value(arg, "--broadcast-ip"))
         {
-            args.receiver.broadcast_ip =
-                require_value("--broadcast-ip=", arg.substr(std::string("--broadcast-ip=").size()));
+            args.receiver.broadcast_ip = require_value(arg, *value);
         }
-        else if (starts_with(arg, "--collection-id="))
+        else if (auto value = flag_value(arg, "--collection-id"))
         {
-            args.collection_id = require_value("--collection-id=", arg.substr(std::string("--collection-id=").size()));
+            args.collection_id = require_value(arg, *value);
         }
-        else if (starts_with(arg, "--device-clock="))
+        else if (auto value = flag_value(arg, "--device-clock"))
         {
-            args.device_clock =
-                choose_device_clock(arg.substr(std::string("--device-clock=").size()).c_str(), device_clock_env);
+            args.device_clock = parse_device_clock(arg, *value);
         }
-        else if (starts_with(arg, "--plugin-root-id="))
+        else if (flag_value(arg, "--plugin-root-id"))
         {
             // Not used by this plugin.
         }
@@ -138,22 +144,27 @@ std::string plugin_usage()
     return "Usage: jmex_plugin [--name=value ...]\n"
            "\n"
            "  --channel=N            MOXI channel, 0.." +
-           std::to_string(k_max_channel) + " (default " + std::to_string(receiver.channel) +
+           std::to_string(kMaxChannel) + " (default " + std::to_string(receiver.channel) +
            "; Player's file replay is 255)\n"
            "  --collection-id=ID     collection the body pose is published on (default " +
            defaults.collection_id +
            ")\n"
            "  --bind-ip=ADDR         local address Player connects to and advertisements are sent from "
-           "(default every interface)\n"
-           "  --broadcast-ip=ADDR    where channel advertisements are sent (default 255.255.255.255)\n"
+           "(default " +
+           kEveryInterface +
+           ")\n"
+           "  --broadcast-ip=ADDR    where channel advertisements are sent (default " +
+           kSdkDefaultBroadcastIp +
+           ")\n"
            "  --tcp-port=N           TCP port advertised to Player (default " +
            std::to_string(receiver.tcp_port) +
            ")\n"
            "  --udp-start-port=N     base of the per-channel data ports (default " +
            std::to_string(receiver.udp_start_port) +
            ")\n"
-           "  --device-clock=CLOCK   raw device clock: device (Player's frame time, default) or local; "
-           "JMEX_DEVICE_CLOCK sets it too\n"
+           "  --device-clock=CLOCK   raw device clock: device (Player's frame time) or local (default " +
+           device_clock_name(defaults.device_clock) +
+           ")\n"
            "  --help, -h             print this and exit\n"
            "\n"
            "README.md says when to set each.\n";

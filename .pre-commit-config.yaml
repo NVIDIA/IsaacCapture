@@ -54,7 +54,7 @@ repos:
         language: system
         # Include CMakeLists.txt and Dockerfile.xxx by matching those explicitly in the regex.
         # Same rule as SOURCE_FILES in scripts/check_licenses.py; change both together.
-        files: \.(py|pyi|js|ts|cpp|cc|c|h|hpp|cxx|hxx|inc|cu|cuh|frag|vert|cmake|md|yaml|yml|sh|fbs|toml|html)$|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$
+        files: \.(py|pyi|js|ts|cpp|cc|c|h|hpp|cxx|hxx|inc|cu|cuh|frag|vert|cmake|md|yaml|yml|sh|fbs|toml|html|tsx|css|template)$|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$
       - id: check-lfs-pointers
         name: Ensure Git LFS-marked files are LFS pointers
         entry: python3 scripts/check_lfs_pointers.py

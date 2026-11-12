@@ -18,8 +18,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
-#include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -29,13 +29,12 @@ using namespace plugins::jmex;
 namespace
 {
 
-constexpr const char* LOGGER_NAME = "isaaccapture.plugins.jmex.main";
+constexpr const char* kLoggerName = "isaaccapture.plugins.jmex.main";
 
-// MOXI Player sends at 60 Hz; polling at four times that picks each frame up within about 4 ms.
+// Above Player's frame rate.
 constexpr int kPollHz = 240;
 
-//! Set by SIGINT/SIGTERM so the poll loop returns and ~ReceiverSession() shuts the SDK down in
-//! order, instead of the process being killed mid-stride.
+//! Set by SIGINT/SIGTERM: the poll loop returns and destroying the session shuts the SDK down.
 std::atomic<bool> g_stop{ false };
 static_assert(std::atomic<bool>::is_always_lock_free, "the signal handler stores to this");
 
@@ -45,18 +44,47 @@ extern "C" void on_stop_signal(int /*signum*/)
     g_stop.store(true, std::memory_order_relaxed);
 }
 
+//! Logs the run's counters when it goes out of scope, however the run ends.
+class CountersOnExit
+{
+public:
+    CountersOnExit(const int64_t& published, const ReceiverSession& receiver, const FullBodyPublisher& publisher)
+        : published_(published), receiver_(receiver), publisher_(publisher)
+    {
+    }
+
+    CountersOnExit(const CountersOnExit&) = delete;
+    CountersOnExit& operator=(const CountersOnExit&) = delete;
+
+    ~CountersOnExit()
+    {
+        isaaccapture::Logger::get(kLoggerName)
+            ->info(
+                "stopping -- published {} frames, dropped {}, push failures {}, sessions re-established {}, "
+                "recoveries abandoned {}",
+                published_, receiver_.dropped_frames(), publisher_.push_failures(), publisher_.session_recoveries(),
+                publisher_.recoveries_abandoned());
+    }
+
+private:
+    const int64_t& published_;
+    const ReceiverSession& receiver_;
+    const FullBodyPublisher& publisher_;
+};
+
 } // namespace
 
 int main(int argc, char** argv)
 try
 {
-    const auto logger = isaaccapture::Logger::get(LOGGER_NAME);
-    const PluginArgs args = parse_plugin_args(argc, argv, std::getenv("JMEX_DEVICE_CLOCK"));
-    if (args.help)
+    const std::optional<PluginArgs> parsed = parse_plugin_args(argc, argv);
+    if (!parsed)
     {
         std::cout << plugin_usage();
         return 0;
     }
+    const PluginArgs& args = *parsed;
+    const auto logger = isaaccapture::Logger::get(kLoggerName);
 
     const int channel = args.receiver.channel;
     const std::string collection_id = args.collection_id;
@@ -64,74 +92,56 @@ try
     logger->info("j-mex AgileMaster plugin (channel: {}, collection: {}, device clock: {}, SDK: {})", channel,
                  collection_id, device_clock_name(args.device_clock), moxi_sdk_version());
     logger->info("receiver on tcp {}:{}, advertising to {}, data port base {}",
-                 args.receiver.bind_ip.empty() ? "every interface" : args.receiver.bind_ip, args.receiver.tcp_port,
-                 args.receiver.broadcast_ip.empty() ? "255.255.255.255" : args.receiver.broadcast_ip,
-                 args.receiver.udp_start_port);
+                 args.receiver.bind_ip.value_or(kEveryInterface), args.receiver.tcp_port,
+                 args.receiver.broadcast_ip.value_or(kSdkDefaultBroadcastIp), args.receiver.udp_start_port);
 
-    // OpenXR first: a missing runtime is the common setup mistake, and failing on it before the
-    // MOXI receiver starts means we never take the process-global TCP port just to give it back.
+    // Before the MOXI receiver, so a missing OpenXR runtime fails the run before the receiver
+    // takes its TCP port.
     FullBodyPublisher full_body_publisher(collection_id, args.device_clock);
 
-    // Only now: the publisher's startup wait for an OpenXR system reads no stop flag, so until it
-    // returns, SIGINT and SIGTERM keep their default and end the process. Nothing needs undoing
-    // yet.
+    // The publisher's startup wait for an OpenXR system reads no stop flag: until it returns,
+    // SIGINT and SIGTERM keep their default and end the process.
     std::signal(SIGINT, on_stop_signal);
     std::signal(SIGTERM, on_stop_signal);
 
     ReceiverSession receiver(args.receiver);
+    int64_t published = 0;
+    const CountersOnExit counters(published, receiver, full_body_publisher);
 
     logger->info("Waiting for MOXI Player to pair on channel {}...", channel);
 
     const auto poll_interval = std::chrono::nanoseconds(1000000000 / kPollHz);
     auto next_poll = std::chrono::steady_clock::now();
-    int64_t published = 0;
-
-    int exit_code = 0;
-    try
+    while (!g_stop.load(std::memory_order_relaxed))
     {
-        while (!g_stop.load(std::memory_order_relaxed))
+        auto frame = receiver.poll();
+        if (frame && full_body_publisher.publish(*frame, g_stop))
         {
-            auto frame = receiver.poll();
-            if (frame && full_body_publisher.publish(*frame, g_stop))
+            if (published == 0)
             {
-                if (published == 0)
-                {
-                    logger->info("full body on collection '{}'", collection_id);
-                }
-                ++published;
+                logger->info("full body on collection '{}'", collection_id);
             }
-
-            // After a stall, re-base rather than catch up: the missed polls would all be empty.
-            const auto now = std::chrono::steady_clock::now();
-            next_poll += poll_interval;
-            if (next_poll < now)
-            {
-                next_poll = now + poll_interval;
-            }
-            std::this_thread::sleep_until(next_poll);
+            ++published;
         }
-    }
-    catch (const std::exception& e)
-    {
-        logger->error("{}: {}", argv[0], e.what());
-        exit_code = 1;
-    }
 
-    // Log the counters on every exit: after a fatal outage they are the only record of it.
-    logger->info(
-        "stopping -- published {} frames, dropped {}, push failures {}, sessions re-established {}, recoveries "
-        "abandoned {}",
-        published, receiver.dropped_frames(), full_body_publisher.push_failures(),
-        full_body_publisher.session_recoveries(), full_body_publisher.recoveries_abandoned());
-    return exit_code;
+        // After a stall, re-base rather than catch up: the missed polls would all be empty.
+        const auto now = std::chrono::steady_clock::now();
+        next_poll += poll_interval;
+        if (next_poll < now)
+        {
+            next_poll = now + poll_interval;
+        }
+        std::this_thread::sleep_until(next_poll);
+    }
+    return 0;
 }
 catch (const std::exception& e)
 {
-    isaaccapture::Logger::get(LOGGER_NAME)->error("{}: {}", argv[0], e.what());
+    isaaccapture::Logger::get(kLoggerName)->error("{}: {}", argv[0], e.what());
     return 1;
 }
 catch (...)
 {
-    isaaccapture::Logger::get(LOGGER_NAME)->error("{}: Unknown error", argv[0]);
+    isaaccapture::Logger::get(kLoggerName)->error("{}: Unknown error", argv[0]);
     return 1;
 }

@@ -6,6 +6,7 @@
 #include "device_clock.hpp"
 #include "receiver_config.hpp"
 
+#include <optional>
 #include <string>
 
 namespace plugins
@@ -17,19 +18,18 @@ namespace jmex
 struct PluginArgs
 {
     ReceiverConfig receiver;
+    //! Must equal LiveFullBodyTrackerJmexImpl::DEFAULT_COLLECTION_ID.
     std::string collection_id = "jmex_full_body";
     DeviceClock device_clock = DeviceClock::DEVICE;
-    //! --help or -h was given; nothing else was parsed, JMEX_DEVICE_CLOCK included.
-    bool help = false;
 };
 
 /*!
  * @brief Parse the plugin's named arguments; the last occurrence of a flag wins.
  *
- * ``device_clock_env`` is ``JMEX_DEVICE_CLOCK``, which ``--device-clock=`` overrides. Throws
- * std::runtime_error naming the argument it cannot use.
+ * @return Empty when --help or -h is given, whatever else is. Prints nothing.
+ * @throws std::runtime_error naming the argument it cannot use.
  */
-PluginArgs parse_plugin_args(int argc, const char* const* argv, const char* device_clock_env);
+std::optional<PluginArgs> parse_plugin_args(int argc, const char* const* argv);
 
 //! The flags and their defaults, for --help.
 std::string plugin_usage();

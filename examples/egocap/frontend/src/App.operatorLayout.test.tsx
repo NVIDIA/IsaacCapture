@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The cameras-first operator page: the status bar, the camera stage, the control dock and the side drawer that
  * holds the 3D view and raw data. useCaptureSession is mocked so each test controls the snapshot directly.
@@ -17,6 +21,7 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 function snapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {

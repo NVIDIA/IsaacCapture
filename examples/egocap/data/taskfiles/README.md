@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 # Task catalogs
 
 CSV task catalogs served read-only by the web backend at `GET /api/task-files` (names) and
-`GET /api/task-files/{name}` (parsed task definitions, in file order). Only the files in this directory are
-served; the backend never reads another location. Deployments must ship this directory with the application.
+`GET /api/task-files/{name}` (parsed task definitions, in file order). Only files in the configured shipped and imported catalog directories are
+served. Deployments must ship this directory with the application.
 
 Two layouts are supported:
 
@@ -20,6 +20,10 @@ Two layouts are supported:
 
 Other columns (operators, sessions, completion tracking) are ignored. A task file lists available tasks; it does not
 select one.
+
+Operators can add catalogs of their own from the page's Settings → Tasks (a CSV uploaded from their browser); those are stored in a `taskfiles/` directory beside the operator settings file (under the recording output
+inside the hidden `.egocap/` configuration directory by default), listed together with the shipped ones, and can be removed again. An imported catalog with a
+shipped catalog's name takes its place in the listing without modifying the shipped file.
 
 Set `EGOCAP_TASK_FILES_DIR` to serve a different directory (for example the one the recorder reads its task library
 from); unset, the API reads this one. The summary file `Summary.csv`, hidden files and editor leftovers are never

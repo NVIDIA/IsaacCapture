@@ -21,9 +21,7 @@ target_include_directories(jmex_plugin_core
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
 )
 
-# Public headers include the generated full-body schema, so isaacteleop_schema propagates. Nothing
-# else does: no public header includes OpenXR or the pusher -- the transport the publisher owns is
-# behind this library's own headers.
+# Public headers include the generated full-body schema, so isaacteleop_schema propagates.
 target_link_libraries(jmex_plugin_core
     PUBLIC
         isaacteleop_schema
@@ -34,10 +32,4 @@ target_link_libraries(jmex_plugin_core
         log_bridge::log_bridge_core
 )
 
-set_target_properties(jmex_plugin_core PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN YES
-)
-
-add_library(isaac::jmex_plugin_core ALIAS jmex_plugin_core)
+add_library(jmex::jmex_plugin_core ALIAS jmex_plugin_core)

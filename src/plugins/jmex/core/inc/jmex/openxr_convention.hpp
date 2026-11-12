@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "body_joint_mapping.hpp"
+#include <schema/pose_generated.h>
 
 namespace plugins
 {
@@ -19,7 +19,7 @@ namespace jmex
  * @param moxi_position         Joint position in MOXI space, meters.
  * @param moxi_orientation_wxyz Joint orientation in MOXI space, scalar first, as the SDK answers.
  */
-JointPose moxi_pose_to_openxr(const float moxi_position[3], const float moxi_orientation_wxyz[4]);
+core::Pose moxi_pose_to_openxr(const float moxi_position[3], const float moxi_orientation_wxyz[4]);
 
 } // namespace jmex
 } // namespace plugins

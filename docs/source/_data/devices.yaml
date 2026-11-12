@@ -296,7 +296,7 @@ devices:
           url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/jmex
       requirements:
         - Linux, x86_64
-        - MOXI Receiver SDK 0.8.1 or newer (on request from j-mex)
+        - MOXI Receiver SDK (on request from j-mex)
         - MOXI Player for Robot with the standard human skeleton loaded, on this machine or the same subnet
 
   - id: logitech-rudder-pedals

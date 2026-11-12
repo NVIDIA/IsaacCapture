@@ -16,14 +16,14 @@ pose to a standard Isaac Capture full-body MCAP.
    discoverable. [Building](../../src/plugins/jmex/README.md#building) in the plugin README gives the
    build option, the SDK and the build prerequisites.
 2. **MOXI Player for Robot**, with the **standard human skeleton** loaded, on a known channel. The
-   plugin's default is channel 1; Player's file replay is fixed on 255. For a Player on another
-   machine, start the plugin yourself as in
+   plugin's `--help` names its default channel, and
+   [Running](../../src/plugins/jmex/README.md#running) in the plugin README the one Player's file
+   replay uses. For a Player on another machine, start the plugin yourself as in
    [Choosing where the receiver listens](../../src/plugins/jmex/README.md#choosing-where-the-receiver-listens),
    and keep the examples from starting their own: `JMEX_PLUGIN_AUTO_LAUNCH=0` for the task,
    `--no-plugin` for the recording script.
 3. **A CloudXR runtime.** It is required even though no headset is.
-4. **Isaac Lab 3.0.0, 3.0.0 EA or 3.0.0 beta2**, for the teleop half. [Verified on](#verified-on)
-   gives the exact versions.
+4. **Isaac Lab 3.0**, one of the versions under [Verified on](#verified-on), for the teleop half.
 5. **This repository's `isaaccapture`, in Isaac Lab's Python**, also for the teleop half: no
    released package carries the `body.jmex` vendor yet. Build it as in
    [Build from source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html),
@@ -65,7 +65,7 @@ This is **upper-body teleop**: the operator's arms drive the G1's arms, and thei
 bending sideways, twisting — drives its waist. Turning on the spot does not move the robot, and the
 legs belong to the locomotion policy. The scene is the G1 on its own.
 
-Running it takes four steps:
+To run it:
 
 1. **Start the runtime** in a terminal of its own, and leave it running; `Ctrl-C` there stops it
    once Isaac Lab has exited. It runs on Isaac Lab's Python, which has this repository's
@@ -108,13 +108,13 @@ Things to know:
 - **The task launches `jmex_plugin` itself.** `JMEX_PLUGIN_AUTO_LAUNCH=0` leaves that to you, and
   `JMEX_CHANNEL` and `JMEX_COLLECTION_ID` change the channel and the collection.
 - **Until Player pairs**, the G1 holds its own reset pose, and the console says so once and then
-  every 300 frames.
+  again at intervals.
 - **If Player disconnects mid-run**, the G1 holds the last pose it received: the collection keeps its
   last frame. The plugin logs `MOXI Player disconnected; waiting for it to come back`, and the G1
   follows again once Player pairs.
-- **Load the standard human skeleton in Player.** Only a frame that carries all 24 slots moves the
-  robot. A robot URDF loaded by mistake fills only some of them; when slots stay missing for 30
-  frames in a row — a few seconds when driven live — the console names them, again every 300 frames.
+- **Load the standard human skeleton in Player.** Only a frame that carries every slot moves the
+  robot. A robot URDF loaded by mistake fills only some of them; when slots stay missing for
+  a run of frames, the console names them, and again at intervals while they stay missing.
 
 ### What is connected, and what is not
 
@@ -127,18 +127,18 @@ Things to know:
 | Fingers | Zero |
 | Legs, base motion | A fixed standing command; the locomotion policy keeps the G1 standing |
 
-Ten of the 24 slots reach the action: the shoulders, elbows and wrists for the arms, the two hips
+These slots reach the action: the shoulders, elbows and wrists for the arms, the two hips
 for the operator's heading, and `SPINE1` and `SPINE3` for the torso. The rest are drawn in the
 overlay and drive nothing.
 
 ### Reading the overlay
 
-The task draws two figures over the robot. Once XR is running, Kit's main viewport shows the XR
-camera's view; open **Window → Viewport 2** to watch them:
+The task draws an overlay on the robot. Once XR is running, Kit's main viewport shows the XR
+camera's view; open **Window → Viewport 2** to watch it:
 
 | Color | What it is | Should the robot line up with it? |
 | --- | --- | --- |
-| Blue | The body pose as it arrived, turned to face the way the robot does, with its pelvis on the robot's | No. It has the operator's proportions |
+| Blue | The body pose as it arrived, turned to face the way the robot does, with its pelvis on the robot's | No. It has the streamed skeleton's proportions |
 | Orange | Each arm as the IK is asked to place it, with the shoulder, elbow and wrist drawn as large dots | Yes. The robot's shoulders, elbows and wrists should sit on the large dots |
 
 Before Player pairs, orange is a dot on each of the robot's resting wrists, elbows and shoulders,
@@ -170,18 +170,20 @@ python -m isaaccapture_examples.jmex.record_jmex_full_body \
   --no-launch-cloudxr-runtime
 ```
 
-This records ten seconds to that path on the plugin's default channel. Add `--channel=255` to
-record from Player's file replay, and `--collection-id=` if this machine runs more than one of
-these.
+This records ten seconds to that path on the plugin's default channel. Add `--channel=` to record
+from another one, such as Player's file replay
+([Running](../../src/plugins/jmex/README.md#running) in the plugin README names it), and
+`--collection-id=` if this machine runs more than one of these.
 
 The script starts `jmex_plugin` itself and stops it on exit. `--no-plugin` leaves starting it to
-you, which is also how to give the plugin any of its [other
-flags](../../src/plugins/jmex/README.md#running). Start the runtime first, as above: if the script
-starts a runtime itself and that runtime is still coming up, the script can wait at
+you, which is also how to give the plugin any of its
+[other flags](../../src/plugins/jmex/README.md#choosing-where-the-receiver-listens). Start the
+runtime first, as above: if the script starts a runtime itself and that runtime is still coming up,
+the script can wait at
 `OpenXR HMD form factor is unavailable; waiting for a system...` with no timeout, and `Ctrl-C` does
 not stop it.
 
-Each progress line reports how many of the 24 slots the frame carried:
+Each progress line reports how many slots the frame carried:
 
 ```text
 [record] t= 1.03s  frame=60  joints=24/24
@@ -205,25 +207,23 @@ python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
 
 | Channel | Schema | Contents |
 | --- | --- | --- |
-| `full_body/full_body` | `core.FullBodyPoseRecord` | 24 body-pose slots, OpenXR axes, meters |
+| `full_body/full_body` | `core.FullBodyPoseRecord` | Every body-pose slot, OpenXR axes, meters |
 | `controllers/left_controller` | `core.ControllerSnapshotRecord` | No tracked pose on a mocap-only session |
 | `controllers/right_controller` | `core.ControllerSnapshotRecord` | No tracked pose on a mocap-only session |
 
-The two controller channels are recorded because the shared replay pipeline expects them. Near the
-end of each pass, replay logs `left controller data not found` and `right controller data not found`
-once each; neither is a fault.
+Near the end of each pass, replay logs `left controller data not found` and
+`right controller data not found` once each; neither is a fault.
 
 ## Known limitations
 
 - **Nothing can be picked up.** The body pose carries no finger joints, so the fingers stay at zero,
   and the table and its object are moved away.
-- **The feet shuffle.** The pelvis is pinned, and the locomotion policy keeps counterbalancing
-  whatever the arms do.
+- **The feet shuffle in place.**
 - **An arm thrown out to the shoulder's joint limit can stay there.** Isaac Lab's "Press 'R'" does
   not reset it; restart Isaac Lab. Short visits to the limit that clear on their own are more
   common.
-- **Stay inside the waist's range**: ±15° of lean and side bend, ±30° of twist, as logged at
-  startup. Past them the waist stops at the limit and the G1 stops following, arms included.
+- **Stay inside the waist's range**, which the task logs at startup. Past it the waist stops at the
+  limit and the G1 stops following, arms included.
 - **The G1 runs behind the operator.** With XR on, the simulation runs well below real time.
 - **Stand upright before starting.** For the first couple of seconds the robot catches up to
   wherever the operator already is.
@@ -247,19 +247,19 @@ Each with the `LocomanipulationG1EnvCfg` base task and the Pink IK controller th
 
 The retargeting tests need only the staged `isaaccapture` package: no Isaac Sim, Isaac Lab, device
 or MOXI Player. They carry the ctest label `jmex`, as do the plugin's C++ tests, which need no MOXI
-Receiver SDK. A build registers them only with `BUILD_PLUGIN_JMEX` on, and the Python ones also need
-`BUILD_EXAMPLES` and `BUILD_VIZ`:
+Receiver SDK. A build with `BUILD_PLUGIN_JMEX`, `BUILD_EXAMPLES` and `BUILD_VIZ` on has them all:
 
 ```bash
 ctest --test-dir build -L jmex --output-on-failure
 ```
 
 To run them under `pytest` from the repository root instead, put the staged package on `PYTHONPATH`
-and use the Python the build was configured for, 3.11 unless `ISAAC_TELEOP_PYTHON_VERSION` set
-another:
+and use the Python the build was configured for, which its cache records as
+`ISAAC_TELEOP_PYTHON_VERSION`:
 
 ```bash
+PY=$(sed -n 's/^ISAAC_TELEOP_PYTHON_VERSION:STRING=//p' build/CMakeCache.txt)
 PYTHONPATH=build/python_package/Release \
-  uv run --project tests/python/examples/jmex --python 3.11 --extra dev \
+  uv run --project tests/python/examples/jmex --python "$PY" --extra dev \
   pytest tests/python/examples/jmex/ -v
 ```

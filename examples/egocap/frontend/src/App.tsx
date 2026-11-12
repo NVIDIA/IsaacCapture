@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";
@@ -30,6 +34,8 @@ import {
 import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
+import { SettingsPanel } from "./SettingsPanel";
+import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
 import type { RecordingPhase } from "./recordingUiReducer";
 
@@ -200,10 +206,19 @@ function providerTone(status: ProviderStatus["status"]): Tone {
   return PROVIDER_TONE[status] ?? "neutral";
 }
 
-/** The page's top bar: app title, capture mode and feed-health status.
+/** The page's top bar: app title, capture mode, feed-health status and the Settings button.
  * There is no page/tab navigation -- the generic capture display and the
- * Ego Capture UI recording panel are always-present siblings on one page. */
-function AppHeader({ response, feedHealthLabel }: { response: CaptureStatusResponse | null; feedHealthLabel: string }) {
+ * Ego Capture UI recording panel are always-present siblings on one page, and
+ * Settings opens as a drawer over them rather than replacing them. */
+function AppHeader({
+  response,
+  feedHealthLabel,
+  onOpenSettings,
+}: {
+  response: CaptureStatusResponse | null;
+  feedHealthLabel: string;
+  onOpenSettings: () => void;
+}) {
   return (
     <header className="app-header">
       <div className="app-title">
@@ -217,6 +232,9 @@ function AppHeader({ response, feedHealthLabel }: { response: CaptureStatusRespo
         <span className="feed-health" aria-live="polite">
           Feed {feedHealthLabel}
         </span>
+        <button type="button" className="settings-button" onClick={onOpenSettings} aria-haspopup="dialog">
+          Settings
+        </button>
       </div>
     </header>
   );
@@ -464,11 +482,32 @@ export default function App() {
     return () => window.removeEventListener("resize", refit);
   }, []);
   const unavailable = response === null && feedHealth === "unavailable";
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // The operator settings the page itself uses (camera roles). Re-read each time Settings closes, so a change
+  // saved there reaches the tiles without a reload.
+  const [settingsGeneration, setSettingsGeneration] = useState(0);
+  const operatorSettings = useOperatorSettings(settingsGeneration);
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    setSettingsGeneration((n) => n + 1);
+  };
+  // Camera roles use the capture streams currently available on main.
+  const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera").map((s) => s.name);
 
   return (
     <div className="app-shell app-shell--operator">
-      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} />
+      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => setSettingsOpen(true)} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={closeSettings}
+        sidebarWidth={sidebarWidth}
+        sidebarDefault={SIDEBAR_DEFAULT_PX}
+        onResetSidebar={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+        controlToken={controlToken}
+        cameraSources={cameraSources}
+      />
       <div
+        inert={settingsOpen}
         className={`op-body${resizing ? " op-body--resizing" : ""}`}
         style={{ "--op-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
@@ -495,7 +534,7 @@ export default function App() {
               <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
               {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
               <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>
-                <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} />
+                <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} cameraRoles={operatorSettings?.camera_roles ?? null} />
               </div>
               <div className="op-dock">
                 <RecordingPanel
@@ -509,6 +548,7 @@ export default function App() {
                   setControlToken={setControlToken}
                   clearControlToken={clearControlToken}
                   onPhaseChange={setPanelPhase}
+                  interactionBlocked={settingsOpen}
                 />
               </div>
             </>

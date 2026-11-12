@@ -186,7 +186,7 @@ def _new_batch_id() -> str:
     return f"egocap-batch-{uuid.uuid4()}"
 
 
-def _control_token_valid(candidate: object, expected: str) -> bool:
+def control_token_valid(candidate: object, expected: str) -> bool:
     """Timing-safe comparison against the server's one generated secret.
     Rejects a non-``str``, wrong-length, or non-ASCII candidate before
     ``compare_digest`` itself, which raises ``TypeError`` on non-ASCII
@@ -430,7 +430,7 @@ class RecordingContext:
         place that actually needs current accepted sources and a
         committed instruction. See ``RecordingSessionCoordinator``'s own
         ``start_episode``/``set_task``/``new_batch`` docstrings."""
-        if not _control_token_valid(command.control_token, self.control_token):
+        if not control_token_valid(command.control_token, self.control_token):
             return "rejected", "Enter the current recording control token"
         if command.payload.get("batch_id") != self.batch_id:
             return "rejected", "no matching batch"

@@ -14,14 +14,17 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, replace
-from pathlib import Path
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import gymnasium as gym
 import numpy as np
+import pinocchio as pin
 from gymnasium.envs.registration import registry
+from pink.tasks import FrameTask
 from scipy.spatial.transform import Rotation
 
+from isaaccapture.retargeting_engine.deviceio_source_nodes import FullBodySource
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 from isaaccapture.schema import BodyJoint
 from isaaccapture.teleop_session_manager import PluginConfig, RetargetingExecutionConfig
@@ -46,16 +49,18 @@ from .jmex_g1_retargeting import (
     POSE_DIM,
     FrameTargetCfg,
     G1ActionLayout,
-    JmexG1ActionSource,
+    JmexG1Retargeter,
     JmexG1Settings,
     PelvisPose,
     ReferenceOverlay,
     arm_frame_targets,
     forearm_frame,
+    g1_locomanipulation_pipeline,
     info_or_print,
     left_wrist_chain,
     right_wrist_chain,
 )
+from .plugin import full_body_source, plugin_config
 
 if TYPE_CHECKING:
     import torch
@@ -67,7 +72,7 @@ if TYPE_CHECKING:
         PinkInverseKinematicsAction,
     )
 
-logger = logging.getLogger("isaaccapture.jmex.jmex_g1_tasks")
+logger = logging.getLogger("isaaccapture.examples.jmex.jmex_g1_tasks")
 
 TASK_ID = "Isaac-PickPlace-Locomanipulation-G1-Jmex-Abs-v0"
 
@@ -75,14 +80,9 @@ TASK_ID = "Isaac-PickPlace-Locomanipulation-G1-Jmex-Abs-v0"
 # manager broadcasts to every environment there is.
 _TELEOP_ENV_INDEX = 0
 
-_PLUGIN_NAME = "jmex"
-_PLUGIN_ROOT_ID = "jmex"
-
-# Pink's frame names, which are the URDF's and carry the asset's prefix. Isaac Sim's body
-# names for the same links do not -- the two namespaces are not interchangeable, and the
-# prefix is not universal within the URDF either. The wrist names are the ones Isaac Lab's
-# G1 pink controller config already targets (isaaclab_tasks/.../configs/pink_controller_cfg.py);
-# the shoulder and elbow links follow the same naming.
+# Pink's frame names: the URDF's, with the asset's prefix that Isaac Sim's body names for the same
+# links lack. Do not derive them by prefixing a body name: not every URDF frame carries it. The
+# wrists are the ones isaaclab_tasks/.../configs/pink_controller_cfg.py targets.
 _PINK_PELVIS_LINK = "g1_29dof_with_hand_rev_1_0_pelvis"
 _PINK_LEFT_SHOULDER_LINK = "g1_29dof_with_hand_rev_1_0_left_shoulder_pitch_link"
 _PINK_LEFT_ELBOW_LINK = "g1_29dof_with_hand_rev_1_0_left_elbow_link"
@@ -171,8 +171,7 @@ _BODY_CHAINS = (
     ),
 )
 
-# The overlay's two colors (RGBA): blue is the body pose as it arrived, orange the arms
-# rebuilt from it. The README says how to read them.
+# Overlay colors (RGBA); README.md "Reading the overlay" says what each one draws.
 _RECEIVED_COLOR = (0.25, 0.65, 1.0, 1.0)
 _REBUILT_COLOR = (1.0, 0.55, 0.1, 1.0)
 # Debug draw sizes are screen pixels, so they stay legible however far the camera is.
@@ -186,44 +185,45 @@ _PARK_OFFSET_Y = 5.0
 
 
 class _JmexRuntime:
-    """What the pipeline needs from the running robot: its layout, env and live pelvis.
+    """What the pipeline needs from the running robot: its env, layout, finger count and pelvis.
 
-    The layout is only measurable once Isaac Lab has built the Pink IK controller, and the
-    pipeline is built later still, when the teleop session starts.
+    All but the pelvis exist once Isaac Lab has built the Pink IK action term, which measures
+    the layout; the pipeline is built later still, when the teleop session starts.
     """
 
-    def __init__(self) -> None:
-        self._layout: G1ActionLayout | None = None
-        self._env: Any | None = None
-        self._pelvis = PelvisPose(
-            position=np.zeros(3), orientation_xyzw=np.array([0.0, 0.0, 0.0, 1.0])
-        )
+    def __init__(self, pelvis: PelvisPose) -> None:
+        self._robot: tuple[Any, G1ActionLayout, int] | None = None
+        self._pelvis = pelvis
 
-    def publish_env(self, env: Any) -> None:
-        self._env = env
+    def publish_robot(
+        self, env: Any, layout: G1ActionLayout, hand_joint_dim: int
+    ) -> None:
+        self._robot = (env, layout, hand_joint_dim)
 
-    def env(self) -> Any | None:
-        return self._env
-
-    def env_origin(self) -> np.ndarray:
-        """The teleoperated environment's origin in the simulation world."""
-        if self._env is None:
-            return np.zeros(3)
-        origin = self._env.scene.env_origins[_TELEOP_ENV_INDEX]
-        return origin.detach().cpu().numpy().astype(np.float64)
-
-    def publish_layout(self, layout: G1ActionLayout) -> None:
-        self._layout = layout
-
-    def layout(self) -> G1ActionLayout:
-        """The action layout, sized from the robot the environment actually built."""
-        if self._layout is None:
+    def _measured(self) -> tuple[Any, G1ActionLayout, int]:
+        if self._robot is None:
             raise RuntimeError(
                 "The j-mex pipeline was built before the Pink IK action term measured the "
                 "robot. Launch through the registered task id so the environment is "
                 f"constructed first: --task {TASK_ID}"
             )
-        return self._layout
+        return self._robot
+
+    def env(self) -> Any:
+        return self._measured()[0]
+
+    def layout(self) -> G1ActionLayout:
+        """The action layout, sized from the robot the environment actually built."""
+        return self._measured()[1]
+
+    def hand_joint_dim(self) -> int:
+        """The Pink IK action term's ``hand_joint_dim``."""
+        return self._measured()[2]
+
+    def env_origin(self) -> np.ndarray:
+        """The teleoperated environment's origin in the simulation world."""
+        origin = self.env().scene.env_origins[_TELEOP_ENV_INDEX]
+        return origin.detach().cpu().numpy().astype(np.float64)
 
     def publish_pelvis(
         self, position: np.ndarray, orientation_xyzw: np.ndarray
@@ -237,9 +237,6 @@ class _JmexRuntime:
         return self._pelvis
 
 
-_RUNTIME = _JmexRuntime()
-
-
 class _ReferenceOverlayDrawer:
     """Draws each frame's ``ReferenceOverlay`` with Kit's debug draw.
 
@@ -247,16 +244,15 @@ class _ReferenceOverlayDrawer:
     drawing fails, it says so once and draws nothing more; the task runs the same either way.
     """
 
-    def __init__(self) -> None:
-        self._draw: Any | None = None
-        self._off = False
+    def __init__(self, runtime: _JmexRuntime) -> None:
+        self._runtime = runtime
 
     def __call__(self, overlay: ReferenceOverlay) -> None:
-        draw = self._debug_draw()
+        draw = self._debug_draw
         if draw is None:
             return
         # The overlay is in the per-env world frame; debug draw is in the simulation's.
-        origin = _RUNTIME.env_origin()
+        origin = self._runtime.env_origin()
         starts: list[list[float]] = []
         ends: list[list[float]] = []
         line_colors: list[tuple[float, ...]] = []
@@ -299,9 +295,9 @@ class _ReferenceOverlayDrawer:
         except Exception as exc:
             self._turn_off(f"drawing failed ({type(exc).__name__}: {exc})")
 
+    @cached_property
     def _debug_draw(self) -> Any | None:
-        if self._draw is not None or self._off:
-            return self._draw
+        """Kit's debug draw, acquired on first use; None once the overlay is off."""
         try:
             import omni.kit.app
 
@@ -311,26 +307,22 @@ class _ReferenceOverlayDrawer:
             from isaacsim.util.debug_draw import _debug_draw
 
             draw = _debug_draw.acquire_debug_draw_interface()
-        # Outside Kit any of the three steps can fail, each in its own way.
+        # Outside Kit any of these steps can fail, each in its own way.
         except Exception as exc:
             self._turn_off(f"no Kit debug draw ({type(exc).__name__}: {exc})")
             return None
         if draw is None:
             self._turn_off("no Kit debug draw")
             return None
-        self._draw = draw
         info_or_print(
             logger,
-            "drawing the reference overlay -- blue is the body pose as received, in the "
-            "operator's proportions, and is not meant to line up with the robot; orange is each "
-            "arm rebuilt in the robot's proportions, and its large dots are what the IK is told "
-            "to reach -- the robot's wrist, elbow and shoulder should sit on them.",
+            "drawing the reference overlay; the example README's 'Reading the overlay' says "
+            "what each color is.",
         )
         return draw
 
     def _turn_off(self, reason: str) -> None:
-        self._off = True
-        self._draw = None
+        self._debug_draw = None
         logger.warning("%s; the reference overlay is off", reason)
 
 
@@ -367,37 +359,14 @@ def _settings_from_env() -> JmexG1TaskSettings:
     return replace(default, device=device)
 
 
-def _plugin_search_paths() -> list[Path]:
-    # The repository root: this file sits in examples/jmex/python/isaaccapture_examples/jmex/.
-    base = Path(__file__).resolve().parents[5]
-    candidates = [base / "plugins", base / "install" / "plugins"]
-    return [path for path in candidates if path.exists()]
-
-
 def _plugin_configs(settings: JmexG1TaskSettings) -> list[PluginConfig]:
     if not settings.device.plugin_auto_launch:
         return []
-    search_paths = _plugin_search_paths()
-    if not search_paths:
-        raise RuntimeError(
-            "jmex plugin directory not found. Configure with -DBUILD_PLUGIN_JMEX=ON and run "
-            "`cmake --install build`, or set "
-            "JMEX_PLUGIN_AUTO_LAUNCH=0 to drive a manually started plugin."
-        )
     return [
-        # The rest of the receiver's settings live in src/plugins/jmex/plugin.yaml. These
-        # two are appended after it, and the last value of a flag wins.
-        PluginConfig(
-            plugin_name=_PLUGIN_NAME,
-            plugin_root_id=_PLUGIN_ROOT_ID,
-            search_paths=search_paths,
-            plugin_args=[
-                f"--channel={settings.device.channel}",
-                f"--collection-id={settings.device.collection_id}",
-            ],
-            # Refuse to start rather than wait for a pairing that cannot happen: a build without
-            # BUILD_PLUGIN_JMEX or without the SDK installs the other plugins but not this one.
-            required=True,
+        plugin_config(
+            settings.device.channel,
+            settings.device.collection_id,
+            otherwise="set JMEX_PLUGIN_AUTO_LAUNCH=0 to drive a manually started plugin.",
         )
     ]
 
@@ -411,8 +380,6 @@ def _measure_frame_targets(
     state alone. Each shoulder read there is its arm's anchor before the operator's torso pose
     turns it about the waist (``_measure_waist_pivot``).
     """
-    import pinocchio as pin
-
     model, data = _rest_kinematics(pink_configuration)
 
     def placement(name: str) -> pin.SE3:
@@ -477,15 +444,13 @@ def _measure_frame_targets(
     if unknown:
         raise RuntimeError(
             f"The Pink controller has frame tasks on {unknown}, which no body slot drives. "
-            "Each frame task takes seven numbers of the action, so none can be left out."
+            f"Each frame task takes {POSE_DIM} numbers of the action, so none can be left out."
         )
     return tuple(by_frame[name] for name in frame_names)
 
 
 def _rest_kinematics(pink_configuration: Any) -> tuple[Any, Any]:
     """Pink's pinocchio model, and a private ``Data`` for it at the model's rest configuration."""
-    import pinocchio as pin
-
     model = pink_configuration.full_model
     data = model.createData()
     q_rest = np.asarray(pink_configuration.robot_wrapper.q0, dtype=np.float64)
@@ -501,8 +466,6 @@ def _measure_waist_pivot(pink_configuration: Any) -> tuple[float, float, float]:
     It is the point the upper body tips about, measured off the same rest configuration as the
     shoulders and the link lengths.
     """
-    import pinocchio as pin
-
     model, data = _rest_kinematics(pink_configuration)
     pelvis = data.oMf[model.getFrameId(_PINK_PELVIS_LINK)]
 
@@ -603,7 +566,7 @@ def _leading_frame_tasks(
 
     The action term locates each task's slot with ``enumerate`` over the whole list and
     does not compress the index, so a frame task sitting behind a non-frame one reads the
-    wrong seven numbers first and only raises later, if at all.
+    wrong ``POSE_DIM`` numbers first and only raises later, if at all.
     """
     frame_indices = [
         index for index, task in enumerate(tasks) if isinstance(task, frame_task_cls)
@@ -616,41 +579,31 @@ def _leading_frame_tasks(
     return tasks[: len(frame_indices)]
 
 
-def _assert_action_dim(layout: G1ActionLayout) -> None:
-    """Check the pipeline's action length against the environment's, before the first frame.
-
-    Unchecked, a mismatch surfaces on the first step as a bare shape ``ValueError`` from the
-    action manager, which does not say which side is wrong. Skipped without a running
-    environment, as in the tests.
-    """
-    env = _RUNTIME.env()
-    if env is None:
-        return
-    total = env.action_manager.total_action_dim
-    if layout.action_dim != total:
+def _assert_action_dim(runtime: _JmexRuntime, pipeline: OutputCombiner) -> None:
+    """Raise if the pipeline's action length differs from the environment's."""
+    (action,) = pipeline.output_types()[ACTION_OUTPUT].types
+    total = runtime.env().action_manager.total_action_dim
+    if action.shape != (total,):
         raise RuntimeError(
             "j-mex action size disagrees with the environment: the pipeline produces "
-            f"{layout.action_dim} from {len(layout.frame_targets)} frame tasks, "
-            f"{layout.num_hand_joints} finger joints and {layout.num_locomotion} "
-            f"locomotion elements, but the action manager expects {total}. A task added to "
+            f"{action.shape[0]}, but the action manager expects {total}. A task added to "
             "the Pink controller without a matching frame target lands here."
         )
 
 
-def _build_jmex_pink_ik_action_class() -> type[PinkInverseKinematicsAction]:
+def _build_jmex_pink_ik_action_class(
+    runtime: _JmexRuntime,
+) -> type[PinkInverseKinematicsAction]:
     """Built lazily, so importing this module does not pull in Isaac Lab's action stack."""
     from isaaclab.envs.mdp.actions.pink_task_space_actions import (
         PinkInverseKinematicsAction,
     )
 
-    # The class the action term counts to give a task seven numbers of the action.
-    from pink.tasks import FrameTask
-
     class JmexPinkInverseKinematicsAction(PinkInverseKinematicsAction):
-        """Isaac Lab's Pink IK action, plus the two things the j-mex pipeline needs from it.
+        """Isaac Lab's Pink IK action, plus what the j-mex pipeline needs from it.
 
         It measures the robot once at startup and republishes the pelvis's live world pose
-        every step. Both go to ``_RUNTIME``; neither changes how the IK behaves.
+        every step. Both go to ``runtime``; neither changes how the IK behaves.
         """
 
         def __init__(
@@ -658,11 +611,13 @@ def _build_jmex_pink_ik_action_class() -> type[PinkInverseKinematicsAction]:
         ) -> None:
             super().__init__(cfg, env)
             controller = self._ik_controllers[0]
+            # FrameTask is the class the action term counts to give a task ``POSE_DIM``
+            # numbers of the action.
             frame_tasks = _leading_frame_tasks(
                 controller.cfg.variable_input_tasks, FrameTask
             )
-            _RUNTIME.publish_env(env)
-            _RUNTIME.publish_layout(
+            runtime.publish_robot(
+                env,
                 G1ActionLayout(
                     frame_targets=_measure_frame_targets(
                         controller.pink_configuration,
@@ -671,7 +626,8 @@ def _build_jmex_pink_ik_action_class() -> type[PinkInverseKinematicsAction]:
                     waist_pivot_pelvis=_measure_waist_pivot(
                         controller.pink_configuration
                     ),
-                )
+                ),
+                self.hand_joint_dim,
             )
             self._publish_pelvis()
 
@@ -685,7 +641,7 @@ def _build_jmex_pink_ik_action_class() -> type[PinkInverseKinematicsAction]:
             data = self._env.scene[self.cfg.controller.articulation_name].data
             pose = data.body_link_pose_w.torch[_TELEOP_ENV_INDEX, self._base_link_idx]
             pose = pose.detach().cpu().numpy()
-            _RUNTIME.publish_pelvis(pose[:3] - _RUNTIME.env_origin(), pose[3:7])
+            runtime.publish_pelvis(pose[:3] - runtime.env_origin(), pose[3:7])
 
         def process_actions(self, actions: torch.Tensor) -> None:
             # Read before the base class consumes the action, so the pose the pipeline
@@ -696,28 +652,28 @@ def _build_jmex_pink_ik_action_class() -> type[PinkInverseKinematicsAction]:
     return JmexPinkInverseKinematicsAction
 
 
-def build_jmex_g1_locomanipulation_pipeline(
-    settings: JmexG1TaskSettings = DEFAULT_JMEX_G1_TASK_SETTINGS,
+def _build_pipeline(
+    runtime: _JmexRuntime, settings: JmexG1TaskSettings
 ) -> OutputCombiner:
-    """Build the one-source Isaac Teleop pipeline this task takes its action from."""
-    layout = _RUNTIME.layout()
-    _assert_action_dim(layout)
-    info_or_print(
-        logger,
-        "the action is %d long -- %d for each of %s, then %d fingers and %d locomotion",
-        layout.action_dim,
-        POSE_DIM,
-        ", ".join(target.name for target in layout.frame_targets),
-        layout.num_hand_joints,
-        layout.num_locomotion,
-    )
-    source = JmexG1ActionSource(
+    """Build the Isaac Teleop pipeline this task takes its action from."""
+    layout = runtime.layout()
+    body = full_body_source(settings.device.collection_id)
+    retargeter = JmexG1Retargeter(
         layout=layout,
-        pelvis_pose_provider=_RUNTIME.pelvis,
+        pelvis_pose_provider=runtime.pelvis,
         settings=settings.device,
-        overlay_sink=_ReferenceOverlayDrawer(),
+        overlay_sink=_ReferenceOverlayDrawer(runtime),
     )
-    return OutputCombiner({ACTION_OUTPUT: source.output(ACTION_OUTPUT)})
+    connected = retargeter.connect(
+        {JmexG1Retargeter.FULL_BODY: body.output(FullBodySource.FULL_BODY)}
+    )
+    pipeline = g1_locomanipulation_pipeline(
+        connected.output(JmexG1Retargeter.FRAME_POSES),
+        layout,
+        num_hand_joints=runtime.hand_joint_dim(),
+    )
+    _assert_action_dim(runtime, pipeline)
+    return pipeline
 
 
 def register_tasks() -> None:
@@ -762,27 +718,32 @@ class JmexLocomanipulationG1EnvCfg(LocomanipulationG1EnvCfg):
         for asset in (self.scene.packing_table, self.scene.object):
             x, y, z = asset.init_state.pos
             asset.init_state.pos = (x, y + _PARK_OFFSET_Y, z)
-        # The wheel is now more than 1 m from the robot, which ends the episode on the first
-        # step, and the pick-and-place checks have nothing left to judge. The time limit would
-        # reset the robot every 20 s.
+        # Parked, the wheel trips object_too_far on the first step, and the pick-and-place checks
+        # have nothing left to judge. time_out would reset the robot during a run.
         self.terminations.object_dropping = None
         self.terminations.object_too_far = None
         self.terminations.success = None
         self.terminations.time_out = None
 
-        # Seed the pelvis from the spawn pose, so the frames before the first physics step
-        # already carry the robot's yaw instead of an assumed identity. `rot` is xyzw.
-        _RUNTIME.publish_pelvis(
-            np.asarray(self.scene.robot.init_state.pos, dtype=np.float64),
-            np.asarray(self.scene.robot.init_state.rot, dtype=np.float64),
+        # The action term, the pipeline and its overlay share this runtime through their
+        # closures. Do not make it a cfg field: copying the configclass would split it in two.
+        # The pelvis starts at the spawn pose, so the frames before the first physics step
+        # already carry the robot's yaw. `rot` is xyzw.
+        runtime = _JmexRuntime(
+            PelvisPose(
+                position=np.asarray(self.scene.robot.init_state.pos, dtype=np.float64),
+                orientation_xyzw=np.asarray(
+                    self.scene.robot.init_state.rot, dtype=np.float64
+                ),
+            )
         )
 
         _insert_arm_frame_tasks(self.actions.upper_body_ik.controller)
-        self.actions.upper_body_ik.class_type = _build_jmex_pink_ik_action_class()
-
-        self.isaac_teleop.pipeline_builder = lambda: (
-            build_jmex_g1_locomanipulation_pipeline(settings)
+        self.actions.upper_body_ik.class_type = _build_jmex_pink_ik_action_class(
+            runtime
         )
+
+        self.isaac_teleop.pipeline_builder = lambda: _build_pipeline(runtime, settings)
         self.isaac_teleop.plugins = _plugin_configs(settings)
         # Required: pipelined, the default, would run the overlay's Kit calls on a worker thread.
         self.isaac_teleop.retargeting_execution = RetargetingExecutionConfig(
@@ -799,6 +760,5 @@ __all__ = [
     "TASK_ID",
     "JmexG1TaskSettings",
     "JmexLocomanipulationG1EnvCfg",
-    "build_jmex_g1_locomanipulation_pipeline",
     "register_tasks",
 ]

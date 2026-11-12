@@ -8,11 +8,9 @@ version: "1.0.0"
 # README.md, "Choosing where the receiver listens", covers --bind-ip and --broadcast-ip and what a
 # Player on another machine needs.
 args:
-  - "--channel=1"
-  - "--collection-id=jmex_full_body"
   - "--bind-ip=127.0.0.1"
   - "--broadcast-ip=127.0.0.1"
 devices:
   - path: "/mocap/jmex"
     type: "full_body"
-    description: "MOXI Player channel as a 24-slot body pose, OpenXR axes (published on <collection-id>)"
+    description: "MOXI Player channel as a full body pose, OpenXR axes (published on <collection-id>)"
