@@ -251,10 +251,76 @@ void checkTimingExtension(TestContext& test)
     TEST_CHECK_EQ(test, bundle.streams[1].samples[0].timing.flags, static_cast<uint16_t>(0));
 }
 
+// Emits one two-camera stereo bundle with the timing extension and the given clock; the first sample carries
+// monotonic and realtime capture times, `realtimeNs` for the latter.
+bool emitTimed(bool setClock, argus_sender::Avs1TimingClockDomain clock, int64_t realtimeNs, argus_sender::Avs1Bundle* out)
+{
+    FakePacketSink sink;
+    std::vector<argus_sender::Avs1StreamRecord> streams = templates();
+    streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
+    argus_sender::FrameBundleAssembler assembler =
+        setClock ? argus_sender::FrameBundleAssembler(&sink, 89, streams, true, clock) :
+                   argus_sender::FrameBundleAssembler(&sink, 89, streams, true);
+    std::vector<argus_sender::BundleStreamInput> inputs(2);
+    inputs[0].present = true;
+    inputs[0].sequence = 1;
+    inputs[0].timings.push_back(timing(10, 1000));
+    inputs[0].timings.push_back(timing(11, 1004));
+    inputs[0].timings[0].hasCaptureMonotonic = true;
+    inputs[0].timings[0].captureMonotonicNs = 123456789;
+    inputs[0].timings[0].captureRealtimeNs = realtimeNs;
+    inputs[0].timings[0].captureUncertaintyNs = 2500;
+    inputs[0].timings[0].captureAnchorAgeNs = 400000000;
+    if (!assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0))
+        return false;
+    const uint8_t payload[] = { 0, 0, 1, 0x26 };
+    for (size_t camera = 0; camera < 2; ++camera)
+    {
+        if (!assembler.encodedSink(0, camera)->enqueueEncoded(
+                payload, sizeof(payload), 1, 2200, argus_sender::SENDER_CLOCK_REALTIME))
+            return false;
+    }
+    const char* error = NULL;
+    return sink.packets.size() == 1 &&
+           argus_sender::parseAvs1WireRecord(sink.packets[0].data(), sink.packets[0].size(), out, &error);
+}
+
+void checkTimingClock(TestContext& test)
+{
+    const int64_t realtimeNs = 1762900000123456789LL;
+    argus_sender::Avs1Bundle bundle;
+
+    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_REALTIME, realtimeNs, &bundle));
+    argus_sender::Avs1TimingRecord record = bundle.streams[0].samples[0].timing;
+    TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_REALTIME));
+    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(realtimeNs));
+    TEST_CHECK_EQ(test, record.uncertaintyNs, static_cast<uint32_t>(2500));
+
+    // Realtime requested but no realtime time: no claim, even though a monotonic time exists.
+    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_REALTIME, 0, &bundle));
+    record = bundle.streams[0].samples[0].timing;
+    TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(0));
+    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(0));
+    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(0));
+
+    // Default and explicit monotonic emit domain 1 with the monotonic time, whatever the realtime value.
+    TEST_CHECK(test, emitTimed(false, argus_sender::AVS1_TIMING_CLOCK_MONOTONIC, realtimeNs, &bundle));
+    record = bundle.streams[0].samples[0].timing;
+    TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_MONOTONIC));
+    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(123456789));
+    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_MONOTONIC, 0, &bundle));
+    record = bundle.streams[0].samples[0].timing;
+    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_MONOTONIC));
+    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(123456789));
+}
+
 int main()
 {
     TestContext test("bundle_assembler");
     checkTimingExtension(test);
+    checkTimingClock(test);
     FakePacketSink sink;
     argus_sender::FrameBundleAssembler assembler(&sink, 77, templates());
 

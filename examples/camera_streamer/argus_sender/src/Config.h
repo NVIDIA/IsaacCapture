@@ -110,6 +110,9 @@ struct NetworkConfig
     // Sets the AVS1 timing extension on every bundle; a receiver that predates it rejects those bundles, so it is off
     // until the receiver is updated.
     bool timingExtension = false;
+    // Which clock the timing record's capture time is stated in: false for the sender CLOCK_MONOTONIC, true for
+    // CLOCK_REALTIME. Realtime needs a receiver that knows that domain and requires the extension.
+    bool timingClockRealtime = false;
 };
 
 struct RuntimeConfig

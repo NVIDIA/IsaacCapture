@@ -197,7 +197,50 @@ int main()
         argus_sender::Avs1Bundle claimed = mixedBundle();
         claimed.streams[0].samples[0].timing = good;
         TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(claimed, &timedWire, &error));
-        // VALID needs the monotonic domain and a nonzero time; without VALID everything must be zero.
+        // The realtime domain round-trips like the monotonic one.
+        {
+            argus_sender::Avs1Bundle realtime = timed;
+            realtime.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
+            realtime.streams[0].samples[0].timing.sensorCaptureNs = 1762900000123456789ULL;
+            std::vector<uint8_t> realtimeWire;
+            TEST_CHECK(test, argus_sender::buildAvs1WireRecord(realtime, &realtimeWire, &error));
+            argus_sender::Avs1Bundle realtimeParsed;
+            TEST_CHECK(test, argus_sender::parseAvs1WireRecord(
+                                 realtimeWire.data(), realtimeWire.size(), &realtimeParsed, &error));
+            const argus_sender::Avs1TimingRecord& back = realtimeParsed.streams[0].samples[0].timing;
+            TEST_CHECK_EQ(test, back.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_REALTIME));
+            TEST_CHECK_EQ(test, back.sensorCaptureNs, 1762900000123456789ULL);
+            TEST_CHECK_EQ(test, back.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+            // Domain 2 without VALID and a non-zero field is refused.
+            argus_sender::Avs1Bundle noValid = timed;
+            noValid.streams[0].samples[0].timing.flags = 0;
+            noValid.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
+            TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(noValid, &realtimeWire, &error));
+            // An unknown domain with VALID is refused, on build and on parse.
+            const uint16_t unknownDomains[] = { 0, 3, 0xFFFF };
+            for (size_t i = 0; i < 3; ++i)
+            {
+                argus_sender::Avs1Bundle unknown = timed;
+                unknown.streams[0].samples[0].timing.clockDomain = unknownDomains[i];
+                TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(unknown, &realtimeWire, &error));
+            }
+            // Patch a built record: clock_domain is the u16 at timing-record offset 18.
+            const size_t domainOffset = 4 + 64 + 2 * 40 + 3 * 72 + 18;
+            std::vector<uint8_t> goodWire;
+            TEST_CHECK(test, argus_sender::buildAvs1WireRecord(timed, &goodWire, &error));
+            for (size_t i = 0; i < 3; ++i)
+            {
+                std::vector<uint8_t> patched = goodWire;
+                patched[domainOffset] = static_cast<uint8_t>(unknownDomains[i] >> 8);
+                patched[domainOffset + 1] = static_cast<uint8_t>(unknownDomains[i] & 0xff);
+                TEST_CHECK(
+                    test, !argus_sender::parseAvs1WireRecord(patched.data(), patched.size(), &realtimeParsed, &error));
+            }
+            std::vector<uint8_t> patched = goodWire;
+            patched[domainOffset + 1] = 2;
+            TEST_CHECK(test, argus_sender::parseAvs1WireRecord(patched.data(), patched.size(), &realtimeParsed, &error));
+        }
+        // VALID needs the monotonic or realtime domain and a nonzero time; without VALID everything must be zero.
         argus_sender::Avs1Bundle bad = timed;
         bad.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_NONE;
         TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));

@@ -252,6 +252,7 @@ struct SiplCapture::Impl
         int64_t captureMonotonicNs = 0;
         int64_t captureUncertaintyNs = 0;
         int64_t captureAnchorAgeNs = 0;
+        int64_t captureRealtimeNs = 0;
     };
 
     struct Sensor
@@ -615,6 +616,7 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
                     next.captureMonotonicNs = mapping.captureMonotonicNs;
                     next.captureUncertaintyNs = mapping.uncertaintyNs;
                     next.captureAnchorAgeNs = mapping.anchorAgeNs;
+                    next.captureRealtimeNs = mapping.hasRealtime ? mapping.captureRealtimeNs : 0;
                     sensor.lastMappingReason.clear();
                 }
                 else if (mapping.reason != sensor.lastMappingReason)
@@ -849,6 +851,7 @@ bool SiplCapture::acquireLatest(uint32_t cameraId, CaptureFrame* frame)
     out.captureMonotonicNs = taken.captureMonotonicNs;
     out.captureUncertaintyNs = taken.captureUncertaintyNs;
     out.captureAnchorAgeNs = taken.captureAnchorAgeNs;
+    out.captureRealtimeNs = taken.captureRealtimeNs;
     out.readyMonotonicNs = taken.readyMonotonicNs;
     // bufferDesc is the surface's DMA-BUF descriptor; whether the encoder accepts it for this NvSci-backed buffer is
     // not established off the board.

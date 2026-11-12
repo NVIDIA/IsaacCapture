@@ -27,6 +27,10 @@ struct ClockPair
     int64_t monotonicNs = 0;
     // Width of the bracket the pair was read in; the pair is no more certain than this.
     int64_t bracketNs = 0;
+    // CLOCK_REALTIME ns read inside the same bracket, so realtime minus monotonic is known to within the bracket.
+    // Only meaningful when hasRealtime.
+    int64_t realtimeNs = 0;
+    bool hasRealtime = false;
 };
 
 // Reads the ARM generic counter and CLOCK_MONOTONIC back to back, keeping the narrowest of a few attempts. Returns
@@ -51,6 +55,10 @@ struct SensorTimeMapping
     int64_t uncertaintyNs = 0;
     // How long ago the anchor was read, at the time of this conversion: its freshness, separate from the uncertainty.
     int64_t anchorAgeNs = 0;
+    // The same capture event on CLOCK_REALTIME, from the anchor's realtime-minus-monotonic offset; present only when
+    // the anchor had a realtime reading. The uncertainty above applies to it as well.
+    bool hasRealtime = false;
+    int64_t captureRealtimeNs = 0;
 };
 
 // One anchor pair is read through a supported clock API and refreshed at a low rate, never per frame; a frame's capture

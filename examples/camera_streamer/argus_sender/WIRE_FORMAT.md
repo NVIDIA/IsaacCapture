@@ -121,15 +121,15 @@ far to trust it.
 
 | Offset | Size | Field | Meaning |
 | ---: | ---: | --- | --- |
-| 0 | 8 | `sensor_capture_ns` | Sensor capture instant, `CLOCK_MONOTONIC` ns; zero unless `VALID` |
+| 0 | 8 | `sensor_capture_ns` | Sensor capture instant in the `clock_domain` clock, ns; zero unless `VALID` |
 | 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_MONOTONIC` mapping: the anchor's read bracket plus 500 ppm of the time between the anchor and the sensor event |
 | 12 | 4 | `anchor_age_ns` | Age of the mapping's anchor when the frame was stamped |
 | 16 | 2 | `flags` | `0x0001` `VALID`: the capture time passed the sender's checks |
-| 18 | 2 | `clock_domain` | `1` = `CLOCK_MONOTONIC`; zero unless `VALID` |
+| 18 | 2 | `clock_domain` | `1` = sender `CLOCK_MONOTONIC`, `2` = sender `CLOCK_REALTIME`; zero unless `VALID` |
 | 20 | 4 | `reserved` | Zero |
 
 With `VALID` clear every other field must be zero and the sample makes no capture-time claim; a receiver must not
-substitute another time for it. `VALID` requires `clock_domain` 1 and a nonzero `sensor_capture_ns`. A new
+substitute another time for it. `VALID` requires `clock_domain` 1 or 2 and a nonzero `sensor_capture_ns`. A new
 `session_id` invalidates every earlier mapping. Parsers reject a record count that does not match `descriptor_bytes`,
 unknown flags and nonzero reserved fields. A receiver that predates the flag rejects the bundle as an unknown bundle
 flag, so deploy the receiver before a sender that sets it.

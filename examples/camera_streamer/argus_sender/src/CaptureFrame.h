@@ -140,6 +140,8 @@ struct CaptureFrame
     int64_t captureMonotonicNs = 0;
     int64_t captureUncertaintyNs = 0;
     int64_t captureAnchorAgeNs = 0;
+    // The same capture event on CLOCK_REALTIME; 0 when the mapping had no realtime anchor.
+    int64_t captureRealtimeNs = 0;
     Nv12Surface surface;
     FrameLease lease;
 };

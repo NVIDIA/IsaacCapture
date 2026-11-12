@@ -336,8 +336,9 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
         if (root["network"])
         {
             const YAML::Node network = root["network"];
-            const std::set<std::string> allowed = { "bind",      "port",           "reconnect_ms",
-                                                    "dump_wire", "send_buffer_kb", "timing_extension" };
+            const std::set<std::string> allowed = { "bind",        "port",           "reconnect_ms",
+                                                    "dump_wire",   "send_buffer_kb", "timing_extension",
+                                                    "timing_clock" };
             if (!rejectUnknown(network, allowed, "network", error) ||
                 !readOptional(network, "bind", "network", &config->network.bindHost, error))
             {
@@ -352,6 +353,14 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
             {
                 return false;
             }
+            std::string timingClock = "monotonic";
+            if (!readOptional(network, "timing_clock", "network", &timingClock, error))
+                return false;
+            if (timingClock != "monotonic" && timingClock != "realtime")
+                return fail(error, "network.timing_clock must be \"monotonic\" or \"realtime\"");
+            config->network.timingClockRealtime = timingClock == "realtime";
+            if (config->network.timingClockRealtime && !config->network.timingExtension)
+                return fail(error, "network.timing_clock \"realtime\" requires network.timing_extension");
             if (port > std::numeric_limits<uint16_t>::max())
                 return fail(error, "network.port must be in 1..65535");
             config->network.port = static_cast<uint16_t>(port);

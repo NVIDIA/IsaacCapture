@@ -20,6 +20,9 @@ struct FakeClocks
 {
     int64_t skewNs = 0;
     int64_t bracketNs = 2000;
+    // Added to CLOCK_MONOTONIC for the realtime reading; a wall-clock step changes it. Off unless hasRealtime.
+    int64_t realtimeOffsetNs = 0;
+    bool hasRealtime = false;
     int reads = 0;
 
     ClockPair at(int64_t monotonicNs)
@@ -29,6 +32,9 @@ struct FakeClocks
         pair.source = (monotonicNs + skewNs) / 32;
         pair.monotonicNs = monotonicNs;
         pair.bracketNs = bracketNs;
+        pair.hasRealtime = hasRealtime;
+        if (hasRealtime)
+            pair.realtimeNs = monotonicNs + realtimeOffsetNs;
         return pair;
     }
 };
@@ -225,6 +231,94 @@ int main()
         const SensorTimeMapping recovered =
             map.map(static_cast<uint64_t>((now - 30 * kMs + clocks.skewNs) / 32), now, now);
         TEST_CHECK(test, recovered.valid);
+    }
+
+    // The realtime capture time is the monotonic one plus the anchor's realtime-minus-monotonic offset.
+    {
+        FakeClocks clocks;
+        clocks.hasRealtime = true;
+        clocks.realtimeOffsetNs = 1700000000LL * 1000000000LL + 123456;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        const SensorTimeMapping mapping = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, mapping.valid);
+        TEST_CHECK(test, mapping.hasRealtime);
+        TEST_CHECK_EQ(test, mapping.captureMonotonicNs, now - 30 * kMs);
+        TEST_CHECK_EQ(test, mapping.captureRealtimeNs, mapping.captureMonotonicNs + clocks.realtimeOffsetNs);
+    }
+
+    // A reader that gave no realtime reading leaves the mapping without one; the monotonic result is unchanged.
+    {
+        FakeClocks clocks;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        const SensorTimeMapping mapping = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, mapping.valid);
+        TEST_CHECK(test, !mapping.hasRealtime);
+        TEST_CHECK_EQ(test, mapping.captureRealtimeNs, static_cast<int64_t>(0));
+        TEST_CHECK_EQ(test, mapping.captureMonotonicNs, now - 30 * kMs);
+    }
+
+    // A wall-clock step between anchors, larger than stepThresholdNs plus both brackets, invalidates the mapping
+    // although the counter still agrees with CLOCK_MONOTONIC; the next consistent refresh recovers.
+    {
+        FakeClocks clocks;
+        clocks.hasRealtime = true;
+        clocks.realtimeOffsetNs = 1700000000LL * 1000000000LL;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now).valid);
+        now += 1000 * kMs;
+        clocks.realtimeOffsetNs += 50 * kMs;
+        const SensorTimeMapping stepped = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, !stepped.valid);
+        TEST_CHECK(test, stepped.reason.find("clock step") != std::string::npos);
+        now += 1000 * kMs;
+        const SensorTimeMapping recovered = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, recovered.valid);
+        TEST_CHECK_EQ(test, recovered.captureRealtimeNs, recovered.captureMonotonicNs + clocks.realtimeOffsetNs);
+    }
+
+    // A realtime offset movement inside the allowance (2 ms threshold plus two 2 us brackets) is not a step.
+    {
+        FakeClocks clocks;
+        clocks.hasRealtime = true;
+        clocks.realtimeOffsetNs = 1700000000LL * 1000000000LL;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now).valid);
+        now += 1000 * kMs;
+        clocks.realtimeOffsetNs += 1 * kMs;
+        const SensorTimeMapping within = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, within.valid);
+        TEST_CHECK_EQ(test, within.captureRealtimeNs, within.captureMonotonicNs + clocks.realtimeOffsetNs);
+    }
+
+    // A counter step is still caught when the realtime offset holds still, and a realtime step on an anchor pair
+    // where one side has no realtime reading is not judged.
+    {
+        FakeClocks clocks;
+        clocks.hasRealtime = true;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now).valid);
+        now += 1000 * kMs;
+        clocks.skewNs = 50 * kMs;
+        const SensorTimeMapping stepped = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, !stepped.valid);
+        TEST_CHECK(test, stepped.reason.find("clock step") != std::string::npos);
+
+        FakeClocks mixed;
+        int64_t mixedNow = 10000 * kMs;
+        SensorClockMap mixedMap = makeMap(&mixed, &mixedNow);
+        TEST_CHECK(test, mixedMap.map(static_cast<uint64_t>((mixedNow - 30 * kMs) / 32), mixedNow, mixedNow).valid);
+        mixedNow += 1000 * kMs;
+        mixed.hasRealtime = true;
+        mixed.realtimeOffsetNs = 5000 * kMs;
+        const SensorTimeMapping unjudged =
+            mixedMap.map(static_cast<uint64_t>((mixedNow - 30 * kMs) / 32), mixedNow, mixedNow);
+        TEST_CHECK(test, unjudged.valid);
+        TEST_CHECK(test, unjudged.hasRealtime);
     }
 
     // Resetting (capture restart) drops the anchor: the next frame reads a fresh one and a step is forgotten.
