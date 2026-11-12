@@ -128,7 +128,7 @@ def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5000, clock_port=5611, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
+        port=5000, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
     )
 
 
@@ -139,19 +139,17 @@ def test_argus_backend_is_not_full_range():
 
 
 def test_overrides_replace_only_their_values():
-    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 6000, 5100)
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 5100)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5100, clock_port=6000, fps=60, bitrate_mbps=9, stream_id="head", full_range=True, sipl=True
+        port=5100, fps=60, bitrate_mbps=9, stream_id="head", full_range=True, sipl=True
     )
     partial = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, fps=15))
-    assert (partial.fps, partial.bitrate_mbps, partial.clock_port, partial.port) == (15, 4, 5611, 5000)
+    assert (partial.fps, partial.bitrate_mbps, partial.port) == (15, 4, 5000)
 
 
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda c: c["network"].pop("timing_extension"),
-        lambda c: c["network"].pop("clock_port"),
         lambda c: c["streams"][0]["output"].update(fps=0),
         lambda c: c["streams"][0]["output"].pop("fps"),
         lambda c: c.update(capture_backend="auto"),
@@ -638,3 +636,55 @@ def test_sighup_during_stop_kills_everything_at_once_and_restores_the_handler(st
     assert time.monotonic() - started < 5
     assert [c.process.returncode for c in stack.children] == [-signal.SIGKILL] * 2
     assert signal.getsignal(signal.SIGHUP) is before
+
+
+def test_default_profile_has_no_legacy_clock_keys():
+    network = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)["network"]
+    assert "timing_extension" not in network and "clock_port" not in network
+
+
+def test_parse_args_timesync_defaults(monkeypatch):
+    monkeypatch.delenv("EGOCAP_TIMESYNC_TOOL", raising=False)
+    args = ss.parse_args([])
+    assert args.chrony_cmd_port == 12301
+    assert args.chrony_wait == 120.0
+    assert args.require_chrony is False
+    assert args.timesync_tool.as_posix().endswith("src/core/timesync/tools/timesync_tool.py")
+
+
+def test_load_timesync_tool_exposes_module_functions(tmp_path: Path):
+    tool = tmp_path / "fake_tool.py"
+    tool.write_text("def lan_address_toward(h):\n    return h\n\ndef reference_id_for(a):\n    return 'ID' + a\n")
+    module = ss.load_timesync_tool(tool)
+    assert module.reference_id_for("y") == "IDy"
+
+
+def test_load_timesync_tool_missing_file_raises(tmp_path: Path):
+    with pytest.raises(ss.StartupError, match="does not exist"):
+        ss.load_timesync_tool(tmp_path / "absent.py")
+
+
+def test_default_receiver_uses_its_venv_python_when_present(monkeypatch, tmp_path: Path):
+    receiver_dir = tmp_path / "examples/camera_streamer/camera_receiver"
+    (receiver_dir / ".venv/bin").mkdir(parents=True)
+    (receiver_dir / ".venv/bin/python").write_text("")
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path)
+    assert ss.default_receiver_command().startswith(f"{receiver_dir}/.venv/bin/python ")
+    (receiver_dir / ".venv/bin/python").unlink()
+    assert ss.default_receiver_command().startswith("python3 ")
+
+
+def test_ensure_receiver_environment_runs_setup_only_when_something_is_missing(monkeypatch, tmp_path: Path):
+    receiver_dir = tmp_path / "examples/camera_streamer/camera_receiver"
+    (receiver_dir / ".venv/bin").mkdir(parents=True)
+    (receiver_dir / "codec").mkdir()
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path)
+    calls = []
+    monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    ss.ensure_receiver_environment()
+    assert calls == [["bash", str(receiver_dir / "setup.sh")]]
+    calls.clear()
+    (receiver_dir / ".venv/bin/python").write_text("")
+    (receiver_dir / "codec/_camera_receiver_codec.cpython-313-x86_64-linux-gnu.so").write_text("")
+    ss.ensure_receiver_environment()
+    assert calls == []
