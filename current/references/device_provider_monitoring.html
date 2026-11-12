@@ -573,14 +573,22 @@ behavior.</p>
 </section>
 <section id="openxr-ownership">
 <h2>OpenXR ownership<a class="headerlink" href="#openxr-ownership" title="Link to this heading">#</a></h2>
-<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-tracking. Runtime or session loss fails the provider; sustained loss of active
-head tracking disconnects the headset while leaving the runtime provider
-available.</p>
+<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">SESSION_</span><wbr><span class="pre">STATE_</span><wbr><span class="pre">STOPPING</span></code> ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. <code class="docutils literal notranslate"><span class="pre">XR_SESSION_STATE_READY</span></code> begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.</p>
+<p>Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.</p>
 <p>For externally supplied <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>, Isaac Teleop does not consume the
 external owner’s event queue. The provider is available after setup and the
 headset remains <code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code> unless the owner supplies health through another
 integration.</p>
+<p>Native consumers must rebuild together: <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles</span></code> includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.</p>
 </section>
 </section>
 
@@ -721,7 +729,7 @@ integration.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 10, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>

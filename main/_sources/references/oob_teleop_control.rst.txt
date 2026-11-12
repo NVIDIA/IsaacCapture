@@ -92,6 +92,39 @@ You should see output confirming the hub is running:
    Streaming and web page access use WiFi, not USB tethering.
    ``adb forward`` is used only temporarily for CDP automation.
 
+.. Keep quick-start labels bold so they do not introduce a new RST title level.
+
+**Automatic presence recovery**
+
+While ``--setup-oob`` owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.
+
+On supported PICO hardware, the live ``stk_stk3x1x`` wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.
+
+Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub's ``xrPresence`` reports these independently of cached SDK metrics.
+The ``xr`` cadence contains ``sessionActive``, ``generation``, ``visibility``
+(2 visible, 1 blurred, 0 hidden, -1 unknown), ``frameAgeMs``, ``headAgeMs``,
+``leftAgeMs``, ``rightAgeMs``, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.
+
 **Step 2 — (Manual fallback) Open the web client on the headset**
 
 If the adb automation fails (e.g. headset not paired), you can manually open
@@ -269,6 +302,7 @@ Headset → hub: ``clientMetrics``
      "type": "clientMetrics",
      "payload": {
        "t": 1712800000000,
+       "sampleAgeMs": 125,
        "cadence": "frame",
        "metrics": {
          "streaming.framerate": 72.0,
@@ -281,6 +315,11 @@ One message is sent per cadence per tick, carrying the last known value of every
 reported so far in that cadence. Metric names are the CloudXR.js ``MetricsName`` values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 ``{name: value}`` map per cadence, so metrics added by a future SDK need no hub change.
+``sampleAgeMs`` is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device's
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.
 
 Browser health exchange
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -342,8 +381,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; ``connectDispatched`` records a
 host CONNECT click; and ``streamConfirmed`` requires a streaming report with
 fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
-milestone and when it was entered. ``lastMetricsAt`` is the host-received
-metrics time in epoch milliseconds; the launcher accepts ``streamConfirmed``
+milestone and when it was entered. ``lastMetricsAt`` is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+``lastSeenAt`` remains the browser message receipt time. The launcher accepts ``streamConfirmed``
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.

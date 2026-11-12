@@ -147,12 +147,22 @@ behavior.
 OpenXR ownership
 ----------------
 
-For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-tracking. Runtime or session loss fails the provider; sustained loss of active
-head tracking disconnects the headset while leaving the runtime provider
-available.
+For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. ``XR_SESSION_STATE_STOPPING`` ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. ``XR_SESSION_STATE_READY`` begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.
+
+Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.
 
 For externally supplied ``oxr_handles``, Isaac Teleop does not consume the
 external owner's event queue. The provider is available after setup and the
 headset remains ``UNKNOWN`` unless the owner supplies health through another
 integration.
+
+Native consumers must rebuild together: ``OpenXRSessionHandles`` includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.

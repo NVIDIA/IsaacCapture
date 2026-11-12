@@ -521,6 +521,33 @@ page access and CloudXR streaming)</p></li>
 <p>Streaming and web page access use WiFi, not USB tethering.
 <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">forward</span></code> is used only temporarily for CDP automation.</p>
 </div>
+<p><strong>Automatic presence recovery</strong></p>
+<p>While <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.</p>
+<p>On supported PICO hardware, the live <code class="docutils literal notranslate"><span class="pre">stk_stk3x1x</span></code> wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.</p>
+<p>Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub’s <code class="docutils literal notranslate"><span class="pre">xrPresence</span></code> reports these independently of cached SDK metrics.
+The <code class="docutils literal notranslate"><span class="pre">xr</span></code> cadence contains <code class="docutils literal notranslate"><span class="pre">sessionActive</span></code>, <code class="docutils literal notranslate"><span class="pre">generation</span></code>, <code class="docutils literal notranslate"><span class="pre">visibility</span></code>
+(2 visible, 1 blurred, 0 hidden, -1 unknown), <code class="docutils literal notranslate"><span class="pre">frameAgeMs</span></code>, <code class="docutils literal notranslate"><span class="pre">headAgeMs</span></code>,
+<code class="docutils literal notranslate"><span class="pre">leftAgeMs</span></code>, <code class="docutils literal notranslate"><span class="pre">rightAgeMs</span></code>, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.</p>
 <p><strong>Step 2 — (Manual fallback) Open the web client on the headset</strong></p>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
@@ -679,6 +706,7 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"clientMetrics"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">"t"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"sampleAgeMs"</span><span class="p">:</span><span class="w"> </span><span class="mi">125</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"cadence"</span><span class="p">:</span><span class="w"> </span><span class="s2">"frame"</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">      </span><span class="nt">"streaming.framerate"</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">,</span>
@@ -691,7 +719,12 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <p>One message is sent per cadence per tick, carrying the last known value of every metric
 reported so far in that cadence. Metric names are the CloudXR.js <code class="docutils literal notranslate"><span class="pre">MetricsName</span></code> values,
 so they match the SDK documentation. The hub stores them as an arbitrary
-<code class="docutils literal notranslate"><span class="pre">{name:</span> <span class="pre">value}</span></code> map per cadence, so metrics added by a future SDK need no hub change.</p>
+<code class="docutils literal notranslate"><span class="pre">{name:</span> <span class="pre">value}</span></code> map per cadence, so metrics added by a future SDK need no hub change.
+<code class="docutils literal notranslate"><span class="pre">sampleAgeMs</span></code> is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device’s
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.</p>
 </section>
 <section id="browser-health-exchange">
 <h3>Browser health exchange<a class="headerlink" href="#browser-health-exchange" title="Link to this heading">#</a></h3>
@@ -748,8 +781,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; <code class="docutils literal notranslate"><span class="pre">connectDispatched</span></code> records a
 host CONNECT click; and <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code> requires a streaming report with
 fresh metrics. <code class="docutils literal notranslate"><span class="pre">readinessStage</span></code> and <code class="docutils literal notranslate"><span class="pre">readinessSince</span></code> show the latest
-milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the host-received
-metrics time in epoch milliseconds; the launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
+milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+<code class="docutils literal notranslate"><span class="pre">lastSeenAt</span></code> remains the browser message receipt time. The launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.</p>
@@ -1411,7 +1445,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 10, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>
