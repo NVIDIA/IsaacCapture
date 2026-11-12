@@ -468,6 +468,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         url = f"http://127.0.0.1:{args.backend_port}/"
         token = control_token(backend.log)
         print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
+        if not args.mock:
+            # The backend admits a take only with an accepted tracking source, which a cameras-only session lacks.
+            print("This session is a camera preview: Record needs a tracking source (use --mock or a headset).")
         print("Ctrl-C stops everything.")
         if args.open:
             webbrowser.open(url)

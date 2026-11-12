@@ -90,7 +90,8 @@ uv run python tools/start_system.py --orin user@orin --deploy-script PATH --live
 ```
 
 It prints the page URL and the recording control token. The session is real and cameras-only (no headset, no mock
-cameras); `--mock` switches to synthetic tracking and cameras. Without `--orin` only the PC side starts, and
+cameras), which is a **preview**: the backend only lets a take start once a tracking source has been accepted, so
+Record stays unavailable without one. `--mock` switches to synthetic tracking and cameras. Without `--orin` only the PC side starts, and
 `--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
 so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
 address, because the bridge measures the sender's clock at that address.
