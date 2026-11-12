@@ -105,6 +105,13 @@ into color conversion, so neither path adds a second full-frame pass.
 notifications include `slot_generation`; consumers can detect if a slot was
 overwritten before they consumed it.
 
+When the sender's AVS1 bundle carries the timing extension, each frame notification also includes the sensor
+start-of-frame in the sender's `CLOCK_REALTIME` (`sensor_capture_realtime_ns`), its stated uncertainty
+(`sensor_capture_uncertainty_ns`), the age of the sender's sensor anchor (`sensor_anchor_age_ns`) and
+`sensor_capture_valid`. The time fields are `None` when the record is absent or not valid; nothing is substituted. A
+valid record must use clock domain 2 (`CLOCK_REALTIME`), and any other domain is rejected. A bundle from a sender that
+predates the extension is still accepted and carries no capture time.
+
 ## Downstream consumers
 
 Consumers subscribe to the GPU rings through the local Unix socket. The

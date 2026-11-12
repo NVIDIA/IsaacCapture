@@ -64,13 +64,9 @@ public:
         size_t m_cameraIndex;
     };
 
-    Impl(PacketSink* packetSink,
-         uint64_t sessionId,
-         const std::vector<Avs1StreamRecord>& streamTemplates,
-         bool timingExtension)
+    Impl(PacketSink* packetSink, uint64_t sessionId, const std::vector<Avs1StreamRecord>& streamTemplates)
         : m_packetSink(packetSink),
           m_sessionId(sessionId),
-          m_timingExtension(timingExtension),
           m_streamTemplates(streamTemplates),
           m_nextSendSequence(1),
           m_error(false)
@@ -125,10 +121,9 @@ public:
                 pending.bundle.senderCaptureReadyTscNs = senderCaptureReadyTscNs;
             }
         }
-        // With the extension every bundle carries a timing record per sample, valid or not, so a receiver never has
-        // to guess whether an absent claim means none or unsupported.
-        if (m_timingExtension)
-            pending.bundle.flags |= AVS1_BUNDLE_TIMING_EXT;
+        // Every bundle carries a timing record per sample, valid or not, so a receiver never has to guess whether an
+        // absent claim means none or unsupported.
+        pending.bundle.flags |= AVS1_BUNDLE_TIMING_EXT;
         pending.bundle.streams = m_streamTemplates;
         for (size_t streamIndex = 0; streamIndex < inputs.size(); ++streamIndex)
         {
@@ -193,7 +188,7 @@ public:
                 // The sensor start-of-frame in the sender's CLOCK_REALTIME; without a checked mapping that produced it,
                 // the record stays without VALID.
                 const int64_t captureNs = timing.captureRealtimeNs;
-                if (m_timingExtension && timing.hasCaptureMonotonic && captureNs > 0)
+                if (timing.hasCaptureMonotonic && captureNs > 0)
                 {
                     // Uncertainty and age are 32-bit nanosecond fields: a value that does not fit is not a claim worth
                     // making, so the whole record stays without VALID.
@@ -471,7 +466,6 @@ private:
 
     PacketSink* m_packetSink;
     uint64_t m_sessionId;
-    bool m_timingExtension;
     std::vector<Avs1StreamRecord> m_streamTemplates;
     std::vector<std::vector<std::unique_ptr<SampleSink>>> m_sinks;
     // Hold across ordered collection and enqueue. Lock order: send, then state.
@@ -484,9 +478,8 @@ private:
 
 FrameBundleAssembler::FrameBundleAssembler(PacketSink* packetSink,
                                            uint64_t sessionId,
-                                           const std::vector<Avs1StreamRecord>& streamTemplates,
-                                           bool timingExtension)
-    : m_impl(new Impl(packetSink, sessionId, streamTemplates, timingExtension))
+                                           const std::vector<Avs1StreamRecord>& streamTemplates)
+    : m_impl(new Impl(packetSink, sessionId, streamTemplates))
 {
 }
 
