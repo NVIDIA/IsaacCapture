@@ -6,6 +6,7 @@ add_executable(pose_provider_tests
     test_camera_input.cpp
     test_pose_provider.cpp
     test_stub_contract.cpp
+    test_undistort.cpp
 )
 
 target_link_libraries(pose_provider_tests
@@ -14,6 +15,7 @@ target_link_libraries(pose_provider_tests
         pose_provider::pose_camera_input
         pose_provider::pose_engine_stub
         pose_provider::pose_provider_core
+        pose_provider::pose_undistort
 )
 
 catch_discover_tests(pose_provider_tests ADD_TAGS_AS_LABELS)
