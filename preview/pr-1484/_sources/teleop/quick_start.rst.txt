@@ -81,13 +81,6 @@ The two commands above track the newest 1.x release. To follow this version of t
    uv pip install 'isaaccapture[cloudxr,retargeters]\ |pip_version_pin|\ ' \\
          --extra-index-url https://pypi.nvidia.com --prerelease=allow
 
-.. note::
-
-   **aarch64 (Jetson / DGX):** The full ``retargeters`` extra does not resolve on ``aarch64``
-   because some of its pinned dependencies have no ``aarch64`` wheels. Replace ``retargeters``
-   with ``retargeters-lite`` in the command above, for example
-   ``uv pip install 'isaaccapture[cloudxr,retargeters-lite]~=1.0'``.
-
 Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See :doc:`../development/build_from_source/index` for more details.
 

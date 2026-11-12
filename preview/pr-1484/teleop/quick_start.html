@@ -512,13 +512,6 @@ and an opt-in to pre-release versions:</p>
 (1.8.x) exactly, pin to the series it describes instead:</p>
 <pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.8.0' \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>aarch64 (Jetson / DGX):</strong> The full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra does not resolve on <code class="docutils literal notranslate"><span class="pre">aarch64</span></code>
-because some of its pinned dependencies have no <code class="docutils literal notranslate"><span class="pre">aarch64</span></code> wheels. Replace <code class="docutils literal notranslate"><span class="pre">retargeters</span></code>
-with <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> in the command above, for example
-<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">'isaaccapture[cloudxr,retargeters-lite]~=1.0'</span></code>.</p>
-</div>
 <p>Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for more details.</p>
 </section>
@@ -1004,7 +997,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>
