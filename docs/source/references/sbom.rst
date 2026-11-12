@@ -4,9 +4,9 @@
 Wheel contents SBOM and license evidence
 ========================================
 
-Every published ``isaaccapture`` wheel lists what it redistributes and carries the license
-text behind each obligation. You can check both offline, without installing the wheel. The
-Release build refuses to ship a wheel with a gap in either.
+Every ``isaaccapture`` wheel published from 1.7 on lists what it redistributes and carries the
+license text behind each obligation; earlier wheels carry neither. You can check both offline,
+without installing the wheel. The Release build refuses to ship a wheel with a gap in either.
 
 To check a wheel, see `Verifying a wheel`_. To learn how the evidence is worked out, or why
 a build stopped, see the collector's developer README, :code-file:`scripts/sbom/README.md`.
@@ -43,7 +43,7 @@ What a wheel carries
 Evidence published with a release
 ---------------------------------
 
-Each tagged GitHub release carries one archive, ``isaaccapture-sbom-<tag>.zip``. Unpacked,
+Each tagged GitHub release from 1.7 on carries one archive, ``isaaccapture-sbom-<tag>.zip``. Unpacked,
 its ``isaaccapture-sbom-<tag>/`` directory holds, for every wheel:
 
 ``<wheel>.spdx.json``
