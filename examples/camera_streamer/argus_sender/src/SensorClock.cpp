@@ -17,11 +17,14 @@ namespace
 {
 
 #if defined(__aarch64__)
-int64_t monotonicNow()
+// False when the clock cannot be read; the value is then meaningless.
+bool monotonicNow(int64_t* ns)
 {
     timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return false;
+    *ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    return true;
 }
 
 // False when the clock cannot be read; the value is then meaningless.
@@ -53,11 +56,16 @@ bool readCounterPair(ClockPair* pair)
     best.bracketNs = std::numeric_limits<int64_t>::max();
     for (int i = 0; i < kAttempts; ++i)
     {
-        const int64_t before = monotonicNow();
-        const int64_t source = readCounter();
+        int64_t before = 0;
+        int64_t after = 0;
         int64_t realtime = 0;
+        if (!monotonicNow(&before))
+            continue;
+        const int64_t source = readCounter();
         const bool realtimeOk = realtimeNow(&realtime);
-        const int64_t after = monotonicNow();
+        // A failed or backwards read cannot bracket the counter: this attempt is discarded.
+        if (!monotonicNow(&after) || after < before)
+            continue;
         if (after - before < best.bracketNs)
         {
             best.source = source;
@@ -68,6 +76,8 @@ bool readCounterPair(ClockPair* pair)
             best.hasRealtime = realtimeOk;
         }
     }
+    if (best.bracketNs == std::numeric_limits<int64_t>::max())
+        return false; // no attempt produced a usable bracket
     *pair = best;
     return true;
 #else
