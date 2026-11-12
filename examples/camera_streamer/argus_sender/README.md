@@ -323,6 +323,12 @@ The SIPL backend reports its start-of-frame timestamp this way. On the board it 
 (`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads
 the moment the frame is dequeued by about 22 ms. That is one board and one camera, not vendor documentation.
 
+Only the SIPL backend reports a sensor timestamp. The Argus backend does not, so its bundles carry all-zero timing
+records and no capture time. How closely the counter's start-of-frame value marks the physical exposure has been
+measured on that one board and has not been validated independently. The checks and their tests show that the counter
+is converted consistently onto the sender's clock; they do not show that it is the exposure instant. Describe the value
+downstream as the sensor's start-of-frame counter mapped onto the sender's clock, not as the exposure time.
+
 Every AVS1 bundle carries one timing record per sample (see [WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant in
 the sender's `CLOCK_REALTIME` (clock domain 2), the uncertainty and the anchor age, valid only for frames that passed
 the checks; a sample without a checked mapping carries an all-zero record. A receiver that predates the extension
