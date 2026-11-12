@@ -265,6 +265,8 @@ export function CameraGrid({
             name={tile.name}
             track={tile.track}
             phase={livekit.phase}
+            clock={livekit.clock}
+            basis={tile.basis}
             // A LiveKit tile is a main view only when no CaptureServer camera claims that place: every head
             // camera when there are several, otherwise the first tile.
             primary={liveKitOnly && (equalHeads ? isHeadTile(tile.name) : index === 0)}

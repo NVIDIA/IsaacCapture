@@ -95,6 +95,7 @@ describe("parseSnapshot LiveKit camera streams", () => {
       room: "r",
       publisher: "orin",
       track: "left",
+      timestamp_basis: 1,
     });
   });
 
@@ -117,6 +118,7 @@ describe("parseSnapshot LiveKit camera streams", () => {
   it.each([
     ["a missing url", { ...LIVEKIT_STREAM, url: undefined }],
     ["a missing publisher", { ...LIVEKIT_STREAM, publisher: undefined }],
+    ["a missing timestamp basis", { ...LIVEKIT_STREAM, timestamp_basis: undefined }],
     ["a numeric track", { ...LIVEKIT_STREAM, track: 3 }],
     ["a numeric name", { ...LIVEKIT_STREAM, name: 3 }],
     ["a non-numeric stream_id", { ...LIVEKIT_STREAM, stream_id: "16" }],

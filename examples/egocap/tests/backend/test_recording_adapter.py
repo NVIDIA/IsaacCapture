@@ -709,3 +709,120 @@ def test_real_ingress_enforces_the_byte_budget_on_video_samples():
         assert "byte budget" in ingress.failure
 
     asyncio.run(run())
+
+
+# --- tracking time is the host poll time, on the same timeline as LiveKit video -------
+
+
+def _tracking_frame(capture_time_ns: int, receive_time_ns: int) -> CaptureFrame:
+    return CaptureFrame(
+        session_id="s",
+        description=None,  # type: ignore[arg-type]
+        stream_id=1,
+        sequence=0,
+        capture_time_ns=capture_time_ns,
+        receive_time_ns=receive_time_ns,
+        payload=capture_protocol.encode_tracking_frame(default_tracking_values()),
+    )
+
+
+def test_pico_and_manus_samples_are_both_stamped_with_the_one_host_poll_frame_time():
+    # The recorded tracking time is when the host polled the devices (HOST_POLL), not a device measurement time:
+    # every sample from one frame carries that frame's single timestamp, whichever source it is.
+    frame = _tracking_frame(capture_time_ns=5_000_123_456_789, receive_time_ns=5_000_130_000_000)
+    samples = _convert_raw_item(frame)
+
+    assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
+    for sample in samples:
+        assert isinstance(sample, NumericSample)
+        assert sample.capture_time == frame.capture_time_ns / 1e9
+        assert sample.receive_time == frame.receive_time_ns / 1e9
+
+
+async def test_livekit_video_and_tracking_from_one_frame_share_the_pc_monotonic_timeline():
+    from collections import defaultdict
+
+    from egocap_web.clock_exchange import ClockEstimator, Exchange
+    from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+    from egocap_web.livekit_recording import LiveKitRecordingFeed
+
+    S = 1_000_000_000
+    event_ns = 5_000 * S  # truth: the PC-monotonic time of one event seen by both sources
+    camera_offset_ns = 3_200_000_000_000  # the camera's clock runs this far ahead of the PC's
+
+    # One exchange, symmetric 2 ms each way, so the mapping is exact and its uncertainty is 2 ms.
+    t1 = event_ns - 2 * S
+    estimator = ClockEstimator()
+    estimator.add(
+        Exchange(
+            t1=t1,
+            t2=t1 + 2_000_000 + camera_offset_ns,
+            t3=t1 + 2_000_000 + camera_offset_ns,
+            t4=t1 + 4_000_000,
+        )
+    )
+    now_ns = event_ns + 50_000_000
+    mapping = estimator.mapping(now_ns)
+    assert mapping is not None
+
+    class Clock:
+        discontinuity = False
+
+        def mapping(self):
+            return estimator.mapping(now_ns)
+
+    class Receiver:
+        clock_sync = Clock()
+
+        def __init__(self, frames):
+            self.frames = list(frames)
+            self.counters = defaultdict(StreamCounters)
+
+        async def next_frame_or_lost(self, stream_id, timeout=None):
+            return self.frames.pop(0) if self.frames else None
+
+    class Ingress:
+        def __init__(self):
+            self.offered = []
+
+        def offer(self, item):
+            self.offered.append(item)
+            return True
+
+    stream = capture_protocol.LiveKitCameraStream(
+        stream_id=16,
+        name="cam",
+        url="wss://lk",
+        room="r",
+        publisher="o",
+        track="t",
+        timestamp_basis=capture_protocol.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
+    )
+    received = ReceivedFrame(
+        stream_id=16,
+        image=np.zeros((2, 2, 3), dtype=np.uint8),
+        receive_time_ns=now_ns,
+        transport_timestamp_us=0,
+        user_timestamp_us=(event_ns + camera_offset_ns) // 1000,
+        frame_id=None,
+        user_data=None,
+    )
+    ingress = Ingress()
+    feed = LiveKitRecordingFeed(Receiver([received]), [stream], ingress, {16: "cam"})  # type: ignore[arg-type]
+    feed.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await feed.stop()
+
+    (video,) = ingress.offered
+    assert isinstance(video, VideoSample)
+    tracking = _convert_raw_item(_tracking_frame(capture_time_ns=event_ns + 1_500_000, receive_time_ns=now_ns))
+    assert tracking
+
+    # Both are seconds on the PC's monotonic clock; their gap is the synthetic 1.5 ms (the host poll lags the
+    # event), and the video time is within the mapping's uncertainty of the truth.
+    truth_gap_s = 1.5e-3
+    tolerance_s = mapping.uncertainty_ns / 1e9
+    assert abs(video.capture_time - event_ns / S) <= tolerance_s
+    for sample in tracking:
+        assert abs((sample.capture_time - video.capture_time) - truth_gap_s) <= tolerance_s

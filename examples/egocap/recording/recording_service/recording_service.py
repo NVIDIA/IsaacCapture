@@ -169,6 +169,9 @@ class _Take:
         self.operation_task: asyncio.Task[Any] | None = None
         self.operation = ""
         self.error: str | None = None
+        # Timing evidence for this take (clock mappings and their quality), written to the kept episode's
+        # attributes. Held in memory only: a take recovered after a crash has none, and says nothing of timing.
+        self.timing: dict[str, Any] | None = None
         self.released = store is None
         # Work ownership: ``operating`` while a lifecycle operation owns the take,
         # ``in_flight`` while a storage call is running even if its waiter went away.
@@ -263,6 +266,15 @@ class RecordingService:
         if take.operation:
             raise StateError(f"episode {episode_id!r} already has a {take.operation} in progress")
         return await self._begin(take, "stop", self._stop_impl(take))
+
+    def set_episode_timing(self, episode_id: str, timing: dict[str, Any]) -> None:
+        """Attach timing evidence (JSON-serializable) to the active episode; it is written with its attributes.
+
+        Call before ``stop_episode``. It replaces any earlier value, is not persisted in the recovery manifest, and
+        raises ``StateError`` if the episode is not the active one.
+        """
+        json.dumps(timing)  # a value that cannot be written must fail here, not while the take is finalizing
+        self._active(episode_id, "set timing").timing = timing
 
     async def discard_episode(self, episode_id: str) -> EpisodeResult:
         """Close admission, settle all work, and delete only this episode's unfinished output."""
@@ -944,7 +956,10 @@ class RecordingService:
                     # gone and the final one already holds the data: never rewrite it, only verify its identity.
                     if where == "pending":
                         await self._call(
-                            take, write_episode_attributes, session_path / m.pending_path, self._attributes(m)
+                            take,
+                            write_episode_attributes,
+                            session_path / m.pending_path,
+                            self._attributes(m, take.timing),
                         )
                     final = await self._call(take, finalize_episode_dir, session_path, m)
                     await self._checkpoint(take, storage_phase="FINALIZED")
@@ -1006,7 +1021,7 @@ class RecordingService:
         for name, value in changes.items():
             setattr(take.manifest, name, value)
 
-    def _attributes(self, m: EpisodeManifest) -> dict[str, Any]:
+    def _attributes(self, m: EpisodeManifest, timing: dict[str, Any] | None = None) -> dict[str, Any]:
         """Dataset-level metadata written to a kept episode, using the names existing readers consume.
 
         Only checks that actually ran are reported: the mandatory integrity check is recorded, and capture
@@ -1039,6 +1054,8 @@ class RecordingService:
             "config_digest": m.config_digest,
             "sources": m.sources,
         }
+        if timing:
+            attributes["timing"] = timing
         if m.assignment is not None:
             attributes.update(
                 {"studio": m.studio, "route_group": m.assignment["group"], "output_index": m.assignment["slot"]}

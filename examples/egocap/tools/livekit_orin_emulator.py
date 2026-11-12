@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import contextlib
 import signal
+import struct
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -34,6 +35,9 @@ except ImportError as exc:  # the optional "livekit" extra is not installed
 
 #: Seconds between periodic stats lines.
 STATS_INTERVAL_S = 5.0
+#: Bases on the emulated publisher's monotonic clock, and bases that stamp the capture event (not processing time).
+_MONOTONIC_BASES = ("capture_monotonic_us", "monotonic_us")
+_CAPTURE_BASES = ("capture_monotonic_us", "capture_unix_us")
 #: Width of the frame-counter strip, in bits (one coloured block per bit).
 _COUNTER_BITS = 24
 
@@ -83,10 +87,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument(
         "--timestamp-basis",
-        choices=("capture_unix_us", "processing_unix_us", "monotonic_us"),
-        default="capture_unix_us",
-        help="what user_timestamp carries: this host's Unix time at frame generation, which for synthetic frames "
-        "is their capture time (recordable); the same reading declared as processing time; or monotonic time",
+        choices=("capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"),
+        default="monotonic_us",
+        help="what user_timestamp carries: monotonic_us is the emulated Orin's monotonic time when the frame is "
+        "ready (what the native sender stamps by default; recordable, mapped by clock-sync); "
+        "capture_monotonic_us is the same clock declared as the sensor capture event (also recordable); "
+        "capture_unix_us and processing_unix_us are Unix-time stamps, which cannot be recorded",
+    )
+    parser.add_argument(
+        "--clock-offset-ms",
+        type=float,
+        default=0.0,
+        help="emulate an Orin whose Unix clock reads this many milliseconds ahead of this host's (negative: "
+        "behind); applies to the Unix bases, since monotonic clocks of two machines are unrelated",
+    )
+    parser.add_argument(
+        "--clock-drift-ppm",
+        type=float,
+        default=0.0,
+        help="the emulated Orin clock gains this many microseconds per second of run time "
+        "(every basis, and the clock-sync replies)",
+    )
+    parser.add_argument(
+        "--pipeline-delay-ms",
+        type=float,
+        default=0.0,
+        help="a capture-basis stamp names the capture event, which happened this many milliseconds before the "
+        "frame is published (exposure, readout, ISP and encode); the processing basis is unaffected",
+    )
+    parser.add_argument(
+        "--monotonic-offset-s",
+        type=float,
+        default=0.0,
+        help="emulate an Orin whose monotonic clock reads this many seconds ahead of this host's (a different "
+        "boot time); applies to the monotonic basis and to the clock-sync replies",
     )
     return parser
 
@@ -116,9 +150,77 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def user_timestamp_us(basis: str) -> int:
-    """Returns now in microseconds on the chosen clock (a Unix basis, or ``monotonic_us``)."""
-    ns = time.monotonic_ns() if basis == "monotonic_us" else time.time_ns()
+    """Returns now in microseconds on the chosen clock (a Unix basis, or a monotonic one)."""
+    ns = time.monotonic_ns() if basis in _MONOTONIC_BASES else time.time_ns()
     return ns // 1000
+
+
+@dataclass(frozen=True)
+class ClockModel:
+    """How the emulated Orin's stamps differ from this host's clock: an offset, a slow drift, and the delay between
+    a capture event and its publication. All zero reproduces this host's own readings."""
+
+    offset_us: int = 0
+    drift_ppm: float = 0.0
+    pipeline_delay_us: int = 0
+    monotonic_offset_ns: int = 0
+    started_ns: int = 0
+    #: The run-time clock the drift is measured on; injectable so a test can step it deterministically.
+    monotonic_ns: Callable[[], int] = time.monotonic_ns
+
+    @classmethod
+    def from_args(
+        cls, args: argparse.Namespace, monotonic_ns: Callable[[], int] = time.monotonic_ns
+    ) -> ClockModel:
+        return cls(
+            offset_us=round(args.clock_offset_ms * 1000),
+            drift_ppm=args.clock_drift_ppm,
+            pipeline_delay_us=round(args.pipeline_delay_ms * 1000),
+            monotonic_offset_ns=round(args.monotonic_offset_s * 1e9),
+            started_ns=monotonic_ns(),
+            monotonic_ns=monotonic_ns,
+        )
+
+    def _drift_us(self) -> float:
+        return (self.monotonic_ns() - self.started_ns) / 1e9 * self.drift_ppm
+
+    def orin_monotonic_ns(self) -> int:
+        """The emulated Orin's monotonic clock: this host's, a different boot time, and the same slow drift."""
+        return self.monotonic_ns() + self.monotonic_offset_ns + round(self._drift_us() * 1000)
+
+    def adjustment_us(self, basis: str, *, at_capture: bool) -> int:
+        """Microseconds to add to this host's reading of ``basis`` to get the emulated Orin's stamp."""
+        offset_us = self.monotonic_offset_ns // 1000 if basis in _MONOTONIC_BASES else self.offset_us
+        delay_us = self.pipeline_delay_us if at_capture else 0
+        return round(offset_us + self._drift_us() - delay_us)
+
+
+#: A clock-sync request from the PC (``Q``, sequence, t1) and this publisher's reply (``R``, sequence, t1, t2, t3):
+#: little-endian, t1 on the PC's monotonic clock and t2/t3 on this publisher's, in nanoseconds.
+CLOCK_SYNC_TOPIC = "isaaccapture.clock-sync"
+_SYNC_REQUEST = struct.Struct("<cIq")
+_SYNC_REPLY = struct.Struct("<cIqqq")
+
+
+def build_sync_reply(request: bytes, t2: int, t3: int) -> bytes | None:
+    """The reply to a well-formed clock-sync request, or None for anything else."""
+    if len(request) != _SYNC_REQUEST.size:
+        return None
+    kind, sequence, t1 = _SYNC_REQUEST.unpack(request)
+    if kind != b"Q":
+        return None
+    return _SYNC_REPLY.pack(b"R", sequence, t1, t2, t3)
+
+
+async def answer_clock_sync(room: rtc.Room, identity: str, request: bytes, t2: int, clock: ClockModel) -> None:
+    """Answers one clock-sync request, stamping t3 just before sending; anything malformed is ignored."""
+    # Stamped here, after t2, and as late as possible: the PC removes (t3 - t2) from its round trip.
+    reply = build_sync_reply(request, t2, clock.orin_monotonic_ns())
+    if reply is None:
+        return
+    await room.local_participant.publish_data(
+        reply, reliable=False, destination_identities=[identity], topic=CLOCK_SYNC_TOPIC
+    )
 
 
 def build_metadata(frame_id: int, capture_counter_ns: int, timestamp_us: int) -> rtc.FrameMetadata:
@@ -175,13 +277,16 @@ async def publish_stream(
     stop: asyncio.Event,
     counters: Counters,
     capture_clock: Callable[[], int] = time.monotonic_ns,
+    clock: ClockModel | None = None,
 ) -> None:
     """Sends frames for one track at ``--fps`` until ``stop`` is set.
 
     Deadlines are start + n*period rather than sleep(period), so encode time and loop jitter do not accumulate
     into drift. After a stall longer than a period the schedule restarts from now instead of bursting to catch up.
+    ``clock`` is the emulated Orin's clock, shared by every track of one publisher so their stamps drift together.
     """
     period = 1.0 / args.fps
+    clock = clock or ClockModel.from_args(args)
     loop = asyncio.get_running_loop()
     deadline = loop.time()
     frame_id = 0
@@ -190,12 +295,18 @@ async def publish_stream(
         # The counter and a capture-time stamp are taken before the frame is synthesized, as a camera stamps at
         # capture; a processing-time stamp is taken once the frame is ready, as the real sender's is.
         capture_ns = capture_clock()
-        at_capture = args.timestamp_basis != "processing_unix_us"
-        timestamp_us = user_timestamp_us(args.timestamp_basis) if at_capture else 0
+        at_capture = args.timestamp_basis in _CAPTURE_BASES
+        timestamp_us = (
+            user_timestamp_us(args.timestamp_basis) + clock.adjustment_us(args.timestamp_basis, at_capture=True)
+            if at_capture
+            else 0
+        )
         pixels = make_pattern(args.width, args.height, spec.sensor, frame_id)
         frame = rtc.VideoFrame(args.width, args.height, rtc.VideoBufferType.RGBA, pixels.tobytes())
         if not at_capture:
-            timestamp_us = user_timestamp_us(args.timestamp_basis)
+            timestamp_us = user_timestamp_us(args.timestamp_basis) + clock.adjustment_us(
+                args.timestamp_basis, at_capture=False
+            )
         source.capture_frame(
             frame,
             timestamp_us=timestamp_us,
@@ -230,6 +341,22 @@ async def run(args: argparse.Namespace, stop: asyncio.Event) -> None:
     publications = []
     tasks: list[asyncio.Task] = []
     try:
+        # One emulated Orin clock for every track, so their stamps share one offset and drift origin.
+        clock = ClockModel.from_args(args)
+        replies: set[asyncio.Task] = set()
+
+        def on_data(packet: rtc.DataPacket) -> None:
+            # t2 is read first, before anything else runs, so it is as close to the receipt as software allows.
+            t2 = clock.orin_monotonic_ns()
+            if packet.topic != CLOCK_SYNC_TOPIC or packet.participant is None:
+                return
+            task = asyncio.get_running_loop().create_task(
+                answer_clock_sync(room, packet.participant.identity, packet.data, t2, clock)
+            )
+            replies.add(task)
+            task.add_done_callback(replies.discard)
+
+        room.on("data_received", on_data)
         # One source and one published track per stream, named as the PC side expects.
         for spec in args.streams:
             source = rtc.VideoSource(args.width, args.height)
@@ -245,7 +372,7 @@ async def run(args: argparse.Namespace, stop: asyncio.Event) -> None:
                 ],
             )
             publications.append(await room.local_participant.publish_track(track, options))
-            tasks.append(asyncio.create_task(publish_stream(source, spec, args, stop, counters)))
+            tasks.append(asyncio.create_task(publish_stream(source, spec, args, stop, counters, clock=clock)))
         tasks.append(asyncio.create_task(report_stats(stop, counters)))
         # A failed task would otherwise be noticed only at shutdown; stop everything as soon as one ends.
         for task in tasks:

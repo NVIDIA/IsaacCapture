@@ -15,7 +15,7 @@ export class LiveKitTokenHttpError extends Error {}
 /** The backend's answer was not the expected `{token}` body. */
 export class LiveKitTokenParseError extends Error {}
 
-/** Fetches a fresh subscribe-only token for `room`; throws LiveKitTokenHttpError with the backend's reason. */
+/** Fetches a fresh viewer token (subscribe and data messages, no media publishing) for `room`; throws LiveKitTokenHttpError with the backend's reason. */
 export async function fetchLiveKitToken(room: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch(`/api/livekit-token?room=${encodeURIComponent(room)}`, { signal });
   if (!response.ok) {

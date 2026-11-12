@@ -13,7 +13,14 @@ from pathlib import Path
 import pytest
 
 from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator
-from recording_service import FieldSpec, NumericSourceSpec, RecordingPhase, ServiceConfig
+from recording_service import (
+    Disposition,
+    FieldSpec,
+    NumericSourceSpec,
+    RecordingPhase,
+    RecordingService,
+    ServiceConfig,
+)
 
 NUMERIC = NumericSourceSpec("s", (FieldSpec("v", "float64"),))
 
@@ -38,6 +45,9 @@ class FakeSource:
 
     async def stop(self) -> None:
         self.events.append("stop")
+
+    def timing_evidence(self):
+        return None
 
 
 def make_coordinator(tmp_path: Path, source) -> RecordingSessionCoordinator:
@@ -138,4 +148,94 @@ async def test_retiring_the_take_stops_the_source_before_the_ingress(tmp_path):
     ingress.stop = recording_stop
     await coordinator.stop_episode(episode.episode_id)
     assert events[-2:] == ["stop", "ingress.stop"]
+    await coordinator.close()
+
+
+class EvidenceSource(FakeSource):
+    """A source whose timing evidence is read once per take, in the order given (None: no clock sync)."""
+
+    def __init__(self, events: list[str], evidence: list) -> None:
+        super().__init__(events)
+        self.evidence = list(evidence)
+
+    def timing_evidence(self):
+        self.events.append("timing_evidence")
+        return self.evidence.pop(0)
+
+
+def spy_on_service(monkeypatch, events: list[str]) -> list[tuple[str, dict]]:
+    """Record set_episode_timing calls (and their order against stop_episode) on the real service."""
+    calls: list[tuple[str, dict]] = []
+    set_timing, stop = RecordingService.set_episode_timing, RecordingService.stop_episode
+
+    def recording_set_timing(self, episode_id, timing):
+        events.append("set_timing")
+        calls.append((episode_id, timing))
+        return set_timing(self, episode_id, timing)
+
+    async def recording_stop(self, episode_id):
+        events.append("stop_episode")
+        return await stop(self, episode_id)
+
+    monkeypatch.setattr(RecordingService, "set_episode_timing", recording_set_timing)
+    monkeypatch.setattr(RecordingService, "stop_episode", recording_stop)
+    return calls
+
+
+async def test_the_sources_timing_evidence_is_given_to_the_service_once_before_stop_and_not_reused(
+    tmp_path, monkeypatch
+):
+    events: list[str] = []
+    first = {"clock_mapping": {"mappings": [1]}}
+    calls = spy_on_service(monkeypatch, events)
+    coordinator = make_coordinator(tmp_path, EvidenceSource(events, [first, None]))
+    await coordinator.open()
+    coordinator.set_task("t")
+
+    one = await coordinator.start_episode()
+    await coordinator.stop_episode(one.episode_id)
+    assert calls == [(one.episode_id, first)]
+    assert events.index("timing_evidence") < events.index("set_timing") < events.index("stop_episode")
+
+    two = await coordinator.start_episode()
+    await coordinator.stop_episode(two.episode_id)
+    assert calls == [(one.episode_id, first)]  # the second take's source had none; nothing carried over
+    await coordinator.close()
+
+
+async def test_a_discarded_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
+    events: list[str] = []
+    calls = spy_on_service(monkeypatch, events)
+    discarded = {"clock_mapping": {"mappings": ["discarded take"]}}
+    coordinator = make_coordinator(tmp_path, EvidenceSource(events, [discarded, None]))
+    await coordinator.open()
+    coordinator.set_task("t")
+
+    one = await coordinator.start_episode()
+    await coordinator.discard_episode(one.episode_id)
+    two = await coordinator.start_episode()
+    await coordinator.stop_episode(two.episode_id)
+
+    assert calls == []  # the second take's source had none, and nothing was inherited from the discarded one
+    await coordinator.close()
+
+
+async def test_an_interrupted_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
+    events: list[str] = []
+    calls = spy_on_service(monkeypatch, events)
+    interrupted = {"clock_mapping": {"mappings": ["interrupted take"]}}
+    coordinator = make_coordinator(tmp_path, EvidenceSource(events, [interrupted, None]))
+    await coordinator.open()
+    coordinator.set_task("t")
+
+    one = await coordinator.start_episode()
+    coordinator._readiness_check = lambda: (False, "the camera went away")
+    interrupted_result = await coordinator.stop_episode(one.episode_id)
+    assert interrupted_result.disposition is not Disposition.KEPT
+    _ = await coordinator.discard_pending(one.episode_id)  # a retained take must be settled before another starts
+    coordinator._readiness_check = lambda: (True, None)
+    two = await coordinator.start_episode()
+    await coordinator.stop_episode(two.episode_id)
+
+    assert calls == []
     await coordinator.close()

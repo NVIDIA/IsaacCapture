@@ -594,7 +594,7 @@ All enums are IntEnum classes. Supply enum members to the Python API; incoming n
 | `ImageCodec` | `JPEG=1` |
 | `ClockDomain` | `CAPTURE_HOST_MONOTONIC=1` |
 | `TimeUnit` | `NANOSECONDS=1` |
-| `LiveKitTimestampBasis` | `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3` |
+| `LiveKitTimestampBasis` | `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`, `SENSOR_CAPTURE_MONOTONIC_US=4` |
 | `SampleTimeSemantics` | `HOST_POLL=1` |
 | `PoseRepresentation` | `POSITION_QUATERNION=1` |
 | `QuaternionOrder` | `XYZW=1` |
@@ -1229,7 +1229,7 @@ A `streams` entry with `kind` `LIVEKIT_IMAGE=3` says where a camera's video is p
 | `room` | Nonempty string of at most 512 characters. | The room to join. |
 | `publisher` | Nonempty string of at most 512 characters. | The publishing participant's identity. |
 | `track` | Nonempty string of at most 512 characters. | The published track's name; unique per `publisher`. |
-| `timestamp_basis` | `LiveKitTimestampBasis`: `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`. | What the frame's `user_timestamp_us` means. Only `SENSOR_CAPTURE_UNIX_US` is a capture time; the other two are not recordable as one. |
+| `timestamp_basis` | `LiveKitTimestampBasis`: `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`, `SENSOR_CAPTURE_MONOTONIC_US=4`. | What the frame's `user_timestamp_us` means. 1: the publisher's monotonic clock when the frame was ready to encode. 2: Unix processing time on the publisher. 3: Unix time of the sensor's capture event. 4: the sensor's capture event on the publisher's monotonic clock. Only 1 and 4 are recordable, using the publisher's clock-sync replies; 2 and 3 are preview only. |
 | `width`, `height` | Positive integer, or null (the key may be omitted). | The configured frame size, or null when not known. |
 | `fps` | Finite positive number, or null (the key may be omitted). | The configured frame rate, or null when not known. |
 
@@ -1244,13 +1244,13 @@ livekit:
   url: wss://LIVEKIT_HOST            # ws:// or wss://
   room: sensing-preview
   publisher: orin-sensing
-  timestamp_basis: capture_unix_us   # monotonic_us (default), processing_unix_us or capture_unix_us
+  timestamp_basis: monotonic_us      # monotonic_us (default), capture_monotonic_us, processing_unix_us or capture_unix_us
   streams:                           # may be empty
     - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
     - {name: Head right, track: sensing-right}   # width, height and fps are optional
 ```
 
-`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_unix_us`=3). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a camera name configured with `--gmsl-camera` is rejected.
+`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_unix_us`=3, `capture_monotonic_us`=4). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a camera name configured with `--gmsl-camera` is rejected.
 
 Each WebSocket binary message consists of a 32-byte header followed immediately by a payload. For CaptureFrame, that payload is the packed tracking blob defined by SessionInit. For CaptureImage, it is the JPEG bytes. The header itself contains no JSON and no field-name strings.
 

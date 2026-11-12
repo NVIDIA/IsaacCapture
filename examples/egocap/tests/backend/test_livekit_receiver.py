@@ -620,10 +620,12 @@ async def test_a_different_participant_disconnecting_changes_nothing(receiver):
 async def test_feed_on_a_never_attached_stream_fails_when_the_publisher_leaves(monkeypatch):
     from egocap_web.livekit_recording import LiveKitRecordingFeed
 
-    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
+    capture = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
     stream = camera(1, "left", timestamp_basis=capture)
     rx = lr.LiveKitFrameReceiver([stream], TOKEN)
     await rx.start()
+    stub = SimpleNamespace(mapping=lambda: None, discontinuity=False, stop=lambda: asyncio.sleep(0))
+    rx.clock_sync = stub  # the feed needs a clock-sync object to exist
     reasons: list[str] = []
     feed = LiveKitRecordingFeed(
         rx, [stream], SimpleNamespace(offer=lambda item: True), {1: "src"}, on_failure=reasons.append
