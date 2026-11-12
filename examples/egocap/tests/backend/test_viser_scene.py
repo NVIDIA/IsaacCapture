@@ -725,7 +725,7 @@ async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or
             events.append("scene stop")
             raise RuntimeError("scene refused to stop")
 
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     created = []
     monkeypatch.setattr(
@@ -773,11 +773,11 @@ class _FakeAligner:
         self.closed_with = timeout
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
 
 
 async def _lifespan_with_station(monkeypatch, tmp_path, station_yaml):
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     config = tmp_path / "station.yaml"
     config.write_text(station_yaml, encoding="utf-8")
@@ -920,7 +920,7 @@ async def test_the_lifespan_starts_no_aligner_when_alignment_is_off(monkeypatch,
 async def test_invalid_3d_view_settings_leave_it_unavailable_and_capture_running(monkeypatch):
     monkeypatch.setenv("EGOCAP_VISER_ENABLED", "1")
     monkeypatch.setenv("EGOCAP_VISER_PORT", "not-a-number")
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     monkeypatch.setattr(app_module, "CaptureStatusMonitor", _FakeMonitor)
     app = app_module.FastAPI()
@@ -990,7 +990,7 @@ async def test_malformed_settings_are_ignored_while_the_3d_view_is_off(monkeypat
     monkeypatch.setenv("EGOCAP_VISER_ENABLED", "0")
     monkeypatch.setenv("EGOCAP_VISER_PORT", "")
     monkeypatch.setenv("EGOCAP_VISER_HEAD_MODEL_SCALE", "wide")
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     monkeypatch.setattr(app_module, "CaptureStatusMonitor", _FakeMonitor)
     app = app_module.FastAPI()

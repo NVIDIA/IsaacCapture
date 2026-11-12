@@ -471,7 +471,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         task_file_root=task_file_root,
     )
     # Kept episodes are time-aligned in the background when the station configures an index camera.
-    aligner: AutoAligner | None = None
     aligner_task: asyncio.Task[None] | None = None
     if aligner is not None:
         coordinator.on_episode_kept = aligner.submit

@@ -165,7 +165,7 @@ class AutoAligner:
             logger.warning("time alignment still has queued episodes at shutdown; they are retried at next start")
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            _ = await task
 
     async def _align(self, job: _Job) -> None:
         """Align one kept episode in a child process; raises with the reason when it is refused or fails."""

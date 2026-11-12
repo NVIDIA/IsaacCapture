@@ -300,6 +300,10 @@ def test_a_tracking_latency_for_an_unknown_source_is_a_station_config_error(tmp_
     ("text", "match"),
     [
         ("alignment: [1]\n", "'alignment' must be a mapping"),
+        ("alignment: []\n", "'alignment' must be a mapping"),
+        ("alignment: 0\n", "'alignment' must be a mapping"),
+        ("alignment:\n  tracking_latency_s: 0\n", "tracking_latency_s must be a mapping"),
+        ("alignment:\n  tracking_latency_s: []\n", "tracking_latency_s must be a mapping"),
         ("alignment:\n  tracking_latency_s: [0.1]\n", "tracking_latency_s must be a mapping"),
     ],
 )

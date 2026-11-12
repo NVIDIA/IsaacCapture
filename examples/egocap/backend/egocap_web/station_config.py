@@ -137,14 +137,20 @@ def _resolve_cameras(station_id: str, entry: dict) -> tuple[p.CameraSelection, .
     return tuple(cameras)
 
 
+def _mapping_or_empty(station_id: str, container: dict, key: str, label: str) -> dict:
+    """``container[key]`` as a mapping: absent or null is empty, any other non-mapping is an error."""
+    value = container.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise StationConfigError(f"station {station_id!r}: {label} must be a mapping")
+    return value
+
+
 def _resolve_latency(station_id: str, entry: dict) -> dict[str, float]:
     """The finite, non-negative seconds in ``alignment.tracking_latency_s``, keyed by tracking source."""
-    section = entry.get("alignment") or {}
-    if not isinstance(section, dict):
-        raise StationConfigError(f"station {station_id!r}: 'alignment' must be a mapping")
-    configured = section.get("tracking_latency_s") or {}
-    if not isinstance(configured, dict):
-        raise StationConfigError(f"station {station_id!r}: alignment.tracking_latency_s must be a mapping")
+    section = _mapping_or_empty(station_id, entry, "alignment", "'alignment'")
+    configured = _mapping_or_empty(station_id, section, "tracking_latency_s", "alignment.tracking_latency_s")
     latency: dict[str, float] = {}
     for name, seconds in configured.items():
         if name not in _TRACKING_SOURCES:
@@ -163,9 +169,7 @@ def _resolve_alignment_index(station_id: str, entry: dict) -> str | None:
     None (alignment off) when it is not set or ``alignment.enabled`` is false. It must name a camera the
     station records with a sensor capture time, which is checked each time a session opens.
     """
-    section = entry.get("alignment") or {}
-    if not isinstance(section, dict):
-        raise StationConfigError(f"station {station_id!r}: 'alignment' must be a mapping")
+    section = _mapping_or_empty(station_id, entry, "alignment", "'alignment'")
     if not _bool_field(section, "enabled", default=True):
         return None
     return _str_field(section, "index_source") or None

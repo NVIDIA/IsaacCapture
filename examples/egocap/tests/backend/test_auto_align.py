@@ -151,7 +151,7 @@ async def test_cancelling_an_idle_worker_ends_it_cleanly(tmp_path):
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     assert task.cancelled()
 
 
