@@ -816,11 +816,12 @@ run from another directory) fails with <code class="docutils literal notranslate
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
-<div class="admonition-retargeters-extra-on-aarch64-jetson-dgx admonition">
-<p class="admonition-title"><code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra on aarch64 (Jetson / DGX)</p>
-<p>The full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra does <strong>not</strong> resolve on <code class="docutils literal notranslate"><span class="pre">aarch64</span></code> (some of its
-pinned dependencies have no aarch64 wheels). On Jetson/DGX-class robotics
-targets, install the <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> extra instead:</p>
+<div class="admonition-smaller-retargeters-lite-extra admonition">
+<p class="admonition-title">Smaller <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> extra</p>
+<p><code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> installs only SciPy. The full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra adds
+dex-retargeting, PyTorch and Pinocchio, which <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code> and the
+joint-space retargeters import. When you need neither, for example to keep a
+Jetson install small, install the lite extra instead:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters-lite,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>

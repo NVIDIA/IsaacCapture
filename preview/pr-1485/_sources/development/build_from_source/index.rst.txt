@@ -368,11 +368,12 @@ run from another directory) fails with ``ResolutionImpossible`` / ``No solution 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
-.. admonition:: ``retargeters`` extra on aarch64 (Jetson / DGX)
+.. admonition:: Smaller ``retargeters-lite`` extra
 
-   The full ``retargeters`` extra does **not** resolve on ``aarch64`` (some of its
-   pinned dependencies have no aarch64 wheels). On Jetson/DGX-class robotics
-   targets, install the ``retargeters-lite`` extra instead:
+   ``retargeters-lite`` installs only SciPy. The full ``retargeters`` extra adds
+   dex-retargeting, PyTorch and Pinocchio, which ``DexHandRetargeter`` and the
+   joint-space retargeters import. When you need neither, for example to keep a
+   Jetson install small, install the lite extra instead:
 
    .. code-block:: bash
 
