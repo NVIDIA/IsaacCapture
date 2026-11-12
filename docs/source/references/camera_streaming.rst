@@ -392,8 +392,9 @@ pick the one that offers the configured resolution and frame rate:
    v4l2-ctl --list-devices
    v4l2-ctl --device=/dev/videoN --list-formats-ext   # repeat for each node of the camera
 
-A node without that mode fails to open, and the viewer logs
+A node without that resolution fails to open, and the viewer logs
 ``requested 1920x1080, got 1280x720`` (or similar) every few seconds with ``0.0 submit/s``.
+The viewer does not check the frame rate, so confirm it in the ``--list-formats-ext`` output.
 
 .. code-block:: bash
 
