@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+meta:
+  egocap_station_name: station_a
+numeric_sources:
+- frame_type: PicoTrackingFrame
+  name: pico_controller
+- frame_type: ManusFrame
+  name: glove
+recording:
+  numeric_frame_type: NumericFrame
+  video_frame_type: RGBCameraFrame
+video_sources:
+- name: head_camera
+- name: wrist_camera

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The operator's status bar: what the take is doing, what the task is, how many are saved, how the last one went,
  * and whether every device and camera is healthy. Read-only -- the recording controls themselves stay in
@@ -147,6 +151,7 @@ export function OperatorBar({
   const chips = deriveHealthChips(response, live);
   const problems = chipsNeedingAttention(chips);
   const task = recordingSnapshot?.taskText ?? "";
+  const details = recordingSnapshot?.taskDetails ?? "";
   const last = recordingSnapshot?.lastResult ?? null;
 
   return (
@@ -165,6 +170,11 @@ export function OperatorBar({
       <div className="op-task">
         <span className="op-kicker">Task</span>
         <p className={`op-task-text${task === "" ? " op-task-text--unset" : ""}`}>{task === "" ? "No task set" : task}</p>
+        {details !== "" && (
+          <p className="op-task-details" title={details}>
+            {details}
+          </p>
+        )}
       </div>
 
       <div className="op-counts">

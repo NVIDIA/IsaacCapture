@@ -6,8 +6,8 @@
 # backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
 # consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,
 # meta.task_description, recording.data_dir, and each video_sources entry's name/type (as the
-# cameras requested from CaptureServer). numeric_sources and the rest of each video_sources entry
-# (frame_type, latency, params) are reference data for other tooling, not consumed here --
+# cameras requested from CaptureServer) and the alignment section. numeric_sources and the rest of each
+# video_sources entry (frame_type, latency, params) are reference data for other tooling, not consumed here --
 # CaptureServer owns actually opening the selected cameras/devices. Each video_sources name MUST
 # match one of the names the running CaptureServer instance actually knows about (its own
 # --camera list, mock or real) -- an unknown name rejects the whole capture session, not just
@@ -38,6 +38,17 @@ stations:
       # then this only prefills the field's draft text; the operator still has to press "Set
       # operator" before any recording command is accepted.
       auto_fill_operator_name: false
+    # Each kept episode is time-aligned in the background on index_source's frames; with no index_source nothing
+    # is aligned, and enabled: false also turns it off. Alignment needs every recorded camera, the index
+    # included, to have a sensor capture time (a LiveKit stream with timestamp_basis capture_monotonic_us); the
+    # plain CaptureServer cameras of the mock do not, so episodes recorded with them are not aligned.
+    alignment:
+      enabled: true
+      index_source: head_human_camera
+      # Estimated device-to-host delay in seconds for each tracking source; it is taken off that source's host
+      # poll time when recorded, and a source not listed is not time-aligned. Measure it on the station and
+      # uncomment; no value is assumed.
+      # tracking_latency_s: {pico_controller: <measured>, manus_glove: <measured>}
     video_sources:
     - type: oak_camera
       name: head_human_camera

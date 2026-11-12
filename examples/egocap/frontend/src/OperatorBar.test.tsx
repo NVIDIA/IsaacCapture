@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /** The operator status bar: the recording indicator's rules, the timer, counts, last result and device health. */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
@@ -15,6 +19,7 @@ function snap(overrides: Partial<RecordingSnapshot> = {}): RecordingSnapshot {
     currentEpisodeId: null,
     currentEpisodeElapsedMs: null,
     taskText: "Place the object",
+    taskDetails: "",
     defaultOperator: null,
     autoFillOperatorName: false,
     savedCount: 0,
@@ -109,6 +114,14 @@ describe("OperatorBar", () => {
     expect(within(region).getByText("READY")).not.toBeNull();
     expect(within(region).getByText("Place the object")).not.toBeNull();
     expect(within(region).getByText("12")).not.toBeNull();
+  });
+
+  it("shows the task details under the task, and nothing when there are none", () => {
+    const { unmount } = bar();
+    expect(document.querySelector(".op-task-details")).toBeNull();
+    unmount();
+    bar({ recordingSnapshot: snap({ taskDetails: "Left hand, blue cup" }) });
+    expect(screen.getByText("Left hand, blue cup")).not.toBeNull();
   });
 
   it("flags an unset task rather than leaving a blank", () => {

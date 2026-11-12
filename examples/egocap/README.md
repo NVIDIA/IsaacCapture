@@ -56,7 +56,11 @@ pytest fixture; the rest of `tests/backend` needs no Node/npm.
 Three processes, each in its own terminal, from `egocap/`:
 
 ```bash
-# 1. A standalone mock CaptureServer -- synthetic tracking and camera frames, no hardware
+# 1. A standalone mock CaptureServer -- synthetic tracking and camera frames, no hardware.
+#    This starts with no synthetic delay (--controller-delay-ms/--glove-delay-ms/--delay-jitter-ms add
+#    one), and its cameras are plain CaptureServer JPEG streams, which carry no camera clock evidence:
+#    a recorded take is kept but automatic time alignment refuses it. Aligned output needs the cameras
+#    published through LiveKit (see LIVEKIT_PREVIEW.md).
 uv run capture-server --mock
 
 # 2. The backend, connecting to CaptureServer and serving both frontends -- note the

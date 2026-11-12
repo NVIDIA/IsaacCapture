@@ -668,6 +668,7 @@ describe("useCaptureSession (effect integration)", () => {
       currentEpisodeId: "ep-1",
       currentEpisodeElapsedMs: 1234,
       taskText: "Pour water.",
+      taskDetails: "", // this wire body predates task details, so none
       defaultOperator: null,
       autoFillOperatorName: false,
       savedCount: 0,

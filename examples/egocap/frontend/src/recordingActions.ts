@@ -18,7 +18,8 @@ type SendRecordingCommand = ReturnType<typeof useCaptureSession>["sendRecordingC
  * never opens/closes anything, it only rotates batches via `onNewBatch`. */
 export function buildRecordingActions(sendRecordingCommand: SendRecordingCommand): RecordingActions {
   return {
-    onSetTask: (target: RecordingBatchIdentity, taskText: string) => sendRecordingCommand("set_task", setTaskPayload(target, taskText)),
+    onSetTask: (target: RecordingBatchIdentity, taskText: string, details: string) =>
+      sendRecordingCommand("set_task", setTaskPayload(target, taskText, details)),
     onStartEpisode: (target: RecordingBatchIdentity) => sendRecordingCommand("start_episode", batchTargetPayload(target)),
     onStopEpisode: (target: RecordingEpisodeIdentity) => sendRecordingCommand("stop_episode", episodeTargetPayload(target)),
     onDiscardEpisode: (target: RecordingEpisodeIdentity) => sendRecordingCommand("discard_episode", episodeTargetPayload(target)),

@@ -1,0 +1,84 @@
+{
+  "episode_attrs": {
+    "task_description": "episode task",
+    "timing": {
+      "clock": "monotonic",
+      "offset_s": 0.25
+    }
+  },
+  "source_attrs": {
+    "pico_controller": {
+      "handedness": "both"
+    }
+  },
+  "index_source": "head_camera",
+  "scenarios": {
+    "basic_ds1": {
+      "raw_attrs": {},
+      "sidecars": [],
+      "steps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ]
+    },
+    "basic_ds2": {
+      "raw_attrs": {},
+      "sidecars": [],
+      "steps": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ]
+    },
+    "realign": {
+      "raw_attrs": {},
+      "sidecars": [],
+      "steps": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ]
+    },
+    "attrs_sidecars": {
+      "raw_attrs": {
+        "task_description": "pick and place",
+        "operator": {
+          "id": 7,
+          "tags": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "sidecars": [
+        "head_camera_intrinsics.json"
+      ],
+      "steps": [
+        [
+          0,
+          1
+        ]
+      ]
+    }
+  }
+}

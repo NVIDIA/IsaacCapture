@@ -170,6 +170,40 @@ def test_update_episode_task_description_updates_config_yaml_sidecar(tmp_path):
     assert data["meta"]["task_description"] == "pour cereal"
 
 
+def _make_aligned_copy(session: Path) -> Path:
+    aligned = session.with_name(f"{session.name}_aligned")
+    store = zarr.open(str(aligned), mode="a")
+    store.attrs["index_source"] = "head"
+    store.create_group("episode_0").attrs["episode_length"] = 5
+    (aligned / "config.yaml").write_text("meta: {}\n", encoding="utf-8")
+    return aligned
+
+
+def test_update_episode_task_description_updates_the_aligned_copy_beside_the_session(tmp_path):
+    session = tmp_path / "session"
+    _make_session(session, 2)
+    aligned = _make_aligned_copy(session)
+    update_episode_task_description(
+        session, "0-1", task_description="pour cereal", task_name="pour", studio="Kitchen"
+    )
+    store = zarr.open(str(aligned), mode="r")
+    for attrs in (store.attrs, store["episode_0"].attrs):
+        assert attrs["task_description"] == "pour cereal"
+        assert attrs["task_name"] == "pour" and attrs["studio"] == "Kitchen"
+    assert "episode_1" not in store and store.attrs["index_source"] == "head"
+    meta = yaml.safe_load((aligned / "config.yaml").read_text(encoding="utf-8"))["meta"]
+    assert meta["task_description"] == "pour cereal"
+
+
+def test_update_episode_task_description_leaves_the_aligned_name_and_studio_when_not_given(tmp_path):
+    session = tmp_path / "session"
+    _make_session(session, 1)
+    aligned = _make_aligned_copy(session)
+    update_episode_task_description(session, "0", task_description="x")
+    attrs = zarr.open(str(aligned), mode="r").attrs
+    assert attrs["task_description"] == "x" and "task_name" not in attrs and "studio" not in attrs
+
+
 def test_update_episode_task_description_bad_range_with_relocate_raises_without_moving(tmp_path):
     # Regression: episodes must be parsed before relocating, so a malformed
     # range raises and leaves the session at its original location rather
@@ -195,3 +229,17 @@ def test_update_episode_task_description_aggregates_refresh_failure_recorded(tmp
     monkeypatch.setattr(mod, "refresh_session_egocap_zarr_aggregates", boom)
     result = update_episode_task_description(tmp_path, "0", task_description="x")
     assert result.aggregates_refreshed is False
+
+
+def test_update_episode_task_description_relocating_a_managed_session_raises_and_changes_nothing(tmp_path):
+    session = tmp_path / "EOD" / "_unmatched" / "2026-01-01-10-00-00"
+    _make_session(session, 1)
+    (session / ".recording").mkdir()
+    (session / ".recording" / "episode_0.json").write_text("{}", encoding="utf-8")
+    (session / "config.yaml").write_text("meta: {}\n", encoding="utf-8")
+    _make_aligned_copy(session)
+    before = {str(f.relative_to(tmp_path)): f.read_bytes() for f in sorted(tmp_path.rglob("*")) if f.is_file()}
+    with pytest.raises(OSError, match="fixed by its episode manifests"):
+        update_episode_task_description(session, "0", task_description="x", studio="Kitchen", relocate=True)
+    after = {str(f.relative_to(tmp_path)): f.read_bytes() for f in sorted(tmp_path.rglob("*")) if f.is_file()}
+    assert after == before and not (tmp_path / "EOD" / "Kitchen").exists()

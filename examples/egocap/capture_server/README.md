@@ -88,6 +88,12 @@ a degraded camera. There is no automatic reconnection: retry by starting a new s
 If a release times out the server refuses further sessions (`BUSY`) until it is
 restarted, because a timeout does not prove the device was released.
 
+## Manus calibration
+
+CaptureServer can calibrate Manus gloves on its host and keep the MCAL files in a managed directory for
+later capture. See [`CALIBRATION.md`](CALIBRATION.md) for setup, the `CaptureClient` calibration API, the
+wire messages.
+
 ## Validation status
 
 Implemented and exercised on a Pico 4 Ultra and an OAK-D-W through the normal server
@@ -121,7 +127,7 @@ async def start(
     *,
     sources: Sequence[SourceType],
     cameras: Sequence[CameraSelection] = (),
-    plugins: Sequence[PluginType] = (),
+    plugins: Sequence[PluginType | ManusPluginConfig] = (),
     on_started: Callback[CaptureStarted] | None = None,
     on_status: Callback[CaptureStatus] | None = None,
     on_capture_frame: Callback[CaptureFrame] | None = None,
@@ -134,7 +140,11 @@ async def start(
 async def stop(self) -> None: ...
 ```
 
-`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes two operations, start and stop.
+```python
+async def query_devices(self) -> tuple[protocol.DeviceEntry, ...]: ...
+```
+
+`Callback[T]` means `Callable[[T], None | Awaitable[None]]`: a synchronous or asynchronous function taking one value of type T. All start arguments are keyword-only. The client exposes three operations: start, stop and the read-only device query. `ManusPluginConfig` and `DeviceQueryError` are imported from `capture_server.client`; `DeviceEntry` and `ManusCalibrationCatalogStatus` are in `capture_server.protocol`.
 
 #### Constructor and start arguments
 
@@ -143,7 +153,7 @@ async def stop(self) -> None: ...
 | Constructor `url` | Nonempty `str`, a `ws://` or `wss://` station URL. | Identifies the remote capture server. Construction creates an idle client without connecting. |
 | `sources` | Sequence of unique `SourceType`: `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. Required; an empty sequence is allowed. | Chooses tracking outputs. CONTROLLERS selects both controller sides; HANDS selects both hand sides. An empty sequence supports camera-only capture. |
 | `cameras` | Sequence of `CameraSelection`, default empty; at most three, with unique names. | Selects station-configured cameras by logical name and type. |
-| `plugins` | Sequence of unique `PluginType`: `MANUS=1`; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
+| `plugins` | Sequence of unique plugins: a `PluginType` (`MANUS=1`) or a `ManusPluginConfig` that also names MCAL files; default empty. | Enables these tracking plugins. Manus uses its HUMAN dataset and is optional: missing plugin discovery does not itself require session failure. This selection does not require connected gloves or filter hands by vendor. |
 | Five `on_...` arguments | `Callback[T] \| None`, default None; argument types appear below. | Registers notifications. None discards that notification; it does not disable acquisition. |
 
 An empty `sources` sequence together with any enabled plugin is rejected as `INVALID_CONFIG`: an enabled plugin needs IC actually entered for discovery to run, but the real IC graph-construction API rejects an empty output mapping outright, so that combination has no valid native graph to build. Plugin requests are otherwise independent of output subscriptions — a session can enable Manus without selecting `HANDS`, and vice versa; only the specific zero-sources-with-an-enabled-plugin combination is rejected, not any particular source choice. Camera-only capture (empty `sources`, no enabled plugin) remains supported and never enters IC.
@@ -352,6 +362,7 @@ The client validates the wire SessionInit notification and converts it to Captur
 | `enabled` | `bool` | Whether the station launches it; true for a plugin selected through start. |
 | `required` | `bool` | Whether failure to discover the plugin fails startup; false for start selections. It does not require connected gloves. |
 | `datasets` | `tuple[ManusDataset, ...]`: `HUMAN=1`. | Requested live human-skeleton dataset. start selects HUMAN. |
+| `left_calibration`, `right_calibration` | `str` or omitted: an `.mcal` basename. | MCAL file for that glove, chosen from the server's MCAL folder (see Device query). Omitted when none was selected. |
 
 #### CaptureClock
 
@@ -575,7 +586,7 @@ All enums are IntEnum classes. Supply enum members to the Python API; incoming n
 | `StartupStage` | `INITIALIZING=1`, `WAITING_FOR_HEADSET=2`, `CONNECTING=3`, `STARTING_SOURCES=4` |
 | `StopReason` | `REQUESTED=1`, `OWNER_DISCONNECTED=4`, `SERVER_SHUTDOWN=6`, `IC_ERROR=7`, `IC_EXITED=8`, `CAMERA_ERROR=9` |
 | `RejectionReason` | `INVALID_CONFIG=1`, `BUSY=2`, `UNKNOWN_SESSION=3` |
-| `StreamKind` | `TRACKING=1`, `IMAGE=2` |
+| `StreamKind` | `TRACKING=1`, `IMAGE=2`, `LIVEKIT_IMAGE=3` |
 | `BinaryKind` | `CAPTURE_FRAME=1`, `CAPTURE_IMAGE=2` |
 | `TrackingSchema` | `IC_TRACKING_V1=1` |
 | `WireDType` | `UINT8=1`, `FLOAT32_LE=2`, `FLOAT64_LE=3` |
@@ -583,6 +594,7 @@ All enums are IntEnum classes. Supply enum members to the Python API; incoming n
 | `ImageCodec` | `JPEG=1` |
 | `ClockDomain` | `CAPTURE_HOST_MONOTONIC=1` |
 | `TimeUnit` | `NANOSECONDS=1` |
+| `LiveKitTimestampBasis` | `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`, `SENSOR_CAPTURE_MONOTONIC_US=4` |
 | `SampleTimeSemantics` | `HOST_POLL=1` |
 | `PoseRepresentation` | `POSITION_QUATERNION=1` |
 | `QuaternionOrder` | `XYZW=1` |
@@ -686,18 +698,28 @@ One JSON object is one text message. One complete header and payload is one bina
 | Server → client | 5 | SessionStatus |
 | Server → client | 6 | SessionStopped |
 | Server → client | 10 | RequestRejected |
+| Client → server, on `/query` | 11 | QueryDevices |
+| Server → client, on `/query` | 12 | Devices |
 | Server → client | BinaryKind 1 | CaptureFrame |
 | Server → client | BinaryKind 2 | CaptureImage |
 
-There are ten message families. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
+There are ten session message families, plus the device query described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
 
-Every JSON message has these envelope fields. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
+Every JSON session message has these envelope fields. The two `/query` messages instead carry `type`, `version` and a client-chosen `request_id`, and no `session_id`; a query message that carries one is rejected. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
 
 | Field | Allowed contents | What it does |
 |---|---|---|
-| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
+| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`, `QUERY_DEVICES=11`, `DEVICES=12`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
 | `version` | Not an enum: exactly integer 1; not boolean true. | Identifies the protocol contract used to interpret all remaining fields. A receiver must reject another version rather than guess its meaning. |
 | `session_id` | Nonempty string, at most 128 characters; a new UUID string is recommended for each new session. | Associates configuration, status, samples and terminal replies with one session. A reply for another ID must not reset the active session. This is a client-chosen correlation ID, not a hardware identifier. |
+
+#### Device query
+
+`QueryDevices` is a read-only request on the server's `/query` path: its own short-lived connection, one request and one reply, no ownership and no session, so it works before capture and while a capture is running. Any other message on `/query`, including every capture command, closes the connection with 1002. `await client.query_devices()` returns the `DeviceEntry` tuple and raises `DeviceQueryError` when no answer is obtained; a failure is never reported as an empty list.
+
+Request: `{"type": 11, "version": 1, "request_id": "<1..128 chars>"}`. Reply: `{"type": 12, "version": 1, "request_id": ..., "devices": [...]}` with one entry per device kind. The Manus entry is `{"device": 1, "mcal_status": ..., "mcal_files": [...], "error_message": ...}`. `mcal_status` is `READY=1` (the list may be empty), `DISABLED=2` (the server has no MCAL folder) or `UNAVAILABLE=3` (the folder could not be read; `error_message` says why). A listing over the 2000-file limit is `UNAVAILABLE`, never truncated.
+
+The MCAL folder is set with `--manus-calibration-dir DIR`. It is a plain folder: any nonempty, readable `.mcal` regular file directly in it is offered, whether placed by hand or written by a calibration tool. Symbolic links are never offered; copy files in. A name is offered only if it uses ASCII letters, digits, `_`, `.` and `-`, starts with a letter or digit, ends in lower-case `.mcal` and is at most 133 characters; any other file (for example `left glove (2).mcal` or `A.MCAL`) is silently skipped, so rename it. Select files by name with `ManusPluginConfig(left_calibration=..., right_calibration=...)` in `start(plugins=...)`. Begin is refused as `INVALID_CONFIG` when a name is not in the folder at that moment. A name only selects a file; whether the glove accepted it is the Manus plugin's per-hand status. If the file disappears or becomes unreadable after Begin is accepted, the plugin cannot load it and both hands are lost for that session.
 
 #### Begin: configure sources, plugins and cameras
 
@@ -907,7 +929,7 @@ This is a complete SessionInit for head, controllers and hands:
 | `clock.domain` | `ClockDomain`: `CAPTURE_HOST_MONOTONIC=1`. | Times use the capture computer's elapsed-time clock; they do not use Unix/calendar time or the client's elapsed-time clock. |
 | `clock.unit` | `TimeUnit`: `NANOSECONDS=1`. | An interval of 1,000,000,000 timestamp units means one second. |
 | `clock.sample_time_semantics` | `SampleTimeSemantics`: `HOST_POLL=1`. | The tracking timestamp describes the host's source-sampling step. It does not claim to be a sensor exposure time or an SDK callback timestamp. |
-| `streams` | Array of tracking and camera descriptor objects. | Defines the stream IDs, formats and tracking byte layout the client must register from SessionInit before any binary messages. An empty array is valid only when no streams were requested. |
+| `streams` | Array of tracking, camera and LiveKit camera descriptor objects. | Defines the stream IDs, formats and tracking byte layout the client must register from SessionInit before any binary messages. An empty array is valid only when no streams were requested. |
 
 The client validates and caches this decoding contract. A layout/format change requires a new session. Unknown camera intrinsics can initially be null; later measured intrinsics are metadata, not a byte-layout change.
 
@@ -1060,7 +1082,7 @@ Dotted field names preserve the public IC group/field identity. Dtype codes are 
 | Tracking descriptor field | Python enum and accepted values, or ordinary type | Meaning |
 |---|---|---|
 | `stream_id` | Not an enum: integer 0 for tracking. | Associates a binary message's header with this descriptor. |
-| `kind` | `StreamKind`: `TRACKING=1` for this descriptor; `IMAGE=2` for camera descriptors. | Selects the kind of decoder to use for the stream. |
+| `kind` | `StreamKind`: `TRACKING=1` for this descriptor; `IMAGE=2` for camera descriptors; `LIVEKIT_IMAGE=3` for LiveKit camera descriptors. | Selects the kind of decoder to use for the stream. |
 | `name` | String, `tracking` for this stream; no enum. | Provides a readable stream label. Routing uses stream\_id, not this label. |
 | `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Identifies the complete field contract, including presence/validity meanings and the 1995-byte layout. A client rejects an unsupported schema rather than interpreting a similar-looking blob. |
 | `sources` | `SourceType`: unique array drawn from `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. | Records the source channels selected for this tracking stream. Unselected channels retain inert slots in the fixed binary layout. |
@@ -1193,6 +1215,42 @@ The camera descriptor repeats name and type from the accepted request and adds t
 | `orientation.rotation_degrees` | Not an enum: integer 0. | Advertises no server-applied image rotation. A client must not assume a hidden quarter-turn correction. |
 | `orientation.mirrored` | Boolean false. | Advertises no server-applied mirror operation. |
 | `intrinsics` | Null or a finite numeric array of shape \[3,3\]; not an enum. | A camera projection matrix for these image dimensions. Its focal-length terms express how rays project into pixels, and its principal-point terms locate the image's optical center in pixel coordinates. Null means the server supplies no such calibration; it must not be interpreted as an identity camera matrix. |
+
+#### LiveKit camera descriptors
+
+A `streams` entry with `kind` `LIVEKIT_IMAGE=3` says where a camera's video is published in a LiveKit room. The server never sends these frames; each consumer joins the room itself and learns the actual dimensions and frame rate from the video. A descriptor does not mean frames are arriving. A client that does not know kind 3 rejects the whole SessionInit, so a server started with `--livekit-streams` cannot be used by older clients.
+
+| LiveKit descriptor field | Python enum and accepted values, or ordinary type | Meaning |
+|---|---|---|
+| `stream_id` | Not an enum: integer 16–23. | Identifies the entry in the one stream-id space shared with the tracking and JPEG camera streams. |
+| `kind` | `StreamKind`: `LIVEKIT_IMAGE=3`. | Selects this descriptor. |
+| `name` | Nonempty string of at most 512 characters. | Operator-facing camera name. It must differ from every other LiveKit entry's name and from every JPEG camera name. |
+| `url` | Nonempty string of at most 512 characters starting with `ws://` or `wss://`. | The LiveKit server to join. |
+| `room` | Nonempty string of at most 512 characters. | The room to join. |
+| `publisher` | Nonempty string of at most 512 characters. | The publishing participant's identity. |
+| `track` | Nonempty string of at most 512 characters. | The published track's name; unique per `publisher`. |
+| `timestamp_basis` | `LiveKitTimestampBasis`: `PUBLISHER_MONOTONIC_US=1`, `PUBLISHER_PROCESSING_UNIX_US=2`, `SENSOR_CAPTURE_UNIX_US=3`, `SENSOR_CAPTURE_MONOTONIC_US=4`. | What the frame's `user_timestamp_us` means. 1: the publisher's monotonic clock when the frame was ready to encode. 2: Unix processing time on the publisher. 3: Unix time of the sensor's capture event. 4: the sensor's capture event on the publisher's monotonic clock. Only 1 and 4 are recordable, using the publisher's clock-sync replies; 2 and 3 are preview only. |
+| `width`, `height` | Positive integer, or null (the key may be omitted). | The configured frame size, or null when not known. |
+| `fps` | Finite positive number, or null (the key may be omitted). | The configured frame rate, or null when not known. |
+
+At most 8 LiveKit entries are allowed, and all of them must share one `url`, `room` and `publisher`: consumers join a single room as a single publisher. Both the server (at startup) and the client (when parsing SessionInit) enforce these rules.
+
+##### The `--livekit-streams` file
+
+`--livekit-streams FILE` loads the entries from a YAML file. The server exits with code 2 and a message on stderr if the file cannot be read or is invalid. Stream ids are assigned 16, 17, ... in file order. Unknown keys are errors.
+
+```yaml
+livekit:
+  url: wss://LIVEKIT_HOST            # ws:// or wss://
+  room: sensing-preview
+  publisher: orin-sensing
+  timestamp_basis: monotonic_us      # monotonic_us (default), capture_monotonic_us, processing_unix_us or capture_unix_us
+  streams:                           # may be empty
+    - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
+    - {name: Head right, track: sensing-right}   # width, height and fps are optional
+```
+
+`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_unix_us`=3, `capture_monotonic_us`=4). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a camera name configured with `--gmsl-camera` is rejected.
 
 Each WebSocket binary message consists of a 32-byte header followed immediately by a payload. For CaptureFrame, that payload is the packed tracking blob defined by SessionInit. For CaptureImage, it is the JPEG bytes. The header itself contains no JSON and no field-name strings.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Component-level tests for render/focus/image-event paths that reducer
  * and parser tests can't reach: CameraTile's retry-outcome ordering, the
@@ -10,6 +14,7 @@ import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
+import { OPERATOR_SETTINGS_FIXTURE, SETTINGS_FIXTURE } from "./settingsTestDoubles";
 import { useCaptureSession, type AcceptedTracking, type CaptureSessionState } from "./useCaptureSession";
 import { Axes, HandJointOrder, PositionUnit, QuaternionOrder, type PreviewSnapshot } from "./captureProtocol";
 import type { ControllerDisplay, DecodedTracking, HandDisplay } from "./trackingDecoder";
@@ -22,6 +27,7 @@ vi.mock("./useCaptureSession", async (importOriginal) => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(overrides: Partial<PreviewSnapshot> = {}): PreviewSnapshot {
@@ -456,5 +462,37 @@ describe("CaptureTree diagnostic vs never-had-data", () => {
     render(<App />);
     expect(screen.getByText("tracking sample exceeded the preview size limit and was dropped")).toBeTruthy();
     expect(screen.queryByText("No tracking sample yet.")).toBeNull();
+  });
+});
+
+
+describe("Settings modal recording isolation", () => {
+  it("blocks shortcuts from focused modal buttons and restores controls after close", async () => {
+    const send = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true, json: async () => url === "/api/operator-settings" ? OPERATOR_SETTINGS_FIXTURE
+        : url === "/api/settings" ? SETTINGS_FIXTURE : url === "/api/tools" ? { tools: [] } : { files: [], imported: [] },
+    })));
+    mockState(makeState({
+      sendRecordingCommand: send,
+      recordingSnapshot: {
+        batchId: "b1", episodePhase: "RECORDING", currentEpisodeId: "e1", currentEpisodeElapsedMs: 0,
+        taskText: "Fold towel", taskDetails: "", defaultOperator: null, autoFillOperatorName: false,
+        savedCount: 0, lastResult: null, readyToRecord: true, revision: 0,
+      },
+    }));
+    const { container } = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const station = within(dialog).getByRole("button", { name: "Station" });
+    fireEvent.click(station);
+    station.focus();
+    for (const key of ["a", "w", "s", "r", "t", " "]) fireEvent.keyDown(window, { key });
+    expect(send).not.toHaveBeenCalled();
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(false);
+    fireEvent.keyDown(window, { key: "w" });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

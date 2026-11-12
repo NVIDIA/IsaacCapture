@@ -29,9 +29,15 @@ from capture_server import protocol as capture_protocol
 from capture_server.client import CaptureFrame
 from egocap_web import recording_session as coordinator_module
 from egocap_web.recording_adapter import MANUS_GLOVE_SPEC, PICO_CONTROLLER_SPEC, RecordingIngress
-from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator, SessionStatus
+from egocap_web.recording_session import (
+    CoordinatorBusyError,
+    OperationKind,
+    RecordingSessionCoordinator,
+    SessionStatus,
+)
 from recording_service import (
     Disposition,
+    EpisodeResult,
     FieldSpec,
     NumericSourceSpec,
     RecordingPhase,
@@ -57,9 +63,14 @@ def make_config_factory(tmp_path: Path, *, numeric_sources=(NUMERIC,), **overrid
     return factory
 
 
-def make_coordinator(tmp_path: Path, *, readiness_check=ALWAYS_READY, **overrides) -> RecordingSessionCoordinator:
+def make_coordinator(
+    tmp_path: Path, *, readiness_check=ALWAYS_READY, tracking_latency=None, **overrides
+) -> RecordingSessionCoordinator:
     return RecordingSessionCoordinator(
-        make_config_factory(tmp_path, **overrides), queue_capacity=8, readiness_check=readiness_check
+        make_config_factory(tmp_path, **overrides),
+        queue_capacity=8,
+        readiness_check=readiness_check,
+        tracking_latency=tracking_latency,
     )
 
 
@@ -278,6 +289,19 @@ async def test_stale_target_stop_is_rejected_and_the_real_active_take_keeps_inge
     group = zarr.open_group(str(result.final_path), mode="r")
     head_x_values = group["pico_controller"]["head_pose"][:, 0, 3]
     assert list(head_x_values) == [1.0, 2.0]
+    await coordinator.close()
+
+
+async def test_task_details_reach_the_episode_metadata(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC))
+    await coordinator.open()
+    coordinator.set_task("t", task_details="left hand")
+    episode = await coordinator.start_episode()
+    coordinator.on_capture_frame(_fake_tracking_frame(head_x=1.0, capture_time_ns=1_000_000_000))
+    result = await coordinator.stop_episode(episode.episode_id)
+    assert result.disposition is Disposition.KEPT
+    group = zarr.open_group(str(result.final_path), mode="r")
+    assert group.attrs["task_details"] == "left hand"
     await coordinator.close()
 
 
@@ -724,3 +748,239 @@ async def test_a_final_close_keeps_admission_blocked_but_an_ordinary_close_reope
         coordinator.set_task("too late")
     with pytest.raises(CoordinatorBusyError):
         await coordinator.start_episode()
+
+
+async def test_the_configured_latency_reaches_the_converted_tracking_sample_times(tmp_path: Path, monkeypatch):
+    from tests.backend.test_recording_adapter import default_tracking_values
+
+    converters = []
+    real = coordinator_module.RecordingIngress
+
+    def capture_convert(*args, **kwargs):
+        converters.append(kwargs["convert"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "RecordingIngress", capture_convert)
+    coordinator = make_coordinator(
+        tmp_path,
+        numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
+        tracking_latency={"pico_controller": 0.02},
+    )
+    await coordinator.open()
+    coordinator.set_task("t")
+    await coordinator.start_episode()
+    frame = CaptureFrame(
+        session_id="s",
+        description=None,  # type: ignore[arg-type]
+        stream_id=1,
+        sequence=0,
+        capture_time_ns=5_000_000_000,
+        receive_time_ns=5_040_000_000,
+        payload=capture_protocol.encode_tracking_frame(default_tracking_values()),
+    )
+    times = {s.source: s.capture_time for s in converters[-1](frame)}
+    assert times["pico_controller"] == pytest.approx(4.98) and times["manus_glove"] == 5.0
+    await coordinator.close()
+
+
+class _MediaSource:
+    def __init__(self, evidence):
+        self.evidence = evidence
+
+    async def prepare(self):
+        pass
+
+    def start(self, ingress, on_failure):
+        pass
+
+    async def stop(self):
+        pass
+
+    def timing_evidence(self):
+        return self.evidence
+
+
+async def _kept_timing(tmp_path: Path, *, latency=None, livekit_source=None):
+    coordinator = RecordingSessionCoordinator(
+        make_config_factory(tmp_path, numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC)),
+        queue_capacity=8,
+        readiness_check=ALWAYS_READY,
+        livekit_source=livekit_source,
+        tracking_latency=latency,
+    )
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    coordinator.on_capture_frame(_fake_tracking_frame(capture_time_ns=5_000_000_000))
+    result = await coordinator.stop_episode(episode.episode_id)
+    await coordinator.close()
+    group = zarr.open_group(str(result.final_path), mode="r")
+    return dict(group.attrs).get("timing"), group
+
+
+async def test_a_configured_latency_is_recorded_as_a_qualified_estimate_matching_the_stored_times(tmp_path: Path):
+    timing, group = await _kept_timing(tmp_path, latency={"pico_controller": 0.02, "manus_glove": 0.0})
+    assert timing["event_time"] == {
+        "pico_controller": {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": 0.02,
+            "qualified": True,
+        },
+        "manus_glove": {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": 0.0,
+            "qualified": True,
+        },
+    }
+    assert group["pico_controller"]["capture_time"][0] == pytest.approx(4.98)
+    assert group["manus_glove"]["capture_time"][0] == pytest.approx(5.0)
+
+
+async def test_the_coordinator_keeps_its_own_copy_of_the_tracking_latency(tmp_path: Path):
+    latency = {"pico_controller": 0.02}
+    coordinator = make_coordinator(tmp_path, tracking_latency=latency)
+    latency["pico_controller"] = 9.0
+    assert coordinator._tracking_latency == {"pico_controller": 0.02}
+    assert make_coordinator(tmp_path)._tracking_latency == {}
+
+
+async def test_a_missing_latency_is_recorded_as_an_unqualified_host_poll_time(tmp_path: Path):
+    timing, _ = await _kept_timing(tmp_path)
+    assert timing["event_time"] == {
+        "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+        "manus_glove": {"meaning": "host_poll_time", "qualified": False},
+    }
+
+
+async def test_tracking_timing_is_recorded_when_the_media_source_has_no_evidence(tmp_path: Path):
+    timing, _ = await _kept_timing(tmp_path, latency={"pico_controller": 0.02}, livekit_source=_MediaSource(None))
+    assert timing["event_time"]["pico_controller"]["qualified"] is True
+    assert timing["event_time"]["manus_glove"]["qualified"] is False
+
+
+async def test_tracking_timing_is_merged_with_the_media_evidence_and_keeps_its_cameras(tmp_path: Path):
+    media = {
+        "clock_mapping": {"mappings": []},
+        "event_time": {
+            "cam16": {"meaning": "sensor_capture", "qualified": True},
+            "pico_controller": {"meaning": "stale", "qualified": False},
+        },
+    }
+    timing, _ = await _kept_timing(tmp_path, latency={"pico_controller": 0.02}, livekit_source=_MediaSource(media))
+    assert timing["clock_mapping"] == {"mappings": []}
+    assert timing["event_time"]["cam16"] == {"meaning": "sensor_capture", "qualified": True}
+    assert timing["event_time"]["pico_controller"]["meaning"] == "host_poll_minus_latency"
+    assert timing["event_time"]["manus_glove"] == {"meaning": "host_poll_time", "qualified": False}
+
+
+async def test_a_kept_stop_calls_the_kept_hook_once_and_leaves_the_result_hook_alone(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    result = await coordinator.stop_episode(episode.episode_id)
+    assert kept == [result] and results == [result]
+    await coordinator.close()
+
+
+async def test_a_discarded_episode_does_not_call_the_kept_hook_but_still_reports_its_result(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    result = await coordinator.discard_episode(episode.episode_id)
+    assert kept == [] and results == [result]
+    await coordinator.close()
+
+
+async def test_a_kept_stop_without_hooks_set_succeeds(tmp_path: Path):
+    coordinator = make_coordinator(tmp_path)
+    await coordinator.open()
+    coordinator.set_task("t")
+    episode = await coordinator.start_episode()
+    assert (await coordinator.stop_episode(episode.episode_id)).disposition is Disposition.KEPT
+    await coordinator.close()
+
+
+def _recovered_result(disposition):
+    return EpisodeResult(
+        session_id="s",
+        episode_id="s/episode_0",
+        episode_index=0,
+        disposition=disposition,
+        final_path=Path("/out/s/episode_0"),
+        pending_path=None,
+        counts=(),
+        duration_seconds=1.0,
+        quality=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected_calls"),
+    [(Disposition.KEPT, 1), (Disposition.RECOVERY_REQUIRED, 0), (Disposition.DISCARDED, 0)],
+)
+async def test_a_recovered_episode_calls_the_kept_hook_only_when_it_was_kept(
+    tmp_path: Path, monkeypatch, disposition, expected_calls
+):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(disposition)
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            return result
+
+    kept, results = [], []
+    coordinator.on_episode_kept = kept.append
+    coordinator.on_episode_result = results.append
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    assert await coordinator.recover_episode("s/episode_0") is result
+    assert kept == [result] * expected_calls and results == []
+
+
+async def test_a_recovered_episode_without_a_kept_hook_succeeds(tmp_path: Path, monkeypatch):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(Disposition.KEPT)
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            return result
+
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    assert await coordinator.recover_episode("s/episode_0") is result
+
+
+async def test_a_recovery_whose_caller_is_cancelled_still_reaches_the_kept_hook_once(tmp_path: Path, monkeypatch):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(Disposition.KEPT)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            started.set()
+            await release.wait()
+            return result
+
+    kept = []
+    coordinator.on_episode_kept = kept.append
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    caller = asyncio.create_task(coordinator.recover_episode("s/episode_0"))
+    await started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        _ = await caller
+    assert kept == []
+    assert coordinator._operation is OperationKind.RECOVERING
+
+    release.set()
+    await coordinator._operation_task
+    assert kept == [result]
+    assert coordinator._operation is None

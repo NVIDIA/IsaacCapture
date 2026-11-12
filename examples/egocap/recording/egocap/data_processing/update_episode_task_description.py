@@ -108,6 +108,25 @@ class EpisodeTaskUpdateResult:
     config_yaml_updated: bool = False
 
 
+def _update_aligned_copy(
+    aligned_root: Path, indices: list[int], task_description: str, task_name: str, studio: str
+) -> None:
+    """Apply the same task, name and studio metadata to an aligned copy's root, episodes and ``config.yaml``."""
+    fields = {"task_description": task_description}
+    if task_name:
+        fields["task_name"] = task_name
+    if studio:
+        fields["studio"] = studio
+    store = zarr.open(str(aligned_root), mode="a")
+    store.attrs.update(fields)
+    for n in indices:
+        if f"episode_{n}" in store:
+            store[f"episode_{n}"].attrs.update(fields)
+    _update_session_config_yaml(
+        aligned_root, task_description=task_description, task_name=task_name, studio=studio
+    )
+
+
 def update_episode_task_description(
     zarr_root: Path,
     episodes: str,
@@ -169,6 +188,10 @@ def update_episode_task_description(
         task_name=task_name,
         studio=studio_stored,
     )
+    # The time-aligned copy beside the session carries the same metadata, so it is updated with it.
+    aligned_root = zarr_root.with_name(f"{zarr_root.name}_aligned")
+    if aligned_root.is_dir():
+        _update_aligned_copy(aligned_root, indices, task_description, task_name, studio_stored)
 
     try:
         refresh_session_egocap_zarr_aggregates(zarr_root)

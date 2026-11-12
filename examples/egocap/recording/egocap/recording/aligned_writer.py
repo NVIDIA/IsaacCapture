@@ -1,0 +1,385 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Writes a time-aligned copy of a recorded episode, in the aligned dataset layout downstream readers expect.
+
+The aligned session sits beside the raw one and mirrors it: the same ``episode_<n>`` groups, the same per-source
+groups, the same videos. What differs is the time alignment (see :mod:`alignment`): each episode gains
+``valid_indices`` and ``valid_timestamps``; each camera gains ``aligned_frame_indices``; each resampled field is
+written as ``<field>_interp`` and its raw array is left out (readers use the ``_interp`` name); every other raw
+array, the attributes, the session's ``config.yaml`` and sidecars, and the videos are carried over unchanged. The
+aligned root's ``zarr.json`` records which source was the index.
+
+This module writes the files; the caller chooses the times, qualification and the staging that makes publication
+all-or-nothing.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import tempfile
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import yaml
+import zarr
+
+from .alignment import AlignedEpisode, align_episode, check_continuity, qualified_sources, source_rules
+from .episode_layout import (
+    FINALIZATION_KEEP,
+    ROUTE_ATTR,
+    EpisodeManifest,
+    read_identity,
+    route_id,
+)
+
+__all__ = [
+    "ALIGNED_SESSION_SIDECARS",
+    "AlignedWriteError",
+    "align_kept_episode",
+    "check_kept_episode",
+    "publish_aligned_episode",
+    "validate_aligned_episode",
+    "write_aligned_episode",
+]
+
+#: Session-level files carried into the aligned session when the raw session has them.
+ALIGNED_SESSION_SIDECARS = (
+    "config.yaml",
+    "data_check_config.yaml",
+    "head_camera_intrinsics.json",
+    "head_camera_extrinsics.json",
+    "wrist_calibration_offsets.json",
+    "left_wrist_camera_intrinsics.json",
+    "right_wrist_camera_intrinsics.json",
+    "rectification.json",
+)
+#: Video container suffixes that are carried into the aligned episode.
+_VIDEO_SUFFIXES = (".mp4", ".mkv", ".avi", ".mov")
+#: Arrays at most this large are read back by validation to catch stale or empty chunks.
+_CHECK_MAX_BYTES = 10 * 1024 * 1024
+
+
+class AlignedWriteError(RuntimeError):
+    """The aligned episode could not be written or did not validate."""
+
+
+def _copy_attrs(source: Any, target: Any) -> None:
+    """Carry every attribute of a zarr group over to the aligned group."""
+    for key, value in source.attrs.items():
+        target.attrs[key] = value
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    """Put a video in the aligned episode: a hard link when the filesystem allows it, else a copy."""
+    # A video from an earlier alignment is replaced, not merged with.
+    if os.path.lexists(target):
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _check_separate(raw_session: Path, aligned_session: Path) -> None:
+    """Refuse an output that is the raw session or shares a tree with it, before any file is touched.
+
+    Re-aligning an episode deletes the aligned copy first; if that copy were the raw episode, the recording
+    would be destroyed. Paths are resolved, so a symlink to the raw session is refused too.
+    """
+    raw, aligned = raw_session.resolve(), aligned_session.resolve()
+    if aligned == raw or raw in aligned.parents or aligned in raw.parents:
+        raise AlignedWriteError("the aligned session must be separate from the raw session")
+
+
+def _write_root(raw_session: Path, aligned_session: Path, index_source: str) -> None:
+    """Create the aligned root: its attributes, the session sidecars, and the index source in ``zarr.json``."""
+    aligned_session.mkdir(parents=True, exist_ok=True)
+    aligned_root = zarr.open_group(str(aligned_session), mode="a")
+    # The raw session is only read: a raw root with no metadata of its own has no attributes to carry over.
+    try:
+        raw_attrs = dict(zarr.open_group(str(raw_session), mode="r").attrs)
+    except (FileNotFoundError, zarr.errors.GroupNotFoundError):
+        raw_attrs = {}
+    for key, value in raw_attrs.items():
+        aligned_root.attrs[key] = value
+    # The index source is a root attribute so a reader knows which camera's frames define the timeline. One root
+    # has one, so an episode on a different index is refused rather than relabelling the ones already there.
+    existing = aligned_root.attrs.get("index_source")
+    if existing not in (None, index_source):
+        raise AlignedWriteError(f"the aligned session uses index source {existing!r}, not {index_source!r}")
+    aligned_root.attrs["index_source"] = index_source
+    for name in ALIGNED_SESSION_SIDECARS:
+        source, target = raw_session / name, aligned_session / name
+        # The session config is always refreshed from the raw session, as the aligned dataset format does; any
+        # other existing sidecar is left alone, so re-aligning never overwrites what is already there.
+        if source.is_file() and (name == "config.yaml" or not target.exists()):
+            shutil.copy2(source, target)
+
+
+def _write_source(raw_group: Any, target_group: Any, aligned_source: Any) -> None:
+    """Write one source: its attributes, the raw arrays that are not resampled, and what the alignment adds."""
+    _copy_attrs(raw_group, target_group)
+    for name in raw_group.array_keys():
+        # A resampled field is read as ``<field>_interp``; its raw array is not kept.
+        if name not in aligned_source.interpolated:
+            target_group[name] = raw_group[name][:]
+    for name, values in aligned_source.interpolated.items():
+        target_group[f"{name}_interp"] = values
+    if aligned_source.aligned_frame_indices is not None:
+        target_group["aligned_frame_indices"] = aligned_source.aligned_frame_indices
+
+
+def validate_aligned_episode(aligned_session: Path, episode_index: int, index_source: str) -> list[str]:
+    """Problems with a written aligned episode; empty means it is as expected.
+
+    Checks the arrays every aligned episode has, that the index source has ``aligned_frame_indices``, and that the
+    small arrays can be read back and are not empty (a stale chunk from an earlier, differently shaped alignment
+    only shows when the data is read).
+    """
+    problems: list[str] = []
+    key = f"episode_{episode_index}"
+    root = zarr.open_group(str(aligned_session), mode="r")
+    if key not in root:
+        return [f"{key} group missing from the aligned session"]
+    episode = root[key]
+    for required in ("valid_indices", "valid_timestamps"):
+        if required not in episode:
+            problems.append(f"{key}/{required} missing")
+    if index_source not in episode:
+        problems.append(f"{key}/{index_source} group missing")
+    elif "aligned_frame_indices" not in episode[index_source]:
+        problems.append(f"{key}/{index_source}/aligned_frame_indices missing")
+
+    def check(group: Any, prefix: str) -> None:
+        """Read each small array under ``group`` and report one that fails or is empty."""
+        for name in group.array_keys():
+            array = group[name]
+            if array.nbytes > _CHECK_MAX_BYTES:
+                continue
+            try:
+                data = np.asarray(array[:])
+            except Exception as exc:  # a stale chunk raises something zarr-specific
+                problems.append(f"{prefix}/{name} unreadable: {exc}")
+                continue
+            if data.size == 0:
+                problems.append(f"{prefix}/{name} is empty")
+        for name in group.group_keys():
+            check(group[name], f"{prefix}/{name}")
+
+    check(episode, key)
+    return problems
+
+
+def write_aligned_episode(
+    raw_session: Path,
+    aligned_session: Path,
+    episode_index: int,
+    index_source: str,
+    *,
+    downsample: int = 1,
+    qualified: Mapping[str, bool],
+    continuity: Mapping[str, Mapping[str, object]] | None,
+) -> AlignedEpisode:
+    """Align one recorded episode and write it into ``aligned_session``; returns the alignment.
+
+    ``qualified`` says, per source, whether its recorded capture time is a qualified event time (a measured one,
+    or a configured estimate the recorder already applied). A source that is not, or is not listed, refuses the
+    alignment, so nothing is written for it. The times aligned on are the recorded capture times, used unchanged.
+    ``continuity`` is the episode's stored per-source continuity evidence (None if it recorded none): a source
+    whose evidence is missing, unknown or records a break refuses it too.
+    Raises ``AlignedWriteError`` if the written episode does not validate.
+    """
+    _check_separate(raw_session, aligned_session)
+    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
+    rules = source_rules(config)
+    cameras = [e["name"] for e in config.get("video_sources") or []]
+    key = f"episode_{episode_index}"
+    # The episode group is opened on its own: the raw session's root need not have metadata of its own.
+    raw_episode = zarr.open_group(str(raw_session / key), mode="r")
+
+    # Only declared sources the episode actually recorded take part, as the valid range spans what is present.
+    present = _participating(raw_episode, rules)
+    unqualified = [name for name in [index_source, *present] if not qualified.get(name, False)]
+    if unqualified:
+        raise AlignedWriteError(f"sources without a qualified event time: {sorted(set(unqualified))}")
+    times = {name: raw_episode[name]["capture_time"][:] for name in present}
+    # The evidence is checked against the rows actually written: a break at a row the source lacks is refused.
+    broken = check_continuity(continuity, [index_source, *present], {name: len(t) for name, t in times.items()})
+    if broken:
+        raise AlignedWriteError("; ".join(broken))
+    fields = {name: {a: raw_episode[name][a][:] for a in raw_episode[name].array_keys()} for name in present}
+    aligned = align_episode(
+        index_source,
+        times,
+        [c for c in cameras if c in present],
+        fields,
+        {name: rules[name] for name in present},
+        downsample=downsample,
+    )
+
+    _write_root(raw_session, aligned_session, index_source)
+    root = zarr.open_group(str(aligned_session), mode="a")
+    # An existing aligned episode is never replaced.
+    if key in root:
+        raise AlignedWriteError(f"{key} already exists in the aligned session")
+    episode = root.require_group(key)
+    _copy_attrs(raw_episode, episode)
+    episode["valid_indices"] = aligned.valid_indices
+    episode["valid_timestamps"] = aligned.valid_timestamps
+    for name in present:
+        _write_source(raw_episode[name], episode.require_group(name), aligned.sources[name])
+
+    # The videos are the same files: linked, so the aligned episode costs no extra disk.
+    raw_dir, aligned_dir = raw_session / key, aligned_session / key
+    for video in sorted(raw_dir.iterdir()) if raw_dir.is_dir() else []:
+        if video.suffix in _VIDEO_SUFFIXES:
+            _link_or_copy(video, aligned_dir / video.name)
+
+    problems = validate_aligned_episode(aligned_session, episode_index, index_source)
+    if problems:
+        raise AlignedWriteError("; ".join(problems))
+    return aligned
+
+
+def publish_aligned_episode(
+    raw_session: Path,
+    aligned_session: Path,
+    episode_index: int,
+    index_source: str,
+    *,
+    downsample: int = 1,
+    qualified: Mapping[str, bool],
+    continuity: Mapping[str, Mapping[str, object]] | None,
+) -> AlignedEpisode:
+    """Write the aligned episode privately, then move it into ``aligned_session`` with one rename.
+
+    The episode is built and validated in a private staging directory beside the aligned session (same
+    filesystem, so the videos stay linked), so a reader sees the finished episode or none. Each attempt owns its
+    staging directory, so concurrent runs never touch each other's work. An existing aligned episode is never
+    replaced: it is refused. A crashed run leaves its staging directory behind. Arguments and refusals are those
+    of :func:`write_aligned_episode`.
+    """
+    _check_separate(raw_session, aligned_session)
+    key = f"episode_{episode_index}"
+    final = aligned_session / key
+    # Refuse before doing any work; the rename below fails too if one appears meanwhile.
+    if final.exists():
+        raise AlignedWriteError(f"{final} already exists; it is not replaced")
+    aligned_session.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{aligned_session.name}.staging-", dir=aligned_session.parent))
+    try:
+        _check_separate(raw_session, staging)
+        aligned = write_aligned_episode(
+            raw_session,
+            staging,
+            episode_index,
+            index_source,
+            downsample=downsample,
+            qualified=qualified,
+            continuity=continuity,
+        )
+        # The aligned root and sidecars are idempotent; the episode itself moves in by one rename.
+        _write_root(raw_session, aligned_session, index_source)
+        os.rename(staging / key, final)
+    finally:
+        # Nothing of a failed or refused write reaches the aligned session.
+        shutil.rmtree(staging, ignore_errors=True)
+    return aligned
+
+
+def check_kept_episode(raw_session: Path, episode_index: int, manifest: EpisodeManifest) -> list[str]:
+    """Why ``manifest`` is not the record of the finalized, kept episode at ``raw_session/episode_<index>``.
+
+    The stored evidence is trusted only for the exact episode it describes, so this binds them: the episode's
+    own stamp must name the manifest's episode, the take must be finalized and kept, the written row counts must
+    match the manifest's, and the location must be the manifest's: its routed slot and group when it was routed,
+    its own index otherwise. A matching integer in a file name is never taken as identity. Empty means it is.
+    """
+    problems: list[str] = []
+    episode_dir = raw_session / f"episode_{episode_index}"
+    # The episode directory carries the id of the episode that owns it.
+    if read_identity(episode_dir) != manifest.episode_id:
+        problems.append("the episode directory is not the one this manifest describes (episode id differs)")
+    # Only a finalized take whose disposition was to keep its data is a kept episode.
+    if manifest.storage_phase != "FINALIZED" or manifest.finalization != FINALIZATION_KEEP:
+        problems.append(
+            f"the manifest is not a finalized kept episode ({manifest.storage_phase}, {manifest.finalization})"
+        )
+    if manifest.assignment is not None:
+        # A routed episode sits in its group under its slot, which need not equal its recording index.
+        group = manifest.assignment["group"]
+        stamp = _attribute(raw_session / "zarr.json", ROUTE_ATTR)
+        if episode_index != manifest.assignment["slot"] or stamp != route_id(manifest.session_id, group):
+            problems.append("the episode is not at the routed location the manifest records")
+    elif episode_index != manifest.episode_index:
+        problems.append("the episode index is not the manifest's")
+    # The written rows must be exactly the rows the manifest sealed.
+    try:
+        episode = zarr.open_group(str(episode_dir), mode="r")
+        for name, count in manifest.counts.items():
+            # A source with sealed rows must still be there; one that wrote none may be absent.
+            if name not in episode:
+                if count.get("written"):
+                    problems.append(f"{name}: recorded rows are missing from the episode")
+            elif int(episode[name]["capture_time"].shape[0]) != count.get("written"):
+                problems.append(f"{name}: the rows on disk differ from the sealed count")
+    except (OSError, zarr.errors.GroupNotFoundError) as exc:
+        problems.append(f"the episode cannot be read: {exc}")
+    return problems
+
+
+def _attribute(metadata_file: Path, name: str) -> Any:
+    """One attribute of a zarr group's metadata file, or None when the file or the attribute is absent."""
+    try:
+        return json.loads(metadata_file.read_text(encoding="utf-8")).get("attributes", {}).get(name)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _participating(episode: Any, rules: Mapping[str, Any]) -> list[str]:
+    """The declared sources an episode recorded with at least one row; an absent or empty one takes no part."""
+    return [name for name in rules if name in episode and episode[name]["capture_time"].shape[0] > 0]
+
+
+def episode_qualification(raw_session: Path, episode_index: int, index_source: str) -> dict[str, bool]:
+    """Whether the episode's own timing evidence qualifies the index source and each source that took part."""
+    config = yaml.safe_load((raw_session / "config.yaml").read_text(encoding="utf-8")) or {}
+    episode = zarr.open_group(str(raw_session / f"episode_{episode_index}"), mode="r")
+    names = sorted({index_source, *_participating(episode, source_rules(config))})
+    return qualified_sources(dict(episode.attrs).get("timing"), names)
+
+
+def align_kept_episode(
+    raw_session: Path,
+    episode_index: int,
+    index_source: str,
+    manifest: EpisodeManifest,
+    *,
+    aligned_session: Path | None = None,
+    downsample: int = 1,
+) -> AlignedEpisode:
+    """Align one kept episode from what the recorder stored about it, and publish the result.
+
+    ``manifest`` must be the record of exactly this finalized, kept episode (see :func:`check_kept_episode`);
+    its continuity evidence is used only then. Which sources have a qualified event time is read from the
+    episode's own ``timing`` attribute, so an episode recorded without that evidence is refused, never assumed
+    qualified. The aligned session defaults to ``<raw session name>_aligned`` beside the raw one.
+    """
+    problems = check_kept_episode(raw_session, episode_index, manifest)
+    if problems:
+        raise AlignedWriteError("; ".join(problems))
+    return publish_aligned_episode(
+        raw_session,
+        aligned_session or raw_session.with_name(f"{raw_session.name}_aligned"),
+        episode_index,
+        index_source,
+        downsample=downsample,
+        qualified=episode_qualification(raw_session, episode_index, index_source),
+        continuity=manifest.continuity,
+    )

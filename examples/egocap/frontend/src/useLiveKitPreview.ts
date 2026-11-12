@@ -1,0 +1,203 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * One LiveKit room connection for every offered video stream.
+ *
+ * CaptureServer says which streams exist; this connects to their room only to receive the video. It picks each
+ * stream's track out of the camera host's participant (whether published before we joined or after), and lets the
+ * SDK handle ordinary network reconnects. Only a full disconnect starts a new attempt, with a fresh token.
+ */
+
+import { useEffect, useState } from "react";
+import { Room, RoomEvent, Track } from "livekit-client";
+import type { RemoteParticipant, RemoteTrack } from "livekit-client";
+import type { LiveKitStreamDescriptor } from "./captureProtocol";
+import { fetchLiveKitToken } from "./livekitPreview";
+import { LiveKitClockSync } from "./liveKitClockSync";
+
+/** Delay before a new attempt after a failed connect or a full disconnect. */
+const RETRY_DELAY_MS = 3000;
+
+export type LiveKitPhase = "idle" | "connecting" | "connected" | "reconnecting" | "error";
+
+export interface LiveKitTile {
+  name: string;
+  /** What the stream's frame timestamp means (the backend's timestamp basis value). */
+  basis: number;
+  /** The subscribed video track, or null while the camera host has not published it. */
+  track: RemoteTrack | null;
+}
+
+export interface LiveKitPreviewState {
+  phase: LiveKitPhase;
+  /** Why video is unavailable, when ``phase`` is "error". */
+  message: string | null;
+  /** One entry per offered stream, in the order offered; empty when nothing is offered. */
+  tiles: LiveKitTile[];
+  /** Maps the publisher's monotonic clock onto this browser's; null until connected. */
+  clock: LiveKitClockSync | null;
+}
+
+const IDLE: LiveKitPreviewState = { phase: "idle", message: null, tiles: [], clock: null };
+
+/** The offered streams with the given subscribed tracks filled in by track name. */
+function tilesFor(streams: LiveKitStreamDescriptor[], tracks: Map<string, RemoteTrack>): LiveKitTile[] {
+  return streams.map((s) => ({ name: s.name, basis: s.timestamp_basis, track: tracks.get(s.track) ?? null }));
+}
+
+/**
+ * Receives the offered LiveKit streams for the lifetime of the calling component. All streams of one session
+ * share a room and publisher, so the first stream names the connection.
+ */
+export function useLiveKitPreview(streams: LiveKitStreamDescriptor[]): LiveKitPreviewState {
+  const [state, setState] = useState<LiveKitPreviewState>(IDLE);
+  // A new session offering the same streams must not reconnect, so the effect depends on content, not identity.
+  const key = JSON.stringify(streams);
+
+  useEffect(() => {
+    const offered: LiveKitStreamDescriptor[] = JSON.parse(key);
+    if (offered.length === 0) {
+      setState(IDLE);
+      return;
+    }
+    const { url, room: roomName, publisher } = offered[0];
+    // `cancelled` ends every in-flight attempt and pending retry when the streams change or the component unmounts.
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let room: Room | null = null;
+    let clock: LiveKitClockSync | null = null;
+    let worker: Worker | null = null;
+    const controller = new AbortController();
+
+    function scheduleRetry(): void {
+      if (cancelled || retryTimer !== null) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void attempt();
+      }, RETRY_DELAY_MS);
+    }
+
+    function releaseConnectionResources(): void {
+      clock?.stop();
+      clock = null;
+      worker?.terminate();
+      worker = null;
+    }
+
+    // `owner` is the room of the attempt that reports; null before it has made one. A failed attempt gives up the
+    // current room, so anything it reports later (a handler, or a connect() that settles after a retry began) is
+    // ignored and cannot tear down the attempt that replaced it.
+    function fail(message: string, owner: Room | null): void {
+      if (cancelled || room !== owner) return;
+      releaseConnectionResources();
+      const failed = room;
+      room = null;
+      void failed?.disconnect();
+      setState({ phase: "error", message, tiles: tilesFor(offered, new Map()), clock: null });
+      scheduleRetry();
+    }
+
+    async function attempt(): Promise<void> {
+      const tracks = new Map<string, RemoteTrack>();
+      let owner: Room | null = null;
+      const owns = (): boolean => !cancelled && room === owner;
+      const publish = (phase: LiveKitPhase): void => {
+        if (owns()) setState({ phase, message: null, tiles: tilesFor(offered, tracks), clock });
+      };
+      publish("connecting");
+      let token: string;
+      try {
+        // A fresh token for every attempt: the previous one may have expired while we were disconnected.
+        token = await fetchLiveKitToken(roomName, controller.signal);
+      } catch (error) {
+        // Say why video is unavailable, including when the backend could not be reached at all.
+        fail(error instanceof Error && error.name !== "TypeError" ? error.message : "Cannot reach the backend", null);
+        return;
+      }
+      if (cancelled) return;
+
+      /** Records the camera host's offered video tracks that are already subscribed. */
+      const adopt = (participant: RemoteParticipant): void => {
+        if (participant.identity !== publisher) return;
+        for (const publication of participant.trackPublications.values()) {
+          if (publication.kind === Track.Kind.Video && publication.track) {
+            tracks.set(publication.trackName, publication.track);
+          }
+        }
+      };
+
+      // The worker strips the per-frame metadata trailer off encoded video; without one (no Worker support) the
+      // room still works and latency simply stays unavailable.
+      worker =
+        typeof Worker === "undefined"
+          ? null
+          : new Worker(new URL("livekit-client/packet-trailer-worker", import.meta.url), { type: "module" });
+      const next = new Room(worker === null ? undefined : { packetTrailer: { worker } });
+      room = next;
+      owner = next;
+      next
+        .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          if (!owns() || participant.identity !== publisher || track.kind !== Track.Kind.Video) return;
+          tracks.set(publication.trackName, track);
+          publish("connected");
+        })
+        .on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+          if (!owns()) return;
+          // Only drop the mapping if it is still this track: a republication may already have replaced it.
+          if (tracks.get(publication.trackName) === track) tracks.delete(publication.trackName);
+          publish("connected");
+        })
+        .on(RoomEvent.ParticipantDisconnected, (participant) => {
+          if (!owns() || participant.identity !== publisher) return;
+          tracks.clear();
+          publish("connected");
+        })
+        .on(RoomEvent.Reconnecting, () => publish("reconnecting"))
+        .on(RoomEvent.Reconnected, () => {
+          if (!owns()) return;
+          // The SDK resumed the session; pick up anything published while it was away.
+          next.remoteParticipants.forEach(adopt);
+          publish("connected");
+        })
+        .on(RoomEvent.Disconnected, () => {
+          // Not a reconnect: the SDK gave up or the server closed the room. Start over with a new token.
+          if (!owns()) return;
+          tracks.clear();
+          fail("Disconnected from the LiveKit room", next);
+        });
+
+      try {
+        await next.connect(url, token);
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error), next);
+        return;
+      }
+      if (!owns()) {
+        // Superseded while connecting (disconnect, retry or unmount): leave this room without touching the current one.
+        void next.disconnect();
+        return;
+      }
+      // Tracks published before we joined arrive here rather than through TrackSubscribed.
+      next.remoteParticipants.forEach(adopt);
+      clock = new LiveKitClockSync(next, publisher);
+      clock.start();
+      publish("connected");
+    }
+
+    void attempt();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      // Detaches every track and closes the connection; the Disconnected handler above is a no-op once cancelled.
+      releaseConnectionResources();
+      void room?.disconnect();
+      room = null;
+    };
+  }, [key]);
+
+  return state;
+}

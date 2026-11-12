@@ -17,28 +17,34 @@ fabricate a usable pose).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 
 import numpy as np
 import pytest
 
 from capture_server import protocol as capture_protocol
-from capture_server.client import CaptureFrame
+from capture_server.client import CameraImage, CaptureFrame
 from egocap_web.recording_adapter import (
+    MANUS_GLOVE_SPEC,
+    PICO_CONTROLLER_SPEC,
     RecordingAdapterError,
     RecordingIngress,
+    _raw_item_bytes,
     build_manus_glove_fields,
     build_pico_controller_fields,
     button_pressed,
     convert_camera_image,
+    convert_capture_frame,
     convert_controller_aim_pose,
     convert_hand_pose,
     convert_head_pose,
+    convert_raw_item,
     oxr_fingertips_to_manus_skeleton,
     pose7d_to_matrix,
     validate_tracking_descriptor,
 )
-from recording_service import NumericSample, SubmissionResult, SubmissionStatus, VideoSample
+from recording_service import NumericSample, PixelFormat, SubmissionResult, SubmissionStatus, VideoSample
 
 IDENTITY_QUAT = (0.0, 0.0, 0.0, 1.0)
 
@@ -317,7 +323,10 @@ def test_validate_tracking_descriptor_rejects_mismatched_fields():
 
 
 class _FakeCameraImage:
-    def __init__(self, rgb: np.ndarray, capture_time_ns: int, receive_time_ns: int, name: str = "cam"):
+    def __init__(
+        self, rgb: np.ndarray, capture_time_ns: int, receive_time_ns: int, name: str = "cam", session_id: str = "s"
+    ):
+        self.session_id = session_id
         self._rgb = rgb
         self.capture_time_ns = capture_time_ns
         self.receive_time_ns = receive_time_ns
@@ -336,6 +345,12 @@ def test_convert_camera_image_is_rgb8_with_seconds_timestamps():
     assert sample.capture_time == pytest.approx(2.0)
     assert sample.receive_time == pytest.approx(3.0)
     assert sample.image is rgb
+
+
+def test_convert_camera_image_records_the_transport_session_as_its_continuity():
+    image = _FakeCameraImage(np.zeros((4, 4, 3), dtype=np.uint8), 1, 2, session_id="sess-a")
+    sample = convert_camera_image(image, "head_human_camera")  # type: ignore[arg-type]
+    assert sample.continuity == ("capture_session", "sess-a")
 
 
 # --- bounded ingress -----------------------------------------------------------
@@ -583,3 +598,304 @@ def test_queue_bytes_bounds_the_queue_by_size_not_count():
 def test_queue_bytes_must_be_positive():
     with pytest.raises(ValueError):
         RecordingIngress(queue_capacity=1, queue_bytes=0, submit=lambda s: None)
+
+
+# --- raw item sizing -----------------------------------------------------------
+
+
+class _DecodedFrame:
+    """Anything with an ``image`` ndarray, to size by pixels without being a VideoSample."""
+
+    def __init__(self, image: np.ndarray) -> None:
+        self.image = image
+
+
+def test_raw_item_bytes_sizes_a_decoded_frame_by_its_pixels():
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((10, 20, 3), dtype=np.uint8))) == 600  # type: ignore[arg-type]
+    assert _raw_item_bytes(_DecodedFrame(np.zeros((2, 2), dtype=np.uint16))) == 8  # type: ignore[arg-type]
+
+
+def test_raw_item_bytes_keeps_sizing_the_existing_types():
+    jpeg = CameraImage(
+        session_id="s", stream_id=1, sequence=0, capture_time_ns=0, receive_time_ns=0, name="c", jpeg=b"j" * 123
+    )
+    frame = CaptureFrame(
+        session_id="s",
+        description=None,
+        stream_id=0,
+        sequence=0,
+        capture_time_ns=0,
+        receive_time_ns=0,
+        payload=b"x" * 77,
+    )
+    assert _raw_item_bytes(jpeg) == 123
+    assert _raw_item_bytes(frame) == 77
+
+
+def test_decoded_frame_larger_than_the_byte_budget_overflows_the_ingress():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        small = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))  # 300 bytes
+        big = _DecodedFrame(np.zeros((20, 20, 3), dtype=np.uint8))  # 1200 bytes, over the budget on its own
+        assert ingress.offer(big) is False  # type: ignore[arg-type]
+        assert "byte budget" in ingress.failure
+        # A failed ingress admits nothing more, even a frame that would have fit.
+        assert ingress.offer(small) is False  # type: ignore[arg-type]
+
+    asyncio.run(run())
+
+
+def test_decoded_frames_within_the_budget_are_queued():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+            convert=lambda raw: [_numeric_sample(1)],
+        )
+        frame = _DecodedFrame(np.zeros((10, 10, 3), dtype=np.uint8))
+        assert [ingress.offer(frame) for _ in range(3)] == [True, True, True]  # type: ignore[arg-type]
+        assert ingress.offer(frame) is False  # type: ignore[arg-type]  # 1200 > 1000
+        assert ingress.failure is not None
+
+    asyncio.run(run())
+
+
+def _video_sample(shape=(10, 10, 3), source="head_left") -> VideoSample:
+    return VideoSample(
+        source=source,
+        image=np.zeros(shape, dtype=np.uint8),
+        pixel_format=PixelFormat.RGB8,
+        capture_time=1.0,
+        receive_time=2.0,
+    )
+
+
+def testconvert_raw_item_passes_a_video_sample_through_unchanged():
+    sample = _video_sample()
+    converted = convert_raw_item(sample)
+    assert len(converted) == 1
+    assert converted[0] is sample
+
+
+def test_raw_item_bytes_sizes_a_video_sample_by_its_pixels():
+    assert _raw_item_bytes(_video_sample((10, 20, 3))) == 600
+
+
+def test_real_ingress_with_the_default_converter_submits_a_video_sample():
+    async def run():
+        submitted: list[VideoSample] = []
+
+        def submit(sample):
+            submitted.append(sample)
+            return SubmissionResult(SubmissionStatus.ACCEPTED, sample.source, None)
+
+        ingress = RecordingIngress(queue_capacity=4, submit=submit)  # no convert: the default converter
+        await ingress.start()
+        sample = _video_sample()
+        assert ingress.offer(sample) is True
+        for _ in range(50):
+            if submitted:
+                break
+            await asyncio.sleep(0.01)
+        await ingress.stop()
+        assert ingress.failure is None
+        assert len(submitted) == 1
+        assert submitted[0] is sample
+
+    asyncio.run(run())
+
+
+def test_real_ingress_enforces_the_byte_budget_on_video_samples():
+    async def run():
+        ingress = RecordingIngress(
+            queue_capacity=100,
+            queue_bytes=1000,
+            submit=lambda s: SubmissionResult(SubmissionStatus.ACCEPTED, s.source, None),
+        )
+        assert ingress.offer(_video_sample((20, 20, 3))) is False  # 1200 bytes, over the budget on its own
+        assert "byte budget" in ingress.failure
+
+    asyncio.run(run())
+
+
+# --- tracking time is the host poll time, on the same timeline as LiveKit video -------
+
+
+def _tracking_frame(capture_time_ns: int, receive_time_ns: int) -> CaptureFrame:
+    return CaptureFrame(
+        session_id="s",
+        description=None,  # type: ignore[arg-type]
+        stream_id=1,
+        sequence=0,
+        capture_time_ns=capture_time_ns,
+        receive_time_ns=receive_time_ns,
+        payload=capture_protocol.encode_tracking_frame(default_tracking_values()),
+    )
+
+
+def test_pico_and_manus_samples_are_both_stamped_with_the_one_host_poll_frame_time():
+    # The recorded tracking time is when the host polled the devices (HOST_POLL), not a device measurement time:
+    # every sample from one frame carries that frame's single timestamp, whichever source it is.
+    frame = _tracking_frame(capture_time_ns=5_000_123_456_789, receive_time_ns=5_000_130_000_000)
+    samples = convert_raw_item(frame)
+
+    assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
+    for sample in samples:
+        assert isinstance(sample, NumericSample)
+        assert sample.capture_time == frame.capture_time_ns / 1e9
+        assert sample.receive_time == frame.receive_time_ns / 1e9
+
+
+async def test_livekit_video_and_tracking_from_one_frame_share_the_pc_monotonic_timeline():
+    from collections import defaultdict
+
+    from egocap_web.clock_exchange import ClockEstimator, Exchange
+    from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+    from egocap_web.livekit_recording import LiveKitRecordingFeed
+
+    S = 1_000_000_000
+    event_ns = 5_000 * S  # truth: the PC-monotonic time of one event seen by both sources
+    camera_offset_ns = 3_200_000_000_000  # the camera's clock runs this far ahead of the PC's
+
+    # One exchange, symmetric 2 ms each way, so the mapping is exact and its uncertainty is 2 ms.
+    t1 = event_ns - 2 * S
+    estimator = ClockEstimator()
+    estimator.add(
+        Exchange(
+            t1=t1,
+            t2=t1 + 2_000_000 + camera_offset_ns,
+            t3=t1 + 2_000_000 + camera_offset_ns,
+            t4=t1 + 4_000_000,
+        )
+    )
+    now_ns = event_ns + 50_000_000
+    mapping = estimator.mapping(now_ns)
+    assert mapping is not None
+
+    class Clock:
+        discontinuity = False
+
+        def mapping(self):
+            return estimator.mapping(now_ns)
+
+    class Receiver:
+        clock_sync = Clock()
+
+        def __init__(self, frames):
+            self.frames = list(frames)
+            self.counters = defaultdict(StreamCounters)
+
+        async def next_frame_or_lost(self, stream_id, timeout=None):
+            return self.frames.pop(0) if self.frames else None
+
+    class Ingress:
+        def __init__(self):
+            self.offered = []
+
+        def offer(self, item):
+            self.offered.append(item)
+            return True
+
+    stream = capture_protocol.LiveKitCameraStream(
+        stream_id=16,
+        name="cam",
+        url="wss://lk",
+        room="r",
+        publisher="o",
+        track="t",
+        timestamp_basis=capture_protocol.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
+    )
+    received = ReceivedFrame(
+        stream_id=16,
+        image=np.zeros((2, 2, 3), dtype=np.uint8),
+        receive_time_ns=now_ns,
+        transport_timestamp_us=0,
+        user_timestamp_us=(event_ns + camera_offset_ns) // 1000,
+        frame_id=None,
+        user_data=None,
+    )
+    ingress = Ingress()
+    feed = LiveKitRecordingFeed(Receiver([received]), [stream], ingress, {16: "cam"})  # type: ignore[arg-type]
+    feed.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await feed.stop()
+
+    (video,) = ingress.offered
+    assert isinstance(video, VideoSample)
+    tracking = convert_raw_item(_tracking_frame(capture_time_ns=event_ns + 1_500_000, receive_time_ns=now_ns))
+    assert tracking
+
+    # Both are seconds on the PC's monotonic clock; their gap is the synthetic 1.5 ms (the host poll lags the
+    # event), and the video time is within the mapping's uncertainty of the truth.
+    truth_gap_s = 1.5e-3
+    tolerance_s = mapping.uncertainty_ns / 1e9
+    assert abs(video.capture_time - event_ns / S) <= tolerance_s
+    for sample in tracking:
+        assert abs((sample.capture_time - video.capture_time) - truth_gap_s) <= tolerance_s
+
+
+def test_tracking_specs_name_the_frame_types_that_select_their_alignment_rules():
+    from egocap.recording.alignment import FRAME_FIELD_RULES
+
+    assert PICO_CONTROLLER_SPEC.frame_type == "PicoTrackingFrame"
+    assert MANUS_GLOVE_SPEC.frame_type == "ManusFrame"
+    assert {PICO_CONTROLLER_SPEC.frame_type, MANUS_GLOVE_SPEC.frame_type} <= set(FRAME_FIELD_RULES)
+
+
+def test_every_tracking_sample_of_a_frame_carries_the_host_clock_connection_as_its_continuity():
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_000_100_000)
+    samples = convert_raw_item(frame)
+    assert sorted(s.source for s in samples) == ["manus_glove", "pico_controller"]
+    assert [s.continuity for s in samples] == [("host_clock", "s")] * 2
+
+
+def _capture_times(samples):
+    return {s.source: s.capture_time for s in samples}
+
+
+def test_no_latency_leaves_the_poll_time_as_the_capture_time():
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
+    for samples in (convert_raw_item(frame), convert_raw_item(frame, {}), convert_capture_frame(frame, None)):
+        assert set(_capture_times(samples).values()) == {5.0}
+
+
+def test_a_latency_is_taken_off_the_poll_time_per_source_and_receive_time_is_unchanged():
+    frame = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_040_000_000)
+    samples = convert_raw_item(frame, {"pico_controller": 0.02, "manus_glove": 0.0})
+    assert _capture_times(samples) == pytest.approx({"pico_controller": 4.98, "manus_glove": 5.0})
+    assert {s.receive_time for s in samples} == {5.04}
+
+
+def test_a_later_receive_time_does_not_move_the_adjusted_capture_times():
+    latency = {"pico_controller": 0.02, "manus_glove": 0.03}
+    prompt = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_001_000_000)
+    delayed = _tracking_frame(capture_time_ns=5_000_000_000, receive_time_ns=5_250_000_000)
+    assert _capture_times(convert_raw_item(prompt, latency)) == _capture_times(convert_raw_item(delayed, latency))
+
+
+def test_the_latency_is_applied_once_to_each_frame():
+    latency = {"pico_controller": 0.02, "manus_glove": 0.02}
+    times = [
+        _capture_times(convert_raw_item(_tracking_frame(t, t + 1_000_000), latency))["pico_controller"]
+        for t in (1_000_000_000, 2_000_000_000)
+    ]
+    assert times == pytest.approx([0.98, 1.98])
+
+
+def test_a_latency_does_not_change_the_tracking_continuity():
+    samples = convert_raw_item(_tracking_frame(5_000_000_000, 5_000_100_000), {"pico_controller": 0.02})
+    assert {s.continuity for s in samples} == {("host_clock", "s")}
+
+
+def test_a_new_capture_connection_changes_the_tracking_continuity_identity():
+    first = convert_raw_item(_tracking_frame(1_000_000_000, 1_000_100_000))
+    other = dataclasses.replace(_tracking_frame(2_000_000_000, 2_000_100_000), session_id="t")
+    assert {s.continuity for s in convert_raw_item(other)} == {("host_clock", "t")}
+    assert {s.continuity for s in first} == {("host_clock", "s")}
