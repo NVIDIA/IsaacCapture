@@ -306,6 +306,13 @@ stream beside it, so keep the port on a trusted camera network. A requester shou
 request it still has outstanding, and should discard its outstanding requests and its estimate when the AVS1 `session_id`
 changes or the connection is re-established; the responder cannot tell a late reply from a current one.
 
+A requester that turns the exchange into an offset should also check that a reply comes from the sender's own address,
+that its estimate is recent (discard it when no fresh reply has arrived for a while), and that the `session_id` has not
+changed. The exchange measures the offset between two clocks and its uncertainty. It says nothing about when a sensor
+exposed a frame: a capture time derived through it is the sensor's own timestamp, with that timestamp's caveats,
+moved onto the requester's clock. Do not present the offset or its error bound as a claim of exact physical capture
+time.
+
 ## Wire dump
 
 Set `network.dump_wire` to save the exact length-prefixed AVS1 records that were
