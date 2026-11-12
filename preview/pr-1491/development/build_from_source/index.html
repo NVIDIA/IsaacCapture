@@ -821,7 +821,10 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/&lt;name&gt;<span class="w"> </span>--no-sources
 </pre></div>
 </div>
-<p>Without it, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
+<p>On aarch64 this command fails for <code class="docutils literal notranslate"><span class="pre">deviceio_live_view</span></code>, because SOMA-X pulls in <code class="docutils literal notranslate"><span class="pre">cholespy</span></code>,
+which has no aarch64 wheel. Use the aarch64 install in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a> instead.</p>
+<p>Without <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">CloudXR</span> <span class="pre">service</span> <span class="pre">exited</span> <span class="pre">during</span> <span class="pre">startup</span></code> and the
 service log reads <code class="docutils literal notranslate"><span class="pre">CloudXR</span> <span class="pre">SDK</span> <span class="pre">missing</span> <span class="pre">native/libcloudxr.so</span></code>. After a rebuild, run
