@@ -114,7 +114,7 @@ descriptor still reports codec, dimensions, FPS, and camera count.
 
 ## Timing extension
 
-When `TIMING_EXT` is set, `descriptor_bytes` also counts one 24-byte timing record per sample descriptor, stored
+This sender sets `TIMING_EXT` on every bundle. When it is set, `descriptor_bytes` also counts one 24-byte timing record per sample descriptor, stored
 after all sample descriptors in the same flattened order, before the payload area. It states the sensor's capture
 instant on the sender's `CLOCK_REALTIME` and how far to trust it. The instant is the sensor's start of frame, not the
 exposure midpoint and not the time the frame was ready, encoded or sent.

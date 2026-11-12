@@ -144,7 +144,7 @@ bool runCaptureSender(const AppConfig& config,
         return false;
     }
 
-    FrameBundleAssembler assembler(&tcpSender, sessionId, templates, config.network.timingExtension);
+    FrameBundleAssembler assembler(&tcpSender, sessionId, templates);
     HevcEncoderSettings encoderSettings;
     encoderSettings.kpi = config.runtime.kpi;
     encoderSettings.logIntervalSeconds = config.runtime.logIntervalSeconds;

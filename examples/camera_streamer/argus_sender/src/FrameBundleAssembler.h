@@ -31,11 +31,8 @@ struct BundleStreamInput
 class FrameBundleAssembler
 {
 public:
-    // With `timingExtension` every bundle carries the AVS1 timing record per sample (see WIRE_FORMAT.md).
-    FrameBundleAssembler(PacketSink* packetSink,
-                         uint64_t sessionId,
-                         const std::vector<Avs1StreamRecord>& streamTemplates,
-                         bool timingExtension = false);
+    // Every bundle carries the AVS1 timing record per sample, valid or not (see WIRE_FORMAT.md).
+    FrameBundleAssembler(PacketSink* packetSink, uint64_t sessionId, const std::vector<Avs1StreamRecord>& streamTemplates);
     ~FrameBundleAssembler();
 
     EncodedFrameSink* encodedSink(size_t streamIndex, size_t cameraIndex);

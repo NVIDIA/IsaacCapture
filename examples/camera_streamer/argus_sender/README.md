@@ -110,7 +110,6 @@ network:
   port: 5000
   reconnect_ms: 1000
   dump_wire: ""                 # optional exact TCP-record dump
-  timing_extension: false       # AVS1 sensor capture-time record (sender CLOCK_REALTIME); receivers must support it
 
 runtime:
   frames: 0                      # 0 = run until stopped/disconnected
@@ -324,11 +323,10 @@ The SIPL backend reports its start-of-frame timestamp this way. On the board it 
 (`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads
 the moment the frame is dequeued by about 22 ms. That is one board and one camera, not vendor documentation.
 
-With `network.timing_extension: true` every AVS1 bundle carries one timing record per sample (see
-[WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant in the sender's `CLOCK_REALTIME` (clock domain 2), the
-uncertainty and the anchor age, valid only for frames that passed the checks. A receiver that predates the extension, or
-that does not know domain 2, rejects those bundles, so leave it off until the receiver is updated. A new `session_id`
-invalidates every earlier mapping.
+Every AVS1 bundle carries one timing record per sample (see [WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant in
+the sender's `CLOCK_REALTIME` (clock domain 2), the uncertainty and the anchor age, valid only for frames that passed
+the checks; a sample without a checked mapping carries an all-zero record. A receiver that predates the extension
+rejects those bundles, so deploy the receiver before the sender. A new `session_id` invalidates every earlier mapping.
 
 ## Wire dump
 
