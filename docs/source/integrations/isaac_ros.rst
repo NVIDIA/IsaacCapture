@@ -5,8 +5,8 @@ Isaac ROS
 =========
 
 Isaac ROS Teleop consumes ``teleop_ros2``, the reference ROS 2 publisher for Isaac Teleop
-data. It runs in a Docker image and publishes hand, end-effector, root, head, controller,
-finger-joint, and TF data on ``xr_teleop/*`` topics.
+data. It runs in a Docker image and publishes hand, end-effector, root, head, controller and
+finger-joint data on ``xr_teleop/*`` topics, and TF on ``/tf``.
 
 Build the image from the repository root:
 
