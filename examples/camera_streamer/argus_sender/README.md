@@ -111,6 +111,7 @@ network:
   reconnect_ms: 1000
   dump_wire: ""                 # optional exact TCP-record dump
   timing_extension: false       # AVS1 sensor capture-time record; receivers must support it
+  timing_clock: monotonic       # monotonic | realtime; clock of the capture time, realtime needs timing_extension
 
 runtime:
   frames: 0                      # 0 = run until stopped/disconnected
@@ -325,7 +326,9 @@ to repeat the measurement.
 With `network.timing_extension: true` every AVS1 bundle carries one timing record per sample (see
 [WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant, the uncertainty and the anchor age, valid only for frames that
 passed the checks. A receiver that predates the extension rejects those bundles, so leave it off until the receiver is
-updated. A new `session_id` invalidates every earlier mapping.
+updated. `network.timing_clock` selects the clock the capture time is stated in: `monotonic` (default, domain 1) or
+`realtime` (domain 2, sender `CLOCK_REALTIME`); `realtime` requires `timing_extension` and a receiver that knows domain
+2. A new `session_id` invalidates every earlier mapping.
 
 ## Wire dump
 

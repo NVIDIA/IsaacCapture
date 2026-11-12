@@ -144,7 +144,9 @@ bool runCaptureSender(const AppConfig& config,
         return false;
     }
 
-    FrameBundleAssembler assembler(&tcpSender, sessionId, templates, config.network.timingExtension);
+    FrameBundleAssembler assembler(
+        &tcpSender, sessionId, templates, config.network.timingExtension,
+        config.network.timingClockRealtime ? AVS1_TIMING_CLOCK_REALTIME : AVS1_TIMING_CLOCK_MONOTONIC);
     HevcEncoderSettings encoderSettings;
     encoderSettings.kpi = config.runtime.kpi;
     encoderSettings.logIntervalSeconds = config.runtime.logIntervalSeconds;
@@ -234,6 +236,7 @@ bool runCaptureSender(const AppConfig& config,
                     timing.captureMonotonicNs = frame.captureMonotonicNs;
                     timing.captureUncertaintyNs = frame.captureUncertaintyNs;
                     timing.captureAnchorAgeNs = frame.captureAnchorAgeNs;
+                    timing.captureRealtimeNs = frame.captureRealtimeNs;
                 }
                 inputs[i].timings.push_back(timing);
                 uint32_t readyDomain = SENDER_CLOCK_UNKNOWN;

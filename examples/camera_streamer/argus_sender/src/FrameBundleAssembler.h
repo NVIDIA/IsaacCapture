@@ -35,7 +35,8 @@ public:
     FrameBundleAssembler(PacketSink* packetSink,
                          uint64_t sessionId,
                          const std::vector<Avs1StreamRecord>& streamTemplates,
-                         bool timingExtension = false);
+                         bool timingExtension = false,
+                         Avs1TimingClockDomain timingClock = AVS1_TIMING_CLOCK_MONOTONIC);
     ~FrameBundleAssembler();
 
     EncodedFrameSink* encodedSink(size_t streamIndex, size_t cameraIndex);

@@ -24,6 +24,13 @@ int64_t monotonicNow()
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
+int64_t realtimeNow()
+{
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
 int64_t readCounter()
 {
     uint64_t value;
@@ -45,12 +52,15 @@ bool readCounterPair(ClockPair* pair)
     {
         const int64_t before = monotonicNow();
         const int64_t source = readCounter();
+        const int64_t realtime = realtimeNow();
         const int64_t after = monotonicNow();
         if (after - before < best.bracketNs)
         {
             best.source = source;
             best.monotonicNs = before + (after - before) / 2;
             best.bracketNs = after - before;
+            best.realtimeNs = realtime;
+            best.hasRealtime = true;
         }
     }
     *pair = best;
@@ -105,10 +115,17 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
         const int64_t counterNs = counterTicksToNs(next.source - m_anchor.source, m_config.counterHz);
         const int64_t monotonicDeltaNs = next.monotonicNs - m_anchor.monotonicNs;
         const int64_t disagreement = std::llabs(counterNs - monotonicDeltaNs);
-        if (disagreement > m_config.stepThresholdNs + m_anchor.bracketNs + next.bracketNs)
-            m_stepped = true;
-        else
-            m_stepped = false;
+        const int64_t allowed = m_config.stepThresholdNs + m_anchor.bracketNs + next.bracketNs;
+        // CLOCK_REALTIME and CLOCK_MONOTONIC share frequency adjustment, so their difference moves only on a wall-clock
+        // step; the same allowance covers both checks.
+        bool realtimeStep = false;
+        if (m_anchor.hasRealtime && next.hasRealtime)
+        {
+            const int64_t previousOffset = m_anchor.realtimeNs - m_anchor.monotonicNs;
+            const int64_t nextOffset = next.realtimeNs - next.monotonicNs;
+            realtimeStep = std::llabs(nextOffset - previousOffset) > allowed;
+        }
+        m_stepped = disagreement > allowed || realtimeStep;
     }
     m_anchor = next;
     m_anchorTakenNs = nowMonotonicNs;
@@ -155,6 +172,11 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
     }
     result.valid = true;
     result.captureMonotonicNs = capture;
+    if (m_anchor.hasRealtime)
+    {
+        result.hasRealtime = true;
+        result.captureRealtimeNs = capture + (m_anchor.realtimeNs - m_anchor.monotonicNs);
+    }
     return result;
 }
 

@@ -69,7 +69,8 @@ enum Avs1TimingFlags
 enum Avs1TimingClockDomain
 {
     AVS1_TIMING_CLOCK_NONE = 0,
-    AVS1_TIMING_CLOCK_MONOTONIC = 1
+    AVS1_TIMING_CLOCK_MONOTONIC = 1,
+    AVS1_TIMING_CLOCK_REALTIME = 2
 };
 
 // The sensor's capture instant on the sender's clock and how far to trust it. With AVS1_TIMING_VALID clear, every

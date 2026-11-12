@@ -112,6 +112,19 @@ int main()
         TEST_CHECK(test, !net.network.timingExtension);
         TEST_CHECK(test, loadText("version: 1\nnetwork: {timing_extension: true}\n" + streams, &net, &error));
         TEST_CHECK(test, net.network.timingExtension);
+        TEST_CHECK(test, !net.network.timingClockRealtime);
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {timing_extension: true, timing_clock: monotonic}\n" + streams,
+                                  &net, &error));
+        TEST_CHECK(test, !net.network.timingClockRealtime);
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {timing_extension: true, timing_clock: realtime}\n" + streams,
+                                  &net, &error));
+        TEST_CHECK(test, net.network.timingClockRealtime);
+        argus_sender::AppConfig rejected;
+        TEST_CHECK(test, !loadText("version: 1\nnetwork: {timing_clock: realtime}\n" + streams, &rejected, &error));
+        TEST_CHECK(test, error.find("requires network.timing_extension") != std::string::npos);
+        TEST_CHECK(test, !loadText("version: 1\nnetwork: {timing_extension: true, timing_clock: tai}\n" + streams,
+                                   &rejected, &error));
+        TEST_CHECK(test, error.find("network.timing_clock must be") != std::string::npos);
     }
 
     argus_sender::AppConfig invalid;
