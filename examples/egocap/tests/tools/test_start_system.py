@@ -37,16 +37,17 @@ def test_publisher_token_is_a_verifiable_hs256_jwt():
 
 
 def test_generated_configs_parse_and_carry_parameters():
-    streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", "trk", 640, 480, 30))
+    streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", "trk", 640, 480, 30, "b"))
     stream = streams["livekit"]["streams"][0]
     assert (stream["track"], stream["width"], stream["height"]) == ("trk", 640, 480)
 
-    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480))
+    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head"))
     assert receiver["receiver"]["port"] == 5555
     assert (receiver["streams"][0]["width"], receiver["streams"][0]["height"]) == (640, 480)
 
-    sender = yaml.safe_load(ss.sender_yaml(5555, 30, 8))
-    assert sender["network"]["port"] == 5555
+    assert streams["livekit"]["timestamp_basis"] == "b"
+    assert receiver["streams"][0]["name"] == "head"
+    assert receiver["streams"][0]["ipc"]["mono"] == "head"
 
 
 def test_control_token_found_or_absent(tmp_path: Path):
@@ -63,6 +64,55 @@ def test_main_requires_deploy_script_with_orin(monkeypatch, capsys):
     monkeypatch.setattr(signal, "signal", lambda *_: None)
     assert ss.main(["--orin", "x@y"]) == 1
     assert "--deploy-script" in capsys.readouterr().err
+
+
+def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    argv = ["--orin", "user@some-host-name", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main(argv) == 1
+    assert "IPv4 address" in capsys.readouterr().err
+
+
+def test_default_profile_gives_the_head_camera_settings():
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
+    assert ss.sender_settings(config) == ss.SenderSettings(
+        port=5000, clock_port=5611, fps=30, bitrate_mbps=4, stream_id="head"
+    )
+
+
+def test_overrides_replace_only_their_values():
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 6000, 5100)
+    assert ss.sender_settings(config) == ss.SenderSettings(
+        port=5100, clock_port=6000, fps=60, bitrate_mbps=9, stream_id="head"
+    )
+    partial = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, fps=15))
+    assert (partial.fps, partial.bitrate_mbps, partial.clock_port, partial.port) == (15, 4, 5611, 5000)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c["network"].pop("timing_extension"),
+        lambda c: c["network"].pop("clock_port"),
+        lambda c: c["streams"][0]["output"].update(fps=0),
+        lambda c: c["streams"][0]["output"].pop("fps"),
+    ],
+)
+def test_sender_settings_rejects_an_incomplete_profile(mutate):
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
+    mutate(config)
+    with pytest.raises(ss.StartupError):
+        ss.sender_settings(config)
+
+
+def test_load_sender_config_rejects_missing_file_and_two_streams(tmp_path: Path):
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(tmp_path / "absent.yaml")
+    two = tmp_path / "two.yaml"
+    two.write_text("streams:\n  - {id: a}\n  - {id: b}\n")
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(two)
 
 
 def test_stack_stop_all_terminates_child(tmp_path: Path):

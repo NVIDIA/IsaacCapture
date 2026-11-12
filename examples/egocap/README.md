@@ -89,9 +89,17 @@ reference.
 uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH --open
 ```
 
-It prints the page URL and the recording control token. Without `--orin` only the PC side starts, and
+It prints the page URL and the recording control token. The session is real and cameras-only (no headset, no mock
+cameras); `--mock` switches to synthetic tracking and cameras. Without `--orin` only the PC side starts, and
 `--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
-so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`).
+so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
+address, because the bridge measures the sender's clock at that address.
+
+The sender settings come from the checked-in profile `configs/sender-shw5g-sipl-head.yaml` (30 fps, 4 Mbit/s HEVC,
+timing extension and clock responder on). Pass another file with `--sender-config`, or override single values with
+`--fps`, `--bitrate-mbps`, `--clock-port` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
+built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
+setting and lists every key.
 
 ## Real hardware
 

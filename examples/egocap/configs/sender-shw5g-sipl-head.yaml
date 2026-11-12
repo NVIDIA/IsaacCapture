@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Default sender profile: one SHW5G head camera through the SIPL backend, HEVC over AVS1/TCP, with the sensor
+# timing extension and the UDP clock responder on. CAMERA_SETTINGS.md describes every key.
+#
+# The platform file, config name, link masks and tuning directory describe the tested head-camera setup; edit them
+# for another installation. Sensor size and rate come from the platform file, so no dimensions are set here.
+
+version: 1
+capture_backend: sipl
+
+sipl:
+  platform_config_json: /opt/isaaccapture/camera-platform.json
+  platform_config_name: SHW5G_2
+  link_masks: [256, 0]
+  nito_dir: /var/nvidia/nvcam/settings/sipl
+
+network:
+  bind: 0.0.0.0
+  port: 5000
+  # Both are needed for a page latency measured from sensor capture time: the timing records carry the capture
+  # instant, and the responder lets the PC map the sender's clock onto its own. A client must use the same port.
+  timing_extension: true
+  clock_port: 5611
+
+runtime:
+  frames: 0
+  kpi: true
+  log_interval_s: 1
+
+streams:
+  - id: head
+    type: mono
+    cameras:
+      - {device: 0, mode: 0}
+    output:
+      codec: hevc
+      fps: 30
+      bitrate_mbps: 4

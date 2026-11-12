@@ -6,10 +6,13 @@
 
     uv run python tools/start_system.py --orin user@orin --deploy-script PATH --bridge PATH --livekit-server PATH
 
-In order: deploy and start the Orin sender over ssh, a LiveKit server, CaptureServer, the backend (which owns the
-recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``--orin`` no sender is started, so
-only the PC side comes up. Each process is waited on until it is ready before the next one starts, and all of them
-are stopped, last started first, when this script exits for any reason.
+In order: deploy and start the Orin sender over ssh, a LiveKit server, CaptureServer, the backend (which owns
+the recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``--orin`` no sender is started, so
+only the PC side comes up. Each process is waited on until it is ready before the next one starts, and all of
+them are stopped, last started first, when this script exits for any reason.
+
+The sender settings come from the checked-in profile ``configs/sender-shw5g-sipl-head.yaml`` (see
+CAMERA_SETTINGS.md). The session is real and cameras-only unless ``--mock`` is given.
 
 The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
 (or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``). The pure helpers sit above the
@@ -22,6 +25,7 @@ import argparse
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import shlex
@@ -36,11 +40,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 EGOCAP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EGOCAP_ROOT.parents[1]
 LIVEKIT_DEV_KEY = "devkey"
 LIVEKIT_DEV_SECRET = "secret"
 CONTROL_TOKEN_MARKER = "Recording control token for this run:"
+DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/sender-shw5g-sipl-head.yaml"
+DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.camera_only.example.yaml"
+# The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
+TIMESTAMP_BASIS = "capture_monotonic_us"
 
 
 class StartupError(Exception):
@@ -78,20 +88,22 @@ def publisher_token(key: str, secret: str, room: str, identity: str, hours: int 
     return f"{header}.{body}.{signature}"
 
 
-def streams_yaml(url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int) -> str:
+def streams_yaml(
+    url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int, basis: str
+) -> str:
     """The CaptureServer ``--livekit-streams`` file for one camera published by the bridge."""
     return (
         "livekit:\n"
         f"  url: {url}\n"
         f"  room: {room}\n"
         f"  publisher: {publisher}\n"
-        "  timestamp_basis: monotonic_us\n"
+        f"  timestamp_basis: {basis}\n"
         "  streams:\n"
         f"    - {{name: head, track: {track}, width: {width}, height: {height}, fps: {fps}}}\n"
     )
 
 
-def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int) -> str:
+def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int, name: str) -> str:
     """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
     return (
         "version: 1\n"
@@ -107,43 +119,80 @@ def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: in
         "  queue_size: 1024\n"
         "streams:\n"
         "  - index: 0\n"
-        "    name: head\n"
+        f"    name: {name}\n"
         "    type: mono\n"
         f"    width: {width}\n"
         f"    height: {height}\n"
         "    output_format: nv12\n"
         "    ring_depth: 6\n"
         "    ipc:\n"
-        "      mono: head\n"
+        f"      mono: {name}\n"
     )
 
 
-def sender_yaml(port: int, fps: int, bitrate_mbps: int) -> str:
-    """The Orin sender's config: the SIPL head camera encoded as HEVC."""
-    return (
-        "version: 1\n"
-        "capture_backend: sipl\n"
-        "sipl:\n"
-        "  platform_config_json: /opt/isaaccapture/camera-platform.json\n"
-        "  platform_config_name: SHW5G_2\n"
-        "  link_masks: [256, 0]\n"
-        "  nito_dir: /var/nvidia/nvcam/settings/sipl\n"
-        "network:\n"
-        "  bind: 0.0.0.0\n"
-        f"  port: {port}\n"
-        "runtime:\n"
-        "  frames: 0\n"
-        "  kpi: true\n"
-        "  log_interval_s: 1\n"
-        "streams:\n"
-        "  - id: head\n"
-        "    type: mono\n"
-        "    cameras:\n"
-        "      - {device: 0, mode: 0}\n"
-        "    output:\n"
-        "      codec: hevc\n"
-        f"      fps: {fps}\n"
-        f"      bitrate_mbps: {bitrate_mbps}\n"
+@dataclass(frozen=True)
+class SenderSettings:
+    """The effective sender values the rest of the stack must agree with."""
+
+    port: int
+    clock_port: int
+    fps: int
+    bitrate_mbps: int
+    stream_id: str
+
+
+def load_sender_config(
+    path: Path,
+    fps: int | None = None,
+    bitrate_mbps: int | None = None,
+    clock_port: int | None = None,
+    sender_port: int | None = None,
+) -> dict:
+    """Read the checked-in sender profile and apply the command-line overrides to the loaded mapping.
+
+    The bridge, the receiver and the CaptureServer descriptor are all built from the result, so one value
+    cannot differ between the sender and its consumers.
+    """
+    try:
+        config = yaml.safe_load(path.read_text())
+    except OSError as error:
+        raise StartupError(f"cannot read the sender config {path}: {error}; pass --sender-config") from error
+    if not isinstance(config, dict) or not isinstance(config.get("streams"), list) or len(config["streams"]) != 1:
+        raise StartupError(f"{path}: the launcher supports exactly one stream in the sender config")
+    stream = config["streams"][0]
+    network = config.setdefault("network", {})
+    output = stream.setdefault("output", {})
+    # An override replaces the profile's value; the profile stays the source of everything else.
+    if fps is not None:
+        output["fps"] = fps
+    if bitrate_mbps is not None:
+        output["bitrate_mbps"] = bitrate_mbps
+    if clock_port is not None:
+        network["clock_port"] = clock_port
+    if sender_port is not None:
+        network["port"] = sender_port
+    return config
+
+
+def sender_settings(config: dict) -> SenderSettings:
+    """The values other components need from a loaded sender config, refusing one that cannot give a latency."""
+    network = config.get("network", {})
+    stream = config["streams"][0]
+    output = stream.get("output", {})
+    # The bridge and the descriptor need a number, and a native-rate profile (fps 0) has none until runtime.
+    if not output.get("fps"):
+        raise StartupError(
+            "the sender config must set streams[0].output.fps; the bridge and descriptor need a rate"
+        )
+    # Without both, the page has no sensor capture time and no clock to map it with.
+    if not network.get("timing_extension") or not network.get("clock_port"):
+        raise StartupError("the sender config must set network.timing_extension: true and network.clock_port")
+    return SenderSettings(
+        port=int(network.get("port", 5000)),
+        clock_port=int(network["clock_port"]),
+        fps=int(output["fps"]),
+        bitrate_mbps=int(output.get("bitrate_mbps", 0)),
+        stream_id=str(stream["id"]),
     )
 
 
@@ -251,12 +300,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--release", default="egocap-start", help="release name for the Orin deploy")
     parser.add_argument("--skip-deploy", action="store_true", help="reuse the release named by --release")
     parser.add_argument(
-        "--station-config", type=Path, default=EGOCAP_ROOT / "recording/egocap/stations/ego_stations.example.yaml"
+        "--sender-config", type=Path, default=DEFAULT_SENDER_CONFIG, help="sender profile uploaded to the Orin"
     )
-    parser.add_argument("--width", type=int, default=2560)
-    parser.add_argument("--height", type=int, default=1984)
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--bitrate-mbps", type=int, default=4, help="sender HEVC bitrate")
+    parser.add_argument("--station-config", type=Path, default=DEFAULT_STATION_CONFIG)
+    parser.add_argument("--width", type=int, default=2560, help="sensor width the receiver and descriptor expect")
+    parser.add_argument(
+        "--height", type=int, default=1984, help="sensor height the receiver and descriptor expect"
+    )
+    parser.add_argument("--fps", type=int, help="override the profile's output.fps")
+    parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
+    parser.add_argument("--clock-port", type=int, help="override the profile's UDP clock port (sender and bridge)")
+    parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
+    parser.add_argument(
+        "--mock", action="store_true", help="synthetic tracking and cameras instead of a cameras-only real session"
+    )
     parser.add_argument("--backend-port", type=int, default=8010)
     parser.add_argument("--seconds", type=int, default=3600, help="how long the Orin sender runs")
     parser.add_argument("--open", action="store_true", help="open the page in a browser once it is up")
@@ -268,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     orin_host = args.orin.rsplit("@", 1)[-1] if args.orin else None
     room, publisher, track = "egocap-room", "egocap-bridge", "sensing-head"
-    livekit_url, sender_port = "ws://127.0.0.1:7880", 5000
+    livekit_url = "ws://127.0.0.1:7880"
     workdir = Path(tempfile.mkdtemp(prefix="egocap-start-"))
     ipc_socket = str(workdir / "camera_receiver.sock")
     stack = Stack(workdir)
@@ -280,13 +337,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise StartupError("--orin needs --deploy-script (or EGOCAP_DEPLOY_SCRIPT)")
         if args.orin and not (args.bridge and args.livekit_server):
             raise StartupError("--orin needs --bridge and --livekit-server to carry the video to the page")
+        # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
+        sender_config = load_sender_config(
+            args.sender_config, args.fps, args.bitrate_mbps, args.clock_port, args.sender_port
+        )
+        sender = sender_settings(sender_config)
+        # The bridge's sender-clock address must be a literal IPv4 address, not a name.
+        if args.orin:
+            try:
+                ipaddress.IPv4Address(orin_host)
+            except ValueError as error:
+                raise StartupError(
+                    f"--orin needs an IPv4 address for the sender clock, got {orin_host!r}"
+                ) from error
+        (workdir / "sender.yaml").write_text(yaml.safe_dump(sender_config, sort_keys=False))
         (workdir / "streams.yaml").write_text(
-            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, args.fps)
+            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, sender.fps, TIMESTAMP_BASIS)
         )
         (workdir / "receiver.yaml").write_text(
-            receiver_yaml(orin_host or "127.0.0.1", sender_port, ipc_socket, args.width, args.height)
+            receiver_yaml(
+                orin_host or "127.0.0.1", sender.port, ipc_socket, args.width, args.height, sender.stream_id
+            )
         )
-        (workdir / "sender.yaml").write_text(sender_yaml(sender_port, args.fps, args.bitrate_mbps))
+        print(
+            f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
+            f"timing extension on, clock port {sender.clock_port}, release {args.release}"
+        )
         token_file = workdir / "publisher-token.txt"
         token_file.write_text(publisher_token(LIVEKIT_DEV_KEY, LIVEKIT_DEV_SECRET, room, publisher))
         token_file.chmod(0o600)
@@ -321,7 +397,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # 3. CaptureServer announces the stream and serves tracking.
         capture = stack.start(
             "capture-server",
-            [python, "-m", "capture_server", "--mock", "--livekit-streams", str(workdir / "streams.yaml")],
+            [
+                python,
+                "-m",
+                "capture_server",
+                *(["--mock"] if args.mock else []),
+                "--livekit-streams",
+                str(workdir / "streams.yaml"),
+            ],
             env={"PYTHONPATH": pythonpath},
             cwd=EGOCAP_ROOT,
         )
@@ -344,6 +427,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "EGOCAP_STATION_CONFIG": str(args.station_config),
                 "LIVEKIT_API_KEY": LIVEKIT_DEV_KEY,
                 "LIVEKIT_API_SECRET": LIVEKIT_DEV_SECRET,
+                # A cameras-only session needs no headset and no IsaacCapture checkout.
+                **({} if args.mock else {"EGOCAP_CAPTURE_SOURCES": "none"}),
             },
             cwd=EGOCAP_ROOT,
         )
@@ -367,9 +452,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--socket",
                     ipc_socket,
                     "--stream",
-                    f"head={track}:2",
+                    f"{sender.stream_id}={track}:2",
                     "--fps",
-                    str(args.fps),
+                    str(sender.fps),
+                    "--timestamp-basis",
+                    TIMESTAMP_BASIS,
+                    "--sender-clock",
+                    f"{orin_host}:{sender.clock_port}",
                 ],
             )
         url = f"http://127.0.0.1:{args.backend_port}/"

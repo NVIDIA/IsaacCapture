@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Station file for a cameras-only session: it requests no CaptureServer cameras, because the video arrives through
+# LiveKit streams, and it needs no headset (start the backend with EGOCAP_CAPTURE_SOURCES=none). Used by
+# tools/start_system.py by default.
+stations:
+  station_01:
+    recording:
+      data_dir: ~/egocap_data/recordings
+      record_fps: 60
+      stream_fps: 60
+      verbose: false
+      video_frame_type: RGBCameraFrame
+      numeric_frame_type: TrackingFrame
+    meta:
+      egocap_station_name: Station 01
+      task_description: Place the object in the tray.
+      operator_name: ''
+      auto_fill_operator_name: false
+    numeric_sources:
+    - type: pico
+      name: pico_controller
+      record_fps: 60
+      stream_fps: 60
+      frame_type: PicoTrackingFrame
+      latency: 0.05
+    - type: manus
+      name: manus_glove
+      record_fps: 60
+      stream_fps: 60
+      frame_type: ManusFrame
+      latency: 0.05
