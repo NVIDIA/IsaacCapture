@@ -221,11 +221,13 @@ void checkTimingExtension(TestContext& test)
     inputs[0].timings.push_back(timing(11, 1004));
     inputs[0].timings[0].hasCaptureMonotonic = true;
     inputs[0].timings[0].captureMonotonicNs = 123456789;
+    inputs[0].timings[0].captureRealtimeNs = 1762900000123456789LL;
     inputs[0].timings[0].captureUncertaintyNs = 2500;
     inputs[0].timings[0].captureAnchorAgeNs = 400000000;
     // A second sample whose uncertainty does not fit the 32-bit field makes no capture claim.
     inputs[0].timings[1].hasCaptureMonotonic = true;
     inputs[0].timings[1].captureMonotonicNs = 123456790;
+    inputs[0].timings[1].captureRealtimeNs = 1762900000123456790LL;
     inputs[0].timings[1].captureUncertaintyNs = 5000000000LL;
     TEST_CHECK(test, assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0));
     const uint8_t payload[] = { 0, 0, 1, 0x26 };
@@ -243,7 +245,8 @@ void checkTimingExtension(TestContext& test)
     TEST_CHECK(test, (bundle.flags & argus_sender::AVS1_BUNDLE_TIMING_EXT) != 0);
     const argus_sender::Avs1TimingRecord& mapped = bundle.streams[0].samples[0].timing;
     TEST_CHECK_EQ(test, mapped.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
-    TEST_CHECK_EQ(test, mapped.sensorCaptureNs, static_cast<uint64_t>(123456789));
+    TEST_CHECK_EQ(test, mapped.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_REALTIME));
+    TEST_CHECK_EQ(test, mapped.sensorCaptureNs, static_cast<uint64_t>(1762900000123456789LL));
     TEST_CHECK_EQ(test, mapped.uncertaintyNs, static_cast<uint32_t>(2500));
     TEST_CHECK_EQ(test, mapped.anchorAgeNs, static_cast<uint32_t>(400000000));
     TEST_CHECK_EQ(test, bundle.streams[0].samples[1].timing.flags, static_cast<uint16_t>(0));
@@ -252,18 +255,14 @@ void checkTimingExtension(TestContext& test)
     TEST_CHECK_EQ(test, bundle.streams[1].samples[0].timing.flags, static_cast<uint16_t>(0));
 }
 
-// Emits one two-camera stereo bundle with the timing extension and the given clock; the first sample carries
-// monotonic and realtime capture times, `realtimeNs` for the latter.
-bool emitTimed(bool setClock, argus_sender::Avs1TimingClockDomain clock, int64_t realtimeNs, argus_sender::Avs1Bundle* out)
+// Emits one two-camera stereo bundle with the timing extension; the first sample carries a monotonic capture time
+// and `realtimeNs` as its realtime one.
+bool emitTimed(int64_t realtimeNs, argus_sender::Avs1Bundle* out)
 {
     FakePacketSink sink;
     std::vector<argus_sender::Avs1StreamRecord> streams = templates();
     streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
-    // The assembler cannot be copied, so each construction is made in place.
-    std::unique_ptr<argus_sender::FrameBundleAssembler> owned(
-        setClock ? new argus_sender::FrameBundleAssembler(&sink, 89, streams, true, clock) :
-                   new argus_sender::FrameBundleAssembler(&sink, 89, streams, true));
-    argus_sender::FrameBundleAssembler& assembler = *owned;
+    argus_sender::FrameBundleAssembler assembler(&sink, 89, streams, true);
     std::vector<argus_sender::BundleStreamInput> inputs(2);
     inputs[0].present = true;
     inputs[0].sequence = 1;
@@ -288,35 +287,25 @@ bool emitTimed(bool setClock, argus_sender::Avs1TimingClockDomain clock, int64_t
            argus_sender::parseAvs1WireRecord(sink.packets[0].data(), sink.packets[0].size(), out, &error);
 }
 
+// The record carries the realtime capture time only; the monotonic one is never emitted.
 void checkTimingClock(TestContext& test)
 {
     const int64_t realtimeNs = 1762900000123456789LL;
     argus_sender::Avs1Bundle bundle;
 
-    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_REALTIME, realtimeNs, &bundle));
+    TEST_CHECK(test, emitTimed(realtimeNs, &bundle));
     argus_sender::Avs1TimingRecord record = bundle.streams[0].samples[0].timing;
     TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
     TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_REALTIME));
     TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(realtimeNs));
     TEST_CHECK_EQ(test, record.uncertaintyNs, static_cast<uint32_t>(2500));
 
-    // Realtime requested but no realtime time: no claim, even though a monotonic time exists.
-    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_REALTIME, 0, &bundle));
+    // No realtime time: no claim, even though a monotonic time exists.
+    TEST_CHECK(test, emitTimed(0, &bundle));
     record = bundle.streams[0].samples[0].timing;
     TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(0));
     TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(0));
     TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(0));
-
-    // Default and explicit monotonic emit domain 1 with the monotonic time, whatever the realtime value.
-    TEST_CHECK(test, emitTimed(false, argus_sender::AVS1_TIMING_CLOCK_MONOTONIC, realtimeNs, &bundle));
-    record = bundle.streams[0].samples[0].timing;
-    TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
-    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_MONOTONIC));
-    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(123456789));
-    TEST_CHECK(test, emitTimed(true, argus_sender::AVS1_TIMING_CLOCK_MONOTONIC, 0, &bundle));
-    record = bundle.streams[0].samples[0].timing;
-    TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_MONOTONIC));
-    TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(123456789));
 }
 
 int main()

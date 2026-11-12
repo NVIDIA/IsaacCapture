@@ -69,6 +69,8 @@ enum Avs1TimingFlags
 enum Avs1TimingClockDomain
 {
     AVS1_TIMING_CLOCK_NONE = 0,
+    // Reserved: an earlier layout stated the capture time on the sender's CLOCK_MONOTONIC. It is not supported, and a
+    // valid record in this domain is rejected.
     AVS1_TIMING_CLOCK_MONOTONIC = 1,
     AVS1_TIMING_CLOCK_REALTIME = 2
 };

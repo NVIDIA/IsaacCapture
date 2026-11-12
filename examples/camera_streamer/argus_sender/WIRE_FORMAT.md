@@ -116,20 +116,21 @@ descriptor still reports codec, dimensions, FPS, and camera count.
 
 When `TIMING_EXT` is set, `descriptor_bytes` also counts one 24-byte timing record per sample descriptor, stored
 after all sample descriptors in the same flattened order, before the payload area. It states the sensor's capture
-instant on the sender's `CLOCK_MONOTONIC`, which is the clock the sender answers clock-exchange requests on, and how
-far to trust it.
+instant on the sender's `CLOCK_REALTIME` and how far to trust it. The instant is the sensor's start of frame, not the
+exposure midpoint and not the time the frame was ready, encoded or sent.
 
 | Offset | Size | Field | Meaning |
 | ---: | ---: | --- | --- |
 | 0 | 8 | `sensor_capture_ns` | Sensor capture instant in the `clock_domain` clock, ns; zero unless `VALID` |
-| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_MONOTONIC` mapping: the anchor's read bracket plus 500 ppm of the time between the anchor and the sensor event |
+| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_REALTIME` mapping: the anchor's read bracket plus 500 ppm of the time between the anchor and the sensor event; it does not include how well another host's wall clock agrees |
 | 12 | 4 | `anchor_age_ns` | Age of the mapping's anchor when the frame was stamped |
 | 16 | 2 | `flags` | `0x0001` `VALID`: the capture time passed the sender's checks |
-| 18 | 2 | `clock_domain` | `1` = sender `CLOCK_MONOTONIC`, `2` = sender `CLOCK_REALTIME`; zero unless `VALID` |
+| 18 | 2 | `clock_domain` | `2` = sender `CLOCK_REALTIME`; `1` is reserved and unsupported; zero unless `VALID` |
 | 20 | 4 | `reserved` | Zero |
 
 With `VALID` clear every other field must be zero and the sample makes no capture-time claim; a receiver must not
-substitute another time for it. `VALID` requires `clock_domain` 1 or 2 and a nonzero `sensor_capture_ns`. A new
+substitute another time for it. `VALID` requires `clock_domain` 2 and a nonzero `sensor_capture_ns`; a record in any
+other domain, including the reserved `1`, is rejected. A new
 `session_id` invalidates every earlier mapping. Parsers reject a record count that does not match `descriptor_bytes`,
 unknown flags and nonzero reserved fields. A receiver that predates the flag rejects the bundle as an unknown bundle
 flag, so deploy the receiver before a sender that sets it.
@@ -142,7 +143,7 @@ Golden record (hex), one stream, one sample, a three-byte payload, `VALID` with 
 3ba26b2000000088000000030000000077359400000000010101000000000040000000300000001e0000000100000000
 00000005000000010000000000000000000300000000000000000000000000000000004d000000007604670000000000
 000000000000000000000000000000000000000000000000000000000000000000000003000000003b7c458000000bb8
-0ee6b2800001000100000000000001
+0ee6b2800001000200000000000001
 ```
 
 ## Sample descriptor
