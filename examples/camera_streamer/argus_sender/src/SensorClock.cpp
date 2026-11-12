@@ -24,11 +24,14 @@ int64_t monotonicNow()
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
-int64_t realtimeNow()
+// False when the clock cannot be read; the value is then meaningless.
+bool realtimeNow(int64_t* ns)
 {
     timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+        return false;
+    *ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+    return true;
 }
 
 int64_t readCounter()
@@ -52,7 +55,8 @@ bool readCounterPair(ClockPair* pair)
     {
         const int64_t before = monotonicNow();
         const int64_t source = readCounter();
-        const int64_t realtime = realtimeNow();
+        int64_t realtime = 0;
+        const bool realtimeOk = realtimeNow(&realtime);
         const int64_t after = monotonicNow();
         if (after - before < best.bracketNs)
         {
@@ -60,7 +64,8 @@ bool readCounterPair(ClockPair* pair)
             best.monotonicNs = before + (after - before) / 2;
             best.bracketNs = after - before;
             best.realtimeNs = realtime;
-            best.hasRealtime = true;
+            // A failed read leaves the pair without a realtime reading, so no realtime capture time is claimed.
+            best.hasRealtime = realtimeOk;
         }
     }
     *pair = best;
