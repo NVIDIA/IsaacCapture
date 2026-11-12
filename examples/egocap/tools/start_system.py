@@ -1,0 +1,396 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Starts the whole Ego Capture stack with one command and stops it together on Ctrl-C.
+
+    uv run python tools/start_system.py --orin user@orin --deploy-script PATH --bridge PATH --livekit-server PATH
+
+In order: deploy and start the Orin sender over ssh, a LiveKit server, CaptureServer, the backend (which owns the
+recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``--orin`` no sender is started, so
+only the PC side comes up. Each process is waited on until it is ready before the next one starts, and all of them
+are stopped, last started first, when this script exits for any reason.
+
+The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
+(or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``). The pure helpers sit above the
+supervisor so they can be tested without starting anything.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import hmac
+import json
+import os
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import webbrowser
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+EGOCAP_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = EGOCAP_ROOT.parents[1]
+LIVEKIT_DEV_KEY = "devkey"
+LIVEKIT_DEV_SECRET = "secret"
+CONTROL_TOKEN_MARKER = "Recording control token for this run:"
+
+
+class StartupError(Exception):
+    """A step failed in a way the operator should read as is."""
+
+
+def _b64(data: bytes) -> str:
+    """URL-safe base64 without padding, as JWT segments require."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def publisher_token(key: str, secret: str, room: str, identity: str, hours: int = 24) -> str:
+    """Sign a LiveKit join token that may publish and subscribe in one room.
+
+    Done here rather than with the LiveKit CLI so the launcher needs nothing installed beyond the server itself.
+    """
+    header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    now = int(time.time())
+    claims = {
+        "iss": key,
+        "sub": identity,
+        "name": identity,
+        "nbf": now,
+        "exp": now + hours * 3600,
+        "video": {
+            "room": room,
+            "roomJoin": True,
+            "canPublish": True,
+            "canSubscribe": True,
+            "canPublishData": True,
+        },
+    }
+    body = _b64(json.dumps(claims).encode())
+    signature = _b64(hmac.new(secret.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest())
+    return f"{header}.{body}.{signature}"
+
+
+def streams_yaml(url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int) -> str:
+    """The CaptureServer ``--livekit-streams`` file for one camera published by the bridge."""
+    return (
+        "livekit:\n"
+        f"  url: {url}\n"
+        f"  room: {room}\n"
+        f"  publisher: {publisher}\n"
+        "  timestamp_basis: monotonic_us\n"
+        "  streams:\n"
+        f"    - {{name: head, track: {track}, width: {width}, height: {height}, fps: {fps}}}\n"
+    )
+
+
+def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int) -> str:
+    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
+    return (
+        "version: 1\n"
+        "receiver:\n"
+        f"  host: {host}\n"
+        f"  port: {port}\n"
+        "  gpu_id: 0\n"
+        "  max_record_bytes: 268435456\n"
+        "  stats_log_interval_s: 2\n"
+        "ipc:\n"
+        f"  socket_path: {socket_path}\n"
+        "  owner_name: egocap_start_system\n"
+        "  queue_size: 1024\n"
+        "streams:\n"
+        "  - index: 0\n"
+        "    name: head\n"
+        "    type: mono\n"
+        f"    width: {width}\n"
+        f"    height: {height}\n"
+        "    output_format: nv12\n"
+        "    ring_depth: 6\n"
+        "    ipc:\n"
+        "      mono: head\n"
+    )
+
+
+def sender_yaml(port: int, fps: int, bitrate_mbps: int) -> str:
+    """The Orin sender's config: the SIPL head camera encoded as HEVC."""
+    return (
+        "version: 1\n"
+        "capture_backend: sipl\n"
+        "sipl:\n"
+        "  platform_config_json: /opt/isaaccapture/camera-platform.json\n"
+        "  platform_config_name: SHW5G_2\n"
+        "  link_masks: [256, 0]\n"
+        "  nito_dir: /var/nvidia/nvcam/settings/sipl\n"
+        "network:\n"
+        "  bind: 0.0.0.0\n"
+        f"  port: {port}\n"
+        "runtime:\n"
+        "  frames: 0\n"
+        "  kpi: true\n"
+        "  log_interval_s: 1\n"
+        "streams:\n"
+        "  - id: head\n"
+        "    type: mono\n"
+        "    cameras:\n"
+        "      - {device: 0, mode: 0}\n"
+        "    output:\n"
+        "      codec: hevc\n"
+        f"      fps: {fps}\n"
+        f"      bitrate_mbps: {bitrate_mbps}\n"
+    )
+
+
+def port_open(host: str, port: int) -> bool:
+    """Whether something accepts TCP connections at host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@dataclass
+class Managed:
+    """One child process and the log file its output goes to."""
+
+    name: str
+    process: subprocess.Popen
+    log: Path
+
+
+class Stack:
+    """Starts child processes one at a time and stops every one of them, last first, on exit."""
+
+    def __init__(self, workdir: Path) -> None:
+        """Keep each child's log under ``workdir`` so a failed step can point at the file to read."""
+        self.workdir = workdir
+        self.children: list[Managed] = []
+
+    def start(
+        self, name: str, command: Sequence[str], env: dict[str, str] | None = None, cwd: Path | None = None
+    ) -> Managed:
+        """Launch a child in its own process group so stopping it also stops anything it spawned."""
+        log = self.workdir / f"{name}.log"
+        handle = log.open("w")
+        process = subprocess.Popen(
+            list(command),
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, **(env or {})},
+            cwd=cwd,
+            start_new_session=True,
+        )
+        child = Managed(name, process, log)
+        self.children.append(child)
+        print(f"started {name} (pid {process.pid}); log {log}")
+        return child
+
+    def wait_until(self, child: Managed, ready, what: str, timeout_s: float) -> None:
+        """Block until ``ready()`` is true, failing early if the child exits first."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if child.process.poll() is not None:
+                raise StartupError(
+                    f"{child.name} exited with {child.process.returncode} before {what}; see {child.log}"
+                )
+            if ready():
+                print(f"{child.name}: {what}")
+                return
+            time.sleep(0.5)
+        raise StartupError(f"{child.name} was not ready ({what}) within {timeout_s:.0f} s; see {child.log}")
+
+    def stop_all(self) -> None:
+        """Interrupt every child, last started first, and kill any that ignore it."""
+        for child in reversed(self.children):
+            if child.process.poll() is None:
+                # SIGINT lets the receiver and sender drain and free the GPU and cameras.
+                os.killpg(child.process.pid, signal.SIGINT)
+        deadline = time.monotonic() + 15
+        for child in reversed(self.children):
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                child.process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.process.pid, signal.SIGKILL)
+
+
+def control_token(log: Path) -> str | None:
+    """The recording control token the backend prints at startup, once it has."""
+    for line in log.read_text(errors="replace").splitlines():
+        if CONTROL_TOKEN_MARKER in line:
+            return line.split(CONTROL_TOKEN_MARKER, 1)[1].strip()
+    return None
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """The command line; every external tool's path may also come from an environment variable."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--orin", help="user@host of the Jetson; omit to start only the PC side")
+    parser.add_argument(
+        "--deploy-script", default=os.environ.get("EGOCAP_DEPLOY_SCRIPT"), help="the sender's deploy_sender.py"
+    )
+    parser.add_argument(
+        "--livekit-server", default=os.environ.get("EGOCAP_LIVEKIT_SERVER"), help="livekit-server binary"
+    )
+    parser.add_argument("--bridge", default=os.environ.get("EGOCAP_BRIDGE"), help="camera_livekit_bridge binary")
+    parser.add_argument(
+        "--receiver",
+        default=os.environ.get(
+            "EGOCAP_RECEIVER",
+            f"python3 {REPO_ROOT / 'examples/camera_streamer/camera_receiver/camera_receiver.py'}",
+        ),
+        help="command that runs the camera receiver (takes --config FILE)",
+    )
+    parser.add_argument("--release", default="egocap-start", help="release name for the Orin deploy")
+    parser.add_argument("--skip-deploy", action="store_true", help="reuse the release named by --release")
+    parser.add_argument(
+        "--station-config", type=Path, default=EGOCAP_ROOT / "recording/egocap/stations/ego_stations.example.yaml"
+    )
+    parser.add_argument("--width", type=int, default=2560)
+    parser.add_argument("--height", type=int, default=1984)
+    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--bitrate-mbps", type=int, default=4, help="sender HEVC bitrate")
+    parser.add_argument("--backend-port", type=int, default=8010)
+    parser.add_argument("--seconds", type=int, default=3600, help="how long the Orin sender runs")
+    parser.add_argument("--open", action="store_true", help="open the page in a browser once it is up")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Bring the stack up in dependency order, print how to use it, then wait until interrupted."""
+    args = parse_args(argv)
+    orin_host = args.orin.rsplit("@", 1)[-1] if args.orin else None
+    room, publisher, track = "egocap-room", "egocap-bridge", "sensing-head"
+    livekit_url, sender_port = "ws://127.0.0.1:7880", 5000
+    workdir = Path(tempfile.mkdtemp(prefix="egocap-start-"))
+    ipc_socket = str(workdir / "camera_receiver.sock")
+    stack = Stack(workdir)
+    # Children must stop however this script ends, including an exception in the middle of startup.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    try:
+        # The deploy is checked first so a missing tool fails before anything is running.
+        if args.orin and not args.deploy_script:
+            raise StartupError("--orin needs --deploy-script (or EGOCAP_DEPLOY_SCRIPT)")
+        if args.orin and not (args.bridge and args.livekit_server):
+            raise StartupError("--orin needs --bridge and --livekit-server to carry the video to the page")
+        (workdir / "streams.yaml").write_text(
+            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, args.fps)
+        )
+        (workdir / "receiver.yaml").write_text(
+            receiver_yaml(orin_host or "127.0.0.1", sender_port, ipc_socket, args.width, args.height)
+        )
+        (workdir / "sender.yaml").write_text(sender_yaml(sender_port, args.fps, args.bitrate_mbps))
+        token_file = workdir / "publisher-token.txt"
+        token_file.write_text(publisher_token(LIVEKIT_DEV_KEY, LIVEKIT_DEV_SECRET, room, publisher))
+        token_file.chmod(0o600)
+        python = sys.executable
+        pythonpath = os.pathsep.join(
+            str(EGOCAP_ROOT / sub) for sub in ("backend", "recording", "capture_server", ".")
+        )
+
+        # 1. The Orin sender: deploy a release (never activating a service), then run it for a bounded time.
+        if args.orin:
+            deploy = [python, args.deploy_script, args.orin]
+            if not args.skip_deploy:
+                print("deploying the sender to", args.orin)
+                subprocess.run([*deploy, "deploy", "--with-sipl", "--name", args.release], check=True)
+            stack.start(
+                "sender",
+                [
+                    *deploy,
+                    "run",
+                    "--name",
+                    args.release,
+                    "--config",
+                    str(workdir / "sender.yaml"),
+                    "--seconds",
+                    str(args.seconds),
+                ],
+            )
+        # 2. LiveKit carries the video from the bridge to the browser and the recorder.
+        if args.livekit_server:
+            server = stack.start("livekit", [args.livekit_server, "--dev", "--bind", "127.0.0.1"])
+            stack.wait_until(server, lambda: port_open("127.0.0.1", 7880), "listening on 7880", 30)
+        # 3. CaptureServer announces the stream and serves tracking.
+        capture = stack.start(
+            "capture-server",
+            [python, "-m", "capture_server", "--mock", "--livekit-streams", str(workdir / "streams.yaml")],
+            env={"PYTHONPATH": pythonpath},
+            cwd=EGOCAP_ROOT,
+        )
+        stack.wait_until(capture, lambda: port_open("127.0.0.1", 8082), "listening on 8082", 60)
+        # 4. The backend serves the page and runs the recorder.
+        backend = stack.start(
+            "backend",
+            [
+                python,
+                "-m",
+                "uvicorn",
+                "egocap_web.app:app",
+                "--app-dir",
+                "backend",
+                "--port",
+                str(args.backend_port),
+            ],
+            env={
+                "PYTHONPATH": pythonpath,
+                "EGOCAP_STATION_CONFIG": str(args.station_config),
+                "LIVEKIT_API_KEY": LIVEKIT_DEV_KEY,
+                "LIVEKIT_API_SECRET": LIVEKIT_DEV_SECRET,
+            },
+            cwd=EGOCAP_ROOT,
+        )
+        stack.wait_until(
+            backend, lambda: port_open("127.0.0.1", args.backend_port), f"listening on {args.backend_port}", 60
+        )
+        # 5. The receiver decodes the sender's stream; the bridge republishes it into the LiveKit room.
+        if args.orin:
+            receiver = stack.start(
+                "receiver", [*shlex.split(args.receiver), "--config", str(workdir / "receiver.yaml")]
+            )
+            stack.wait_until(receiver, lambda: Path(ipc_socket).exists(), "IPC socket ready", 60)
+            stack.start(
+                "bridge",
+                [
+                    args.bridge,
+                    "--livekit-url",
+                    livekit_url,
+                    "--livekit-token-file",
+                    str(token_file),
+                    "--socket",
+                    ipc_socket,
+                    "--stream",
+                    f"head={track}:2",
+                    "--fps",
+                    str(args.fps),
+                ],
+            )
+        url = f"http://127.0.0.1:{args.backend_port}/"
+        token = control_token(backend.log)
+        print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
+        print("Ctrl-C stops everything.")
+        if args.open:
+            webbrowser.open(url)
+        # Stay up until a child dies or the operator interrupts.
+        while all(child.process.poll() is None for child in stack.children):
+            time.sleep(1)
+        dead = next(child for child in stack.children if child.process.poll() is not None)
+        raise StartupError(f"{dead.name} exited with {dead.process.returncode}; see {dead.log}")
+    except KeyboardInterrupt:
+        return 0
+    except (StartupError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        stack.stop_all()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -80,6 +80,19 @@ backend printed at startup — both are required before any recording command is
 [`frontend/README.md`](frontend/README.md) for the full station-file and environment-variable
 reference.
 
+## One command for the whole stack
+
+`tools/start_system.py` deploys the camera sender to the Orin, then starts LiveKit, CaptureServer, the backend
+(which owns the recorder), the camera receiver and the bridge, and stops them all on Ctrl-C:
+
+```bash
+uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH --open
+```
+
+It prints the page URL and the recording control token. Without `--orin` only the PC side starts, and
+`--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
+so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`).
+
 ## Real hardware
 
 CaptureServer's real mode needs its own Python bindings built in an
