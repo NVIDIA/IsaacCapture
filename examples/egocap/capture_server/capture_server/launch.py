@@ -125,6 +125,7 @@ def build_mock_source_factory(
     seed: int,
     ic_faults: set[str] | frozenset[str] = frozenset(),
     camera_faults: set[str] | frozenset[str] = frozenset(),
+    delays: dict[str, float] | None = None,
 ) -> SourceFactory:
     """The default ``CaptureServer`` source factory, wired to the two mock
     SDK files. ``ic_faults``/``camera_faults`` are captured here, once,
@@ -141,7 +142,11 @@ def build_mock_source_factory(
             begin,
             sdk=mock_isaac_capture,
             session_factory=partial(
-                mock_isaac_capture.TeleopSession, scenario=scenario, seed=seed, faults=set(ic_faults)
+                mock_isaac_capture.TeleopSession,
+                scenario=scenario,
+                seed=seed,
+                faults=set(ic_faults),
+                **(delays or {}),
             ),
         )
 
@@ -409,6 +414,7 @@ def build_source_factory(
     scenario: str = "demo",
     seed: int = 0,
     faults: frozenset[str] = frozenset(),
+    delays: dict[str, float] | None = None,
 ) -> SourceFactory:
     """Select the acquisition implementation once, from ``config.mock``.
 
@@ -422,5 +428,5 @@ def build_source_factory(
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown mock scenario {scenario!r}; choose one of {', '.join(SCENARIOS)}")
     return build_mock_source_factory(
-        scenario=scenario, seed=seed, ic_faults=set(faults), camera_faults=set(faults)
+        scenario=scenario, seed=seed, ic_faults=set(faults), camera_faults=set(faults), delays=delays
     )

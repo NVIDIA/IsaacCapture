@@ -126,6 +126,8 @@ def test_a_resolved_station_is_reported_with_its_cameras(monkeypatch, tmp_path):
         task_description="Fold the towel",
         data_dir=tmp_path / "data",
         cameras=(),
+        latency={},
+        alignment_index=None,
     )
     body = _client(_snapshot(station=station, station_path=Path("s.yaml"))).get("/api/settings").json()
     assert body["station"]["id"] == "station_01"

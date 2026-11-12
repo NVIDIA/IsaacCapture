@@ -186,7 +186,11 @@ async def test_the_sources_timing_evidence_is_given_to_the_service_once_before_s
     tmp_path, monkeypatch
 ):
     events: list[str] = []
-    first = {"clock_mapping": {"mappings": [1]}}
+    first = {"clock_mapping": {"mappings": [1]}, "event_time": {"cam16": {"qualified": True}}}
+    tracking = {
+        "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+        "manus_glove": {"meaning": "host_poll_time", "qualified": False},
+    }
     calls = spy_on_service(monkeypatch, events)
     coordinator = make_coordinator(tmp_path, EvidenceSource(events, [first, None]))
     await coordinator.open()
@@ -194,18 +198,24 @@ async def test_the_sources_timing_evidence_is_given_to_the_service_once_before_s
 
     one = await coordinator.start_episode()
     await coordinator.stop_episode(one.episode_id)
-    assert calls == [(one.episode_id, first)]
+    merged = {**first, "event_time": {**first["event_time"], **tracking}}
+    assert calls == [(one.episode_id, merged)]
     assert events.index("timing_evidence") < events.index("set_timing") < events.index("stop_episode")
 
     two = await coordinator.start_episode()
     await coordinator.stop_episode(two.episode_id)
-    assert calls == [(one.episode_id, first)]  # the second take's source had none; nothing carried over
+    # the second take's source had none: only its tracking times are recorded, nothing carried over
+    assert calls[1:] == [(two.episode_id, {"event_time": tracking})]
     await coordinator.close()
 
 
 async def test_a_discarded_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
     events: list[str] = []
     calls = spy_on_service(monkeypatch, events)
+    tracking = {
+        "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+        "manus_glove": {"meaning": "host_poll_time", "qualified": False},
+    }
     discarded = {"clock_mapping": {"mappings": ["discarded take"]}}
     coordinator = make_coordinator(tmp_path, EvidenceSource(events, [discarded, None]))
     await coordinator.open()
@@ -216,13 +226,18 @@ async def test_a_discarded_takes_evidence_does_not_describe_the_next_take(tmp_pa
     two = await coordinator.start_episode()
     await coordinator.stop_episode(two.episode_id)
 
-    assert calls == []  # the second take's source had none, and nothing was inherited from the discarded one
+    # the second take's source had none: only its tracking times are recorded, nothing inherited
+    assert calls == [(two.episode_id, {"event_time": tracking})]
     await coordinator.close()
 
 
 async def test_an_interrupted_takes_evidence_does_not_describe_the_next_take(tmp_path, monkeypatch):
     events: list[str] = []
     calls = spy_on_service(monkeypatch, events)
+    tracking = {
+        "pico_controller": {"meaning": "host_poll_time", "qualified": False},
+        "manus_glove": {"meaning": "host_poll_time", "qualified": False},
+    }
     interrupted = {"clock_mapping": {"mappings": ["interrupted take"]}}
     coordinator = make_coordinator(tmp_path, EvidenceSource(events, [interrupted, None]))
     await coordinator.open()
@@ -237,5 +252,5 @@ async def test_an_interrupted_takes_evidence_does_not_describe_the_next_take(tmp
     two = await coordinator.start_episode()
     await coordinator.stop_episode(two.episode_id)
 
-    assert calls == []
+    assert calls == [(two.episode_id, {"event_time": tracking})]
     await coordinator.close()

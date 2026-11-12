@@ -33,7 +33,7 @@ from capture_server import protocol as p
 from recording_service import PixelFormat, VideoSample
 
 from .livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
-from .recording_adapter import RecordingIngress
+from .recording_adapter import MANUS_GLOVE_SOURCE, PICO_CONTROLLER_SOURCE, RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
@@ -64,11 +64,36 @@ _DEFAULT_BUDGET_MS = 5.0
 
 # What each tracking source's saved time means today; none is a physical acquisition time.
 _TRACKING_SEMANTICS: dict[str, str] = {
-    "recorded_time": "the host's poll time for every tracking source",
+    "recorded_time": "the host's poll time for every tracking source, less a configured latency where one is set",
     "controllers": "device value is the pose-evaluation time (a predicted XrTime), not an acquisition time",
     "manus_gloves": "device value is host monotonic time at push; the SDK publishTime is not used",
     "physical_alignment": "unavailable: no tracking source carries a mapped device measurement time",
 }
+
+
+def sensor_capture_names(streams: Sequence[p.LiveKitCameraStream]) -> frozenset[str]:
+    """The names of the recordable streams whose time is the sensor's capture event, which alignment requires."""
+    return frozenset(s.name for s in streams if _RECORDABLE_BASES.get(s.timestamp_basis) == "sensor_capture")
+
+
+def tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any]]:
+    """What each tracking source's saved time is, and whether it is a qualified event time.
+
+    A source with a configured latency is saved as its host poll time minus that latency: an estimate, marked as
+    one with the latency used, never a measurement of the device. One without a latency is only the host poll
+    time and stays unqualified.
+    """
+    return {
+        name: {
+            "meaning": "host_poll_minus_latency",
+            "estimated": True,
+            "latency_s": latency[name],
+            "qualified": True,
+        }
+        if name in latency
+        else {"meaning": "host_poll_time", "qualified": False}
+        for name in (PICO_CONTROLLER_SOURCE, MANUS_GLOVE_SOURCE)
+    }
 
 
 def uncertainty_budget_ns() -> int:
@@ -283,6 +308,8 @@ class LiveKitRecordingFeed:
                 pixel_format=PixelFormat.RGB8,
                 capture_time=capture_time,
                 receive_time=receive_time,
+                # The mapping that placed this frame, read once here: a later refresh must not relabel it.
+                continuity=("clock_mapping", mapping.epoch),
             )
             if not self._ingress.offer(sample):
                 # The ingress refuses once it has failed or stopped; it reports its own reason.
@@ -507,8 +534,18 @@ class LiveKitRecordingSource:
                 "exchanges_rejected": clock_sync.rejected,
                 "mapping_current_at_stop": clock_sync.mapping() is not None,
             },
-            # Tracking samples carry the host's poll time for every source; device measurement times are unmapped.
-            "tracking_time": "host_poll",
+            # Per recorded source: what its saved time means and whether it is a qualified event time. A camera is
+            # qualified only when its time is the sensor's capture event; a frame-ready time is not.
+            "event_time": {
+                # A stream is recorded under its own name (see start()), which is the key readers look it up by.
+                **{
+                    s.name: {
+                        "meaning": _RECORDABLE_BASES[s.timestamp_basis],
+                        "qualified": _RECORDABLE_BASES[s.timestamp_basis] == "sensor_capture",
+                    }
+                    for s in self._streams
+                },
+            },
             "tracking_semantics": _TRACKING_SEMANTICS,
         }
 

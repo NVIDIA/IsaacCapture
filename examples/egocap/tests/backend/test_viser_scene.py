@@ -725,7 +725,7 @@ async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or
             events.append("scene stop")
             raise RuntimeError("scene refused to stop")
 
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     created = []
     monkeypatch.setattr(
@@ -738,10 +738,189 @@ async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or
     assert events == ["scene stop"] and created[0].stopped  # capture is still stopped
 
 
+_HEAD_VIDEO = "video_sources:\n  - type: oak_camera\n    name: head\n"
+_HEAD_ALIGNED = _HEAD_VIDEO + "alignment:\n  index_source: head\n"
+
+
+class _FakeAligner:
+    instances = []
+
+    def __init__(self, output_root, index_source):
+        self.output_root, self.index_source = output_root, index_source
+        self.submitted = []
+        self.cancelled = False
+        self.closed_with = None
+        _FakeAligner.instances.append(self)
+
+    def submit(self, result):
+        self.submitted.append(result)
+
+    def note_video_sources(self, recorded, qualified):
+        self.noted = (recorded, qualified)
+
+    async def run(self):
+        import asyncio
+
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+    async def close(self, task, timeout):
+        import asyncio
+
+        self.closed_with = timeout
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            _ = await task
+
+
+async def _lifespan_with_station(monkeypatch, tmp_path, station_yaml):
+    from egocap_web import app as app_module
+
+    config = tmp_path / "station.yaml"
+    config.write_text(station_yaml, encoding="utf-8")
+    monkeypatch.setenv("EGOCAP_STATION_CONFIG", str(config))
+    monkeypatch.setattr(app_module, "CaptureStatusMonitor", _FakeMonitor)
+    monkeypatch.setattr(app_module, "AutoAligner", _FakeAligner)
+    _FakeAligner.instances.clear()
+    return app_module
+
+
+async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it_at_shutdown(
+    monkeypatch, tmp_path
+):
+    import asyncio
+
+    app_module = await _lifespan_with_station(
+        monkeypatch,
+        tmp_path,
+        f"recording:\n  data_dir: {tmp_path}/rec\n" + _HEAD_ALIGNED,
+    )
+    app = app_module.FastAPI()
+    async with app_module.lifespan(app):
+        (aligner,) = _FakeAligner.instances
+        await asyncio.sleep(0)  # let the worker start so its cancellation is observable
+        assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
+        assert app.state.recording_context.coordinator.on_episode_kept == aligner.submit
+    assert aligner.cancelled and aligner.closed_with == app_module._ALIGNER_SHUTDOWN_SECONDS
+
+
+async def test_the_aligner_is_created_once_and_is_the_factorys_video_source_callback(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
+    )
+    factory_args = []
+    real_factory = app_module._recording_config_factory
+
+    def spy(*args, **kwargs):
+        factory_args.append(args)
+        return real_factory(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_recording_config_factory", spy)
+    async with app_module.lifespan(app_module.FastAPI()):
+        (aligner,) = _FakeAligner.instances
+        (args,) = factory_args
+        assert args[3] == aligner.note_video_sources
+
+
+async def test_no_video_source_callback_is_passed_without_an_index_camera(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(monkeypatch, tmp_path, "meta: {}\n")
+    factory_args = []
+    real_factory = app_module._recording_config_factory
+
+    def spy(*args, **kwargs):
+        factory_args.append(args)
+        return real_factory(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_recording_config_factory", spy)
+    async with app_module.lifespan(app_module.FastAPI()):
+        assert _FakeAligner.instances == [] and factory_args[0][3] is None
+
+
+async def test_the_kept_hook_is_the_aligner_and_the_result_hook_is_left_alone(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
+    )
+    previous_calls = []
+    real_context = app_module.RecordingContext
+
+    def context_with_previous(**kwargs):
+        context = real_context(**kwargs)
+        context.coordinator.on_episode_result = previous_calls.append
+        return context
+
+    monkeypatch.setattr(app_module, "RecordingContext", context_with_previous)
+    app = app_module.FastAPI()
+    async with app_module.lifespan(app):
+        (aligner,) = _FakeAligner.instances
+        coordinator = app.state.recording_context.coordinator
+        assert coordinator.on_episode_kept == aligner.submit
+        coordinator.on_episode_result("result")
+        assert previous_calls == ["result"] and aligner.submitted == []
+
+
+async def test_a_kept_result_emitted_while_the_recorder_closes_is_aligned_before_the_aligner_closes(
+    monkeypatch, tmp_path
+):
+    app_module = await _lifespan_with_station(
+        monkeypatch,
+        tmp_path,
+        _HEAD_ALIGNED,
+    )
+    from recording_service import Disposition, EpisodeResult
+
+    last = EpisodeResult(
+        session_id="s",
+        episode_id="e",
+        episode_index=0,
+        disposition=Disposition.KEPT,
+        final_path=tmp_path / "episode_0",
+        pending_path=None,
+        counts=(),
+        duration_seconds=1.0,
+        quality=None,
+    )
+    events = []
+    real_close = app_module.RecordingSessionCoordinator.close
+
+    async def close_after_a_last_result(self, *args, **kwargs):
+        self.on_episode_kept(last)
+        events.append("coordinator closed")
+        return await real_close(self, *args, **kwargs)
+
+    monkeypatch.setattr(app_module.RecordingSessionCoordinator, "close", close_after_a_last_result)
+    async with app_module.lifespan(app_module.FastAPI()):
+        (aligner,) = _FakeAligner.instances
+        original_close = aligner.close
+
+        async def recording_close(task, timeout):
+            events.append(f"aligner closed with {len(aligner.submitted)} result")
+            await original_close(task, timeout)
+
+        aligner.close = recording_close
+    assert events == ["coordinator closed", "aligner closed with 1 result"]
+
+
+async def test_the_lifespan_starts_no_aligner_when_alignment_is_off(monkeypatch, tmp_path):
+    app_module = await _lifespan_with_station(
+        monkeypatch,
+        tmp_path,
+        _HEAD_VIDEO + "alignment:\n  index_source: head\n  enabled: false\n",
+    )
+    async with app_module.lifespan(app_module.FastAPI()):
+        assert _FakeAligner.instances == []
+
+
 async def test_invalid_3d_view_settings_leave_it_unavailable_and_capture_running(monkeypatch):
     monkeypatch.setenv("EGOCAP_VISER_ENABLED", "1")
     monkeypatch.setenv("EGOCAP_VISER_PORT", "not-a-number")
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     monkeypatch.setattr(app_module, "CaptureStatusMonitor", _FakeMonitor)
     app = app_module.FastAPI()
@@ -811,7 +990,7 @@ async def test_malformed_settings_are_ignored_while_the_3d_view_is_off(monkeypat
     monkeypatch.setenv("EGOCAP_VISER_ENABLED", "0")
     monkeypatch.setenv("EGOCAP_VISER_PORT", "")
     monkeypatch.setenv("EGOCAP_VISER_HEAD_MODEL_SCALE", "wide")
-    import egocap_web.app as app_module
+    from egocap_web import app as app_module
 
     monkeypatch.setattr(app_module, "CaptureStatusMonitor", _FakeMonitor)
     app = app_module.FastAPI()

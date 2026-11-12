@@ -72,3 +72,17 @@ Run all three test suites per "Run the tests yourself" above — check each pack
 - Bound mutation request streams before JSON parsing, even when Content-Length is absent or false; return only deliberate public error messages.
 - Dialogs must move, contain and restore focus as well as suppress recording shortcuts.
 - Concurrent coverage runs must use separate `COVERAGE_FILE` paths so one suite cannot overwrite another suite’s measurements.
+## Derived output never touches the raw recording
+
+An aligned or otherwise derived copy of a recording must live in its own tree and read the raw session
+read-only. Check that the output path is not the raw session, inside it or containing it (resolving links)
+before any file is written. An existing derived episode is refused, never replaced.
+
+## A recording's location and declarations are frozen with it
+
+- A recording-service session's path is fixed by its manifests and ownership stamps: never relocate one. Change
+  its studio metadata in place; legacy sessions without those marks may still move.
+- A reopened session keeps the source declarations it froze. Refuse a changed one with a clear error rather than
+  rewriting `config.yaml`, and never record into a session that has none.
+- Work that must survive a cancelled caller (notifying the aligner of a kept episode, for one) runs inside the
+  owned operation task, not after the awaited result.

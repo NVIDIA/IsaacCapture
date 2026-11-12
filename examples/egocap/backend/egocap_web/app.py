@@ -8,12 +8,14 @@ built React app.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -32,13 +34,19 @@ from recording_service import (
     VideoSourceSpec,
 )
 
+from .auto_align import AutoAligner
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
-from .livekit_recording import LiveKitRecordingSource, recordable_livekit_streams, unrecordable_reason
+from .livekit_recording import (
+    LiveKitRecordingSource,
+    recordable_livekit_streams,
+    sensor_capture_names,
+    unrecordable_reason,
+)
 from .operator_settings import OperatorSettingsStore, operator_settings_path
 from .operator_settings import router as operator_settings_router
 from .preview_routes import router as preview_router
@@ -91,6 +99,8 @@ _RECORDING_QUEUE_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
 # LiveKit stream's decoded frame when that is larger.
 _INGRESS_QUEUE_BYTES = 64 * 1024 * 1024
 _INGRESS_QUEUE_CAPACITY = 4096
+#: How long shutdown waits for queued time alignments before leaving them for the next start.
+_ALIGNER_SHUTDOWN_SECONDS = 30.0
 # LiveKit frames are decoded RGB (megabytes each, ~15 MB at 2560x1984), so
 # the JPEG allowance above holds only a few and a short consumer stall would
 # fail the take. Each recordable stream therefore adds this many of its own
@@ -159,7 +169,12 @@ def _recorder_livekit_token(room: str) -> str:
     return subscriber_token(api_key=api_key, signing_key=signing_key, room=room, now=int(time.time()))
 
 
-def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str | None, output_root: Path):
+def _recording_config_factory(
+    monitor: CaptureStatusMonitor,
+    station_label: str | None,
+    output_root: Path,
+    on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
+):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
     -- so it reflects whichever cameras CaptureServer has ACTUALLY accepted
@@ -181,6 +196,13 @@ def _recording_config_factory(monitor: CaptureStatusMonitor, station_label: str 
             VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
             for s in recordable_livekit_streams(monitor.native.started)
         )
+        if on_video_sources is not None:
+            # Tells the aligner, once per session open, which cameras this session records and which of them
+            # have a sensor capture time (only LiveKit streams stamped that way do).
+            on_video_sources(
+                frozenset(v.name for v in video_sources),
+                sensor_capture_names(recordable_livekit_streams(monitor.native.started)),
+            )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
         # are required for a KEPT result. manus_glove is NOT required:
@@ -393,15 +415,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
     livekit_source = LiveKitRecordingSource(
-        lambda: recordable_livekit_streams(monitor.native.started), _recorder_livekit_token
+        lambda: recordable_livekit_streams(monitor.native.started),
+        _recorder_livekit_token,
+    )
+    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner = (
+        AutoAligner(recording_output_root, resolved_station.alignment_index)
+        if resolved_station is not None and resolved_station.alignment_index is not None
+        else None
     )
     coordinator = RecordingSessionCoordinator(
-        _recording_config_factory(monitor, config.station_label, recording_output_root),
+        _recording_config_factory(
+            monitor,
+            config.station_label,
+            recording_output_root,
+            aligner.note_video_sources if aligner is not None else None,
+        ),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
         readiness_check=_recording_readiness_check(monitor, station_config_error, config.capture_server_url),
         initial_context=initial_context,
         livekit_source=livekit_source,
+        tracking_latency=resolved_station.latency if resolved_station is not None else None,
     )
     monitor.set_recording(coordinator)
     await monitor.start()
@@ -435,6 +470,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         visualization_error=visualization_error,
         task_file_root=task_file_root,
     )
+    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner_task: asyncio.Task[None] | None = None
+    if aligner is not None:
+        coordinator.on_episode_kept = aligner.submit
+        aligner_task = asyncio.create_task(aligner.run())
     visualization: VisualizationScene | None = None
     try:
         visualization = _optional_visualization(monitor, visualization_config, visualization_error)
@@ -451,6 +491,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # retire any in-flight take cleanly. An unreleased close is
             # surfaced, not silently discarded.
             close_result = await coordinator.close(final=True)
+            if aligner is not None and aligner_task is not None:
+                # After the recorder closed, so its last kept episode is queued; bounded so shutdown is too.
+                await aligner.close(aligner_task, _ALIGNER_SHUTDOWN_SECONDS)
             if not close_result.released:
                 logger.error("recording coordinator did not fully release on shutdown: %s", close_result.issues)
             await monitor.stop()

@@ -47,10 +47,15 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class NumericSourceSpec:
-    """A numeric source (pose tracker, glove, ...) and the fields recorded per row."""
+    """A numeric source (pose tracker, glove, ...) and the fields recorded per row.
+
+    ``frame_type`` names the frame definition that says how each field is resampled when the episode is time
+    aligned (see ``alignment.FRAME_FIELD_RULES``); None leaves the session's default numeric frame type.
+    """
 
     name: str
     fields: tuple[FieldSpec, ...]
+    frame_type: str | None = None
 
 
 @dataclass(frozen=True)

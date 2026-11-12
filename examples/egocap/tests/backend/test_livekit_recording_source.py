@@ -424,8 +424,8 @@ def clock_sync_with(history, *, discontinuity=False, rejected=0, current=True, t
     )
 
 
-async def prepared_source(streams):
-    source = make_source(streams)
+async def prepared_source(streams, **kwargs):
+    source = make_source(streams, **kwargs)
     await prepare_with_frames(source, streams)
     return source, FakeReceiver.instances[0]
 
@@ -479,10 +479,49 @@ async def test_timing_evidence_describes_the_mappings_the_take_was_placed_under(
             "exchanges_rejected": 4,
             "mapping_current_at_stop": False,
         },
-        "tracking_time": "host_poll",
+        "event_time": {
+            "cam16": {"meaning": "sensor_capture", "qualified": True},
+            "cam17": {"meaning": "frame_ready", "qualified": False},
+        },
         "tracking_semantics": lrec._TRACKING_SEMANTICS,
     }
     assert json.loads(json.dumps(evidence)) == evidence
+
+
+async def test_event_time_is_keyed_by_recorded_source_and_qualifies_only_sensor_capture(monkeypatch):
+    streams = [livekit_stream(16), livekit_stream(17, basis=MONO)]
+    source, receiver = await prepared_source(streams)
+    receiver.clock_sync = clock_sync_with(history_of(1))
+    event_time = source.timing_evidence()["event_time"]
+    # Recorded sources are named after their streams; the key is that source name, never a stream id.
+    assert {k: v["qualified"] for k, v in event_time.items()} == {
+        "cam16": True,
+        "cam17": False,
+    }
+    assert event_time["cam16"]["meaning"] == "sensor_capture" and event_time["cam17"]["meaning"] == "frame_ready"
+    assert 16 not in event_time and 17 not in event_time
+
+
+def test_a_tracking_latency_makes_that_source_a_marked_estimate_and_others_stay_unqualified():
+    event_time = lrec.tracking_event_time({"pico_controller": 0.02})
+    assert event_time["pico_controller"] == {
+        "meaning": "host_poll_minus_latency",
+        "estimated": True,
+        "latency_s": 0.02,
+        "qualified": True,
+    }
+    assert event_time["manus_glove"] == {"meaning": "host_poll_time", "qualified": False}
+
+
+def test_a_zero_latency_is_still_a_qualified_estimate():
+    assert lrec.tracking_event_time({"manus_glove": 0.0})["manus_glove"]["latency_s"] == 0.0
+    assert lrec.tracking_event_time({"manus_glove": 0.0})["manus_glove"]["qualified"] is True
+
+
+async def test_the_sources_timing_evidence_lists_only_its_cameras_not_tracking():
+    source, receiver = await prepared_source([livekit_stream(16)])
+    receiver.clock_sync = clock_sync_with(history_of(1))
+    assert set(source.timing_evidence()["event_time"]) == {"cam16"}
 
 
 async def test_timing_evidence_records_the_configured_uncertainty_budget(monkeypatch):

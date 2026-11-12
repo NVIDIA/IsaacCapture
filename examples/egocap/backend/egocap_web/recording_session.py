@@ -59,9 +59,11 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from capture_server.client import CameraImage, CaptureFrame
-from egocap_web.recording_adapter import RecordingIngress, validate_tracking_descriptor
+from egocap_web.livekit_recording import tracking_event_time
+from egocap_web.recording_adapter import RecordingIngress, convert_raw_item, validate_tracking_descriptor
 from recording_service import (
     CloseResult,
+    Disposition,
     EpisodeInfo,
     EpisodeResult,
     PendingEpisode,
@@ -187,11 +189,14 @@ class RecordingSessionCoordinator:
         readiness_check: ReadinessCheck,
         initial_context: TaskContext | None = None,
         livekit_source: LiveKitRecordingSource | None = None,
+        tracking_latency: dict[str, float] | None = None,
     ) -> None:
         self._config_factory = config_factory
         # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
         # before the ingress is retired.
         self._livekit_source = livekit_source
+        # The station's estimated delay per tracking source, applied to every take's tracking times.
+        self._tracking_latency = dict(tracking_latency or {})
         #: The clock-mapping evidence of the take in progress, gathered when its video source stops.
         self._timing_evidence: dict[str, Any] | None = None
         self._queue_capacity = queue_capacity
@@ -240,6 +245,8 @@ class RecordingSessionCoordinator:
         # methods. None (the default) means no one is listening yet.
         self.on_episode_started: Callable[[], None] | None = None
         self.on_episode_result: Callable[[EpisodeResult], None] | None = None
+        #: Called with each episode finalized as kept, including one recovered after an interruption.
+        self.on_episode_kept: Callable[[EpisodeResult], None] | None = None
         self.on_batch_rotated: Callable[[], None] | None = None
 
     @property
@@ -472,6 +479,7 @@ class RecordingSessionCoordinator:
             queue_bytes=self._queue_bytes() if callable(self._queue_bytes) else self._queue_bytes,
             submit=partial(service.submit_sample, episode_id),
             on_failure=lambda message: self._schedule_failure_settlement(service, episode_id, message),
+            convert=partial(convert_raw_item, latency=self._tracking_latency),
         )
         await ingress.start()
         self._current_ingress = ingress
@@ -555,6 +563,12 @@ class RecordingSessionCoordinator:
         coordinator's own retained operation task."""
         if self.on_episode_result is not None:
             self.on_episode_result(result)
+        self._emit_kept(result)
+
+    def _emit_kept(self, result: EpisodeResult) -> None:
+        """Tell ``on_episode_kept`` about an episode that was kept."""
+        if result.disposition is Disposition.KEPT and self.on_episode_kept is not None:
+            self.on_episode_kept(result)
 
     async def stop_episode(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()
@@ -646,11 +660,15 @@ class RecordingSessionCoordinator:
         ingress = self._current_ingress
         if ingress is None:
             return _IngressRetirement(settled=True, failure=None)
+        # What the tracking times are, whatever media the take has: the same latency its conversion applied.
+        evidence: dict[str, Any] = {"event_time": tracking_event_time(self._tracking_latency)}
         if self._livekit_source is not None:
-            # Read before the room is left: the clock mappings the take was recorded under.
-            evidence = self._livekit_source.timing_evidence()
-            if evidence is not None:
-                self._timing_evidence = evidence
+            # Read before the room is left: the clock mappings the take was recorded under, merged with the above.
+            media = self._livekit_source.timing_evidence()
+            if media is not None:
+                evidence = {**media, "event_time": {**media.get("event_time", {}), **evidence["event_time"]}}
+        self._timing_evidence = evidence
+        if self._livekit_source is not None:
             # The producer stops first, so nothing is offered to an ingress that is draining.
             await self._livekit_source.stop()
         settled = await ingress.stop()
@@ -674,7 +692,15 @@ class RecordingSessionCoordinator:
 
     async def recover_episode(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()
-        return await self._run_operation(OperationKind.RECOVERING, partial(service.recover_episode, episode_id))
+        return await self._run_operation(
+            OperationKind.RECOVERING, partial(self._recover_episode_impl, service, episode_id)
+        )
+
+    async def _recover_episode_impl(self, service: _RecordingService, episode_id: str) -> EpisodeResult:
+        """Recover inside the owned operation, so a cancelled caller cannot skip the kept notification."""
+        result = await service.recover_episode(episode_id)
+        self._emit_kept(result)
+        return result
 
     async def discard_pending(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()

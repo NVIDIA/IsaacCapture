@@ -2036,6 +2036,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=_MOCK_DEFAULTS["seed"], help="mock only")
     parser.add_argument("--scenario", default=_MOCK_DEFAULTS["scenario"], help="mock only")
     parser.add_argument("--connect-delay", type=float, default=_MOCK_DEFAULTS["connect_delay"], help="mock only")
+    for flag, help_text in (
+        ("controller-delay-ms", "controller content is this old at the poll"),
+        ("glove-delay-ms", "glove content is this old at the poll"),
+        ("delay-jitter-ms", "seeded +/- jitter on both delays"),
+    ):
+        parser.add_argument(f"--{flag}", type=float, default=0.0, help=f"mock only: synthetic delay, {help_text}")
     parser.add_argument(
         "--fault",
         action="append",
@@ -2124,7 +2130,14 @@ def _station_cameras(args: argparse.Namespace) -> dict[str, StationCamera] | Non
 
 
 # Defaults of the mock-only CLI options; any other value with real acquisition is an error.
-_MOCK_DEFAULTS = {"seed": 0, "scenario": "demo", "connect_delay": 0.0}
+_MOCK_DEFAULTS = {
+    "seed": 0,
+    "scenario": "demo",
+    "connect_delay": 0.0,
+    "controller_delay_ms": 0.0,
+    "glove_delay_ms": 0.0,
+    "delay_jitter_ms": 0.0,
+}
 
 
 def _mock_only_options_used(args: argparse.Namespace) -> list[str]:
@@ -2245,7 +2258,15 @@ async def _run_cli(args: argparse.Namespace) -> int:
             )
             # The one place the implementation is chosen, before any session is accepted.
             source_factory = build_source_factory(
-                config, scenario=args.scenario, seed=args.seed, faults=frozenset(args.fault)
+                config,
+                scenario=args.scenario,
+                seed=args.seed,
+                faults=frozenset(args.fault),
+                delays={
+                    "controller_delay_s": args.controller_delay_ms / 1000,
+                    "glove_delay_s": args.glove_delay_ms / 1000,
+                    "delay_jitter_s": args.delay_jitter_ms / 1000,
+                },
             )
         if args.livekit_streams is not None:
             from .livekit_streams import load_livekit_streams
