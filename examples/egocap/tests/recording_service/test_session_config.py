@@ -317,9 +317,27 @@ async def test_a_session_without_a_config_yaml_reopens_but_cannot_start_a_take(t
     assert not list(session.session_path.glob("episode_*"))
 
 
-@pytest.mark.parametrize("text", ["numeric_sources: [1]\n", "[1, 2]\n"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "numeric_sources: [1]\n",
+        "[1, 2]\n",
+        "",
+        "recording: {}\n",
+        "numeric_sources: [{name: tracker}, {name: tracker}]\n",
+    ],
+)
 async def test_a_malformed_config_yaml_refuses_reopen_clearly(tmp_path, own, text):
     config, session = await _frozen_session(tmp_path, own)
     (session.session_path / "config.yaml").write_text(text)
     with pytest.raises(ConfigurationError, match="no readable source declarations"):
+        await own(RecordingService(config)).open_session(session.session_id)
+
+
+async def test_reopening_with_a_source_the_frozen_config_does_not_declare_is_refused(tmp_path, own):
+    config, session = await _frozen_session(tmp_path, own)
+    (session.session_path / "config.yaml").write_text(
+        "numeric_sources: [{name: tracker, frame_type: PicoTrackingFrame}]\n"
+    )
+    with pytest.raises(ConfigurationError, match="'plain' is not declared"):
         await own(RecordingService(config)).open_session(session.session_id)

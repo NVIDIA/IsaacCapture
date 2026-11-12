@@ -732,14 +732,20 @@ class RecordingService:
         if not path.is_file():
             return
         try:
-            frozen = yaml.safe_load(path.read_text()) or {}
-            default = frozen.get("recording", {}).get("numeric_frame_type", _DEFAULT_NUMERIC_FRAME_TYPE)
-            declared = {e["name"]: e.get("frame_type", default) for e in frozen.get("numeric_sources", [])}
-        except (OSError, yaml.YAMLError, AttributeError, KeyError, TypeError) as exc:
+            frozen = yaml.safe_load(path.read_text())
+            default = (frozen.get("recording") or {}).get("numeric_frame_type", _DEFAULT_NUMERIC_FRAME_TYPE)
+            entries = frozen["numeric_sources"]
+            names = [e["name"] for e in entries]
+            if len(set(names)) != len(names):
+                raise ValueError("a source is declared twice")
+            declared = {e["name"]: e.get("frame_type", default) for e in entries}
+        except (OSError, yaml.YAMLError, AttributeError, KeyError, TypeError, ValueError) as exc:
             raise ConfigurationError(f"{path} has no readable source declarations: {exc}") from exc
         for spec in self._config.numeric_sources:
-            requested = spec.frame_type or _DEFAULT_NUMERIC_FRAME_TYPE
-            if spec.name in declared and declared[spec.name] != requested:
+            if spec.name not in declared:
+                raise ConfigurationError(f"source {spec.name!r} is not declared in {path}; open a new session")
+            requested = _DEFAULT_NUMERIC_FRAME_TYPE if spec.frame_type is None else spec.frame_type
+            if declared[spec.name] != requested:
                 raise ConfigurationError(
                     f"source {spec.name!r} was frozen with frame type {declared[spec.name]!r} but is now "
                     f"{requested!r}; open a new session to record with the new frame type"

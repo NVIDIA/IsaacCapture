@@ -697,7 +697,7 @@ class RecordingSessionCoordinator:
         )
 
     async def _recover_episode_impl(self, service: _RecordingService, episode_id: str) -> EpisodeResult:
-        # Runs in the owned operation task, so a caller cancelled mid-recovery cannot skip the notification.
+        """Recover inside the owned operation, so a cancelled caller cannot skip the kept notification."""
         result = await service.recover_episode(episode_id)
         self._emit_kept(result)
         return result
