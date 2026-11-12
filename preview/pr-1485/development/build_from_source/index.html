@@ -796,7 +796,7 @@ was built for (<code class="docutils literal notranslate"><span class="pre">ISAA
 environment with that version. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04 with
 <code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span> <span class="pre">found</span></code>.
 From the repository root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip commands below.</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip, so plain pip also works in this venv.</span>
 uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </pre></div>
@@ -1056,7 +1056,7 @@ build tree, so C++ changes need a <code class="docutils literal notranslate"><sp
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>
