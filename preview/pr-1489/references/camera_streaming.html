@@ -869,8 +869,9 @@ pick the one that offers the configured resolution and frame rate:</p>
 v4l2-ctl<span class="w"> </span>--device<span class="o">=</span>/dev/videoN<span class="w"> </span>--list-formats-ext<span class="w">   </span><span class="c1"># repeat for each node of the camera</span>
 </pre></div>
 </div>
-<p>A node without that mode fails to open, and the viewer logs
-<code class="docutils literal notranslate"><span class="pre">requested</span> <span class="pre">1920x1080,</span> <span class="pre">got</span> <span class="pre">1280x720</span></code> (or similar) every few seconds with <code class="docutils literal notranslate"><span class="pre">0.0</span> <span class="pre">submit/s</span></code>.</p>
+<p>A node without that resolution fails to open, and the viewer logs
+<code class="docutils literal notranslate"><span class="pre">requested</span> <span class="pre">1920x1080,</span> <span class="pre">got</span> <span class="pre">1280x720</span></code> (or similar) every few seconds with <code class="docutils literal notranslate"><span class="pre">0.0</span> <span class="pre">submit/s</span></code>.
+The viewer does not check the frame rate, so confirm it in the <code class="docutils literal notranslate"><span class="pre">--list-formats-ext</span></code> output.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml<span class="w">     </span><span class="c1"># or oakd.yaml / zed.yaml / argus_shw5g.yaml</span>
 </pre></div>
 </div>
@@ -1639,7 +1640,7 @@ the <a class="reference internal" href="retargeting/index.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>
