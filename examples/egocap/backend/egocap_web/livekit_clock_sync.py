@@ -83,7 +83,7 @@ class ClockSyncClient:
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                _ = await task
         self._room.off("data_received", self._on_data)
 
     def mapping(self) -> ClockMapping | None:

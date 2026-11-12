@@ -99,6 +99,9 @@ class ClockEstimator:
         self._newest_ns: int | None = None
         #: Every mapping adopted, oldest first, so a take can record the epochs and quality it was made under.
         self.history: list[ClockMapping] = []  # trimmed to the newest _MAX_HISTORY
+        #: Distinct mappings (by epoch and accepted_at_ns) trimmed off the front of ``history``; a mapping that is
+        #: re-reported with a growing age allowance counts once.
+        self.trimmed_mappings = 0
         #: Set, and left set, when a new best mapping disagrees with the last by more than their uncertainties and
         #: the allowed drift explain: mappings before it stay as they were, and a take spanning it is not aligned.
         self.discontinuity = False
@@ -137,8 +140,16 @@ class ClockEstimator:
         if candidate != previous:
             self._current = candidate
             self.history.append(candidate)
-            del self.history[:-_MAX_HISTORY]
+            self._trim_history()
         return None
+
+    def _trim_history(self) -> None:
+        dropped = self.history[:-_MAX_HISTORY]
+        if not dropped:
+            return
+        kept = {(m.epoch, m.accepted_at_ns) for m in self.history[-_MAX_HISTORY:]}
+        self.trimmed_mappings += len({(m.epoch, m.accepted_at_ns) for m in dropped} - kept)
+        del self.history[:-_MAX_HISTORY]
 
     def mapping(self, now_ns: int) -> ClockMapping | None:
         """The current mapping, or None when there is none yet or no exchange arrived within the stale limit.

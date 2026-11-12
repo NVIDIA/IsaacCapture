@@ -263,7 +263,7 @@ async def test_a_mapping_that_arrives_late_still_lets_the_take_start():
     await asyncio.sleep(0.1)
     assert not task.done()
     FakeReceiver.instances[0].clock_sync.ready = True
-    await task
+    _ = await task
     await source.stop()
 
 
@@ -415,9 +415,9 @@ def history_of(count: int) -> list[ClockMapping]:
     ]
 
 
-def clock_sync_with(history, *, discontinuity=False, rejected=0, current=True):
+def clock_sync_with(history, *, discontinuity=False, rejected=0, current=True, trimmed=0):
     return SimpleNamespace(
-        estimator=SimpleNamespace(history=history),
+        estimator=SimpleNamespace(history=history, trimmed_mappings=trimmed),
         discontinuity=discontinuity,
         rejected=rejected,
         mapping=lambda: history[-1] if current else None,
@@ -504,6 +504,13 @@ async def test_timing_evidence_carries_only_the_newest_mappings():
         m.accepted_at_ns for m in history[-lrec._MAX_EVIDENCE_MAPPINGS :]
     ]
     assert clock_mapping["mappings_omitted_oldest"] == 36
+
+
+async def test_timing_evidence_counts_mappings_the_estimator_already_trimmed():
+    source, receiver = await prepared_source([livekit_stream(16)])
+    receiver.clock_sync = clock_sync_with(history_of(lrec._MAX_EVIDENCE_MAPPINGS + 4), trimmed=10)
+
+    assert source.timing_evidence()["clock_mapping"]["mappings_omitted_oldest"] == 14
 
 
 async def test_an_exchange_reported_again_with_more_uncertainty_is_listed_once_as_first_reported():

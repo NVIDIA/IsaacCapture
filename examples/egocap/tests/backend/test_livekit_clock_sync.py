@@ -182,7 +182,7 @@ def receiver(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> lr.LiveKitFra
         "rtc",
         SimpleNamespace(
             Room=FakeRoom,
-            RoomOptions=lambda **f: SimpleNamespace(**f),
+            RoomOptions=SimpleNamespace,
             TrackKind=SimpleNamespace(KIND_VIDEO="video"),
         ),
     )

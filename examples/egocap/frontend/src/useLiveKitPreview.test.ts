@@ -415,4 +415,44 @@ describe("useLiveKitPreview", () => {
     await flush();
     expect(room.disconnect).toHaveBeenCalled();
   });
+
+  it("keeps the retried connection when an abandoned attempt's connect finishes later", async () => {
+    stubFetch(ok());
+    let release!: () => void;
+    FakeRoom.connectGate = new Promise<void>((r) => (release = r));
+    const { result } = await mounted();
+    const stale = FakeRoom.instances[0];
+    // Disconnected arrives while the first connect is still pending, so a retry starts and connects first.
+    act(() => stale.emit("Disconnected"));
+    FakeRoom.connectGate = null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
+    });
+    const current = FakeRoom.instances[1];
+    expect(result.current.phase).toBe("connected");
+    expect(syncs).toHaveLength(1);
+
+    release();
+    await flush();
+    expect(stale.disconnect).toHaveBeenCalled();
+    expect(current.disconnect).not.toHaveBeenCalled();
+    expect(syncs).toHaveLength(1);
+    expect(syncs[0].stop).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("connected");
+    expect(result.current.clock).toBe(syncs[0]);
+  });
+
+  it("ignores a late Disconnected from an abandoned room", async () => {
+    stubFetch(ok());
+    const { result } = await mounted();
+    const first = FakeRoom.instances[0];
+    act(() => first.emit("Disconnected"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
+    });
+    expect(result.current.phase).toBe("connected");
+    act(() => first.emit("Disconnected"));
+    expect(result.current.phase).toBe("connected");
+    expect(syncs[1].stop).not.toHaveBeenCalled();
+  });
 });

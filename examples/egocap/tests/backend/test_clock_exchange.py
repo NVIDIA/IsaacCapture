@@ -363,6 +363,7 @@ def test_history_keeps_only_the_newest_mappings_however_many_are_adopted() -> No
 
     assert len(estimator.history) == _MAX_HISTORY
     assert [m.accepted_at_ns for m in estimator.history] == [e.t4 for e in exchanges[-_MAX_HISTORY:]]
+    assert estimator.trimmed_mappings == total - _MAX_HISTORY
 
 
 def test_mapping_uncertainty_ages_between_exchanges_without_growing_history() -> None:

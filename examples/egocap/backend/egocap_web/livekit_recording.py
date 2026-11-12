@@ -501,7 +501,7 @@ class LiveKitRecordingSource:
                     for m in mappings
                 ],
                 # A long take keeps only the newest mappings; this counts the older ones left out.
-                "mappings_omitted_oldest": len(ordered) - len(mappings),
+                "mappings_omitted_oldest": clock_sync.estimator.trimmed_mappings + len(ordered) - len(mappings),
                 "uncertainty_budget_ns": self._budget_ns,
                 "discontinuity": clock_sync.discontinuity,
                 "exchanges_rejected": clock_sync.rejected,
