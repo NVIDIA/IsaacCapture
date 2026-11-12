@@ -95,7 +95,7 @@ cameras); `--mock` switches to synthetic tracking and cameras. Without `--orin` 
 so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
 address, because the bridge measures the sender's clock at that address.
 
-The sender settings come from the checked-in profile `configs/sender-shw5g-sipl-head.yaml` (30 fps, 4 Mbit/s HEVC,
+The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC,
 timing extension and clock responder on). Pass another file with `--sender-config`, or override single values with
 `--fps`, `--bitrate-mbps`, `--clock-port` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
 built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which

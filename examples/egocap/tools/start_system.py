@@ -11,7 +11,7 @@ the recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``-
 only the PC side comes up. Each process is waited on until it is ready before the next one starts, and all of
 them are stopped, last started first, when this script exits for any reason.
 
-The sender settings come from the checked-in profile ``configs/sender-shw5g-sipl-head.yaml`` (see
+The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
 CAMERA_SETTINGS.md). The session is real and cameras-only unless ``--mock`` is given.
 
 The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
@@ -47,7 +47,7 @@ REPO_ROOT = EGOCAP_ROOT.parents[1]
 LIVEKIT_DEV_KEY = "devkey"
 LIVEKIT_DEV_SECRET = "secret"
 CONTROL_TOKEN_MARKER = "Recording control token for this run:"
-DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/sender-shw5g-sipl-head.yaml"
+DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
 DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.camera_only.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
 TIMESTAMP_BASIS = "capture_monotonic_us"

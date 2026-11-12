@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Default sender profile: one SHW5G head camera through the SIPL backend, HEVC over AVS1/TCP, with the sensor
-# timing extension and the UDP clock responder on. CAMERA_SETTINGS.md describes every key.
+# Default camera settings the launcher uploads to the sender. This file is specific to one rig: a single SHW5G head
+# camera on the SIPL backend, HEVC over AVS1/TCP, with the sensor timing extension and the UDP clock responder on.
+# CAMERA_SETTINGS.md describes every key.
 #
-# The platform file, config name, link masks and tuning directory describe the tested head-camera setup; edit them
-# for another installation. Sensor size and rate come from the platform file, so no dimensions are set here.
+# Another rig needs its own file (pass it with --sender-config): a different SIPL platform or camera changes the
+# `sipl` block, and the Argus backend has no `sipl` block and selects sensor modes through `cameras[].mode`. The
+# platform file, config name, link masks and tuning directory here describe the tested head-camera setup. Sensor
+# size and rate come from the platform file, so no dimensions are set.
 
 version: 1
 capture_backend: sipl
