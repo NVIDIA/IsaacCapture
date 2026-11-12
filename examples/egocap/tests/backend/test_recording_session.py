@@ -29,7 +29,12 @@ from capture_server import protocol as capture_protocol
 from capture_server.client import CaptureFrame
 from egocap_web import recording_session as coordinator_module
 from egocap_web.recording_adapter import MANUS_GLOVE_SPEC, PICO_CONTROLLER_SPEC, RecordingIngress
-from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator, SessionStatus
+from egocap_web.recording_session import (
+    CoordinatorBusyError,
+    OperationKind,
+    RecordingSessionCoordinator,
+    SessionStatus,
+)
 from recording_service import (
     Disposition,
     EpisodeResult,
@@ -951,3 +956,31 @@ async def test_a_recovered_episode_without_a_kept_hook_succeeds(tmp_path: Path, 
 
     monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
     assert await coordinator.recover_episode("s/episode_0") is result
+
+
+async def test_a_recovery_whose_caller_is_cancelled_still_reaches_the_kept_hook_once(tmp_path: Path, monkeypatch):
+    coordinator = make_coordinator(tmp_path)
+    result = _recovered_result(Disposition.KEPT)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class RecoveringService:
+        async def recover_episode(self, episode_id):
+            started.set()
+            await release.wait()
+            return result
+
+    kept = []
+    coordinator.on_episode_kept = kept.append
+    monkeypatch.setattr(coordinator, "_require_open", lambda: RecoveringService())
+    caller = asyncio.create_task(coordinator.recover_episode("s/episode_0"))
+    await started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        _ = await caller
+    assert kept == []
+    assert coordinator._operation is OperationKind.RECOVERING
+
+    release.set()
+    await coordinator._operation_task
+    assert kept == [result]
+    assert coordinator._operation is None

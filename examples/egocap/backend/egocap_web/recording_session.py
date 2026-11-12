@@ -692,7 +692,13 @@ class RecordingSessionCoordinator:
 
     async def recover_episode(self, episode_id: str) -> EpisodeResult:
         service = self._require_open()
-        result = await self._run_operation(OperationKind.RECOVERING, partial(service.recover_episode, episode_id))
+        return await self._run_operation(
+            OperationKind.RECOVERING, partial(self._recover_episode_impl, service, episode_id)
+        )
+
+    async def _recover_episode_impl(self, service: _RecordingService, episode_id: str) -> EpisodeResult:
+        # Runs in the owned operation task, so a caller cancelled mid-recovery cannot skip the notification.
+        result = await service.recover_episode(episode_id)
         self._emit_kept(result)
         return result
 

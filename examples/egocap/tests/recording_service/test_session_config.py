@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import yaml
 import zarr
 
@@ -18,6 +19,7 @@ import recording_service.recording_service as impl
 from egocap.recording.alignment import align_episode, source_rules
 from recording_service import (
     CaptureQcConfig,
+    ConfigurationError,
     Disposition,
     FieldSpec,
     NumericSample,
@@ -27,6 +29,7 @@ from recording_service import (
     RecordingService,
     RoutingConfig,
     ServiceConfig,
+    StateError,
     VideoSample,
     VideoSourceSpec,
 )
@@ -256,3 +259,67 @@ async def test_a_recorded_episode_aligns_from_its_own_config_yaml_and_arrays(tmp
     assert np.allclose(pico["head_pose"][:, 0, 3], aligned.valid_timestamps)  # poses follow the linear ramp
     glove = aligned.sources["manus_glove"].interpolated["left_hand_pose"]
     assert glove.shape == (count, 25, 4, 4) and np.allclose(glove[:, 0, 0, 0], aligned.valid_timestamps)
+
+
+async def _frozen_session(tmp_path, own, config=None):
+    config = config or _config(tmp_path / "out", video_sources=())
+    service = own(RecordingService(config))
+    session = await service.open_session()
+    await service.close()
+    return config, session
+
+
+def _with_frame_types(config, **types):
+    sources = tuple(
+        dataclasses.replace(s, frame_type=types.get(s.name, s.frame_type)) for s in config.numeric_sources
+    )
+    return dataclasses.replace(config, numeric_sources=sources)
+
+
+async def test_reopening_with_the_same_or_default_equivalent_frame_types_succeeds(tmp_path, own):
+    config, session = await _frozen_session(tmp_path, own)
+    path = session.session_path / "config.yaml"
+    before = path.read_bytes()
+    reordered = dataclasses.replace(config, numeric_sources=config.numeric_sources[::-1])
+    equivalent = _with_frame_types(config, plain="NumericFrame")  # the declared default, spelled out
+    for candidate in (reordered, equivalent):
+        again = own(RecordingService(candidate))
+        await again.open_session(session.session_id)
+        await again.close()
+    assert path.read_bytes() == before
+
+
+async def test_reopening_with_a_changed_frame_type_is_refused_and_leaves_the_session_alone(tmp_path, own):
+    config, session = await _frozen_session(tmp_path, own)
+    path = session.session_path / "config.yaml"
+    before = path.read_bytes()
+    for changed in (
+        _with_frame_types(config, tracker="NumericFrame"),  # specialised -> default
+        _with_frame_types(config, plain="PicoTrackingFrame"),  # default -> specialised
+    ):
+        again = own(RecordingService(changed))
+        with pytest.raises(ConfigurationError, match="open a new session"):
+            await again.open_session(session.session_id)
+        assert path.read_bytes() == before
+    # The refusal released the session lock: the unchanged configuration still opens it.
+    ok = own(RecordingService(config))
+    await ok.open_session(session.session_id)
+
+
+async def test_a_session_without_a_config_yaml_reopens_but_cannot_start_a_take(tmp_path, own):
+    config, session = await _frozen_session(tmp_path, own)
+    (session.session_path / "config.yaml").unlink()
+    again = own(RecordingService(config))
+    await again.open_session(session.session_id)
+    assert not again.pending_episodes()
+    with pytest.raises(StateError, match="no frozen source declarations"):
+        await again.start_episode("t")
+    assert not list(session.session_path.glob("episode_*"))
+
+
+@pytest.mark.parametrize("text", ["numeric_sources: [1]\n", "[1, 2]\n"])
+async def test_a_malformed_config_yaml_refuses_reopen_clearly(tmp_path, own, text):
+    config, session = await _frozen_session(tmp_path, own)
+    (session.session_path / "config.yaml").write_text(text)
+    with pytest.raises(ConfigurationError, match="no readable source declarations"):
+        await own(RecordingService(config)).open_session(session.session_id)

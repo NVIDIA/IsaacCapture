@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from pathlib import Path
 
 import pytest
@@ -243,3 +244,38 @@ def test_refresh_session_egocap_zarr_aggregates_keys_fallback_to_iteration(tmp_p
 
     store2 = zarr.open(str(tmp_path), mode="r")
     assert store2.attrs["num_episodes"] == 1
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {str(f.relative_to(root)): f.read_bytes() for f in sorted(root.rglob("*")) if f.is_file()}
+
+
+def _managed_by_manifests(session: Path) -> None:
+    (session / ".recording").mkdir()
+    (session / ".recording" / "episode_0.json").write_text("{}")
+
+
+def _managed_by_route_stamp(session: Path) -> None:
+    (session / "zarr.json").write_text(json.dumps({"attributes": {"recording_route_id": "s|g"}}))
+
+
+def _managed_by_unreadable_stamp(session: Path) -> None:
+    (session / "zarr.json").write_text("{not json")
+
+
+@pytest.mark.parametrize("mark", [_managed_by_manifests, _managed_by_route_stamp, _managed_by_unreadable_stamp])
+def test_relocate_refuses_a_recorder_managed_session_and_changes_nothing(tmp_path, mark):
+    session = _session_dir(tmp_path, "_unmatched")
+    mark(session)
+    before = _snapshot(tmp_path)
+    with pytest.raises(OSError, match="fixed by its episode manifests"):
+        relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert _snapshot(tmp_path) == before
+    assert not (tmp_path / "Kitchen").exists()
+
+
+def test_relocate_still_moves_a_legacy_session_with_an_unstamped_zarr_group(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    (session / "zarr.json").write_text(json.dumps({"attributes": {"studio": "Kitchen"}}))
+    result = relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert (result / "zarr.json").is_file() and not session.exists()

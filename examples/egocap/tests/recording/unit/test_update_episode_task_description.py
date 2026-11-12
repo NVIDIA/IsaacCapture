@@ -229,3 +229,17 @@ def test_update_episode_task_description_aggregates_refresh_failure_recorded(tmp
     monkeypatch.setattr(mod, "refresh_session_egocap_zarr_aggregates", boom)
     result = update_episode_task_description(tmp_path, "0", task_description="x")
     assert result.aggregates_refreshed is False
+
+
+def test_update_episode_task_description_relocating_a_managed_session_raises_and_changes_nothing(tmp_path):
+    session = tmp_path / "EOD" / "_unmatched" / "2026-01-01-10-00-00"
+    _make_session(session, 1)
+    (session / ".recording").mkdir()
+    (session / ".recording" / "episode_0.json").write_text("{}", encoding="utf-8")
+    (session / "config.yaml").write_text("meta: {}\n", encoding="utf-8")
+    _make_aligned_copy(session)
+    before = {str(f.relative_to(tmp_path)): f.read_bytes() for f in sorted(tmp_path.rglob("*")) if f.is_file()}
+    with pytest.raises(OSError, match="fixed by its episode manifests"):
+        update_episode_task_description(session, "0", task_description="x", studio="Kitchen", relocate=True)
+    after = {str(f.relative_to(tmp_path)): f.read_bytes() for f in sorted(tmp_path.rglob("*")) if f.is_file()}
+    assert after == before and not (tmp_path / "EOD" / "Kitchen").exists()

@@ -104,6 +104,8 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _ENCODERS = ("opencv_mp4v", "ffmpeg_h264", "ffmpeg_h264_nvenc")
+#: The numeric frame type of a source that declares none.
+_DEFAULT_NUMERIC_FRAME_TYPE = "NumericFrame"
 
 
 def _sha256(path: Path) -> str:
@@ -708,6 +710,7 @@ class RecordingService:
             write_json_atomic(record_path, record)
             write_yaml_atomic(session_path / SESSION_CONFIG_FILE, self._session_config())
             return
+        self._check_frozen_frame_types(session_path)
         record = json.loads(record_path.read_text()) if record_path.is_file() else {}
         for asset in assets:
             recorded, preserved = record.get(asset.name), session_path / asset.name
@@ -717,6 +720,30 @@ class RecordingService:
             if asset.required:
                 raise ConfigurationError(problem)
             self._issues.append("optional " + problem)
+
+    def _check_frozen_frame_types(self, session_path: Path) -> None:
+        """Refuse to reopen a session whose frozen numeric frame types differ from the active declarations.
+
+        Alignment reads the session's config.yaml, so a source declared differently now would resample a later
+        take by rules other than the ones its session froze. A session with no config.yaml is left to recovery
+        and discard; ``_start_impl`` refuses to record into it.
+        """
+        path = session_path / SESSION_CONFIG_FILE
+        if not path.is_file():
+            return
+        try:
+            frozen = yaml.safe_load(path.read_text()) or {}
+            default = frozen.get("recording", {}).get("numeric_frame_type", _DEFAULT_NUMERIC_FRAME_TYPE)
+            declared = {e["name"]: e.get("frame_type", default) for e in frozen.get("numeric_sources", [])}
+        except (OSError, yaml.YAMLError, AttributeError, KeyError, TypeError) as exc:
+            raise ConfigurationError(f"{path} has no readable source declarations: {exc}") from exc
+        for spec in self._config.numeric_sources:
+            requested = spec.frame_type or _DEFAULT_NUMERIC_FRAME_TYPE
+            if spec.name in declared and declared[spec.name] != requested:
+                raise ConfigurationError(
+                    f"source {spec.name!r} was frozen with frame type {declared[spec.name]!r} but is now "
+                    f"{requested!r}; open a new session to record with the new frame type"
+                )
 
     def _session_config(self) -> dict[str, Any]:
         """The session's ``config.yaml``: the station identity and the source declarations time alignment reads.
@@ -731,7 +758,10 @@ class RecordingService:
         if config.station_label:
             data["meta"] = {"egocap_station_name": config.station_label}
         # The default frame types for sources that declare none.
-        data["recording"] = {"video_frame_type": "RGBCameraFrame", "numeric_frame_type": "NumericFrame"}
+        data["recording"] = {
+            "video_frame_type": "RGBCameraFrame",
+            "numeric_frame_type": _DEFAULT_NUMERIC_FRAME_TYPE,
+        }
         latency = config.latency or {}
 
         def declare(name: str, frame_type: str | None = None) -> dict[str, Any]:
@@ -845,6 +875,8 @@ class RecordingService:
         if self._blocking:
             raise StateError(f"unreadable episode manifests must be resolved first: {self._blocking}")
         session = self._session
+        if not (session.session_path / SESSION_CONFIG_FILE).is_file():
+            raise StateError("session has no frozen source declarations; start a new session to record")
         index = next_episode_index(session.session_path)
         pending_name, final_name = episode_dir_names(index)
         manifest = EpisodeManifest(
