@@ -49,5 +49,20 @@ struct ConfigResolution
 //! leaves a stale default in place. Throws std::runtime_error on any of those failures.
 ConfigResolution load_options_from_config(const std::string& explicit_path, IoExoGloveRos2Plugin::Options& options);
 
+/*!
+ * @brief The session-reference keys of a `--session-reference=PATH` file.
+ *
+ * The file is the snippet `--export-session-reference=PATH` writes (or the config file itself): a
+ * YAML mapping whose `reference_left` / `reference_right` keys carry one hand's block. The two keys
+ * are read; every other key is ignored, so pointing at the main config works too. An explicit file
+ * must exist and parse. Throws std::runtime_error on any failure.
+ */
+struct SessionReferenceFile
+{
+    std::string left;
+    std::string right;
+};
+SessionReferenceFile load_session_reference_file(const std::string& path);
+
 } // namespace io_exo_glove_ros2
 } // namespace plugins

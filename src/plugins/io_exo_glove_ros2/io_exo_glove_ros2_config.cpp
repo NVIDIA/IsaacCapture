@@ -28,17 +28,15 @@ namespace
 //! fails loudly instead of silently leaving the built-in default in place.
 constexpr std::string_view kKnownKeys[] = { "joints_topic",
                                             "links_topic",
-                                            "joints_left_collection_id",
-                                            "joints_right_collection_id",
+                                            "joints_collection_id",
                                             "tips_left_collection_id",
                                             "tips_right_collection_id",
                                             "tips_reference_frame",
                                             "wrist_source",
-                                            "left_aim_to_wrist",
-                                            "right_aim_to_wrist",
-                                            "left_joint_zero_offsets",
-                                            "right_joint_zero_offsets",
-                                            "wrist_smoothing_ms" };
+                                            "wrist_alignment",
+                                            "reference_left",
+                                            "reference_right",
+                                            "export_session_reference" };
 
 std::string known_keys_as_text()
 {
@@ -96,56 +94,6 @@ void assign(const YAML::Node& root, const char* key, std::string& target, const 
     }
 
     target = value;
-}
-
-//! Applies one of the legacy per-hand `*_joint_zero_offsets` strings. The values are unused (flexion
-//! comes from the tip chord), but the keys are still accepted so an existing config file keeps
-//! loading; only the scalar/empty shape is enforced. `key:` with no scalar is the same as empty.
-void assign_unused_text(const YAML::Node& root, const char* key, std::string& target, const std::string& path)
-{
-    const YAML::Node node = root[key];
-    if (!node)
-    {
-        return;
-    }
-    if (node.IsNull())
-    {
-        target.clear();
-        return;
-    }
-
-    if (!node.IsScalar())
-    {
-        throw std::runtime_error("config '" + path + "': '" + key + "' must be a single scalar string");
-    }
-    target = node.as<std::string>();
-}
-
-//! Applies a numeric `key` to @p target; a non-numeric value is rejected rather than truncated.
-void assign_number(const YAML::Node& root, const char* key, double& target, const std::string& path)
-{
-    const YAML::Node node = root[key];
-    if (!node)
-    {
-        return;
-    }
-    if (!node.IsScalar())
-    {
-        throw std::runtime_error("config '" + path + "': '" + key + "' must be a single number");
-    }
-    try
-    {
-        const double value = node.as<double>();
-        if (!(value >= 0.0))
-        {
-            throw std::runtime_error("config '" + path + "': '" + key + "' must not be negative");
-        }
-        target = value;
-    }
-    catch (const YAML::Exception& e)
-    {
-        throw std::runtime_error("config '" + path + "': '" + key + "' must be a number: " + std::string(e.what()));
-    }
 }
 
 //! Implicit candidates, used only when no file was named explicitly.
@@ -216,21 +164,62 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     validate_keys(root, path);
     assign(root, "joints_topic", options.joints_topic, path);
     assign(root, "links_topic", options.links_topic, path);
-    assign(root, "joints_left_collection_id", options.joints_left_collection_id, path);
-    assign(root, "joints_right_collection_id", options.joints_right_collection_id, path);
+    assign(root, "joints_collection_id", options.joints_collection_id, path);
     assign(root, "tips_left_collection_id", options.tips_left_collection_id, path);
     assign(root, "tips_right_collection_id", options.tips_right_collection_id, path);
     assign(root, "tips_reference_frame", options.tips_reference_frame, path);
     assign(root, "wrist_source", options.wrist_source, path);
-    assign(root, "left_aim_to_wrist", options.left_aim_to_wrist, path);
-    assign(root, "right_aim_to_wrist", options.right_aim_to_wrist, path);
-    // Accepted for compatibility, ignored by the plugin: flexion is tip-driven.
-    assign_unused_text(root, "left_joint_zero_offsets", options.left_joint_zero_offsets, path);
-    assign_unused_text(root, "right_joint_zero_offsets", options.right_joint_zero_offsets, path);
-    assign_number(root, "wrist_smoothing_ms", options.wrist_smoothing_ms, path);
+    assign(root, "wrist_alignment", options.wrist_alignment, path);
+    assign(root, "reference_left", options.reference_left, path);
+    assign(root, "reference_right", options.reference_right, path);
+    assign(root, "export_session_reference", options.export_session_reference, path);
 
     resolution.loaded_path = path;
     return resolution;
+}
+
+SessionReferenceFile load_session_reference_file(const std::string& path)
+{
+    if (path.empty())
+    {
+        throw std::runtime_error("--session-reference= needs a file path");
+    }
+    YAML::Node root;
+    try
+    {
+        root = YAML::LoadFile(path);
+    }
+    catch (const YAML::Exception& e)
+    {
+        throw std::runtime_error("session reference '" + path + "': YAML parse error: " + std::string(e.what()));
+    }
+    if (!root || !root.IsMap())
+    {
+        throw std::runtime_error("session reference '" + path +
+                                 "': expected a YAML mapping with reference_left / reference_right");
+    }
+
+    SessionReferenceFile reference;
+    for (const auto& entry : root)
+    {
+        const std::string key = entry.first.as<std::string>();
+        std::string* target =
+            key == "reference_left" ? &reference.left : (key == "reference_right" ? &reference.right : nullptr);
+        if (target == nullptr)
+        {
+            continue; // Other keys belong to the main config; only the reference keys are read here.
+        }
+        if (!entry.second.IsScalar())
+        {
+            throw std::runtime_error("session reference '" + path + "': '" + key + "' must be a single scalar string");
+        }
+        *target = entry.second.as<std::string>();
+        if (target->empty())
+        {
+            throw std::runtime_error("session reference '" + path + "': '" + key + "' must not be empty");
+        }
+    }
+    return reference;
 }
 
 } // namespace io_exo_glove_ros2

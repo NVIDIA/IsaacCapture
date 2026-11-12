@@ -5,10 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Preface
 
-The ROS 2 streams are published by the IO exoskeleton SDK; start that first, then run this plugin.
-The link poses (`/io_fusion/tf_exoskeleton`) are the required input: the injected hand's flexion and
-spread both come from that stream. The joint-angle topic is optional -- on the current rig it is not
-published, and nothing the plugin injects depends on it.
+The required ROS 2 topics are published by the IO exoskeleton SDK; start that first, then run this
+plugin.
 
 # Exoskeleton Glove ROS 2 Bridge plugin
 
@@ -25,13 +23,12 @@ and a recording is not tied to one hand:
 
 ```
 Exoskeleton SDK / ROS 2 driver
-  --/io_esk/joint_data-->        sensor_msgs/msg/JointState  (optional: glove DOF angles, radians)
+  --/io_esk/joint_data-->        sensor_msgs/msg/JointState  (glove skeleton DOF angles, radians)
   --/io_fusion/tf_exoskeleton--> tf2_msgs/msg/TFMessage      (every link pose, children of base_link)
                      |
                      v
         io_exo_glove_ros2_plugin (rclcpp node)
-          joints -> JointStateOutput    -> SchemaPusher("exo_glove_joints_left",
-                                                        "exo_glove_joints_right", joint_state)
+          joints -> JointStateOutput    -> SchemaPusher("exo_glove_joints",    joint_state)
           tips L -> JointSe3PoseOutput  -> SchemaPusher("exo_glove_tips_left",  joint_se3_pose)
           tips R -> JointSe3PoseOutput  -> SchemaPusher("exo_glove_tips_right", joint_se3_pose)
                      |
@@ -40,10 +37,8 @@ Exoskeleton SDK / ROS 2 driver
         JointSe3PoseTracker (fingertip poses)
 ```
 
-The TF stream is published at about 120 Hz in the reference setup and is all the injected hand
-needs. Nothing is changed on the way through: names, values and the reference frame are forwarded as
-published. The joint-angle collection is optional: when the driver does not publish that topic it
-simply stays quiet, which is the correct "not tracked" signal for its consumer.
+Both topics are published at about 120 Hz in the reference setup. Nothing is changed on the way
+through: names, values and the reference frame are forwarded as published.
 
 ## Build
 
@@ -66,28 +61,28 @@ the header defaults.
 ```yaml
 joints_topic: "/io_esk/joint_data"
 links_topic: "/io_fusion/tf_exoskeleton"
-joints_left_collection_id: "exo_glove_joints_left"
-joints_right_collection_id: "exo_glove_joints_right"
+joints_collection_id: "exo_glove_joints"
 tips_left_collection_id: "exo_glove_tips_left"
 tips_right_collection_id: "exo_glove_tips_right"
 tips_reference_frame: "base_link"
 wrist_source: "auto"
-left_aim_to_wrist: "0,0,0,0,0,0,1"
-right_aim_to_wrist: "0,0,0,0,0,0,1"
+wrist_alignment: "auto"
+# The persistent session reference (see "Session reference" below): paste the snippet that
+# --export-session-reference= writes. Both keys are optional; a missing hand captures as before.
+reference_left: "chord thumb=...; offset thumb=...; gap index=.../...; angle thumb0=... ..."
+reference_right: "chord thumb=...; offset thumb=...; gap index=.../...; angle thumb0=... ..."
+# Where to write the reference snippet after a good capture (and at start-up when one is loaded).
+export_session_reference: "/tmp/glove_reference.yaml"
 ```
-
-`left_joint_zero_offsets` / `right_joint_zero_offsets` are accepted for compatibility with older
-config files but **ignored**: flexion is derived from the fingertip chords, so nothing about a
-session's open pose can bias it and no open-hand calibration is needed.
 
 Every key is optional. Precedence, lowest to highest:
 
 1. the built-in defaults in `io_exo_glove_ros2_plugin.hpp`
 2. the config file
-3. the command-line flags `--joints-topic=`, `--links-topic=`, `--joints-left-collection-id=`,
-   `--joints-right-collection-id=`, `--tips-left-collection-id=`, `--tips-right-collection-id=`,
-   `--tips-reference-frame=`, `--wrist-source=`, `--left-aim-to-wrist=`, `--right-aim-to-wrist=`,
-   `--wrist-smoothing-ms=`
+3. the command-line flags `--joints-topic=`, `--links-topic=`, `--joints-collection-id=`,
+   `--tips-left-collection-id=`, `--tips-right-collection-id=`, `--tips-reference-frame=`,
+   `--wrist-source=`, `--wrist-alignment=`, `--session-reference=` (a file carrying the two reference
+   keys; overrides the config per hand) and `--export-session-reference=`
 
 The file is looked up in this order, first hit wins:
 
@@ -111,7 +106,7 @@ Naming a file explicitly (`--config=` or the environment variable) makes a missi
 an error instead of a silent fallback to defaults. Unknown keys are rejected too, so a typo such as
 `joint_topics:` fails loudly rather than quietly keeping the old value.
 
-## Joint angles (collections `exo_glove_joints_left`, `exo_glove_joints_right`)
+## Joint angles (collection `exo_glove_joints`)
 
 `JointState.name` is the lookup key, so the `JointStateSource` consumer reads joints **by name** and
 the order on the wire does not matter. The reference setup publishes 42 joints (radians), right hand
@@ -172,7 +167,7 @@ no explicit size; five poses are about 200 B.
 from isaaccapture.deviceio_trackers import JointSe3PoseTracker, JointStateTracker
 from isaaccapture.schema import JointName, JointType
 
-joints = JointStateTracker("exo_glove_joints_left")       # 4096-byte default; one tracker per hand
+joints = JointStateTracker("exo_glove_joints")            # 4096-byte default
 tips = JointSe3PoseTracker("exo_glove_tips_left")         # 1024-byte default
 
 # ... register both with the DeviceIOSession, then each tick:
@@ -188,121 +183,251 @@ if thumb is not None:
 ## Hand tracking (devices `/hand/left`, `/hand/right`)
 
 The same link poses are injected as the **OpenXR hand skeleton**, one push device per hand
-(`plugin_utils::HandInjector`). This is the output a hand-tracking consumer records: it reads
+(`plugin_utils::HandInjector`). This is the output the device conformance suite records: it reads
 Isaac Teleop's OpenXR hand tracker (`core.HandPoseRecord`, 26 joints per hand), not a tensor
-collection of the plugin's own, so a glove that publishes only joint angles or fingertips has nothing
-this device can drive. OpenXR requires every one of the 26 joints to be valid while a hand is active, so
-all 26 are filled -- `PALM` and the four non-thumb metacarpals included.
+collection of the plugin's own, so a glove that publishes only joint angles or fingertips cannot be
+conformance tested. OpenXR judges 21 of the 26 joints (`PALM` and the four non-thumb metacarpals are
+optional), and the exoskeleton's own chain ends at the fingertips, which is exactly 21 poses per hand:
 
-The exoskeleton's links are a **linkage mechanism**, not a hand: in the vendor's own URDF its finger
-segments are 7.6 cm and 7.5 cm (about twice a human phalanx) and the linkage leaves the finger plane
-between two joints, so injecting those frames directly gives a palm a few millimetres deep and fingers
-twice a palm long. What carries over from the glove is its **articulation**; the injected skeleton is
-the anatomy from the vendor's human-hand model, driven by that articulation:
-
-| What the plugin reads (mechanism) | What it injects (anatomy) |
+| OpenXR joint | Frame in `/io_fusion/tf_exoskeleton` |
 | --- | --- |
-| `link_<Side>Skeleton<Finger>1` and `<side>_<finger>_tip` translations | the fingertip **chord**, normalised against the operator's own travel, that sets the bend |
-| the thumb chord's in-plane angle around the palm normal | the thumb's **opposition** (CMC, plus a share at the MCP) |
-| the four `link_…Skeleton<Finger>1` local `+Z` axes and the knuckle row | the palm frame: `+X` across, `+Y` the back of the hand, `-Z` along the fingers |
-| `link_<Side>Skeleton<Finger>1` (or `Thumb1`) quaternion | the knuckle spread / thumb lift (not flexion) |
-| `link_<Side>SkeletonThumbBase` (revolute) | the thumb's mount, not a fifth finger |
-| `<side>_<finger>_tip` | the distal phalanx beyond `…_DISTAL` |
+| `WRIST` | `joint_<Side>SkeletonBase` (`<side>_hand` also accepted) |
+| `THUMB_METACARPAL`, `THUMB_PROXIMAL`, `THUMB_DISTAL` | `link_<Side>SkeletonThumbBase`, `…Thumb1`, `…Thumb2` |
+| `THUMB_TIP` | `<side>_thumb_tip` |
+| `INDEX_PROXIMAL`, `INDEX_INTERMEDIATE`, `INDEX_DISTAL` | `link_<Side>SkeletonIndex1..3` |
+| `INDEX_TIP` | `<side>_index_tip` |
+| `MIDDLE_*` | `link_<Side>SkeletonMiddle1..3`, `<side>_middle_tip` |
+| `RING_*` | `link_<Side>SkeletonRing1..3`, `<side>_ring_tip` |
+| `LITTLE_*` | `link_<Side>SkeletonPinky1..3`, `<side>_little_tip` |
 
-Flexion is derived from the **fingertip**, not from the linkage's joint angles. For each finger the
-chord is `|tip - knuckle|`, where the knuckle is `link_<Side>Skeleton<Finger>1` (the thumb's is
-`link_<Side>SkeletonThumbBase`) and the tip is the vendor's own `<side>_<finger>_tip`. The palm frame
-is built from the knuckle row: `across` is index minus little knuckle (mirrored for the right hand),
-`dorsal` is the mean of the four knuckles' local `+Z` axes -- the URDF's knuckle-spread axis, i.e.
-the palm normal, which is live in every message -- and `distal` is `dorsal x across`. The chord's
-palmward angle is measured in that frame, so its sign is geometric: a tip on the palm side always
-curls the hand towards the palm. The linkage's second frame is the first bend joint's origin only
-1.1 cm from the first along the knuckle row, so "knuckle -> next frame" is not a distal direction on
-this rig; the spread axis is the reliable live palm normal.
-
-The glove's chord travel is smaller than the anatomical chain's, so an absolute chord-to-bend map
-left a half-closed glove looking open: the operator had to make a full fist before the injected hand
-registered. Each hand and finger therefore learns its own **travel gain** from a rolling 6 s window
-of the chord: the 5th and 95th percentiles of that window are the short and long extents, and the
-current chord is normalised to `fraction = (max - chord) / (max - min)`. The extents are low-passed
-with a 1 s time constant, so a window update cannot step the pose; a window whose 5th..95th span is
-below 5 mm has not seen a gesture, so its extents are ignored and the previous mapping kept. This is
-a **per-session, per-finger gain learned from the operator's own range**, not a rig constant: a
-half-range gesture still drives the full anatomical range, and a hand held still cannot make the gain
-chase noise. The state lives in `FingerChordGain`/`HandChordGain` and resets when the plugin
-restarts.
-
-The normalised chord is converted to **one total bend of the anatomical chain**. The chain is the
-same human model as before (MCP -> PIP -> DIP -> tip, with its fixed segment lengths; CMC -> MCP ->
-IP -> tip for the thumb), and the bend is solved by bisection so that the chain's tip lands on the
-anatomical chord the fraction names: the longest chord seen maps to the straight chain (0 deg), the
-shortest to the fully curled one. That keeps bone lengths constant by construction. The total is
-split with fixed weights 0.45 / 0.35 / 0.20 over MCP / PIP / DIP (the thumb's CMC / MCP / IP) and
-each joint is clamped to its human maximum (finger MCP 85, PIP 95, DIP 70 deg; thumb CMC 35, MCP 55,
-IP 75). The weights and maxima live in `io_exo_glove_ros2_kinematics.hpp`; the landmark table is
-unchanged.
-
-**Opposition.** A thumb that only flexes in the palm's plane cannot reach the index, so the chord's
-lateral angle around the palm normal is tracked in the same window and normalised the same way. Its
-normalised travel (0 at the widest angle seen, 1 at the narrowest) drives an extra CMC rotation
-about an axis in the palm plane, plus a share at the MCP; the IP is left to the flexion solve. The
-injected thumb therefore swings out of the palm's plane towards the index as the glove's thumb does.
-The lateral guard is 0.1 rad (~6 deg) because it is an angle, not a length.
-
-Because the tip chord cannot invert, the runtime bend-direction check, the per-joint open-hand zeros
-and the per-joint open-to-fist gains are gone, and `--calibrate-zero` is removed. The knuckle spread
-and the thumb's mount still come from the linkage's joint angles: their zero and sign are rig
-constants in `io_exo_glove_ros2_kinematics.cpp`, and
-`io_exo_glove_ros2_kinematics_tables.py` re-derives them from a recorded
-`/io_fusion/tf_exoskeleton` stream. The plugin logs, once, how many joints each hand filled and the
-mechanism root it bound to.
-
-The human model's hand joints are exported un-fanned (every hand-joint `rpy` is zero), which would
-leave the knuckles 31 mm apart and roll the finger plane 13 degrees. The landmark table therefore
-also carries the A-pose: a metacarpal fan that puts the index-to-little knuckle span at 56 mm with a
-level finger plane, and the thumb's own rest frame so it leaves the palm. The table is driven by the
-glove's articulation on top of that rest pose; `io_exo_glove_ros2_kinematics_tables.py` prints the
-neutral-frame numbers (span, `table.level`, the thumb metacarpal's position along the knuckle line)
-and checks the retained spread and thumb-mount constants against the recording.
+A rig whose link names differ only needs that table changed in `io_exo_glove_ros2_hand.cpp`; the plugin
+logs every slot it resolved on the first frame that carries a hand and lists the ones it could not
+fill, so one run says exactly what bound to what.
 
 The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
 is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,
 the preference under the default `auto`), `controller` (aim pose, the fallback), or `auto`.
-`$IO_EXO_GLOVE_ROS2_WRIST_SOURCE` overrides the setting; set it to match how the capture was
-configured. A controller aim pose is not the wrist joint, so
-`left_aim_to_wrist` / `right_aim_to_wrist` carry the rigid offset per hand (`x,y,z,qx,qy,qz,qw`,
-identity by default); the plugin cannot know a controller's mounting, so it is configuration.
+`$IO_EXO_GLOVE_ROS2_WRIST_SOURCE` overrides the setting -- the conformance capture's `--wrist-source`
+only labels the take, so set the variable to match. The glove's wrist frame and the headset's wrist
+frame differ by a fixed rotation per hand, and `wrist_alignment: "auto"` captures it from the first
+frame where both are tracked, logging it as `x,y,z,w` to paste into the config and make a take
+reproducible; `identity` says the frames already agree, and an explicit `x,y,z,w` pins the rotation.
 With no wrist source tracked the skeleton is still injected, at the origin and flagged untracked:
 honest degradation rather than a frozen pose at the last known place.
 
-The offset can be measured instead of guessed: switch to `--wrist-source=controller` (or set
-`wrist_source: "controller"`), run the plugin once with `--calibrate-aim`, hold both hands flat, palm
-down and fingers forward for about a second, and it prints the two `left_aim_to_wrist` /
-`right_aim_to_wrist` values for that pose. Paste them into `config/io_exo_glove_ros2.yaml` and record
-normally; `--aim-behind=` / `--aim-height=` move the wrist joint under the controller (defaults 4 cm
-behind the aim origin along the fingers and 6 cm below it), and `--aim-flip` rolls the measured
-constant 180 degrees about the fingers for a controller whose aim frame has its up axis towards the
-palm (instead of the back of the hand).
-
-The injected skeleton is expressed in the OpenXR wrist frame: `WRIST` is the origin and the rest of
-the anatomy follows from the glove's articulation alone. Nothing is captured from the first frame, so
-a take does not depend on how the hand was held when the plugin started. Joint orientations are built
-from the bones (`-Z` along the segment, `+Y` the back of the hand, flipped for the right hand).
-
-`wrist_smoothing_ms` (default 60, 0 disables) low-passes the wrist pose, including a valid but not
-actively tracked one: optical hand tracking is noisy -- and a glove in front of the headset makes it
-noisier -- while the glove's own articulation is not, so only the anchor is filtered. Smoothing a
-pose the source repeats also keeps consecutive injected frames distinct instead of bit-identical.
-
-A wrist source that stops updating is detected: when the raw pose repeats bit-identically while any
-fingertip chord moved more than 2 mm, and that persists for 0.2 s, the plugin logs once and either
-switches to the controller source (under `wrist_source: "auto"`, when a controller is tracked) or
-drops the hand's push device until the pose changes, so the runtime reports it inactive instead of
-recording a frozen wrist. Any change in the pose clears the state; a live source never trips it.
-
 Poses are metres in the session's base space, as OpenXR requires, and the injected rate follows the
-glove's 120 Hz TF stream, well above the 30 Hz a hand-tracking consumer may expect. A hand with no data for
+glove's 120 Hz TF stream -- above the 30 Hz the conformance suite asks for. A hand with no data for
 200 ms has its push device dropped, so the runtime reports it inactive instead of holding a stale pose.
+
+### Session reference: calibrate once, store it in the config
+
+The injected hand is a fixed-length human chain (MCP/PIP/DIP 85/95/70 deg, thumb CMC/MCP/IP
+35/55/75 deg) driven by the exoskeleton's **own joint angles**, not by a chord length. Per hand and
+per mechanism joint the plugin computes the absolute joint angle from the published link quaternions
+with the v5 URDF rest rotations and revolute axes:
+
+```
+theta = signed_angle(conj(R_rest) * conj(R_parent) * R_child, axis)
+```
+
+Each joint's angle is unwrapped around its baked open reading, so it is continuous across the
++-pi boundary. The session reference stores the **open-pose angle of every mechanism joint** (20
+values per hand: four per digit), and the fraction is
+
+```
+f = clamp((theta - theta_open) / (theta_closed - theta_open), 0, 1)
+```
+
+where `theta_closed` is the joint's baked fist angle. The model's joints are `f * limit` (85/95/70,
+thumb 35/55/75), so at the session's open pose every joint reads exactly 0 and at the mechanism's
+own closed angle every joint reads exactly its human maximum. The four fingers combine their MCP and
+DIP (the PIP is a coupling link that barely articulates in this mechanism's fist), so the whole
+finger follows the hinges that carry its curl.
+
+r35 adds an **open deadband** at the open end, stored per hand in the reference:
+
+```
+d     = deadband / 85 deg                 # hand-level, model degrees
+f_raw = clamp((theta - theta_open) / (theta_closed - theta_open), 0, 1)
+f     = clamp((f_raw - d) / (1 - d), 0, 1)
+      = clamp((moved - D) / (|travel| - D), 0, 1)      with D = d * |travel|, moved = |theta - theta_open|
+```
+
+So the deadband is one hand-level number, but it is applied as a fraction of each hinge's own
+travel (the equivalent per-joint angle `D` in the formula). Everything within `d` of the session's
+open pose reads exactly 0; `theta = theta_closed` still reads exactly 1 because both ends are
+shifted by the same fraction, so the fist is **not** compressed. An r31 four-section block has no
+deadband (`d = 0`) and runs the old map bit for bit. The value is the measured relaxed-vs-stiff
+offset per hand, plus 2 deg, capped at **25 deg**; it is printed by `--print-config` and carried by
+`format -> parse -> format`.
+
+The **closed table** (`kAngleClosed`) is the current mounting's fist (live_20261112_095821, frame
+6968). The r31 table was the 09:18 mounting's deeper fist and left the 09:58 fist at 80-84 deg; the
+09:58 fist now reads exactly 85/95/70, and the deeper 09:18 fist still clamps to the maxima.
+
+The **tip-frame orientation is not a rig constant** -- the same finger has been measured 147 deg from
+the human axis in one driver session and 54 deg in another -- so the reference also keeps the open
+chord and the rotation from the device's open tip direction to that digit's human rest axis, plus the
+opening and tightest thumb-to-finger gap. The chord values are **not** used by the angle driver; they
+are what a reference written by an earlier round (or a failed capture) falls back to.
+
+Those measurements are a **session reference**. It is captured automatically from the first frames,
+but it can also be written to the config: then every later start loads it and the capture window is
+skipped entirely. The operator calibrates once and never repeats the start-up ritual. A **loaded
+five-section (r35)** reference is authoritative: r35 no longer widens it to the take's most-extended
+frame, because that is exactly what turned a relaxed or stiff straight hand into curl. A **captured**
+reference, and a four-section r31 block without the deadband, still widen as in r31; the open
+deadband absorbs the session-to-session variation instead.
+
+#### The block format
+
+One quoted scalar per hand, five `;`-separated sections: `chord`, `offset`, `gap`, `angle`,
+`deadband`. Chords and gaps are millimetres with three decimals; each offset is a unit quaternion
+`x,y,z,w` with six decimals; a gap is `open/tightest`; each angle is **degrees** with three
+decimals; the deadband is one number in **model degrees** (0..25). Digit order is always thumb,
+index, middle, ring, little; the gap section has the four fingers only. The angle section has all 20
+mechanism joints, keyed `<digit><slot>` with slot 0 the knuckle spread/mount and slots 1..3
+MCP/PIP/DIP (thumb CMC/MCP/IP), in the URDF chain order. The names make the block auditable and the
+section order does not matter:
+
+```yaml
+reference_left: "chord thumb=83.827 index=83.800 middle=84.670 ring=87.160 little=65.540; offset thumb=-0.017458,-0.089227,-0.144430,0.985329 index=0.588302,0.073364,-0.067845,0.802444 middle=0.620804,0.068593,0.021338,0.780668 ring=0.576115,0.072535,0.012770,0.814043 little=0.583541,0.027232,-0.034353,0.810899; gap index=120.218/97.356 middle=143.309/116.131 ring=156.262/132.404 little=155.598/138.059; angle thumb0=-32.296 thumb1=-32.566 thumb2=33.574 thumb3=229.892 index0=-23.883 index1=23.115 index2=-138.535 index3=25.291 middle0=-19.983 middle1=17.154 middle2=-138.890 middle3=14.634 ring0=-17.361 ring1=18.193 ring2=-134.844 ring3=10.217 little0=-14.530 little1=20.237 little2=-153.437 little3=22.661; deadband 25.000"
+reference_right: "chord thumb=87.419 index=84.280 middle=87.610 ring=82.450 little=62.320; offset thumb=-0.267492,-0.041677,0.079838,0.959342 index=0.606993,0.067513,-0.057525,0.789742 middle=0.529825,0.054947,0.034908,0.845605 ring=0.485412,0.072808,0.024949,0.870891 little=0.527497,0.071893,-0.022518,0.846210; gap index=120.870/99.990 middle=143.430/117.250 ring=154.300/129.790 little=161.490/139.010; angle thumb0=0.641 thumb1=24.795 thumb2=27.815 thumb3=240.079 index0=12.023 index1=-10.989 index2=-131.306 index3=7.602 middle0=1.995 middle1=-4.593 middle2=-131.421 middle3=0.762 ring0=-3.001 ring1=-5.398 ring2=-136.496 ring3=-4.835 little0=-30.148 little1=-7.794 little2=-154.440 little3=14.334; deadband 19.700"
+```
+
+A block is **complete** when both sections carry every digit; a hand with a complete block never runs
+the window. A missing or malformed block falls back to the auto-capture, with a warning. A block is
+rejected (and the window captures instead) when:
+
+- a chord is outside **20-160 mm**, or a finger's open chord is not above its baked closed chord
+  (the legacy chord map would have no travel);
+- an offset quaternion's norm is not 1 within `1e-3` (it is normalised after the check);
+- a gap is negative, or its tightest value exceeds its open value;
+- an angle is outside **-720..720 deg**;
+- a section or a digit is missing, duplicated or truncated.
+
+A **three-section block** (chord, offset, gap; one written by an earlier round) still loads: it is
+accepted, but the hand then runs the **chord driver**, exactly as before, and the load line is a
+warning:
+
+```
+session reference: left: loaded from config (no angle section: using the CHORD driver; re-export the reference to drive from the mechanism's joint angles)
+```
+
+A **four-section block** (chord, offset, gap, angle; an r31 block) still loads with the
+**joint-angle driver** but no deadband: `d = 0`, the r31 map bit for bit, and a warning asks for a
+re-export.
+
+A **five-section block** loads with the **joint-angle driver and the open deadband**:
+
+```
+session reference: left: loaded from config (joint-angle driver, open deadband 25.000 deg)
+```
+
+`--print-config` prints both blocks and their driver (`<valid, joint-angle driver, open deadband
+25.000 deg>`, `<valid, joint-angle driver, no open deadband (r31 map)>` or `<valid, chord driver
+(legacy block)>`), so a typo is visible before the plugin runs. The captured reference is
+**quantized to the same 3/6-decimal spelling at the close of the window**, so the values a run uses
+are exactly the values the config will carry: capture -> export -> reload reproduces the same
+mapping bit for bit. A deadband above 25 deg is rejected; the cap is enforced by the parser too.
+
+#### Writing the reference (export)
+
+After a good capture (and at start-up when a block is loaded), the plugin writes a YAML snippet to
+the path given by `export_session_reference` (config) or `--export-session-reference=PATH`:
+
+```bash
+./io_exo_glove_ros2_plugin --export-session-reference=/tmp/glove_reference.yaml
+```
+
+```yaml
+# SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# io_exo_glove_ros2 session reference, generated 2026-11-12T09:50:00+0800 by io_exo_glove_ros2 1.0.0.
+# Paste these keys into config/io_exo_glove_ros2.yaml, or pass this file as
+# --session-reference=<this file>. Format and operator workflow: README.md, "Session reference".
+# left: captured this run, 40 frames in 0.400 s
+# right: captured this run, 40 frames in 0.400 s
+reference_left: "chord ...; angle ..."
+reference_right: "chord ...; angle ..."
+```
+
+The header carries the date, the plugin version and, per hand, the capture statistics (frames and
+seconds). A hand without a usable reference is listed in the header and omitted from the keys, so a
+one-handed rig exports exactly what it has. Exporting a *loaded* reference writes it back unchanged
+(that is the start-up write).
+
+#### Loading the reference
+
+Precedence, lowest to highest:
+
+1. built-in empty block (the window captures)
+2. `reference_left` / `reference_right` in the config file
+3. `--session-reference=PATH`: reads the same two keys from that file (the exported snippet, or the
+   config itself). A hand the file omits keeps the config's block, so a one-handed file never
+   disturbs the other hand.
+
+With a loaded block the plugin logs one load line and never logs a capture line for that hand: the
+first frame is already mapped. Without a block it logs
+`session reference: left: not in config; capturing from the first frames`, and an invalid block logs
+`session reference: left: rejected (<reason>); capturing from the first frames` as a warning.
+
+The stale guard (a stream that never changes in the window is held open and reported) belongs to the
+capture window; a hand that loads a reference from the config starts mapped, exactly as its stored
+reference says. A hand whose frames stop arriving is still dropped by the plugin after 200 ms, as
+before.
+
+#### Capture window (the fallback)
+
+The window is 40 valid frames or 2 s (from 20 frames on), and never later than 4 s. Until it closes
+every digit is held open, because the open reference is what makes an angle (or a chord) meaningful.
+The window stores the open-pose angle of every mechanism joint, the open chords, the tip-direction
+offsets and the thumb gaps. A window that cannot be satisfied falls back to the baked table and the
+hand is injected regardless; a hand whose frames never changed in the window (an idle or frozen
+glove) is held open/neutral and reported as stale instead of being read as flexion. Every outcome
+logs one line per hand:
+
+```
+session open reference captured: left: thumb 90.1 mm (+0.0 deg) index 98.9 mm (+50.5 deg) ...
+session open reference not captured: left: only 3 valid frame(s) in 4.00 s; using the baked table
+```
+
+After the window a **captured** reference only **widens**: a pose more open than the stored one
+replaces the open angles of the whole hand, and a longer chord or a wider gap replaces the stored
+one. It can never collapse, so a window that caught the hand part-way bent repairs itself the next
+time the operator opens the hand. A **loaded five-section (r35)** reference does not widen; the
+stored calibration is authoritative and the open deadband absorbs the session variation. A loaded
+four-section r31 block keeps the old widen-on-a-more-open-pose behaviour.
+
+The angle fraction maps **linearly** to the bend above the deadband: each joint moves from 0 at the
+session's open angle (and stays 0 for the first `deadband` of model bend) to its own limit at the
+baked closed angle, so the fist is still exactly 85/95/70. The raw mechanism travel differs per joint
+(the linkage moves roughly half as far as the finger), which is why the per-joint gain is baked with
+the closed table; the operator-visible transfer above the deadband is the 1:1 one.
+
+The **thumb** is driven by the glove's own thumb-to-finger gaps, the only sign-stable signal the
+device gives: at the session's opening gap it is neutral/abducted, and as the gap closes it rotates
+about its CMC towards the injected tip of the finger being pinched, the three hinges staying the same
+fraction of their 35/55/75 deg limits. At the session's open pose it is held exactly neutral (the
+thumb is the one digit whose amount the angle table does not drive); its open angle is still stored
+in the reference. Its old device-direction aim (which reached 67 deg) is gone.
+
+### Recording a conformance take
+
+Device conformance is recorded from a build of this repository, with the CTS copied into
+`src/python/isaaccapture/cts/`:
+
+```bash
+src/python/isaaccapture/cts/hand/checker/setup_env.sh --panel
+src/python/isaaccapture/cts/hand/capture/setup_env.sh
+src/python/isaaccapture/cts/hand/capture/record.sh exo_glove --plugin io_exo_glove_ros2 --wrist-source hand_tracking
+```
+
+`record.sh` launches the plugin from `install/plugins/` (`cmake --install build`), so install before
+recording. The capture panel then drives the eleven scripted gestures and writes the take; check it
+with `hand_cts.cli` and package it with `hand_cts.panel`. See **Device Conformance Testing** for the
+full procedure.
 
 ## Usage
 
@@ -318,6 +443,12 @@ source /opt/ros/humble/setup.bash
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
     --config=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.yaml \
     --joints-topic=/io_esk/joint_data
+
+# Persist a reference: capture once, write the snippet, then load it on every later start.
+./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
+    --export-session-reference=/tmp/glove_reference.yaml       # run once, hand open, then stop
+./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
+    --session-reference=/tmp/glove_reference.yaml              # every later start: no window
 ```
 
 `--help` lists all flags. Everything from `--ros-args` onwards is forwarded to ROS 2 untouched

@@ -4,10 +4,8 @@
 #pragma once
 
 #include "io_exo_glove_ros2_hand.hpp"
-#include "io_exo_glove_ros2_kinematics.hpp"
 
 #include <deviceio_session/deviceio_session.hpp>
-#include <log_bridge/logger.hpp>
 #include <openxr/openxr.h>
 #include <oxr_utils/oxr_time.hpp>
 #include <plugin_utils/hand_injector.hpp>
@@ -41,26 +39,23 @@ namespace io_exo_glove_ros2
  * The glove's articulation is bridged, not a pre-retargeted command stream, so the mapping onto a
  * particular dexterous hand stays on this side and recordings are not tied to one hand:
  *
- *  - ``sensor_msgs/msg/JointState`` (default ``/io_esk/joint_data``): the glove's own DOF angles, split
- *    by hand and forwarded unchanged -- one collection per hand, so a glove that drops out is visible
- *    as that hand's collection going quiet instead of as 0.0 radians in a merged one. Read through
- *    the generic joint-space path (``JointStateTracker`` / ``JointStateSource``).
+ *  - ``sensor_msgs/msg/JointState`` (default ``/io_esk/joint_data``): the glove's own DOF angles (the
+ *    two hands' skeleton joints, radians), forwarded unchanged and read through the generic
+ *    joint-space path (``JointStateTracker`` / ``JointStateSource``).
  *
- *  - ``tf2_msgs/msg/TFMessage`` (default ``/io_fusion/tf_exoskeleton``): every link pose, of which the
- *    five fingertips per hand are published as ``JointSe3PoseOutput`` (tensor id
- *    ``joint_se3_pose``, one collection per hand). See ``pack_fingertip_poses``.
+ *  - ``tf2_msgs/msg/TFMessage`` (default ``/io_fusion/tf_exoskeleton``): every link pose, of which
+ *    the five fingertips per hand are published as ``JointSe3PoseOutput`` (tensor id
+ *    ``joint_se3_pose``, one collection per hand) -- the schema for a sparse, vendor-chosen set of
+ *    6-DoF frames. See ``pack_fingertip_poses``.
  *
  *  - The same link poses injected as the OpenXR hand skeleton (``/hand/left``, ``/hand/right``,
  *    ``type: hand_tracker``) through ``plugin_utils::HandInjector``, which is what the device
  *    conformance suite records: it reads Isaac Teleop's OpenXR hand tracker, not a channel of the
- *    plugin's own. The exoskeleton's links are a *linkage mechanism* -- its fingers are twice a human
- *    phalanx long -- so the injected skeleton is the vendor's human-hand anatomy: flexion from the
- *    fingertip chords (each normalised against a rolling window of the operator's own travel, so a
- *    half-closed glove is a half-closed hand) and the thumb's opposition from the chord's lateral
- *    angle, with the knuckle spread and thumb mount from the linkage's joint angles (see
- *    io_exo_glove_ros2_kinematics.hpp). It is placed in the room by a
- *    wrist pose from the headset's own hand tracking or from a controller
- *    (``plugin_utils::WristPoseSource``), because the glove's own frame is not anchored in the room.
+ *    plugin's own. The exoskeleton's 21 skeletal links per hand are exactly the 21 OpenXR hand
+ *    joints the suite judges (``PALM`` and the four non-thumb metacarpals are optional in OpenXR),
+ *    and the skeleton is placed in the room by a wrist pose from the headset's own hand tracking or
+ *    from a controller (``plugin_utils::WristPoseSource``), because the glove's own frame is not
+ *    anchored in the room. See ``build_hand_skeleton``.
  *
  * The joint and fingertip streams are transport-only: names and values are forwarded as published.
  * The one exception is the fingertip reference frame, which ``JointSe3PoseOutput`` cannot carry per
@@ -75,10 +70,7 @@ public:
     {
         std::string joints_topic = "/io_esk/joint_data";
         std::string links_topic = "/io_fusion/tf_exoskeleton";
-        //! One joint collection per hand: the glove publishes 42 joints named ``joint_Left...`` and
-        //! ``joint_Right...``, and a consumer has to be able to tell when one glove drops out.
-        std::string joints_left_collection_id = "exo_glove_joints_left";
-        std::string joints_right_collection_id = "exo_glove_joints_right";
+        std::string joints_collection_id = "exo_glove_joints";
         std::string tips_left_collection_id = "exo_glove_tips_left";
         std::string tips_right_collection_id = "exo_glove_tips_right";
         //! Reference frame the fingertip poses must be expressed in; the frame a consumer reads them
@@ -87,81 +79,47 @@ public:
         //! Where the wrist pose that places the injected OpenXR skeleton in the room comes from:
         //! "auto" (optical hand tracking, controller as the fallback), "hand_tracking" or "controller".
         std::string wrist_source = "auto";
-        //! Rigid transform from the controller's aim pose to the wrist joint, per hand, as
-        //! "x,y,z,qx,qy,qz,qw" (metres, unit quaternion). Depends on the controller and how it is
-        //! mounted on the glove, which this plugin cannot know, so it is configuration; identity
-        //! keeps the hand on the aim pose. Only used when the wrist comes from a controller.
-        std::string left_aim_to_wrist = "0,0,0,0,0,0,1";
-        std::string right_aim_to_wrist = "0,0,0,0,0,0,1";
-        //! Legacy per-joint open-hand zero corrections. Flexion now comes from the tip chord, so
-        //! these values are **unused**: the keys are still parsed (an old config file must not fail
-        //! to load) and the plugin logs once that they are ignored. Empty is the normal value.
-        std::string left_joint_zero_offsets;
-        std::string right_joint_zero_offsets;
-        //! Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is
-        //! noisy -- and a glove in front of the headset makes it noisier -- while the glove's own
-        //! articulation is not, so the anchor is smoothed to keep the injected hand still. 0 disables
-        //! the filter.
-        double wrist_smoothing_ms = 60.0;
+        //! How the glove's wrist frame is aligned with that pose: "auto" (captured from the first
+        //! frame both are tracked), "identity" (the frames already agree) or an explicit "x,y,z,w"
+        //! rotation.
+        std::string wrist_alignment = "auto";
+        //! Persistent session reference for each hand, as documented in README.md. Empty means "no
+        //! block": the first frames capture it as before. A complete block skips the window.
+        std::string reference_left;
+        std::string reference_right;
+        //! Where to write the reference snippet after a capture (and at start-up when one is loaded).
+        //! Empty disables the export.
+        std::string export_session_reference;
     };
 
-    //! Tensor size for a joint collection, in bytes. It is ``JointStateTracker``'s own default, so a
-    //! consumer needs no custom size; a hand's 21 joints serialize to about 1 KB.
+    //! Plugin version reported in an exported session-reference header. Keep it in sync with
+    //! plugin.yaml (the launcher reads the version from there; this is only the file comment).
+    static constexpr const char* kPluginVersion = "1.0.0";
+
+    //! Tensor size for the joint collection, in bytes. It is ``JointStateTracker``'s own default, so a
+    //! consumer needs no custom size; the reference 42-joint payload serializes to about 2 KB.
     static constexpr std::size_t kJointsMaxFlatbufferSize = 4096;
 
     explicit IoExoGloveRos2Plugin(const Options& options);
-
-    /*!
-     * @brief One-shot `--calibrate-aim` session: averages one held aim pose per hand and prints the
-     * fixed controller-aim -> wrist transforms for the controller wrist source.
-     *
-     * Runs instead of the normal tick loop (main calls it before spinning) and costs the operator one
-     * second of holding both hands flat, palm down, fingers forward. A window in which a controller
-     * moved more than 5 mm or 2 deg is rejected and retried. The wrist source must be the controller
-     * one, with identity offsets (main supplies those for this run), so the pose averaged here is the
-     * raw aim pose. Throws std::runtime_error when the mode or the controllers are not usable; the
-     * caller's handler logs it and exits non-zero.
-     *
-     * @param behind_m Wrist offset behind the aim origin along the fingers, in metres.
-     * @param height_m Wrist offset below the aim origin, in metres.
-     * @param aim_flip Flip the dorsal hint: the controller's aim frame has its up axis towards the
-     *        palm, so the wrist target is rolled 180 degrees about the fingers (--aim-flip).
-     */
-    void calibrate_aim(float behind_m, float height_m, bool aim_flip);
 
 private:
     //! Hands the plugin bridges, and their index into the per-hand state arrays.
     static constexpr std::size_t kSideCount = 2;
 
-    //! Latest skeleton read from the link stream, with the time it arrived and the fingertip chords
-    //! the stale-wrist guard compares from frame to frame.
+    //! How the injected skeleton is aligned with the tracked wrist pose.
+    enum class Alignment
+    {
+        Auto, //!< Captured from the first frame where the glove and the wrist source are both tracked.
+        Identity, //!< The glove's wrist frame already matches the OpenXR wrist frame.
+        Explicit, //!< The rotation named by Options::wrist_alignment.
+    };
+
+    //! Latest skeleton read from the link stream, with the time it arrived.
     struct HandFrame
     {
         HandSkeleton skeleton;
         std::chrono::steady_clock::time_point stamp{};
-        std::array<float, kHumanFingerCount> chord_m{};
         bool valid = false;
-    };
-
-    //! Filtered wrist pose per hand; @c has is false until the source first tracks it.
-    struct SmoothedWrist
-    {
-        XrPosef pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-        bool has = false;
-    };
-
-    //! Rate limit for a warning that a broken feed would otherwise repeat at stream rate.
-    class Throttler
-    {
-    public:
-        explicit Throttler(std::chrono::milliseconds period) : m_period(period)
-        {
-        }
-        bool ready();
-
-    private:
-        std::chrono::milliseconds m_period;
-        std::chrono::steady_clock::time_point m_last{};
     };
 
     static std::size_t side_index(Hand hand)
@@ -169,7 +127,7 @@ private:
         return hand == Hand::Left ? 0 : 1;
     }
 
-    //! Forwards the glove's own joint angles, split by hand into one collection each.
+    //! Forwards the glove's own joint angles unchanged.
     void push_joint_state(const sensor_msgs::msg::JointState& msg);
 
     //! Publishes one hand's fingertip poses (see pack_fingertip_poses()).
@@ -182,23 +140,24 @@ private:
     void hand_tick();
 
     //! Places one hand's skeleton at the tracked wrist and pushes it to the runtime.
-    void push_hand(std::size_t side, std::unique_ptr<plugin_utils::HandInjector>& injector, XrTime time, float dt_s);
+    void push_hand(std::size_t side, std::unique_ptr<plugin_utils::HandInjector>& injector, XrTime time);
 
-    //! Runs the tracked wrist through the low-pass filter and returns the pose to place the hand at.
-    XrPosef smooth_wrist(std::size_t side, const XrPosef& pose, float dt_s);
+    //! Logs, once, which frame each OpenXR joint resolved to; empty entries are not published.
+    void log_resolved_slots(const HandSkeleton& skeleton, std::size_t side);
+
+    //! Installs the configured session references (both hands) and logs the one line per hand.
+    void install_session_references();
+
+    //! Writes the configured export file when a usable reference exists; logs success or why not.
+    void write_session_reference_export();
 
     Options m_opts;
-
-    //! Session diagnostics go through isaaccapture's logger (the rules in the repo's AGENTS.md), so
-    //! they reach the session's log rather than only the native-capture file.
-    std::shared_ptr<spdlog::logger> m_logger;
 
     // OpenXR session shared by all outputs; SchemaPusher is non-copyable/non-movable, so each
     // collection gets its own instance rather than a single multiplexed pusher. The session carries
     // the push-device extension the hand injection needs as well as the tensor extensions.
     std::shared_ptr<core::OpenXRSession> m_session; // OpenXR session (connects to the CloudXR runtime)
-    std::unique_ptr<core::SchemaPusher> m_joints_left_pusher; // Left hand's glove joint angles
-    std::unique_ptr<core::SchemaPusher> m_joints_right_pusher; // Right hand's glove joint angles
+    std::unique_ptr<core::SchemaPusher> m_joints_pusher; // Glove joint angles
     std::unique_ptr<core::SchemaPusher> m_tips_left_pusher; // Left fingertip poses
     std::unique_ptr<core::SchemaPusher> m_tips_right_pusher; // Right fingertip poses
 
@@ -212,31 +171,14 @@ private:
     std::unique_ptr<plugin_utils::HandInjector> m_left_injector;
     std::unique_ptr<plugin_utils::HandInjector> m_right_injector;
 
+    Alignment m_alignment = Alignment::Auto;
+    XrQuaternionf m_alignment_explicit{ 0.0f, 0.0f, 0.0f, 1.0f };
+    //! Per-hand rotation captured in Alignment::Auto; empty until both sources are tracked together.
+    std::array<std::optional<XrQuaternionf>, kSideCount> m_auto_alignment;
+
     std::mutex m_hand_mutex;
     std::array<HandFrame, kSideCount> m_hand_frames;
-    //! Per-session, per-finger chord travel learned from the operator's own range. Kept across
-    //! messages: it is the gain that turns a half-closed glove into a half-closed hand.
-    std::array<HandChordGain, kSideCount> m_chord_gains;
-    //! Controller-only wrist source, created under ``wrist_source: auto`` so a frozen optical wrist
-    //! can hand over to the controller instead of withholding the hand. Null otherwise.
-    std::unique_ptr<plugin_utils::WristPoseSource> m_controller_wrist_source;
-    //! Per-hand stale-wrist detection, fed the raw (pre-smoothing) wrist pose and the tip chords.
-    std::array<FrozenWristGuard, kSideCount> m_frozen_wrist;
-    //! A configured controller aim pose is legitimately static, so only the optical sources are
-    //! checked for a stall.
-    bool m_detect_stale_wrist = false;
     bool m_slots_logged = false;
-
-    std::array<SmoothedWrist, kSideCount> m_smoothed_wrists;
-    //! Time of the previous injection tick, for the smoothing filter's time step.
-    std::chrono::steady_clock::time_point m_last_tick = std::chrono::steady_clock::now();
-
-    Throttler m_joint_split_warn{ std::chrono::milliseconds(5000) };
-    Throttler m_joint_size_warn{ std::chrono::milliseconds(5000) };
-    Throttler m_tip_frame_warn{ std::chrono::milliseconds(5000) };
-    Throttler m_tip_size_warn{ std::chrono::milliseconds(5000) };
-    std::array<Throttler, kSideCount> m_wrist_warn{ Throttler{ std::chrono::milliseconds(5000) },
-                                                    Throttler{ std::chrono::milliseconds(5000) } };
 
     rclcpp::TimerBase::SharedPtr m_hand_timer;
 };

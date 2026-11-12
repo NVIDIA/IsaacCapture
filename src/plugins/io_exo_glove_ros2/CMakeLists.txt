@@ -17,10 +17,8 @@ find_package(tf2_msgs REQUIRED)
 
 add_executable(io_exo_glove_ros2_plugin
     main.cpp
-    io_exo_glove_ros2_aim.cpp
     io_exo_glove_ros2_config.cpp
     io_exo_glove_ros2_hand.cpp
-    io_exo_glove_ros2_kinematics.cpp
     io_exo_glove_ros2_pack.cpp
     io_exo_glove_ros2_plugin.cpp
 )
@@ -56,4 +54,6 @@ target_link_options(io_exo_glove_ros2_plugin PRIVATE "LINKER:--exclude-libs,ALL"
 
 install(TARGETS io_exo_glove_ros2_plugin RUNTIME DESTINATION plugins/io_exo_glove_ros2)
 install(FILES plugin.yaml README.md DESTINATION plugins/io_exo_glove_ros2)
-install(FILES config/io_exo_glove_ros2.yaml DESTINATION plugins/io_exo_glove_ros2/config)
+install(FILES config/io_exo_glove_ros2.yaml
+        config/io_exo_glove_ros2_session_reference.example.yaml
+        DESTINATION plugins/io_exo_glove_ros2/config)

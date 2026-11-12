@@ -1,18 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "io_exo_glove_ros2_aim.hpp"
 #include "io_exo_glove_ros2_config.hpp"
 #include "io_exo_glove_ros2_pack.hpp"
 #include "io_exo_glove_ros2_plugin.hpp"
 
-#include <log_bridge/logger.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,36 +19,19 @@ using namespace plugins::io_exo_glove_ros2;
 namespace
 {
 
-//! This executable's diagnostics go through the same logger as the plugin's; --help and
-//! --print-config stay on stdout because they are the program's output, not a log line.
-std::shared_ptr<spdlog::logger> logger()
-{
-    static const std::shared_ptr<spdlog::logger> instance =
-        isaaccapture::Logger::get("isaaccapture.plugins.io_exo_glove_ros2.Main");
-    return instance;
-}
-
 //! Values taken from the command line. A field left unset keeps whatever the config file or the
 //! built-in default provided.
 struct CliOverrides
 {
     std::optional<std::string> joints_topic;
     std::optional<std::string> links_topic;
-    std::optional<std::string> joints_left_collection_id;
-    std::optional<std::string> joints_right_collection_id;
+    std::optional<std::string> joints_collection_id;
     std::optional<std::string> tips_left_collection_id;
     std::optional<std::string> tips_right_collection_id;
     std::optional<std::string> tips_reference_frame;
     std::optional<std::string> wrist_source;
-    std::optional<std::string> left_aim_to_wrist;
-    std::optional<std::string> right_aim_to_wrist;
-    std::optional<double> wrist_smoothing_ms;
-    //! One-shot calibration; CLI-only, not a config-file key. The aim offsets are per-run and shared
-    //! by both hands, because the controller mounting is the same left and right.
-    bool calibrate_aim = false;
-    bool aim_flip = false;
-    std::optional<double> aim_behind_m;
-    std::optional<double> aim_height_m;
+    std::optional<std::string> wrist_alignment;
+    std::optional<std::string> export_session_reference;
 };
 
 void print_usage(const char* prog)
@@ -64,28 +44,19 @@ void print_usage(const char* prog)
               << kConfigEnvVar << ")\n"
               << "  --joints-topic=TOPIC           Override the glove joint angles topic (sensor_msgs/JointState)\n"
               << "  --links-topic=TOPIC            Override the exoskeleton link poses topic (tf2_msgs/TFMessage)\n"
-              << "  --joints-left-collection-id=ID Override the left hand's joint angles collection id\n"
-              << "  --joints-right-collection-id=ID\n"
-              << "                                 Override the right hand's joint angles collection id\n"
+              << "  --joints-collection-id=ID      Override the joint angles tensor collection id\n"
               << "  --tips-left-collection-id=ID   Override the left fingertip poses collection id\n"
               << "  --tips-right-collection-id=ID  Override the right fingertip poses collection id\n"
               << "  --tips-reference-frame=FRAME   Override the frame the fingertip poses are expressed in\n"
               << "  --wrist-source=SOURCE          Override where the injected hand's wrist pose comes from\n"
               << "                                 (auto | hand_tracking | controller)\n"
-              << "  --left-aim-to-wrist=POSE       Override the controller aim -> wrist offset, left hand\n"
-              << "  --right-aim-to-wrist=POSE      Override it for the right hand\n"
-              << "                                 (POSE is x,y,z,qx,qy,qz,qw)\n"
-              << "  --wrist-smoothing-ms=MS        Override the tracked wrist's low-pass time constant (0 = off)\n"
-              << "  --calibrate-aim                One-shot: hold both hands flat and still, print the controller\n"
-              << "                                 aim -> wrist values for both hands and exit\n"
-              << "                                 (requires --wrist-source=controller)\n"
-              << "  --aim-flip                     Calibration: take the controller aim frame's up axis as\n"
-              << "                                 towards the palm, i.e. flip the dorsal hint and roll the\n"
-              << "                                 aim -> wrist constant 180 degrees about the fingers\n"
-              << "  --aim-behind=M                 Calibration: wrist offset behind the aim origin along the\n"
-              << "                                 fingers, in metres (default 0.04)\n"
-              << "  --aim-height=M                 Calibration: wrist offset below the aim origin, in metres\n"
-              << "                                 (default 0.06)\n"
+              << "  --wrist-alignment=ROTATION     Override how the glove's wrist frame is aligned with it\n"
+              << "                                 (auto | identity | x,y,z,w)\n"
+              << "  --session-reference=PATH       Load reference_left/reference_right from PATH (the snippet\n"
+              << "                                 --export-session-reference= writes, or the config file);\n"
+              << "                                 overrides the config per hand and skips the capture window\n"
+              << "  --export-session-reference=PATH  Write the session-reference snippet after a good capture\n"
+              << "                                 (and at start-up when a reference is loaded)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
@@ -100,6 +71,41 @@ int fail_empty_flag(const char* prog, const char* flag)
     return 1;
 }
 
+//! One line for --print-config: unset, a valid block's text and its driver, or the parse error.
+std::string describe_session_reference(const std::string& text)
+{
+    if (text.empty())
+    {
+        return "<unset: the capture window learns it>";
+    }
+    SessionReferenceBlock block;
+    std::string error;
+    if (!parse_session_reference_block(text.c_str(), block, error))
+    {
+        return "<invalid: " + error + "> " + text;
+    }
+    std::string driver;
+    if (block.has_angles)
+    {
+        char deadband[80] = "";
+        if (block.has_deadband)
+        {
+            std::snprintf(deadband, sizeof(deadband), ", open deadband %.3f deg",
+                          static_cast<double>(block.angle_deadband_rad) * 180.0 / 3.14159265358979323846);
+        }
+        else
+        {
+            std::snprintf(deadband, sizeof(deadband), ", no open deadband (r31 map)");
+        }
+        driver = std::string("<valid, joint-angle driver") + deadband + "> ";
+    }
+    else
+    {
+        driver = "<valid, chord driver (legacy block)> ";
+    }
+    return driver + text;
+}
+
 //! Returns the value of a `--key=value` argument, or nullopt when @p arg is not that key.
 std::optional<std::string> flag_value(const std::string& arg, const char* key)
 {
@@ -111,29 +117,6 @@ std::optional<std::string> flag_value(const std::string& arg, const char* key)
     return arg.substr(prefix.size());
 }
 
-//! Parses a non-negative length in metres for the calibration flags; prints the usage on bad input,
-//! which the one-shot mode cannot recover from.
-bool parse_metres(const std::string& value, const char* flag, const char* prog, double& out)
-{
-    try
-    {
-        out = std::stod(value);
-    }
-    catch (const std::exception&)
-    {
-        std::cerr << "Error: --" << flag << "= must be a number." << std::endl;
-        print_usage(prog);
-        return false;
-    }
-    if (!std::isfinite(out) || out < 0.0)
-    {
-        std::cerr << "Error: --" << flag << "= must be a non-negative number of metres." << std::endl;
-        print_usage(prog);
-        return false;
-    }
-    return true;
-}
-
 } // namespace
 
 int main(int argc, char** argv)
@@ -142,6 +125,7 @@ try
     IoExoGloveRos2Plugin::Options options; // Built-in defaults; the config file and CLI layer on top.
     CliOverrides cli;
     std::string config_path;
+    std::string session_reference_path;
     bool print_config = false;
 
     // Arguments handed to ROS: everything this plugin does not consume itself.
@@ -184,14 +168,6 @@ try
         {
             print_config = true;
         }
-        else if (arg == "--calibrate-aim")
-        {
-            cli.calibrate_aim = true;
-        }
-        else if (arg == "--aim-flip")
-        {
-            cli.aim_flip = true;
-        }
         else if (const auto value = flag_value(arg, "config"))
         {
             if (value->empty())
@@ -216,21 +192,13 @@ try
             }
             cli.links_topic = *value;
         }
-        else if (const auto value = flag_value(arg, "joints-left-collection-id"))
+        else if (const auto value = flag_value(arg, "joints-collection-id"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "joints-left-collection-id");
+                return fail_empty_flag(argv[0], "joints-collection-id");
             }
-            cli.joints_left_collection_id = *value;
-        }
-        else if (const auto value = flag_value(arg, "joints-right-collection-id"))
-        {
-            if (value->empty())
-            {
-                return fail_empty_flag(argv[0], "joints-right-collection-id");
-            }
-            cli.joints_right_collection_id = *value;
+            cli.joints_collection_id = *value;
         }
         else if (const auto value = flag_value(arg, "tips-left-collection-id"))
         {
@@ -264,64 +232,29 @@ try
             }
             cli.wrist_source = *value;
         }
-        else if (const auto value = flag_value(arg, "left-aim-to-wrist"))
+        else if (const auto value = flag_value(arg, "wrist-alignment"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "left-aim-to-wrist");
+                return fail_empty_flag(argv[0], "wrist-alignment");
             }
-            cli.left_aim_to_wrist = *value;
+            cli.wrist_alignment = *value;
         }
-        else if (const auto value = flag_value(arg, "right-aim-to-wrist"))
+        else if (const auto value = flag_value(arg, "session-reference"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "right-aim-to-wrist");
+                return fail_empty_flag(argv[0], "session-reference");
             }
-            cli.right_aim_to_wrist = *value;
+            session_reference_path = *value;
         }
-        else if (const auto value = flag_value(arg, "wrist-smoothing-ms"))
+        else if (const auto value = flag_value(arg, "export-session-reference"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "wrist-smoothing-ms");
+                return fail_empty_flag(argv[0], "export-session-reference");
             }
-            try
-            {
-                cli.wrist_smoothing_ms = std::stod(*value);
-            }
-            catch (const std::exception&)
-            {
-                std::cerr << "Error: --wrist-smoothing-ms= must be a number." << std::endl;
-                print_usage(argv[0]);
-                return 1;
-            }
-        }
-        else if (const auto value = flag_value(arg, "aim-behind"))
-        {
-            if (value->empty())
-            {
-                return fail_empty_flag(argv[0], "aim-behind");
-            }
-            double metres = 0.0;
-            if (!parse_metres(*value, "aim-behind", argv[0], metres))
-            {
-                return 1;
-            }
-            cli.aim_behind_m = metres;
-        }
-        else if (const auto value = flag_value(arg, "aim-height"))
-        {
-            if (value->empty())
-            {
-                return fail_empty_flag(argv[0], "aim-height");
-            }
-            double metres = 0.0;
-            if (!parse_metres(*value, "aim-height", argv[0], metres))
-            {
-                return 1;
-            }
-            cli.aim_height_m = metres;
+            cli.export_session_reference = *value;
         }
         else
         {
@@ -335,6 +268,20 @@ try
     // everything else. The capture's --wrist-source is a label the plugin cannot see, so it is read
     // from the environment variable the capture sets alongside it.
     const ConfigResolution resolution = load_options_from_config(config_path, options);
+    if (!session_reference_path.empty())
+    {
+        // The reference-file flag overrides the config per hand; a hand the file omits keeps the
+        // config's block (or captures one), so a one-handed file never disturbs the other hand.
+        const SessionReferenceFile reference = load_session_reference_file(session_reference_path);
+        if (!reference.left.empty())
+        {
+            options.reference_left = reference.left;
+        }
+        if (!reference.right.empty())
+        {
+            options.reference_right = reference.right;
+        }
+    }
     if (const char* from_env = std::getenv(kWristSourceEnvVar); from_env != nullptr && *from_env != '\0')
     {
         options.wrist_source = from_env;
@@ -347,13 +294,9 @@ try
     {
         options.links_topic = *cli.links_topic;
     }
-    if (cli.joints_left_collection_id)
+    if (cli.joints_collection_id)
     {
-        options.joints_left_collection_id = *cli.joints_left_collection_id;
-    }
-    if (cli.joints_right_collection_id)
-    {
-        options.joints_right_collection_id = *cli.joints_right_collection_id;
+        options.joints_collection_id = *cli.joints_collection_id;
     }
     if (cli.tips_left_collection_id)
     {
@@ -371,17 +314,13 @@ try
     {
         options.wrist_source = *cli.wrist_source;
     }
-    if (cli.left_aim_to_wrist)
+    if (cli.wrist_alignment)
     {
-        options.left_aim_to_wrist = *cli.left_aim_to_wrist;
+        options.wrist_alignment = *cli.wrist_alignment;
     }
-    if (cli.right_aim_to_wrist)
+    if (cli.export_session_reference)
     {
-        options.right_aim_to_wrist = *cli.right_aim_to_wrist;
-    }
-    if (cli.wrist_smoothing_ms)
-    {
-        options.wrist_smoothing_ms = *cli.wrist_smoothing_ms;
+        options.export_session_reference = *cli.export_session_reference;
     }
 
     if (print_config)
@@ -395,56 +334,27 @@ try
         }
         std::cout << "joints_topic            = " << options.joints_topic << "\n"
                   << "links_topic             = " << options.links_topic << "\n"
-                  << "joints_left_collection_id  = " << options.joints_left_collection_id << "\n"
-                  << "joints_right_collection_id = " << options.joints_right_collection_id << "\n"
+                  << "joints_collection_id    = " << options.joints_collection_id << "\n"
                   << "tips_left_collection_id = " << options.tips_left_collection_id << "\n"
                   << "tips_right_collection_id= " << options.tips_right_collection_id << "\n"
                   << "tips_reference_frame    = " << options.tips_reference_frame << "\n"
                   << "wrist_source            = " << options.wrist_source << "\n"
-                  << "left_aim_to_wrist       = " << options.left_aim_to_wrist << "\n"
-                  << "right_aim_to_wrist      = " << options.right_aim_to_wrist << "\n"
-                  << "wrist_smoothing_ms      = " << options.wrist_smoothing_ms << "\n"
+                  << "wrist_alignment         = " << options.wrist_alignment << "\n"
+                  << "reference_left          = " << describe_session_reference(options.reference_left) << "\n"
+                  << "reference_right         = " << describe_session_reference(options.reference_right) << "\n"
+                  << "export_session_reference= "
+                  << (options.export_session_reference.empty() ? "<unset>" : options.export_session_reference) << "\n"
                   << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
                   << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
                   << "\n(Both sizes are the consumer trackers' own defaults -- JointStateTracker and "
-                     "JointSe3PoseTracker -- so no explicit size is needed for either collection.)\n"
-                     "(left/right_joint_zero_offsets are accepted but ignored: flexion is derived from the\n"
-                     " fingertip chords, so no per-session open-hand zero is needed.)"
+                     "JointSe3PoseTracker -- so no explicit size is needed for either collection.)"
                   << std::endl;
         return 0;
     }
 
     if (!resolution.loaded_path.empty())
     {
-        logger()->info("Loaded config: {}", resolution.loaded_path);
-    }
-
-    // This mode writes the aim-to-wrist constants for the controller source; any other source has no
-    // aim pose to calibrate, so fail before creating a session rather than after.
-    if (cli.calibrate_aim && options.wrist_source != "controller")
-    {
-        logger()->error("--calibrate-aim requires --wrist-source=controller, not '{}'", options.wrist_source);
-        return 1;
-    }
-    // The flip only affects the dorsal hint the one-shot calibration builds; outside that mode it
-    // would silently do nothing, so fail loudly instead.
-    if (cli.aim_flip && !cli.calibrate_aim)
-    {
-        logger()->error("--aim-flip is only meaningful with --calibrate-aim");
-        return 1;
-    }
-
-    // The calibration measures the raw controller aim pose, so the wrist source must not have the
-    // configured offset folded in (WristPoseSource::query() applies it). Identity here is for this
-    // one-shot run only; the configured values are what the printed ones replace.
-    IoExoGloveRos2Plugin::Options run_options = options;
-    if (cli.calibrate_aim)
-    {
-        run_options.left_aim_to_wrist = "0,0,0,0,0,0,1";
-        run_options.right_aim_to_wrist = "0,0,0,0,0,0,1";
-        logger()->info("Aim calibration: wrist {:.3f} m behind and {:.3f} m below the controller aim origin{}",
-                       cli.aim_behind_m.value_or(kDefaultAimBehindM), cli.aim_height_m.value_or(kDefaultAimHeightM),
-                       cli.aim_flip ? ", dorsal hint flipped" : "");
+        std::cout << "Loaded config: " << resolution.loaded_path << std::endl;
     }
 
     // ROS gets only the arguments it owns: our own flags and the launcher-injected
@@ -458,29 +368,22 @@ try
     ros_argv.push_back(nullptr);
     rclcpp::init(static_cast<int>(ros_args.size()), ros_argv.data());
 
-    logger()->info("IoExoGloveRos2Plugin (joints: {} -> {}, {}, tips: {} -> {} / {})", options.joints_topic,
-                   options.joints_left_collection_id, options.joints_right_collection_id, options.links_topic,
-                   options.tips_left_collection_id, options.tips_right_collection_id);
+    std::cout << "IoExoGloveRos2Plugin (joints: " << options.joints_topic << " -> " << options.joints_collection_id
+              << ", tips: " << options.links_topic << " -> " << options.tips_left_collection_id << " / "
+              << options.tips_right_collection_id << ")" << std::endl;
 
-    auto node = std::make_shared<IoExoGloveRos2Plugin>(run_options);
-    if (cli.calibrate_aim)
-    {
-        node->calibrate_aim(static_cast<float>(cli.aim_behind_m.value_or(kDefaultAimBehindM)),
-                            static_cast<float>(cli.aim_height_m.value_or(kDefaultAimHeightM)), cli.aim_flip);
-        rclcpp::shutdown();
-        return 0;
-    }
+    auto node = std::make_shared<IoExoGloveRos2Plugin>(options);
     rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;
 }
 catch (const std::exception& e)
 {
-    logger()->error("{}: {}", argv[0], e.what());
+    std::cerr << argv[0] << ": " << e.what() << std::endl;
     return 1;
 }
 catch (...)
 {
-    logger()->error("{}: Unknown error", argv[0]);
+    std::cerr << argv[0] << ": Unknown error" << std::endl;
     return 1;
 }
