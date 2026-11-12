@@ -28,6 +28,9 @@ struct WorkerConfig
     uint32_t idr_period = 30;
     /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
     uint32_t scale_div = 1;
+    /// The IPC pictures are full-range (0-255) rather than limited-range (16-235); the encoded stream signals it. The
+    /// receiver's IPC catalog does not carry the range, so the operator says it here.
+    bool source_full_range = false;
     /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
     TimestampBasis timestamp_basis = TimestampBasis::CaptureUnixUs;
 };

@@ -71,6 +71,13 @@ start-of-frame (missing, in the future, older than 5 s, or on another clock doma
 a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
 need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
 
+`--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
+then signals full range, so players and recordings keep the black and white levels. Without it the stream signals
+limited range (16-235). The receiver's IPC catalog does not carry the range, so it is set here and must match the
+source: a full-range picture published as limited range has crushed blacks and clipped whites, and the reverse
+looks washed out. The encoder copies levels as they are and does no range conversion. The stream signals no colour
+primaries, transfer or matrix, so a player assumes its default (BT.709 for HD).
+
 `--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
 congestion control reports for each track (with 10% headroom, never above the maximum or below 0.5 Mbps), so a
 fresh connection does not fill the sender's pacing queue. A fixed 8 Mbps start made the first frames 1-2 s old and
@@ -93,3 +100,14 @@ build/probe/camera_ipc_probe --socket /tmp/camera_receiver_avs1_cuda_ipc.sock \
 It prints each stream's plane layout, then per frame the slot, generation,
 stream sequence, session id, sensor start time and a checksum of the first
 pixels. Slots are overwritten without notice when the publisher's ring wraps.
+
+## Reading the receiver's slots
+
+The receiver rewrites its GPU ring slots in rotation and never waits for a reader: a slot is overwritten without
+notice about `ring_depth` frames after it was announced, and the only signal is a later frame notice. A consumer
+therefore has to finish with a slot within that window or skip ahead. The bridge follows this: it uses only the
+newest notice, starts the GPU copy at once on its own stream, waits for it to complete, and drops (never encodes)
+the picture when later notices show the ring may have wrapped; those frames count as slot overruns in the `[stats]`
+line. The notices arrive asynchronously, so this check cannot prove a copy was clean: a stall of most of the ring's
+window between the notice and the end of the copy can still publish a picture that mixes two frames under the earlier
+frame's metadata. Only a read guard in the receiver, which skips slots a reader holds, would remove that case.

@@ -270,6 +270,134 @@ void test_decodable_across_reconfigure(NvencEncoder& enc)
     std::remove(path.c_str());
 }
 
+// MSB-first reader over an SPS RBSP (emulation-prevention bytes already removed).
+struct BitReader
+{
+    const std::vector<uint8_t>& d;
+    size_t pos = 0; // bit position
+    bool ok = true;
+
+    uint32_t u(int n)
+    {
+        uint32_t v = 0;
+        for (int i = 0; i < n; ++i, ++pos)
+        {
+            if ((pos >> 3) >= d.size())
+            {
+                ok = false;
+                return 0;
+            }
+            v = (v << 1) | ((d[pos >> 3] >> (7 - (pos & 7))) & 1u);
+        }
+        return v;
+    }
+
+    uint32_t ue()
+    {
+        int zeros = 0;
+        while (ok && u(1) == 0 && zeros < 32)
+            ++zeros;
+        return ok ? (1u << zeros) - 1u + u(zeros) : 0;
+    }
+};
+
+// Returns video_full_range_flag from the first SPS in an Annex-B access unit; -1 if absent, unparsable, or the
+// VUI carries no video_signal_type.
+int sps_video_full_range(const std::vector<uint8_t>& au)
+{
+    for (size_t i = 0; i + 4 < au.size(); ++i)
+    {
+        if (!(au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1 && (au[i + 3] & 0x1F) == 7))
+            continue;
+        // RBSP after the NAL header, up to the next start code, with 00 00 03 emulation bytes dropped.
+        std::vector<uint8_t> rbsp;
+        for (size_t j = i + 4; j < au.size(); ++j)
+        {
+            if (j + 2 < au.size() && au[j] == 0 && au[j + 1] == 0 && au[j + 2] <= 1)
+                break;
+            if (rbsp.size() >= 2 && rbsp[rbsp.size() - 1] == 0 && rbsp[rbsp.size() - 2] == 0 && au[j] == 3)
+                continue;
+            rbsp.push_back(au[j]);
+        }
+        BitReader r{ rbsp };
+        const uint32_t profile = r.u(8);
+        r.u(16); // constraint flags + level_idc
+        r.ue(); // seq_parameter_set_id
+        constexpr uint32_t kHighProfiles[] = { 100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135 };
+        for (uint32_t hp : kHighProfiles)
+        {
+            if (profile != hp)
+                continue;
+            if (r.ue() == 3) // chroma_format_idc
+                r.u(1);
+            r.ue();
+            r.ue();
+            r.u(1);
+            if (r.u(1)) // seq_scaling_matrix_present_flag: not produced by NVENC, not parsed here
+                return -1;
+        }
+        r.ue(); // log2_max_frame_num_minus4
+        const uint32_t poc_type = r.ue();
+        if (poc_type == 0)
+            r.ue();
+        else if (poc_type == 1)
+            return -1;
+        r.ue(); // max_num_ref_frames
+        r.u(1);
+        r.ue();
+        r.ue();
+        if (!r.u(1)) // frame_mbs_only_flag
+            r.u(1);
+        r.u(1); // direct_8x8_inference_flag
+        if (r.u(1)) // frame_cropping_flag
+            for (int k = 0; k < 4; ++k)
+                r.ue();
+        if (!r.u(1)) // vui_parameters_present_flag
+            return -1;
+        if (r.u(1)) // aspect_ratio_info_present_flag
+            if (r.u(8) == 255)
+                r.u(32);
+        if (r.u(1)) // overscan_info_present_flag
+            r.u(1);
+        if (!r.u(1)) // video_signal_type_present_flag
+            return -1;
+        r.u(3); // video_format
+        const uint32_t full = r.u(1);
+        return r.ok ? static_cast<int>(full) : -1;
+    }
+    return -1;
+}
+
+// A grayscale ramp (Y 0..255 across the width, UV 128) must be signalled as full or limited range as configured.
+void test_range_signalling(CudaContext& ctx, bool full_range)
+{
+    EncoderConfig cfg;
+    cfg.geometry = { 640, 480 };
+    cfg.full_range = full_range;
+    cfg.input_surfaces = 2;
+    NvencEncoder enc(ctx, cfg);
+
+    std::vector<uint8_t> luma(static_cast<size_t>(640) * 480);
+    for (size_t i = 0; i < luma.size(); ++i)
+        luma[i] = static_cast<uint8_t>((i % 640) * 255 / 639);
+
+    int flag = -2;
+    for (int i = 0; i < 3; ++i)
+    {
+        NvencEncoder::Surface s;
+        CHECK(enc.acquire(s));
+        CHECK(cudaMemcpy2D(s.view.y, s.view.y_pitch, luma.data(), 640, 640, 480, cudaMemcpyHostToDevice) == cudaSuccess);
+        CHECK(cudaMemset2D(s.view.uv, s.view.uv_pitch, 128, 640, 240) == cudaSuccess);
+        CHECK(cudaDeviceSynchronize() == cudaSuccess);
+        EncodedPacket p = enc.encode(s, nullptr, 2000 + static_cast<uint64_t>(i), i == 0);
+        if (i == 0)
+            flag = sps_video_full_range(p.data);
+    }
+    if (flag != (full_range ? 1 : 0))
+        std::fprintf(stderr, "video_full_range_flag=%d for full_range=%d\n", flag, full_range ? 1 : 0);
+    CHECK(flag == (full_range ? 1 : 0));
+}
+
 } // namespace
 
 int main()
@@ -365,6 +493,8 @@ int main()
     test_output_after_reconfigure(*enc);
     test_rate_changes_output_size(*enc);
     test_decodable_across_reconfigure(*enc);
+    test_range_signalling(*ctx, true);
+    test_range_signalling(*ctx, false);
 
     if (g_failures != 0)
     {
