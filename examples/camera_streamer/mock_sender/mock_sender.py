@@ -43,6 +43,13 @@ SAMPLE_SENDER_TIMING_VALID = 0x0008
 SAMPLE_SOF_TSC_VALID = 0x0002
 BUNDLE_SENDER_CLOCK_VALID = 0x0001  # realtime domain; the TAI flag stays clear
 BUNDLE_SENDER_TSC_VALID = 0x0004
+BUNDLE_TIMING_EXT = (
+    0x0008  # one TIMING record per sample follows the sample descriptors
+)
+# Capture time, uncertainty, anchor age, flags, clock domain, reserved.
+TIMING = struct.Struct("!QIIHHI")
+TIMING_VALID = 0x0001
+TIMING_DOMAIN_REALTIME = 2
 TSC_BASE_NS = 7_000_000_000_000  # arbitrary origin of the synthetic TSC domain
 LOOP_SECONDS = 12
 GOP_SECONDS = 2
@@ -200,9 +207,14 @@ def build_record(
     enqueue_ns: int,
     ready_tsc_ns: int,
     sof_lag_ns: int,
+    timing_uncertainty_ns: int | None = None,
 ) -> bytes:
-    """One length-prefixed AVS1 record: every stream has a descriptor, present or not."""
-    streams, samples, body = [], [], b""
+    """One length-prefixed AVS1 record: every stream has a descriptor, present or not.
+
+    With ``timing_uncertainty_ns`` every sample also carries a timing record: the synthetic sensor start of frame on the
+    mock's wall clock (the ready time minus the lag) for a present sample, all zero for an absent one.
+    """
+    streams, samples, timings, body = [], [], [], b""
     for index, (cursor, payload) in enumerate(zip(cursors, payloads)):
         present = payload is not None
         streams.append(
@@ -222,13 +234,24 @@ def build_record(
                 )
             )  # fmt: skip
             body += payload
+            timings.append(
+                TIMING.pack(
+                    ready_ns - sof_lag_ns, timing_uncertainty_ns or 0, 0,
+                    TIMING_VALID, TIMING_DOMAIN_REALTIME, 0,
+                )
+            )  # fmt: skip
         else:
             samples.append(
                 SAMPLE.pack(index, 0, 0, 0, 0, index, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             )
+            timings.append(TIMING.pack(0, 0, 0, 0, 0, 0))
     descriptors = b"".join(streams) + b"".join(samples)
+    bundle_flags = BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_TSC_VALID
+    if timing_uncertainty_ns is not None:
+        descriptors += b"".join(timings)
+        bundle_flags |= BUNDLE_TIMING_EXT
     header = HEADER.pack(
-        b"AVS1", 1, BUNDLE_SENDER_CLOCK_VALID | BUNDLE_SENDER_TSC_VALID, HEADER.size,
+        b"AVS1", 1, bundle_flags, HEADER.size,
         len(streams), len(samples), bundle_sequence, session_id, ready_ns, enqueue_ns,
         len(descriptors), len(body), ready_tsc_ns,
     )  # fmt: skip
@@ -248,10 +271,12 @@ class MockSender:
         pauses: list[Pause],
         disconnects_s: list[float],
         sof_lag_ns: int = 20_000_000,
+        timing_uncertainty_ns: int | None = None,
     ) -> None:
         self.specs = specs
         self.clock = clock
         self.sof_lag_ns = sof_lag_ns
+        self.timing_uncertainty_ns = timing_uncertainty_ns
         self.pauses = pauses
         self.disconnects_s = sorted(disconnects_s)
         self._units = {
@@ -337,6 +362,7 @@ class MockSender:
                 self.clock.now_ns(),
                 ready_tsc_ns,
                 self.sof_lag_ns,
+                self.timing_uncertainty_ns,
             )
             conn.sendall(record)
             self.bundles_sent += 1
@@ -401,6 +427,14 @@ def main(argv: list[str] | None = None) -> int:
     )  # fmt: skip
     parser.add_argument("--clock-drift-ppm", type=float, default=0.0)
     parser.add_argument(
+        "--timing-ext", action="store_true",
+        help="send the AVS1 timing record: the synthetic sensor start of frame on the mock's wall clock",
+    )  # fmt: skip
+    parser.add_argument(
+        "--sensor-uncertainty-us", type=float, default=500.0,
+        help="the uncertainty the timing record states for the sensor-to-wall-clock mapping",
+    )  # fmt: skip
+    parser.add_argument(
         "--pause", type=parse_pause, action="append", default=[], metavar="NAME@START+SECONDS",
         help="stop one stream for a while; it resumes at an IDR",
     )  # fmt: skip
@@ -435,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
         args.pause,
         args.disconnect_at,
         int(args.sof_lag_ms * 1e6),
+        int(args.sensor_uncertainty_us * 1000) if args.timing_ext else None,
     )
     listener = socket.create_server((args.bind, args.port), reuse_port=False)
     logger.info(

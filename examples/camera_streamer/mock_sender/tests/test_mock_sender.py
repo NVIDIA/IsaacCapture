@@ -194,6 +194,44 @@ class ServeDurationTest(unittest.TestCase):
         self.assertGreater(sender.bundles_sent, 0)
 
 
+class TimingRecordTest(unittest.TestCase):
+    def _record(self, uncertainty, payloads):
+        cursors = [ms._Cursor(SPEC, [(b"x", True)]) for _ in payloads]
+        return ms.build_record(
+            cursors,
+            payloads,
+            1,
+            7,
+            2_000_000_000,
+            2_000_000_100,
+            5_000_000_000,
+            20_000_000,
+            uncertainty,
+        )
+
+    def _header(self, record):
+        return ms.HEADER.unpack_from(record, 4)
+
+    def test_no_timing_extension_by_default(self):
+        header = self._header(self._record(None, [b"abc"]))
+        self.assertFalse(header[2] & ms.BUNDLE_TIMING_EXT)
+
+    def test_timing_extension_carries_realtime_capture_per_sample(self):
+        record = self._record(3000, [b"abc", None])
+        header = self._header(record)
+        self.assertTrue(header[2] & ms.BUNDLE_TIMING_EXT)
+        descriptors = record[4 + ms.HEADER.size :][: header[10]]
+        timings = descriptors[-2 * ms.TIMING.size :]
+        present = ms.TIMING.unpack_from(timings, 0)
+        self.assertEqual(
+            present,
+            (1_980_000_000, 3000, 0, ms.TIMING_VALID, ms.TIMING_DOMAIN_REALTIME, 0),
+        )
+        self.assertEqual(
+            ms.TIMING.unpack_from(timings, ms.TIMING.size), (0, 0, 0, 0, 0, 0)
+        )
+
+
 class ParseArgsTest(unittest.TestCase):
     def test_stream_spec(self):
         self.assertEqual(
