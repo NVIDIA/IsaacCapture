@@ -378,7 +378,11 @@ Install an example into this venv with ``--no-sources``:
 
    uv pip install -e ./examples/<name> --no-sources
 
-Without it, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
+On aarch64 this command fails for ``deviceio_live_view``, because SOMA-X pulls in ``cholespy``,
+which has no aarch64 wheel. Use the aarch64 install in
+:code-file:`examples/deviceio_live_view/README.md` instead.
+
+Without ``--no-sources``, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with ``The CloudXR service exited during startup`` and the
 service log reads ``CloudXR SDK missing native/libcloudxr.so``. After a rebuild, run
