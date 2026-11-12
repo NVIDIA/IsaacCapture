@@ -336,8 +336,7 @@ async def test_a_malformed_config_yaml_refuses_reopen_clearly(tmp_path, own, tex
 
 async def test_reopening_with_a_source_the_frozen_config_does_not_declare_is_refused(tmp_path, own):
     config, session = await _frozen_session(tmp_path, own)
-    (session.session_path / "config.yaml").write_text(
-        "numeric_sources: [{name: tracker, frame_type: PicoTrackingFrame}]\n"
-    )
+    declared = "numeric_sources:\n  - {name: tracker, frame_type: PicoTrackingFrame}\n"
+    (session.session_path / "config.yaml").write_text(declared)
     with pytest.raises(ConfigurationError, match="'plain' is not declared"):
         await own(RecordingService(config)).open_session(session.session_id)
