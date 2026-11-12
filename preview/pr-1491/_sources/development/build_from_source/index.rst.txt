@@ -381,8 +381,9 @@ Install an example into this venv with ``--no-sources``:
 Without it, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with ``The CloudXR service exited during startup`` and the
-service log reads ``CloudXR SDK missing native/libcloudxr.so``. After a rebuild, rerun the wheel
-install above; the example does not need reinstalling.
+service log reads ``CloudXR SDK missing native/libcloudxr.so``. After a rebuild, run
+``cmake --install build`` so ``./install/wheels/`` holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so

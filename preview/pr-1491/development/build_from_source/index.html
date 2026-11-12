@@ -824,8 +824,9 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <p>Without it, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">CloudXR</span> <span class="pre">service</span> <span class="pre">exited</span> <span class="pre">during</span> <span class="pre">startup</span></code> and the
-service log reads <code class="docutils literal notranslate"><span class="pre">CloudXR</span> <span class="pre">SDK</span> <span class="pre">missing</span> <span class="pre">native/libcloudxr.so</span></code>. After a rebuild, rerun the wheel
-install above; the example does not need reinstalling.</p>
+service log reads <code class="docutils literal notranslate"><span class="pre">CloudXR</span> <span class="pre">SDK</span> <span class="pre">missing</span> <span class="pre">native/libcloudxr.so</span></code>. After a rebuild, run
+<code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code> so <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code> holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.</p>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
 in 1.9, so
 <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
@@ -1068,7 +1069,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
       <br/>
     
   </p>
