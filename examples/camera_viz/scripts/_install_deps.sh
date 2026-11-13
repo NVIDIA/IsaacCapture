@@ -579,6 +579,17 @@ else
     uv pip install --python "$PY" --upgrade "${PKGS[@]}"
 fi
 
+# isaaccapture[cloudxr] depends on cupy-cuda12x, so on a CUDA 13 host the install
+# above brings that variant back next to the target. Remove it again; the variants
+# share the cupy/ directory, so reinstall the target afterwards.
+for v in cupy-cuda11x cupy-cuda12x cupy-cuda13x; do
+    if [[ "$v" != "$target_cupy" ]] && uv pip show --python "$PY" "$v" >/dev/null 2>&1; then
+        step "removing $v pulled in by dependencies (target is $target_cupy)"
+        uv pip uninstall --python "$PY" "$v" >/dev/null
+        uv pip install --python "$PY" --reinstall-package "$target_cupy" "$target_cupy"
+    fi
+done
+
 # The example itself, so `python -m isaaccapture_examples.camera_viz` resolves
 # without the source directory on sys.path. Editable, so edits need no
 # reinstall -- and the native codec .so, built in place below, is picked up
