@@ -14,6 +14,7 @@ namespace
 {
 
 using plugins::omniglove::ConversionStatus;
+using plugins::omniglove::HandJoints;
 
 void fill_pose(omniglove_pose6_t& pose, float x, float y, float z, const XrQuaternionf& orientation)
 {
@@ -68,11 +69,13 @@ bool openxr_axes(bool is_left, const XrQuaternionf& orientation)
 {
     omniglove_post_data_t post{};
     fill_hand(post, orientation);
-    std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-    if (plugins::omniglove::convert_post_data(post, is_left, joints) != ConversionStatus::Success)
+    const auto result = plugins::omniglove::convert_post_data(post, is_left);
+    const auto* converted = std::get_if<HandJoints>(&result);
+    if (converted == nullptr)
     {
         return false;
     }
+    const auto& joints = *converted;
     const float norm = std::sqrt(orientation.x * orientation.x + orientation.y * orientation.y +
                                  orientation.z * orientation.z + orientation.w * orientation.w);
     const XrQuaternionf unit = { orientation.x / norm, orientation.y / norm, orientation.z / norm, orientation.w / norm };
@@ -122,8 +125,9 @@ TEST_CASE("OmniGlove conversion preserves its OpenXR hand contract", "[omniglove
 {
     omniglove_post_data_t post{};
     fill_hand(post);
-    std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-    REQUIRE(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::Success);
+    auto result = plugins::omniglove::convert_post_data(post, true);
+    REQUIRE(std::holds_alternative<HandJoints>(result));
+    auto joints = std::get<HandJoints>(result);
     constexpr XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     int valid_count = 0;
     for (const auto& joint : joints)
@@ -141,19 +145,42 @@ TEST_CASE("OmniGlove conversion preserves its OpenXR hand contract", "[omniglove
         CHECK(openxr_axes(is_left, { 1.0F, 2.0F, 3.0F, 4.0F }));
     }
     const XrPosef left_wrist = joints[XR_HAND_JOINT_WRIST_EXT].pose;
-    REQUIRE(plugins::omniglove::convert_post_data(post, false, joints) == ConversionStatus::Success);
+    result = plugins::omniglove::convert_post_data(post, false);
+    REQUIRE(std::holds_alternative<HandJoints>(result));
+    joints = std::get<HandJoints>(result);
     CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.x, -left_wrist.position.x));
     CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.y, -left_wrist.position.y));
     CHECK(near(joints[XR_HAND_JOINT_WRIST_EXT].pose.position.z, left_wrist.position.z));
 
     post.flags = plugins::omniglove::kPostBoneModelValid;
-    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::IkNotConverged);
+    CHECK(std::get<ConversionStatus>(plugins::omniglove::convert_post_data(post, true)) ==
+          ConversionStatus::IkNotConverged);
     post.flags = plugins::omniglove::kPostIkConverged;
-    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::BoneModelInvalid);
+    CHECK(std::get<ConversionStatus>(plugins::omniglove::convert_post_data(post, true)) ==
+          ConversionStatus::BoneModelInvalid);
     fill_hand(post);
     post.mapped = 0;
-    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::NotMapped);
+    CHECK(std::get<ConversionStatus>(plugins::omniglove::convert_post_data(post, true)) == ConversionStatus::NotMapped);
     fill_hand(post);
     post.index.landmarks.mcp.position_m[0] = std::numeric_limits<float>::quiet_NaN();
-    CHECK(plugins::omniglove::convert_post_data(post, true, joints) == ConversionStatus::InvalidPose);
+    CHECK(std::get<ConversionStatus>(plugins::omniglove::convert_post_data(post, true)) == ConversionStatus::InvalidPose);
+}
+
+TEST_CASE("OmniGlove returns no joints when the last landmark is invalid", "[omniglove][conversion]")
+{
+    omniglove_post_data_t post{};
+    fill_hand(post);
+    post.pinky.landmarks.tip.quaternion_xyzw[3] = std::numeric_limits<float>::infinity();
+    auto result = plugins::omniglove::convert_post_data(post, true);
+    REQUIRE(std::holds_alternative<ConversionStatus>(result));
+    CHECK(std::get<ConversionStatus>(result) == ConversionStatus::InvalidPose);
+
+    fill_hand(post);
+    for (auto& component : post.pinky.landmarks.tip.quaternion_xyzw)
+    {
+        component = 0.0F;
+    }
+    result = plugins::omniglove::convert_post_data(post, false);
+    REQUIRE(std::holds_alternative<ConversionStatus>(result));
+    CHECK(std::get<ConversionStatus>(result) == ConversionStatus::InvalidPose);
 }

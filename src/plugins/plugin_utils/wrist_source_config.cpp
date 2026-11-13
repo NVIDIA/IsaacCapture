@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "inc/plugin_utils/wrist_pose_source.hpp"
+#include "inc/plugin_utils/wrist_source_config.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +15,20 @@
 namespace plugin_utils
 {
 
+const char* to_string(WristSourceMode mode)
+{
+    switch (mode)
+    {
+    case WristSourceMode::Auto:
+        return "auto";
+    case WristSourceMode::HandTracking:
+        return "hand_tracking";
+    case WristSourceMode::Controller:
+        return "controller";
+    }
+    throw std::invalid_argument("invalid wrist source mode");
+}
+
 WristSourceMode wrist_source_mode_from_env(const char* name, WristSourceMode fallback)
 {
     const char* value = std::getenv(name);
@@ -22,17 +36,12 @@ WristSourceMode wrist_source_mode_from_env(const char* name, WristSourceMode fal
     {
         return fallback;
     }
-    if (std::strcmp(value, "hand_tracking") == 0)
+    for (const auto mode : { WristSourceMode::HandTracking, WristSourceMode::Controller, WristSourceMode::Auto })
     {
-        return WristSourceMode::HandTracking;
-    }
-    if (std::strcmp(value, "controller") == 0)
-    {
-        return WristSourceMode::Controller;
-    }
-    if (std::strcmp(value, "auto") == 0)
-    {
-        return WristSourceMode::Auto;
+        if (std::strcmp(value, to_string(mode)) == 0)
+        {
+            return mode;
+        }
     }
     throw std::runtime_error(std::string(name) + " must be hand_tracking, controller or auto; got '" + value + "'");
 }

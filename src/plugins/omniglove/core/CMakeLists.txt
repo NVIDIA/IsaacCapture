@@ -4,6 +4,8 @@
 add_library(omniglove_plugin_core STATIC
     omniglove_hand_conversion.cpp
     omniglove_plugin.cpp
+    inc/omniglove_plugin/omniglove_hand_conversion.hpp
+    inc/omniglove_plugin/omniglove_plugin.hpp
 )
 
 target_include_directories(omniglove_plugin_core
@@ -23,15 +25,6 @@ target_link_libraries(omniglove_plugin_core
         OpenXR::openxr_loader
         Teleop::openxr_extensions
         log_bridge::log_bridge_core
-)
-
-if(NOT OMNIGLOVE_SDK_GIT_COMMIT)
-    set(OMNIGLOVE_SDK_GIT_COMMIT "unknown")
-endif()
-target_compile_definitions(omniglove_plugin_core
-    PRIVATE
-        OMNIGLOVE_SDK_RELEASE_VERSION="${OmnigloveSDK_VERSION}"
-        OMNIGLOVE_SDK_GIT_COMMIT="${OMNIGLOVE_SDK_GIT_COMMIT}"
 )
 
 add_library(isaac::omniglove_plugin ALIAS omniglove_plugin_core)

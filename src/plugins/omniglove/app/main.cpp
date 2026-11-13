@@ -49,7 +49,8 @@ try
     while (!stop_requested.load(std::memory_order_relaxed))
     {
         plugin.update();
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        constexpr auto kFramePeriod = plugins::omniglove::OmniglovePlugin::kSourceInterval;
+        std::this_thread::sleep_for(kFramePeriod);
     }
     return 0;
 }

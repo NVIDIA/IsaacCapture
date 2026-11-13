@@ -14,12 +14,14 @@
 #include <plugin_utils/wrist_pose_source.hpp>
 
 #include <array>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <vector>
 
 struct omniglove_session;
 struct omniglove_stream_sample;
@@ -27,9 +29,17 @@ struct omniglove_stream_sample;
 namespace plugins::omniglove
 {
 
+struct SdkSessionDeleter
+{
+    void operator()(omniglove_session* session) const noexcept;
+};
+using SdkSession = std::unique_ptr<omniglove_session, SdkSessionDeleter>;
+
 class OmniglovePlugin
 {
 public:
+    static constexpr auto kSourceInterval = std::chrono::milliseconds(8);
+
     explicit OmniglovePlugin(const std::string& plugin_root_id);
     ~OmniglovePlugin();
 
@@ -44,14 +54,10 @@ private:
         uint64_t source_sequence = 0;
     };
 
-    struct HandState
+    struct CallbackState
     {
         std::optional<HandFrame> frame;
-        std::unique_ptr<plugin_utils::HandInjector> injector;
-        int64_t last_pushed_ns = 0;
-        core::PluginDeviceState state = core::PluginDeviceState_DISCONNECTED;
-        core::PluginDeviceReason reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
-        bool sample_error_logged = false;
+        int64_t last_received_ns = 0;
     };
 
     struct StreamContext
@@ -60,18 +66,26 @@ private:
         bool is_left;
     };
 
-    struct SessionDeleter
+    struct HandState
     {
-        void operator()(omniglove_session* session) const noexcept;
+        std::optional<StreamContext> stream;
+        std::unique_ptr<plugin_utils::HandInjector> injector;
+        int64_t last_pushed_ns = 0;
+        core::PluginDeviceState state = core::PluginDeviceState_DISCONNECTED;
+        core::PluginDeviceReason reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
     };
 
-    static void stream_callback(const omniglove_stream_sample* sample, void* user_data);
+    static constexpr std::size_t hand_index(bool is_left)
+    {
+        return is_left ? 0 : 1;
+    }
 
-    void initialize_sdk();
+    HandState& hand_state(bool is_left);
+    static void stream_callback(const omniglove_stream_sample* sample, void* user_data) noexcept;
+
     void start_device_streams();
     void on_sample(const omniglove_stream_sample& sample, bool is_left);
-    void invalidate_hand(bool is_left);
-    void pump_hand(HandState& hand, bool is_left, const std::optional<HandFrame>& frame);
+    void pump_hand(HandState& hand, bool is_left, const CallbackState& input);
 
     std::shared_ptr<spdlog::logger> m_logger =
         isaaccapture::Logger::get("isaaccapture.plugins.omniglove.OmniglovePlugin");
@@ -84,9 +98,10 @@ private:
 
     std::mutex m_frame_mutex;
     std::array<HandState, 2> m_hands;
-    std::vector<std::unique_ptr<StreamContext>> m_streams;
+    std::array<CallbackState, 2> m_inputs;
+    std::exception_ptr m_callback_error;
     // Destroy the SDK first: its callbacks borrow the contexts, frames and mutex above.
-    std::unique_ptr<omniglove_session, SessionDeleter> m_sdk_session;
+    SdkSession m_sdk_session;
 };
 
 } // namespace plugins::omniglove

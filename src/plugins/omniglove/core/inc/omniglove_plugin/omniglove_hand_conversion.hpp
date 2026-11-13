@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <variant>
 
 struct omniglove_post_data;
 
@@ -19,16 +20,16 @@ inline constexpr uint32_t kPostBoneModelValid = 1U << 2U;
 
 enum class ConversionStatus
 {
-    Success,
     NotMapped,
     IkNotConverged,
     BoneModelInvalid,
     InvalidPose,
 };
 
-ConversionStatus convert_post_data(const omniglove_post_data& post,
-                                   bool is_left,
-                                   std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT>& joints);
+using HandJoints = std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT>;
+using ConversionResult = std::variant<HandJoints, ConversionStatus>;
+
+ConversionResult convert_post_data(const omniglove_post_data& post, bool is_left);
 
 const char* conversion_status_name(ConversionStatus status) noexcept;
 

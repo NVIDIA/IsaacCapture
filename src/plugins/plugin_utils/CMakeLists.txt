@@ -9,6 +9,8 @@ add_library(teleop_plugin_utils STATIC
     inc/plugin_utils/plugin_device_status_publisher.hpp
     wrist_pose_source.cpp
     wrist_source_config.cpp
+    inc/plugin_utils/wrist_source_config.hpp
+    inc/plugin_utils/hand_pose_basis.hpp
     inc/plugin_utils/wrist_pose_source.hpp
 )
 

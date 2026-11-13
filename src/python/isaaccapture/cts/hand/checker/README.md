@@ -68,7 +68,8 @@ they could not be answered, and the rest are judged as usual.
 
 This uses the viewer's bundle builder, reruns all checks, verifies the original
 recording and companion files, and prints the archive's verdict and SHA-256.
-It requires the panel dependencies. Existing archives are never overwritten.
+It does not require the optional panel dependencies. Existing archives are never
+overwritten.
 
 ## Read the report
 

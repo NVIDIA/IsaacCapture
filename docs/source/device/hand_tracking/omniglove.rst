@@ -16,7 +16,8 @@ host's hand retargeter.
 Hardware and prerequisites
 --------------------------
 
-- Linux x86_64 or aarch64; the current hardware validation used x86_64.
+- Linux x86_64 or aarch64 with the system libusb runtime (``libusb-1.0-0``
+  on Ubuntu); the current hardware validation used x86_64.
 - The Isaac Capture source-build dependencies and the
   `AgiLink OmniGlove SDK <https://github.com/AgibotTech/agilink_omniglove_sdk>`_.
 - One left and one right OmniGlove for two-hand CTS, connected over USB.
@@ -51,20 +52,19 @@ Install the USB rule on the host:
    ./src/plugins/omniglove/install_udev_rules.sh
 
 CMake retrieves the pinned SDK into the build directory and validates its
-release checksums. The target architecture selects the SDK package. Runtime
-libraries and license notices are installed with the plugin.
+release checksums. The target architecture selects the SDK package. The SDK
+runtime library and its license notices are installed with the plugin. libusb
+is supplied by the operating system.
 
 .. code-block:: bash
 
-   cmake -S . -B out -DBUILD_PLUGIN_OMNIGLOVE=ON
-   cmake --build out
-   cmake --install out --component omniglove
+   cmake -S . -B build -DBUILD_PLUGIN_OMNIGLOVE=ON
+   cmake --build build
+   cmake --install build --component omniglove
 
-For an explicit local release, set
-``-DOMNIGLOVE_SDK_ROOT=/path/to/agilink_omniglove_sdk``; CMake does not modify it.
-``-DOMNIGLOVE_SDK_REF=<commit-or-ref>`` selects another managed release. Use a
-full commit SHA for a reproducible override. Source build options remain under
-the user's control.
+Existing build directories using ``OMNIGLOVE_SDK_ROOT`` or ``OMNIGLOVE_SDK_REF``
+should remove those cache entries. Local SDK checkouts use CMake's standard
+``-DFETCHCONTENT_SOURCE_DIR_OMNIGLOVE_SDK=/path/to/agilink_omniglove_sdk`` override.
 
 Running
 -------
@@ -149,13 +149,14 @@ Device status and CTS
 ---------------------
 
 The shared device status publisher reports left and right hand availability
-under the configured plugin root. Stale SDK frames report a disconnected hand;
-a fresh frame without a usable wrist reports a degraded hand. A discovered
-glove that fails stream configuration or startup stops the plugin with an error.
+under the configured plugin root. A glove that stops streaming reports a
+disconnected hand. A glove still streaming without a usable skeleton or wrist
+reports a degraded hand. A transient rejected sample retains the last usable
+pose until it becomes stale. Stream configuration or startup failures and
+incompatible SDK sample contracts stop the plugin with an error.
 
 Follow :doc:`/conformance/setup`, :doc:`/conformance/hand` and
-:doc:`/conformance/submit` for recording, review and submission. Keep the take
-summary and hardware evidence in the integration PR description.
+:doc:`/conformance/submit` for recording, review and submission.
 
 Troubleshooting
 ---------------
@@ -173,3 +174,15 @@ Troubleshooting
   invalid skeleton frames are intentionally withheld.
 - **Header/runtime ABI mismatch:** rebuild against the selected SDK and
   verify that the installed executable loads its accompanying runtime library.
+
+License
+-------
+
+The plugin source is Apache-2.0. The AgiLink OmniGlove SDK is licensed under
+MulanPSL-2.0; its shared library is redistributed with the plugin, together with
+``LICENSE.omniglove-sdk`` and ``THIRD_PARTY_NOTICES.omniglove-sdk.md``.
+
+The SDK depends on libusb, licensed under LGPL-2.1-or-later. This plugin uses
+the operating system's libusb and does not redistribute the SDK's bundled
+libusb binary. The SDK notices describe the vendor's complete release;
+only the SDK runtime library is copied into this plugin's install tree.

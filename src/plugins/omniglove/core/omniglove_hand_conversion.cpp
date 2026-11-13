@@ -4,6 +4,8 @@
 #include "inc/omniglove_plugin/omniglove_hand_conversion.hpp"
 
 #include <omniglove/omniglove.h>
+#include <oxr_utils/math.hpp>
+#include <plugin_utils/hand_pose_basis.hpp>
 
 #include <array>
 #include <cmath>
@@ -25,48 +27,43 @@ struct JointSource
     const omniglove_pose6_t* pose;
 };
 
-std::array<JointSource, 21> joint_sources(const omniglove_post_data_t& post)
+auto joint_sources(const omniglove_post_data_t& post)
 {
-    return { JointSource{ XR_HAND_JOINT_WRIST_EXT, &post.wrist.landmark },
-             JointSource{ XR_HAND_JOINT_THUMB_METACARPAL_EXT, &post.thumb.landmarks.cmc },
-             JointSource{ XR_HAND_JOINT_THUMB_PROXIMAL_EXT, &post.thumb.landmarks.mcp },
-             JointSource{ XR_HAND_JOINT_THUMB_DISTAL_EXT, &post.thumb.landmarks.ip },
-             JointSource{ XR_HAND_JOINT_THUMB_TIP_EXT, &post.thumb.landmarks.tip },
-             JointSource{ XR_HAND_JOINT_INDEX_PROXIMAL_EXT, &post.index.landmarks.mcp },
-             JointSource{ XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT, &post.index.landmarks.pip },
-             JointSource{ XR_HAND_JOINT_INDEX_DISTAL_EXT, &post.index.landmarks.dip },
-             JointSource{ XR_HAND_JOINT_INDEX_TIP_EXT, &post.index.landmarks.tip },
-             JointSource{ XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, &post.middle.landmarks.mcp },
-             JointSource{ XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT, &post.middle.landmarks.pip },
-             JointSource{ XR_HAND_JOINT_MIDDLE_DISTAL_EXT, &post.middle.landmarks.dip },
-             JointSource{ XR_HAND_JOINT_MIDDLE_TIP_EXT, &post.middle.landmarks.tip },
-             JointSource{ XR_HAND_JOINT_RING_PROXIMAL_EXT, &post.ring.landmarks.mcp },
-             JointSource{ XR_HAND_JOINT_RING_INTERMEDIATE_EXT, &post.ring.landmarks.pip },
-             JointSource{ XR_HAND_JOINT_RING_DISTAL_EXT, &post.ring.landmarks.dip },
-             JointSource{ XR_HAND_JOINT_RING_TIP_EXT, &post.ring.landmarks.tip },
-             JointSource{ XR_HAND_JOINT_LITTLE_PROXIMAL_EXT, &post.pinky.landmarks.mcp },
-             JointSource{ XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT, &post.pinky.landmarks.pip },
-             JointSource{ XR_HAND_JOINT_LITTLE_DISTAL_EXT, &post.pinky.landmarks.dip },
-             JointSource{ XR_HAND_JOINT_LITTLE_TIP_EXT, &post.pinky.landmarks.tip } };
-}
-
-bool finite(float value)
-{
-    return std::isfinite(value);
+    return std::array{ JointSource{ XR_HAND_JOINT_WRIST_EXT, &post.wrist.landmark },
+                       JointSource{ XR_HAND_JOINT_THUMB_METACARPAL_EXT, &post.thumb.landmarks.cmc },
+                       JointSource{ XR_HAND_JOINT_THUMB_PROXIMAL_EXT, &post.thumb.landmarks.mcp },
+                       JointSource{ XR_HAND_JOINT_THUMB_DISTAL_EXT, &post.thumb.landmarks.ip },
+                       JointSource{ XR_HAND_JOINT_THUMB_TIP_EXT, &post.thumb.landmarks.tip },
+                       JointSource{ XR_HAND_JOINT_INDEX_PROXIMAL_EXT, &post.index.landmarks.mcp },
+                       JointSource{ XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT, &post.index.landmarks.pip },
+                       JointSource{ XR_HAND_JOINT_INDEX_DISTAL_EXT, &post.index.landmarks.dip },
+                       JointSource{ XR_HAND_JOINT_INDEX_TIP_EXT, &post.index.landmarks.tip },
+                       JointSource{ XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT, &post.middle.landmarks.mcp },
+                       JointSource{ XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT, &post.middle.landmarks.pip },
+                       JointSource{ XR_HAND_JOINT_MIDDLE_DISTAL_EXT, &post.middle.landmarks.dip },
+                       JointSource{ XR_HAND_JOINT_MIDDLE_TIP_EXT, &post.middle.landmarks.tip },
+                       JointSource{ XR_HAND_JOINT_RING_PROXIMAL_EXT, &post.ring.landmarks.mcp },
+                       JointSource{ XR_HAND_JOINT_RING_INTERMEDIATE_EXT, &post.ring.landmarks.pip },
+                       JointSource{ XR_HAND_JOINT_RING_DISTAL_EXT, &post.ring.landmarks.dip },
+                       JointSource{ XR_HAND_JOINT_RING_TIP_EXT, &post.ring.landmarks.tip },
+                       JointSource{ XR_HAND_JOINT_LITTLE_PROXIMAL_EXT, &post.pinky.landmarks.mcp },
+                       JointSource{ XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT, &post.pinky.landmarks.pip },
+                       JointSource{ XR_HAND_JOINT_LITTLE_DISTAL_EXT, &post.pinky.landmarks.dip },
+                       JointSource{ XR_HAND_JOINT_LITTLE_TIP_EXT, &post.pinky.landmarks.tip } };
 }
 
 bool convert_pose(const omniglove_pose6_t& source, bool is_left, XrPosef& destination)
 {
     for (float value : source.position_m)
     {
-        if (!finite(value))
+        if (!std::isfinite(value))
         {
             return false;
         }
     }
     for (float value : source.quaternion_xyzw)
     {
-        if (!finite(value))
+        if (!std::isfinite(value))
         {
             return false;
         }
@@ -84,24 +81,15 @@ bool convert_pose(const omniglove_pose6_t& source, bool is_left, XrPosef& destin
     destination.orientation = { source.quaternion_xyzw[0] / norm, source.quaternion_xyzw[1] / norm,
                                 source.quaternion_xyzw[2] / norm, source.quaternion_xyzw[3] / norm };
 
-    // OmniGlove's right wrist frame has +Y palmward. OpenXR requires +Y
-    // dorsal on both hands, so conjugate right-hand poses by a Z half-turn.
-    if (!is_left)
-    {
-        destination.position.x = -destination.position.x;
-        destination.position.y = -destination.position.y;
-        destination.orientation.x = -destination.orientation.x;
-        destination.orientation.y = -destination.orientation.y;
-    }
+    destination = plugin_utils::remap_to_openxr_basis(destination, is_left);
     return true;
 }
 
 } // namespace
 
-ConversionStatus convert_post_data(const omniglove_post_data_t& post,
-                                   bool is_left,
-                                   std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT>& joints)
+ConversionResult convert_post_data(const omniglove_post_data_t& post, bool is_left)
 {
+    HandJoints joints{};
     for (auto& joint : joints)
     {
         joint = {};
@@ -127,10 +115,6 @@ ConversionStatus convert_post_data(const omniglove_post_data_t& post,
         XrHandJointLocationEXT& destination = joints[static_cast<std::size_t>(source.joint)];
         if (!convert_pose(*source.pose, is_left, destination.pose))
         {
-            for (auto& joint : joints)
-            {
-                joint.locationFlags = 0;
-            }
             return ConversionStatus::InvalidPose;
         }
         if (source.joint != XR_HAND_JOINT_WRIST_EXT)
@@ -138,20 +122,18 @@ ConversionStatus convert_post_data(const omniglove_post_data_t& post,
             // SDK finger frames point +Z toward the tip; OpenXR points -Z.
             // Post-multiply by a local Y half-turn to preserve dorsal +Y.
             // The SDK wrist already has proximal +Z and must not be flipped.
-            const XrQuaternionf q = destination.pose.orientation;
-            destination.pose.orientation = { -q.z, q.w, q.x, -q.y };
+            constexpr XrPosef kYHalfTurn{ { 0.0F, 1.0F, 0.0F, 0.0F }, { 0.0F, 0.0F, 0.0F } };
+            destination.pose = oxr_utils::multiply_poses(destination.pose, kYHalfTurn);
         }
         destination.locationFlags = kValidFlags;
     }
-    return ConversionStatus::Success;
+    return joints;
 }
 
 const char* conversion_status_name(ConversionStatus status) noexcept
 {
     switch (status)
     {
-    case ConversionStatus::Success:
-        return "success";
     case ConversionStatus::NotMapped:
         return "not mapped";
     case ConversionStatus::IkNotConverged:

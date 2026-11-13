@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import zipfile
 
+from cts_common.panel.bundle import companions
+
 from hand_cts.labels import StepTimeline
 from hand_cts.mcap_source import McapFrameSource
 from hand_cts.panel import bundle
@@ -27,11 +29,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
     recording = args.recording.resolve()
-    required = [
-        recording,
-        *(recording.with_suffix(s) for s in (".labels.json", ".json", ".log")),
-    ]
-    missing = [str(path) for path in required if not path.is_file()]
+    sidecars, missing = companions(recording)
+    required = [recording, *sidecars]
+    if not recording.is_file():
+        missing.insert(0, str(recording))
     if missing:
         parser.error("missing take files: " + ", ".join(missing))
 
@@ -41,8 +42,6 @@ def main(argv: list[str] | None = None) -> None:
     report = run(source, timeline=timeline)
     name, data = bundle.build(report, source.tracks(), recording, timeline)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        if archive.testzip() is not None:
-            raise RuntimeError("CTS archive failed its integrity check")
         root = name.removesuffix(".zip")
         manifest = json.loads(archive.read(f"{root}/report.json"))
         for item in manifest["inputs"]["files"]:

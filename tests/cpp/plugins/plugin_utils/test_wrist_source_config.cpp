@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
-#include <plugin_utils/wrist_pose_source.hpp>
+#include <plugin_utils/hand_pose_basis.hpp>
+#include <plugin_utils/wrist_source_config.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -60,6 +61,11 @@ TEST_CASE("Wrist source mode accepts only named modes", "[plugin_utils][wrist_co
     CHECK(plugin_utils::wrist_source_mode_from_env(kVariable, WristSourceMode::Auto) == WristSourceMode::Controller);
     env.set("auto");
     CHECK(plugin_utils::wrist_source_mode_from_env(kVariable, WristSourceMode::HandTracking) == WristSourceMode::Auto);
+    for (const auto mode : { WristSourceMode::HandTracking, WristSourceMode::Controller, WristSourceMode::Auto })
+    {
+        env.set(plugin_utils::to_string(mode));
+        CHECK(plugin_utils::wrist_source_mode_from_env(kVariable, WristSourceMode::Auto) == mode);
+    }
     env.set("controler");
     CHECK_THROWS_AS(plugin_utils::wrist_source_mode_from_env(kVariable, WristSourceMode::Auto), std::runtime_error);
 }
@@ -97,4 +103,26 @@ TEST_CASE("Optional wrist offsets fall back only when unset", "[plugin_utils][wr
     CHECK(plugin_utils::pose_from_env(kVariable, fallback).position.y == 2);
     env.set("invalid");
     CHECK_THROWS_AS(plugin_utils::pose_from_env(kVariable, fallback), std::runtime_error);
+}
+
+TEST_CASE("Glove basis conversion preserves left poses and is reversible on the right", "[plugin_utils][hand_basis]")
+{
+    constexpr XrPosef pose{ { 0.1F, 0.2F, 0.3F, 0.9F }, { 1.0F, 2.0F, 3.0F } };
+    for (bool is_left : { true, false })
+    {
+        const auto converted = plugin_utils::remap_to_openxr_basis(pose, is_left);
+        const float sign = is_left ? 1.0F : -1.0F;
+        CHECK(converted.position.x == sign * pose.position.x);
+        CHECK(converted.position.y == sign * pose.position.y);
+        CHECK(converted.position.z == pose.position.z);
+        CHECK(converted.orientation.x == sign * pose.orientation.x);
+        CHECK(converted.orientation.y == sign * pose.orientation.y);
+        CHECK(converted.orientation.z == pose.orientation.z);
+        CHECK(converted.orientation.w == pose.orientation.w);
+        const auto restored = plugin_utils::remap_to_openxr_basis(converted, is_left);
+        CHECK(restored.position.x == pose.position.x);
+        CHECK(restored.position.y == pose.position.y);
+        CHECK(restored.orientation.x == pose.orientation.x);
+        CHECK(restored.orientation.y == pose.orientation.y);
+    }
 }
