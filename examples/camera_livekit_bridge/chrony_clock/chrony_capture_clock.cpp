@@ -85,10 +85,14 @@ isaaccapture::timesync::Qualification ChronyCaptureClock::qualify(bool sender_va
 
     isaaccapture::timesync::LocalClockObservation observation;
     int64_t now_ns = 0;
+    int64_t evidence_floor_ns = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         observation = m_tracker.observe(isaaccapture::timesync::sample_local_clock(m_clocks));
         now_ns = m_clocks.monotonic_ns();
+        if (observation.stepped)
+            m_evidence_floor_ns = now_ns;
+        evidence_floor_ns = m_evidence_floor_ns;
     }
     if (observation.stepped)
     {
@@ -98,9 +102,19 @@ isaaccapture::timesync::Qualification ChronyCaptureClock::qualify(bool sender_va
         refused.generation = observation.generation;
         return refused;
     }
-    return isaaccapture::timesync::qualify_capture(capture, m_sender_monitor.snapshot().evidence,
-                                                   m_pc_monitor.snapshot().evidence, observation, now_ns,
-                                                   m_qualifier_config);
+    // Chrony evidence read at or before a step describes the clock as it was, so it cannot support a frame converted
+    // against the clock as it is. Frames stay unqualified until both hosts have been read again after the step.
+    auto sender_evidence = m_sender_monitor.snapshot().evidence;
+    auto pc_evidence = m_pc_monitor.snapshot().evidence;
+    if (evidence_floor_ns != 0)
+    {
+        if (sender_evidence && sender_evidence->observed_monotonic_ns <= evidence_floor_ns)
+            sender_evidence.reset();
+        if (pc_evidence && pc_evidence->observed_monotonic_ns <= evidence_floor_ns)
+            pc_evidence.reset();
+    }
+    return isaaccapture::timesync::qualify_capture(
+        capture, sender_evidence, pc_evidence, observation, now_ns, m_qualifier_config);
 }
 
 } // namespace camera_bridge

@@ -39,7 +39,10 @@ struct ChronyCaptureClockConfig
  * It polls this host's chronyd and the camera host's in the background and samples the local realtime/monotonic pair
  * per frame. A frame the evidence cannot vouch for gets a refusal verdict and no time, and the publisher sends it
  * without a timestamp, which a recording consumer treats as a timing fault. A detected realtime step on this host
- * refuses the frame that revealed it; frames after it qualify against the new clock generation. Thread-safe.
+ * refuses the frame that revealed it and every frame after it until both chronyds have been polled again after the
+ * step: evidence read before it described the old clock and is never reused, so the frames in between carry no
+ * timestamp and a take in progress ends with that fault. Frames after that qualify against the new clock generation.
+ * Thread-safe.
  */
 class ChronyCaptureClock
 {
@@ -71,6 +74,9 @@ private:
     isaaccapture::timesync::ChronyMonitor m_sender_monitor;
     std::mutex m_mutex;
     isaaccapture::timesync::LocalClockTracker m_tracker;
+    /// Monotonic time of the latest detected realtime step on this host; chrony evidence read at or before it is not
+    /// used.
+    int64_t m_evidence_floor_ns = 0;
 };
 
 } // namespace camera_bridge
