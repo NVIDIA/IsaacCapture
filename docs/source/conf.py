@@ -68,6 +68,8 @@ extensions = [
     "sphinx_design",
     "ecosystem_grid",
     "breakable_literals",
+    "markdown_nodes",
+    "sphinx_llm.txt",
 ]
 
 exclude_patterns = ["build", "_templates", "_data", "_ext", "Thumbs.db", ".DS_Store"]
@@ -77,6 +79,24 @@ exclude_patterns = ["build", "_templates", "_data", "_ext", "Thumbs.db", ".DS_St
 # that interpolate a substitution have to use ``parsed-literal``, so widen the selector
 # to keep the copy button on them.
 copybutton_selector = "div.highlight pre, pre.literal-block"
+
+# sphinx-llm writes llms.txt and a page.md beside every page.html for agents. Only main
+# publishes them; plain sphinx-build ("") keeps them on so CI's -W covers the Markdown
+# build too.
+llms_txt_enabled = _smv_ref_name() in ("", "main")
+llms_txt_suffix_mode = "replace"
+# A redirect stub's refresh and a hidden toctree mean nothing outside HTML.
+llms_txt_suppress_unknown_node_warnings = ["meta", "toctree"]
+# sphinx-llm indexes every *.md in its build, so a :download: of a README.md would be
+# listed as a page with no doctree, which -W turns into a failure.
+llms_txt_exclude = ["_downloads/**"]
+# The default is pyproject.toml's description, which still reads "Isaac Teleop".
+llms_txt_description = (
+    "Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) "
+    "and egocentric data (Ego Pipeline): device plugins, retargeters, and data "
+    "utilities for recording, replaying, and converting human and robot "
+    "demonstration data."
+)
 
 templates_path = ["_templates"]
 
