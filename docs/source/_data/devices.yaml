@@ -164,7 +164,7 @@ devices:
     details:
       setup:
         - label: VIVE Tracker Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/vive_se3_tracker
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/vive_se3_tracker
         - label: VIVE Ultimate Tracker docs
           doc: /device/trackers/vive_ultimate_tracker
         - label: Developer Guide
@@ -192,7 +192,7 @@ devices:
     details:
       setup:
         - label: MANUS Gloves Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/manus
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/manus
         - label: MANUS Gloves docs
           doc: /device/hand_tracking/manus
       requirements:
@@ -216,7 +216,7 @@ devices:
     details:
       setup:
         - label: Haptikos Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/haptikos
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/haptikos
         - label: Haptikos docs
           doc: /device/hand_tracking/haptikos
       requirements:
@@ -238,7 +238,7 @@ devices:
     details:
       setup:
         - label: OGLO Tactile Glove Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oglo_tactile
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/oglo_tactile
         - label: OGLO Tactile Glove docs
           doc: /device/tactile/oglo
       requirements:
@@ -261,7 +261,7 @@ devices:
         - label: WUJI Glove docs
           doc: /device/hand_tracking/wuji_glove
         - label: WUJI Glove Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/wuji_glove
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/wuji_glove
         - label: WUJI Hand retargeting
           doc: /references/retargeting/wuji
       requirements:
@@ -282,7 +282,7 @@ devices:
     details:
       setup:
         - label: Noitom Mocap Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/noitom_mocap
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/noitom_mocap
 
   - id: logitech-rudder-pedals
     name: Logitech Rudder Pedals
@@ -293,7 +293,7 @@ devices:
     details:
       setup:
         - label: Generic 3-axis Pedal Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/generic_3axis_pedal
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal
       requirements:
         - USB connection to the workstation
       acquire:
@@ -309,7 +309,7 @@ devices:
     details:
       setup:
         - label: SpaceMouse Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/spacemouse
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/spacemouse
         - label: SpaceMouse docs
           doc: /device/spatial_controllers/spacemouse
       requirements:
@@ -344,7 +344,7 @@ devices:
     details:
       setup:
         - label: OAK-D Camera Plugin
-          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oak
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/oak
         - label: OAK Camera docs
           doc: /device/cameras/oak
       requirements:
@@ -399,4 +399,4 @@ planned:
     name: 3Dconnexion 3D Space Mouse
     url: https://3dconnexion.com/us/spacemouse/
     note: HID input over USB, CLI tool.
-    tracking: https://github.com/NVIDIA/IsaacTeleop/issues/276
+    tracking: https://github.com/NVIDIA/IsaacCapture/issues/276

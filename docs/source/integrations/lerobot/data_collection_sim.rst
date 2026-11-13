@@ -284,12 +284,12 @@ Convert to LeRobot Dataset
 
    **Export to a LeRobot dataset.** Converting these sim HDF5 demos to the
    :doc:`LeRobot dataset format <training_groot>` is **not yet provided** for the stack task. The
-   closest reference is the locomanipulation converter `convert_dataset.py`_ from the ``develop``
+   closest reference is the locomanipulation converter `convert_dataset.py`_ from the ``main``
    branch in Isaac Lab, which targets a different task and must be adapted.
 
 ..
    References
-.. _Isaac Lab installation guide: https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html#isaaclab-installation-root
+.. _Isaac Lab installation guide: https://isaac-sim.github.io/IsaacLab/develop/source/isaaclab/installation.html
 .. _CloudXR teleoperation in Isaac Lab: https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html
-.. _convert_dataset.py: https://github.com/isaac-sim/IsaacLab/blob/develop/scripts/imitation_learning/locomanipulation_sdg/gr00t/convert_dataset.py
+.. _convert_dataset.py: https://github.com/isaac-sim/IsaacLab/blob/main/scripts/imitation_learning/locomanipulation_sdg/gr00t/convert_dataset.py
 .. _SO-101 support in LeRobot: https://huggingface.co/docs/lerobot/en/so101
