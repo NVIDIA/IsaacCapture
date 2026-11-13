@@ -79,16 +79,15 @@ looks washed out. The encoder copies levels as they are and does no range conver
 primaries, transfer or matrix, so a player assumes its default (BT.709 for HD).
 
 `--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
-congestion control reports for each track (with 10% headroom, never above the maximum or below 0.5 Mbps), so a
-fresh connection does not fill the sender's pacing queue. A fixed 8 Mbps start made the first frames 1-2 s old and
-growing; with the adaptive start they are about 60-150 ms old from the first frame and settle near 80 ms while
-the rate climbs to the maximum within roughly 20 s. The `[stats]` line shows the current rate, the transport's
+congestion control reports for each track (90% of the target, never above the maximum or below 0.5 Mbps), so a
+fresh connection does not fill the sender's pacing queue. The `[stats]` line shows the current rate, the transport's
 target and how many times the rate changed.
 
 Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
-and one wrist, local LiveKit server): the head at 2560x1984 and 8 Mbps and at 1280x992 both ran with no missing
-frames and a median capture-to-receive time of 65-85 ms. A fixed 20 Mbps head built a standing backlog of about
-1.2 s, so keep the maximum near 8 Mbps.
+and one wrist, local LiveKit server): frames are 60-150 ms old from the first frame and settle near 80 ms while the
+rate climbs to the maximum within roughly 20 s. The head at 2560x1984 and 8 Mbps and at 1280x992 both ran with no
+missing frames and a median capture-to-receive time of 65-85 ms. A 20 Mbps maximum on the head built a standing
+backlog of about 1.2 s, so keep the maximum near 8 Mbps.
 
 ## Probe
 
