@@ -51,6 +51,7 @@ REPO_ROOT = EGOCAP_ROOT.parents[1]
 LIVEKIT_DEV_KEY = "devkey"
 LIVEKIT_DEV_SECRET = "secret"
 CONTROL_TOKEN_MARKER = "Recording control token for this run:"
+TIMESYNC_TOOL = REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
 DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
 DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
@@ -63,6 +64,9 @@ BACKEND_GRACE_S = 90.0
 STOP_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
 # The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
 MOCK_TIMESTAMP_BASIS = "monotonic_us"
+# The bridge shrinks the picture by this integer factor before encoding, so the descriptor declares the shrunken
+# size: the recorder refuses a take whose frames differ from the declared one.
+BRIDGE_DOWNSCALE = 2
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -152,7 +156,6 @@ class SenderSettings:
     """The effective sender values the rest of the stack must agree with."""
 
     port: int
-    clock_port: int
     fps: int
     bitrate_mbps: int
     stream_id: str
@@ -174,7 +177,6 @@ def load_sender_config(
     path: Path,
     fps: int | None = None,
     bitrate_mbps: int | None = None,
-    clock_port: int | None = None,
     sender_port: int | None = None,
 ) -> dict:
     """Read the checked-in sender profile and apply the command-line overrides to the loaded mapping.
@@ -198,8 +200,6 @@ def load_sender_config(
         output["fps"] = fps
     if bitrate_mbps is not None:
         output["bitrate_mbps"] = bitrate_mbps
-    if clock_port is not None:
-        network["clock_port"] = clock_port
     if sender_port is not None:
         network["port"] = sender_port
     return config
@@ -221,12 +221,8 @@ def sender_settings(config: dict) -> SenderSettings:
         raise StartupError(
             "the sender config must set streams[0].output.fps; the bridge and descriptor need a rate"
         )
-    # Without both, the page has no sensor capture time and no clock to map it with.
-    if not network.get("timing_extension") or not network.get("clock_port"):
-        raise StartupError("the sender config must set network.timing_extension: true and network.clock_port")
     return SenderSettings(
         port=int(network.get("port", 5000)),
-        clock_port=int(network["clock_port"]),
         fps=int(output["fps"]),
         bitrate_mbps=int(output.get("bitrate_mbps", 0)),
         stream_id=str(stream["id"]),
@@ -248,12 +244,23 @@ def mock_sender_command(python: str, script: Path, settings: SenderSettings, wid
     ]
 
 
-def bridge_timing_arguments(settings: SenderSettings, mock: bool, orin_host: str | None) -> list[str]:
-    """The bridge flags that say what the frame timestamps mean and where the sender's clock can be measured."""
+def bridge_timing_arguments(
+    settings: SenderSettings, mock: bool, orin_host: str | None, reference_id: str | None, chrony_port: int
+) -> list[str]:
+    """The bridge flags that say what the frame timestamps mean and which chrony instances can vouch for them."""
     if mock:
-        # No sender clock to measure and no SIPL range to signal.
+        # No sender clock to qualify and no SIPL range to signal.
         return ["--timestamp-basis", MOCK_TIMESTAMP_BASIS]
-    flags = ["--timestamp-basis", TIMESTAMP_BASIS, "--sender-clock", f"{orin_host}:{settings.clock_port}"]
+    flags = [
+        "--timestamp-basis",
+        TIMESTAMP_BASIS,
+        "--chrony-sender",
+        str(orin_host),
+        "--chrony-sender-refid",
+        str(reference_id),
+        "--chrony-pc-port",
+        str(chrony_port),
+    ]
     # SIPL pictures are full range; the bridge must say so or the encoded stream signals limited range.
     return [*flags, "--source-full-range"] if settings.full_range else flags
 
@@ -275,6 +282,26 @@ def check_station_cameras(station_config: Path, capture_cameras: Sequence[str]) 
             "--capture-camera NAME=DEVICE_ID for each, or use a station file whose video_sources name none "
             "(the stream from the Orin comes through LiveKit)"
         )
+
+
+def load_timesync_tool(path: Path):
+    """The timesync module's tool, imported so its address and reference-id helpers have one copy."""
+    import importlib.util
+
+    if not path.is_file():
+        raise StartupError(f"the timesync tool {path} does not exist (--timesync-tool or EGOCAP_TIMESYNC_TOOL)")
+    spec = importlib.util.spec_from_file_location("timesync_tool", path)
+    if spec is None or spec.loader is None:
+        raise StartupError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    # The tool's dataclasses look their module up by name, so it is registered while it runs.
+    sys.modules["timesync_tool"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("timesync_tool", None)
+        raise
+    return module
 
 
 def port_open(host: str, port: int) -> bool:
@@ -453,6 +480,25 @@ def control_token(log: Path) -> str | None:
     return None
 
 
+def ensure_receiver_environment() -> None:
+    """Run the receiver's own ``setup.sh`` when its venv or its native decoder is missing; it is idempotent."""
+    receiver_dir = REPO_ROOT / "examples/camera_streamer/camera_receiver"
+    has_venv = (receiver_dir / ".venv/bin/python").is_file()
+    has_codec = any((receiver_dir / "codec").glob("_camera_receiver_codec*.so"))
+    if has_venv and has_codec:
+        return
+    print("setting up the camera receiver environment (first run)", flush=True)
+    subprocess.run(["bash", str(receiver_dir / "setup.sh")], check=True)
+
+
+def default_receiver_command() -> str:
+    """Run the receiver with the Python from its own ``setup.sh`` environment, which has CuPy, when it exists."""
+    receiver_dir = REPO_ROOT / "examples/camera_streamer/camera_receiver"
+    venv_python = receiver_dir / ".venv/bin/python"
+    python = str(venv_python) if venv_python.is_file() else "python3"
+    return f"{python} {receiver_dir / 'camera_receiver.py'}"
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """The command line; every external tool's path may also come from an environment variable."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -466,12 +512,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bridge", default=os.environ.get("EGOCAP_BRIDGE"), help="camera_livekit_bridge binary")
     parser.add_argument(
         "--receiver",
-        default=os.environ.get(
-            "EGOCAP_RECEIVER",
-            shlex.join(
-                ["python3", str(REPO_ROOT / "examples/camera_streamer/camera_receiver/camera_receiver.py")]
-            ),
-        ),
+        default=os.environ.get("EGOCAP_RECEIVER", default_receiver_command()),
         help="command that runs the camera receiver (takes --config FILE)",
     )
     parser.add_argument("--release", default="egocap-start", help="release name for the Orin deploy")
@@ -480,14 +521,38 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--sender-config", type=Path, default=DEFAULT_SENDER_CONFIG, help="sender profile uploaded to the Orin"
     )
     parser.add_argument("--station-config", type=Path, default=DEFAULT_STATION_CONFIG)
-    parser.add_argument("--width", type=int, default=2560, help="sensor width the receiver and descriptor expect")
     parser.add_argument(
-        "--height", type=int, default=1984, help="sensor height the receiver and descriptor expect"
+        "--width",
+        type=int,
+        default=2560,
+        help="sensor width; the receiver expects it and the descriptor declares it divided by the bridge shrink",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=1984,
+        help="sensor height; the receiver expects it and the descriptor declares it divided by the bridge shrink",
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
-    parser.add_argument("--clock-port", type=int, help="override the profile's UDP clock port (sender and bridge)")
     parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
+    parser.add_argument(
+        "--timesync-tool",
+        type=Path,
+        default=Path(os.environ.get("EGOCAP_TIMESYNC_TOOL", TIMESYNC_TOOL)),
+        help="the timesync module's timesync_tool.py",
+    )
+    parser.add_argument("--chrony-cmd-port", type=int, default=12301, help="command port of this PC's chronyd")
+    parser.add_argument(
+        "--chrony-wait",
+        type=float,
+        default=120.0,
+        help="seconds to wait for this PC to settle on the Orin's clock",
+    )
+    parser.add_argument(
+        "--require-chrony", action="store_true", help="stop instead of starting before the clocks have settled"
+    )
+    parser.add_argument("--host-lan-ip", help="this PC's address toward the Orin (default: found from the route)")
     parser.add_argument(
         "--mock",
         action="store_true",
@@ -552,22 +617,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_station_cameras(args.station_config, args.capture_camera)
         basis = MOCK_TIMESTAMP_BASIS if args.mock else TIMESTAMP_BASIS
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
-        sender_config = load_sender_config(
-            args.sender_config, args.fps, args.bitrate_mbps, args.clock_port, args.sender_port
-        )
+        sender_config = load_sender_config(args.sender_config, args.fps, args.bitrate_mbps, args.sender_port)
         sender = sender_settings(sender_config)
-        # The bridge's sender-clock address must be a literal IPv4 address, not a name.
+        # The bridge identifies the Orin's chrony by the reference id of its IPv4 address.
         if args.orin:
             try:
                 ipaddress.IPv4Address(orin_host)
             except ValueError as error:
-                raise StartupError(
-                    f"--orin needs an IPv4 address for the sender clock, got {orin_host!r}"
-                ) from error
+                raise StartupError(f"--orin needs an IPv4 address for the Orin, got {orin_host!r}") from error
         (workdir / "sender.yaml").write_text(yaml.safe_dump(sender_config, sort_keys=False))
         (workdir / "streams.yaml").write_text(
             streams_yaml(
-                livekit_url, room, publisher, track, args.width, args.height, sender.fps, basis, sender.stream_id
+                livekit_url,
+                room,
+                publisher,
+                track,
+                args.width // BRIDGE_DOWNSCALE,
+                args.height // BRIDGE_DOWNSCALE,
+                sender.fps,
+                basis,
+                sender.stream_id,
             )
         )
         (workdir / "receiver.yaml").write_text(
@@ -580,7 +649,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(
                 f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
-                f"timing extension on, clock port {sender.clock_port}, release {args.release}"
+                f"release {args.release}"
             )
             if args.orin:
                 stop_at = time.strftime("%H:%M:%S", time.localtime(time.time() + args.seconds))
@@ -596,12 +665,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         token_file.chmod(0o600)
         python = sys.executable
         pythonpath = os.pathsep.join(
-            str(EGOCAP_ROOT / sub) for sub in ("backend", "recording", "capture_server", ".")
+            [
+                *(str(EGOCAP_ROOT / sub) for sub in ("backend", "recording", "capture_server", ".")),
+                # CaptureServer imports the Manus calibration worker, which is not part of this folder.
+                str(REPO_ROOT / "src/plugins/manus_calibration/python"),
+            ]
         )
 
+        if args.orin and args.receiver == default_receiver_command():
+            ensure_receiver_environment()
+            # The default was resolved before this setup created the receiver's environment, so resolve it again.
+            # An explicit --receiver or EGOCAP_RECEIVER is not the default and is never replaced.
+            args.receiver = default_receiver_command()
+        # Time sync is set up after the page is up (below), so a slow or failed install never holds the preview.
+        if args.orin:
+            tool = load_timesync_tool(args.timesync_tool)
+            lan_ip = args.host_lan_ip or tool.lan_address_toward(orin_host)
         # 1. The Orin sender: deploy a release (never activating a service), then run it for a bounded time.
         if args.orin:
             deploy = [python, args.deploy_script, args.orin]
+            # nvargus-daemon returns at boot and holds the cameras, which SIPL capture needs free; a sender left
+            # by an earlier run outlives its ssh session.
+            subprocess.run([*deploy, "stop"], check=False)
+            subprocess.run([*deploy, "stop-daemon"], check=True)
             if not args.skip_deploy:
                 print("deploying the sender to", args.orin)
                 subprocess.run(
@@ -695,12 +781,89 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--socket",
                     ipc_socket,
                     "--stream",
-                    f"{sender.stream_id}={track}:2",
+                    f"{sender.stream_id}={track}:{BRIDGE_DOWNSCALE}",
                     "--fps",
                     str(sender.fps),
-                    *bridge_timing_arguments(sender, args.mock, orin_host),
+                    *bridge_timing_arguments(
+                        sender,
+                        args.mock,
+                        orin_host,
+                        tool.reference_id_for(orin_host) if args.orin else None,
+                        args.chrony_cmd_port,
+                    ),
                 ],
             )
+        if args.orin:
+            # Every step is bounded: the page and preview do not need qualified times, and a slow Orin or a missing
+            # package must not keep them down. The bridge refuses unqualified times, so a take cannot start until
+            # time sync is up.
+            print("setting up time sync", flush=True)
+            settled = False
+            try:
+                provisioned = (
+                    subprocess.run([python, str(args.timesync_tool), "ensure-local"], check=False).returncode == 0
+                )
+            except OSError:
+                provisioned = False
+            if provisioned:
+                # An unprivileged chronyd on this PC measures the Orin's clock and never adjusts this PC's. Nothing
+                # has to reach this PC from the Orin, so a firewall here does not matter.
+                stack.start(
+                    "timesync-follower",
+                    [
+                        python,
+                        str(args.timesync_tool),
+                        "follow",
+                        "--server",
+                        orin_host,
+                        "--cmd-port",
+                        str(args.chrony_cmd_port),
+                        "--workdir",
+                        str(workdir / "chrony"),
+                    ],
+                )
+                print("configuring the Orin's chrony to serve its clock to", lan_ip, flush=True)
+                try:
+                    configured = (
+                        subprocess.run(
+                            [
+                                python,
+                                str(args.timesync_tool),
+                                "configure-remote",
+                                args.orin,
+                                "--host-lan-ip",
+                                lan_ip,
+                            ],
+                            check=False,
+                            timeout=90,
+                        ).returncode
+                        == 0
+                    )
+                except subprocess.TimeoutExpired:
+                    configured = False
+                settled = (
+                    configured
+                    and subprocess.run(
+                        [
+                            python,
+                            str(args.timesync_tool),
+                            "status",
+                            "--remote",
+                            orin_host,
+                            "--cmd-port",
+                            str(args.chrony_cmd_port),
+                            "--wait",
+                            str(args.chrony_wait),
+                        ],
+                        check=False,
+                    ).returncode
+                    == 0
+                )
+            if not settled:
+                message = "the clocks have not settled, so the bridge refuses capture times until they do"
+                if args.require_chrony:
+                    raise StartupError(message)
+                print("WARNING:", message)
         url = f"http://127.0.0.1:{args.backend_port}/"
         token = control_token(backend.log)
         print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
@@ -726,6 +889,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     finally:
         stack.stop_all()
+        if args.orin and args.deploy_script:
+            # Ending the local ssh does not end the remote sender; ask it to stop so it frees the cameras.
+            subprocess.run([sys.executable, args.deploy_script, args.orin, "stop"], check=False)
 
 
 if __name__ == "__main__":
