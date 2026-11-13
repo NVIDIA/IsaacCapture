@@ -307,7 +307,7 @@ metadata only and do not alter the AVS1 wire format.
 
 A camera backend that reports its sensor's capture timestamp can have the sender state it in the sender's
 `CLOCK_REALTIME`, so another host whose wall clock is synchronised can compare it with its own. `SensorClockMap` reads the
-platform counter, `CLOCK_MONOTONIC` and `CLOCK_REALTIME` in one bracket once a second and converts each frame's timestamp
+platform counter, `CLOCK_MONOTONIC` and `CLOCK_REALTIME` in one bracket ten times a second and converts each frame's timestamp
 from the difference: counter to `CLOCK_MONOTONIC` through the anchor, then to `CLOCK_REALTIME` through the anchor's
 realtime-minus-monotonic offset. Every conversion is checked: a capture time after the frame was ready, an
 implausibly old one, a counter or clock that cannot be read, an unknown frequency, or a step between two consecutive
@@ -326,8 +326,16 @@ The SIPL backend reports its start-of-frame timestamp this way. On the board it 
 (`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads
 the moment the frame is dequeued by about 22 ms. That is one board and one camera, not vendor documentation.
 
-Only the SIPL backend reports a sensor timestamp. The Argus backend does not, so its bundles carry all-zero timing
-records and no capture time. How closely the counter's start-of-frame value marks the physical exposure has been
+The Argus backend reports the start-of-frame TSC from `Argus::Ext::ISensorTimestampTsc`, which the Argus headers document as
+nanoseconds. It is the same counter scaled to nanoseconds, so it goes through the same `SensorTimeMapper` as the SIPL
+ticks, with the unit declared as nanoseconds and never inferred from the value. That the Argus TSC is the platform counter
+on a given board follows from the documentation and is not measured here; the mapping's checks refuse a frame whose
+converted time is after it was ready or implausibly old. A frame without the extension, or one the mapping refuses, has
+no capture time; the generic sensor timestamp is never used instead. Each camera has its own mapper, because cameras are
+acquired on separate threads and a stereo bundle can have one eye qualified and not the other.
+
+Only the unit declaration and the extraction of the timestamp are backend code; the conversion, anchor reads, checks and
+the fields written to the timing record are shared. How closely the counter's start-of-frame value marks the physical exposure has been
 measured on that one board and has not been validated independently. The checks and their tests show that the counter
 is converted consistently onto the sender's clock; they do not show that it is the exposure instant. Describe the value
 downstream as the sensor's start-of-frame counter mapped onto the sender's clock, not as the exposure time.
@@ -354,7 +362,7 @@ See [WIRE_FORMAT.md](WIRE_FORMAT.md) for the byte-level format.
 
 ## Source layout
 
-- `SensorClock.*`: the counter-to-`CLOCK_REALTIME` mapping (through `CLOCK_MONOTONIC`) and its checks.
+- `SensorClock.*`: the counter-to-`CLOCK_REALTIME` mapping (through `CLOCK_MONOTONIC`), its checks, and `SensorTimeMapper`, the one path both backends use.
 - `Config.*`: YAML parsing and validation.
 - `CaptureManager.*` / `CaptureDomainPlan.*` / `PriorityFrameHandoff.h`: independent priority-eye acquisition and latest-frame slots, event-driven secondary Argus domains, configurable EGL mailbox/FIFO consumers, and timing.
 - `CapturePriorityPolicy.*`: priority-stream selection, startup synchronization tolerance, and secondary release timing.

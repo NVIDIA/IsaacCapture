@@ -105,6 +105,14 @@ int64_t counterTicksToNs(int64_t ticks, int64_t hz)
     return seconds * 1000000000LL + remainder * 1000000000LL / hz;
 }
 
+int64_t monotonicNowNs()
+{
+    timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
 SensorClockMap::SensorClockMap(const Config& config, PairReader reader)
     : m_config(config), m_reader(std::move(reader)), m_anchorTakenNs(0), m_haveAnchor(false), m_stepped(false)
 {
@@ -202,6 +210,77 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         result.captureRealtimeNs = capture + (m_anchor.realtimeNs - m_anchor.monotonicNs);
     }
     return result;
+}
+
+namespace
+{
+
+SensorClockMap::Config nanosecondConfig(int64_t counterHz, SensorClockMap::Config config)
+{
+    // Everything inside the map is in nanoseconds of the platform counter, so one source unit is one nanosecond. A
+    // counter of unknown frequency leaves it at 0, which the map refuses.
+    config.counterHz = counterHz > 0 ? 1000000000LL : 0;
+    return config;
+}
+
+SensorClockMap::PairReader nanosecondReader(int64_t counterHz, SensorClockMap::PairReader reader)
+{
+    return [counterHz, reader](ClockPair* pair)
+    {
+        if (counterHz <= 0 || !reader || !reader(pair))
+            return false;
+        // Only the counter value changes units; the monotonic, realtime and bracket fields are already in ns.
+        pair->source = counterTicksToNs(pair->source, counterHz);
+        return true;
+    };
+}
+
+} // namespace
+
+SensorTimeMapper::SensorTimeMapper(int64_t counterHz,
+                                   const SensorClockMap::Config& config,
+                                   SensorClockMap::PairReader reader)
+    : m_counterHz(counterHz), m_map(nanosecondConfig(counterHz, config), nanosecondReader(counterHz, std::move(reader)))
+{
+}
+
+void SensorTimeMapper::reset()
+{
+    m_map.reset();
+}
+
+SensorTimeMapping SensorTimeMapper::map(uint64_t timestamp,
+                                        SensorTimestampUnit unit,
+                                        int64_t readyMonotonicNs,
+                                        int64_t nowMonotonicNs)
+{
+    if (m_counterHz <= 0)
+        return m_map.map(0, readyMonotonicNs, nowMonotonicNs); // refused: the frequency is not known
+    if (timestamp > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    {
+        SensorTimeMapping refused;
+        refused.reason = "the sensor timestamp is out of range";
+        return refused;
+    }
+    const int64_t ns = unit == SensorTimestampUnit::CounterTicks ?
+                           counterTicksToNs(static_cast<int64_t>(timestamp), m_counterHz) :
+                           static_cast<int64_t>(timestamp);
+    SensorTimeMapping result = m_map.map(static_cast<uint64_t>(ns), readyMonotonicNs, nowMonotonicNs);
+    if (result.valid)
+    {
+        // One counter tick is the resolution of the timestamp and of the anchor read.
+        result.uncertaintyNs += (1000000000LL + m_counterHz - 1) / m_counterHz;
+    }
+    return result;
+}
+
+void applyMappingToTiming(const SensorTimeMapping& mapping, FrameTiming* timing)
+{
+    timing->hasCaptureMonotonic = mapping.valid;
+    timing->captureMonotonicNs = mapping.valid ? mapping.captureMonotonicNs : 0;
+    timing->captureUncertaintyNs = mapping.valid ? mapping.uncertaintyNs : 0;
+    timing->captureAnchorAgeNs = mapping.valid ? mapping.anchorAgeNs : 0;
+    timing->captureRealtimeNs = mapping.valid && mapping.hasRealtime ? mapping.captureRealtimeNs : 0;
 }
 
 } // namespace argus_sender

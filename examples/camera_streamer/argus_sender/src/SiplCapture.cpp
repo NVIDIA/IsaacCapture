@@ -271,7 +271,7 @@ struct SiplCapture::Impl
         NvSciSyncCpuWaitContext cpuWaitContext = nullptr;
 
         // Places the sensor's capture timestamp on CLOCK_MONOTONIC; used on this sensor's frame thread only.
-        std::unique_ptr<SensorClockMap> clockMap;
+        std::unique_ptr<SensorTimeMapper> clockMap;
         std::string lastMappingReason;
 
         std::mutex mutex;
@@ -387,8 +387,7 @@ void SiplCapture::Impl::configure()
         sensor->info = info;
         checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &sensor->cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
         SensorClockMap::Config clockConfig;
-        clockConfig.counterHz = counterHz;
-        sensor->clockMap.reset(new SensorClockMap(clockConfig, readCounterPair));
+        sensor->clockMap.reset(new SensorTimeMapper(counterHz, clockConfig, readCounterPair));
         // ISP0 only: ICP would double the capture bandwidth for a raw stream nothing here consumes.
         sensor->pipelineConfig.captureOutputRequested = false;
         sensor->pipelineConfig.isp0OutputRequested = true;
@@ -584,8 +583,8 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             if (sensor.clockMap)
             {
                 const int64_t ready = static_cast<int64_t>(next.readyMonotonicNs);
-                const SensorTimeMapping mapping =
-                    sensor.clockMap->map(nvm->GetImageData().frameCaptureStartTSC, ready, ready);
+                const SensorTimeMapping mapping = sensor.clockMap->map(
+                    nvm->GetImageData().frameCaptureStartTSC, SensorTimestampUnit::CounterTicks, ready, ready);
                 if (mapping.valid)
                 {
                     next.sensorTscNs = static_cast<uint64_t>(
