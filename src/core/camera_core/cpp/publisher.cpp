@@ -29,6 +29,27 @@ DeliveryOrder resolve_order(const ReaderOptions& options)
     return options.window == 1 ? DeliveryOrder::NEWEST : DeliveryOrder::IN_ORDER;
 }
 
+// A pixel stream names every plane of its format; an encoded stream has none.
+bool layout_is_valid(const StreamDescription& stream)
+{
+    if (stream.is_encoded())
+    {
+        return stream.plane_count == 0;
+    }
+    if (stream.width == 0 || stream.height == 0 || stream.plane_count != plane_count_of(stream.pixel_format))
+    {
+        return false;
+    }
+    for (std::uint32_t i = 0; i < stream.plane_count; ++i)
+    {
+        if (stream.planes[i].stride_bytes == 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 Publisher::Publisher(Clock clock) : m_clock(clock ? std::move(clock) : Clock(steady_now_ns))
@@ -63,6 +84,11 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
             throw std::invalid_argument("camera group '" + description.id + "' has a stream without an id, a slot " +
                                         "size or between 1 and " + std::to_string(MAX_SLOTS_PER_STREAM) + " slots");
         }
+        if (!layout_is_valid(stream))
+        {
+            throw std::invalid_argument("camera stream '" + stream.id + "' needs a size and one stride per plane of " +
+                                        "its pixel format, or no planes at all when it is encoded");
+        }
         group->slot_count = std::min(group->slot_count, stream.slot_count);
         group->slots.emplace_back(stream.slot_count);
     }
@@ -82,7 +108,8 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
 std::optional<std::uint32_t> Publisher::acquire_slot(GroupId group, std::size_t stream)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    std::vector<Slot>& slots = group_at(group).slots.at(stream);
+    Group& target = group_at(group);
+    std::vector<Slot>& slots = target.slots.at(stream);
     for (std::uint32_t i = 0; i < slots.size(); ++i)
     {
         if (slots[i].holds == 0 && !slots[i].writing)
@@ -91,7 +118,7 @@ std::optional<std::uint32_t> Publisher::acquire_slot(GroupId group, std::size_t 
             return i;
         }
     }
-    ++m_stats.no_free_slot;
+    ++target.stats.no_free_slot;
     return std::nullopt;
 }
 
@@ -156,7 +183,7 @@ std::uint64_t Publisher::publish(GroupId group, std::span<const ImageInfo> image
         }
         hold(target, set);
         target.ring.push_back(set);
-        ++m_stats.published;
+        ++target.stats.published;
         sequence = set.sequence;
 
         trim_ring(target, freed);
@@ -312,10 +339,10 @@ std::uint32_t Publisher::generation(GroupId group) const
     return group_at(group).generation;
 }
 
-PublisherStats Publisher::stats() const
+PublisherStats Publisher::stats(GroupId group) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_stats;
+    return group_at(group).stats;
 }
 
 Publisher::Group& Publisher::group_at(GroupId group)
@@ -424,10 +451,10 @@ void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscript
         if (!subscription.sink->send_event(id, event))
         {
             unhold(group, *target, freed);
-            ++m_stats.send_failures;
+            ++group.stats.send_failures;
             return;
         }
-        ++m_stats.events_sent;
+        ++group.stats.events_sent;
         subscription.leases.emplace(event.lease_id, *target);
         subscription.cursor = target->sequence;
         subscription.started = true;

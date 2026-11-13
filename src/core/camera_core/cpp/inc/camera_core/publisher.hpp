@@ -41,6 +41,7 @@ public:
     virtual bool send_event(SubscriptionId subscription, const FrameEvent& event) = 0;
 };
 
+// Counters of one group since it was added.
 struct PublisherStats
 {
     std::uint64_t published = 0; // frame sets published
@@ -131,7 +132,7 @@ public:
     // ---- reader side -----------------------------------------------------------------------
 
     /**
-     * @brief Start sending a group's frame events to a sink.
+     * @brief Start sending a group's frame events to a sink, which must outlive the subscription.
      * @return The subscription, or the reason it does not fit the pool.
      */
     SubscribeResult subscribe(EventSink& sink, GroupId group, const ReaderOptions& options);
@@ -152,7 +153,7 @@ public:
     GroupDescription group_description(GroupId group) const;
     std::optional<GroupId> find_group(std::string_view id) const;
     std::uint32_t generation(GroupId group) const;
-    PublisherStats stats() const;
+    PublisherStats stats(GroupId group) const;
 
 private:
     struct FrameSet
@@ -191,6 +192,7 @@ private:
         std::deque<FrameSet> ring;
         std::vector<SubscriptionId> subscriptions;
         std::shared_ptr<const SlotFreeCallback> on_free;
+        PublisherStats stats;
     };
 
     struct FreedSlot
@@ -216,7 +218,6 @@ private:
     std::map<SubscriptionId, Subscription> m_subscriptions;
     SubscriptionId m_next_subscription = 1;
     std::uint64_t m_next_lease = 1;
-    PublisherStats m_stats;
 };
 
 } // namespace core::camera

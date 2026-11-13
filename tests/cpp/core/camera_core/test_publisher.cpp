@@ -48,7 +48,8 @@ GroupDescription make_group(std::uint32_t slots, std::size_t streams = 2, const 
         stream.id = id + "/" + std::to_string(i);
         stream.width = 640;
         stream.height = 400;
-        stream.stride_bytes = 640 * 4;
+        stream.plane_count = 1;
+        stream.planes[0].stride_bytes = 640 * 4;
         stream.slot_bytes = 640 * 400 * 4;
         stream.slot_count = slots;
         stream.frame_rate = 60.0;
@@ -226,7 +227,7 @@ TEST_CASE("a slot is reused only when neither the ring nor a reader holds it", "
     const auto third = publisher.acquire_slot(group, 0);
     REQUIRE(third == 2u);
     REQUIRE_FALSE(publisher.acquire_slot(group, 0).has_value());
-    REQUIRE(publisher.stats().no_free_slot == 1);
+    REQUIRE(publisher.stats(group).no_free_slot == 1);
     publisher.abandon_slot(group, 0, *third);
 
     // Releasing frame set 1 frees slot 0 and hands the reader frame set 2.
@@ -245,7 +246,7 @@ TEST_CASE("the slot-free callback fires when the last holder lets go", "[camera_
                                      [&](std::size_t stream, std::uint32_t slot)
                                      {
                                          // Runs outside the publisher's lock, so calling back in must not deadlock.
-                                         (void)publisher.stats();
+                                         (void)publisher.stats(group);
                                          freed.emplace_back(stream, slot);
                                      });
     RecordingSink sink;
@@ -315,14 +316,14 @@ TEST_CASE("a frame set that could not be sent is not counted as held", "[camera_
 
     sink.accept = false;
     publish_next(publisher, group);
-    REQUIRE(publisher.stats().send_failures == 1);
+    REQUIRE(publisher.stats(group).send_failures == 1);
     REQUIRE(sink.events.empty());
 
     sink.accept = true;
     publish_next(publisher, group);
     REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 2 });
     REQUIRE(sink.events[0].skipped == 0);
-    REQUIRE(publisher.stats().events_sent == 1);
+    REQUIRE(publisher.stats(group).events_sent == 1);
 
     // Frame set 1 left the ring and no reader holds it: its slot is free.
     REQUIRE(publisher.acquire_slot(group, 0) == 0u);
@@ -388,7 +389,7 @@ TEST_CASE("an encoded stream is described by its codec, not by a pixel format", 
     StreamDescription& stream = description.streams[0];
     REQUIRE_FALSE(stream.is_encoded());
     stream.codec = Codec::H265;
-    stream.stride_bytes = 0;
+    stream.plane_count = 0;
     stream.slot_bytes = 2 * 1024 * 1024; // room for one access unit
 
     Publisher publisher;
@@ -436,6 +437,20 @@ TEST_CASE("misuse by a backend is rejected", "[camera_core][validation]")
     REQUIRE_THROWS_AS(publisher.add_group(make_group(MAX_SLOTS_PER_STREAM + 1)), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.add_group(make_group(4), 0), std::invalid_argument);
 
+    // A pixel stream names every plane of its format; an encoded stream has none.
+    GroupDescription nv12 = make_group(4, 1, "nv12");
+    nv12.streams[0].pixel_format = PixelFormat::NV12;
+    REQUIRE_THROWS_AS(publisher.add_group(nv12), std::invalid_argument);
+    nv12.streams[0].plane_count = 2;
+    nv12.streams[0].planes[1] = { .offset_bytes = 640 * 400, .stride_bytes = 640 };
+    REQUIRE_NOTHROW(publisher.add_group(nv12));
+    GroupDescription encoded_with_planes = make_group(4, 1, "enc");
+    encoded_with_planes.streams[0].codec = Codec::H264;
+    REQUIRE_THROWS_AS(publisher.add_group(encoded_with_planes), std::invalid_argument);
+    GroupDescription no_size = make_group(4, 1, "empty");
+    no_size.streams[0].width = 0;
+    REQUIRE_THROWS_AS(publisher.add_group(no_size), std::invalid_argument);
+
     const GroupId group = publisher.add_group(make_group(4));
     REQUIRE_THROWS_AS(publisher.add_group(make_group(4)), std::invalid_argument); // same id
 
@@ -445,7 +460,7 @@ TEST_CASE("misuse by a backend is rejected", "[camera_core][validation]")
     images[0].slot = *publisher.acquire_slot(group, 0);
     REQUIRE_THROWS_AS(publisher.publish(group, { images.data(), 1 }, {}), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.publish(group, images, {}), std::invalid_argument); // stream 1 not acquired
-    REQUIRE(publisher.stats().published == 0);
+    REQUIRE(publisher.stats(group).published == 0);
 
     REQUIRE_THROWS_AS(publisher.abandon_slot(group, 1, 0), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.acquire_slot(99, 0), std::out_of_range);
@@ -523,5 +538,5 @@ TEST_CASE("capture and a reader on different threads keep every frame set in ord
     REQUIRE(dropped == 0);
     REQUIRE(out_of_order == 0);
     REQUIRE(received > 0);
-    REQUIRE(publisher.stats().published == FRAME_SETS);
+    REQUIRE(publisher.stats(group).published == FRAME_SETS);
 }

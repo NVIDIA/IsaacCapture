@@ -27,6 +27,21 @@ enum class PixelFormat : std::uint32_t
     GRAY8 = 4,
 };
 
+// NV12 has two planes (luma, then interleaved chroma); the other formats have one.
+inline constexpr std::size_t MAX_PLANES_PER_IMAGE = 2;
+
+constexpr std::uint32_t plane_count_of(PixelFormat format)
+{
+    return format == PixelFormat::NV12 ? 2 : 1;
+}
+
+// Where one plane of an image sits inside a slot.
+struct PlaneLayout
+{
+    std::uint32_t offset_bytes = 0;
+    std::uint32_t stride_bytes = 0; // from the start of one row to the start of the next
+};
+
 // Whether a stream's slots hold pixels or one access unit of encoded video each.
 enum class Codec : std::uint32_t
 {
@@ -53,7 +68,8 @@ struct StreamDescription
     MemoryKind memory = MemoryKind::HOST;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::uint32_t stride_bytes = 0; // row pitch of the first plane; 0 for an encoded stream
+    std::uint32_t plane_count = 0; // 0 for an encoded stream
+    std::array<PlaneLayout, MAX_PLANES_PER_IMAGE> planes; // the same for every slot of the stream
     std::uint64_t slot_bytes = 0; // capacity of one slot
     std::uint32_t slot_count = 0;
     double frame_rate = 0.0; // configured or measured, not the sensor mode's maximum
