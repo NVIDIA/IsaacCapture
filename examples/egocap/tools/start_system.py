@@ -173,6 +173,16 @@ def _section(parent: dict, key: str, path: Path) -> dict:
     return value
 
 
+def _section(parent: dict, key: str, path: Path) -> dict:
+    """The mapping under ``parent[key]``, created when absent or null; another type is a startup error."""
+    value = parent.get(key)
+    if value is None:
+        value = parent[key] = {}
+    if not isinstance(value, dict):
+        raise StartupError(f"{path}: {key} must be a mapping")
+    return value
+
+
 def load_sender_config(
     path: Path,
     fps: int | None = None,
@@ -674,6 +684,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.orin and args.receiver == default_receiver_command():
             ensure_receiver_environment()
+            # The default was resolved before this setup created the receiver's environment, so resolve it again.
+            # An explicit --receiver or EGOCAP_RECEIVER is not the default and is never replaced.
+            args.receiver = default_receiver_command()
         # Time sync is set up after the page is up (below), so a slow or failed install never holds the preview.
         if args.orin:
             tool = load_timesync_tool(args.timesync_tool)
