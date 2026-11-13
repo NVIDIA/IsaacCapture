@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import random
 import re
 import shutil
@@ -264,8 +265,9 @@ class MockSender:
         """Accept receivers one at a time until stopped or duration_s elapses."""
         listener.settimeout(0.5)
         started = time.monotonic()
+        stop_at = started + duration_s if duration_s else None
         while not self.stop_event.is_set():
-            if duration_s and time.monotonic() - started >= duration_s:
+            if stop_at is not None and time.monotonic() >= stop_at:
                 return
             try:
                 conn, peer = listener.accept()
@@ -275,13 +277,14 @@ class MockSender:
                 return  # the listener was closed
             logger.info("receiver connected from %s:%d", *peer[:2])
             try:
-                self._stream_to(conn)
+                self._stream_to(conn, stop_at)
             except OSError as exc:
                 logger.info("receiver connection ended: %s", exc)
             finally:
                 conn.close()
 
-    def _stream_to(self, conn: socket.socket) -> None:
+    def _stream_to(self, conn: socket.socket, stop_at: float | None = None) -> None:
+        """Send bundles until stopped, a scripted disconnect, or the monotonic time ``stop_at``."""
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         cursors = [_Cursor(spec, self._units[spec]) for spec in self.specs]
         session_id = random.getrandbits(62) | 1
@@ -289,7 +292,13 @@ class MockSender:
         start = time.monotonic()
         tick = 0
         while not self.stop_event.is_set():
-            elapsed = time.monotonic() - start
+            now = time.monotonic()
+            if stop_at is not None:
+                if now >= stop_at:
+                    return
+                # A receiver that stops reading must not hold the sender past --duration.
+                conn.settimeout(stop_at - now)
+            elapsed = now - start
             if disconnects and elapsed >= disconnects[0]:
                 logger.info("scripted disconnect at %.1fs", disconnects.pop(0))
                 return
@@ -332,8 +341,19 @@ class MockSender:
             conn.sendall(record)
             self.bundles_sent += 1
             deadline = start + tick / self.base_fps
-            if self.stop_event.wait(max(0.0, deadline - time.monotonic())):
+            pause = max(0.0, deadline - time.monotonic())
+            if stop_at is not None:
+                pause = min(pause, max(0.0, stop_at - time.monotonic()))
+            if self.stop_event.wait(pause):
                 return
+
+
+def _has_access_units(path: Path) -> bool:
+    """Whether ``path`` exists and holds at least one access unit."""
+    try:
+        return bool(split_access_units(path.read_bytes()))
+    except OSError:
+        return False
 
 
 def ensure_sources(specs: list[StreamSpec], cache_dir: Path) -> dict[StreamSpec, Path]:
@@ -345,9 +365,17 @@ def ensure_sources(specs: list[StreamSpec], cache_dir: Path) -> dict[StreamSpec,
     sources = {}
     for spec in specs:
         path = cache_dir / f"{spec.name}_{spec.width}x{spec.height}_{spec.fps}.hevc"
-        if not path.exists():
+        if not _has_access_units(path):
             logger.info("encoding %s", path.name)
-            make_stream_file(path, spec)
+            # Encoded beside the cache file and moved into place only when it has a decodable access unit, so an
+            # interrupted or failed encode never leaves an empty file that the next launch would trust.
+            partial = path.with_name(path.name + ".partial")
+            make_stream_file(partial, spec)
+            if not _has_access_units(partial):
+                raise SystemExit(
+                    f"encoding {path.name} produced no decodable access unit"
+                )
+            os.replace(partial, path)
         sources[spec] = path
     return sources
 
@@ -415,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sender.serve(listener, args.duration)
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl-C is how a run without --duration ends; the listener is closed below
     finally:
         listener.close()
     return 0
