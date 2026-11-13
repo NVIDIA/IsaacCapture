@@ -47,8 +47,9 @@ Per hand, with the default collection prefix ``revohuman``
      - ``JointStateOutput`` with the 21 encoder angles in radians, in SDK order;
        see :doc:`/device/joint_space/index`
    * - ``revohuman_<side>_tactile`` / tensor ``tactile``
-     - ``TactileDataArray`` taxel forces: the SDK's calibrated reading, unchanged,
-       along each taxel's outward normal; see :doc:`/device/tactile/index`
+     - ``TactileDataArray`` taxel forces in newtons, as the SDK reports them,
+       along each taxel's outward normal; see
+       :doc:`/device/tactile/index`
    * - ``revohuman_<side>_tactile/metadata``
      - The ``TactileMetadata`` layout the forces belong to
 
@@ -123,21 +124,31 @@ The plugin neither records nor plays back: record its collections with
 ``McapRecordingConfig`` and play them back with ``McapReplayConfig``, as for any
 other tracker (see :doc:`/references/mcap_record_replay`).
 
-The plugin finds the gloves through the SDK, at most one left and one right,
-with nothing to declare. When both are plugged in, it opens them in one
-two-hand SDK kit with time sync on, so the two hands' samples come from the
-same USB frame. A glove plugged in alone opens on its own; when the other one
-arrives, both are reopened together. Gloves that cannot be opened together
-keep streaming on their own. Until a glove is found, the plugin looks for it
-every 2 s and reports the SDK's reason in its status, without holding up the
-other hand. The SDK reconnects a glove after a short dropout; when the stream
-ends anyway, the plugin closes the glove, together with its partner when the
-two share a kit, and looks for them again.
+The plugin finds the gloves through the SDK's autokit, at most one left and one
+right, with nothing to declare; the SDK opens, retries and reopens them in the
+background. Gloves plugged in at start-up open together in one two-hand SDK kit,
+synced on one USB frame where the SDK can; otherwise each opens on its own, and
+a missing glove is looked for again at the SDK autokit's retry interval
+(``retry_ms`` in ``revohuman.h``) with the SDK's reason in its status. The
+SDK reconnects a glove after a short dropout and re-syncs a pair itself. When a
+stream of the pair ends anyway, both gloves close and reopen as a pair once both
+are back; if only one is back for the autokit's ``pair_wait_ms`` it opens on its
+own, the other follows on its own, and the two stay unpaired until the plugin
+restarts. Gloves streaming without hardware sync to each other (paired in host
+time, unpaired after a lost pair, or opened separately) report their ``/glove``
+status as degraded with the reason.
+
+From start-up until a hand's first glove sample, for at most ``startup_hold_ns``
+of the plugin's ``PipelineConfig``, the plugin injects that hand with no valid
+joints. A client reading OpenXR hand tracking then gets no joints while the
+gloves open, not the headset's optical hand followed by the glove's.
 
 Each glove's mechanical model follows the product the SDK identifies: a PTV1
 glove uses the DV1 model and a P1 glove the P model. A P1 glove has no tactile
 sensors, so it streams the hand and joint states without tactile outputs. A
-glove of the wrong product or with incompatible firmware is reported as failed.
+glove of the wrong product, with incompatible firmware or with a hand model the
+plugin is not fitted to is reported as failed; the plugin keeps running. The
+plugin is fitted to the models of the C SDK release that ``install.sh`` pins.
 
 Wrist pose
 ----------
@@ -155,8 +166,7 @@ variable.
 
 A controller reports its aim pose, not the wrist. No controller mount is
 calibrated for these gloves yet, so the aim-to-wrist offsets default to
-identity and the plugin warns for each hand without one unless the source is
-``hand_tracking``. Set them with:
+identity. Set them with:
 
 .. code-block:: bash
 
@@ -171,27 +181,26 @@ the last valid wrist pose (or the stage origin), and its status is degraded.
 
 The glove's wrist is a reference point of its mechanical model: the origin of
 its ``palm_link``, on the back of the hand near the end of the forearm, moved
-about 12.6 mm towards the palm to the depth of the palm centre. It is not the
-anatomical wrist centre that the OpenXR wrist joint stands for. Nominally the
-wrist centre is about 4 cm further towards the fingers and about 0.2 to 0.7 cm
-further towards the palm; these figures come from typical adult hand
-dimensions, not from measurements on the glove, and vary with the wearer. With
-optical hand tracking, the injected hand therefore sits that much further
-towards the fingers and the palm than the tracked hand. With a controller, set
-the aim-to-wrist offsets to end at the glove's wrist point. Verify the
-alignment for the wearer.
+12.6 mm towards the palm. It is not the anatomical wrist
+centre that the OpenXR wrist joint stands for. Nominally the wrist centre is
+about 4 cm further towards the fingers and about 0.2 to 0.7 cm further towards
+the palm; these figures come from typical adult hand dimensions, not from
+measurements on the glove, and vary with the wearer. With optical hand tracking,
+the injected hand therefore sits that much further towards the fingers and the
+palm than the tracked hand. With a controller, set the aim-to-wrist offsets to
+end at the glove's wrist point. Verify the alignment for the wearer.
 
 Tactile layout
 --------------
 
-At start-up the plugin builds each hand's ``TactileMetadata`` from the C SDK's
-taxel layout for the DV1 model (``rh_hand_model_taxel_layout``); there is no
-layout file or option. Each taxel is bound rigidly to the OpenXR joint its SDK
-link moves with, with its +Z along the outward normal. That joint is rigid on
-the link, so the skinned taxels stay on the SDK's taxels as the fingers bend.
-The log names the layout source, taxel count and SHA-256 of each hand's
-metadata. When the SDK has no layout, the plugin logs why and pushes no tactile
-data; the other outputs are unaffected.
+When a glove opens, the plugin builds its hand's ``TactileMetadata`` from the C
+SDK's taxel layout for the glove's model (``rh_hand_model_taxel_layout``); there
+is no layout file or option. Each taxel is bound rigidly to the OpenXR joint its
+SDK link moves with, with its +Z along the outward normal. That joint is rigid
+on the link, so the skinned taxels stay on the SDK's taxels as the fingers bend.
+The log names the taxel count and whether the metadata was built; the debug log
+names the SDK's layout source. When the SDK has no layout, the plugin logs why
+and pushes no tactile data; the other outputs are unaffected.
 
 A force sample is pushed only while it is calibrated, recent and newer than the
 last one, and its status names the reason when it is not. Consumers must check
@@ -210,17 +219,18 @@ Troubleshooting
      - The downloaded package does not match the pinned release. Re-run to
        rule out a corrupted download; if it persists, do not bypass the check
        — verify the release assets upstream.
-   * - No ``revohuman_plugin`` is built, ``install.sh`` refuses the install, or
-       the plugin stops before the OpenXR session naming an SDK function
-     - The SDK found during configuration is incomplete: its library is missing
-       or lacks a function the plugin calls. Point ``REVOHUMAN_SDK_ROOT`` at a
-       complete C SDK release and reconfigure.
+   * - CMake configuration fails naming the RevoHuman SDK
+     - The SDK at ``REVOHUMAN_SDK_ROOT`` is incomplete: its library, headers or
+       licence are missing. Point it at a complete C SDK release and
+       reconfigure.
    * - A glove is never opened and its status names a busy port
      - Another process, such as the SDK viewer, holds the glove's serial port.
        Close it; the plugin opens the glove on its next attempt.
    * - A glove is reported as failed
-     - The status carries the SDK's reason: a product or variant the plugin
-       does not support, or incompatible firmware. These are not retried.
+     - The status carries the reason: a product or variant the plugin does not
+       support, incompatible firmware, or a hand model the plugin is not fitted
+       to, as from a C SDK release other than the one ``install.sh`` pins. These
+       are not retried.
    * - Hands appear but a downstream client sees no tactile data
      - A P1 glove has no tactile sensors. Otherwise check the start-up log for
        why there is no ``TactileMetadata`` (an SDK without the taxel layout),

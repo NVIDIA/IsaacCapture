@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -572,14 +573,22 @@ behavior.</p>
 </section>
 <section id="openxr-ownership">
 <h2>OpenXR ownership<a class="headerlink" href="#openxr-ownership" title="Link to this heading">#</a></h2>
-<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-tracking. Runtime or session loss fails the provider; sustained loss of active
-head tracking disconnects the headset while leaving the runtime provider
-available.</p>
+<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">SESSION_</span><wbr><span class="pre">STATE_</span><wbr><span class="pre">STOPPING</span></code> ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. <code class="docutils literal notranslate"><span class="pre">XR_SESSION_STATE_READY</span></code> begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.</p>
+<p>Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.</p>
 <p>For externally supplied <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>, Isaac Teleop does not consume the
 external owner’s event queue. The provider is available after setup and the
 headset remains <code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code> unless the owner supplies health through another
 integration.</p>
+<p>Native consumers must rebuild together: <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles</span></code> includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.</p>
 </section>
 </section>
 
@@ -720,7 +729,7 @@ integration.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 04, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 13, 2026.
       <br/>
     
   </p>
