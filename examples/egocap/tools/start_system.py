@@ -160,6 +160,16 @@ class SenderSettings:
     sipl: bool
 
 
+def _section(parent: dict, key: str, path: Path) -> dict:
+    """The mapping under ``parent[key]``, created when absent or null; another type is a startup error."""
+    value = parent.get(key)
+    if value is None:
+        value = parent[key] = {}
+    if not isinstance(value, dict):
+        raise StartupError(f"{path}: {key} must be a mapping")
+    return value
+
+
 def load_sender_config(
     path: Path,
     fps: int | None = None,
@@ -179,8 +189,10 @@ def load_sender_config(
     if not isinstance(config, dict) or not isinstance(config.get("streams"), list) or len(config["streams"]) != 1:
         raise StartupError(f"{path}: the launcher supports exactly one stream in the sender config")
     stream = config["streams"][0]
-    network = config.setdefault("network", {})
-    output = stream.setdefault("output", {})
+    if not isinstance(stream, dict):
+        raise StartupError(f"{path}: streams[0] must be a mapping")
+    network = _section(config, "network", path)
+    output = _section(stream, "output", path)
     # An override replaces the profile's value; the profile stays the source of everything else.
     if fps is not None:
         output["fps"] = fps
@@ -701,6 +713,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         while all(child.process.poll() is None for child in stack.children):
             time.sleep(1)
         dead = next(child for child in stack.children if child.process.poll() is not None)
+        if dead.name == "sender" and dead.process.returncode == 0:
+            # The sender runs for --seconds and then exits cleanly: that is the requested end, not a failure.
+            print(f"the Orin sender finished its {args.seconds} s run; stopping the stack")
+            return 0
         raise StartupError(f"{dead.name} exited with {dead.process.returncode}; see {dead.log}")
     except KeyboardInterrupt:
         return 0
