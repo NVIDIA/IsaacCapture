@@ -258,11 +258,49 @@ void test_realtime_step()
     CHECK(stepped.verdict == Verdict::NoLocalClock);
     CHECK(stepped.generation > first.generation);
 
+    // Evidence read before the step is not reused; both hosts are read again after it.
+    r.clocks.advance(kMs);
+    r.clock->poll_once();
     const int64_t realtime = r.clocks.realtime.load();
     const Qualification after = r.clock->qualify(true, realtime - 10 * kMs, 100'000);
     CHECK(after.verdict == Verdict::Qualified);
     CHECK(after.generation == stepped.generation);
     CHECK(after.capture_monotonic_ns == (realtime - 10 * kMs) - (realtime - r.clocks.monotonic.load()));
+}
+
+void test_realtime_step_discards_evidence_read_before_it()
+{
+    Rig r;
+    r.healthy();
+    r.build();
+    r.clock->poll_once();
+    // The sender's capture timestamp is fixed in realtime and does not move with this machine's clock.
+    const int64_t capture_realtime = r.clocks.realtime.load() - 80 * kMs;
+    const Qualification first = r.clock->qualify(true, capture_realtime, 100'000);
+    CHECK(first.verdict == Verdict::Qualified);
+
+    r.clocks.realtime -= 20 * kMs; // only this machine's realtime steps
+    const Qualification stepped = r.clock->qualify(true, capture_realtime, 100'000);
+    CHECK(stepped.verdict == Verdict::NoLocalClock);
+    CHECK(stepped.generation > first.generation);
+
+    // No poll since the step: the evidence describes the old clock and must not qualify the frame.
+    const Qualification again = r.clock->qualify(true, capture_realtime, 100'000);
+    CHECK(!again.usable());
+    CHECK(again.verdict == Verdict::NoSenderEvidence || again.verdict == Verdict::NoPcEvidence);
+    const Qualification third = r.clock->qualify(true, capture_realtime, 100'000);
+    CHECK(!third.usable());
+
+    // Both hosts read again after the step: qualification recovers on the new clock.
+    r.clocks.monotonic += kMs;
+    r.clocks.realtime += kMs;
+    r.healthy();
+    r.clock->poll_once();
+    const Qualification recovered = r.clock->qualify(true, capture_realtime, 100'000);
+    CHECK(recovered.verdict == Verdict::Qualified);
+    CHECK(recovered.generation == stepped.generation);
+    const int64_t offset = r.clocks.realtime.load() - r.clocks.monotonic.load();
+    CHECK(recovered.capture_monotonic_ns == capture_realtime - offset);
 }
 
 void test_over_budget()
@@ -345,6 +383,7 @@ int main()
     test_unsynchronised();
     test_stale_evidence();
     test_realtime_step();
+    test_realtime_step_discards_evidence_read_before_it();
     test_over_budget();
     test_start_stop();
     test_concurrent_qualify();
