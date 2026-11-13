@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrony_clock/chrony_capture_clock.hpp>
 #include <livekit_publisher/livekit_session.hpp>
 #include <nvenc/cuda_context.hpp>
 #include <video_types/timestamp_basis.hpp>
@@ -32,7 +33,9 @@ struct WorkerConfig
     /// receiver's IPC catalog does not carry the range, so the operator says it here.
     bool source_full_range = false;
     /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
-    TimestampBasis timestamp_basis = TimestampBasis::CaptureUnixUs;
+    TimestampBasis timestamp_basis = TimestampBasis::MonotonicUs;
+    /// Chrony evidence for capture_monotonic_us; shared by every stream and owned by the caller.
+    ChronyCaptureClock* chrony_clock = nullptr;
 };
 
 struct WorkerStats
@@ -52,6 +55,11 @@ struct WorkerStats
     std::atomic<uint64_t> capture_to_ready_us_total{ 0 };
     std::atomic<uint64_t> capture_to_ready_samples{ 0 };
     std::atomic<uint32_t> capture_to_ready_max_us{ 0 };
+    /// capture_monotonic_us: how many frames got each timesync::Verdict, and the last frame's combined uncertainty and
+    /// the PC clock generation it was converted under.
+    std::atomic<uint64_t> chrony_verdicts[16] = {};
+    std::atomic<int64_t> last_uncertainty_ns{ 0 };
+    std::atomic<uint64_t> last_generation{ 0 };
     /// The latest target the transport reported (0 until it reports one).
     std::atomic<uint32_t> target_bps{ 0 };
 };

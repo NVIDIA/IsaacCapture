@@ -19,7 +19,7 @@ Each stream runs on its own thread. A frame is copied (or box-averaged down) on
 the GPU from the IPC slot into an NVENC input surface, encoded, and submitted as
 a pre-encoded access unit. Pixels never reach host memory. The frame's source
 sequence is the track's `frame_id`, the sensor start time (when the receiver
-derived one) is the `user_timestamp` in Unix microseconds, and the sensor
+derived one) is the `user_timestamp` (what it means is set by `--timestamp-basis`, below), and the sensor
 counter is the 8-byte `user_data`. The newest picture is encoded and older
 queued ones are skipped. The receiver overwrites a slot without notice once its ring wraps, so after the GPU copy the
 bridge checks for a newer notice for the same slot, or as many newer notices as the ring has other slots, and drops the
@@ -40,6 +40,13 @@ slots" applies.
 | --- | --- | --- | --- |
 | `livekit_publisher/` and the session, publication and feedback wiring in `bridge/` | Transport adapters | Adapt the useful implementation; retire the hard-coded transport glue | Map sessions, publications, encoder feedback and reconnect behaviour to the adapter boundary. Lands when real web clients receive streams, and feedback and recovery work, through an adapter. |
 | `ipc_client/` and the slot read in `bridge/stream_worker.cpp` | Camera reader views and leases | Retire | Read frames through a lease held until the final GPU read. Lands with the receiver's lease support. |
+| `chrony_clock/` and the capture-time publication in `bridge/stream_worker.cpp` | The receiver backend's published clock mapping (offset, uncertainty, discontinuity epoch) | Transitional: adapt, then retire the bridge-specific adapter | Carry mapped capture time, validity and discontinuity behaviour through the receiver contract. Lands when consumers obtain equivalent timing without the bridge-only adapter. |
+| `src/core/timesync/` (used by `chrony_clock/`) | The estimator behind the receiver's clock mapping | Reuse | Keep the chrony evidence handling and qualification behind the destination interface. |
+
+The `chrony_clock/` adapter connects the reusable timing library to the current video publication path and is intended
+to converge on the receiver backend's clock-mapping contract. With `capture_monotonic_us`, a mapping that cannot be
+vouched for publishes no timestamp, and the frame-ready time is never offered in its place; a capture over the
+precision target keeps its timestamp. `monotonic_us` is a separate, declared basis.
 
 ## Build
 
@@ -78,13 +85,33 @@ the same basis:
 
 | Basis | Value |
 | --- | --- |
-| `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
-| `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
+| `monotonic_us` (default) | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
+| `capture_monotonic_us` | The sensor start-of-frame on this host's monotonic clock, converted from the sender's `CLOCK_REALTIME` with chrony evidence for both hosts (below). |
 
-`capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
-start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
-a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would
-need a measured sender-to-host clock mapping with a stated uncertainty, which does not exist yet.
+`capture_monotonic_us` uses the sensor start-of-frame that the receiver reads from the sender's AVS1 timing record
+(`sensor_capture_realtime_ns`, `sensor_capture_uncertainty_ns`, `sensor_capture_valid`) and the time-sync library in
+`src/core/timesync`. Each frame is converted from the sender's `CLOCK_REALTIME` to this host's monotonic clock, or
+refused with a typed reason, using chronyd's own report for both hosts, a bracketed read of this host's clocks, and the
+sender's stated uncertainty. Two outcomes are different in kind. A conversion that cannot be vouched for (a stale or
+unsynchronised chrony report, another reference, an implausible age, an invalid sender record) is published without a
+timestamp, and the frame-ready time is never offered in its place. A conversion that passes every one of those checks
+but whose combined uncertainty is over the precision target (`over_budget`) still has a capture instant with a known
+bound, so it is published with that timestamp; the target classifies the frame in the statistics and does not remove its
+time. It needs:
+
+| Option | Meaning |
+| --- | --- |
+| `--chrony-sender HOST[:PORT]` | The camera host's chronyd, read over chrony's monitoring interface (it must `cmdallow` this host). |
+| `--chrony-sender-refid HEX` | The reference id this host's chronyd must have selected (an NTP source's reference id is its IPv4 address in hex). |
+| `--chrony-pc-port PORT` | Read this host's chronyd on that command port over loopback, for a dedicated instance next to the system one. |
+| `--chronyc PATH` | The `chronyc` binary (default `chronyc` on `PATH`). |
+
+`src/core/timesync/README.md` describes the arrangement (this host measures the camera host, which serves its own clock) and how to set it up with `timesync_tool.py`. The
+A realtime step of this host's wall clock is a timing fault: the frame that reveals it and every frame for the next 8 s are published without a timestamp (a longer silence than a recording take tolerates, so a take cannot continue across the step even if some of those frames are lost on the way), and chrony readings taken before the step are never reused. The
+`[stats]` line gains the number of frames that met the precision target, a count per other verdict (`over_budget` frames
+carry a timestamp; the rest do not), the last combined uncertainty and the clock generation the frame was converted
+under. These are runtime diagnostics only and are not recorded with the video. The caller of a recording should treat a
+frame without a timestamp as a timing fault.
 
 `--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
 then signals full range, so players and recordings keep the black and white levels. Without it the stream signals

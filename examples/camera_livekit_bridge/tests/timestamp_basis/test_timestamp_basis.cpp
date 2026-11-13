@@ -3,7 +3,6 @@
 
 #include <video_types/timestamp_basis.hpp>
 
-#include <cstdint>
 #include <iostream>
 
 namespace
@@ -25,50 +24,13 @@ void check(bool condition, const char* what)
 int main()
 {
     using camera_bridge::TimestampBasis;
-    using camera_bridge::user_timestamp_us;
 
     check(camera_bridge::parse_timestamp_basis("monotonic_us") == TimestampBasis::MonotonicUs, "parse monotonic_us");
     check(camera_bridge::parse_timestamp_basis("capture_monotonic_us") == TimestampBasis::CaptureMonotonicUs,
           "parse capture_monotonic_us");
-    check(camera_bridge::parse_timestamp_basis("capture_unix_us") == TimestampBasis::CaptureUnixUs,
-          "parse capture_unix_us");
+    check(!camera_bridge::parse_timestamp_basis("capture_unix_us").has_value(), "reject a Unix-time basis");
     check(!camera_bridge::parse_timestamp_basis("processing_unix_us").has_value(), "reject an unsupported basis");
     check(!camera_bridge::parse_timestamp_basis("").has_value(), "reject an empty basis");
-
-    const int64_t realtime = 1'800'000'000'000'000'000;
-    const int64_t monotonic = 5'000'000'000'000;
-
-    // Frame-ready time ignores the sensor time and is the monotonic clock in microseconds.
-    check(user_timestamp_us(TimestampBasis::MonotonicUs, 0, realtime, monotonic) == 5'000'000'000,
-          "monotonic_us without sensor time");
-    check(user_timestamp_us(TimestampBasis::MonotonicUs, 123, realtime, monotonic) == 5'000'000'000,
-          "monotonic_us ignores sensor time");
-
-    // Capture time 80 ms ago on the sender's wall clock.
-    const uint64_t sof = static_cast<uint64_t>(realtime - 80'000'000);
-    check(user_timestamp_us(TimestampBasis::CaptureUnixUs, sof, realtime, monotonic) == sof / 1000,
-          "capture_unix_us is the sensor time");
-    check(user_timestamp_us(TimestampBasis::CaptureMonotonicUs, sof, realtime, monotonic) ==
-              (5'000'000'000'000 - 80'000'000) / 1000,
-          "capture_monotonic_us is now minus the age");
-
-    // No sensor time, a future one and an implausibly old one are not vouched for.
-    for (const auto basis : { TimestampBasis::CaptureUnixUs, TimestampBasis::CaptureMonotonicUs })
-    {
-        check(user_timestamp_us(basis, 0, realtime, monotonic) == 0, "no sensor time gives 0");
-        check(user_timestamp_us(basis, static_cast<uint64_t>(realtime + 1'000'000), realtime, monotonic) == 0,
-              "future sensor time gives 0");
-        check(user_timestamp_us(basis, static_cast<uint64_t>(realtime - camera_bridge::kMaxCaptureAgeNs - 1), realtime,
-                                monotonic) == 0,
-              "too old sensor time gives 0");
-        check(user_timestamp_us(
-                  basis, static_cast<uint64_t>(realtime - camera_bridge::kMaxCaptureAgeNs), realtime, monotonic) != 0,
-              "sensor time at the age limit is accepted");
-    }
-
-    // An age larger than the monotonic clock itself cannot be placed on it.
-    check(user_timestamp_us(TimestampBasis::CaptureMonotonicUs, sof, realtime, 10'000'000) == 0,
-          "age beyond the monotonic clock gives 0");
 
     if (g_failures == 0)
         std::cout << "timestamp_basis: all checks passed\n";

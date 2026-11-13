@@ -272,8 +272,27 @@ struct StreamWorker::Impl
             const bool wall_is_realtime = wall_domain != notice.metadata.end() && wall_domain->is_string() &&
                                           wall_domain->get<std::string>() == "realtime";
             const uint64_t sensor_sof_ns = wall_is_realtime ? unsigned_field(notice.metadata, "sensor_sof_ns") : 0;
-            frame.user_timestamp_us =
-                user_timestamp_us(config.timestamp_basis, sensor_sof_ns, ready_realtime_ns, ready_monotonic_ns);
+            frame.user_timestamp_us = config.timestamp_basis == TimestampBasis::MonotonicUs ?
+                                          static_cast<uint64_t>(ready_monotonic_ns / 1000) :
+                                          0;
+            if (config.timestamp_basis == TimestampBasis::CaptureMonotonicUs && config.chrony_clock != nullptr)
+            {
+                // The receiver's timing record: the sensor start of frame on the sender's CLOCK_REALTIME with the
+                // sender's stated uncertainty. A conversion that cannot be vouched for publishes no capture time; the
+                // frame-ready time is never offered in its place.
+                const auto valid = notice.metadata.find("sensor_capture_valid");
+                const bool sender_valid = valid != notice.metadata.end() && valid->is_boolean() && valid->get<bool>();
+                const auto result = config.chrony_clock->qualify(
+                    sender_valid, static_cast<int64_t>(unsigned_field(notice.metadata, "sensor_capture_realtime_ns")),
+                    static_cast<int64_t>(unsigned_field(notice.metadata, "sensor_capture_uncertainty_ns")));
+                ++stats.chrony_verdicts[static_cast<std::size_t>(result.verdict)];
+                stats.last_uncertainty_ns = result.uncertainty_ns;
+                stats.last_generation = result.generation;
+                // A precision miss still has a converted instant with a stated bound, so the frame keeps its capture
+                // time; only a conversion that cannot be vouched for publishes none.
+                if (result.usable())
+                    frame.user_timestamp_us = static_cast<uint64_t>(result.capture_monotonic_ns) / 1000;
+            }
             if (sensor_sof_ns != 0)
             {
                 const int64_t age_ns = ready_realtime_ns - static_cast<int64_t>(sensor_sof_ns);
