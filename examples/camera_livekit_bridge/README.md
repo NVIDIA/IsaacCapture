@@ -105,6 +105,7 @@ time. It needs:
 | `--chronyc PATH` | The `chronyc` binary (default `chronyc` on `PATH`). |
 
 `src/core/timesync/README.md` describes the arrangement (this host measures the camera host, which serves its own clock) and how to set it up with `timesync_tool.py`. The
+A realtime step of this host's wall clock is a timing fault: the frame that reveals it and every frame for the next 8 s are published without a timestamp (a longer silence than a recording take tolerates, so a take cannot continue across the step even if some of those frames are lost on the way), and chrony readings taken before the step are never reused. The
 `[stats]` line gains the number of frames that met the precision target, a count per other verdict (`over_budget` frames
 carry a timestamp; the rest do not), the last combined uncertainty and the clock generation the frame was converted
 under. These are runtime diagnostics only and are not recorded with the video. The caller of a recording should treat a
