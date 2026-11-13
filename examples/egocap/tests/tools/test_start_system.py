@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,14 +73,16 @@ def test_control_token_found_or_absent(tmp_path: Path):
 def test_main_requires_deploy_script_with_orin(monkeypatch, capsys, tmp_path: Path):
     monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
     # signal.signal is stubbed so main()'s SIGTERM handler is never installed in the test process.
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     assert ss.main(["--orin", "x@y"]) == 1
     assert "--deploy-script" in capsys.readouterr().err
 
 
 def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     argv = [
         "--orin",
@@ -102,7 +105,8 @@ def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp
 
     workdir = tmp_path / "work"
     workdir.mkdir()
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
     monkeypatch.setattr(ss, "FRONTEND_INDEX", tmp_path / "dist" / "index.html")
     monkeypatch.setattr(ss.Stack, "start", fail_start)
@@ -311,15 +315,15 @@ def test_child_whose_group_is_already_gone_is_treated_as_stopped(stack, tmp_path
 
     def flaky_killpg(pgid: int, sig: int) -> None:
         calls.append(pgid)
+        real_killpg(pgid, sig)
         if len(calls) == 1:
             raise ProcessLookupError
-        real_killpg(pgid, sig)
 
     monkeypatch.setattr(ss.os, "killpg", flaky_killpg)
     stack.stop_all()
     assert calls[0] == stack.children[1].process.pid
-    # b's group "vanished" at the first call, so it is skipped and only a is signalled.
-    assert stack.children[0].process.poll() == 0
+    # b's first signal reports its group as gone; it is not an error, and both children still end up stopped.
+    assert [c.process.poll() for c in stack.children] == [0, 0]
 
 
 def test_grace_is_recorded_per_child(stack, tmp_path: Path):
@@ -374,7 +378,8 @@ def test_bridge_timing_arguments_for_mock_and_real_sender():
 
 def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
     monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     assert ss.main(["--orin", "user@192.0.2.10", "--mock"]) == 1
     assert "do not pass --orin" in capsys.readouterr().err
@@ -384,7 +389,8 @@ def test_main_refuses_a_missing_mock_sender(monkeypatch, capsys, tmp_path: Path)
     def fail_start(*_, **__):
         raise AssertionError("a child process was started")
 
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     monkeypatch.setattr(ss.Stack, "start", fail_start)
     monkeypatch.delenv("EGOCAP_MOCK_SENDER", raising=False)
@@ -396,7 +402,8 @@ def test_main_refuses_a_missing_mock_sender(monkeypatch, capsys, tmp_path: Path)
 
 
 def test_main_refuses_a_station_that_requests_cameras_not_given(monkeypatch, capsys, tmp_path: Path):
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     assert ss.main(["--capture-camera", "other=dev1"]) == 1
     assert EXAMPLE_CAMERAS[0] in capsys.readouterr().err
@@ -412,18 +419,19 @@ def recorded_main(monkeypatch, tmp_path: Path):
     children: list[SimpleNamespace] = []
     deploys: list[list[str]] = []
 
-    def fake_start(self, name, command, env=None, cwd=None, grace_s=ss.DEFAULT_GRACE_S):
+    def fake_start(self, name, command, env=None, cwd=None, grace_s=ss.DEFAULT_GRACE_S, leader_only=False):
         log = self.workdir / f"{name}.log"
         log.write_text("")
-        children.append(SimpleNamespace(name=name, command=list(command), env=env))
-        managed = ss.Managed(name, SimpleNamespace(poll=lambda: None, pid=0), log, grace_s)
+        children.append(SimpleNamespace(name=name, command=list(command), env=env, leader_only=leader_only))
+        managed = ss.Managed(name, SimpleNamespace(poll=lambda: None, pid=0), log, grace_s, leader_only)
         self.children.append(managed)
         return managed
 
     def interrupt(_seconds):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
     monkeypatch.setattr(ss, "FRONTEND_INDEX", frontend)
     monkeypatch.setattr(ss.Stack, "start", fake_start)
@@ -432,7 +440,7 @@ def recorded_main(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(ss.Stack, "stop_all", lambda self: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda command, **_: deploys.append(list(command)))
     monkeypatch.setattr(ss.time, "sleep", interrupt)
-    return SimpleNamespace(children=children, deploys=deploys, workdir=workdir)
+    return SimpleNamespace(children=children, deploys=deploys, workdir=workdir, installed=installed)
 
 
 def _command(recorded, name: str) -> str:
@@ -470,3 +478,90 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     assert "--timestamp-basis monotonic_us" in bridge
     assert "--sender-clock" not in bridge
     assert recorded_main.deploys == []
+
+
+def test_main_installs_the_stop_handlers_and_starts_the_backend_leader_only(recorded_main, tmp_path: Path):
+    mock_sender = tmp_path / "mock_sender.py"
+    mock_sender.write_text("")
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(mock_sender)]
+    assert ss.main(argv) == 0
+    handlers = dict(recorded_main.installed)
+    assert handlers[signal.SIGTERM] is ss._raise_interrupt
+    assert handlers[signal.SIGHUP] is ss._raise_interrupt
+    leader_only = {c.name: c.leader_only for c in recorded_main.children}
+    assert leader_only["backend"] is True
+
+
+GRANDCHILD = """
+import signal, sys, time
+pid_file, int_file = sys.argv[1:3]
+def on_int(*_):
+    open(int_file, "w").write("grandchild-int")
+    sys.exit(0)
+signal.signal(signal.SIGINT, on_int)
+open(pid_file, "w").write(str(__import__("os").getpid()))
+time.sleep(60)
+"""
+
+PARENT_OF_GRANDCHILD = """
+import signal, subprocess, sys, time
+from pathlib import Path
+grandchild, pid_file, int_file, ready = sys.argv[1:5]
+subprocess.Popen([sys.executable, "-c", grandchild, pid_file, int_file])
+while not Path(pid_file).exists():
+    time.sleep(0.02)
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+open(ready, "w").close()
+time.sleep(60)
+"""
+
+
+def _with_grandchild(stack: ss.Stack, tmp_path: Path, **kwargs) -> tuple[Path, Path, Path]:
+    pid_file, int_file, ready = tmp_path / "gc.pid", tmp_path / "gc.int", tmp_path / "parent.ready"
+    command = [sys.executable, "-c", PARENT_OF_GRANDCHILD, GRANDCHILD, str(pid_file), str(int_file), str(ready)]
+    stack.start("parent", command, **kwargs)
+    _await_files([ready])
+    return pid_file, int_file, ready
+
+
+def _assert_pid_gone(pid: int) -> None:
+    # A killed orphan stays visible until init reaps it, so allow a moment.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"pid {pid} still exists")
+
+
+def test_leader_only_child_keeps_its_helper_from_the_polite_signal_and_the_helper_is_killed(stack, tmp_path: Path):
+    pid_file, int_file, _ = _with_grandchild(stack, tmp_path, leader_only=True)
+    stack.stop_all()
+    assert stack.children[0].process.poll() is not None
+    assert not int_file.exists()
+    _assert_pid_gone(int(pid_file.read_text()))
+
+
+def test_helper_left_in_the_group_of_an_exited_child_is_killed(stack, tmp_path: Path):
+    pid_file, int_file, _ = _with_grandchild(stack, tmp_path)
+    stack.stop_all()
+    assert stack.children[0].process.poll() is not None
+    _assert_pid_gone(int(pid_file.read_text()))
+
+
+def test_sighup_during_stop_kills_everything_at_once_and_restores_the_handler(stack, tmp_path: Path):
+    ready = [_stubborn(stack, tmp_path, "a", grace_s=30), _stubborn(stack, tmp_path, "b", grace_s=30)]
+    _await_files(ready)
+    before = signal.getsignal(signal.SIGHUP)
+    timer = threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGHUP))
+    timer.start()
+    started = time.monotonic()
+    try:
+        stack.stop_all()
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 5
+    assert [c.process.returncode for c in stack.children] == [-signal.SIGKILL] * 2
+    assert signal.getsignal(signal.SIGHUP) is before
