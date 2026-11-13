@@ -313,11 +313,14 @@ realtime-minus-monotonic offset. Every conversion is checked: a capture time aft
 implausibly old one, a counter or clock that cannot be read, an unknown frequency, or a step between two consecutive
 anchors (the counter against `CLOCK_MONOTONIC`, or `CLOCK_REALTIME` against `CLOCK_MONOTONIC`) gives
 no capture time for that frame, never a substituted host-side stamp, and the reason is logged when it changes. A frame
-that passes also carries an uncertainty (the anchor's read bracket plus 500 ppm of the time between the anchor and the
-sensor event, the bound on how far `CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age, which is
-reported separately as its freshness. The uncertainty bounds the mapping only; it
-does not include how closely the sensor's timestamp event matches the physical exposure, or how well the two hosts'
-wall clocks agree.
+that passes also carries an uncertainty (the anchor's read bracket plus 83334 ppm, `chrony`'s default maximum slew rate, of the time between the anchor
+and the sensor event, the bound on how far `CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age, which is
+reported separately as its freshness. The slew rate is an assumption about the host's clock discipline, not a
+measurement: it holds while the host's `chrony` (or other discipline) slews no faster than that, which is `chrony`'s
+default `maxslewrate`; a host configured to slew faster is outside the bound. The anchor is read ten times a second,
+so the distance, and with it the uncertainty, stays small, and a frame whose uncertainty would exceed 20 ms is given
+no capture time. The uncertainty bounds the mapping only; it does not include how closely the sensor's timestamp event
+matches the physical exposure, or how well the two hosts' wall clocks agree.
 
 The SIPL backend reports its start-of-frame timestamp this way. On the board it was measured against the platform counter
 (`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads

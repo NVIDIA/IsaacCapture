@@ -61,10 +61,11 @@ struct SensorTimeMapping
     int64_t captureRealtimeNs = 0;
 };
 
-// One anchor pair is read through a supported clock API and refreshed at a low rate, never per frame; a frame's capture
+// One anchor pair is read through a supported clock API and refreshed at a low rate (not per frame); a frame's capture
 // time is the anchor plus the counter difference. A capture time after the frame was ready, or more than maxAgeNs
 // before it, means the assumed counter or rate is wrong. A refreshed anchor that disagrees with the old one by more
-// than stepThresholdNs means a clock step: the mapping is invalid until reset() or the next consistent refresh.
+// than stepThresholdNs plus the slew allowed over their spacing means a clock step: the mapping is invalid until
+// reset() or the next consistent refresh.
 //
 // Not thread-safe; one instance per capture thread.
 class SensorClockMap
@@ -76,14 +77,23 @@ public:
     {
         // Counter frequency in Hz.
         int64_t counterHz = 0;
-        int64_t refreshNs = 1000000000;
+        // How often the anchor pair is read again. The uncertainty grows with the distance from the anchor to the
+        // sensor event, so a short interval keeps it small; ten reads a second is still a low rate.
+        int64_t refreshNs = 100000000;
         // Largest plausible gap between capture and the frame being ready.
         int64_t maxAgeNs = 2000000000;
         // Largest agreement error between consecutive anchors, on top of their brackets.
         int64_t stepThresholdNs = 2000000;
-        // CLOCK_MONOTONIC is slewed by NTP against the counter, which Linux bounds at 500 ppm: the mapping's
-        // uncertainty grows by this much per second of distance between the anchor and the sensor event.
-        int64_t slewPpm = 500;
+        // The fastest the host's clock discipline may slew CLOCK_MONOTONIC against the counter: the mapping's
+        // uncertainty grows by this much per second of distance between the anchor and the sensor event. The default
+        // is chrony's documented default maxslewrate (83333.333 ppm), which chrony reaches by adjusting the tick; a
+        // frequency-only NTP discipline stays within 500 ppm, so that is not a safe general default. A host that caps
+        // its slew rate lower may set a lower value. The bound is an assumption about the host's configuration, not
+        // something this class can measure.
+        int64_t slewPpm = 83334;
+        // A frame whose uncertainty would exceed this is not qualified, rather than reported with a bound too wide to
+        // mean anything.
+        int64_t maxUncertaintyNs = 20000000;
     };
 
     SensorClockMap(const Config& config, PairReader reader);
