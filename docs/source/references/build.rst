@@ -56,7 +56,7 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
 CMake integration
 -----------------
 
-The project uses a modern CMake target-based approach. Libraries export namespaced alias targets (e.g. ``oxr::oxr_core``, ``deviceio::deviceio_session``, ``isaacteleop_schema``); include directories are propagated. Package config files are generated for use after install. See the respective ``CMakeLists.txt`` in ``src/core`` and under ``examples/`` for target names and usage.
+The project uses a modern CMake target-based approach. Libraries export namespaced alias targets (e.g. ``oxr::oxr_core``, ``deviceio::deviceio_session``, ``isaacteleop_schema``); include directories are propagated. These targets exist only in the build tree: ``cmake --install`` installs no Isaac Capture libraries, headers, or package config files. See the respective ``CMakeLists.txt`` in ``src/core`` and under ``examples/`` for target names and usage.
 
 Using the Python wheel
 ----------------------
@@ -136,10 +136,12 @@ After a successful build and install, relative to your build directory:
 - **C++ libraries:** ``src/core/`` (and under each module)
 - **Examples (binaries):** under ``examples/`` (e.g. ``examples/oxr/cpp/``)
 - **Installed files:** ``install/`` (or your ``CMAKE_INSTALL_PREFIX``)
-  - Libraries: ``install/lib/``
-  - Headers: ``install/include/``
+
   - Wheels: ``install/wheels/``
+  - Plugins: ``install/plugins/``
   - Examples: ``install/examples/``
+  - ``install/lib/``, ``install/include/``, and ``install/share/`` hold only fetched third-party
+    dependencies, such as the OpenXR loader.
 
 Troubleshooting
 ---------------

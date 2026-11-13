@@ -59,8 +59,16 @@ version, then enable camera support and build the wheel:
    cmake -S . -B build -DBUILD_OVXR_CAMERA_QUADS=ON
    cmake --build build --target python_package python_stubs python_wheel --parallel
 
-Install the generated wheel with its ``ovxr`` extra using the instructions
-above. The extra requires CUDA 13 Python bindings for GPU camera output;
+This builds only the wheel, so it stays in ``./build/wheels/``; ``./install/wheels/`` is
+written by a full build's ``cmake --install build``. Install it from there with its ``ovxr``
+extra. ``--reinstall-package`` replaces an installed wheel of the same version that lacks
+the helper:
+
+.. code-block:: bash
+
+   uv pip install "isaaccapture[ovxr]==X.Y+local" --find-links=./build/wheels/ --reinstall-package isaaccapture
+
+The extra requires CUDA 13 Python bindings for GPU camera output;
 ``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
 The helper is disabled by default.
 
