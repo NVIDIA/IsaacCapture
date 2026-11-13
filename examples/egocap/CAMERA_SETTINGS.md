@@ -82,7 +82,10 @@ missing, timing is unqualified or the mapping has not settled, the page shows no
 
 ## Sender profile keys
 
-Defaults are the parser's own and can differ from the shipped profile.
+These keys belong to the sender release the profile targets, which is not part of this tree: it supports the SIPL
+backend and the timing extension. An older `argus_sender` in this repository has a different parser and rejects some
+of these keys, so check a release's parser before using a key. Defaults are that parser's own and can differ from the
+shipped profile.
 
 | Key | Default / requirement | Meaning and consumer |
 |---|---|---|
@@ -157,7 +160,7 @@ The receiver reads its own file once at start; the launcher generates it from th
 | `streams[].ipc.left` | `<name>.left` | IPC name for stereo left eye. |
 | `streams[].ipc.right` | `<name>.right` | IPC name for stereo right eye. |
 
-The sender and receiver files are separate schemas: the sender rejects the `receiver` and `ipc` roots, and receiver
+The sender and receiver files are separate schemas: the sender release described here rejects the `receiver` and `ipc` roots, and receiver
 stream entries need fields such as `index` that the sender does not have.
 
 ## CaptureServer stream descriptor keys
@@ -176,4 +179,4 @@ timestamps; it does not configure the Orin or join LiveKit for anyone.
 | `livekit.streams[].track` | Required valid descriptor value | Actual LiveKit track name published by bridge. |
 | `livekit.streams[].width` | Required valid descriptor value | Advertised image width; match processed output. |
 | `livekit.streams[].height` | Required valid descriptor value | Advertised image height. |
-| `livekit.streams[].fps` | Required valid descriptor value | Advertised nominal FPS; set 60 consistently, but this does not command the sender. |
+| `livekit.streams[].fps` | Required valid descriptor value | Advertised nominal FPS; the launcher sets it to the sender's effective `output.fps`, and it does not command the sender. |

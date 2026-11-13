@@ -90,18 +90,24 @@ uv run python tools/start_system.py --orin user@orin --deploy-script PATH --live
 ```
 
 It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs a built
-IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware. The default station file (`--station-config`) is the
-shipped example, which requests cameras; pass your own station file when the rig has different ones.
+IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware, and it opens only the cameras it is given with
+`--capture-camera NAME=DEVICE_ID`. The default station file (`--station-config`) is the shipped example, which
+requests three cameras, so the launcher refuses to start unless each one is given; use a station file whose
+`video_sources` name no CaptureServer cameras when the video comes from the Orin through LiveKit.
 
-`--mock` runs without hardware: CaptureServer gives synthetic tracking and cameras, and a local mock sender
-(`camera_streamer`'s `mock_sender.py`, found under `examples/camera_streamer/mock_sender` or given with
-`--mock-sender`, and needing `ffmpeg` with `libx265`) replaces the Orin, so nothing real is started and `--orin` is
-refused. With `--bridge` and `--livekit-server` the mock video goes through the same receiver, bridge and page; its
-timestamps are the frame-ready time, because the mock sender has no clock to measure. A recording made in this mode
-is synthetic data. Without `--orin` or `--mock` only the PC side starts, and
-`--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
-so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
-address, because the bridge measures the sender's clock at that address.
+`--mock` runs without hardware: CaptureServer gives synthetic tracking and cameras, and a local mock sender replaces
+the Orin, so nothing real is started and `--orin` is refused. The mock sender is `camera_streamer`'s `mock_sender.py`.
+It is not in this tree (it is added by the camera_streamer mock-sender change, PR #1476), so give its path with
+`--mock-sender` or `EGOCAP_MOCK_SENDER`; it needs `ffmpeg` with `libx265`. With `--bridge`, `--livekit-server` and the
+mock sender the mock video goes through the same receiver, bridge and page, with the frame-ready time as its
+timestamp because the mock sender has no clock to measure. A recording made in this mode is synthetic data.
+
+Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
+for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
+cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
+LiveKit server and the bridge are not in this tree, so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`,
+`EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4 address, because the bridge measures the sender's
+clock at that address.
 
 The page needs the frontend built once (`cd frontend && npm install && npm run build`); the launcher refuses to start
 without `frontend/dist`.

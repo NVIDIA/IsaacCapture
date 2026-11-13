@@ -8,17 +8,19 @@
 
 In order: deploy and start the Orin sender over ssh, a LiveKit server, CaptureServer, the backend (which owns
 the recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``--orin`` no sender is started, so
-only the PC side comes up. Each process is waited on until it is ready before the next one starts, and all of
-them are stopped, last started first, when this script exits for any reason.
+only the PC side comes up. The servers, the backend and the receiver are waited on until they are ready before the
+next one starts, and all children are stopped, last started first, when this script ends on Ctrl-C, on SIGTERM or
+after an error. The Orin sender runs for ``--seconds``; when it ends the whole stack is stopped.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
 CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
 unless ``--mock`` gives it synthetic tracking and cameras. ``--mock`` also replaces the Orin sender with a local
 mock sender (no ``--orin``), so nothing real is started; the receiver, bridge and page are the same.
 
-The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
-(or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``). The pure helpers sit above the
-supervisor so they can be tested without starting anything.
+The sender release the profile describes, its deploy tool, the LiveKit server, the bridge and the mock sender are
+not part of this tree, so the tools' paths are options (or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``,
+``EGOCAP_BRIDGE``, ``EGOCAP_MOCK_SENDER``). The pure helpers sit above the supervisor so they can be tested without
+starting anything.
 """
 
 from __future__ import annotations
@@ -59,7 +61,6 @@ DEFAULT_GRACE_S = 15.0
 BACKEND_GRACE_S = 90.0
 # The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
 MOCK_TIMESTAMP_BASIS = "monotonic_us"
-DEFAULT_MOCK_SENDER = REPO_ROOT / "examples/camera_streamer/mock_sender/mock_sender.py"
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -100,45 +101,48 @@ def publisher_token(key: str, secret: str, room: str, identity: str, hours: int 
 
 
 def streams_yaml(
-    url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int, basis: str
+    url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int, basis: str, name: str
 ) -> str:
     """The CaptureServer ``--livekit-streams`` file for one camera published by the bridge."""
-    return (
-        "livekit:\n"
-        f"  url: {url}\n"
-        f"  room: {room}\n"
-        f"  publisher: {publisher}\n"
-        f"  timestamp_basis: {basis}\n"
-        "  streams:\n"
-        f"    - {{name: head, track: {track}, width: {width}, height: {height}, fps: {fps}}}\n"
-    )
+    # Dumped from a mapping because the stream name comes from a user-edited profile.
+    descriptor = {
+        "livekit": {
+            "url": url,
+            "room": room,
+            "publisher": publisher,
+            "timestamp_basis": basis,
+            "streams": [{"name": name, "track": track, "width": width, "height": height, "fps": fps}],
+        }
+    }
+    return yaml.safe_dump(descriptor, sort_keys=False)
 
 
 def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int, name: str) -> str:
     """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
-    return (
-        "version: 1\n"
-        "receiver:\n"
-        f"  host: {host}\n"
-        f"  port: {port}\n"
-        "  gpu_id: 0\n"
-        "  max_record_bytes: 268435456\n"
-        "  stats_log_interval_s: 2\n"
-        "ipc:\n"
-        f"  socket_path: {socket_path}\n"
-        "  owner_name: egocap_start_system\n"
-        "  queue_size: 1024\n"
-        "streams:\n"
-        "  - index: 0\n"
-        f"    name: {name}\n"
-        "    type: mono\n"
-        f"    width: {width}\n"
-        f"    height: {height}\n"
-        "    output_format: nv12\n"
-        "    ring_depth: 6\n"
-        "    ipc:\n"
-        f"      mono: {name}\n"
-    )
+    config = {
+        "version": 1,
+        "receiver": {
+            "host": host,
+            "port": port,
+            "gpu_id": 0,
+            "max_record_bytes": 268435456,
+            "stats_log_interval_s": 2,
+        },
+        "ipc": {"socket_path": socket_path, "owner_name": "egocap_start_system", "queue_size": 1024},
+        "streams": [
+            {
+                "index": 0,
+                "name": name,
+                "type": "mono",
+                "width": width,
+                "height": height,
+                "output_format": "nv12",
+                "ring_depth": 6,
+                "ipc": {"mono": name},
+            }
+        ],
+    }
+    return yaml.safe_dump(config, sort_keys=False)
 
 
 @dataclass(frozen=True)
@@ -151,6 +155,7 @@ class SenderSettings:
     bitrate_mbps: int
     stream_id: str
     full_range: bool
+    sipl: bool
 
 
 def load_sender_config(
@@ -167,7 +172,7 @@ def load_sender_config(
     """
     try:
         config = yaml.safe_load(path.read_text())
-    except OSError as error:
+    except (OSError, yaml.YAMLError) as error:
         raise StartupError(f"cannot read the sender config {path}: {error}; pass --sender-config") from error
     if not isinstance(config, dict) or not isinstance(config.get("streams"), list) or len(config["streams"]) != 1:
         raise StartupError(f"{path}: the launcher supports exactly one stream in the sender config")
@@ -191,6 +196,12 @@ def sender_settings(config: dict) -> SenderSettings:
     network = config.get("network", {})
     stream = config["streams"][0]
     output = stream.get("output", {})
+    # The deploy builds the SIPL backend only for a SIPL profile, and the bridge's range flag follows the backend,
+    # so neither may be guessed from an `auto` or missing value.
+    if config.get("capture_backend") not in ("sipl", "argus"):
+        raise StartupError("the sender config must set capture_backend to sipl or argus")
+    if not stream.get("id"):
+        raise StartupError("the sender config must set streams[0].id")
     # The bridge and the descriptor need a number, and a native-rate profile (fps 0) has none until runtime.
     if not output.get("fps"):
         raise StartupError(
@@ -206,7 +217,8 @@ def sender_settings(config: dict) -> SenderSettings:
         bitrate_mbps=int(output.get("bitrate_mbps", 0)),
         stream_id=str(stream["id"]),
         # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
-        full_range=config.get("capture_backend") == "sipl",
+        full_range=config["capture_backend"] == "sipl",
+        sipl=config["capture_backend"] == "sipl",
     )
 
 
@@ -230,6 +242,25 @@ def bridge_timing_arguments(settings: SenderSettings, mock: bool, orin_host: str
     flags = ["--timestamp-basis", TIMESTAMP_BASIS, "--sender-clock", f"{orin_host}:{settings.clock_port}"]
     # SIPL pictures are full range; the bridge must say so or the encoded stream signals limited range.
     return [*flags, "--source-full-range"] if settings.full_range else flags
+
+
+def check_station_cameras(station_config: Path, capture_cameras: Sequence[str]) -> None:
+    """Refuse a station file that requests CaptureServer cameras which were not given with ``--capture-camera``."""
+    try:
+        data = yaml.safe_load(station_config.read_text())
+        # Only the first station is ever read by the backend.
+        station = next(iter(data["stations"].values()))
+        requested = [source["name"] for source in station.get("video_sources") or []]
+    except (OSError, yaml.YAMLError, KeyError, StopIteration, TypeError, AttributeError) as error:
+        raise StartupError(f"cannot read the station file {station_config}: {error}") from error
+    given = {camera.split("=", 1)[0] for camera in capture_cameras}
+    missing = [name for name in requested if name not in given]
+    if missing:
+        raise StartupError(
+            f"the station file {station_config} requests cameras {missing} that CaptureServer was not given; pass "
+            "--capture-camera NAME=DEVICE_ID for each, or use a station file whose video_sources name none "
+            "(the stream from the Orin comes through LiveKit)"
+        )
 
 
 def port_open(host: str, port: int) -> bool:
@@ -270,17 +301,21 @@ class Stack:
         """Launch a child in its own process group so stopping it also stops anything it spawned."""
         # Each child writes to its own file so a failed step can point the operator at the output to read.
         log = self.workdir / f"{name}.log"
-        handle = log.open("w")
         # A new session makes the child the leader of its own process group, so a signal to the group reaches
         # anything it spawned and never this script.
-        process = subprocess.Popen(
-            list(command),
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            env={**os.environ, **(env or {})},
-            cwd=cwd,
-            start_new_session=True,
-        )
+        with log.open("w") as handle:
+            try:
+                process = subprocess.Popen(
+                    list(command),
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ, **(env or {})},
+                    cwd=cwd,
+                    start_new_session=True,
+                )
+            except OSError as error:
+                # A wrong tool path is an operator mistake, so say which tool instead of printing a traceback.
+                raise StartupError(f"cannot start {name} ({command[0]}): {error}") from error
         # Registering the child here is what makes stop_all() cover it even if a later step fails.
         child = Managed(name, process, log, grace_s)
         self.children.append(child)
@@ -371,7 +406,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--receiver",
         default=os.environ.get(
             "EGOCAP_RECEIVER",
-            f"python3 {REPO_ROOT / 'examples/camera_streamer/camera_receiver/camera_receiver.py'}",
+            shlex.join(
+                ["python3", str(REPO_ROOT / "examples/camera_streamer/camera_receiver/camera_receiver.py")]
+            ),
         ),
         help="command that runs the camera receiver (takes --config FILE)",
     )
@@ -398,11 +435,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mock-sender",
         type=Path,
-        default=Path(os.environ.get("EGOCAP_MOCK_SENDER", DEFAULT_MOCK_SENDER)),
-        help="camera_streamer's mock_sender.py, used with --mock (needs ffmpeg with libx265)",
+        default=Path(os.environ["EGOCAP_MOCK_SENDER"]) if os.environ.get("EGOCAP_MOCK_SENDER") else None,
+        help="camera_streamer's mock_sender.py (not in this tree), used with --mock (needs ffmpeg with libx265)",
+    )
+    parser.add_argument(
+        "--capture-camera",
+        action="append",
+        default=[],
+        metavar="NAME=DEVICE_ID",
+        help="a camera for CaptureServer to open (repeatable); the station file may only name cameras given here",
     )
     parser.add_argument("--backend-port", type=int, default=8010)
-    parser.add_argument("--seconds", type=int, default=3600, help="how long the Orin sender runs")
+    parser.add_argument(
+        "--seconds",
+        type=int,
+        default=3600,
+        help="how long the Orin sender runs; when it ends the whole stack stops, so a take in progress is cut off",
+    )
     parser.add_argument("--open", action="store_true", help="open the page in a browser once it is up")
     return parser.parse_args(argv)
 
@@ -429,8 +478,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # The camera chain (sender, receiver, bridge, LiveKit) runs for the Orin, or for --mock when the tools to
         # carry its video are given; without them --mock is just CaptureServer's own synthetic cameras.
         chain = bool(args.orin) or (args.mock and bool(args.bridge and args.livekit_server))
-        if chain and args.mock and not args.mock_sender.is_file():
-            raise StartupError(f"the mock sender {args.mock_sender} does not exist; pass --mock-sender")
+        if chain and args.mock and not (args.mock_sender and args.mock_sender.is_file()):
+            raise StartupError(
+                "--mock with --bridge and --livekit-server needs --mock-sender (or EGOCAP_MOCK_SENDER)"
+            )
+        # Real acquisition opens only the cameras it is given, and a station file naming any other one is rejected
+        # for the whole session, so catch it here instead of at the first Begin.
+        if not args.mock:
+            check_station_cameras(args.station_config, args.capture_camera)
         basis = MOCK_TIMESTAMP_BASIS if args.mock else TIMESTAMP_BASIS
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(
@@ -447,7 +502,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ) from error
         (workdir / "sender.yaml").write_text(yaml.safe_dump(sender_config, sort_keys=False))
         (workdir / "streams.yaml").write_text(
-            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, sender.fps, basis)
+            streams_yaml(
+                livekit_url, room, publisher, track, args.width, args.height, sender.fps, basis, sender.stream_id
+            )
         )
         (workdir / "receiver.yaml").write_text(
             receiver_yaml(
@@ -461,6 +518,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
                 f"timing extension on, clock port {sender.clock_port}, release {args.release}"
             )
+            if args.orin:
+                stop_at = time.strftime("%H:%M:%S", time.localtime(time.time() + args.seconds))
+                print(f"the Orin sender stops after {args.seconds} s (about {stop_at}), which stops this stack")
         # Without a build the backend serves no page, and announcing a URL that answers 404 would mislead.
         if not FRONTEND_INDEX.is_file():
             raise StartupError(
@@ -480,7 +540,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             deploy = [python, args.deploy_script, args.orin]
             if not args.skip_deploy:
                 print("deploying the sender to", args.orin)
-                subprocess.run([*deploy, "deploy", "--with-sipl", "--name", args.release], check=True)
+                subprocess.run(
+                    [*deploy, "deploy", *(["--with-sipl"] if sender.sipl else []), "--name", args.release],
+                    check=True,
+                )
             stack.start(
                 "sender",
                 [
@@ -512,6 +575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "-m",
                 "capture_server",
                 *(["--mock"] if args.mock else []),
+                *(arg for camera in args.capture_camera for arg in ("--camera", camera)),
                 # The descriptor advertises a LiveKit stream, so it is given only when something publishes one.
                 *(["--livekit-streams", str(workdir / "streams.yaml")] if chain else []),
             ],
@@ -576,7 +640,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         token = control_token(backend.log)
         print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
         if args.mock:
-            # A recording made here mixes synthetic tracking and cameras with the real stream.
+            # Everything the page shows and records in this mode is synthetic.
             print("--mock: tracking, the CaptureServer cameras and the camera stream are synthetic.")
         print("Ctrl-C stops everything.")
         if args.open:
