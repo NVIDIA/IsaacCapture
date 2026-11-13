@@ -125,6 +125,45 @@ def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp
     assert "frontend is not built" in capsys.readouterr().err
 
 
+def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sensor_size(
+    monkeypatch, capsys, tmp_path: Path
+):
+    commands: dict[str, list[str]] = {}
+
+    def record_start(self, name, command, *_, **__):
+        commands[name] = list(command)
+        if name == "bridge":
+            # The bridge is the last thing the files under test feed; stop the run once it is launched.
+            raise ss.StartupError("stop after the bridge")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    index = tmp_path / "dist" / "index.html"
+    index.parent.mkdir()
+    index.write_text("")
+    timesync = tmp_path / "timesync_tool.py"
+    timesync.write_text("def reference_id_for(host):\n    return 'REFID'\n")
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", index)
+    monkeypatch.setattr(ss.Stack, "start", record_start)
+    monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
+    monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
+    monkeypatch.setattr(ss.subprocess, "run", lambda *_, **__: None)
+    argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2"]
+    assert ss.main(argv) == 1
+    assert "stop after the bridge" in capsys.readouterr().err
+
+    declared = yaml.safe_load((workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    received = yaml.safe_load((workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (declared["width"], declared["height"]) == (2560 // ss.BRIDGE_DOWNSCALE, 1984 // ss.BRIDGE_DOWNSCALE)
+    assert (declared["width"], declared["height"]) == (1280, 992)
+    assert (received["width"], received["height"]) == (2560, 1984)
+    bridge = commands["bridge"]
+    assert bridge[bridge.index("--stream") + 1].endswith(f":{ss.BRIDGE_DOWNSCALE}")
+
+
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
