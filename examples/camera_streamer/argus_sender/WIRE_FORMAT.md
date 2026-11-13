@@ -122,7 +122,7 @@ exposure midpoint and not the time the frame was ready, encoded or sent.
 | Offset | Size | Field | Meaning |
 | ---: | ---: | --- | --- |
 | 0 | 8 | `sensor_capture_ns` | Sensor capture instant in the `clock_domain` clock, ns; zero unless `VALID` |
-| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_REALTIME` mapping: the anchor's read bracket plus 500 ppm of the time between the anchor and the sensor event; it does not include how well another host's wall clock agrees |
+| 8 | 4 | `uncertainty_ns` | Bound on the sensor-to-`CLOCK_REALTIME` mapping: the anchor's read bracket plus 83334 ppm (chrony's default maximum slew rate) of the time between the anchor and the sensor event; it does not include how well another host's wall clock agrees |
 | 12 | 4 | `anchor_age_ns` | Age of the mapping's anchor when the frame was stamped |
 | 16 | 2 | `flags` | `0x0001` `VALID`: the capture time passed the sender's checks |
 | 18 | 2 | `clock_domain` | `2` = sender `CLOCK_REALTIME`; `1` is reserved and unsupported; zero unless `VALID` |

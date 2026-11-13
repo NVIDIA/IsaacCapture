@@ -130,7 +130,10 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
         const int64_t counterNs = counterTicksToNs(next.source - m_anchor.source, m_config.counterHz);
         const int64_t monotonicDeltaNs = next.monotonicNs - m_anchor.monotonicNs;
         const int64_t disagreement = std::llabs(counterNs - monotonicDeltaNs);
-        const int64_t allowed = m_config.stepThresholdNs + m_anchor.bracketNs + next.bracketNs;
+        // A slew within slewPpm moves the two clocks apart by up to that fraction of the spacing, which is not a step.
+        const int64_t spacingNs = std::llabs(next.monotonicNs - m_anchor.monotonicNs);
+        const int64_t allowed =
+            m_config.stepThresholdNs + m_anchor.bracketNs + next.bracketNs + spacingNs * m_config.slewPpm / 1000000;
         // CLOCK_REALTIME and CLOCK_MONOTONIC share frequency adjustment, so their difference moves only on a wall-clock
         // step; the same allowance covers both checks.
         bool realtimeStep = false;
@@ -173,6 +176,12 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         counterTicksToNs(static_cast<int64_t>(sensorTicks) - m_anchor.source, m_config.counterHz);
     const int64_t capture = m_anchor.monotonicNs + anchorToEventNs;
     result.uncertaintyNs = m_anchor.bracketNs + std::llabs(anchorToEventNs) * m_config.slewPpm / 1000000;
+    if (result.uncertaintyNs > m_config.maxUncertaintyNs)
+    {
+        result.reason =
+            "the sensor event is too far from the anchor for the mapping's uncertainty to stay within the limit";
+        return result;
+    }
     if (capture > readyMonotonicNs)
     {
         result.reason = "the sensor timestamp is after the frame was ready: the assumed counter or rate is wrong";

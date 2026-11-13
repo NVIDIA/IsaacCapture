@@ -7,6 +7,9 @@
 #include "SensorClock.h"
 #include "TestHarness.h"
 
+#include <algorithm>
+#include <cstdlib>
+
 using namespace argus_sender;
 
 namespace
@@ -43,10 +46,32 @@ SensorClockMap makeMap(FakeClocks* clocks, int64_t* nowNs)
 {
     SensorClockMap::Config config;
     config.counterHz = kHz;
+    // The cases below are written around a one-second refresh and a 500 ppm slew; the defaults are covered separately.
+    config.refreshNs = 1000000000;
+    config.slewPpm = 500;
     return SensorClockMap(config,
                           [clocks, nowNs](ClockPair* pair)
                           {
                               *pair = clocks->at(*nowNs);
+                              return true;
+                          });
+}
+
+// A 1 GHz counter (one tick per ns) whose pair reader returns whatever `anchor` holds when it is called.
+SensorClockMap::Config gigahertzConfig()
+{
+    SensorClockMap::Config config;
+    config.counterHz = 1000000000;
+    config.refreshNs = 1000000000;
+    return config;
+}
+
+SensorClockMap makeAnchorMap(const SensorClockMap::Config& config, ClockPair* anchor)
+{
+    return SensorClockMap(config,
+                          [anchor](ClockPair* pair)
+                          {
+                              *pair = *anchor;
                               return true;
                           });
 }
@@ -349,6 +374,115 @@ int main()
                                 return true;
                             });
         TEST_CHECK(test, !noHz.map(1, now, now).valid);
+    }
+
+    // The monotonic clock slewing against the counter between anchors: with the anchor read at 1 s and the event 0.5 s
+    // later, +10000 ppm puts the true monotonic time at 1.505 s. A 500 ppm bound (252000 ns) did not cover that 5 ms.
+    {
+        const int64_t anchorNs = 1000 * kMs;
+        const int64_t trueNs = 1505 * kMs;
+        ClockPair anchor;
+        anchor.source = anchorNs;
+        anchor.monotonicNs = anchorNs;
+        anchor.bracketNs = 2000;
+
+        SensorClockMap::Config wide = gigahertzConfig();
+        wide.maxUncertaintyNs = 1000 * kMs;
+        SensorClockMap map = makeAnchorMap(wide, &anchor);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>(anchorNs), anchorNs, anchorNs).valid);
+        const SensorTimeMapping mapping = map.map(static_cast<uint64_t>(1500 * kMs), trueNs, trueNs);
+        TEST_CHECK(test, mapping.valid);
+        TEST_CHECK(test, std::llabs(mapping.captureMonotonicNs - trueNs) <= mapping.uncertaintyNs);
+
+        // The default ceiling refuses a bound this wide rather than reporting it.
+        SensorClockMap defaulted = makeAnchorMap(gigahertzConfig(), &anchor);
+        TEST_CHECK(test, defaulted.map(static_cast<uint64_t>(anchorNs), anchorNs, anchorNs).valid);
+        const SensorTimeMapping refused = defaulted.map(static_cast<uint64_t>(1500 * kMs), trueNs, trueNs);
+        TEST_CHECK(test, !refused.valid);
+        TEST_CHECK(test, refused.reason.find("too far from the anchor") != std::string::npos);
+    }
+
+    // Between refreshes, a slew up to the configured rate never moves the true time outside the reported uncertainty.
+    {
+        const int64_t anchorNs = 1000 * kMs;
+        const int64_t slews[] = { -500, 500, -10000, 10000, -83000, 83000 };
+        const int64_t distances[] = { 20 * kMs, 100 * kMs, 400 * kMs };
+        for (const int64_t slew : slews)
+        {
+            for (const int64_t distance : distances)
+            {
+                ClockPair anchor;
+                anchor.source = anchorNs;
+                anchor.monotonicNs = anchorNs;
+                anchor.bracketNs = 2000;
+                SensorClockMap::Config config = gigahertzConfig();
+                config.refreshNs = 10000 * kMs;
+                config.maxUncertaintyNs = 1000 * kMs; // 83000 ppm over 400 ms is past the default ceiling
+                SensorClockMap map = makeAnchorMap(config, &anchor);
+                TEST_CHECK(test, map.map(static_cast<uint64_t>(anchorNs), anchorNs, anchorNs).valid);
+                // The monotonic clock runs `slew` ppm fast against the counter over the distance.
+                const int64_t trueNs = anchorNs + distance + distance * slew / 1000000;
+                const int64_t readyNs = std::max(trueNs, anchorNs + distance);
+                const SensorTimeMapping mapping =
+                    map.map(static_cast<uint64_t>(anchorNs + distance), readyNs, anchorNs + distance);
+                TEST_CHECK(test, mapping.valid);
+                if (mapping.valid)
+                    TEST_CHECK(test, std::llabs(mapping.captureMonotonicNs - trueNs) <= mapping.uncertaintyNs);
+            }
+        }
+    }
+
+    // A consistent slew at the maximum rate between anchors is not a step; a 2 s jump of CLOCK_MONOTONIC is.
+    {
+        const int64_t anchorNs = 1000 * kMs;
+        ClockPair anchor;
+        anchor.source = anchorNs;
+        anchor.monotonicNs = anchorNs;
+        anchor.bracketNs = 2000;
+        SensorClockMap::Config config = gigahertzConfig();
+        config.refreshNs = 100 * kMs;
+        SensorClockMap map = makeAnchorMap(config, &anchor);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>(anchorNs), anchorNs, anchorNs).valid);
+        // 100 ms of counter time is 108.3 ms of CLOCK_MONOTONIC at +83000 ppm.
+        anchor.monotonicNs = anchorNs + 100 * kMs + 8300000;
+        anchor.source = anchorNs + 100 * kMs;
+        const SensorTimeMapping slewed =
+            map.map(static_cast<uint64_t>(anchor.source), anchor.monotonicNs, anchor.monotonicNs);
+        TEST_CHECK(test, slewed.valid);
+
+        ClockPair jumped = anchor;
+        SensorClockMap jumpMap = makeAnchorMap(config, &jumped);
+        jumped.monotonicNs = anchorNs;
+        jumped.source = anchorNs;
+        TEST_CHECK(test, jumpMap.map(static_cast<uint64_t>(anchorNs), anchorNs, anchorNs).valid);
+        jumped.monotonicNs = anchorNs + 100 * kMs + 2000 * kMs;
+        jumped.source = anchorNs + 100 * kMs;
+        const SensorTimeMapping stepped =
+            jumpMap.map(static_cast<uint64_t>(jumped.source), jumped.monotonicNs, jumped.monotonicNs);
+        TEST_CHECK(test, !stepped.valid);
+        TEST_CHECK(test, stepped.reason.find("clock step") != std::string::npos);
+    }
+
+    // The default maxUncertaintyNs: an event 241 ms from the anchor exceeds 20 ms of uncertainty, one 239 ms from it
+    // does not.
+    {
+        FakeClocks clocks;
+        int64_t now = 10000 * kMs;
+        SensorClockMap::Config config;
+        config.counterHz = kHz;
+        SensorClockMap map(config,
+                           [&clocks, &now](ClockPair* pair)
+                           {
+                               *pair = clocks.at(now);
+                               return true;
+                           });
+        const SensorTimeMapping inside = map.map(static_cast<uint64_t>((now - 239 * kMs) / 32), now, now);
+        TEST_CHECK(test, inside.valid);
+        TEST_CHECK(test, inside.uncertaintyNs <= 20 * kMs);
+        const SensorTimeMapping outside = map.map(static_cast<uint64_t>((now - 241 * kMs) / 32), now, now);
+        TEST_CHECK(test, !outside.valid);
+        TEST_CHECK(test, outside.uncertaintyNs > 20 * kMs);
+        TEST_CHECK(test, outside.reason.find("too far from the anchor") != std::string::npos);
     }
 
     return test.finish();
