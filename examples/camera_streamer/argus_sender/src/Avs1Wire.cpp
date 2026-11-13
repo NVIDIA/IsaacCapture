@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -121,11 +121,7 @@ bool validateStream(
     if (stream.fpsDenominator == 0)
         return fail(error, "AVS1 FPS denominator is zero");
 
-    if (stream.rotation != 0 && stream.rotation != 180)
-        return fail(error, "unsupported AVS1 rotation");
     const bool streamPresent = (stream.flags & AVS1_STREAM_PRESENT) != 0;
-    if (streamPresent != (stream.sequence != 0))
-        return fail(error, "AVS1 stream sequence must be nonzero only when the stream is present");
     for (size_t i = 0; i < stream.samples.size(); ++i)
     {
         const Avs1SampleRecord& sample = stream.samples[i];
@@ -317,12 +313,6 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
     {
         return fail(error, "unsupported AVS1 header");
     }
-    if (parsed.flags & ~kKnownBundleFlags)
-        return fail(error, "unknown AVS1 bundle flags");
-    if ((parsed.flags & AVS1_BUNDLE_SENDER_CLOCK_TAI) && !(parsed.flags & AVS1_BUNDLE_SENDER_CLOCK_VALID))
-        return fail(error, "AVS1 TAI flag requires a valid sender clock");
-    if (parsed.sequence == 0 || parsed.sessionId == 0)
-        return fail(error, "AVS1 sequence and session ID must be nonzero");
     if (!validateSenderTsc(parsed.flags, parsed.senderCaptureReadyTscNs, error))
     {
         return false;
@@ -343,7 +333,6 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
     std::vector<uint16_t> firstSamples(streamCount);
     std::vector<uint16_t> streamSampleCounts(streamCount);
     parsed.streams.resize(streamCount);
-    uint32_t flatCursor = 0;
     for (uint16_t i = 0; i < streamCount; ++i)
     {
         uint16_t streamIndex = 0;
@@ -364,19 +353,14 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
         {
             return fail(error, "short AVS1 stream descriptor");
         }
-        // Validate counts before resize so malformed tables cannot amplify allocations.
-        const uint16_t expectedCount = (stream.flags & AVS1_STREAM_STEREO) ? 2 : 1;
-        if (streamIndex != i || reserved32 != 0 || streamSampleCounts[i] != expectedCount ||
-            firstSamples[i] != flatCursor || flatCursor + streamSampleCounts[i] > sampleCount)
+        if (streamIndex != i || reserved32 != 0 ||
+            static_cast<uint32_t>(firstSamples[i]) + streamSampleCounts[i] > sampleCount)
         {
             return fail(error, "invalid AVS1 stream descriptor index");
         }
-        flatCursor += streamSampleCounts[i];
         stream.samples.resize(streamSampleCounts[i]);
     }
 
-    if (flatCursor != sampleCount)
-        return fail(error, "AVS1 sample descriptors are not fully referenced");
     std::vector<ParsedSampleLocation> locations(sampleCount);
     for (uint16_t flat = 0; flat < sampleCount; ++flat)
     {
@@ -422,14 +406,6 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
         sample.senderCaptureReadyNs = captureReadyNs;
         sample.senderProcessSubmitNs = processSubmitNs;
         sample.senderProcessDoneNs = processDoneNs;
-    }
-    // A size sum alone cannot detect overlapping ranges with a gap elsewhere.
-    uint64_t expectedOffset = 0;
-    for (const auto& location : locations)
-    {
-        if (location.offset != expectedOffset)
-            return fail(error, "AVS1 payload ranges overlap or have gaps");
-        expectedOffset += location.size;
     }
     const size_t payloadStart = kAvs1LengthPrefixBytes + headerBytes + descriptorBytes;
     for (uint16_t streamIndex = 0; streamIndex < streamCount; ++streamIndex)
