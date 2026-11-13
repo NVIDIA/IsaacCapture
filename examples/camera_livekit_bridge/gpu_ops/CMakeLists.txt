@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # GPU operations on NV12 pictures, run between the IPC slot and the encoder input.
-add_library(gpu_ops STATIC box_downscale.cu)
+add_library(gpu_ops STATIC box_downscale.cu sine_warp.cu gpu_pipeline.cpp)
 
 target_include_directories(gpu_ops
     INTERFACE

@@ -34,10 +34,12 @@ void usage()
 {
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
-           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us]\n"
+           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--gpu-step NAME[=ARGS] ...] [--timestamp-basis monotonic_us|capture_monotonic_us]\n"
            "         capture_monotonic_us: --chrony-sender HOST[:PORT] --chrony-sender-refid HEX [--chrony-pc-port PORT]\n"
            "           [--chronyc PATH]\n"
-           "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
+           "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n"
+           "  --gpu-step adds a per-frame GPU image operation, repeatable, run in the order given before the downscale;\n"
+           "  none run by default. Known: sine-warp[=AMPLITUDE_PX,WAVELENGTH_PX,PHASE_RAD] (an example, not rectification).\n";
 }
 
 std::string read_token(const std::string& path)
@@ -132,6 +134,8 @@ int main(int argc, char** argv)
             chrony_config.pc_port = std::atoi(next().c_str());
         else if (arg == "--chronyc")
             chrony_config.chronyc_path = next();
+        else if (arg == "--gpu-step")
+            defaults.gpu_steps.push_back(next());
         else if (arg == "--gpu")
             gpu = std::atoi(next().c_str());
         else if (arg == "--stream")

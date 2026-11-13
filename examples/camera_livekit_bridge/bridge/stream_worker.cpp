@@ -3,7 +3,7 @@
 
 #include "stream_worker.hpp"
 
-#include <gpu_ops/box_downscale.hpp>
+#include <gpu_ops/gpu_step.hpp>
 #include <ipc_client/cuda_ipc_client.hpp>
 #include <nvenc/nvenc_encoder.hpp>
 #include <video_types/video_types.hpp>
@@ -78,11 +78,16 @@ struct StreamWorker::Impl
         const IpcStream& stream = client.streams().front();
         layout = read_layout(stream);
         source = { static_cast<uint32_t>(stream.width), static_cast<uint32_t>(stream.height) };
-        if (!box_downscale_supported(source.width, source.height, cfg.scale_div))
-            throw std::runtime_error("stream '" + cfg.stream + "' is " + std::to_string(source.width) + "x" +
-                                     std::to_string(source.height) + " and cannot be shrunk by " +
-                                     std::to_string(cfg.scale_div) + " to an even size");
-        geometry = { source.width / cfg.scale_div, source.height / cfg.scale_div };
+        // The steps asked for run in order at the source size, then the stream's own downscale shrinks the result.
+        for (const auto& step_spec : cfg.gpu_steps)
+            pipeline.add(make_gpu_step(step_spec));
+        if (cfg.scale_div > 1)
+            pipeline.add(make_box_downscale_step(cfg.scale_div));
+        const std::string unusable = pipeline.prepare({ source.width, source.height });
+        if (!unusable.empty())
+            throw std::runtime_error("stream '" + cfg.stream + "' (" + std::to_string(source.width) + "x" +
+                                     std::to_string(source.height) + "): " + unusable);
+        geometry = { pipeline.output_size().width, pipeline.output_size().height };
 
         PublishSpec spec;
         spec.name = cfg.track;
@@ -161,26 +166,12 @@ struct StreamWorker::Impl
             NvencEncoder::Surface surface;
             if (!encoder.acquire(surface))
                 throw std::runtime_error("no free encoder input surface");
-            // The picture goes from the IPC slot to the encoder input on the GPU: a plain copy at full size, or a block
-            // average that shrinks it. The encode below waits for this stream.
-            const auto copy_status = [&]
-            {
-                if (config.scale_div > 1)
-                {
-                    const Nv12Planes in{ base + layout.y_offset, base + layout.uv_offset, layout.y_pitch,
-                                         layout.uv_pitch };
-                    const Nv12PlanesOut out{ surface.view.y, surface.view.uv, surface.view.y_pitch,
-                                             surface.view.uv_pitch };
-                    return box_downscale_nv12(in, source.width, source.height, out, config.scale_div, copy_stream);
-                }
-                const auto y =
-                    cudaMemcpy2DAsync(surface.view.y, surface.view.y_pitch, base + layout.y_offset, layout.y_pitch,
-                                      source.width, source.height, cudaMemcpyDeviceToDevice, copy_stream);
-                if (y != cudaSuccess)
-                    return y;
-                return cudaMemcpy2DAsync(surface.view.uv, surface.view.uv_pitch, base + layout.uv_offset, layout.uv_pitch,
-                                         source.width, source.height / 2, cudaMemcpyDeviceToDevice, copy_stream);
-            }();
+            // The picture goes from the IPC slot to the encoder input on the GPU, through the configured series of
+            // GPU steps (a plain copy when there are none). This is the place a per-frame image operation such as lens
+            // rectification runs: see GpuStep in gpu_ops/gpu_step.hpp. The encode below waits for this stream.
+            const Nv12Planes in{ base + layout.y_offset, base + layout.uv_offset, layout.y_pitch, layout.uv_pitch };
+            const Nv12PlanesOut out{ surface.view.y, surface.view.uv, surface.view.y_pitch, surface.view.uv_pitch };
+            const cudaError_t copy_status = pipeline.enqueue(in, out, copy_stream);
             if (copy_status != cudaSuccess)
             {
                 encoder.release(surface);
@@ -329,6 +320,7 @@ struct StreamWorker::Impl
     CudaContext& context;
     CudaIpcClient client;
     PlaneLayout layout;
+    GpuPipeline pipeline;
     Geometry source;
     Geometry geometry;
     std::unique_ptr<VideoTrackSink> sink;

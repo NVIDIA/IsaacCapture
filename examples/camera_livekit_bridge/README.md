@@ -42,11 +42,35 @@ slots" applies.
 | `ipc_client/` and the slot read in `bridge/stream_worker.cpp` | Camera reader views and leases | Retire | Read frames through a lease held until the final GPU read. Lands with the receiver's lease support. |
 | `chrony_clock/` and the capture-time publication in `bridge/stream_worker.cpp` | The receiver backend's published clock mapping (offset, uncertainty, discontinuity epoch) | Transitional: adapt, then retire the bridge-specific adapter | Carry mapped capture time, validity and discontinuity behaviour through the receiver contract. Lands when consumers obtain equivalent timing without the bridge-only adapter. |
 | `src/core/timesync/` (used by `chrony_clock/`) | The estimator behind the receiver's clock mapping | Reuse | Keep the chrony evidence handling and qualification behind the destination interface. |
+| `gpu_ops/` and the GPU step pipeline in `bridge/stream_worker.cpp` | Application or derived-stream processing over camera data | Reuse the kernels; adapt the pipeline; retire the bridge wiring | Connect read-only camera views, GPU completion and derived outputs to a processing consumer. Lands when GPU processing runs there with correct geometry and calibration and safe buffer lifetime. |
+
+GPU operations run on camera images as application or derived-stream processing; running them inside this bridge is
+temporary wiring. The processing path keeps input and output on the GPU and ties buffer lifetime to GPU completion, and
+must keep doing so when it moves behind the camera reader interface. The sine-warp step demonstrates kernel
+integration; it is not a calibrated rectification implementation.
 
 The `chrony_clock/` adapter connects the reusable timing library to the current video publication path and is intended
 to converge on the receiver backend's clock-mapping contract. With `capture_monotonic_us`, a mapping that cannot be
 vouched for publishes no timestamp, and the frame-ready time is never offered in its place; a capture over the
 precision target keeps its timestamp. `monotonic_us` is a separate, declared basis.
+
+## GPU steps (per-frame image operations)
+
+Between the receiver's IPC buffer and the encoder the picture can pass through a series of GPU steps, with no host
+copy. None run by default. `--gpu-step NAME[=ARGS]` adds one, repeatable; steps run in the order given, at the source
+size, and a stream's own `:DIV` downscale shrinks the result afterwards.
+
+| Step | Arguments | Purpose |
+| --- | --- | --- |
+| `sine-warp` | `AMPLITUDE_PX,WAVELENGTH_PX,PHASE_RAD` (all optional) | An EXAMPLE horizontal ripple. It is not calibrated rectification; it exists to show the shape of a step. |
+
+The system and how to add a step (with a walk-through of writing lens rectification) are described in
+[`GPU_PROCESSING.md`](GPU_PROCESSING.md). A step is a class deriving from `GpuStep` (`gpu_ops/inc/gpu_ops/gpu_step.hpp`) with `prepare()` (once per picture size:
+allocate and upload) and `enqueue()` (per frame: launch kernels on the given stream). To add one, write the class and
+add a line to `make_gpu_step()` in `gpu_ops/gpu_pipeline.cpp`. `SineWarpStep` (`gpu_ops/inc/gpu_ops/sine_warp.hpp`) is
+the template, and its comment explains how lens rectification would be written the same way: a remap table computed
+once from the camera calibration and uploaded in `prepare()`, and a per-frame kernel that samples the source through it
+(luma and chroma), with the fill for positions outside the image.
 
 ## Build
 
