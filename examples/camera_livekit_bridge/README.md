@@ -40,6 +40,13 @@ slots" applies.
 | --- | --- | --- | --- |
 | `livekit_publisher/` and the session, publication and feedback wiring in `bridge/` | Transport adapters | Adapt the useful implementation; retire the hard-coded transport glue | Map sessions, publications, encoder feedback and reconnect behaviour to the adapter boundary. Lands when real web clients receive streams, and feedback and recovery work, through an adapter. |
 | `ipc_client/` and the slot read in `bridge/stream_worker.cpp` | Camera reader views and leases | Retire | Read frames through a lease held until the final GPU read. Lands with the receiver's lease support. |
+| `chrony_clock/` and the capture-time publication in `bridge/stream_worker.cpp` | The receiver backend's published clock mapping (offset, uncertainty, discontinuity epoch) | Transitional: adapt, then retire the bridge-specific adapter | Carry mapped capture time, validity and discontinuity behaviour through the receiver contract. Lands when consumers obtain equivalent timing without the bridge-only adapter. |
+| `src/core/timesync/` (used by `chrony_clock/`) | The estimator behind the receiver's clock mapping | Reuse | Keep the chrony evidence handling and qualification behind the destination interface. |
+
+The `chrony_clock/` adapter connects the reusable timing library to the current video publication path and is intended
+to converge on the receiver backend's clock-mapping contract. With `capture_monotonic_us`, a mapping that cannot be
+vouched for publishes no timestamp, and the frame-ready time is never offered in its place; a capture over the
+precision target keeps its timestamp. `monotonic_us` is a separate, declared basis.
 
 ## Build
 
