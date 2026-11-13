@@ -727,3 +727,133 @@ def test_ensure_receiver_environment_runs_setup_only_when_something_is_missing(m
     (receiver_dir / "codec/_camera_receiver_codec.cpython-313-x86_64-linux-gnu.so").write_text("")
     ss.ensure_receiver_environment()
     assert calls == []
+
+
+class _FakeProcess:
+    def __init__(self, returncode: int | None) -> None:
+        self.returncode = returncode
+        self.pid = 0
+
+    def poll(self):
+        return self.returncode
+
+
+def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[str], exit_codes=None):
+    """Run main() against a REPO_ROOT without a receiver venv; returns (exit code, argv per child, run calls).
+
+    ``exit_codes`` maps a child name to the code its poll() reports; other children keep running.
+    """
+    exit_codes = exit_codes or {}
+    started: dict[str, list[str]] = {}
+    runs: list = []
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    index = tmp_path / "dist" / "index.html"
+    index.parent.mkdir()
+    index.write_text("")
+    timesync = tmp_path / "timesync_tool.py"
+    timesync.write_text("def reference_id_for(host):\n    return 'REFID'\n")
+    receiver_dir = tmp_path / "repo/examples/camera_streamer/camera_receiver"
+    receiver_dir.mkdir(parents=True)
+
+    def fake_start(self, name, command, *_, **__):
+        started[name] = list(command)
+        log = self.workdir / f"{name}.log"
+        log.write_text("")
+        child = ss.Managed(name, _FakeProcess(exit_codes.get(name)), log)
+        self.children.append(child)
+        return child
+
+    class _Done:
+        returncode = 0
+
+    monkeypatch.delenv("EGOCAP_RECEIVER", raising=False)
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", index)
+    monkeypatch.setattr(ss.Stack, "start", fake_start)
+    monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
+    monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
+    monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **__: runs.append(list(cmd)) or _Done())
+    monkeypatch.setattr(ss.time, "sleep", lambda *_: None)
+    argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *extra_argv]
+    return ss.main(argv), started, runs, receiver_dir
+
+
+def test_first_run_starts_the_receiver_with_the_venv_python_that_setup_created(monkeypatch, tmp_path: Path):
+    venv_python = tmp_path / "repo/examples/camera_streamer/camera_receiver/.venv/bin/python"
+    setups = []
+
+    def fake_setup():
+        setups.append(True)
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("")
+
+    monkeypatch.setattr(ss, "ensure_receiver_environment", fake_setup)
+    # The sender exits cleanly as soon as the stack is up, which ends the run.
+    code, started, _, _ = _run_main_with_stub_children(monkeypatch, tmp_path, [], {"sender": 0})
+    assert code == 0
+    assert setups == [True]
+    assert started["receiver"][0] == str(venv_python)
+    assert "python3" not in started["receiver"][0]
+
+
+def test_explicit_receiver_is_passed_through_without_setup(monkeypatch, tmp_path: Path):
+    def fail_setup():
+        raise AssertionError("setup ran for an explicit receiver")
+
+    monkeypatch.setattr(ss, "ensure_receiver_environment", fail_setup)
+    code, started, _, _ = _run_main_with_stub_children(
+        monkeypatch, tmp_path, ["--receiver", "custom-python recv.py"], {"sender": 0}
+    )
+    assert code == 0
+    assert started["receiver"][:2] == ["custom-python", "recv.py"]
+
+
+@pytest.mark.parametrize(
+    ("exit_codes", "expected"),
+    [
+        ({"sender": 0}, 0),
+        ({"sender": 3}, 1),
+        ({"bridge": 0}, 1),
+        ({"receiver": 0}, 1),
+    ],
+)
+def test_only_a_clean_sender_exit_ends_the_run_successfully(monkeypatch, tmp_path: Path, exit_codes, expected):
+    monkeypatch.setattr(ss, "ensure_receiver_environment", lambda: None)
+    code, _, _, _ = _run_main_with_stub_children(monkeypatch, tmp_path, ["--receiver", "r.py"], exit_codes)
+    assert code == expected
+
+
+def _config_file(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "sender.yaml"
+    path.write_text(text)
+    return path
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "network: null\nstreams:\n  - {id: head, output: {fps: 30, bitrate_mbps: 4}}\n",
+        "streams:\n  - {id: head, output: null}\n",
+    ],
+)
+def test_load_sender_config_accepts_a_null_section(tmp_path: Path, text: str):
+    config = ss.load_sender_config(_config_file(tmp_path, text), fps=20, sender_port=5001)
+    assert config["network"]["port"] == 5001
+    assert config["streams"][0]["output"]["fps"] == 20
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "network: 5\nstreams:\n  - {id: head}\n",
+        "streams:\n  - {id: head, output: [1]}\n",
+        "streams: [3]\n",
+    ],
+)
+def test_load_sender_config_rejects_a_section_that_is_not_a_mapping(tmp_path: Path, text: str):
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(_config_file(tmp_path, text))
