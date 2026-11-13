@@ -51,6 +51,8 @@ DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
 DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.camera_only.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
 TIMESTAMP_BASIS = "capture_monotonic_us"
+# The backend serves the page from this build output and mounts nothing if it is missing.
+FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
 
 class StartupError(Exception):
@@ -229,8 +231,11 @@ class Stack:
         self, name: str, command: Sequence[str], env: dict[str, str] | None = None, cwd: Path | None = None
     ) -> Managed:
         """Launch a child in its own process group so stopping it also stops anything it spawned."""
+        # Each child writes to its own file so a failed step can point the operator at the output to read.
         log = self.workdir / f"{name}.log"
         handle = log.open("w")
+        # A new session makes the child the leader of its own process group, so a signal to the group reaches
+        # anything it spawned and never this script.
         process = subprocess.Popen(
             list(command),
             stdout=handle,
@@ -239,6 +244,7 @@ class Stack:
             cwd=cwd,
             start_new_session=True,
         )
+        # Registering the child here is what makes stop_all() cover it even if a later step fails.
         child = Managed(name, process, log)
         self.children.append(child)
         print(f"started {name} (pid {process.pid}); log {log}")
@@ -366,6 +372,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
             f"timing extension on, clock port {sender.clock_port}, release {args.release}"
         )
+        # Without a build the backend serves no page, and announcing a URL that answers 404 would mislead.
+        if not FRONTEND_INDEX.is_file():
+            raise StartupError(
+                f"the frontend is not built ({FRONTEND_INDEX} is missing); run `npm install && npm run build` "
+                f"in {EGOCAP_ROOT / 'frontend'}"
+            )
         token_file = workdir / "publisher-token.txt"
         token_file.write_text(publisher_token(LIVEKIT_DEV_KEY, LIVEKIT_DEV_SECRET, room, publisher))
         token_file.chmod(0o600)

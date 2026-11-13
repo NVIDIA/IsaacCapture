@@ -74,6 +74,21 @@ def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
     assert "IPv4 address" in capsys.readouterr().err
 
 
+def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp_path: Path):
+    def fail_start(*_, **__):
+        raise AssertionError("a child process was started")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", tmp_path / "dist" / "index.html")
+    monkeypatch.setattr(ss.Stack, "start", fail_start)
+    argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main(argv) == 1
+    assert "frontend is not built" in capsys.readouterr().err
+
+
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(

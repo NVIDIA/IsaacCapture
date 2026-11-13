@@ -96,6 +96,9 @@ Record stays unavailable without one. `--mock` switches to synthetic tracking an
 so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
 address, because the bridge measures the sender's clock at that address.
 
+The page needs the frontend built once (`cd frontend && npm install && npm run build`); the launcher refuses to start
+without `frontend/dist`.
+
 The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC,
 timing extension and clock responder on). Pass another file with `--sender-config`, or override single values with
 `--fps`, `--bitrate-mbps`, `--clock-port` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
