@@ -11,11 +11,10 @@ import stat
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 from pathlib import Path
 
 import timesync_tool as tool
-from timesync_tool import ToolError, Tracking
 
 REAL_LINE = (
     "5BBD5B9D,91.189.91.157,3,1794516440.890180266,-0.000037218,-0.000042871,"
@@ -36,7 +35,7 @@ def remote_line(ref_id: str = HOST_ID, dispersion: str = "0.000300000") -> str:
     )
 
 
-def make_tracking(**overrides: object) -> Tracking:
+def make_tracking(**overrides: object) -> tool.Tracking:
     fields: dict[str, object] = dict(
         reference_id=HOST_ID,
         reference_name="",
@@ -50,7 +49,7 @@ def make_tracking(**overrides: object) -> Tracking:
         leap_status="Normal",
     )
     fields.update(overrides)
-    return Tracking(**fields)  # type: ignore[arg-type]
+    return tool.Tracking(**fields)  # type: ignore[arg-type]
 
 
 class ParseTrackingTest(unittest.TestCase):
@@ -84,14 +83,14 @@ class ParseTrackingTest(unittest.TestCase):
     def test_wrong_field_counts(self) -> None:
         fields = REAL_LINE.split(",")
         for bad in (",".join(fields[:13]), ",".join(fields + ["x"])):
-            with self.assertRaises(ToolError):
+            with self.assertRaises(tool.ToolError):
                 tool.parse_tracking(bad)
 
     def test_non_numeric_fields(self) -> None:
         for index in (2, 3, 4, 9, 10, 11, 12):
             fields = REAL_LINE.split(",")
             fields[index] = "abc"
-            with self.subTest(index=index), self.assertRaises(ToolError):
+            with self.subTest(index=index), self.assertRaises(tool.ToolError):
                 tool.parse_tracking(",".join(fields))
 
 
@@ -102,7 +101,7 @@ class ReferenceIdTest(unittest.TestCase):
 
     def test_bad_addresses(self) -> None:
         for bad in ("999.1.1.1", "a.b.c.d", "1.2.3"):
-            with self.subTest(bad=bad), self.assertRaises(ToolError):
+            with self.subTest(bad=bad), self.assertRaises(tool.ToolError):
                 tool.reference_id_for(bad)
 
 
@@ -121,6 +120,22 @@ class RemoteDropInTest(unittest.TestCase):
                 f"cmdallow {HOST_IP}",
             ],
         )
+
+
+class RemoteDropInOfflineTest(unittest.TestCase):
+    def test_default_has_no_local_reference(self) -> None:
+        self.assertEqual(
+            tool.remote_drop_in(HOST_IP),
+            f"allow {HOST_IP}\nbindcmdaddress 0.0.0.0\ncmdallow {HOST_IP}\n",
+        )
+        self.assertNotIn("local", tool.remote_drop_in(HOST_IP, False))
+        self.assertNotIn("local stratum", tool.remote_script(HOST_IP))
+
+    def test_offline_adds_local_stratum(self) -> None:
+        drop_in = tool.remote_drop_in(HOST_IP, True)
+        self.assertIn("local stratum 10", drop_in.splitlines())
+        self.assertIn(f"allow {HOST_IP}", drop_in)
+        self.assertIn("local stratum 10", tool.remote_script(HOST_IP, True))
 
 
 class RemoteScriptTest(unittest.TestCase):
@@ -171,7 +186,7 @@ class RemoteScriptTest(unittest.TestCase):
 
 
 class JudgeTest(unittest.TestCase):
-    def judge(self, local: Tracking) -> list[str]:
+    def judge(self, local: tool.Tracking) -> list[str]:
         return tool.judge(local, HOST_ID, 0.002)
 
     def test_usable(self) -> None:
@@ -191,6 +206,19 @@ class JudgeTest(unittest.TestCase):
         problems = self.judge(make_tracking(root_dispersion=0.01))
         self.assertEqual(len(problems), 1)
         self.assertIn("dispersion", problems[0])
+
+    def test_large_system_time_is_not_ready(self) -> None:
+        problems = self.judge(make_tracking(root_dispersion=0.0003, system_time=0.050))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("System time", problems[0])
+        # The sign does not matter.
+        problems = self.judge(make_tracking(root_dispersion=0.0003, system_time=-0.050))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("System time", problems[0])
+
+    def test_small_system_time_stays_ready(self) -> None:
+        self.assertEqual(self.judge(make_tracking(system_time=0.0005)), [])
+        self.assertEqual(self.judge(make_tracking(system_time=-0.0005)), [])
 
     def test_problems_accumulate(self) -> None:
         bad = make_tracking(
@@ -219,6 +247,25 @@ class MainConfigureRemoteTest(unittest.TestCase):
         self.assertIn(f"cmdallow {HOST_IP}", out)
         self.assertIn("bindcmdaddress 0.0.0.0", out)
 
+    def test_dry_run_offline_adds_local_reference(self) -> None:
+        code, out, _ = run_main(
+            [
+                "configure-remote",
+                "user@host",
+                "--host-lan-ip",
+                HOST_IP,
+                "--offline",
+                "--dry-run",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("local stratum 10", out)
+        code, out, _ = run_main(
+            ["configure-remote", "user@host", "--host-lan-ip", HOST_IP, "--dry-run"]
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("local stratum", out)
+
     def test_bad_host_lan_ip(self) -> None:
         code, _, err = run_main(
             ["configure-remote", "user@host", "--host-lan-ip", "nope", "--dry-run"]
@@ -230,7 +277,7 @@ class MainConfigureRemoteTest(unittest.TestCase):
         def expire(*args: object, **kwargs: object) -> None:
             raise subprocess.TimeoutExpired(cmd="ssh", timeout=5)
 
-        with mock.patch.object(tool.subprocess, "run", expire):
+        with unittest.mock.patch.object(tool.subprocess, "run", expire):
             code, _, err = run_main(
                 [
                     "configure-remote",
@@ -248,8 +295,10 @@ class MainConfigureRemoteTest(unittest.TestCase):
 class EnsureLocalTest(unittest.TestCase):
     def test_does_nothing_when_chronyd_is_found(self) -> None:
         with (
-            mock.patch.object(tool.shutil, "which", return_value="/usr/sbin/chronyd"),
-            mock.patch.object(tool.subprocess, "run") as run,
+            unittest.mock.patch.object(
+                tool.shutil, "which", return_value="/usr/sbin/chronyd"
+            ),
+            unittest.mock.patch.object(tool.subprocess, "run") as run,
         ):
             code, out, _ = run_main(["ensure-local"])
         self.assertEqual(code, 0)
@@ -259,9 +308,11 @@ class EnsureLocalTest(unittest.TestCase):
     def test_installs_chrony_when_missing(self) -> None:
         done = subprocess.CompletedProcess([], 0)
         with (
-            mock.patch.object(tool.shutil, "which", return_value=None),
-            mock.patch.object(Path, "is_file", return_value=False),
-            mock.patch.object(tool.subprocess, "run", return_value=done) as run,
+            unittest.mock.patch.object(tool.shutil, "which", return_value=None),
+            unittest.mock.patch.object(Path, "is_file", return_value=False),
+            unittest.mock.patch.object(
+                tool.subprocess, "run", return_value=done
+            ) as run,
         ):
             code, _, _ = run_main(["ensure-local"])
         self.assertEqual(code, 0)
@@ -272,9 +323,9 @@ class EnsureLocalTest(unittest.TestCase):
     def test_failed_install_is_an_error(self) -> None:
         failed = subprocess.CompletedProcess([], 100)
         with (
-            mock.patch.object(tool.shutil, "which", return_value=None),
-            mock.patch.object(Path, "is_file", return_value=False),
-            mock.patch.object(tool.subprocess, "run", return_value=failed),
+            unittest.mock.patch.object(tool.shutil, "which", return_value=None),
+            unittest.mock.patch.object(Path, "is_file", return_value=False),
+            unittest.mock.patch.object(tool.subprocess, "run", return_value=failed),
         ):
             code, _, err = run_main(["ensure-local"])
         self.assertEqual(code, 1)

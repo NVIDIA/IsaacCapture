@@ -83,6 +83,8 @@ private:
     CommandRunner runner_;
     NowFn now_;
     NowFn now_realtime_;
+    /// Serialises start() and stop() so a start cannot slip in while a stop is still joining the worker.
+    std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
     MonitorSnapshot snapshot_;
     std::condition_variable wake_;

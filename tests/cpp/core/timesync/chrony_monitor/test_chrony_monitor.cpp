@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <future>
 #include <memory>
 #include <set>
 #include <string>
@@ -318,6 +319,61 @@ void test_stop_during_blocking_runner()
     CHECK(Clock::now() - t0 < milliseconds(300 + 700));
 }
 
+void test_restart_after_stop()
+{
+    Fake f;
+    f.result = good();
+    ChronyMonitorConfig cfg;
+    cfg.poll_interval = milliseconds(5);
+    ChronyMonitor m(cfg, f.runner(), f.now());
+    for (int i = 0; i < 3; ++i)
+    {
+        const int before = f.calls.load();
+        m.start();
+        CHECK(wait_for_calls(f, before + 2, milliseconds(2000)));
+        m.stop();
+        const int after_stop = f.calls.load();
+        std::this_thread::sleep_for(milliseconds(30));
+        CHECK(f.calls.load() == after_stop); // no worker left polling
+    }
+}
+
+void test_concurrent_start_stop_never_hangs_or_leaks_a_worker()
+{
+    // Runs on a helper thread so a deadlock fails the test instead of hanging the run; a hung helper is detached.
+    auto body = []
+    {
+        Fake f;
+        f.result = good();
+        ChronyMonitorConfig cfg;
+        cfg.poll_interval = milliseconds(1);
+        ChronyMonitor m(cfg, f.runner(), f.now());
+        for (int i = 0; i < 200; ++i)
+        {
+            std::thread starter([&m] { m.start(); });
+            std::thread stopper([&m] { m.stop(); });
+            starter.join();
+            stopper.join();
+        }
+        m.stop();
+        const int after_stop = f.calls.load();
+        std::this_thread::sleep_for(milliseconds(30));
+        return f.calls.load() == after_stop;
+    };
+    std::packaged_task<bool()> task(body);
+    auto fut = task.get_future();
+    std::thread t(std::move(task));
+    if (fut.wait_for(std::chrono::seconds(30)) != std::future_status::ready)
+    {
+        std::fprintf(stderr, "concurrent start/stop hung\n");
+        ++g_failures;
+        t.detach();
+        return;
+    }
+    t.join();
+    CHECK(fut.get()); // no worker still polling after the final stop
+}
+
 } // namespace
 
 int main()
@@ -334,6 +390,8 @@ int main()
     test_stop_prompt_and_idempotent();
     test_destructor_stops();
     test_stop_during_blocking_runner();
+    test_restart_after_stop();
+    test_concurrent_start_stop_never_hangs_or_leaks_a_worker();
     if (g_failures)
     {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

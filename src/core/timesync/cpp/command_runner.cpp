@@ -58,8 +58,16 @@ CommandRunner posix_command_runner()
         posix_spawn_file_actions_adddup2(&actions, write_end.fd, STDOUT_FILENO);
         posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
         posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-        posix_spawn_file_actions_addclose(&actions, read_end.fd);
-        posix_spawn_file_actions_addclose(&actions, write_end.fd);
+        // Descriptors 0-2 were set up above; closing a pipe end that landed on one of them (the parent started with
+        // it closed) would undo that. Only higher descriptors need closing in the child.
+        if (read_end.fd > STDERR_FILENO)
+        {
+            posix_spawn_file_actions_addclose(&actions, read_end.fd);
+        }
+        if (write_end.fd > STDERR_FILENO)
+        {
+            posix_spawn_file_actions_addclose(&actions, write_end.fd);
+        }
 
         std::vector<char*> args;
         for (const auto& a : argv)
@@ -123,15 +131,59 @@ CommandRunner posix_command_runner()
             }
         }
 
-        if (result.timed_out || result.truncated)
+        int status = 0;
+        bool reaped = false;
+        bool wait_failed = false;
+        if (!result.timed_out && !result.truncated)
+        {
+            // The output ended, which does not mean the program did: one that closed stdout and hangs must still be
+            // bounded by the same deadline, so reap it without blocking until the deadline passes.
+            for (;;)
+            {
+                const pid_t waited = waitpid(pid, &status, WNOHANG);
+                if (waited == pid)
+                {
+                    reaped = true;
+                    break;
+                }
+                if (waited < 0 && errno == EINTR)
+                {
+                    continue;
+                }
+                if (waited < 0)
+                {
+                    wait_failed = true;
+                    break;
+                }
+                if (std::chrono::steady_clock::now() >= deadline)
+                {
+                    result.timed_out = true;
+                    break;
+                }
+                poll(nullptr, 0, 5);
+            }
+        }
+        if (!reaped && !wait_failed)
         {
             kill(pid, SIGKILL);
+            for (;;)
+            {
+                const pid_t waited = waitpid(pid, &status, 0);
+                if (waited == pid)
+                {
+                    reaped = true;
+                    break;
+                }
+                if (waited < 0 && errno == EINTR)
+                {
+                    continue;
+                }
+                break; // not reapable: the exit status is unknown
+            }
         }
-        int status = 0;
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-        {
-        }
-        if (!result.timed_out && !result.truncated && WIFEXITED(status))
+        // The exit code is read only from a status that waitpid actually returned: a failed wait leaves it at -1
+        // instead of reporting a zero-initialised status as success.
+        if (reaped && !result.timed_out && !result.truncated && WIFEXITED(status))
         {
             result.exit_code = WEXITSTATUS(status);
         }

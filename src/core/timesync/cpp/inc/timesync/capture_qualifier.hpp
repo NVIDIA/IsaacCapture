@@ -115,15 +115,14 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
 /// at all (a refusal), vouched for but over the budget, or within it.
 ///
 /// The inter-host term bounds sender realtime against PC realtime along camera host system clock -> camera host
-/// NTP clock -> PC chronyd's measurement -> PC system clock: both hosts' |System time|, the PC's Root dispersion and
-/// Root delay / 2 minus the camera host's (those fields are cumulative to the reference, so the difference is the
-/// link between the two and the camera host's own upstream error cancels), a slack for the camera host's dispersion
-/// growing since the PC copied it, and each report's skew times its age. The assumptions are that the PC's source is
-/// the camera host and that its root fields are cumulative through the camera host's; a differing reference id is
-/// refused, and the subtraction is clamped at zero. The subtraction is made only when the camera host's last source
-/// update is not newer than the PC's; otherwise the two reports are not known to describe the same upstream sample
-/// and the PC's full root delay and dispersion are charged. The bound is derived from chrony's own reports, not
-/// measured independently of them.
+/// NTP clock -> PC chronyd's measurement -> PC system clock: both hosts' |System time|, the PC's full Root dispersion
+/// and Root delay / 2, a slack for the camera host's dispersion growing since the PC copied it, and each report's
+/// skew times its age. The camera host's own root values are not subtracted: nothing in chrony's report shows that its
+/// root fields and the PC's copy describe the same upstream sample (`Ref time` is each host's own), and a subtraction
+/// without that correspondence can shrink the bound with no new measurement of the link. The charge therefore
+/// includes the camera host's upstream error and is larger than the link alone, never smaller. The assumption is
+/// that the PC's source is the camera host; a differing reference id is refused. The bound is derived from chrony's
+/// own reports, not measured independently of them.
 ///
 /// `Qualified` carries the PC clock generation. The caller must pin the generation when a take starts and end the
 /// take, not continue it, when a later frame reports a different one.
