@@ -1,14 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// PoseProvider lifecycle tests: the stub adapter for a live run, and a scripted engine for call order and failures.
+// PoseProvider tests on a scripted camera input: the stub adapter for a live run, and a scripted engine for call
+// order, setup resolution and failures.
+
+#include "fake_camera_input.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <pose_camera_input/camera_input.hpp>
 #include <pose_engine_api/pose_engine.hpp>
 #include <pose_provider/pose_provider.hpp>
+#include <pose_undistort/undistort.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -19,45 +28,21 @@
 #include <vector>
 
 using namespace pose_provider;
+using namespace pose_provider::testing;
 using namespace std::chrono_literals;
+using Catch::Matchers::WithinAbs;
 
 namespace
 {
 
-constexpr StreamId kLeft{ 10 };
-constexpr StreamId kRight{ 11 };
 constexpr auto kShortTimeout = 50ms;
-
-// A Stereo setup the stub accepts.
-ResolvedPoseSetup stub_setup(const IPoseEngine& engine)
-{
-    ResolvedPoseSetup setup;
-    setup.input_mode = InputMode::Stereo;
-    setup.memory_kind = MemoryKind::Host;
-    setup.body_frame = "left_optical";
-    for (StreamId id : { kLeft, kRight })
-    {
-        StreamSetup stream;
-        stream.id = id;
-        stream.layout = ImageLayout{ 8, 4, PixelFormat::Gray8, 8 };
-        stream.rate_hz = 30.0;
-        stream.calibration.fx = 100.0;
-        stream.calibration.fy = 100.0;
-        stream.calibration.cx = 3.5;
-        stream.calibration.cy = 1.5;
-        if (id == kRight)
-        {
-            stream.calibration.T_body_camera.translation_m = { 0.075, 0.0, 0.0 };
-        }
-        setup.streams.push_back(stream);
-    }
-    setup.engine_identity = engine.identity();
-    return setup;
-}
 
 // Held by shared_ptr so that a test can read it after PoseProvider has destroyed the engine.
 struct Script
 {
+    EngineCapabilities capabilities{
+        { InputMode::Stereo }, { MemoryKind::Host }, { PixelFormat::Gray8 }, { DistortionModel::None }
+    };
     std::string validation_error;
     std::set<std::string> throwing;
     std::string fatal_reason;
@@ -66,6 +51,7 @@ struct Script
     bool estimate_when_drained = false;
     int estimates_taken = 0;
     std::vector<std::string> calls; // Lifecycle calls, in order.
+    std::optional<ResolvedPoseSetup> initialized; // The setup initialize() received.
 };
 
 class FakeEngine final : public IPoseEngine
@@ -77,7 +63,8 @@ public:
 
     EngineCapabilities capabilities() const override
     {
-        return {};
+        throw_if_scripted("capabilities");
+        return script_->capabilities;
     }
 
     EngineIdentity identity() const override
@@ -91,9 +78,10 @@ public:
         return script_->validation_error;
     }
 
-    void initialize(const ResolvedPoseSetup&) override
+    void initialize(const ResolvedPoseSetup& setup) override
     {
         record("initialize");
+        script_->initialized = setup;
     }
 
     void start() override
@@ -176,19 +164,17 @@ private:
     bool finish_called_ = false;
 };
 
-SetupSupplier fake_setup()
-{
-    return [] { return std::optional<ResolvedPoseSetup>(ResolvedPoseSetup{}); };
-}
-
-SetupSupplier no_setup()
-{
-    return [] { return std::optional<ResolvedPoseSetup>(); };
-}
-
 std::unique_ptr<IPoseEngine> fake_engine(const std::shared_ptr<Script>& script)
 {
     return std::make_unique<FakeEngine>(script);
+}
+
+// An input whose source description is already waiting.
+std::unique_ptr<ICameraInput> ready_input(const std::shared_ptr<FakeCameraSource>& camera,
+                                          SourceDescription description = fake_stereo_description())
+{
+    camera->push(std::move(description));
+    return std::make_unique<FakeCameraInput>(camera);
 }
 
 long stop_calls(const Script& script)
@@ -208,28 +194,37 @@ bool update_until_finished(PoseProvider& provider)
     return provider.finished();
 }
 
+void check_transform(const Transform& actual, const Transform& expected)
+{
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        CHECK_THAT(actual.translation_m[i], WithinAbs(expected.translation_m[i], 1e-12));
+    }
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        CHECK_THAT(actual.rotation_xyzw[i], WithinAbs(expected.rotation_xyzw[i], 1e-12));
+    }
+}
+
 using Calls = std::vector<std::string>;
+
+// A change to a description the profile accepts, and the Setup failure reason it must produce.
+struct SetupRejection
+{
+    std::function<void(SourceDescription&, Script&)> change;
+    std::string reason;
+};
 
 } // namespace
 
 TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_provider]")
 {
-    auto engine = make_pose_engine();
-    const ResolvedPoseSetup setup = stub_setup(*engine);
-    int supplier_calls = 0;
-    int calls_without_setup = 0;
-    PoseProvider provider(ProviderConfig{}, std::move(engine),
-                          [&]() -> std::optional<ResolvedPoseSetup>
-                          {
-                              if (supplier_calls++ < calls_without_setup)
-                              {
-                                  return std::nullopt;
-                              }
-                              return setup;
-                          });
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, make_pose_engine(), std::make_unique<FakeCameraInput>(camera));
 
     SECTION("start requested after Ready")
     {
+        camera->push(fake_stereo_description());
         CHECK(provider.status().state == ProviderState::Preparing);
         provider.update();
         CHECK(provider.status().state == ProviderState::Ready);
@@ -239,14 +234,13 @@ TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_p
         provider.update();
         CHECK(provider.status().state == ProviderState::Running);
     }
-    SECTION("start requested before the setup arrives")
+    SECTION("start requested before the camera input is ready")
     {
-        calls_without_setup = 2;
         provider.request_start();
-        provider.update();
         provider.update();
         CHECK(provider.status().state == ProviderState::Preparing);
         CHECK_FALSE(provider.status().failed);
+        camera->push(fake_stereo_description());
         provider.update();
         CHECK(provider.status().state == ProviderState::Running);
     }
@@ -264,6 +258,8 @@ TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_p
     CHECK(status.engine_health.invalid_input_rejections == 0);
     CHECK(status.startup_timeout == ProviderConfig{}.startup_timeout);
     CHECK(status.drain_timeout == ProviderConfig{}.drain_timeout);
+    CHECK(camera->input_destroyed());
+    CHECK(provider.wait_fd() == -1);
 
     provider.update();
     provider.request_start();
@@ -276,10 +272,11 @@ TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_p
 TEST_CASE("Every path calls the engine in contract order and stops it exactly once", "[unit][pose_provider]")
 {
     auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
 
     SECTION("normal finish")
     {
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider.request_start();
         provider.update();
         CHECK(provider.status().state == ProviderState::Running);
@@ -288,29 +285,32 @@ TEST_CASE("Every path calls the engine in contract order and stops it exactly on
         CHECK(provider.finished());
         CHECK_FALSE(provider.status().failed);
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "finish_input", "stop" });
+        CHECK(camera->input_destroyed());
     }
     SECTION("finish while Preparing")
     {
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), no_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), std::make_unique<FakeCameraInput>(camera));
         provider.request_finish();
         provider.update();
         CHECK(provider.finished());
         CHECK_FALSE(provider.status().failed);
         CHECK(script->calls == Calls{ "stop" });
+        CHECK(camera->input_destroyed());
     }
     SECTION("health() is not read from an engine that was never initialized")
     {
         script->throwing = { "health" };
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), no_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), std::make_unique<FakeCameraInput>(camera));
         provider.request_finish();
         provider.update();
         CHECK(provider.finished());
         CHECK_FALSE(provider.status().failed);
         CHECK(script->calls == Calls{ "stop" });
+        CHECK(camera->input_destroyed());
     }
     SECTION("finish while Ready, with a start pending")
     {
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider.update();
         CHECK(provider.status().state == ProviderState::Ready);
         provider.request_start();
@@ -319,12 +319,14 @@ TEST_CASE("Every path calls the engine in contract order and stops it exactly on
         CHECK(provider.finished());
         CHECK_FALSE(provider.status().failed);
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "stop" });
+        CHECK(camera->input_destroyed());
     }
     SECTION("abort() while Running")
     {
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider.request_start();
         provider.update();
+        CHECK_FALSE(camera->input_destroyed());
         provider.abort();
         const ProviderStatus status = provider.status();
         CHECK(status.state == ProviderState::Finished);
@@ -332,13 +334,14 @@ TEST_CASE("Every path calls the engine in contract order and stops it exactly on
         CHECK(status.failed_component == ProviderComponent::Provider);
         CHECK(status.failure_reason == "aborted");
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+        CHECK(camera->input_destroyed());
         provider.abort();
         CHECK(provider.status().failure_reason == "aborted");
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
     }
     SECTION("abort() after a clean finish")
     {
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider.request_start();
         provider.update();
         provider.request_finish();
@@ -347,11 +350,12 @@ TEST_CASE("Every path calls the engine in contract order and stops it exactly on
         provider.abort();
         CHECK_FALSE(provider.status().failed);
         CHECK(script->calls == before);
+        CHECK(camera->input_destroyed());
     }
     SECTION("stop() throws on a clean finish")
     {
         script->throwing = { "stop" };
-        PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider.request_start();
         provider.update();
         provider.request_finish();
@@ -362,28 +366,32 @@ TEST_CASE("Every path calls the engine in contract order and stops it exactly on
         CHECK(status.failed_component == ProviderComponent::Engine);
         CHECK(status.failure_reason.starts_with("stop:"));
         CHECK(stop_calls(*script) == 1);
+        CHECK(camera->input_destroyed());
     }
     SECTION("destroyed before any update()")
     {
         {
-            PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+            PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
         }
         CHECK(script->calls == Calls{ "stop" });
+        CHECK(camera->input_destroyed());
     }
     SECTION("destroyed while Running")
     {
         {
-            PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+            PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
             provider.request_start();
             provider.update();
         }
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+        CHECK(camera->input_destroyed());
     }
 }
 
 TEST_CASE("Startup failures end the run with the failing component", "[unit][pose_provider]")
 {
     auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
     ProviderConfig short_startup;
     short_startup.startup_timeout = kShortTimeout;
     std::optional<PoseProvider> provider;
@@ -391,46 +399,46 @@ TEST_CASE("Startup failures end the run with the failing component", "[unit][pos
     std::string reason;
     std::optional<Calls> calls;
 
-    SECTION("no setup within the startup timeout")
+    SECTION("no camera input within the startup timeout")
     {
         provider.emplace(short_startup, fake_engine(script));
+        CHECK(provider->wait_fd() == -1);
         CHECK(update_until_finished(*provider));
-        component = ProviderComponent::Setup;
+        component = ProviderComponent::CameraInput;
         reason = "startup timeout";
         calls = Calls{ "stop" };
     }
-    SECTION("the setup supplier throws")
+    SECTION("the camera input fails before it is ready")
     {
-        provider.emplace(ProviderConfig{}, fake_engine(script),
-                         []() -> std::optional<ResolvedPoseSetup> { throw std::runtime_error("no camera metadata"); });
+        camera->push(InputFailed{ "no such device" });
+        provider.emplace(ProviderConfig{}, fake_engine(script), std::make_unique<FakeCameraInput>(camera));
         provider->update();
-        component = ProviderComponent::Setup;
-        reason = "no camera metadata";
+        component = ProviderComponent::CameraInput;
+        reason = "no such device";
+        calls = Calls{ "stop" };
+    }
+    SECTION("capabilities() throws")
+    {
+        script->throwing = { "capabilities" };
+        provider.emplace(ProviderConfig{}, fake_engine(script), ready_input(camera));
+        provider->update();
+        component = ProviderComponent::Engine;
+        reason = "capabilities:";
         calls = Calls{ "stop" };
     }
     SECTION("the engine rejects the setup")
     {
         script->validation_error = "bad setup";
-        provider.emplace(ProviderConfig{}, fake_engine(script), fake_setup());
+        provider.emplace(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider->update();
         component = ProviderComponent::Setup;
         reason = "bad setup";
         calls = Calls{ "validate_configuration", "stop" };
     }
-    SECTION("the stub rejects a one-stream setup")
-    {
-        auto engine = make_pose_engine();
-        ResolvedPoseSetup setup = stub_setup(*engine);
-        setup.streams.pop_back();
-        provider.emplace(ProviderConfig{}, std::move(engine), [setup] { return std::optional(setup); });
-        provider->update();
-        component = ProviderComponent::Setup;
-        reason = "stereo input needs exactly two streams";
-    }
     SECTION("initialize() throws")
     {
         script->throwing = { "initialize" };
-        provider.emplace(ProviderConfig{}, fake_engine(script), fake_setup());
+        provider.emplace(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider->update();
         component = ProviderComponent::Engine;
         reason = "initialize:";
@@ -439,7 +447,7 @@ TEST_CASE("Startup failures end the run with the failing component", "[unit][pos
     SECTION("start() throws")
     {
         script->throwing = { "start" };
-        provider.emplace(ProviderConfig{}, fake_engine(script), fake_setup());
+        provider.emplace(ProviderConfig{}, fake_engine(script), ready_input(camera));
         provider->request_start();
         provider->update();
         component = ProviderComponent::Engine;
@@ -448,7 +456,7 @@ TEST_CASE("Startup failures end the run with the failing component", "[unit][pos
     }
     SECTION("not started within the startup timeout")
     {
-        provider.emplace(short_startup, fake_engine(script), fake_setup());
+        provider.emplace(short_startup, fake_engine(script), ready_input(camera));
         CHECK(update_until_finished(*provider));
         component = ProviderComponent::Provider;
         reason = "startup timeout";
@@ -460,19 +468,236 @@ TEST_CASE("Startup failures end the run with the failing component", "[unit][pos
     CHECK(status.failed);
     CHECK(status.failed_component == component);
     CHECK(status.failure_reason.find(reason) != std::string::npos);
-    if (calls)
+    CHECK(script->calls == *calls);
+    CHECK(provider->wait_fd() == -1);
+    CHECK(provider->wait_timeout() == 0ms);
+}
+
+TEST_CASE("The setup is resolved from the camera's description", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    SourceDescription description = fake_stereo_description();
+    // The rig's reference is not the left eye. The eyes turn about different axes, and neither rotation is quite unit
+    // length.
+    const double scale = 1 + 1e-4;
+    const double half = std::sqrt(0.5) * scale;
+    description.left.T_rig_camera =
+        Transform{ { 0.01, 0.02, 0.03 }, { 0.5 * scale, 0.5 * scale, 0.5 * scale, 0.5 * scale } };
+    description.right.T_rig_camera = Transform{ { 0.012, 0.095, 0.031 }, { half, half, 0.0, 0.0 } };
+    description.right.intrinsics =
+        Intrinsics{ 101.0, 102.0, 3.25, 1.75, DistortionModel::RadTan5, { -0.2, 0.05, 1e-3, -1e-3, 0.01 } };
+    description.right.rate_hz = 60.0;
+    description.right.timed_event = TimedEvent::FrameEnd;
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera, description));
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Ready);
+    REQUIRE(script->initialized.has_value());
+    const ResolvedPoseSetup& setup = *script->initialized;
+
+    CHECK(setup.input_mode == InputMode::Stereo);
+    CHECK(setup.memory_kind == MemoryKind::Host);
+    CHECK_FALSE(setup.imu.has_value());
+    CHECK(setup.body_frame == "left_optical");
+    CHECK(setup.engine_identity == EngineIdentity{ "fake", "1", "none", "none" });
+    REQUIRE(setup.streams.size() == 2);
+    const StreamSetup& left = setup.streams[0];
+    const StreamSetup& right = setup.streams[1];
+    CHECK(left.id == StreamId{ 0 });
+    CHECK(right.id == StreamId{ 1 });
+    CHECK(left.rate_hz == 30.0);
+    CHECK(right.rate_hz == 60.0);
+    for (const StreamSetup* stream : { &left, &right })
     {
-        CHECK(script->calls == *calls);
+        CHECK(stream->layout == ImageLayout{ 8, 4, PixelFormat::Gray8, 8 });
+        CHECK(stream->calibration.distortion == DistortionModel::None);
+        CHECK(stream->calibration.coefficients.empty());
     }
+
+    // Each eye's own lens, undistorted at the delivered size, with the principal point used as given.
+    const auto widest = [](const Intrinsics& lens)
+    {
+        return widest_undistorted_calibration(
+            CameraCalibration{ lens.fx, lens.fy, lens.cx, lens.cy, lens.distortion, lens.coefficients, {} }, 8, 4);
+    };
+    const CameraCalibration left_expected = widest(*description.left.intrinsics);
+    const CameraCalibration right_expected = widest(*description.right.intrinsics);
+    CHECK(left.calibration.fx == left_expected.fx);
+    CHECK(left.calibration.fy == left_expected.fy);
+    CHECK(right.calibration.fx == right_expected.fx);
+    CHECK(right.calibration.fy == right_expected.fy);
+    CHECK(right.calibration.fx != description.right.intrinsics->fx);
+    CHECK(left.calibration.cx == 3.5);
+    CHECK(left.calibration.cy == 1.5);
+    CHECK(right.calibration.cx == 3.25);
+    CHECK(right.calibration.cy == 1.75);
+
+    // Body is the left eye's optical frame, so the right eye sits about one baseline along its x axis.
+    check_transform(left.calibration.T_body_camera, Transform{});
+    check_transform(right.calibration.T_body_camera,
+                    Transform{ { 0.075, 0.001, 0.002 }, { std::sqrt(0.5), 0.0, 0.0, std::sqrt(0.5) } });
+}
+
+TEST_CASE("A description the camera profile cannot use fails the setup, naming the source and the eye",
+          "[unit][pose_provider]")
+{
+    const SetupRejection rows[] = {
+        { [](SourceDescription& d, Script&) { d.backend = "other"; },
+          "other device 'fake-device': no camera profile for this backend" },
+        { [](SourceDescription& d, Script&)
+          {
+              d.backend.clear();
+              d.device_id.clear();
+          },
+          "streams 'fake/left' and 'fake/right': no camera profile for this backend" },
+        { [](SourceDescription& d, Script& s)
+          {
+              d.left.format = PixelFormat::RGBA8;
+              s.capabilities.pixel_formats.clear();
+          },
+          "oak device 'fake-device': the engine does not take Stereo host Gray8 images without distortion" },
+        { [](SourceDescription& d, Script&) { d.left.format = PixelFormat::RGBA8; },
+          "oak device 'fake-device': left eye 'fake/left' is not Gray8" },
+        { [](SourceDescription& d, Script&) { d.right.shutter = Shutter::Rolling; },
+          "oak device 'fake-device': right eye 'fake/right' has no global shutter" },
+        { [](SourceDescription& d, Script&) { d.left.shutter = Shutter::Unknown; },
+          "oak device 'fake-device': left eye 'fake/left' has no global shutter" },
+        { [](SourceDescription& d, Script&) { d.left.timed_event = TimedEvent::Unknown; },
+          "oak device 'fake-device': left eye 'fake/left' does not state which event its sample times mark" },
+        { [](SourceDescription& d, Script&) { d.left.rate_hz.reset(); },
+          "oak device 'fake-device': left eye 'fake/left' has no positive nominal rate" },
+        { [](SourceDescription& d, Script&) { d.right.rate_hz = 0.0; },
+          "oak device 'fake-device': right eye 'fake/right' has no positive nominal rate" },
+        { [](SourceDescription& d, Script&) { d.right.intrinsics.reset(); },
+          "oak device 'fake-device': right eye 'fake/right' has no intrinsics" },
+        { [](SourceDescription& d, Script&) { d.left.T_rig_camera.reset(); },
+          "oak device 'fake-device': left eye 'fake/left' has no pose in the rig" },
+        { [](SourceDescription& d, Script&) {
+             d.right.T_rig_camera->rotation_xyzw = { 0.0, 0.0, 0.0, 0.99 };
+         },
+          "oak device 'fake-device': right eye 'fake/right' has a pose in the rig that is not a rigid transform" },
+        { [](SourceDescription& d, Script&) { d.right.intrinsics->distortion = DistortionModel::Tilted14; },
+          "oak device 'fake-device': right eye 'fake/right': source calibration needs one finite coefficient per term "
+          "of its distortion model" },
+    };
+    for (const SetupRejection& row : rows)
+    {
+        INFO(row.reason);
+        auto script = std::make_shared<Script>();
+        auto camera = std::make_shared<FakeCameraSource>();
+        SourceDescription description = fake_stereo_description();
+        row.change(description, *script);
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera, description));
+        provider.update();
+        const ProviderStatus status = provider.status();
+        CHECK(status.state == ProviderState::Finished);
+        CHECK(status.failed_component == ProviderComponent::Setup);
+        CHECK(status.failure_reason == row.reason);
+        CHECK(script->calls == Calls{ "stop" });
+    }
+}
+
+TEST_CASE("A last camera event fails the run only before a finish request", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    script->drains = false;
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Running);
+
+    SECTION("the source ends while Running")
+    {
+        camera->push(fake_frame(1));
+        camera->push_end();
+        provider.update();
+        const ProviderStatus status = provider.status();
+        CHECK(status.state == ProviderState::Finished);
+        CHECK(status.failed_component == ProviderComponent::CameraInput);
+        CHECK(status.failure_reason == "the camera input ended");
+        CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+    }
+    SECTION("the input fails after the finish request")
+    {
+        provider.request_finish();
+        provider.update();
+        REQUIRE(provider.status().state == ProviderState::Draining);
+        camera->push(fake_frame(1));
+        camera->push(InputFailed{ "transport lost" });
+        provider.update();
+        CHECK(provider.status().state == ProviderState::Draining);
+        CHECK_FALSE(provider.status().failed);
+        script->drains = true;
+        provider.update();
+        CHECK(provider.finished());
+        CHECK_FALSE(provider.status().failed);
+    }
+    CHECK(camera->input_destroyed());
+    CHECK(camera->frames_released() == camera->frames_delivered());
+}
+
+TEST_CASE("update() takes every waiting camera event, and the wait timeout follows the state", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    script->drains = false;
+    auto camera = std::make_shared<FakeCameraSource>();
+    ProviderConfig config;
+    config.startup_timeout = kMaxProviderTimeout;
+    PoseProvider provider(config, fake_engine(script), std::make_unique<FakeCameraInput>(camera));
+    const int fd = provider.wait_fd();
+    REQUIRE(fd >= 0);
+
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Preparing);
+    // Nothing needs polling until the camera input is ready.
+    CHECK(provider.wait_timeout() > 1min);
+
+    camera->push(fake_stereo_description());
+    camera->push(fake_frame(1));
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Ready);
+    CHECK_FALSE(readable(fd));
+    // The engine has no wake handle, so it is polled long before the startup deadline.
+    CHECK(provider.wait_timeout() < 1s);
+
+    camera->push(fake_frame(2));
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Ready);
+    CHECK_FALSE(readable(fd));
+
+    provider.request_start();
+    provider.update();
+    camera->push(fake_frame(3));
+    camera->push(FrameLoss{ 4, 1 });
+    camera->push(fake_frame(5));
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Running);
+    CHECK_FALSE(readable(fd));
+    CHECK(provider.wait_timeout() < 1s);
+    CHECK(camera->frames_delivered() == 4);
+    CHECK(camera->frames_released() == 4);
+
+    provider.request_finish();
+    provider.update();
+    camera->push(fake_frame(6));
+    camera->push_end();
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Draining);
+    CHECK_FALSE(readable(fd));
+    CHECK(camera->frames_released() == 5);
+    CHECK(provider.wait_timeout() > 0ms);
+    CHECK(provider.wait_timeout() < 1s);
 }
 
 TEST_CASE("Failures after startup keep the first reason and stop the engine once", "[unit][pose_provider]")
 {
     auto script = std::make_shared<Script>();
     script->throwing = { "stop" };
+    auto camera = std::make_shared<FakeCameraSource>();
     ProviderConfig config;
     std::optional<PoseProvider> provider;
-    const auto start_provider = [&] { provider.emplace(config, fake_engine(script), fake_setup()); };
+    const auto start_provider = [&] { provider.emplace(config, fake_engine(script), ready_input(camera)); };
     std::string reason;
 
     SECTION("fatal error while Ready")
@@ -575,6 +800,7 @@ TEST_CASE("Failures after startup keep the first reason and stop the engine once
         CHECK(status.failure_reason.find(reason) != std::string::npos);
         CHECK(status.failure_reason.find("stop:") == std::string::npos);
         CHECK(stop_calls(*script) == 1);
+        CHECK(camera->input_destroyed());
     };
     check_first_failure();
     const std::string first_reason = provider->status().failure_reason;
@@ -589,7 +815,8 @@ TEST_CASE("Draining takes an estimate queued as the engine reports drained", "[u
 {
     auto script = std::make_shared<Script>();
     script->estimate_when_drained = true;
-    PoseProvider provider(ProviderConfig{}, fake_engine(script), fake_setup());
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
     provider.request_start();
     provider.update();
     REQUIRE(provider.status().state == ProviderState::Running);

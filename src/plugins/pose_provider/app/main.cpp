@@ -6,18 +6,22 @@
 #include <log_bridge/logger.hpp>
 #include <pose_engine_api/pose_engine.hpp>
 #include <pose_provider/pose_provider.hpp>
+#include <sys/eventfd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstdint>
 #include <exception>
 #include <iostream>
+#include <poll.h>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <thread>
+#include <unistd.h>
 
 using namespace pose_provider;
 
@@ -25,16 +29,21 @@ namespace
 {
 
 constexpr const char* kLoggerName = "isaaccapture.plugins.pose_provider.main";
-constexpr auto kIdlePeriod = std::chrono::milliseconds(5);
 
 std::atomic<bool> g_finish_requested{ false };
-static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<int> g_wake_fd{ -1 };
+static_assert(std::atomic<bool>::is_always_lock_free && std::atomic<int>::is_always_lock_free);
 
 // A repeated signal must never escalate: plugins share the launcher's process group, so Ctrl+C reaches the plugin
-// and PluginManager's stop then sends another SIGINT.
+// and PluginManager's stop then sends another SIGINT. The handler may run on an engine thread, where it cannot
+// interrupt main's poll(), so it also signals the wake descriptor.
 void on_signal(int)
 {
+    const int saved_errno = errno;
     g_finish_requested.store(true);
+    const uint64_t one = 1;
+    [[maybe_unused]] const ssize_t written = ::write(g_wake_fd.load(), &one, sizeof(one));
+    errno = saved_errno;
 }
 
 struct Options
@@ -66,7 +75,8 @@ std::string usage()
     const ProviderConfig defaults{};
     return "Usage: pose_provider_plugin [--startup-timeout=<seconds>] [--drain-timeout=<seconds>] "
            "[--plugin-root-id=<id>] [-h|--help]\n"
-           "  --startup-timeout=<seconds>  Time allowed from launch for the setup and the start (default " +
+           "  --startup-timeout=<seconds>  Time allowed from launch for the camera input to become ready and the run "
+           "to start (default " +
            seconds_text(defaults.startup_timeout) +
            ")\n"
            "  --drain-timeout=<seconds>    Time allowed from a finish request until the engine has drained (default " +
@@ -175,6 +185,13 @@ try
         break;
     }
 
+    // Never closed: a signal may arrive until the process exits.
+    const int wake_fd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (wake_fd < 0)
+    {
+        throw std::system_error(errno, std::generic_category(), "eventfd");
+    }
+    g_wake_fd.store(wake_fd);
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
@@ -190,16 +207,23 @@ try
     PoseProvider provider(options.config, std::move(engine));
     // Stands in for the application's start request until the plugin has a control channel.
     provider.request_start();
+    bool finish_passed = false;
     while (!provider.finished())
     {
-        if (g_finish_requested.load())
+        if (!finish_passed && g_finish_requested.load())
         {
             provider.request_finish();
+            finish_passed = true;
         }
         provider.update();
         if (!provider.finished())
         {
-            std::this_thread::sleep_for(kIdlePeriod);
+            // The wake descriptor stays readable once signaled, so it is watched only until the finish is passed on.
+            pollfd fds[] = { { finish_passed ? -1 : wake_fd, POLLIN, 0 }, { provider.wait_fd(), POLLIN, 0 } };
+            if (::poll(fds, 2, static_cast<int>(provider.wait_timeout().count())) < 0 && errno != EINTR)
+            {
+                throw std::system_error(errno, std::generic_category(), "poll");
+            }
         }
     }
     return provider.status().failed ? 1 : 0;

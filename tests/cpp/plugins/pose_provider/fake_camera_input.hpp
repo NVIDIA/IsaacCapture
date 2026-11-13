@@ -270,11 +270,11 @@ private:
     std::shared_ptr<FakeCameraSource> source_;
 };
 
-/** @brief A Stereo source that resolves to the provider tests' stub_setup(), with the left eye at the rig origin. */
+/** @brief A Stereo source that PoseProvider's camera profile accepts, with the left eye at the rig origin. */
 inline SourceDescription fake_stereo_description()
 {
     SourceDescription description;
-    description.backend = "fake";
+    description.backend = "oak";
     description.device_id = "fake-device";
     description.session_id = "fake-session";
     for (StreamDescription* eye : { &description.left, &description.right })

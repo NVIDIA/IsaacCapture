@@ -14,9 +14,11 @@ target_include_directories(pose_provider_core
 
 target_link_libraries(pose_provider_core
     PUBLIC
+        pose_provider::pose_camera_input
         pose_provider::pose_engine_api
     PRIVATE
         log_bridge::log_bridge_core
+        pose_provider::pose_undistort
 )
 
 add_library(pose_provider::pose_provider_core ALIAS pose_provider_core)
