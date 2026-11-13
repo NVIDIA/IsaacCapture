@@ -492,6 +492,44 @@ void test_budget_boundary()
     CHECK(q.generation == f.clock.generation);
 }
 
+void test_usable_verdicts()
+{
+    const Verdict usable[] = { Verdict::Qualified, Verdict::OverBudget };
+    const Verdict unusable[] = { Verdict::SenderInvalid, Verdict::NoSenderEvidence, Verdict::NoPcEvidence,
+                                 Verdict::StaleEvidence, Verdict::Unsynchronised,   Verdict::ReferenceMismatch,
+                                 Verdict::NoLocalClock,  Verdict::ImplausibleAge };
+    for (Verdict v : usable)
+    {
+        Qualification q;
+        q.verdict = v;
+        CHECK(q.usable());
+    }
+    for (Verdict v : unusable)
+    {
+        Qualification q;
+        q.verdict = v;
+        CHECK(!q.usable());
+    }
+}
+
+void test_over_budget_is_usable_with_the_same_instant()
+{
+    Fixture wide;
+    wide.config.budget_ns = 100 * kMs;
+    const Qualification ok = wide.run();
+    CHECK(ok.verdict == Verdict::Qualified);
+
+    Fixture tight;
+    tight.config.budget_ns = 1;
+    const Qualification over = tight.run();
+    CHECK(over.verdict == Verdict::OverBudget);
+    CHECK(over.usable());
+    CHECK(over.capture_monotonic_ns == ok.capture_monotonic_ns);
+    CHECK(over.capture_monotonic_ns != 0);
+    CHECK(over.uncertainty_ns > tight.config.budget_ns);
+    CHECK(over.uncertainty_ns == ok.uncertainty_ns);
+}
+
 void test_generation_carried_through()
 {
     Fixture f;
@@ -731,6 +769,8 @@ int main()
     test_unsynchronised_camera_host();
     test_implausible_age();
     test_budget_boundary();
+    test_usable_verdicts();
+    test_over_budget_is_usable_with_the_same_instant();
     test_generation_carried_through();
     test_error_bound_rounds_up();
     test_overflowing_inputs_are_refused();
