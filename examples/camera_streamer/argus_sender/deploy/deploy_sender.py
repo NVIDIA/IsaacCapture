@@ -37,6 +37,9 @@ import time
 from pathlib import Path
 
 RELEASES = "~/camera-streamer/releases"
+# The uploaded config sits beside the shipped ones, so a path in it that is relative to the config file (the remaps)
+# resolves inside the release.
+RUN_CONFIG = "src/configs/run-config.yaml"
 SIPL_ROOT = "/usr/src/jetson_sipl_api/sipl"
 SOURCE_ROOT = "examples/camera_streamer/argus_sender"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -163,16 +166,16 @@ def cmd_linktest(target: str, megabytes: int, dry_run: bool) -> None:
 
 
 def cmd_stop(target: str, dry_run: bool) -> None:
-    """Ask the senders that `run` started (./build/argus_sender --config run-config.yaml) to stop (SIGINT, so they drain and free the cameras)."""
+    """Ask the senders that `run` started (./build/argus_sender --config src/configs/run-config.yaml) to stop (SIGINT, so they drain and free the cameras)."""
     remote(
         target,
         r"""
-pids=$(pgrep -f "^\./build/argus_sender --config run-config.yaml" || true)
+pids=$(pgrep -f "^\./build/argus_sender --config src/configs/run-config.yaml" || true)
 if [[ -z "$pids" ]]; then echo "no sender from ~/camera-streamer/releases is running"; exit 0; fi
 echo "signalling: $pids"
 kill -INT $pids
 for _ in $(seq 1 20); do
-    pgrep -f "^\./build/argus_sender --config run-config.yaml" >/dev/null || { echo "stopped"; exit 0; }
+    pgrep -f "^\./build/argus_sender --config src/configs/run-config.yaml" >/dev/null || { echo "stopped"; exit 0; }
     sleep 1
 done
 echo "still running after 20 s; leaving it alone" >&2
@@ -189,7 +192,7 @@ def cmd_reset(target: str, reboot: bool, dry_run: bool) -> None:
     while a sender started by `run` is alive, because restarting the daemon under it would kill its capture.
     """
     guard = r"""
-if pgrep -f "^\./build/argus_sender --config run-config.yaml" >/dev/null; then
+if pgrep -f "^\./build/argus_sender --config src/configs/run-config.yaml" >/dev/null; then
     echo "a sender from ~/camera-streamer/releases is running; run 'stop' first" >&2
     exit 1
 fi
@@ -249,8 +252,16 @@ def cmd_remove_producer(target: str, dry_run: bool) -> None:
 sudo -n true || { echo "passwordless sudo is required on the target" >&2; exit 1; }
 unit=isaaccapture-producer.service
 echo "before:"; ls -la /opt/isaaccapture /etc/systemd/system/$unit 2>&1 | sed 's/^/  /'
-sudo -n systemctl stop $unit || true
-sudo -n systemctl disable $unit || true
+# An installed unit must be confirmed stopped before its files go: a failed stop would otherwise leave a running
+# producer with its unit and release tree deleted under it. An absent unit has nothing to stop.
+if systemctl list-unit-files "$unit" --no-legend | grep -q .; then
+    sudo -n systemctl stop $unit || { echo "could not stop $unit; nothing was removed" >&2; exit 1; }
+    if systemctl is-active --quiet $unit || pgrep -x camera_plugin_s >/dev/null; then
+        echo "the producer is still running after the stop; nothing was removed" >&2
+        exit 1
+    fi
+    sudo -n systemctl disable $unit || { echo "could not disable $unit; nothing was removed" >&2; exit 1; }
+fi
 sudo -n rm -f /etc/systemd/system/$unit /opt/isaaccapture/current /opt/isaaccapture/current.new
 sudo -n rm -rf /opt/isaaccapture/releases
 sudo -n systemctl daemon-reload
@@ -289,7 +300,7 @@ if pgrep -f '/argus_sender' >/dev/null; then
     echo "note: another camera process is running" >&2
 fi
 """
-    upload = ssh_command(target, f"cat > {directory}/run-config.yaml")
+    upload = ssh_command(target, f"cat > {directory}/{RUN_CONFIG}")
     if dry_run:
         print("DRY-RUN", shlex.join(upload), "<", config)
     else:
@@ -303,7 +314,7 @@ fi
 cd $d
 # SIGINT first: the sender drains its encoder and returns every camera buffer on SIGINT/SIGTERM.
 status=0
-{env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config run-config.yaml || status=$?
+{env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config {RUN_CONFIG} || status=$?
 # 124 is the time limit this command set; any other nonzero status is the sender's own and fails the run.
 if [[ $status -eq 124 ]]; then echo "sender stopped at its {seconds} s time limit"; exit 0; fi
 if [[ $status -ne 0 ]]; then echo "sender exited with status $status" >&2; exit $status; fi
@@ -342,6 +353,21 @@ def cmd_deploy(target: str, with_sipl: bool, name: str | None, dry_run: bool) ->
         producer.stdout.close()
         if producer.wait() != 0 or consumer.returncode != 0:
             raise DeployError("copying the source failed")
+
+    # Without Git LFS set up here, `git archive` writes pointer text in place of the remap files; deploying that would
+    # build a sender whose maps cannot load.
+    remote(
+        target,
+        f"""
+bad=$(find {directory}/src -name '*.remap' -print0 | xargs -0 -r grep -l -a '^version https://git-lfs.github.com/spec/v1' || true)
+if [[ -n "$bad" ]]; then
+    echo "these remap files are Git LFS pointers, not data; run 'git lfs install && git lfs pull' here and deploy again:" >&2
+    echo "$bad" >&2
+    exit 1
+fi
+""",
+        dry_run,
+    )
 
     print("==> [3/3] configuring, building and testing on the target", flush=True)
     options = "-DCMAKE_BUILD_TYPE=Release -DDISABLE_MULTIPROCESS=ON"
