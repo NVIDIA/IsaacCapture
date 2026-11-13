@@ -12,7 +12,8 @@ only the PC side comes up. Each process is waited on until it is ready before th
 them are stopped, last started first, when this script exits for any reason.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
-CAMERA_SETTINGS.md). The session is real and cameras-only unless ``--mock`` is given.
+CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
+unless ``--mock`` gives it synthetic tracking and cameras.
 
 The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
 (or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``). The pure helpers sit above the
@@ -48,7 +49,7 @@ LIVEKIT_DEV_KEY = "devkey"
 LIVEKIT_DEV_SECRET = "secret"
 CONTROL_TOKEN_MARKER = "Recording control token for this run:"
 DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
-DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.camera_only.example.yaml"
+DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
 TIMESTAMP_BASIS = "capture_monotonic_us"
 # Seconds a child gets to exit after SIGINT before it is killed. The backend closes an in-progress take, which its
@@ -363,7 +364,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clock-port", type=int, help="override the profile's UDP clock port (sender and bridge)")
     parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
     parser.add_argument(
-        "--mock", action="store_true", help="synthetic tracking and cameras instead of a cameras-only real session"
+        "--mock",
+        action="store_true",
+        help="run CaptureServer with synthetic tracking and cameras, no hardware needed",
     )
     parser.add_argument("--backend-port", type=int, default=8010)
     parser.add_argument("--seconds", type=int, default=3600, help="how long the Orin sender runs")
@@ -484,8 +487,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "EGOCAP_STATION_CONFIG": str(args.station_config),
                 "LIVEKIT_API_KEY": LIVEKIT_DEV_KEY,
                 "LIVEKIT_API_SECRET": LIVEKIT_DEV_SECRET,
-                # A cameras-only session needs no headset and no IsaacCapture checkout.
-                **({} if args.mock else {"EGOCAP_CAPTURE_SOURCES": "none"}),
             },
             cwd=EGOCAP_ROOT,
             grace_s=BACKEND_GRACE_S,
@@ -523,9 +524,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         url = f"http://127.0.0.1:{args.backend_port}/"
         token = control_token(backend.log)
         print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
-        if not args.mock:
-            # The backend admits a take only with an accepted tracking source, which a cameras-only session lacks.
-            print("This session is a camera preview: Record needs a tracking source (use --mock or a headset).")
+        if args.mock:
+            # A recording made here mixes synthetic tracking and cameras with the real stream.
+            print("--mock: tracking and the CaptureServer cameras are synthetic.")
         print("Ctrl-C stops everything.")
         if args.open:
             webbrowser.open(url)

@@ -23,14 +23,6 @@ pass it with `--sender-config`.
 The sender never reads exposure, gain, white balance, trigger frequency or clock-pin settings from its YAML, and there
 is no runtime settings API: add such keys to the file and nothing happens.
 
-## What the default session can do
-
-The launcher's default session is real and cameras-only: CaptureServer runs without `--mock` and the backend runs with
-`EGOCAP_CAPTURE_SOURCES=none`. That shows the live camera, its fps and its latency, but it is a preview. The backend
-admits a recording only after a tracking source has been accepted and requires the controller source in every take, so
-Record stays unavailable until tracking is present (for example with `--mock`, or a real headset). The launcher does
-not change that rule.
-
 ## The default sender profile
 
 `configs/default-camera-settings.yaml` is the profile the launcher uses unless told otherwise. It describes one SHW5G head

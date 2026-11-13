@@ -89,9 +89,11 @@ reference.
 uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH --open
 ```
 
-It prints the page URL and the recording control token. The session is real and cameras-only (no headset, no mock
-cameras), which is a **preview**: the backend only lets a take start once a tracking source has been accepted, so
-Record stays unavailable without one. `--mock` switches to synthetic tracking and cameras. Without `--orin` only the PC side starts, and
+It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs a built
+IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware; `--mock` gives it synthetic tracking and cameras so the
+stack runs without either, and anything recorded then mixes synthetic data with the real camera stream. The default
+station file (`--station-config`) is the shipped example, which requests cameras; pass your own station file when the
+rig has different ones. Without `--orin` only the PC side starts, and
 `--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
 so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
 address, because the bridge measures the sender's clock at that address.
