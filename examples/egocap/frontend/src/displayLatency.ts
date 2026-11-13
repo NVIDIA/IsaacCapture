@@ -35,6 +35,8 @@ export function latencySample(
   mapping: ClockMapping | null,
 ): LatencySample | null {
   if (stamp === undefined || mapping === null || !Number.isFinite(expectedDisplayTime)) return null;
+  // The browser SDK reports a frame that carries no capture time (only a frame id) as a stamp of 0, not as absent.
+  if (stamp.userTimestamp <= 0n) return null;
   const displayRemote = toRemoteNs(mapping, BigInt(Math.round(expectedDisplayTime * 1e6)));
   const ms = Number(displayRemote - stamp.userTimestamp * 1000n) / 1e6;
   const uncertaintyMs = Number(mapping.uncertaintyNs) / 1e6;

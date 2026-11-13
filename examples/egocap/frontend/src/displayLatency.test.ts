@@ -28,6 +28,12 @@ describe("latencySample", () => {
     expect(latencySample(Number.NaN, { userTimestamp: 1_000_000_000n }, mapping())).toBeNull();
   });
 
+  it("is null for a stamp of zero, which the browser SDK reports for a frame that carries no capture time", () => {
+    // Without this a frame with only a frame id gives the publisher's whole monotonic uptime as its latency.
+    expect(latencySample(997_072, { userTimestamp: 0n }, mapping())).toBeNull();
+    expect(latencySample(997_072, { userTimestamp: -1n }, mapping())).toBeNull();
+  });
+
   it("is null when display precedes capture by more than the uncertainty, but keeps a small negative", () => {
     expect(latencySample(996_990, { userTimestamp: 1_000_000_000n }, mapping())).toBeNull(); // -10 ms
     expect(latencySample(996_999, { userTimestamp: 1_000_000_000n }, mapping())?.ms).toBeCloseTo(-1, 6);
