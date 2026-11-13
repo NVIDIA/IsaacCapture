@@ -121,6 +121,9 @@ public:
                 pending.bundle.senderCaptureReadyTscNs = senderCaptureReadyTscNs;
             }
         }
+        // Every bundle carries a timing record per sample, valid or not, so a receiver never has to guess whether an
+        // absent claim means none or unsupported.
+        pending.bundle.flags |= AVS1_BUNDLE_TIMING_EXT;
         pending.bundle.streams = m_streamTemplates;
         for (size_t streamIndex = 0; streamIndex < inputs.size(); ++streamIndex)
         {
@@ -149,6 +152,7 @@ public:
                 sample.senderCaptureReadyNs = 0;
                 sample.senderProcessSubmitNs = 0;
                 sample.senderProcessDoneNs = 0;
+                sample.timing = Avs1TimingRecord();
                 if (!input.present)
                 {
                     pending.timing.samples.push_back(sampleTiming);
@@ -180,6 +184,24 @@ public:
                     sample.sofTscNs = timing.sensorSofTimestampTscNs;
                     sampleTiming.present = true;
                     sampleTiming.sensorSofTscNs = timing.sensorSofTimestampTscNs;
+                }
+                // The sensor start-of-frame in the sender's CLOCK_REALTIME; without a checked mapping that produced it,
+                // the record stays without VALID.
+                const int64_t captureNs = timing.captureRealtimeNs;
+                if (timing.hasCaptureMonotonic && captureNs > 0)
+                {
+                    // Uncertainty and age are 32-bit nanosecond fields: a value that does not fit is not a claim worth
+                    // making, so the whole record stays without VALID.
+                    const int64_t kMaxField = 0xFFFFFFFFLL;
+                    if (timing.captureUncertaintyNs >= 0 && timing.captureUncertaintyNs <= kMaxField &&
+                        timing.captureAnchorAgeNs >= 0 && timing.captureAnchorAgeNs <= kMaxField)
+                    {
+                        sample.timing.flags = AVS1_TIMING_VALID;
+                        sample.timing.clockDomain = AVS1_TIMING_CLOCK_REALTIME;
+                        sample.timing.sensorCaptureNs = static_cast<uint64_t>(captureNs);
+                        sample.timing.uncertaintyNs = static_cast<uint32_t>(timing.captureUncertaintyNs);
+                        sample.timing.anchorAgeNs = static_cast<uint32_t>(timing.captureAnchorAgeNs);
+                    }
                 }
                 pending.timing.samples.push_back(sampleTiming);
                 if (timing.frameTimeNs != 0)

@@ -8,6 +8,9 @@
 #include "TestHarness.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 namespace
@@ -65,6 +68,20 @@ argus_sender::Avs1Bundle mixedBundle()
     bundle.streams.push_back(mono);
     return bundle;
 }
+
+} // namespace
+
+namespace
+{
+
+// One stream, one sample, a three-byte payload, with the timing extension; the receiver's parser test uses the same
+// bytes.
+const char kGoldenHex[] =
+    "000000cb415653310001000d000000400001000100000000000000050102030405060708000000003b9aca0000000000"
+    "3ba26b2000000088000000030000000077359400000000010101000000000040000000300000001e0000000100000000"
+    "00000005000000010000000000000000000300000000000000000000000000000000004d000000007604670000000000"
+    "000000000000000000000000000000000000000000000000000000000000000000000003000000003b7c458000000bb8"
+    "0ee6b2800001000200000000000001";
 
 } // namespace
 
@@ -154,5 +171,141 @@ int main()
     wire = valid;
     wire[4 + 7] = static_cast<uint8_t>(wire[4 + 7] & ~argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID);
     TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(wire.data(), wire.size(), &parsed, &error));
+    // The timing extension: one 24-byte record per sample, after the sample descriptors, counted in descriptor_bytes.
+    {
+        argus_sender::Avs1Bundle timed = mixedBundle();
+        timed.flags |= argus_sender::AVS1_BUNDLE_TIMING_EXT;
+        argus_sender::Avs1TimingRecord good;
+        good.flags = argus_sender::AVS1_TIMING_VALID;
+        good.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
+        good.sensorCaptureNs = 40505284984832ULL;
+        good.uncertaintyNs = 4321;
+        good.anchorAgeNs = 987654;
+        timed.streams[0].samples[0].timing = good; // the other samples carry no capture claim (all zero, VALID clear)
+        std::vector<uint8_t> timedWire;
+        TEST_CHECK(test, argus_sender::buildAvs1WireRecord(timed, &timedWire, &error));
+        TEST_CHECK_EQ(test, timedWire.size(), wire.size() + 3 * argus_sender::kAvs1TimingRecordBytes);
+        argus_sender::Avs1Bundle timedParsed;
+        TEST_CHECK(test, argus_sender::parseAvs1WireRecord(timedWire.data(), timedWire.size(), &timedParsed, &error));
+        TEST_CHECK_EQ(test, timedParsed.streams[0].samples[0].timing.sensorCaptureNs, good.sensorCaptureNs);
+        TEST_CHECK_EQ(test, timedParsed.streams[0].samples[0].timing.uncertaintyNs, good.uncertaintyNs);
+        TEST_CHECK_EQ(test, timedParsed.streams[0].samples[0].timing.anchorAgeNs, good.anchorAgeNs);
+        TEST_CHECK_EQ(test, timedParsed.streams[0].samples[0].timing.clockDomain, good.clockDomain);
+        TEST_CHECK_EQ(test, timedParsed.streams[0].samples[1].timing.flags, static_cast<uint16_t>(0));
+        TEST_CHECK_EQ(test, timedParsed.streams[1].samples[0].timing.sensorCaptureNs, static_cast<uint64_t>(0));
+        // Without the extension flag the layout is unchanged and a timing record is refused.
+        argus_sender::Avs1Bundle claimed = mixedBundle();
+        claimed.streams[0].samples[0].timing = good;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(claimed, &timedWire, &error));
+        // A realistic realtime capture time round-trips.
+        {
+            argus_sender::Avs1Bundle realtime = timed;
+            realtime.streams[0].samples[0].timing.sensorCaptureNs = 1762900000123456789ULL;
+            std::vector<uint8_t> realtimeWire;
+            TEST_CHECK(test, argus_sender::buildAvs1WireRecord(realtime, &realtimeWire, &error));
+            argus_sender::Avs1Bundle realtimeParsed;
+            TEST_CHECK(test, argus_sender::parseAvs1WireRecord(
+                                 realtimeWire.data(), realtimeWire.size(), &realtimeParsed, &error));
+            const argus_sender::Avs1TimingRecord& back = realtimeParsed.streams[0].samples[0].timing;
+            TEST_CHECK_EQ(test, back.clockDomain, static_cast<uint16_t>(argus_sender::AVS1_TIMING_CLOCK_REALTIME));
+            TEST_CHECK_EQ(test, back.sensorCaptureNs, 1762900000123456789ULL);
+            TEST_CHECK_EQ(test, back.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+            // Domain 2 without VALID and a non-zero field is refused.
+            argus_sender::Avs1Bundle noValid = timed;
+            noValid.streams[0].samples[0].timing.flags = 0;
+            noValid.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
+            TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(noValid, &realtimeWire, &error));
+            // Any domain but realtime (including the reserved monotonic value 1) with VALID is refused, on build and on
+            // parse.
+            const uint16_t unknownDomains[] = { 0, 1, 3, 0xFFFF };
+            for (size_t i = 0; i < 4; ++i)
+            {
+                argus_sender::Avs1Bundle unknown = timed;
+                unknown.streams[0].samples[0].timing.clockDomain = unknownDomains[i];
+                TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(unknown, &realtimeWire, &error));
+            }
+            // Patch a built record: clock_domain is the u16 at timing-record offset 18.
+            const size_t domainOffset = 4 + 64 + 2 * 40 + 3 * 72 + 18;
+            std::vector<uint8_t> goodWire;
+            TEST_CHECK(test, argus_sender::buildAvs1WireRecord(timed, &goodWire, &error));
+            for (size_t i = 0; i < 4; ++i)
+            {
+                std::vector<uint8_t> patched = goodWire;
+                patched[domainOffset] = static_cast<uint8_t>(unknownDomains[i] >> 8);
+                patched[domainOffset + 1] = static_cast<uint8_t>(unknownDomains[i] & 0xff);
+                TEST_CHECK(
+                    test, !argus_sender::parseAvs1WireRecord(patched.data(), patched.size(), &realtimeParsed, &error));
+            }
+            std::vector<uint8_t> patched = goodWire;
+            patched[domainOffset + 1] = 2;
+            TEST_CHECK(test, argus_sender::parseAvs1WireRecord(patched.data(), patched.size(), &realtimeParsed, &error));
+        }
+        // VALID needs the realtime domain and a nonzero time; without VALID everything must be zero.
+        argus_sender::Avs1Bundle bad = timed;
+        bad.streams[0].samples[0].timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_NONE;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));
+        bad = timed;
+        bad.streams[0].samples[0].timing.sensorCaptureNs = 0;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));
+        bad = timed;
+        bad.streams[0].samples[1].timing.uncertaintyNs = 5;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));
+        bad = timed;
+        bad.streams[0].samples[0].timing.flags = 0x8001;
+        TEST_CHECK(test, !argus_sender::buildAvs1WireRecord(bad, &timedWire, &error));
+        // A parser refuses a nonzero reserved field and a record count that does not match descriptor_bytes.
+        std::vector<uint8_t> tampered = timedWire;
+        timedWire.clear();
+        TEST_CHECK(test, argus_sender::buildAvs1WireRecord(timed, &timedWire, &error));
+        tampered = timedWire;
+        const size_t timingStart = 4 + 64 + 2 * 40 + 3 * 72;
+        tampered[timingStart + 23] = 1; // first record's reserved word
+        TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(tampered.data(), tampered.size(), &timedParsed, &error));
+        tampered = timedWire;
+        tampered[4 + 48 + 3] = static_cast<uint8_t>(tampered[4 + 48 + 3] - 24); // descriptor_bytes short by one record
+        TEST_CHECK(test, !argus_sender::parseAvs1WireRecord(tampered.data(), tampered.size(), &timedParsed, &error));
+
+        // Golden vector shared with the receiver's parser: one stream, one sample, a three-byte payload.
+        argus_sender::Avs1Bundle golden;
+        golden.flags = argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID | argus_sender::AVS1_BUNDLE_SENDER_TSC_VALID |
+                       argus_sender::AVS1_BUNDLE_TIMING_EXT;
+        golden.sequence = 5;
+        golden.sessionId = 0x0102030405060708ULL;
+        golden.senderCaptureReadyNs = 1000000000ULL;
+        golden.senderTcpEnqueueNs = 1000500000ULL;
+        golden.senderCaptureReadyTscNs = 2000000000ULL;
+        argus_sender::Avs1StreamRecord stream;
+        stream.flags = argus_sender::AVS1_STREAM_PRESENT;
+        stream.codec = argus_sender::AVS1_CODEC_HEVC;
+        stream.width = 64;
+        stream.height = 48;
+        stream.fpsNumerator = 30;
+        stream.sequence = 5;
+        argus_sender::Avs1SampleRecord one;
+        one.flags = argus_sender::AVS1_SAMPLE_PRESENT | argus_sender::AVS1_SAMPLE_SOF_TSC_VALID;
+        one.frameNumber = 77;
+        one.sofTscNs = 1980000000ULL;
+        one.payload = { 0x00, 0x00, 0x01 };
+        one.timing.flags = argus_sender::AVS1_TIMING_VALID;
+        one.timing.clockDomain = argus_sender::AVS1_TIMING_CLOCK_REALTIME;
+        one.timing.sensorCaptureNs = 998000000ULL;
+        one.timing.uncertaintyNs = 3000;
+        one.timing.anchorAgeNs = 250000000U;
+        stream.samples.push_back(one);
+        golden.streams.push_back(stream);
+        std::vector<uint8_t> goldenWire;
+        TEST_CHECK(test, argus_sender::buildAvs1WireRecord(golden, &goldenWire, &error));
+        std::string hex;
+        char pair[3];
+        for (size_t i = 0; i < goldenWire.size(); ++i)
+        {
+            std::snprintf(pair, sizeof(pair), "%02x", goldenWire[i]);
+            hex += pair;
+        }
+        if (std::getenv("AVS1_PRINT_GOLDEN"))
+            std::printf("%s\n", hex.c_str());
+        TEST_CHECK_EQ(test, hex, std::string(kGoldenHex));
+    }
+
     return test.finish();
 }

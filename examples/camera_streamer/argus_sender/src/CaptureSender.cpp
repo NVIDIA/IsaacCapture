@@ -221,16 +221,39 @@ bool runCaptureSender(const AppConfig& config,
                 FrameTiming timing;
                 timing.frameNumber = frame.sequence;
                 timing.acquiredSteadyNs = frame.readyMonotonicNs;
-                // Only a TSC in nanoseconds may go into the AVS1 TSC fields; a raw backend counter stays out
-                // until its units are declared.
+                // Only a TSC in nanoseconds may go into the AVS1 TSC fields, and only a frame whose capture time
+                // passed the backend's mapping check carries one.
+                if (frame.sensorClock == SENSOR_CLOCK_TSC_NS)
+                {
+                    timing.hasSensorSofTimestampTsc = true;
+                    timing.sensorSofTimestampTscNs = frame.sensorTime;
+                }
+                if (frame.captureMapped)
+                {
+                    timing.hasCaptureMonotonic = true;
+                    timing.captureMonotonicNs = frame.captureMonotonicNs;
+                    timing.captureUncertaintyNs = frame.captureUncertaintyNs;
+                    timing.captureAnchorAgeNs = frame.captureAnchorAgeNs;
+                    timing.captureRealtimeNs = frame.captureRealtimeNs;
+                }
                 inputs[i].timings.push_back(timing);
                 uint32_t readyDomain = SENDER_CLOCK_UNKNOWN;
                 const uint64_t readyNs = readSenderClockNs(&readyDomain);
+                // The TSC at the same instant as the wall clock reading, so a receiver can place the sensor's
+                // start-of-frame on the wall clock. Left at 0 (the bundle's TSC anchor is then not marked valid) unless
+                // it is after the start-of-frame and within a plausible lag.
+                const uint64_t tscNowNs = readTscNowNs();
+                const uint64_t kMaxSofLagNs = 500000000ULL;
+                const uint64_t readyTscNs =
+                    (timing.hasSensorSofTimestampTsc && tscNowNs > timing.sensorSofTimestampTscNs &&
+                     tscNowNs - timing.sensorSofTimestampTscNs < kMaxSofLagNs) ?
+                        tscNowNs :
+                        0;
                 uint32_t submitDomain = SENDER_CLOCK_UNKNOWN;
                 const uint64_t submitNs = readSenderClockNs(&submitDomain);
                 if (readyDomain != submitDomain)
                     readyDomain = SENDER_CLOCK_UNKNOWN;
-                if (!assembler.beginBundle(bundleSequence, inputs, readyNs, submitNs, readyDomain, 0) ||
+                if (!assembler.beginBundle(bundleSequence, inputs, readyNs, submitNs, readyDomain, readyTscNs) ||
                     !assembler.recordCopyDone(i, bundleSequence, frame.readyMonotonicNs) ||
                     !assembler.recordProcessStart(i, bundleSequence, steadyNowNs()))
                 {

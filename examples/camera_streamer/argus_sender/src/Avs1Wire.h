@@ -19,12 +19,14 @@ const size_t kAvs1LengthPrefixBytes = 4;
 const size_t kAvs1HeaderBytes = 64;
 const size_t kAvs1StreamDescriptorBytes = 40;
 const size_t kAvs1SampleDescriptorBytes = 72;
+const size_t kAvs1TimingRecordBytes = 24;
 
 enum Avs1BundleFlags
 {
     AVS1_BUNDLE_SENDER_CLOCK_VALID = 1U << 0,
     AVS1_BUNDLE_SENDER_CLOCK_TAI = 1U << 1,
-    AVS1_BUNDLE_SENDER_TSC_VALID = 1U << 2
+    AVS1_BUNDLE_SENDER_TSC_VALID = 1U << 2,
+    AVS1_BUNDLE_TIMING_EXT = 1U << 3
 };
 
 enum Avs1StreamFlags
@@ -59,6 +61,30 @@ enum Avs1SampleRole
     AVS1_ROLE_RIGHT = 2
 };
 
+enum Avs1TimingFlags
+{
+    AVS1_TIMING_VALID = 1U << 0
+};
+
+enum Avs1TimingClockDomain
+{
+    AVS1_TIMING_CLOCK_NONE = 0,
+    // Reserved and unsupported: a valid record in this domain is rejected.
+    AVS1_TIMING_CLOCK_MONOTONIC = 1,
+    AVS1_TIMING_CLOCK_REALTIME = 2
+};
+
+// The sensor's capture instant on the sender's clock and how far to trust it. With AVS1_TIMING_VALID clear, every
+// other field is zero and the frame makes no capture-time claim.
+struct Avs1TimingRecord
+{
+    uint16_t flags = 0;
+    uint16_t clockDomain = AVS1_TIMING_CLOCK_NONE;
+    uint64_t sensorCaptureNs = 0;
+    uint32_t uncertaintyNs = 0;
+    uint32_t anchorAgeNs = 0;
+};
+
 struct Avs1SampleRecord
 {
     uint16_t flags = 0;
@@ -72,6 +98,8 @@ struct Avs1SampleRecord
     uint64_t senderCaptureReadyNs = 0;
     uint64_t senderProcessSubmitNs = 0;
     uint64_t senderProcessDoneNs = 0;
+    // Carried only when the bundle sets AVS1_BUNDLE_TIMING_EXT.
+    Avs1TimingRecord timing;
     std::vector<uint8_t> payload;
 };
 

@@ -1,0 +1,156 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ARGUS_SENDER_SENSOR_CLOCK_H
+#define ARGUS_SENDER_SENSOR_CLOCK_H
+
+// Places a sensor timestamp that is a count of the platform counter's ticks on this machine's CLOCK_MONOTONIC. The
+// mapping is only as good as the assumption that the sensor counts that counter, so every conversion is checked and
+// an implausible one is reported as invalid, never replaced by a host-side stamp.
+
+#include "FrameTiming.h"
+
+#include <cstdint>
+#include <functional>
+#include <string>
+
+namespace argus_sender
+{
+
+// A source clock reading paired with CLOCK_MONOTONIC, read back to back.
+struct ClockPair
+{
+    // The source clock's value (counter ticks) at the midpoint of the bracket.
+    int64_t source = 0;
+    // CLOCK_MONOTONIC ns at the same midpoint.
+    int64_t monotonicNs = 0;
+    // Width of the bracket the pair was read in; the pair is no more certain than this.
+    int64_t bracketNs = 0;
+    // CLOCK_REALTIME ns read inside the same bracket, so realtime minus monotonic is known to within the bracket.
+    // Only meaningful when hasRealtime.
+    int64_t realtimeNs = 0;
+    bool hasRealtime = false;
+};
+
+// Reads the ARM generic counter and CLOCK_MONOTONIC back to back, keeping the narrowest of a few attempts. Returns
+// false where the counter is not readable (not aarch64).
+bool readCounterPair(ClockPair* pair);
+// The generic counter's frequency in Hz; 0 where it is not readable.
+int64_t readCounterHz();
+
+// Counter ticks to nanoseconds without overflowing 64 bits; `hz` must be positive.
+int64_t counterTicksToNs(int64_t ticks, int64_t hz);
+// CLOCK_MONOTONIC in ns; 0 if it cannot be read. This is the clock every mapping result is expressed on.
+int64_t monotonicNowNs();
+
+// The outcome of placing one sensor timestamp.
+struct SensorTimeMapping
+{
+    bool valid = false;
+    // Why it is not valid; empty when it is.
+    std::string reason;
+    // CLOCK_MONOTONIC ns of the sensor's capture event; meaningful only when valid.
+    int64_t captureMonotonicNs = 0;
+    // The anchor pair's bracket plus the slew bound over the distance from the anchor to the sensor event: the mapping
+    // is no more certain than this.
+    int64_t uncertaintyNs = 0;
+    // How long ago the anchor was read, at the time of this conversion: its freshness, separate from the uncertainty.
+    int64_t anchorAgeNs = 0;
+    // The same capture event on CLOCK_REALTIME, from the anchor's realtime-minus-monotonic offset; present only when
+    // the anchor had a realtime reading. The uncertainty above applies to it as well.
+    bool hasRealtime = false;
+    int64_t captureRealtimeNs = 0;
+};
+
+// One anchor pair is read through a supported clock API and refreshed at a low rate (not per frame); a frame's capture
+// time is the anchor plus the counter difference. A capture time after the frame was ready, or more than maxAgeNs
+// before it, means the assumed counter or rate is wrong. A refreshed anchor that disagrees with the old one by more
+// than stepThresholdNs plus the slew allowed over their spacing means a clock step: the mapping is invalid until
+// reset() or the next consistent refresh.
+//
+// Not thread-safe; one instance per capture thread.
+class SensorClockMap
+{
+public:
+    using PairReader = std::function<bool(ClockPair*)>;
+
+    struct Config
+    {
+        // Counter frequency in Hz.
+        int64_t counterHz = 0;
+        // How often the anchor pair is read again. The uncertainty grows with the distance from the anchor to the
+        // sensor event, so a short interval keeps it small; ten reads a second is still a low rate.
+        int64_t refreshNs = 100000000;
+        // Largest plausible gap between capture and the frame being ready.
+        int64_t maxAgeNs = 2000000000;
+        // Largest agreement error between consecutive anchors, on top of their brackets.
+        int64_t stepThresholdNs = 2000000;
+        // The fastest the host's clock discipline may slew CLOCK_MONOTONIC against the counter: the mapping's
+        // uncertainty grows by this much per second of distance between the anchor and the sensor event. The default
+        // is chrony's documented default maxslewrate (83333.333 ppm), which chrony reaches by adjusting the tick; a
+        // frequency-only NTP discipline stays within 500 ppm, so that is not a safe general default. A host that caps
+        // its slew rate lower may set a lower value. The bound is an assumption about the host's configuration, not
+        // something this class can measure.
+        int64_t slewPpm = 83334;
+        // A frame whose uncertainty would exceed this is not qualified, rather than reported with a bound too wide to
+        // mean anything.
+        int64_t maxUncertaintyNs = 20000000;
+    };
+
+    SensorClockMap(const Config& config, PairReader reader);
+
+    SensorTimeMapping map(uint64_t sensorTicks, int64_t readyMonotonicNs, int64_t nowMonotonicNs);
+
+    // Forget the anchor: call when capture restarts or the sensor domain changes.
+    void reset();
+
+private:
+    bool refresh(int64_t nowMonotonicNs, std::string* reason);
+
+    Config m_config;
+    PairReader m_reader;
+    ClockPair m_anchor;
+    int64_t m_anchorTakenNs = 0;
+    bool m_haveAnchor = false;
+    bool m_stepped = false;
+};
+
+// What a backend's sensor timestamp counts: raw ticks of the platform counter (SIPL's start-of-frame), or that counter
+// already scaled to nanoseconds (Argus' TSC timestamps, which are documented as nanoseconds). The backend declares it;
+// it is never inferred from the value.
+enum class SensorTimestampUnit
+{
+    CounterTicks,
+    Nanoseconds
+};
+
+// The one mapping path every backend uses: a backend extracts its sensor timestamp and declares its unit, this class
+// normalises it to nanoseconds of the platform counter and places it with SensorClockMap's checks. `counterHz` is the
+// platform counter's actual frequency (readCounterHz()); it is needed even for a nanosecond timestamp, because the
+// anchor pair is a raw counter read. 0 where the counter is unreadable, and every mapping is then refused.
+//
+// Not thread-safe; one instance per camera, used by the one thread that acquires that camera.
+class SensorTimeMapper
+{
+public:
+    SensorTimeMapper(int64_t counterHz, const SensorClockMap::Config& config, SensorClockMap::PairReader reader);
+
+    SensorTimeMapping map(uint64_t timestamp, SensorTimestampUnit unit, int64_t readyMonotonicNs, int64_t nowMonotonicNs);
+
+    // Forget the anchor: call when capture restarts or the sensor domain changes.
+    void reset();
+
+private:
+    int64_t m_counterHz;
+    SensorClockMap m_map;
+};
+
+// Records a mapping in `timing`. A mapping that is not valid clears the capture fields, so no earlier claim survives.
+void applyMappingToTiming(const SensorTimeMapping& mapping, FrameTiming* timing);
+
+} // namespace argus_sender
+
+#endif // ARGUS_SENDER_SENSOR_CLOCK_H
