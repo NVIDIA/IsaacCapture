@@ -8,6 +8,7 @@
 #include "TestHarness.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 
 using namespace argus_sender;
@@ -74,6 +75,45 @@ SensorClockMap makeAnchorMap(const SensorClockMap::Config& config, ClockPair* an
                               *pair = *anchor;
                               return true;
                           });
+}
+
+// A counter of `hz` Hz that read 0 when CLOCK_MONOTONIC read 0, plus a realtime clock `realtimeOffsetNs` ahead. The
+// reader returns raw ticks, as readCounterPair does.
+struct TickClock
+{
+    int64_t hz = 0;
+    int64_t* nowNs = nullptr;
+    int64_t realtimeOffsetNs = 1700000000000000000LL;
+    int reads = 0;
+    bool fail = false;
+
+    int64_t ticksAt(int64_t monotonicNs) const
+    {
+        return static_cast<int64_t>(static_cast<__int128>(monotonicNs) * hz / 1000000000LL);
+    }
+
+    SensorClockMap::PairReader reader()
+    {
+        return [this](ClockPair* pair)
+        {
+            ++reads;
+            if (fail)
+                return false;
+            pair->source = ticksAt(*nowNs);
+            pair->monotonicNs = *nowNs;
+            pair->bracketNs = 2000;
+            pair->hasRealtime = true;
+            pair->realtimeNs = *nowNs + realtimeOffsetNs;
+            return true;
+        };
+    }
+};
+
+SensorClockMap::Config tickConfig()
+{
+    SensorClockMap::Config config;
+    config.refreshNs = 1000000000;
+    return config;
 }
 
 } // namespace
@@ -484,6 +524,132 @@ int main()
         TEST_CHECK(test, outside.uncertaintyNs > 20 * kMs);
         TEST_CHECK(test, outside.reason.find("too far from the anchor") != std::string::npos);
     }
+
+    // The shared mapper, at counter rates that are not hardcoded anywhere.
+    for (const int64_t hz : { 31250000LL, 19200000LL })
+    {
+        int64_t now = 10000 * kMs;
+        TickClock clock;
+        clock.hz = hz;
+        clock.nowNs = &now;
+        const int64_t ticks = clock.ticksAt(now - 20 * kMs);
+        const int64_t ns = counterTicksToNs(ticks, hz);
+
+        // The same event as ticks and as nanoseconds places identically.
+        SensorTimeMapper fromTicks(hz, tickConfig(), clock.reader());
+        SensorTimeMapper fromNs(hz, tickConfig(), clock.reader());
+        const SensorTimeMapping a =
+            fromTicks.map(static_cast<uint64_t>(ticks), SensorTimestampUnit::CounterTicks, now, now);
+        const SensorTimeMapping b = fromNs.map(static_cast<uint64_t>(ns), SensorTimestampUnit::Nanoseconds, now, now);
+        TEST_CHECK(test, a.valid);
+        TEST_CHECK(test, b.valid);
+        TEST_CHECK_EQ(test, a.captureMonotonicNs, b.captureMonotonicNs);
+        TEST_CHECK_EQ(test, a.captureRealtimeNs, b.captureRealtimeNs);
+        TEST_CHECK_EQ(test, a.hasRealtime, b.hasRealtime);
+        TEST_CHECK_EQ(test, a.uncertaintyNs, b.uncertaintyNs);
+        TEST_CHECK(test, std::llabs(a.captureMonotonicNs - (now - 20 * kMs)) <= a.uncertaintyNs);
+        TEST_CHECK_EQ(test, a.captureRealtimeNs - a.captureMonotonicNs, clock.realtimeOffsetNs);
+        // One counter tick of uncertainty is included, on top of the anchor bracket.
+        TEST_CHECK(test, a.uncertaintyNs >= 2000 + (1000000000LL + hz - 1) / hz);
+
+        // An unknown frequency refuses every mapping with a reason and no value.
+        SensorTimeMapper noHz(0, tickConfig(), clock.reader());
+        for (const SensorTimestampUnit unit : { SensorTimestampUnit::CounterTicks, SensorTimestampUnit::Nanoseconds })
+        {
+            const SensorTimeMapping refused = noHz.map(static_cast<uint64_t>(ticks), unit, now, now);
+            TEST_CHECK(test, !refused.valid);
+            TEST_CHECK(test, !refused.reason.empty());
+            TEST_CHECK_EQ(test, refused.captureMonotonicNs, static_cast<int64_t>(0));
+        }
+        SensorTimeMapper negHz(-5, tickConfig(), clock.reader());
+        TEST_CHECK(test, !negHz.map(static_cast<uint64_t>(ticks), SensorTimestampUnit::CounterTicks, now, now).valid);
+
+        // A timestamp above INT64_MAX is out of range in either unit.
+        SensorTimeMapper huge(hz, tickConfig(), clock.reader());
+        const uint64_t tooBig = static_cast<uint64_t>(INT64_MAX) + 1;
+        for (const SensorTimestampUnit unit : { SensorTimestampUnit::CounterTicks, SensorTimestampUnit::Nanoseconds })
+        {
+            const SensorTimeMapping refused = huge.map(tooBig, unit, now, now);
+            TEST_CHECK(test, !refused.valid);
+            TEST_CHECK(test, !refused.reason.empty());
+        }
+        TEST_CHECK(test, !huge.map(UINT64_MAX, SensorTimestampUnit::CounterTicks, now, now).valid);
+
+        // A reader failure is invalid with a reason.
+        TickClock broken = clock;
+        broken.fail = true;
+        SensorTimeMapper failing(hz, tickConfig(), broken.reader());
+        const SensorTimeMapping failed =
+            failing.map(static_cast<uint64_t>(ticks), SensorTimestampUnit::CounterTicks, now, now);
+        TEST_CHECK(test, !failed.valid);
+        TEST_CHECK(test, !failed.reason.empty());
+
+        // applyMappingToTiming: all five capture fields for a valid mapping, none for a later invalid one.
+        FrameTiming timing;
+        applyMappingToTiming(a, &timing);
+        TEST_CHECK(test, timing.hasCaptureMonotonic);
+        TEST_CHECK_EQ(test, timing.captureMonotonicNs, a.captureMonotonicNs);
+        TEST_CHECK_EQ(test, timing.captureUncertaintyNs, a.uncertaintyNs);
+        TEST_CHECK_EQ(test, timing.captureAnchorAgeNs, a.anchorAgeNs);
+        TEST_CHECK_EQ(test, timing.captureRealtimeNs, a.captureRealtimeNs);
+        TEST_CHECK(test, timing.captureRealtimeNs != 0);
+        applyMappingToTiming(failed, &timing);
+        TEST_CHECK(test, !timing.hasCaptureMonotonic);
+        TEST_CHECK_EQ(test, timing.captureMonotonicNs, static_cast<int64_t>(0));
+        TEST_CHECK_EQ(test, timing.captureUncertaintyNs, static_cast<int64_t>(0));
+        TEST_CHECK_EQ(test, timing.captureAnchorAgeNs, static_cast<int64_t>(0));
+        TEST_CHECK_EQ(test, timing.captureRealtimeNs, static_cast<int64_t>(0));
+    }
+
+    // Two cameras are independent: each keeps its own anchor, and reset() forces a fresh read.
+    {
+        const int64_t hz = 19200000;
+        int64_t nowA = 10000 * kMs;
+        int64_t nowB = 50000 * kMs;
+        TickClock clockA;
+        clockA.hz = hz;
+        clockA.nowNs = &nowA;
+        TickClock clockB;
+        clockB.hz = hz;
+        clockB.nowNs = &nowB;
+        clockB.realtimeOffsetNs = 1600000000000000000LL;
+        SensorTimeMapper mapperA(hz, tickConfig(), clockA.reader());
+        SensorTimeMapper mapperB(hz, tickConfig(), clockB.reader());
+        const int64_t evA = nowA - 10 * kMs;
+        const int64_t evB = nowB - 30 * kMs;
+        const SensorTimeMapping a1 =
+            mapperA.map(static_cast<uint64_t>(clockA.ticksAt(evA)), SensorTimestampUnit::CounterTicks, nowA, nowA);
+        const SensorTimeMapping b1 =
+            mapperB.map(static_cast<uint64_t>(clockB.ticksAt(evB)), SensorTimestampUnit::CounterTicks, nowB, nowB);
+        TEST_CHECK(test, a1.valid);
+        TEST_CHECK(test, b1.valid);
+        TEST_CHECK(test, std::llabs(a1.captureMonotonicNs - evA) <= a1.uncertaintyNs);
+        TEST_CHECK(test, std::llabs(b1.captureMonotonicNs - evB) <= b1.uncertaintyNs);
+        TEST_CHECK_EQ(test, a1.captureRealtimeNs - a1.captureMonotonicNs, clockA.realtimeOffsetNs);
+        TEST_CHECK_EQ(test, b1.captureRealtimeNs - b1.captureMonotonicNs, clockB.realtimeOffsetNs);
+        TEST_CHECK_EQ(test, clockA.reads, 1);
+        TEST_CHECK_EQ(test, clockB.reads, 1);
+
+        // Within the refresh interval neither mapper reads again; a frame on A does not touch B's anchor.
+        nowA += 100 * kMs;
+        const int64_t evA2 = nowA - 5 * kMs;
+        const SensorTimeMapping a2 =
+            mapperA.map(static_cast<uint64_t>(clockA.ticksAt(evA2)), SensorTimestampUnit::CounterTicks, nowA, nowA);
+        TEST_CHECK(test, a2.valid);
+        TEST_CHECK_EQ(test, clockA.reads, 1);
+        TEST_CHECK_EQ(test, clockB.reads, 1);
+
+        // reset() on A forces a new anchor read on A only.
+        mapperA.reset();
+        const SensorTimeMapping a3 =
+            mapperA.map(static_cast<uint64_t>(clockA.ticksAt(evA2)), SensorTimestampUnit::CounterTicks, nowA, nowA);
+        TEST_CHECK(test, a3.valid);
+        TEST_CHECK_EQ(test, clockA.reads, 2);
+        TEST_CHECK_EQ(test, clockB.reads, 1);
+        TEST_CHECK_EQ(test, a3.anchorAgeNs, static_cast<int64_t>(0));
+    }
+
+    TEST_CHECK(test, monotonicNowNs() > 0);
 
     return test.finish();
 }

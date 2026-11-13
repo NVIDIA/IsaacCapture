@@ -308,6 +308,78 @@ void checkTimingClock(TestContext& test)
     TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(0));
 }
 
+// Stereo samples keep their own capture times, and an eye with no mapped capture time emits a zero record even when its
+// other capture fields still hold values.
+void checkStereoCaptureTimes(TestContext& test)
+{
+    struct EyeCase
+    {
+        bool leftMapped;
+        bool rightMapped;
+    };
+    const EyeCase cases[] = { { true, true }, { true, false }, { false, true } };
+    const int64_t leftNs = 1762900000123456789LL;
+    const int64_t rightNs = 1762900000123461234LL;
+    for (const EyeCase& eyes : cases)
+    {
+        FakePacketSink sink;
+        std::vector<argus_sender::Avs1StreamRecord> streams = templates();
+        streams[1].codec = argus_sender::AVS1_CODEC_HEVC;
+        argus_sender::FrameBundleAssembler assembler(&sink, 91, streams);
+        std::vector<argus_sender::BundleStreamInput> inputs(2);
+        inputs[0].present = true;
+        inputs[0].sequence = 1;
+        inputs[0].timings.push_back(timing(10, 1000));
+        inputs[0].timings.push_back(timing(11, 1004));
+        const bool mapped[2] = { eyes.leftMapped, eyes.rightMapped };
+        const int64_t realtime[2] = { leftNs, rightNs };
+        const int64_t uncertainty[2] = { 2500, 7000 };
+        const int64_t age[2] = { 1000000, 90000000 };
+        for (size_t eye = 0; eye < 2; ++eye)
+        {
+            argus_sender::FrameTiming& t = inputs[0].timings[eye];
+            t.hasCaptureMonotonic = mapped[eye];
+            t.captureMonotonicNs = 123456789 + static_cast<int64_t>(eye);
+            t.captureRealtimeNs = realtime[eye];
+            t.captureUncertaintyNs = uncertainty[eye];
+            t.captureAnchorAgeNs = age[eye];
+        }
+        TEST_CHECK(test, assembler.beginBundle(1, inputs, 2000, 2100, argus_sender::SENDER_CLOCK_REALTIME, 0));
+        const uint8_t payload[] = { 0, 0, 1, 0x26 };
+        for (size_t camera = 0; camera < 2; ++camera)
+        {
+            TEST_CHECK(test, assembler.encodedSink(0, camera)->enqueueEncoded(
+                                 payload, sizeof(payload), 1, 2200, argus_sender::SENDER_CLOCK_REALTIME));
+        }
+        TEST_CHECK_EQ(test, sink.packets.size(), static_cast<size_t>(1));
+        if (sink.packets.size() != 1)
+            return;
+        argus_sender::Avs1Bundle bundle;
+        const char* error = NULL;
+        TEST_CHECK(
+            test, argus_sender::parseAvs1WireRecord(sink.packets[0].data(), sink.packets[0].size(), &bundle, &error));
+        for (size_t eye = 0; eye < 2; ++eye)
+        {
+            const argus_sender::Avs1TimingRecord& record = bundle.streams[0].samples[eye].timing;
+            if (mapped[eye])
+            {
+                TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(argus_sender::AVS1_TIMING_VALID));
+                TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(realtime[eye]));
+                TEST_CHECK_EQ(test, record.uncertaintyNs, static_cast<uint32_t>(uncertainty[eye]));
+                TEST_CHECK_EQ(test, record.anchorAgeNs, static_cast<uint32_t>(age[eye]));
+            }
+            else
+            {
+                TEST_CHECK_EQ(test, record.flags, static_cast<uint16_t>(0));
+                TEST_CHECK_EQ(test, record.clockDomain, static_cast<uint16_t>(0));
+                TEST_CHECK_EQ(test, record.sensorCaptureNs, static_cast<uint64_t>(0));
+                TEST_CHECK_EQ(test, record.uncertaintyNs, static_cast<uint32_t>(0));
+                TEST_CHECK_EQ(test, record.anchorAgeNs, static_cast<uint32_t>(0));
+            }
+        }
+    }
+}
+
 // A bundle with no mapped capture time still sets TIMING_EXT and carries an all-zero record per sample.
 void checkUnmappedTiming(TestContext& test)
 {
@@ -451,6 +523,7 @@ int main()
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID));
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_TSC_VALID));
     TEST_CHECK_EQ(test, parsed.senderCaptureReadyTscNs, 0ULL);
+    checkStereoCaptureTimes(test);
     checkConcurrentEnqueueOrder(test, false);
     checkConcurrentEnqueueOrder(test, true);
     return test.finish();

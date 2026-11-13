@@ -11,6 +11,8 @@
 // mapping is only as good as the assumption that the sensor counts that counter, so every conversion is checked and
 // an implausible one is reported as invalid, never replaced by a host-side stamp.
 
+#include "FrameTiming.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -41,6 +43,8 @@ int64_t readCounterHz();
 
 // Counter ticks to nanoseconds without overflowing 64 bits; `hz` must be positive.
 int64_t counterTicksToNs(int64_t ticks, int64_t hz);
+// CLOCK_MONOTONIC in ns; 0 if it cannot be read. This is the clock every mapping result is expressed on.
+int64_t monotonicNowNs();
 
 // The outcome of placing one sensor timestamp.
 struct SensorTimeMapping
@@ -113,6 +117,39 @@ private:
     bool m_haveAnchor = false;
     bool m_stepped = false;
 };
+
+// What a backend's sensor timestamp counts: raw ticks of the platform counter (SIPL's start-of-frame), or that counter
+// already scaled to nanoseconds (Argus' TSC timestamps, which are documented as nanoseconds). The backend declares it;
+// it is never inferred from the value.
+enum class SensorTimestampUnit
+{
+    CounterTicks,
+    Nanoseconds
+};
+
+// The one mapping path every backend uses: a backend extracts its sensor timestamp and declares its unit, this class
+// normalises it to nanoseconds of the platform counter and places it with SensorClockMap's checks. `counterHz` is the
+// platform counter's actual frequency (readCounterHz()); it is needed even for a nanosecond timestamp, because the
+// anchor pair is a raw counter read. 0 where the counter is unreadable, and every mapping is then refused.
+//
+// Not thread-safe; one instance per camera, used by the one thread that acquires that camera.
+class SensorTimeMapper
+{
+public:
+    SensorTimeMapper(int64_t counterHz, const SensorClockMap::Config& config, SensorClockMap::PairReader reader);
+
+    SensorTimeMapping map(uint64_t timestamp, SensorTimestampUnit unit, int64_t readyMonotonicNs, int64_t nowMonotonicNs);
+
+    // Forget the anchor: call when capture restarts or the sensor domain changes.
+    void reset();
+
+private:
+    int64_t m_counterHz;
+    SensorClockMap m_map;
+};
+
+// Records a mapping in `timing`. A mapping that is not valid clears the capture fields, so no earlier claim survives.
+void applyMappingToTiming(const SensorTimeMapping& mapping, FrameTiming* timing);
 
 } // namespace argus_sender
 
