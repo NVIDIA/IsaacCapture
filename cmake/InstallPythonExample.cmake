@@ -10,6 +10,7 @@
 # installed copy so that `uv run` works out of the box in the install tree. On the
 # way it pins isaaccapture to the version this build produced and drops any
 # [tool.uv.sources], so the installed example resolves the wheel next to it.
+# A .python-version beside it pins `uv run` to the build's Python.
 #
 # Two source layouts are accepted while the examples are converted to the
 # convention in examples/README.md (NVIDIA/IsaacTeleop#985), picked by where
@@ -78,6 +79,13 @@ ${_IPE_EXTRA_UV_EXTRA_BUILD_DEPS}
 
     # Install generated pyproject.toml (with [tool.uv] appended)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/pyproject.toml"
+        DESTINATION ${_IPE_DESTINATION}
+    )
+
+    # requires-python is a range, so without this uv picks its newest managed
+    # Python, which `environments` above then rejects.
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/.python-version" "${ISAAC_TELEOP_PYTHON_VERSION}\n")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/.python-version"
         DESTINATION ${_IPE_DESTINATION}
     )
 
