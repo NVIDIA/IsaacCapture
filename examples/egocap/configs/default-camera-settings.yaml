@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Default camera settings for tools/start_system.py: what the Orin's camera sender runs with.
+# It is the only profile for now and describes one rig, a single SHW5G head camera on the SIPL backend. Pass another
+# file with --sender-config for a different rig. CAMERA_SETTINGS.md describes every key.
+#
+# The launcher uploads this file to the Orin, where the sender reads it once at start; to change a value, stop the
+# sender and start it again. The same effective values also set the receiver, the bridge and the stream descriptor
+# the page reads, so change them here (or with the launcher's overrides) and nowhere else.
+
+version: 1
+capture_backend: sipl
+
+# Where SIPL finds the camera. These paths are on the Orin and describe the tested head-camera wiring.
+sipl:
+  platform_config_json: /opt/isaaccapture/camera-platform.json  # sensor size, sensor rate and trigger mode live here
+  platform_config_name: SHW5G_2  # the platform inside that file
+  link_masks: [256, 0]  # which deserializer links are powered, one mask per deserializer
+  nito_dir: /var/nvidia/nvcam/settings/sipl  # image-tuning files
+
+network:
+  bind: 0.0.0.0
+  port: 5000  # TCP port the PC receiver connects to
+  # The two settings below are what let the page show latency measured from the sensor's capture time: the timing
+  # records carry the capture instant, and the clock responder lets the PC map the sender's clock onto its own.
+  # The bridge connects to clock_port, so the launcher takes it from here.
+  timing_extension: true
+  clock_port: 5611  # UDP
+
+runtime:
+  frames: 0  # 0 = run until stopped
+  kpi: true  # periodic rate and timing statistics in the sender log
+  log_interval_s: 1
+
+streams:
+  - id: head  # names the stream in the receiver and the bridge
+    type: mono
+    cameras:
+      - {device: 0, mode: 0}  # device is the SIPL pipeline index; mode is not used on the SIPL backend
+    output:
+      codec: hevc
+      # The stream's frame rate: the encoder's rate, the default GOP length and the rate advertised to the receiver. On
+      # the SIPL backend frames arriving faster than this are skipped; the sensor's own rate comes from the platform file.
+      fps: 30
+      bitrate_mbps: 4  # constant bitrate, sized for a Wi-Fi link between the Orin and the PC
