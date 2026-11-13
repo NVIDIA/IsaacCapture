@@ -26,6 +26,21 @@ bridge checks for a newer notice for the same slot, or as many newer notices as 
 picture instead of encoding it (counted as `slot overruns`). The session also answers clock-sync requests that
 arrive as LiveKit data messages.
 
+## Integration boundary
+
+This example publishes receiver pictures to a browser through LiveKit. The LiveKit session, publication and feedback
+wiring (`livekit_publisher/` and the session handling in `bridge/`) is temporary integration. It is intended to move
+behind transport adapters: a layer that carries camera video and application messages over a selectable network
+transport and owns sessions, admission limits and feedback. Camera buffer ownership and encode and decode
+responsibilities belong to the camera interface. A replacement must preserve browser delivery, bounded latency and
+safe GPU access. Until receiver slots have read leases, the residual risk described under "Reading the receiver's
+slots" applies.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `livekit_publisher/` and the session, publication and feedback wiring in `bridge/` | Transport adapters | Adapt the useful implementation; retire the hard-coded transport glue | Map sessions, publications, encoder feedback and reconnect behaviour to the adapter boundary. Lands when real web clients receive streams, and feedback and recovery work, through an adapter. |
+| `ipc_client/` and the slot read in `bridge/stream_worker.cpp` | Camera reader views and leases | Retire | Read frames through a lease held until the final GPU read. Lands with the receiver's lease support. |
+
 ## Build
 
 ```bash
