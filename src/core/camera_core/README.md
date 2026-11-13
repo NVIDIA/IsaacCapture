@@ -66,4 +66,5 @@ gives these numbers.
 
 ## Tests
 
-`tests/cpp/core/camera_core`, run with `ctest -L camera_core`.
+`tests/cpp/core/camera_core`, run with `ctest -L camera_core`. They are tagged `unit`, so
+`ctest -L unit` runs them too.

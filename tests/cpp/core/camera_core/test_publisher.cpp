@@ -84,7 +84,7 @@ std::vector<std::uint64_t> sequences(const RecordingSink& sink)
 
 } // namespace
 
-TEST_CASE("a window of one always gets the newest frame set", "[camera_core][delivery]")
+TEST_CASE("a window of one always gets the newest frame set", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
@@ -107,7 +107,7 @@ TEST_CASE("a window of one always gets the newest frame set", "[camera_core][del
     REQUIRE(sink.events[1].skipped == 1);
 }
 
-TEST_CASE("a larger window gets every frame set in order", "[camera_core][delivery]")
+TEST_CASE("a larger window gets every frame set in order", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
@@ -127,7 +127,7 @@ TEST_CASE("a larger window gets every frame set in order", "[camera_core][delive
     REQUIRE(sink.events[3].skipped == 0);
 }
 
-TEST_CASE("an in-order reader that falls behind is told what it skipped", "[camera_core][delivery]")
+TEST_CASE("an in-order reader that falls behind is told what it skipped", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
@@ -151,7 +151,7 @@ TEST_CASE("an in-order reader that falls behind is told what it skipped", "[came
     REQUIRE(sink.events[3].skipped == 0);
 }
 
-TEST_CASE("newest order with a larger window skips to the newest frame set", "[camera_core][delivery]")
+TEST_CASE("newest order with a larger window skips to the newest frame set", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
@@ -171,7 +171,7 @@ TEST_CASE("newest order with a larger window skips to the newest frame set", "[c
     REQUIRE(sink.events[2].skipped == 1);
 }
 
-TEST_CASE("a subscription that does not fit the pool is refused", "[camera_core][budget]")
+TEST_CASE("a subscription that does not fit the pool is refused", "[unit][camera_core][budget]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(4));
@@ -194,7 +194,7 @@ TEST_CASE("a subscription that does not fit the pool is refused", "[camera_core]
     REQUIRE_FALSE(publisher.subscribe(second, 99, { .window = 1 }));
 }
 
-TEST_CASE("the backend reserve counts against the pool", "[camera_core][budget]")
+TEST_CASE("the backend reserve counts against the pool", "[unit][camera_core][budget]")
 {
     Publisher publisher;
     // An SDK that keeps four captures in flight, on a pool of eight.
@@ -211,7 +211,7 @@ TEST_CASE("the backend reserve counts against the pool", "[camera_core][budget]"
     REQUIRE_THAT(refused.error, Catch::Matchers::ContainsSubstring("4 for the backend"));
 }
 
-TEST_CASE("a slot is reused only when neither the ring nor a reader holds it", "[camera_core][slots]")
+TEST_CASE("a slot is reused only when neither the ring nor a reader holds it", "[unit][camera_core][slots]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(3, 1));
@@ -237,7 +237,7 @@ TEST_CASE("a slot is reused only when neither the ring nor a reader holds it", "
     REQUIRE(publisher.acquire_slot(group, 0) == 0u);
 }
 
-TEST_CASE("the slot-free callback fires when the last holder lets go", "[camera_core][slots]")
+TEST_CASE("the slot-free callback fires when the last holder lets go", "[unit][camera_core][slots]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(4, 1));
@@ -281,7 +281,7 @@ TEST_CASE("the slot-free callback fires when the last holder lets go", "[camera_
     REQUIRE(freed.size() == 2);
 }
 
-TEST_CASE("unsubscribing returns every frame set the reader held", "[camera_core][slots]")
+TEST_CASE("unsubscribing returns every frame set the reader held", "[unit][camera_core][slots]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8, 1));
@@ -306,7 +306,7 @@ TEST_CASE("unsubscribing returns every frame set the reader held", "[camera_core
     publisher.release(reader.id, sink.events[0].lease_id);
 }
 
-TEST_CASE("a frame set that could not be sent is not counted as held", "[camera_core][delivery]")
+TEST_CASE("a frame set that could not be sent is not counted as held", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(3, 1));
@@ -329,7 +329,7 @@ TEST_CASE("a frame set that could not be sent is not counted as held", "[camera_
     REQUIRE(publisher.acquire_slot(group, 0) == 0u);
 }
 
-TEST_CASE("a restart changes the generation and empties the ring", "[camera_core][lifecycle]")
+TEST_CASE("a restart changes the generation and empties the ring", "[unit][camera_core][lifecycle]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(4, 1));
@@ -352,7 +352,7 @@ TEST_CASE("a restart changes the generation and empties the ring", "[camera_core
     REQUIRE(sink.events[1].sequence == 2);
 }
 
-TEST_CASE("a group publishes one image per stream", "[camera_core][groups]")
+TEST_CASE("a group publishes one image per stream", "[unit][camera_core][groups]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(4, 3, "rig"));
@@ -383,7 +383,7 @@ TEST_CASE("a group publishes one image per stream", "[camera_core][groups]")
     REQUIRE(event.images[2].flags == IMAGE_FLAG_SDK_WARNING);
 }
 
-TEST_CASE("an encoded stream is described by its codec, not by a pixel format", "[camera_core][groups]")
+TEST_CASE("an encoded stream is described by its codec, not by a pixel format", "[unit][camera_core][groups]")
 {
     GroupDescription description = make_group(4, 1, "head.enc");
     StreamDescription& stream = description.streams[0];
@@ -400,7 +400,7 @@ TEST_CASE("an encoded stream is described by its codec, not by a pixel format", 
     REQUIRE(stored.slot_bytes == 2 * 1024 * 1024);
 }
 
-TEST_CASE("every frame set carries its timeline", "[camera_core][timeline]")
+TEST_CASE("every frame set carries its timeline", "[unit][camera_core][timeline]")
 {
     std::int64_t now = 1000;
     Publisher publisher([&] { return now; });
@@ -428,7 +428,7 @@ TEST_CASE("every frame set carries its timeline", "[camera_core][timeline]")
     REQUIRE(sink.events[1].timeline.sent_ns == 2500);
 }
 
-TEST_CASE("misuse by a backend is rejected", "[camera_core][validation]")
+TEST_CASE("misuse by a backend is rejected", "[unit][camera_core][validation]")
 {
     Publisher publisher;
     REQUIRE_THROWS_AS(publisher.add_group(make_group(4, 0)), std::invalid_argument);
@@ -467,7 +467,7 @@ TEST_CASE("misuse by a backend is rejected", "[camera_core][validation]")
     REQUIRE_THROWS_AS(publisher.claim_slot(group, 0, 99), std::invalid_argument);
 }
 
-TEST_CASE("capture and a reader on different threads keep every frame set in order", "[camera_core][threads]")
+TEST_CASE("capture and a reader on different threads keep every frame set in order", "[unit][camera_core][threads]")
 {
     // A reader as the endpoint will drive it: events arrive on the capture thread, the
     // reader's own thread takes them and releases.
