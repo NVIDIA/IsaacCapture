@@ -164,6 +164,19 @@ void test_conversion_uses_pc_offset_not_sample_time()
     CHECK(q.capture_monotonic_ns == f.now - kMs);
 }
 
+// Evidence with every chrony term zero, so each test sets only the term under test.
+ChronyEvidence zero_evidence()
+{
+    return ChronyEvidence{ synced(), 0 };
+}
+
+// The camera host's last source update is not newer than the PC's copy of it, so the shared upstream part cancels.
+void share_upstream_sample(ChronyEvidence& follower, ChronyEvidence& server)
+{
+    server.tracking.ref_time_unix_s = 100.0;
+    follower.tracking.ref_time_unix_s = 100.0;
+}
+
 void test_inter_host_terms()
 {
     Fixture f;
@@ -176,18 +189,13 @@ void test_inter_host_terms()
     f.sender->tracking.root_delay_s = 2e-4;
     f.sender->tracking.skew_ppm = 5.0;
     f.config.budget_ns = 10 * kMs;
+    share_upstream_sample(*f.pc, *f.sender);
     const Qualification q = f.run();
     // Both reports are one second old, follower (PC) update interval 0. |system time|: 100 us + 200 us; root dispersion
     // difference 200 - 100 = 100 us; root delay difference (400 - 200) / 2 = 100 us; skew * age: 10 us + 5 us.
     CHECK(q.verdict == Verdict::Qualified);
     CHECK(within(q.terms.inter_host_ns, 515'000, 2));
     CHECK(q.uncertainty_ns == q.terms.sensor_ns + q.terms.inter_host_ns + q.terms.pc_local_ns);
-}
-
-// Evidence with every chrony term zero, so each test sets only the term under test.
-ChronyEvidence zero_evidence()
-{
-    return ChronyEvidence{ synced(), 0 };
 }
 
 void test_upstream_cancels()
@@ -198,6 +206,7 @@ void test_upstream_cancels()
     f.sender->tracking.root_dispersion_s = 0.01;
     f.pc->tracking.root_delay_s = 0.1 + 200e-6;
     f.pc->tracking.root_dispersion_s = 0.01 + 50e-6;
+    share_upstream_sample(*f.pc, *f.sender);
     const Qualification q = f.run();
     // Link only: 50 us + 200 us / 2 = 150 us. The summed model would charge about 0.11 s + 0.11 s.
     CHECK(within(q.terms.inter_host_ns, 150'000, 50)); // double error on the 0.1 s operands
@@ -210,6 +219,7 @@ void test_upstream_cancels()
 void test_pc_below_camera_host_clamps_to_zero()
 {
     Fixture f;
+    share_upstream_sample(*f.pc, *f.sender);
     f.sender->tracking.root_delay_s = 0.1;
     f.sender->tracking.root_dispersion_s = 0.01;
     f.pc->tracking.root_delay_s = 0.05;
@@ -295,6 +305,7 @@ void test_inter_host_bound_direct()
     // Root fields equal on both sides cancel completely, however large.
     s.tracking.root_delay_s = p.tracking.root_delay_s = 0.1;
     s.tracking.root_dispersion_s = p.tracking.root_dispersion_s = 0.01;
+    share_upstream_sample(s, p);
     CHECK(inter_host_bound_ns(s, p, 0, 0) == 0);
 
     // Dispersion difference counts in full, delay difference at half; exact in binary doubles.
@@ -305,6 +316,7 @@ void test_inter_host_bound_direct()
     CHECK(inter_host_bound_ns(s2, p2, 0, 0) == 500'000'000 + 125'000'000);
 
     // A follower's root fields below the server's contribute nothing, never a negative term.
+    share_upstream_sample(p2, s2);
     CHECK(inter_host_bound_ns(p2, s2, 0, 0) == 0);
 
     // Combined: 1 us slack + 2 us follower aging + 3 us server aging = 6 us.
@@ -321,6 +333,101 @@ void test_inter_host_bound_direct()
     CHECK(inter_host_bound_ns(s4, zero_evidence(), 0, 0) == 2);
     s4.tracking.system_time_s = 1e12;
     CHECK(inter_host_bound_ns(s4, zero_evidence(), 0, 0) == INT64_MAX / 4); // the saturation value
+}
+
+// Follower (PC) root fields 0.5 s dispersion and 0.25 s delay, server's 0.25 s and 0.125 s; all exact in binary
+// doubles.
+struct RootFieldPair
+{
+    ChronyEvidence follower = zero_evidence();
+    ChronyEvidence server = zero_evidence();
+
+    RootFieldPair()
+    {
+        follower.tracking.root_dispersion_s = 0.5;
+        follower.tracking.root_delay_s = 0.25;
+        server.tracking.root_dispersion_s = 0.25;
+        server.tracking.root_delay_s = 0.125;
+        follower.tracking.ref_time_unix_s = 100.0;
+    }
+
+    int64_t bound() const
+    {
+        return inter_host_bound_ns(follower, server, 0, 0);
+    }
+};
+
+constexpr int64_t kCancelledBoundNs = 250'000'000 + 62'500'000; // (0.5 - 0.25) + (0.25 - 0.125) / 2
+constexpr int64_t kUncancelledBoundNs = 500'000'000 + 125'000'000; // 0.5 + 0.25 / 2
+
+void test_cancellation_requires_a_shared_upstream_sample()
+{
+    // Server last updated no later than the follower copied it: cancellation as before.
+    RootFieldPair same;
+    same.server.tracking.ref_time_unix_s = 100.0;
+    CHECK(same.bound() == kCancelledBoundNs);
+    same.server.tracking.ref_time_unix_s = 40.0;
+    CHECK(same.bound() == kCancelledBoundNs);
+
+    // Server updated after the follower: its root fields may differ from the copy, so nothing cancels.
+    RootFieldPair newer;
+    newer.server.tracking.ref_time_unix_s = 101.0;
+    CHECK(newer.bound() == kUncancelledBoundNs);
+    CHECK(newer.bound() > same.bound());
+    // Growing the newer server's root fields changes nothing: the bound is the follower's full values.
+    newer.server.tracking.root_dispersion_s = 0.4;
+    newer.server.tracking.root_delay_s = 0.3;
+    CHECK(newer.bound() == kUncancelledBoundNs);
+
+    // Unknown server update time: nothing cancels.
+    RootFieldPair unknown;
+    unknown.server.tracking.ref_time_unix_s = 0.0;
+    CHECK(unknown.bound() == kUncancelledBoundNs);
+
+    // Unknown follower update time with a known server one: the server is newer, nothing cancels.
+    RootFieldPair no_follower_time;
+    no_follower_time.follower.tracking.ref_time_unix_s = 0.0;
+    no_follower_time.server.tracking.ref_time_unix_s = 100.0;
+    CHECK(no_follower_time.bound() == kUncancelledBoundNs);
+
+    // The other terms are charged on top in both cases.
+    Fixture f;
+    f.pc->tracking = same.follower.tracking;
+    f.pc->tracking.system_time_s = 1e-4;
+    f.sender->tracking = same.server.tracking;
+    f.sender->tracking.system_time_s = -2e-4;
+    f.config.budget_ns = 10 * kSecond;
+    CHECK(within(f.run().terms.inter_host_ns, kCancelledBoundNs + 300'000, 2));
+    f.sender->tracking.ref_time_unix_s = 101.0;
+    CHECK(within(f.run().terms.inter_host_ns, kUncancelledBoundNs + 300'000, 2));
+}
+
+void test_newer_server_root_growth_never_shrinks_the_bound()
+{
+    // Follower evidence fixed; only the server's root fields grow, with a newer update time.
+    RootFieldPair original;
+    original.server.tracking.ref_time_unix_s = 100.0;
+    const int64_t before = original.bound();
+
+    for (double growth : { 0.01, 0.1, 0.25, 0.4, 1.0 })
+    {
+        RootFieldPair grown;
+        grown.server.tracking.ref_time_unix_s = 100.5;
+        grown.server.tracking.root_dispersion_s += growth;
+        grown.server.tracking.root_delay_s += growth;
+        CHECK(grown.bound() >= before);
+    }
+
+    // The same growth through qualify_capture.
+    Fixture f;
+    f.pc->tracking = original.follower.tracking;
+    f.sender->tracking = original.server.tracking;
+    f.config.budget_ns = 10 * kSecond;
+    const int64_t before_run = f.run().terms.inter_host_ns;
+    f.sender->tracking.ref_time_unix_s = 100.5;
+    f.sender->tracking.root_dispersion_s = 0.6;
+    f.sender->tracking.root_delay_s = 0.6;
+    CHECK(f.run().terms.inter_host_ns >= before_run);
 }
 
 void test_simple_rejections()
@@ -758,6 +865,8 @@ int main()
     test_aging_charged_per_host();
     test_both_system_times_charged();
     test_inter_host_bound_direct();
+    test_cancellation_requires_a_shared_upstream_sample();
+    test_newer_server_root_growth_never_shrinks_the_bound();
     test_simple_rejections();
     test_evidence_age_boundary();
     test_unsynchronised();
