@@ -152,6 +152,8 @@ void printUsage(const char* argv0);
 bool parseCommandLine(int argc, char** argv, CommandLine* commandLine);
 bool loadConfigFile(const std::string& path, AppConfig* config, std::string* error);
 bool validateConfig(const AppConfig& config, std::string* error);
+// The restrictions of the SIPL backend, for a config whose backend is resolved after validation (`auto`).
+bool validateSiplConfig(const AppConfig& config, std::string* error);
 
 const char* streamTypeName(StreamType type);
 const char* captureModeName(CaptureMode mode);

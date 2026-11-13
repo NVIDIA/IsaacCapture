@@ -36,6 +36,16 @@ bool executeConfiguredSender(const AppConfig& config)
         return false;
     }
     std::printf("Capture backend: %s\n", captureBackendName(backend));
+    // `auto` resolves to SIPL here, after validation, which checked the SIPL restrictions only for an explicit choice.
+    if (backend == CAPTURE_BACKEND_SIPL && config.captureBackend != CAPTURE_BACKEND_SIPL)
+    {
+        std::string siplError;
+        if (!validateSiplConfig(config, &siplError))
+        {
+            std::fprintf(stderr, "Configuration error: %s\n", siplError.c_str());
+            return false;
+        }
+    }
 
     uint64_t reconnectSession = 0;
     while (!stopRequested())

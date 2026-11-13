@@ -260,6 +260,8 @@ struct SiplCapture::Impl
         std::vector<NvSciBufObj> icpBufObjects;
         std::vector<Slot> slots;
         NvSciSyncObj syncObj = nullptr;
+        // One wait context can wait on only one fence at a time, so each sensor's frame thread has its own.
+        NvSciSyncCpuWaitContext cpuWaitContext = nullptr;
 
         std::mutex mutex;
         bool hasPending = false;
@@ -277,7 +279,6 @@ struct SiplCapture::Impl
     SiplConfig config;
     NvSciBufModule bufModule = nullptr;
     NvSciSyncModule syncModule = nullptr;
-    NvSciSyncCpuWaitContext cpuWaitContext = nullptr;
 
     std::unique_ptr<INvSIPLCamera> camera;
     std::unique_ptr<INvSIPLCameraQuery> queryApi;
@@ -339,7 +340,6 @@ void SiplCapture::Impl::configure()
 {
     checkSci(NvSciBufModuleOpen(&bufModule), "NvSciBufModuleOpen");
     checkSci(NvSciSyncModuleOpen(&syncModule), "NvSciSyncModuleOpen");
-    checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
 
     initSiplTrace();
     queryApi = INvSIPLCameraQuery::GetInstance();
@@ -370,6 +370,7 @@ void SiplCapture::Impl::configure()
     {
         std::unique_ptr<Sensor> sensor(new Sensor());
         sensor->info = info;
+        checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &sensor->cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
         // ISP0 only: ICP would double the capture bandwidth for a raw stream nothing here consumes.
         sensor->pipelineConfig.captureOutputRequested = false;
         sensor->pipelineConfig.isp0OutputRequested = true;
@@ -538,7 +539,7 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             // The ISP is still writing until this fence clears.
             NvSciSyncFence fence = NvSciSyncFenceInitializer;
             checkSipl(nvm->GetEOFNvSciSyncFence(&fence), "GetEOFNvSciSyncFence");
-            const NvSciError wait = NvSciSyncFenceWait(&fence, cpuWaitContext, config.frameTimeoutMs * 1000UL);
+            const NvSciError wait = NvSciSyncFenceWait(&fence, sensor.cpuWaitContext, config.frameTimeoutMs * 1000UL);
             NvSciSyncFenceClear(&fence);
             checkSci(wait, "NvSciSyncFenceWait");
 
@@ -601,6 +602,8 @@ void SiplCapture::Impl::eventLoop(Sensor& sensor)
         case Notification::NOTIF_ERROR_SERIALIZER_FAILURE:
         case Notification::NOTIF_ERROR_SENSOR_FAILURE:
         case Notification::NOTIF_ERROR_INTERNAL_FAILURE:
+        case Notification::NOTIF_ERROR_ICP_CAPTURE_FAILURE:
+        case Notification::NOTIF_ERROR_ISP_PROCESSING_FAILURE:
         {
             std::ostringstream oss;
             oss << "SIPL sensor " << sensor.info.id << " pipeline error, notification "
@@ -658,19 +661,19 @@ void SiplCapture::Impl::cleanup()
             NvSciBufAttrListFree(sensor->bufAttrs);
         if (sensor->syncObj)
             NvSciSyncObjFree(sensor->syncObj);
+        if (sensor->cpuWaitContext)
+            NvSciSyncCpuWaitContextFree(sensor->cpuWaitContext);
+        sensor->cpuWaitContext = nullptr;
         sensor->icpAttrs = nullptr;
         sensor->bufAttrs = nullptr;
         sensor->syncObj = nullptr;
     }
     camera.reset();
     queryApi.reset();
-    if (cpuWaitContext)
-        NvSciSyncCpuWaitContextFree(cpuWaitContext);
     if (syncModule)
         NvSciSyncModuleClose(syncModule);
     if (bufModule)
         NvSciBufModuleClose(bufModule);
-    cpuWaitContext = nullptr;
     syncModule = nullptr;
     bufModule = nullptr;
 }

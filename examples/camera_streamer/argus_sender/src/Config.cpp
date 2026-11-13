@@ -402,6 +402,26 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
     return validateConfig(*config, error);
 }
 
+bool validateSiplConfig(const AppConfig& config, std::string* error)
+{
+    if (config.sipl.platformConfigJson.empty() || config.sipl.platformConfigName.empty())
+        return fail(error, "capture_backend sipl needs sipl.platform_config_json and sipl.platform_config_name");
+    if (config.sipl.linkMasks.empty())
+        return fail(error, "capture_backend sipl needs sipl.link_masks");
+    if (config.sipl.isp0Buffers < 2)
+        return fail(error, "sipl.isp0_buffers must be at least 2");
+    for (size_t i = 0; i < config.streams.size(); ++i)
+    {
+        const StreamConfig& stream = config.streams[i];
+        if (stream.type != STREAM_TYPE_MONO || stream.output.codec != CODEC_HEVC || stream.output.remap.enabled())
+        {
+            return fail(error, "streams[" + std::to_string(i) +
+                                   "]: the sipl backend supports mono hevc streams without a remap");
+        }
+    }
+    return true;
+}
+
 bool validateConfig(const AppConfig& config, std::string* error)
 {
     if (config.version != 1)
@@ -414,24 +434,8 @@ bool validateConfig(const AppConfig& config, std::string* error)
         return fail(error, "at least one stream is required");
     if (config.streams.size() > std::numeric_limits<uint16_t>::max())
         return fail(error, "too many streams for AVS1");
-    if (config.captureBackend == CAPTURE_BACKEND_SIPL)
-    {
-        if (config.sipl.platformConfigJson.empty() || config.sipl.platformConfigName.empty())
-            return fail(error, "capture_backend sipl needs sipl.platform_config_json and sipl.platform_config_name");
-        if (config.sipl.linkMasks.empty())
-            return fail(error, "capture_backend sipl needs sipl.link_masks");
-        if (config.sipl.isp0Buffers < 2)
-            return fail(error, "sipl.isp0_buffers must be at least 2");
-        for (size_t i = 0; i < config.streams.size(); ++i)
-        {
-            const StreamConfig& stream = config.streams[i];
-            if (stream.type != STREAM_TYPE_MONO || stream.output.codec != CODEC_HEVC || stream.output.remap.enabled())
-            {
-                return fail(error, "streams[" + std::to_string(i) +
-                                       "]: the sipl backend supports mono hevc streams without a remap");
-            }
-        }
-    }
+    if (config.captureBackend == CAPTURE_BACKEND_SIPL && !validateSiplConfig(config, error))
+        return false;
 
     std::set<std::string> ids;
     std::set<uint32_t> devices;
