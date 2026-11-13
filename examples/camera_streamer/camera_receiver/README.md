@@ -12,6 +12,19 @@ Standalone AVS1 multi-stream receiver for the two-process camera path:
    NV12 streams into GPU-resident rings.
 3. Same-host consumers open selected streams through CUDA IPC.
 
+## Integration boundary
+
+The receiver and its CUDA IPC publication are temporary integration that connects the standalone streamer to local
+consumers (`cuda_ipc_consumer/` and the LiveKit bridge's `ipc_client`). The boundary is intended to converge on a
+shared camera publisher: a catalog of streams, leases that say when a reader has finished with a buffer, encoded
+stream profiles, and a receiver backend for remote sources. Decoding (`codec/`) and the mock sender remain useful;
+the duplicate handoff is removed only after its consumers use the shared boundary.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `camera_receiver.py`, `cuda_ipc_consumer/`, `examples/camera_livekit_bridge/ipc_client/` | A camera publisher with a catalog, leases, encoded profiles and a receiver backend | Adapt the receiver; retire the bespoke handoff | Move discovery, frame access and completion-based release to the shared reader and receiver contracts. Lands when existing consumers read safe frames and encoded output with matching identity and timing, and the handoff has no remaining users. |
+| `codec/`, `examples/camera_streamer/mock_sender/` | Decoder behind the publisher; a synthetic source for hardware-free tests | Reuse | Carry the tested decode behaviour and mock fixtures forward. No retirement planned. |
+
 ## Setup
 
 From this directory:
