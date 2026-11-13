@@ -3,6 +3,8 @@
 
 cmake_minimum_required(VERSION 3.20)
 
+find_package(Threads REQUIRED)
+
 add_executable(camera_core_tests
     test_publisher.cpp
 )
@@ -10,6 +12,7 @@ add_executable(camera_core_tests
 target_link_libraries(camera_core_tests PRIVATE
     camera::camera_core
     Catch2::Catch2WithMain
+    Threads::Threads
 )
 
 message(STATUS "camera_core_tests target enabled with Catch2")
