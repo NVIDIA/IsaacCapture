@@ -139,8 +139,8 @@ the host records them as ``core.HandPoseRecord`` from ``hand.fbs``.
   ``XrTimeConverter``; the wrist is queried at that same time.
 - Unmapped, unconverged IK, invalid bone data, non-finite poses, zero
   quaternions and stale frames are withheld. A sample is pushed only once.
-  After 200 ms without fresh data the injector is destroyed, reporting the
-  hand inactive. A fresh valid sample and wrist pose recreate it.
+  Each hand is reported inactive when fresh, usable glove data or a valid
+  wrist pose is unavailable. Tracking resumes when both are available.
 
 The plugin publishes the operator's skeleton. It emits no robot joint
 commands or hand ``JointStateOutput`` data and defines no vendor hand schema.
