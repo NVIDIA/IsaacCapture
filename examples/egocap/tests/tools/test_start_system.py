@@ -176,6 +176,45 @@ def test_load_sender_config_rejects_missing_file_and_two_streams(tmp_path: Path)
         ss.load_sender_config(two)
 
 
+def _profile_with(tmp_path: Path, mutate) -> Path:
+    config = yaml.safe_load(ss.DEFAULT_SENDER_CONFIG.read_text())
+    mutate(config)
+    path = tmp_path / "profile.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return path
+
+
+@pytest.mark.parametrize("section", ["network", "output"])
+def test_load_sender_config_treats_a_null_section_as_empty_and_applies_overrides(tmp_path: Path, section: str):
+    def null_it(config):
+        if section == "network":
+            config["network"] = None
+        else:
+            config["streams"][0]["output"] = None
+
+    config = ss.load_sender_config(_profile_with(tmp_path, null_it), 30, 12, 5700, 5701)
+    output = config["streams"][0]["output"]
+    assert output["fps"] == 30 and output["bitrate_mbps"] == 12
+    assert config["network"]["clock_port"] == 5700 and config["network"]["port"] == 5701
+    if section == "network":
+        assert config["network"] == {"clock_port": 5700, "port": 5701}
+    else:
+        assert output == {"fps": 30, "bitrate_mbps": 12}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "key"),
+    [
+        (lambda c: c.update(network=5), "network"),
+        (lambda c: c["streams"][0].update(output=[1]), "output"),
+        (lambda c: c.update(streams=[3]), "streams[0]"),
+    ],
+)
+def test_load_sender_config_rejects_a_wrongly_typed_section(tmp_path: Path, mutate, key: str):
+    with pytest.raises(ss.StartupError, match=key.replace("[", r"\[").replace("]", r"\]")):
+        ss.load_sender_config(_profile_with(tmp_path, mutate))
+
+
 def test_load_sender_config_rejects_malformed_yaml(tmp_path: Path):
     bad = tmp_path / "bad.yaml"
     bad.write_text("a: [")
@@ -478,6 +517,40 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     assert "--timestamp-basis monotonic_us" in bridge
     assert "--sender-clock" not in bridge
     assert recorded_main.deploys == []
+
+
+ORIN_ARGV = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+
+
+def test_main_returns_zero_when_the_sender_finishes_its_run(recorded_main, monkeypatch, capsys):
+    started = ss.Stack.start
+
+    def start(self, name, *args, **kwargs):
+        managed = started(self, name, *args, **kwargs)
+        if name == "sender":
+            managed.process = SimpleNamespace(poll=lambda: 0, pid=0, returncode=0)
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    captured = capsys.readouterr()
+    assert "finished" in captured.out
+    assert "error" not in captured.err
+
+
+@pytest.mark.parametrize(("name", "code"), [("sender", 3), ("receiver", 0)])
+def test_main_fails_when_the_sender_errors_or_another_child_exits(recorded_main, monkeypatch, capsys, name, code):
+    started = ss.Stack.start
+
+    def start(self, n, *args, **kwargs):
+        managed = started(self, n, *args, **kwargs)
+        if n == name:
+            managed.process = SimpleNamespace(poll=lambda: code, pid=0, returncode=code)
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    assert f"{name} exited with {code}" in capsys.readouterr().err
 
 
 def test_main_installs_the_stop_handlers_and_starts_the_backend_leader_only(recorded_main, tmp_path: Path):
