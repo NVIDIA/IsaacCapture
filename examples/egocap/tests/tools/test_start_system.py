@@ -700,7 +700,7 @@ def test_sighup_during_stop_kills_everything_at_once_and_restores_the_handler(st
     assert signal.getsignal(signal.SIGHUP) is before
 
 
-def test_default_profile_has_no_legacy_clock_keys():
+def test_default_profile_declares_no_sender_clock_responder():
     network = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)["network"]
     assert "timing_extension" not in network and "clock_port" not in network
 
