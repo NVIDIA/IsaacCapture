@@ -12,3 +12,7 @@ endif()
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
+
+if(TARGET isaac::avatar_plugin)
+    add_subdirectory(sharpa_avatar)
+endif()
