@@ -19,7 +19,7 @@ Each stream runs on its own thread. A frame is copied (or box-averaged down) on
 the GPU from the IPC slot into an NVENC input surface, encoded, and submitted as
 a pre-encoded access unit. Pixels never reach host memory. The frame's source
 sequence is the track's `frame_id`, the sensor start time (when the receiver
-derived one) is the `user_timestamp` in Unix microseconds, and the sensor
+derived one) is the `user_timestamp` (what it means is set by `--timestamp-basis`, below), and the sensor
 counter is the 8-byte `user_data`. The newest picture is encoded and older
 queued ones are skipped. The receiver overwrites a slot without notice once its ring wraps, so after the GPU copy the
 bridge checks for a newer notice for the same slot, or as many newer notices as the ring has other slots, and drops the
@@ -78,13 +78,8 @@ the same basis:
 
 | Basis | Value |
 | --- | --- |
-| `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
-| `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
+| `monotonic_us` (default) | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
 | `capture_monotonic_us` | The sensor start-of-frame on this host's monotonic clock, converted from the sender's `CLOCK_REALTIME` with chrony evidence for both hosts (below). |
-
-`capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
-start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
-a consumer that needs a capture time says so instead of using a guess.
 
 `capture_monotonic_us` uses the sensor start-of-frame that the receiver reads from the sender's AVS1 timing record
 (`sensor_capture_realtime_ns`, `sensor_capture_uncertainty_ns`, `sensor_capture_valid`) and the time-sync library in

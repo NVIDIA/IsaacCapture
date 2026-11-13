@@ -33,7 +33,7 @@ struct WorkerConfig
     /// receiver's IPC catalog does not carry the range, so the operator says it here.
     bool source_full_range = false;
     /// What each frame's user_timestamp means; the consumer's streams file must name the same basis.
-    TimestampBasis timestamp_basis = TimestampBasis::CaptureUnixUs;
+    TimestampBasis timestamp_basis = TimestampBasis::MonotonicUs;
     /// Chrony evidence for capture_monotonic_us; shared by every stream and owned by the caller.
     ChronyCaptureClock* chrony_clock = nullptr;
 };

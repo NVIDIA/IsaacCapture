@@ -143,22 +143,6 @@ async def main():
 asyncio.run(main())
 """
 
-# Runs under EGOCAP_PY: only the loader and recordability check, no network.
-REFUSE_SCRIPT = r"""
-import json, sys
-from pathlib import Path
-from types import SimpleNamespace
-from capture_server.livekit_streams import load_livekit_streams
-from egocap_web.livekit_recording import recordable_livekit_streams, unrecordable_reason
-
-streams = load_livekit_streams(Path(sys.argv[1]))
-started = SimpleNamespace(streams=streams)
-print("RESULT " + json.dumps({
-    "reason": unrecordable_reason(started, "http://127.0.0.1:8765"),
-    "recordable": len(recordable_livekit_streams(started)),
-}))
-"""
-
 
 def make_receiver_token(room: str, identity: str) -> str:
     """Subscribe and publish-data: clock sync sends its requests as data messages."""
@@ -258,7 +242,6 @@ def _report(r: dict) -> str:
 @unittest.skipIf(_skip_reason() is not None, _skip_reason() or "")
 class BridgeTimingTest(unittest.TestCase):
     results: dict[str, dict]
-    refuse: dict
 
     @classmethod
     def setUpClass(cls):
@@ -393,13 +376,6 @@ class BridgeTimingTest(unittest.TestCase):
         for basis in BASES:
             cls.results[basis] = cls._run_basis(url, sock, room, basis)
             print(f"\n[{basis}] {_report(cls.results[basis])}", file=sys.stderr)
-        unix_yaml = cls._tmp / "streams-unix.yaml"
-        unix_yaml.write_text(_streams_yaml(url, room, "bridge-unix", "capture_unix_us"))
-        out = subprocess.run(
-            [str(EGOCAP_PY), "-c", REFUSE_SCRIPT, str(unix_yaml)],
-            capture_output=True, text=True, check=False, env=_egocap_env(), timeout=120,
-        )  # fmt: skip
-        cls.refuse = _result(out.stdout, "refuse check", out.stderr[-2000:])
 
     def _check_feed(self, basis: str):
         r = self.results[basis]
@@ -441,14 +417,6 @@ class BridgeTimingTest(unittest.TestCase):
     def test_monotonic_us_clock_and_feed(self):
         self._check_clock("monotonic_us")
         self._check_feed("monotonic_us")
-
-    def test_capture_unix_us_is_refused_by_egocap(self):
-        reason = self.refuse["reason"]
-        self.assertIsNotNone(
-            reason, "egocap accepted a capture_unix_us stream for recording"
-        )
-        self.assertIn("monotonic clock", reason)
-        self.assertEqual(self.refuse["recordable"], 0)
 
 
 @unittest.skipUnless(

@@ -272,8 +272,9 @@ struct StreamWorker::Impl
             const bool wall_is_realtime = wall_domain != notice.metadata.end() && wall_domain->is_string() &&
                                           wall_domain->get<std::string>() == "realtime";
             const uint64_t sensor_sof_ns = wall_is_realtime ? unsigned_field(notice.metadata, "sensor_sof_ns") : 0;
-            frame.user_timestamp_us =
-                user_timestamp_us(config.timestamp_basis, sensor_sof_ns, ready_realtime_ns, ready_monotonic_ns);
+            frame.user_timestamp_us = config.timestamp_basis == TimestampBasis::MonotonicUs ?
+                                          static_cast<uint64_t>(ready_monotonic_ns / 1000) :
+                                          0;
             if (config.timestamp_basis == TimestampBasis::CaptureMonotonicUs && config.chrony_clock != nullptr)
             {
                 // The receiver's timing record: the sensor start of frame on the sender's CLOCK_REALTIME with the

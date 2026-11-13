@@ -34,7 +34,7 @@ void usage()
 {
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
-           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us|capture_unix_us]\n"
+           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us]\n"
            "         capture_monotonic_us: --chrony-sender HOST[:PORT] --chrony-sender-refid HEX [--chrony-pc-port PORT]\n"
            "           [--chronyc PATH]\n"
            "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
@@ -103,7 +103,7 @@ int main(int argc, char** argv)
             const auto basis = parse_timestamp_basis(next());
             if (!basis)
             {
-                std::cerr << "--timestamp-basis must be monotonic_us, capture_monotonic_us or capture_unix_us\n";
+                std::cerr << "--timestamp-basis must be monotonic_us or capture_monotonic_us\n";
                 return 2;
             }
             defaults.timestamp_basis = *basis;
@@ -170,8 +170,7 @@ int main(int argc, char** argv)
     {
         std::cerr
             << "--timestamp-basis capture_monotonic_us needs --chrony-sender HOST: the sender's capture time is only "
-               "used with chrony evidence for both hosts. Use monotonic_us for the frame-ready time or "
-               "capture_unix_us for a Unix-time sensor stamp.\n";
+               "used with chrony evidence for both hosts. Use monotonic_us for the frame-ready time.\n";
         return 2;
     }
     if (use_chrony && chrony_config.expected_sender_reference_id.empty())
