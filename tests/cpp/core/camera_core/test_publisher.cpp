@@ -382,6 +382,23 @@ TEST_CASE("a group publishes one image per stream", "[camera_core][groups]")
     REQUIRE(event.images[2].flags == IMAGE_FLAG_SDK_WARNING);
 }
 
+TEST_CASE("an encoded stream is described by its codec, not by a pixel format", "[camera_core][groups]")
+{
+    GroupDescription description = make_group(4, 1, "head.enc");
+    StreamDescription& stream = description.streams[0];
+    REQUIRE_FALSE(stream.is_encoded());
+    stream.codec = Codec::H265;
+    stream.stride_bytes = 0;
+    stream.slot_bytes = 2 * 1024 * 1024; // room for one access unit
+
+    Publisher publisher;
+    const GroupId group = publisher.add_group(description);
+    const StreamDescription stored = publisher.group_description(group).streams[0];
+    REQUIRE(stored.is_encoded());
+    REQUIRE(stored.codec == Codec::H265);
+    REQUIRE(stored.slot_bytes == 2 * 1024 * 1024);
+}
+
 TEST_CASE("every frame set carries its timeline", "[camera_core][timeline]")
 {
     std::int64_t now = 1000;

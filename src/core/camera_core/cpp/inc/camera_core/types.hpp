@@ -25,15 +25,15 @@ enum class PixelFormat : std::uint32_t
     RGBA8 = 2,
     NV12 = 3,
     GRAY8 = 4,
-    // Encoded: a slot holds one access unit instead of pixels.
-    H264 = 16,
-    H265 = 17,
 };
 
-constexpr bool is_encoded(PixelFormat format)
+// Whether a stream's slots hold pixels or one access unit of encoded video each.
+enum class Codec : std::uint32_t
 {
-    return format == PixelFormat::H264 || format == PixelFormat::H265;
-}
+    NONE = 0, // pixels, laid out as the stream's pixel format says
+    H264 = 1,
+    H265 = 2,
+};
 
 // How a slot's memory reaches another process. The core tracks slots by index only and never
 // touches their memory, so a new kind needs no change here.
@@ -48,7 +48,8 @@ enum class MemoryKind : std::uint32_t
 struct StreamDescription
 {
     std::string id;
-    PixelFormat format = PixelFormat::BGRA8;
+    Codec codec = Codec::NONE;
+    PixelFormat pixel_format = PixelFormat::BGRA8; // of a pixel stream; unused when the stream is encoded
     MemoryKind memory = MemoryKind::HOST;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
@@ -56,6 +57,11 @@ struct StreamDescription
     std::uint64_t slot_bytes = 0; // capacity of one slot
     std::uint32_t slot_count = 0;
     double frame_rate = 0.0; // configured or measured, not the sensor mode's maximum
+
+    constexpr bool is_encoded() const
+    {
+        return codec != Codec::NONE;
+    }
 };
 
 // One or more hardware-synchronised streams that are published as one frame set.
