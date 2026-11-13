@@ -14,8 +14,8 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -73,12 +73,16 @@ class EnsureSourcesTest(unittest.TestCase):
         self.addCleanup(self._dir.cleanup)
         self.cache = Path(self._dir.name)
         self.final = self.cache / f"t_{SPEC.width}x{SPEC.height}_{SPEC.fps}.hevc"
-        which = mock.patch.object(ms.shutil, "which", return_value="/usr/bin/ffmpeg")
+        which = unittest.mock.patch.object(
+            ms.shutil, "which", return_value="/usr/bin/ffmpeg"
+        )
         which.start()
         self.addCleanup(which.stop)
 
     def _ensure(self, encoder):
-        with mock.patch.object(ms, "make_stream_file", side_effect=encoder) as enc:
+        with unittest.mock.patch.object(
+            ms, "make_stream_file", side_effect=encoder
+        ) as enc:
             sources = ms.ensure_sources([SPEC], self.cache)
         return sources, enc
 
@@ -122,7 +126,7 @@ class EnsureSourcesTest(unittest.TestCase):
         self.assertFalse(self.final.exists())
 
     def test_missing_ffmpeg_raises(self):
-        with mock.patch.object(ms.shutil, "which", return_value=None):
+        with unittest.mock.patch.object(ms.shutil, "which", return_value=None):
             with self.assertRaises(SystemExit):
                 ms.ensure_sources([SPEC], self.cache)
 
@@ -179,7 +183,7 @@ class ServeDurationTest(unittest.TestCase):
         def padded(*args, **kwargs):
             return build(*args, **kwargs) + padding
 
-        with mock.patch.object(ms, "build_record", side_effect=padded):
+        with unittest.mock.patch.object(ms, "build_record", side_effect=padded):
             started, thread = self._serve_timed(1.0, sender)
             rx = socket.create_connection(("127.0.0.1", self.port))
             self.addCleanup(rx.close)
