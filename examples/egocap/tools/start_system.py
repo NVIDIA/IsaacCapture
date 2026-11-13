@@ -64,6 +64,9 @@ BACKEND_GRACE_S = 90.0
 STOP_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
 # The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
 MOCK_TIMESTAMP_BASIS = "monotonic_us"
+# The bridge shrinks the picture by this integer factor before encoding, so the descriptor declares the shrunken
+# size: the recorder refuses a take whose frames differ from the declared one.
+BRIDGE_DOWNSCALE = 2
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -518,9 +521,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--sender-config", type=Path, default=DEFAULT_SENDER_CONFIG, help="sender profile uploaded to the Orin"
     )
     parser.add_argument("--station-config", type=Path, default=DEFAULT_STATION_CONFIG)
-    parser.add_argument("--width", type=int, default=2560, help="sensor width the receiver and descriptor expect")
     parser.add_argument(
-        "--height", type=int, default=1984, help="sensor height the receiver and descriptor expect"
+        "--width",
+        type=int,
+        default=2560,
+        help="sensor width; the receiver expects it and the descriptor declares it divided by the bridge shrink",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=1984,
+        help="sensor height; the receiver expects it and the descriptor declares it divided by the bridge shrink",
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
@@ -617,7 +628,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         (workdir / "sender.yaml").write_text(yaml.safe_dump(sender_config, sort_keys=False))
         (workdir / "streams.yaml").write_text(
             streams_yaml(
-                livekit_url, room, publisher, track, args.width, args.height, sender.fps, basis, sender.stream_id
+                livekit_url,
+                room,
+                publisher,
+                track,
+                args.width // BRIDGE_DOWNSCALE,
+                args.height // BRIDGE_DOWNSCALE,
+                sender.fps,
+                basis,
+                sender.stream_id,
             )
         )
         (workdir / "receiver.yaml").write_text(
@@ -759,7 +778,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--socket",
                     ipc_socket,
                     "--stream",
-                    f"{sender.stream_id}={track}:2",
+                    f"{sender.stream_id}={track}:{BRIDGE_DOWNSCALE}",
                     "--fps",
                     str(sender.fps),
                     *bridge_timing_arguments(
