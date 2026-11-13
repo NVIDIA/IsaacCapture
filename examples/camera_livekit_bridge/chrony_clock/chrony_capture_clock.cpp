@@ -86,17 +86,23 @@ isaaccapture::timesync::Qualification ChronyCaptureClock::qualify(bool sender_va
     isaaccapture::timesync::LocalClockObservation observation;
     int64_t now_ns = 0;
     int64_t evidence_floor_ns = 0;
+    bool held = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         observation = m_tracker.observe(isaaccapture::timesync::sample_local_clock(m_clocks));
         now_ns = m_clocks.monotonic_ns();
         if (observation.stepped)
+        {
             m_evidence_floor_ns = now_ns;
+            m_hold_until_ns = now_ns + m_config.step_hold_ns;
+        }
         evidence_floor_ns = m_evidence_floor_ns;
+        held = now_ns < m_hold_until_ns;
     }
-    if (observation.stepped)
+    if (observation.stepped || held)
     {
-        // The frame that revealed a realtime step on this host makes no claim.
+        // The frame that revealed a realtime step on this host makes no claim, and neither does any frame within the
+        // hold after it.
         isaaccapture::timesync::Qualification refused;
         refused.verdict = isaaccapture::timesync::Verdict::NoLocalClock;
         refused.generation = observation.generation;

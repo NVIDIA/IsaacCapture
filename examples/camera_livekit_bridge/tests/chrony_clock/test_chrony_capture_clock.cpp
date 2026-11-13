@@ -258,8 +258,13 @@ void test_realtime_step()
     CHECK(stepped.verdict == Verdict::NoLocalClock);
     CHECK(stepped.generation > first.generation);
 
-    // Evidence read before the step is not reused; both hosts are read again after it.
+    // Evidence read before the step is not reused; both hosts are read again after it. The hold still refuses frames.
     r.clocks.advance(kMs);
+    r.clock->poll_once();
+    CHECK(r.qualify().verdict == Verdict::NoLocalClock);
+
+    // Once the hold has elapsed and the evidence is fresh, qualification recovers on the new clock.
+    r.clocks.advance(r.config.step_hold_ns);
     r.clock->poll_once();
     const int64_t realtime = r.clocks.realtime.load();
     const Qualification after = r.clock->qualify(true, realtime - 10 * kMs, 100'000);
@@ -287,20 +292,85 @@ void test_realtime_step_discards_evidence_read_before_it()
     // No poll since the step: the evidence describes the old clock and must not qualify the frame.
     const Qualification again = r.clock->qualify(true, capture_realtime, 100'000);
     CHECK(!again.usable());
-    CHECK(again.verdict == Verdict::NoSenderEvidence || again.verdict == Verdict::NoPcEvidence);
+    CHECK(again.generation == stepped.generation);
     const Qualification third = r.clock->qualify(true, capture_realtime, 100'000);
     CHECK(!third.usable());
 
-    // Both hosts read again after the step: qualification recovers on the new clock.
-    r.clocks.monotonic += kMs;
-    r.clocks.realtime += kMs;
+    // Both hosts read again after the step, and the hold has elapsed: qualification recovers on the new clock.
+    r.clocks.advance(r.config.step_hold_ns + kMs);
     r.healthy();
     r.clock->poll_once();
-    const Qualification recovered = r.clock->qualify(true, capture_realtime, 100'000);
+    const int64_t later_capture_realtime = r.clocks.realtime.load() - 80 * kMs;
+    const Qualification recovered = r.clock->qualify(true, later_capture_realtime, 100'000);
     CHECK(recovered.verdict == Verdict::Qualified);
     CHECK(recovered.generation == stepped.generation);
     const int64_t offset = r.clocks.realtime.load() - r.clocks.monotonic.load();
-    CHECK(recovered.capture_monotonic_ns == capture_realtime - offset);
+    CHECK(recovered.capture_monotonic_ns == later_capture_realtime - offset);
+}
+
+// No frame is timestamped for step_hold_ns after a step, whatever the evidence says, and every refusal carries the
+// post-step generation.
+void test_step_hold()
+{
+    Rig r;
+    r.healthy();
+    r.build();
+    r.clock->poll_once();
+    const Qualification first = r.qualify();
+    CHECK(first.verdict == Verdict::Qualified);
+
+    r.clocks.realtime += 50 * kMs;
+    const Qualification stepped = r.qualify();
+    CHECK(stepped.verdict == Verdict::NoLocalClock);
+    CHECK(stepped.generation > first.generation);
+
+    // Fresh post-step evidence does not lift the hold.
+    r.clocks.advance(kSec);
+    r.healthy();
+    r.clock->poll_once();
+    const Qualification during = r.qualify();
+    CHECK(during.verdict == Verdict::NoLocalClock);
+    CHECK(!during.usable());
+    CHECK(during.generation == stepped.generation);
+
+    // Just before the hold ends, still refused.
+    r.clocks.advance(r.config.step_hold_ns - kSec - 10 * kMs);
+    r.healthy();
+    r.clock->poll_once();
+    const Qualification before_end = r.qualify();
+    CHECK(!before_end.usable());
+    CHECK(before_end.verdict == Verdict::NoLocalClock);
+    CHECK(before_end.generation == stepped.generation);
+
+    // Just after, with fresh evidence, usable and consistent with the new clock.
+    r.clocks.advance(20 * kMs);
+    r.healthy();
+    r.clock->poll_once();
+    const int64_t realtime = r.clocks.realtime.load();
+    const Qualification after = r.clock->qualify(true, realtime - 10 * kMs, 100'000);
+    CHECK(after.verdict == Verdict::Qualified);
+    CHECK(after.generation == stepped.generation);
+    CHECK(after.capture_monotonic_ns == (realtime - 10 * kMs) - (realtime - r.clocks.monotonic.load()));
+}
+
+void test_step_hold_configurable()
+{
+    Rig r;
+    r.config.step_hold_ns = kMs;
+    r.healthy();
+    r.build();
+    r.clock->poll_once();
+    CHECK(r.qualify().verdict == Verdict::Qualified);
+
+    r.clocks.realtime += 50 * kMs;
+    const Qualification stepped = r.qualify();
+    CHECK(stepped.verdict == Verdict::NoLocalClock);
+
+    r.clocks.advance(2 * kMs);
+    r.clock->poll_once();
+    const Qualification after = r.qualify();
+    CHECK(after.verdict == Verdict::Qualified);
+    CHECK(after.generation == stepped.generation);
 }
 
 void test_over_budget()
@@ -384,6 +454,8 @@ int main()
     test_stale_evidence();
     test_realtime_step();
     test_realtime_step_discards_evidence_read_before_it();
+    test_step_hold();
+    test_step_hold_configurable();
     test_over_budget();
     test_start_stop();
     test_concurrent_qualify();
