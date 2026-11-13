@@ -28,6 +28,7 @@ replaced. Until then it is the supported seam, and SIPL and Argus capture and th
 | --- | --- | --- | --- |
 | `src/CaptureBackend.h`, `src/CaptureFrame.h`, `src/CameraCapture.h` | A shared camera backend contract and frame ownership | Adapt the wrappers; retire the duplicate standalone contract | Map source configuration, frame identity and buffer ownership onto the shared contract. Lands when SIPL and Argus both use it with equivalent behaviour and safe buffer lifetime. |
 | Capture and encoder implementation, `src/Avs1Wire.*` | Camera backends and encoders; AVS1 over TCP remains the transport baseline | Reuse | Carry the tested behaviour forward. AVS1 over TCP stays the baseline until a replacement transport is qualified. |
+| `src/SensorClock.*` sensor-to-host time mapping and the AVS1 timing record | The timing implementation shared by the camera and receiver | Reuse the mapping; adapt the wire record | The wire representation may change when shared camera records carry capture identity, clock mapping and validity. An unavailable mapping stays explicit. Lands when the receiver side carries those fields. |
 
 ## Build
 
