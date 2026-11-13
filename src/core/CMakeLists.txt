@@ -13,6 +13,12 @@ add_subdirectory(schema_compat)
 # log during its own construction.
 add_subdirectory(log_bridge)
 
+# Chrony evidence parsing and capture-time qualification (no dependency on the rest of the product).
+# POSIX clocks only, so the Windows source build skips it.
+if(NOT WIN32)
+    add_subdirectory(timesync)
+endif()
+
 # Build OXR Utils first - header-only utilities (no dependencies)
 add_subdirectory(oxr_utils)
 
