@@ -80,10 +80,23 @@ struct UncertaintyTerms
 struct Qualification
 {
     Verdict verdict = Verdict::SenderInvalid;
-    int64_t capture_monotonic_ns = 0; ///< PC CLOCK_MONOTONIC; meaningful only when Qualified.
-    int64_t uncertainty_ns = 0; ///< Sum of the terms; filled for OverBudget as well, for diagnosis.
+    /// PC CLOCK_MONOTONIC; meaningful when `usable()`.
+    int64_t capture_monotonic_ns = 0;
+    /// Sum of the terms, filled whenever `usable()`. It is the honest bound on `capture_monotonic_ns`, whether or not
+    /// it met the budget.
+    int64_t uncertainty_ns = 0;
     uint64_t generation = 0; ///< The PC local-clock generation the conversion used.
     UncertaintyTerms terms;
+
+    /// Whether `capture_monotonic_ns` is a converted capture instant with a stated bound. `OverBudget` is usable: every
+    /// validity check passed and only the precision target was missed, so the instant is still known to within
+    /// `uncertainty_ns`. Every other verdict means the conversion could not be vouched for at all. A caller that
+    /// records frames publishes the instant and the bound when this holds and `Qualified` only says the bound met
+    /// the budget.
+    bool usable() const
+    {
+        return verdict == Verdict::Qualified || verdict == Verdict::OverBudget;
+    }
 };
 
 /// chrony's bound on a host clock against its reference, |System time| + Root dispersion + Root delay / 2, plus
