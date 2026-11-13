@@ -418,6 +418,7 @@ class Stack:
                     else:
                         self._signal_group(child, signal.SIGINT)
                 except ProcessLookupError:
+                    # The leader exited between poll() and the signal, which is a stop and not an error.
                     pass
                 try:
                     exited = self._wait(child, child.grace_s, hurry)
