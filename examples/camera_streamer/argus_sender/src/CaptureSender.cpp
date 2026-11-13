@@ -14,6 +14,7 @@
 #include "FrameBundleAssembler.h"
 #include "FrameTiming.h"
 #include "HevcEncoder.h"
+#include "OutputRateSelector.h"
 #include "Runtime.h"
 #include "TcpTransport.h"
 
@@ -47,6 +48,7 @@ struct Stream
     CaptureSenderStream source;
     uint64_t sequence = 0;
     uint64_t dropped = 0;
+    OutputRateSelector rate{ 0 };
     std::unique_ptr<DirectHevcEncoder> encoder;
     EncoderInputSlots<DmaBuffer> slots{ kEncoderOutputPlaneBuffers };
 };
@@ -102,6 +104,7 @@ bool runCaptureSender(const AppConfig& config,
         const StreamConfig& configStream = config.streams[i];
         streams[i].label = configStream.id;
         streams[i].source = sources[i];
+        streams[i].rate = OutputRateSelector(sources[i].fps);
 
         Avs1StreamRecord& record = templates[i];
         record.codec = AVS1_CODEC_HEVC;
@@ -167,7 +170,16 @@ bool runCaptureSender(const AppConfig& config,
                (config.runtime.frames == 0 || frames < config.runtime.frames))
         {
             if (!capture->waitForFrame(100))
+            {
+                // With few capture buffers all of them can sit in encoder slots the encoder has already finished with;
+                // the backend then has nothing to fill and no frame ever arrives, so give those buffers back here.
+                for (Stream& stream : streams)
+                {
+                    if (stream.encoder && stream.slots.inFlight() > 0)
+                        releaseOne(&stream, false);
+                }
                 continue;
+            }
             for (size_t i = 0; ok && i < streams.size(); ++i)
             {
                 Stream& stream = streams[i];
@@ -178,6 +190,10 @@ bool runCaptureSender(const AppConfig& config,
                 }
                 CaptureFrame frame;
                 if (!capture->acquireLatest(stream.source.cameraId, &frame))
+                    continue;
+                // The stream carries its configured rate, not the sensor's; a skipped frame's lease returns it to the
+                // backend on leaving this scope.
+                if (stream.rate.shouldSkip(frame.readyMonotonicNs))
                     continue;
                 // A frame arriving with no free encoder input is dropped, not waited for: the newest frame is the
                 // one worth sending and the encoder is already a frame behind.
@@ -196,6 +212,7 @@ bool runCaptureSender(const AppConfig& config,
                     break;
                 }
 
+                stream.rate.sent(frame.readyMonotonicNs);
                 ++stream.sequence;
                 ++bundleSequence;
                 std::vector<BundleStreamInput> inputs(streams.size());

@@ -149,3 +149,8 @@ add_executable(argus_sender_test_scoped_release
     tests/test_scoped_release.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_scoped_release scoped_release)
+
+add_executable(argus_sender_test_output_rate_selector
+    tests/test_output_rate_selector.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_output_rate_selector output_rate_selector)
