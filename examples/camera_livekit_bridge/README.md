@@ -42,6 +42,12 @@ slots" applies.
 | `ipc_client/` and the slot read in `bridge/stream_worker.cpp` | Camera reader views and leases | Retire | Read frames through a lease held until the final GPU read. Lands with the receiver's lease support. |
 | `chrony_clock/` and the capture-time publication in `bridge/stream_worker.cpp` | The receiver backend's published clock mapping (offset, uncertainty, discontinuity epoch) | Transitional: adapt, then retire the bridge-specific adapter | Carry mapped capture time, validity and discontinuity behaviour through the receiver contract. Lands when consumers obtain equivalent timing without the bridge-only adapter. |
 | `src/core/timesync/` (used by `chrony_clock/`) | The estimator behind the receiver's clock mapping | Reuse | Keep the chrony evidence handling and qualification behind the destination interface. |
+| `gpu_ops/` and the GPU step pipeline in `bridge/stream_worker.cpp` | Application or derived-stream processing over camera data | Reuse the kernels; adapt the pipeline; retire the bridge wiring | Connect read-only camera views, GPU completion and derived outputs to a processing consumer. Lands when GPU processing runs there with correct geometry and calibration and safe buffer lifetime. |
+
+GPU operations run on camera images as application or derived-stream processing; running them inside this bridge is
+temporary wiring. The processing path keeps input and output on the GPU and ties buffer lifetime to GPU completion, and
+must keep doing so when it moves behind the camera reader interface. The sine-warp step demonstrates kernel
+integration; it is not a calibrated rectification implementation.
 
 The `chrony_clock/` adapter connects the reusable timing library to the current video publication path and is intended
 to converge on the receiver backend's clock-mapping contract. With `capture_monotonic_us`, a mapping that cannot be
