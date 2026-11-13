@@ -111,7 +111,8 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
                             int64_t follower_age_ns,
                             int64_t server_age_ns);
 
-/// Converts a sender realtime capture stamp to PC monotonic and decides whether it may be recorded.
+/// Converts a sender realtime capture stamp to PC monotonic and says how well the conversion can be vouched for: not
+/// at all (a refusal), vouched for but over the budget, or within it.
 ///
 /// The inter-host term bounds sender realtime against PC realtime along camera host system clock -> camera host
 /// NTP clock -> PC chronyd's measurement -> PC system clock: both hosts' |System time|, the PC's Root dispersion and

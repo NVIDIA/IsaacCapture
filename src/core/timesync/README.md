@@ -22,7 +22,7 @@ cmake -S src/core/timesync -B build -DBUILD_TESTING=ON && cmake --build build &&
 | --- | --- |
 | `chrony_tracking.hpp` | Strict parser for one `chronyc -c tracking` line; `is_synchronised`. |
 | `local_clock.hpp` | Bracketed realtime/monotonic sample and a tracker that numbers the intervals between realtime steps. |
-| `capture_qualifier.hpp` | `qualify_capture`: PC-monotonic capture time, summed uncertainty, or a typed refusal. |
+| `capture_qualifier.hpp` | `qualify_capture`: PC-monotonic capture time with its summed uncertainty (`usable()`; `Qualified` also met the budget), or a typed refusal. |
 | `chrony_monitor.hpp`, `command_runner.hpp` | Background `chronyc` poll: no shell, a timeout, an output cap, never in the frame path. |
 | `tools/timesync_tool.py` | Sets up the chrony the library reads (below). Python standard library only. |
 
@@ -82,7 +82,9 @@ so the difference can be slightly off; it is clamped at zero, and the copy slack
 the drift between reads. The bound is derived from chrony's own reports. It has not been validated against an
 independent reference such as a hardware sync pulse, so a qualified frame means "within chrony's claimed error",
 not "measured within". Refusal policy: any report that is stale, has no recent source update, is unsynchronised, or
-names another source is refused and the frame carries no time; nothing is estimated.
+names another source is refused and the frame carries no time; nothing is estimated. A frame that passes every check but
+whose bound is over the budget is `OverBudget`, which is still `usable()`: it keeps its capture time and the bound, and the
+budget is a precision target for the diagnostics, not a condition for having a time.
 
 Step detection compares successive wall-minus-monotonic offsets. On Linux the two clocks share
 frequency adjustment, so the difference changes only on a step. A change beyond both bracket widths
