@@ -42,8 +42,9 @@ values feed the bridge and the CaptureServer descriptor, so they cannot disagree
 ### How the file reaches the sender
 
 The sender does not search for a camera file. The deploy tool uploads the chosen file over SSH to
-`~/camera-streamer/releases/RELEASE/run-config.yaml` on the Orin and starts `./build/argus_sender --config
-run-config.yaml`. The file is read once at start. Editing it while the sender runs changes nothing: stop the
+`~/camera-streamer/releases/RELEASE/src/configs/run-config.yaml` on the Orin, beside the shipped configs so paths in
+it that are relative to the file (the remaps) resolve inside the release, and starts `./build/argus_sender --config
+src/configs/run-config.yaml`. The file is read once at start. Editing it while the sender runs changes nothing: stop the
 sender and start it again. A reconnecting receiver reuses the same in-memory configuration. Uploading a new file does
 not rebuild the binary, so the release must already support the timing extension and the clock responder; an older
 parser rejects keys it does not know instead of ignoring them. The platform JSON and tuning files are not uploaded
@@ -54,9 +55,10 @@ and must already exist at the configured paths on the Orin.
 `streams[].output.fps` defaults to `0`, which resolves the native rate (SIPL: the platform file's virtual-channel
 rate). A nonzero value is used instead. All streams must use native rates together or explicit rates together.
 
-On the SIPL backend `output.fps` sets the encoder's rate hint, the default GOP length and the rate advertised in AVS1.
-It does not drop frames and it does not program the sensor trigger. The Argus backend, by contrast, selects output
-frames with a rate limiter. The sender's `@ N FPS` startup line prints the resolved setting; it is not a measured
+On the SIPL backend `output.fps` sets the encoder's rate, the default GOP length and the rate advertised in AVS1, and
+the sender skips frames that arrive sooner than 85 % of that period after the last one sent, so a 60 Hz sensor gives a
+30 Hz stream. It does not program the sensor trigger. The Argus backend selects output frames with its own rate
+limiter. The sender's `@ N FPS` startup line prints the resolved setting; it is not a measured
 rate. The receiver's `decode[avs1]` line is measured.
 
 The bridge's `--fps` and the descriptor's `fps` are separate settings. The launcher sets both from the sender's
@@ -117,7 +119,7 @@ shipped profile.
 | `streams[].cameras[].mode` | `0` | Argus sensor-mode index; stereo entries must match. SIPL parses it but uses platform configuration instead. |
 | `streams[].capture.mode` | `mailbox` | Argus `mailbox` or `fifo` acquisition. The priority stream requires mailbox in this implementation. SIPL uses its own newest-frame mailbox and does not apply this field. |
 | `streams[].capture.fifo_length` | `3` | Argus FIFO depth, at least 3 when FIFO is selected. Supplying it with mailbox is rejected. More queued frames can increase age. |
-| `streams[].output.fps` | `0` / native nominal | Desired output/encoder FPS, with backend differences described above. Does not directly program SIPL trigger timing. |
+| `streams[].output.fps` | `0` / native nominal | Output/encoder FPS; frames above it are skipped, with backend differences described above. Does not directly program SIPL trigger timing. |
 | `streams[].output.codec` | `hevc` | `hevc`/`h265`, or `raw_nv12`/`raw`/`nv12`. SIPL currently accepts HEVC only. |
 | `streams[].output.width` | `0` / inferred | Explicit nonzero width must be even. Argus uses output geometry; SIPL permits native dimensions only and rejects scaling. |
 | `streams[].output.height` | `0` / inferred | Same constraints as width. |
