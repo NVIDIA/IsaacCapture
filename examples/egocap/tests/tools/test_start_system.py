@@ -207,6 +207,7 @@ def stack(tmp_path: Path):
         try:
             os.killpg(child.process.pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The test already stopped this child's group; reaping it below is all that is left to do.
             pass
         child.process.wait(timeout=5)
 
