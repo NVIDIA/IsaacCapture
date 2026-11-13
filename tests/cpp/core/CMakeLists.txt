@@ -13,6 +13,7 @@ add_subdirectory(live_trackers)
 add_subdirectory(tracker_metadata)
 add_subdirectory(log_bridge)
 add_subdirectory(plugin_manager)
+add_subdirectory(camera_core)
 
 if(BUILD_OVXR_CAMERA_QUADS)
     add_subdirectory(ovxr_pip_layer)

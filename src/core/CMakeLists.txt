@@ -19,6 +19,9 @@ add_subdirectory(oxr_utils)
 # Build Plugin Manager
 add_subdirectory(plugin_manager)
 
+# Camera capture core (standard library only)
+add_subdirectory(camera_core)
+
 # Build OXR library (depends on oxr_utils for types)
 add_subdirectory(oxr)
 
