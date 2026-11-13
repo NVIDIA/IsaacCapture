@@ -7,6 +7,8 @@
 #ifndef ARGUS_SENDER_CONFIG_H
 #define ARGUS_SENDER_CONFIG_H
 
+#include "CaptureBackend.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -103,6 +105,8 @@ struct NetworkConfig
     uint16_t port = 5000;
     uint32_t reconnectDelayMs = 1000;
     std::string dumpWirePath;
+    // Kernel TCP send buffer cap in KiB; 0 keeps the operating system's default.
+    uint32_t sendBufferKb = 0;
 };
 
 struct RuntimeConfig
@@ -113,9 +117,23 @@ struct RuntimeConfig
     bool benchEncode = false;
 };
 
+// SIPL platform description (capture_backend: sipl). Stream `device` then names a SIPL pipeline index.
+struct SiplSettings
+{
+    std::string platformConfigJson;
+    std::string platformConfigName;
+    // One mask per deserializer, in transport order.
+    std::vector<uint32_t> linkMasks;
+    std::string nitoDir = "/var/nvidia/nvcam/settings/sipl";
+    uint32_t isp0Buffers = 6;
+};
+
 struct AppConfig
 {
     uint32_t version = 1;
+    // Which camera SDK captures. auto picks the only backend this build includes.
+    CaptureBackendKind captureBackend = CAPTURE_BACKEND_AUTO;
+    SiplSettings sipl;
     NetworkConfig network;
     RuntimeConfig runtime;
     AlignmentConfig alignment;
@@ -134,6 +152,8 @@ void printUsage(const char* argv0);
 bool parseCommandLine(int argc, char** argv, CommandLine* commandLine);
 bool loadConfigFile(const std::string& path, AppConfig* config, std::string* error);
 bool validateConfig(const AppConfig& config, std::string* error);
+// The restrictions of the SIPL backend, for a config whose backend is resolved after validation (`auto`).
+bool validateSiplConfig(const AppConfig& config, std::string* error);
 
 const char* streamTypeName(StreamType type);
 const char* captureModeName(CaptureMode mode);

@@ -16,6 +16,19 @@ The project builds only `argus_sender`; it does not configure NVIDIA's full
 JPEG sample modules. CMake downloads the pinned yaml-cpp 0.9.0 release archive,
 verifies its SHA-256 digest, and builds it statically.
 
+## Integration boundary
+
+The sender captures through a small backend interface (`src/CaptureBackend.h`, `src/CaptureFrame.h` and
+`src/CameraCapture.h`) so that one capture, encode and send loop serves both SIPL and Argus. That interface is
+temporary integration glue private to this sender. It is intended to converge on a shared camera backend and
+buffer-ownership contract once such a contract covers both capture paths, and the wrappers may then be adapted or
+replaced. Until then it is the supported seam, and SIPL and Argus capture and the HEVC encoder stay available.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `src/CaptureBackend.h`, `src/CaptureFrame.h`, `src/CameraCapture.h` | A shared camera backend contract and frame ownership | Adapt the wrappers; retire the duplicate standalone contract | Map source configuration, frame identity and buffer ownership onto the shared contract. Lands when SIPL and Argus both use it with equivalent behaviour and safe buffer lifetime. |
+| Capture and encoder implementation, `src/Avs1Wire.*` | Camera backends and encoders; AVS1 over TCP remains the transport baseline | Reuse | Carry the tested behaviour forward. AVS1 over TCP stays the baseline until a replacement transport is qualified. |
+
 ## Build
 
 ```bash

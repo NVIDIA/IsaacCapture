@@ -19,8 +19,8 @@ ctest --test-dir build --output-on-failure
 The default suite does not open a camera. It covers YAML capture-mode parsing and validation,
 output geometry, mixed-rate scheduling, capture-priority selection and release
 timing, stereo alignment policy, AVS1 serialization/parsing, asynchronous bundle
-assembly and ordering, plus TCP send/dump/disconnect and bounded stalled-receiver
-drain behavior.
+assembly and ordering, encoder input-slot lease release, plus TCP
+send/dump/disconnect and bounded stalled-receiver drain behavior.
 
 The matching receiver parser tests run from `camera_receiver/`:
 
