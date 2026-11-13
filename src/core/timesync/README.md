@@ -16,6 +16,17 @@ build skips it. It builds without CUDA, LiveKit or Python, and on its own:
 cmake -S src/core/timesync -B build -DBUILD_TESTING=ON && cmake --build build && ctest --test-dir build
 ```
 
+## Integration boundary
+
+This module supplies reusable clock evidence and capture-time qualification. It does not publish anything:
+publication is done by the consumer, currently the camera_livekit_bridge `chrony_clock` adapter. The module is
+intended to remain the estimator behind the receiver backend's clock mapping. Reported uncertainty describes the
+supported measurement model; it is not independent proof of physical timestamp accuracy.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `src/core/timesync/` | The estimator behind the receiver backend's clock mapping | Reuse the chrony evidence handling and qualification; adapt the output to the mapping | Preserve qualified mappings and validity and uncertainty behaviour behind the destination interface. Lands when the receiver backend publishes the mapping. |
+
 ## Pieces
 
 | Header | Role |
