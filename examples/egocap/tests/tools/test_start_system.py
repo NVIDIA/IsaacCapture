@@ -28,6 +28,9 @@ EXAMPLE_CAMERAS = [
     source["name"]
     for source in next(iter(yaml.safe_load(EXAMPLE_STATION.read_text())["stations"].values()))["video_sources"]
 ]
+TIMESYNC_STUB = (
+    "def lan_address_toward(host):\n    return '10.0.0.2'\n\n\ndef reference_id_for(host):\n    return 'REFID'\n"
+)
 CAMERA_ARGS = [arg for name in EXAMPLE_CAMERAS for arg in ("--capture-camera", f"{name}=dev0")]
 
 
@@ -142,7 +145,7 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
     index.parent.mkdir()
     index.write_text("")
     timesync = tmp_path / "timesync_tool.py"
-    timesync.write_text("def reference_id_for(host):\n    return 'REFID'\n")
+    timesync.write_text(TIMESYNC_STUB, encoding="utf-8")
     monkeypatch.setattr(signal, "signal", lambda *_: None)
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
     monkeypatch.setattr(ss, "FRONTEND_INDEX", index)
@@ -151,7 +154,7 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
     monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda *_, **__: None)
     argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *CAMERA_ARGS]
     assert ss.main(argv) == 1
     assert "stop after the bridge" in capsys.readouterr().err
 
@@ -229,12 +232,12 @@ def test_load_sender_config_treats_a_null_section_as_empty_and_applies_overrides
         else:
             config["streams"][0]["output"] = None
 
-    config = ss.load_sender_config(_profile_with(tmp_path, null_it), 30, 12, 5700, 5701)
+    config = ss.load_sender_config(_profile_with(tmp_path, null_it), 30, 12, 5701)
     output = config["streams"][0]["output"]
     assert output["fps"] == 30 and output["bitrate_mbps"] == 12
-    assert config["network"]["clock_port"] == 5700 and config["network"]["port"] == 5701
+    assert config["network"]["port"] == 5701
     if section == "network":
-        assert config["network"] == {"clock_port": 5700, "port": 5701}
+        assert config["network"] == {"port": 5701}
     else:
         assert output == {"fps": 30, "bitrate_mbps": 12}
 
@@ -442,14 +445,15 @@ def test_mock_sender_command_follows_the_profile():
 
 def test_bridge_timing_arguments_for_mock_and_real_sender():
     sipl = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
-    assert ss.bridge_timing_arguments(sipl, True, None) == ["--timestamp-basis", "monotonic_us"]
-    real = " ".join(ss.bridge_timing_arguments(sipl, False, "192.0.2.10"))
+    assert ss.bridge_timing_arguments(sipl, True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
+    real = " ".join(ss.bridge_timing_arguments(sipl, False, "192.0.2.10", "C000020A", 12301))
     assert "--timestamp-basis capture_monotonic_us" in real
-    assert "--sender-clock 192.0.2.10:5611" in real
+    assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in real
+    assert "--sender-clock" not in real
     assert "--source-full-range" in real
     argus_config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
     argus = ss.sender_settings(argus_config)
-    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "192.0.2.10")
+    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "192.0.2.10", "C000020A", 12301)
 
 
 def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
@@ -514,7 +518,17 @@ def recorded_main(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
     # The fake children are not real processes, so there is nothing to signal.
     monkeypatch.setattr(ss.Stack, "stop_all", lambda self: None)
-    monkeypatch.setattr(ss.subprocess, "run", lambda command, **_: deploys.append(list(command)))
+    # Every deploy, stop and timesync step is recorded and reports success.
+    monkeypatch.setattr(
+        ss.subprocess, "run", lambda command, **_: deploys.append(list(command)) or SimpleNamespace(returncode=0)
+    )
+    monkeypatch.setattr(
+        ss,
+        "load_timesync_tool",
+        lambda _path: SimpleNamespace(
+            lan_address_toward=lambda host: "192.0.2.1", reference_id_for=lambda host: "C000020A"
+        ),
+    )
     monkeypatch.setattr(ss.time, "sleep", interrupt)
     return SimpleNamespace(children=children, deploys=deploys, workdir=workdir, installed=installed)
 
@@ -527,7 +541,7 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
     assert ss.main([*argv, *CAMERA_ARGS]) == 0
     names = [c.name for c in recorded_main.children]
-    assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge"]
+    assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge", "timesync-follower"]
     capture = _command(recorded_main, "capture-server")
     assert "--camera" in capture
     assert all(f"{name}=dev0" in capture for name in EXAMPLE_CAMERAS)
@@ -535,11 +549,20 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     assert "--mock" not in capture
     bridge = _command(recorded_main, "bridge")
     assert "--timestamp-basis capture_monotonic_us" in bridge
-    assert "--sender-clock 192.0.2.10:5611" in bridge
+    assert "--sender-clock" not in bridge
     assert "--source-full-range" in bridge
     assert "--config" in _command(recorded_main, "receiver")
-    assert len(recorded_main.deploys) == 1
-    assert "--with-sipl" in recorded_main.deploys[0]
+    release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
+    assert len(release_deploys) == 1
+    assert release_deploys[0][1:3] == ["x", "user@192.0.2.10"]
+
+
+def test_main_wires_chrony_into_the_bridge_and_starts_the_follower_after_it(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    names = [c.name for c in recorded_main.children]
+    assert names.index("timesync-follower") > names.index("bridge")
+    bridge = _command(recorded_main, "bridge")
+    assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in bridge
 
 
 def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
@@ -752,7 +775,7 @@ def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[s
     index.parent.mkdir()
     index.write_text("")
     timesync = tmp_path / "timesync_tool.py"
-    timesync.write_text("def reference_id_for(host):\n    return 'REFID'\n")
+    timesync.write_text(TIMESYNC_STUB, encoding="utf-8")
     receiver_dir = tmp_path / "repo/examples/camera_streamer/camera_receiver"
     receiver_dir.mkdir(parents=True)
 
@@ -778,7 +801,7 @@ def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[s
     monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **__: runs.append(list(cmd)) or _Done())
     monkeypatch.setattr(ss.time, "sleep", lambda *_: None)
     argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *extra_argv]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *CAMERA_ARGS, *extra_argv]
     return ss.main(argv), started, runs, receiver_dir
 
 
@@ -810,50 +833,3 @@ def test_explicit_receiver_is_passed_through_without_setup(monkeypatch, tmp_path
     )
     assert code == 0
     assert started["receiver"][:2] == ["custom-python", "recv.py"]
-
-
-@pytest.mark.parametrize(
-    ("exit_codes", "expected"),
-    [
-        ({"sender": 0}, 0),
-        ({"sender": 3}, 1),
-        ({"bridge": 0}, 1),
-        ({"receiver": 0}, 1),
-    ],
-)
-def test_only_a_clean_sender_exit_ends_the_run_successfully(monkeypatch, tmp_path: Path, exit_codes, expected):
-    monkeypatch.setattr(ss, "ensure_receiver_environment", lambda: None)
-    code, _, _, _ = _run_main_with_stub_children(monkeypatch, tmp_path, ["--receiver", "r.py"], exit_codes)
-    assert code == expected
-
-
-def _config_file(tmp_path: Path, text: str) -> Path:
-    path = tmp_path / "sender.yaml"
-    path.write_text(text)
-    return path
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "network: null\nstreams:\n  - {id: head, output: {fps: 30, bitrate_mbps: 4}}\n",
-        "streams:\n  - {id: head, output: null}\n",
-    ],
-)
-def test_load_sender_config_accepts_a_null_section(tmp_path: Path, text: str):
-    config = ss.load_sender_config(_config_file(tmp_path, text), fps=20, sender_port=5001)
-    assert config["network"]["port"] == 5001
-    assert config["streams"][0]["output"]["fps"] == 20
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "network: 5\nstreams:\n  - {id: head}\n",
-        "streams:\n  - {id: head, output: [1]}\n",
-        "streams: [3]\n",
-    ],
-)
-def test_load_sender_config_rejects_a_section_that_is_not_a_mapping(tmp_path: Path, text: str):
-    with pytest.raises(ss.StartupError):
-        ss.load_sender_config(_config_file(tmp_path, text))

@@ -173,16 +173,6 @@ def _section(parent: dict, key: str, path: Path) -> dict:
     return value
 
 
-def _section(parent: dict, key: str, path: Path) -> dict:
-    """The mapping under ``parent[key]``, created when absent or null; another type is a startup error."""
-    value = parent.get(key)
-    if value is None:
-        value = parent[key] = {}
-    if not isinstance(value, dict):
-        raise StartupError(f"{path}: {key} must be a mapping")
-    return value
-
-
 def load_sender_config(
     path: Path,
     fps: int | None = None,
