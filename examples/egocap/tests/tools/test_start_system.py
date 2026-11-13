@@ -291,3 +291,43 @@ def test_second_ctrl_c_kills_the_child_and_the_rest_at_once(stack, tmp_path: Pat
     stack.stop_all()
     assert time.monotonic() - started < 5
     assert [c.process.returncode for c in stack.children] == [-signal.SIGKILL] * 3
+
+
+def test_mock_sender_command_follows_the_profile():
+    settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    command = ss.mock_sender_command("python", Path("mock.py"), settings, 2560, 1984)
+    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@30"]
+
+
+def test_bridge_timing_arguments_for_mock_and_real_sender():
+    sipl = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    assert ss.bridge_timing_arguments(sipl, True, None) == ["--timestamp-basis", "monotonic_us"]
+    real = " ".join(ss.bridge_timing_arguments(sipl, False, "10.0.0.5"))
+    assert "--timestamp-basis capture_monotonic_us" in real
+    assert "--sender-clock 10.0.0.5:5611" in real
+    assert "--source-full-range" in real
+    argus_config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    argus = ss.sender_settings(argus_config)
+    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "10.0.0.5")
+
+
+def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
+    monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    assert ss.main(["--orin", "user@10.0.0.5", "--mock"]) == 1
+    assert "do not pass --orin" in capsys.readouterr().err
+
+
+def test_main_refuses_a_missing_mock_sender(monkeypatch, capsys, tmp_path: Path):
+    def fail_start(*_, **__):
+        raise AssertionError("a child process was started")
+
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    monkeypatch.setattr(ss.Stack, "start", fail_start)
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(tmp_path / "missing.py")]
+    assert ss.main(argv) == 1
+    err = capsys.readouterr().err
+    assert "mock sender" in err
+    assert "does not exist" in err
