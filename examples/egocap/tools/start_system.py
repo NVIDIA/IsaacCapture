@@ -59,6 +59,8 @@ TIMESTAMP_BASIS = "capture_monotonic_us"
 # coordinator bounds at 35 s and the aligner bounds again afterwards, so it gets a margin over both.
 DEFAULT_GRACE_S = 15.0
 BACKEND_GRACE_S = 90.0
+# Signals that mean "stop the stack"; while it is stopping they mean "stop faster".
+STOP_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
 # The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
 MOCK_TIMESTAMP_BASIS = "monotonic_us"
 # The backend serves the page from this build output and mounts nothing if it is missing.
@@ -280,6 +282,7 @@ class Managed:
     process: subprocess.Popen
     log: Path
     grace_s: float = DEFAULT_GRACE_S
+    leader_only: bool = False
 
 
 class Stack:
@@ -297,8 +300,13 @@ class Stack:
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
         grace_s: float = DEFAULT_GRACE_S,
+        leader_only: bool = False,
     ) -> Managed:
-        """Launch a child in its own process group so stopping it also stops anything it spawned."""
+        """Launch a child in its own process group so stopping it also stops anything it spawned.
+
+        ``leader_only`` sends the polite SIGINT to the child itself and not to its whole group, for a child that
+        closes its own helper processes in an order of its own (the backend's video writers).
+        """
         # Each child writes to its own file so a failed step can point the operator at the output to read.
         log = self.workdir / f"{name}.log"
         # A new session makes the child the leader of its own process group, so a signal to the group reaches
@@ -317,7 +325,7 @@ class Stack:
                 # A wrong tool path is an operator mistake, so say which tool instead of printing a traceback.
                 raise StartupError(f"cannot start {name} ({command[0]}): {error}") from error
         # Registering the child here is what makes stop_all() cover it even if a later step fails.
-        child = Managed(name, process, log, grace_s)
+        child = Managed(name, process, log, grace_s, leader_only)
         self.children.append(child)
         print(f"started {name} (pid {process.pid}); log {log}")
         return child
@@ -354,33 +362,74 @@ class Stack:
         except subprocess.TimeoutExpired:
             print(f"{child.name} did not die after SIGKILL; leaving it", file=sys.stderr)
 
+    @staticmethod
+    def _wait(child: Managed, timeout_s: float, hurry: list[bool]) -> bool:
+        """Wait for the child to exit; False when its grace ran out or the operator asked to hurry."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline and not hurry[0]:
+            try:
+                child.process.wait(timeout=min(0.2, max(0.0, deadline - time.monotonic())))
+                return True
+            except subprocess.TimeoutExpired:
+                continue
+        return child.process.poll() is not None
+
     def stop_all(self) -> None:
         """Stop the children last started first, waiting for each to exit before signalling the next.
 
         A child later in the start order depends on the ones before it (the backend needs CaptureServer's live
         connection to close a take), so it must be gone before its dependencies are signalled. Each child gets its
-        own grace period before it is killed. A second Ctrl-C while waiting kills the rest at once.
+        own grace period before it is killed, and whatever is left of its process group once it has exited is
+        killed too. A second Ctrl-C, or a SIGTERM or SIGHUP, while waiting kills the rest at once instead of
+        aborting.
         """
-        hard = False
-        for child in reversed(self.children):
-            if child.process.poll() is not None:
-                continue
-            if hard:
-                self._kill(child)
-                continue
-            # SIGINT lets the receiver and sender drain and free the GPU and cameras.
-            if not self._signal_group(child, signal.SIGINT):
-                child.process.poll()
-                continue
-            try:
-                child.process.wait(timeout=child.grace_s)
-            except subprocess.TimeoutExpired:
-                print(f"{child.name} did not exit within {child.grace_s:.0f} s; killing it", file=sys.stderr)
-                self._kill(child)
-            except KeyboardInterrupt:
-                # An impatient operator: stop waiting for this child and for every one after it.
-                hard = True
-                self._kill(child)
+        hurry = [False]
+
+        def hurry_up(signum, frame) -> None:
+            hurry[0] = True
+
+        # A signal while stopping must hurry the cleanup, not raise out of it and leave children running.
+        previous = {sig: signal.signal(sig, hurry_up) for sig in STOP_SIGNALS}
+        try:
+            for child in reversed(self.children):
+                if child.process.poll() is not None:
+                    self._signal_group(child, signal.SIGKILL)
+                    continue
+                if hurry[0]:
+                    self._kill(child)
+                    continue
+                # SIGINT lets the receiver and sender drain and free the GPU and cameras. A leader-only child gets
+                # it alone, so its helper processes are not interrupted behind its back.
+                try:
+                    if child.leader_only:
+                        child.process.send_signal(signal.SIGINT)
+                    else:
+                        self._signal_group(child, signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+                try:
+                    exited = self._wait(child, child.grace_s, hurry)
+                except KeyboardInterrupt:
+                    # An impatient operator: stop waiting for this child and for every one after it.
+                    hurry[0] = True
+                    exited = False
+                if exited:
+                    # The leader is gone; anything it left in the group goes with it.
+                    self._signal_group(child, signal.SIGKILL)
+                else:
+                    if not hurry[0]:
+                        print(
+                            f"{child.name} did not exit within {child.grace_s:.0f} s; killing it", file=sys.stderr
+                        )
+                    self._kill(child)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+
+def _raise_interrupt(signum, frame) -> None:
+    """Turn SIGTERM and SIGHUP into the Ctrl-C path, so a closed terminal stops the stack like Ctrl-C does."""
+    raise KeyboardInterrupt
 
 
 def control_token(log: Path) -> str | None:
@@ -465,8 +514,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     workdir = Path(tempfile.mkdtemp(prefix="egocap-start-"))
     ipc_socket = str(workdir / "camera_receiver.sock")
     stack = Stack(workdir)
-    # Children must stop however this script ends, including an exception in the middle of startup.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    # Children run in their own sessions, so a signal to this script reaches none of them; turn the ones that mean
+    # stop into the Ctrl-C path so the finally below always runs stop_all().
+    for sig in STOP_SIGNALS:
+        signal.signal(sig, _raise_interrupt)
     try:
         # The deploy is checked first so a missing tool fails before anything is running.
         if args.orin and args.mock:
@@ -604,6 +655,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
             cwd=EGOCAP_ROOT,
             grace_s=BACKEND_GRACE_S,
+            leader_only=True,
         )
         stack.wait_until(
             backend, lambda: port_open("127.0.0.1", args.backend_port), f"listening on {args.backend_port}", 60
