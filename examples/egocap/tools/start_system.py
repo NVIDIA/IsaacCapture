@@ -13,7 +13,8 @@ them are stopped, last started first, when this script exits for any reason.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
 CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
-unless ``--mock`` gives it synthetic tracking and cameras.
+unless ``--mock`` gives it synthetic tracking and cameras. ``--mock`` also replaces the Orin sender with a local
+mock sender (no ``--orin``), so nothing real is started; the receiver, bridge and page are the same.
 
 The sender's deploy tool, the LiveKit server and the bridge are not part of this tree, so their paths are options
 (or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``). The pure helpers sit above the
@@ -56,6 +57,9 @@ TIMESTAMP_BASIS = "capture_monotonic_us"
 # coordinator bounds at 35 s and the aligner bounds again afterwards, so it gets a margin over both.
 DEFAULT_GRACE_S = 15.0
 BACKEND_GRACE_S = 90.0
+# The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
+MOCK_TIMESTAMP_BASIS = "monotonic_us"
+DEFAULT_MOCK_SENDER = REPO_ROOT / "examples/camera_streamer/mock_sender/mock_sender.py"
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -204,6 +208,28 @@ def sender_settings(config: dict) -> SenderSettings:
         # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
         full_range=config.get("capture_backend") == "sipl",
     )
+
+
+def mock_sender_command(python: str, script: Path, settings: SenderSettings, width: int, height: int) -> list[str]:
+    """The local mock sender that stands in for the Orin: one HEVC stream shaped like the real one."""
+    return [
+        python,
+        str(script),
+        "--port",
+        str(settings.port),
+        "--stream",
+        f"{settings.stream_id}:{width}x{height}@{settings.fps}",
+    ]
+
+
+def bridge_timing_arguments(settings: SenderSettings, mock: bool, orin_host: str | None) -> list[str]:
+    """The bridge flags that say what the frame timestamps mean and where the sender's clock can be measured."""
+    if mock:
+        # No sender clock to measure and no SIPL range to signal.
+        return ["--timestamp-basis", MOCK_TIMESTAMP_BASIS]
+    flags = ["--timestamp-basis", TIMESTAMP_BASIS, "--sender-clock", f"{orin_host}:{settings.clock_port}"]
+    # SIPL pictures are full range; the bridge must say so or the encoded stream signals limited range.
+    return [*flags, "--source-full-range"] if settings.full_range else flags
 
 
 def port_open(host: str, port: int) -> bool:
@@ -366,7 +392,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mock",
         action="store_true",
-        help="run CaptureServer with synthetic tracking and cameras, no hardware needed",
+        help="no hardware: synthetic tracking and cameras from CaptureServer, and a local mock sender instead of "
+        "the Orin (with --bridge and --livekit-server the mock video also reaches the page)",
+    )
+    parser.add_argument(
+        "--mock-sender",
+        type=Path,
+        default=Path(os.environ.get("EGOCAP_MOCK_SENDER", DEFAULT_MOCK_SENDER)),
+        help="camera_streamer's mock_sender.py, used with --mock (needs ffmpeg with libx265)",
     )
     parser.add_argument("--backend-port", type=int, default=8010)
     parser.add_argument("--seconds", type=int, default=3600, help="how long the Orin sender runs")
@@ -387,10 +420,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     try:
         # The deploy is checked first so a missing tool fails before anything is running.
+        if args.orin and args.mock:
+            raise StartupError("--mock replaces the Orin sender with a local mock sender; do not pass --orin")
         if args.orin and not args.deploy_script:
             raise StartupError("--orin needs --deploy-script (or EGOCAP_DEPLOY_SCRIPT)")
         if args.orin and not (args.bridge and args.livekit_server):
             raise StartupError("--orin needs --bridge and --livekit-server to carry the video to the page")
+        # The camera chain (sender, receiver, bridge, LiveKit) runs for the Orin, or for --mock when the tools to
+        # carry its video are given; without them --mock is just CaptureServer's own synthetic cameras.
+        chain = bool(args.orin) or (args.mock and bool(args.bridge and args.livekit_server))
+        if chain and args.mock and not args.mock_sender.is_file():
+            raise StartupError(f"the mock sender {args.mock_sender} does not exist; pass --mock-sender")
+        basis = MOCK_TIMESTAMP_BASIS if args.mock else TIMESTAMP_BASIS
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(
             args.sender_config, args.fps, args.bitrate_mbps, args.clock_port, args.sender_port
@@ -406,17 +447,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ) from error
         (workdir / "sender.yaml").write_text(yaml.safe_dump(sender_config, sort_keys=False))
         (workdir / "streams.yaml").write_text(
-            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, sender.fps, TIMESTAMP_BASIS)
+            streams_yaml(livekit_url, room, publisher, track, args.width, args.height, sender.fps, basis)
         )
         (workdir / "receiver.yaml").write_text(
             receiver_yaml(
                 orin_host or "127.0.0.1", sender.port, ipc_socket, args.width, args.height, sender.stream_id
             )
         )
-        print(
-            f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
-            f"timing extension on, clock port {sender.clock_port}, release {args.release}"
-        )
+        if args.mock:
+            print(f"mock sender: {sender.fps} fps stream {sender.stream_id!r}, timestamps are frame-ready time")
+        else:
+            print(
+                f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
+                f"timing extension on, clock port {sender.clock_port}, release {args.release}"
+            )
         # Without a build the backend serves no page, and announcing a URL that answers 404 would mislead.
         if not FRONTEND_INDEX.is_file():
             raise StartupError(
@@ -450,6 +494,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     str(args.seconds),
                 ],
             )
+        # 1b. With --mock a local mock sender stands in for the Orin, so nothing real is started.
+        mock_sender = None
+        if chain and args.mock:
+            mock_sender = stack.start(
+                "mock-sender", mock_sender_command(python, args.mock_sender, sender, args.width, args.height)
+            )
         # 2. LiveKit carries the video from the bridge to the browser and the recorder.
         if args.livekit_server:
             server = stack.start("livekit", [args.livekit_server, "--dev", "--bind", "127.0.0.1"])
@@ -462,8 +512,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "-m",
                 "capture_server",
                 *(["--mock"] if args.mock else []),
-                "--livekit-streams",
-                str(workdir / "streams.yaml"),
+                # The descriptor advertises a LiveKit stream, so it is given only when something publishes one.
+                *(["--livekit-streams", str(workdir / "streams.yaml")] if chain else []),
             ],
             env={"PYTHONPATH": pythonpath},
             cwd=EGOCAP_ROOT,
@@ -495,7 +545,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             backend, lambda: port_open("127.0.0.1", args.backend_port), f"listening on {args.backend_port}", 60
         )
         # 5. The receiver decodes the sender's stream; the bridge republishes it into the LiveKit room.
-        if args.orin:
+        if chain:
+            if mock_sender is not None:
+                # Building the mock's test streams with ffmpeg can take a while on the first run.
+                stack.wait_until(
+                    mock_sender, lambda: port_open("127.0.0.1", sender.port), f"listening on {sender.port}", 300
+                )
             receiver = stack.start(
                 "receiver", [*shlex.split(args.receiver), "--config", str(workdir / "receiver.yaml")]
             )
@@ -514,11 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{sender.stream_id}={track}:2",
                     "--fps",
                     str(sender.fps),
-                    "--timestamp-basis",
-                    TIMESTAMP_BASIS,
-                    "--sender-clock",
-                    f"{orin_host}:{sender.clock_port}",
-                    *(["--source-full-range"] if sender.full_range else []),
+                    *bridge_timing_arguments(sender, args.mock, orin_host),
                 ],
             )
         url = f"http://127.0.0.1:{args.backend_port}/"
@@ -526,7 +577,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
         if args.mock:
             # A recording made here mixes synthetic tracking and cameras with the real stream.
-            print("--mock: tracking and the CaptureServer cameras are synthetic.")
+            print("--mock: tracking, the CaptureServer cameras and the camera stream are synthetic.")
         print("Ctrl-C stops everything.")
         if args.open:
             webbrowser.open(url)

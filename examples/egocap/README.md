@@ -90,10 +90,15 @@ uv run python tools/start_system.py --orin user@orin --deploy-script PATH --live
 ```
 
 It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs a built
-IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware; `--mock` gives it synthetic tracking and cameras so the
-stack runs without either, and anything recorded then mixes synthetic data with the real camera stream. The default
-station file (`--station-config`) is the shipped example, which requests cameras; pass your own station file when the
-rig has different ones. Without `--orin` only the PC side starts, and
+IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware. The default station file (`--station-config`) is the
+shipped example, which requests cameras; pass your own station file when the rig has different ones.
+
+`--mock` runs without hardware: CaptureServer gives synthetic tracking and cameras, and a local mock sender
+(`camera_streamer`'s `mock_sender.py`, found under `examples/camera_streamer/mock_sender` or given with
+`--mock-sender`, and needing `ffmpeg` with `libx265`) replaces the Orin, so nothing real is started and `--orin` is
+refused. With `--bridge` and `--livekit-server` the mock video goes through the same receiver, bridge and page; its
+timestamps are the frame-ready time, because the mock sender has no clock to measure. A recording made in this mode
+is synthetic data. Without `--orin` or `--mock` only the PC side starts, and
 `--skip-deploy` reuses the previous release. The deploy tool, the LiveKit server and the bridge are not in this tree,
 so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4
 address, because the bridge measures the sender's clock at that address.
