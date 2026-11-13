@@ -9,12 +9,15 @@ import argparse
 import base64
 import csv
 import json
+import logging
 import select
 import signal
 import socket
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+logger = logging.getLogger("isaaccapture.camera_streamer.consumer")
 
 
 @dataclass
@@ -79,7 +82,9 @@ class CudaIpcClient:
             try:
                 self.sock.close()
             except Exception:
-                pass
+                logger.debug(
+                    "CUDA IPC: failed to close publisher socket", exc_info=True
+                )
             self.sock = None
         for slot in self.slots.values():
             slot.owner.close()

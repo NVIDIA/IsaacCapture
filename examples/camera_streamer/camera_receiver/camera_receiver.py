@@ -572,7 +572,9 @@ class Avs1TcpReceiver:
             try:
                 self._conn.close()
             except Exception:
-                pass
+                logger.debug(
+                    "failed to close AVS1 connection during shutdown", exc_info=True
+                )
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -619,7 +621,10 @@ class Avs1TcpReceiver:
                     try:
                         conn.close()
                     except Exception:
-                        pass
+                        logger.debug(
+                            "failed to close AVS1 connection after receive loop",
+                            exc_info=True,
+                        )
                     self._conn = None
                     if self._receive_fps_monitor is not None:
                         self._receive_fps_monitor.stop()

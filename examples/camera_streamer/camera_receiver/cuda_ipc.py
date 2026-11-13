@@ -184,7 +184,9 @@ class CudaIpcFramePublisher:
             try:
                 self._server.close()
             except Exception:
-                pass
+                logger.debug(
+                    "CUDA IPC: failed to close listening socket", exc_info=True
+                )
             self._server = None
         with self._lock:
             clients = list(self._clients)
@@ -194,7 +196,10 @@ class CudaIpcFramePublisher:
             try:
                 client.sock.close()
             except Exception:
-                pass
+                logger.debug(
+                    "CUDA IPC: failed to close consumer socket during shutdown",
+                    exc_info=True,
+                )
         for thread in (self._accept_thread, self._broadcast_thread):
             if thread is not None:
                 thread.join(timeout=2.0)
@@ -360,7 +365,9 @@ class CudaIpcFramePublisher:
                 try:
                     self._send_json(client, {"type": "error", "error": str(exc)})
                 except Exception:
-                    pass
+                    logger.debug(
+                        "CUDA IPC: failed to notify rejected consumer", exc_info=True
+                    )
                 client.close()
                 continue
             with self._lock:
@@ -402,7 +409,10 @@ class CudaIpcFramePublisher:
                     try:
                         client.sock.close()
                     except Exception:
-                        pass
+                        logger.debug(
+                            "CUDA IPC: failed to close disconnected consumer socket",
+                            exc_info=True,
+                        )
 
     @staticmethod
     def _send_json(sock: socket.socket, msg: dict[str, Any]) -> None:
