@@ -50,14 +50,11 @@ enum class Codec : std::uint32_t
     H265 = 2,
 };
 
-// How a slot's memory reaches another process. The core tracks slots by index only and never
-// touches their memory, so a new kind needs no change here.
+// Where a stream's slots live, which tells a reader how to map them. The core tracks slots by
+// index only and never touches their memory; each further kind is added with its pool.
 enum class MemoryKind : std::uint32_t
 {
-    HOST = 1, // shared host memory, passed as a file descriptor
-    CUDA = 2, // CUDA memory on a discrete GPU
-    DMA_BUF = 3, // Jetson buffer, passed as a file descriptor
-    NVSCI_BUF = 4, // reserved for SIPL; nothing implements it yet
+    HOST = 1, // shared host memory
 };
 
 struct StreamDescription
