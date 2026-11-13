@@ -77,7 +77,10 @@ internet source) cancels. That is why the bound is relative and not the sum of b
 
 What is and is not checked: the PC's selected reference id must be the camera host's address, so a different source
 is refused as `ReferenceMismatch`. The assumption that the root fields are cumulative through the camera host is
-chrony's documented behaviour, not something this library measures. The two reports are read at different instants,
+chrony's documented behaviour, not something this library measures. The camera host's root fields are subtracted only
+when its last source update is not newer than the PC's (`Ref time`): then the PC's copy and the camera host's report
+describe the same upstream sample. If the camera host has updated since, its newer root values are not what the PC
+copied, nothing is subtracted, and the PC's full root values are charged instead; the bound is then larger, not smaller. The two reports are read at different instants,
 so the difference can be slightly off; it is clamped at zero, and the copy slack and the skew-times-age terms cover
 the drift between reads. The bound is derived from chrony's own reports. It has not been validated against an
 independent reference such as a hardware sync pulse, so a qualified frame means "within chrony's claimed error",

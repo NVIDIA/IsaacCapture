@@ -120,8 +120,10 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
 /// link between the two and the camera host's own upstream error cancels), a slack for the camera host's dispersion
 /// growing since the PC copied it, and each report's skew times its age. The assumptions are that the PC's source is
 /// the camera host and that its root fields are cumulative through the camera host's; a differing reference id is
-/// refused, and the subtraction is clamped at zero. The bound is derived from chrony's own reports, not measured
-/// independently of them.
+/// refused, and the subtraction is clamped at zero. The subtraction is made only when the camera host's last source
+/// update is not newer than the PC's; otherwise the two reports are not known to describe the same upstream sample
+/// and the PC's full root delay and dispersion are charged. The bound is derived from chrony's own reports, not
+/// measured independently of them.
 ///
 /// `Qualified` carries the PC clock generation. The caller must pin the generation when a take starts and end the
 /// take, not continue it, when a later frame reports a different one.

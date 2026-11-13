@@ -109,9 +109,16 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
     const ChronyTracking& s = follower.tracking;
     const ChronyTracking& p = server.tracking;
     // Root delay and dispersion are cumulative along the chain to the reference, so what the follower adds beyond
-    // the server's own values is the link between them; the shared upstream part cancels.
-    const double link_dispersion_s = std::max(s.root_dispersion_s - p.root_dispersion_s, 0.0);
-    const double link_delay_s = std::max(s.root_delay_s - p.root_delay_s, 0.0);
+    // the server's own values is the link between them, and the shared upstream part cancels. That holds only when
+    // the follower's copy of the server's values and the server's report describe the same upstream sample: the
+    // server has not updated from its own source since the follower last updated from it. A server whose last update
+    // is newer than the follower's may have different root values than the ones the follower copied, so subtracting
+    // them would shrink the bound without any new measurement of the link. Then nothing cancels and the follower's
+    // full root values are charged, which is larger and never smaller than the truth.
+    const bool same_upstream_sample = p.ref_time_unix_s > 0.0 && p.ref_time_unix_s <= s.ref_time_unix_s;
+    const double link_dispersion_s =
+        same_upstream_sample ? std::max(s.root_dispersion_s - p.root_dispersion_s, 0.0) : s.root_dispersion_s;
+    const double link_delay_s = same_upstream_sample ? std::max(s.root_delay_s - p.root_delay_s, 0.0) : s.root_delay_s;
     // The follower copied the server's values when it last polled; the server's dispersion has grown since.
     const double copy_slack_s = p.skew_ppm * 1e-6 * s.update_interval_s;
     const double follower_age_s = static_cast<double>(std::max<int64_t>(follower_age_ns, 0)) * 1e-9;
