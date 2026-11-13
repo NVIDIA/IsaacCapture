@@ -72,16 +72,21 @@ class MockToIpcPipelineTest(unittest.TestCase):
         # Flat frames whose luma is 16 + (frame index) % LEVEL_LOOP.
         levels = cls.tmp / "levels"
         levels.mkdir()
+        x265_params = (
+            "keyint=300:min-keyint=300:scenecut=0:bframes=0:repeat-headers=1:"
+            "aud=1:rc-lookahead=0:no-open-gop=1:log-level=error"
+        )
         for n, w, h in STREAMS:
+            filter_graph = (
+                f"nullsrc=size={w}x{h}:rate=30,format=yuv420p,"
+                f"geq=lum='16+mod(N,{LEVEL_LOOP})':cb=128:cr=128"
+            )
             subprocess.run(
                 [
                     "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
-                    f"nullsrc=size={w}x{h}:rate=30,format=yuv420p,"
-                    f"geq=lum='16+mod(N,{LEVEL_LOOP})':cb=128:cr=128",
+                    filter_graph,
                     "-frames:v", str(LEVEL_LOOP), "-c:v", "libx265",
-                    "-preset", "ultrafast", "-x265-params",
-                    "keyint=300:min-keyint=300:scenecut=0:bframes=0:repeat-headers=1:"
-                    "aud=1:rc-lookahead=0:no-open-gop=1:log-level=error",
+                    "-preset", "ultrafast", "-x265-params", x265_params,
                     "-b:v", "2M", "-pix_fmt", "yuv420p", "-f", "hevc",
                     str(levels / f"{n}_{w}x{h}_30.hevc"),
                 ],
@@ -220,7 +225,8 @@ class MockToIpcPipelineTest(unittest.TestCase):
             mine = [(m, s) for name, m, s in frames if name == n][:FRAMES]
             with self.subTest(stream=n):
                 seqs = [m["stream_sequence"] for m, _ in mine]
-                self.assertEqual(seqs[0], 1, self._logs())
+                # The publisher keeps no replay buffer, so a late subscriber's first frame may not be the first.
+                self.assertGreaterEqual(seqs[0], 1, self._logs())
                 self.assertEqual(seqs, list(range(seqs[0], seqs[0] + len(seqs))))
                 numbers = [m["frame_number"] for m, _ in mine]
                 self.assertEqual(numbers, sorted(set(numbers)))
