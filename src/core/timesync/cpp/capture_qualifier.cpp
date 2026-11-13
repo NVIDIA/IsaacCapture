@@ -108,17 +108,14 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
 {
     const ChronyTracking& s = follower.tracking;
     const ChronyTracking& p = server.tracking;
-    // Root delay and dispersion are cumulative along the chain to the reference, so what the follower adds beyond
-    // the server's own values is the link between them, and the shared upstream part cancels. That holds only when
-    // the follower's copy of the server's values and the server's report describe the same upstream sample: the
-    // server has not updated from its own source since the follower last updated from it. A server whose last update
-    // is newer than the follower's may have different root values than the ones the follower copied, so subtracting
-    // them would shrink the bound without any new measurement of the link. Then nothing cancels and the follower's
-    // full root values are charged, which is larger and never smaller than the truth.
-    const bool same_upstream_sample = p.ref_time_unix_s > 0.0 && p.ref_time_unix_s <= s.ref_time_unix_s;
-    const double link_dispersion_s =
-        same_upstream_sample ? std::max(s.root_dispersion_s - p.root_dispersion_s, 0.0) : s.root_dispersion_s;
-    const double link_delay_s = same_upstream_sample ? std::max(s.root_delay_s - p.root_delay_s, 0.0) : s.root_delay_s;
+    // The follower's root delay and dispersion are charged in full. Subtracting the camera host's own values, so that
+    // only the link between the two is charged, would need both reports to describe the same upstream sample, and
+    // chrony's tracking output has no sample identifier to show that: `Ref time` is when each host processed its own
+    // latest measurement, so comparing the two proves nothing about which samples the root fields came from. Without
+    // that correspondence a subtraction can shrink the bound with no new measurement of the link, so none is made.
+    // The charge includes the camera host's upstream error, so it is larger than the link alone and never smaller.
+    const double link_dispersion_s = s.root_dispersion_s;
+    const double link_delay_s = s.root_delay_s;
     // The follower copied the server's values when it last polled; the server's dispersion has grown since.
     const double copy_slack_s = p.skew_ppm * 1e-6 * s.update_interval_s;
     const double follower_age_s = static_cast<double>(std::max<int64_t>(follower_age_ns, 0)) * 1e-9;
@@ -178,6 +175,14 @@ Qualification qualify_capture(const SenderCapture& capture,
     if (!pc_clock.usable)
     {
         return refuse(Verdict::NoLocalClock);
+    }
+    // The offset between this host's clocks is read from this sample; one older than the evidence limit may predate a
+    // wall-clock step and carries the old generation.
+    int64_t sample_age = 0;
+    if (__builtin_sub_overflow(now_monotonic_ns, pc_clock.sample.monotonic_ns, &sample_age) ||
+        sample_age > config.max_evidence_age_ns)
+    {
+        return refuse(Verdict::StaleEvidence);
     }
 
     q.generation = pc_clock.generation;

@@ -39,7 +39,13 @@ dedicated unprivileged instance next to the system chronyd is read.
 The camera host keeps its own clock and serves it (it may follow UTC or serve its own clock). A second,
 unprivileged chronyd on the PC measures it and never adjusts the PC's system clock, so nothing has to reach the
 PC (a PC firewall does not matter) and the PC needs no root beyond installing chrony. `qualify_capture` charges
-the link between the two.
+the PC's full root delay and dispersion, which include the link between the two and the camera host's own upstream
+error (see "What the bound assumes").
+
+A camera host with no upstream source is served as synchronised only if its chrony has a `local` reference; pass
+`configure-remote --offline` to write one. It is off by default, so a host that follows UTC keeps its configuration.
+`status` is a readiness check on the PC's follower (synchronised, the camera host's reference id, root dispersion and
+System time offset under `--max-dispersion-ms`); it does not state the per-frame bound.
 
 ## Running and deploying it
 
@@ -66,28 +72,24 @@ launch tools call this tool; they do not carry their own chrony setup.
 
 ## What the bound assumes
 
-The inter-host term is both hosts' `System time`, the PC's root dispersion and root delay / 2 minus the camera
-host's, a slack for the camera host's dispersion growing since the PC copied it, and each report's skew times its
-age.
+The inter-host term is both hosts' `System time`, the PC's full root dispersion and root delay / 2, a slack for the
+camera host's dispersion growing since the PC copied it, and each report's skew times its age.
 
-Why the subtraction is used: chrony's root delay and root dispersion are cumulative along the chain to the
-reference. When the PC's source is the camera host, the PC's values are the camera host's plus the link between
-them, so the difference isolates the link and the camera host's own upstream error (large when it follows an
-internet source) cancels. That is why the bound is relative and not the sum of both hosts' absolute bounds.
+The camera host's own root values are not subtracted. They would cancel its upstream error only if both hosts' root
+fields described the same upstream sample, and chrony's report carries no identifier that shows it: `Ref time` is when
+each host processed its own latest measurement, so comparing the two says nothing about which samples the root fields
+came from. Subtracting without that correspondence could shrink the bound with no new measurement of the link, so the
+PC's full values are charged. They include the camera host's upstream error, so the bound is larger than the link
+alone and never smaller; a camera host disciplined from the internet (large root delay) will usually be over the
+budget, and those frames keep their capture time.
 
 What is and is not checked: the PC's selected reference id must be the camera host's address, so a different source
-is refused as `ReferenceMismatch`. The assumption that the root fields are cumulative through the camera host is
-chrony's documented behaviour, not something this library measures. The camera host's root fields are subtracted only
-when its last source update is not newer than the PC's (`Ref time`): then the PC's copy and the camera host's report
-describe the same upstream sample. If the camera host has updated since, its newer root values are not what the PC
-copied, nothing is subtracted, and the PC's full root values are charged instead; the bound is then larger, not smaller. The two reports are read at different instants,
-so the difference can be slightly off; it is clamped at zero, and the copy slack and the skew-times-age terms cover
-the drift between reads. The bound is derived from chrony's own reports. It has not been validated against an
+is refused as `ReferenceMismatch`. The bound is derived from chrony's own reports. It has not been validated against an
 independent reference such as a hardware sync pulse, so a qualified frame means "within chrony's claimed error",
 not "measured within". Refusal policy: any report that is stale, has no recent source update, is unsynchronised, or
-names another source is refused and the frame carries no time; nothing is estimated. A frame that passes every check but
-whose bound is over the budget is `OverBudget`, which is still `usable()`: it keeps its capture time and the bound, and the
-budget is a precision target for the diagnostics, not a condition for having a time.
+names another source is refused and the frame carries no time; nothing is estimated. A frame that passes every check
+but whose bound is over the budget is `OverBudget`, which is still `usable()`: it keeps its capture time and the
+bound, and the budget is a precision target for the diagnostics, not a condition for having a time.
 
 Step detection compares successive wall-minus-monotonic offsets. On Linux the two clocks share
 frequency adjustment, so the difference changes only on a step. A change beyond both bracket widths

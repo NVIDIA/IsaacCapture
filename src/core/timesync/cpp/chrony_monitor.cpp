@@ -107,6 +107,7 @@ MonitorSnapshot ChronyMonitor::snapshot() const
 
 void ChronyMonitor::start()
 {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_.joinable())
     {
@@ -118,6 +119,9 @@ void ChronyMonitor::start()
 
 void ChronyMonitor::stop()
 {
+    // Held until the worker has been joined: a start() meanwhile would clear stopping_ and spawn a second worker, and
+    // this join would then never return.
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     std::thread joinable;
     {
         std::lock_guard<std::mutex> lock(mutex_);

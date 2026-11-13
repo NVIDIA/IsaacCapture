@@ -4,6 +4,7 @@
 #include <timesync/command_runner.hpp>
 
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -97,6 +98,41 @@ void test_stderr_discarded()
     CHECK(r.output == "out\n");
 }
 
+void test_closed_stdout_then_hang_is_killed_at_deadline()
+{
+    // The child closes stdout (EOF for the runner) and then hangs; the deadline must still apply.
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto r = run({ "/bin/sh", "-c", "exec 1>&-; sleep 30" }, milliseconds(300));
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+    CHECK(r.started);
+    CHECK(r.timed_out);
+    CHECK(r.exit_code == -1);
+    CHECK(elapsed < std::chrono::seconds(3));
+}
+
+void test_normal_exit_code_reported()
+{
+    const auto r = run({ "/bin/sh", "-c", "exit 7" });
+    CHECK(r.started);
+    CHECK(!r.timed_out);
+    CHECK(r.exit_code == 7);
+}
+
+void test_ignored_sigchld_never_reports_success()
+{
+    // With SIGCHLD ignored the kernel auto-reaps, so waitpid fails with ECHILD and no status is known. A failing
+    // command must not come back as exit_code 0.
+    struct sigaction ign = {};
+    ign.sa_handler = SIG_IGN;
+    sigemptyset(&ign.sa_mask);
+    struct sigaction old = {};
+    CHECK(sigaction(SIGCHLD, &ign, &old) == 0);
+    const auto r = run({ "/bin/false" });
+    sigaction(SIGCHLD, &old, nullptr);
+    CHECK(r.started);
+    CHECK(r.exit_code != 0);
+}
+
 } // namespace
 
 int main()
@@ -109,6 +145,9 @@ int main()
     test_output_cap();
     test_empty_argv();
     test_stderr_discarded();
+    test_closed_stdout_then_hang_is_killed_at_deadline();
+    test_normal_exit_code_reported();
+    test_ignored_sigchld_never_reports_success();
     if (g_failures)
     {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

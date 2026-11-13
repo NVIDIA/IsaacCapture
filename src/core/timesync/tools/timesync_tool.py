@@ -4,7 +4,7 @@
 """Runs and deploys the chrony setup that the timesync library reads: the camera host serves its clock and the PC measures it.
 
     timesync_tool.py ensure-local
-    timesync_tool.py configure-remote user@host --host-lan-ip IP [--timeout S] [--dry-run]
+    timesync_tool.py configure-remote user@host --host-lan-ip IP [--offline] [--timeout S] [--dry-run]
     timesync_tool.py follow --server HOST [--cmd-port N]
     timesync_tool.py status --remote HOST [--cmd-port N] [--wait S]
 
@@ -117,14 +117,19 @@ def follower_config(server: str, server_port: int, cmd_port: int, workdir: Path)
     )
 
 
-def remote_drop_in(host_lan_ip: str) -> str:
-    """The camera host's chrony drop-in: serve this PC and let it read this chronyd's state."""
-    return f"allow {host_lan_ip}\nbindcmdaddress 0.0.0.0\ncmdallow {host_lan_ip}\n"
+def remote_drop_in(host_lan_ip: str, offline: bool = False) -> str:
+    """The camera host's chrony drop-in: serve this PC and let it read this chronyd's state.
+
+    ``offline`` adds a ``local`` reference, which an isolated camera host (no upstream source) needs to be served as
+    synchronised; a host that follows UTC must not have one.
+    """
+    drop_in = f"allow {host_lan_ip}\nbindcmdaddress 0.0.0.0\ncmdallow {host_lan_ip}\n"
+    return drop_in + "local stratum 10\n" if offline else drop_in
 
 
-def remote_script(host_lan_ip: str) -> str:
+def remote_script(host_lan_ip: str, offline: bool = False) -> str:
     """The bash that ``configure-remote`` runs on the camera host."""
-    wanted = remote_drop_in(host_lan_ip)
+    wanted = remote_drop_in(host_lan_ip, offline)
     return f"""set -eu
 sudo -n true || {{ echo "passwordless sudo is required on the target" >&2; exit 1; }}
 if ! command -v chronyd >/dev/null; then
@@ -174,7 +179,13 @@ def chronyc_tracking(
 
 
 def judge(local: Tracking, expected_id: str, max_dispersion_s: float) -> list[str]:
-    """What keeps this machine's measuring instance from being usable, one message each; empty when it is usable."""
+    """What keeps this machine's measuring instance from being usable, one message each; empty when it is usable.
+
+    The same limit applies to the root dispersion and to the size of the System time offset, so a follower that reports
+    a small dispersion while its clock is tens of milliseconds off is not called ready. This is a readiness check on
+    the follower only: it does not state the inter-host bound, which the capture qualifier computes per frame from both
+    hosts' reports.
+    """
     problems = []
     if not local.synchronised:
         problems.append(
@@ -188,6 +199,11 @@ def judge(local: Tracking, expected_id: str, max_dispersion_s: float) -> list[st
     if local.root_dispersion > max_dispersion_s:
         problems.append(
             f"this machine's root dispersion is {local.root_dispersion * 1e3:.1f} ms, "
+            f"above {max_dispersion_s * 1e3:.1f} ms; it is still settling"
+        )
+    if abs(local.system_time) > max_dispersion_s:
+        problems.append(
+            f"this machine's System time offset is {abs(local.system_time) * 1e3:.1f} ms, "
             f"above {max_dispersion_s * 1e3:.1f} ms; it is still settling"
         )
     return problems
@@ -266,7 +282,7 @@ def cmd_ensure_local(args: argparse.Namespace) -> int:
 
 def cmd_configure_remote(args: argparse.Namespace) -> int:
     reference_id_for(args.host_lan_ip)
-    script = remote_script(args.host_lan_ip)
+    script = remote_script(args.host_lan_ip, args.offline)
     command = [
         "ssh",
         "-o",
@@ -365,6 +381,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     configure.add_argument(
         "--timeout", type=float, default=90.0, help="seconds the whole setup may take"
+    )
+    configure.add_argument(
+        "--offline",
+        action="store_true",
+        help="the camera host has no upstream time source: add a chrony `local` reference so it is served as synchronised",
     )
     configure.add_argument("--dry-run", action="store_true")
     status = sub.add_parser(
