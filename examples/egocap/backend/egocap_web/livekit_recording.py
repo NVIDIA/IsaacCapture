@@ -386,6 +386,11 @@ class LiveKitRecordingSource:
                 )
                 if frame is None:
                     raise RuntimeError(f"{stream.name}: the LiveKit track was lost before recording started")
+                # A take records the publisher's capture time, so a source that sends none cannot start one.
+                if frame.user_timestamp_us is None:
+                    raise RuntimeError(
+                        f"{stream.name}: the first frame carries no capture time, so it cannot be recorded"
+                    )
                 if frame.image.shape[:2] != (stream.height, stream.width):
                     raise RuntimeError(
                         f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "

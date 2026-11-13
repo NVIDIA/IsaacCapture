@@ -10,8 +10,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from capture_server import protocol as p
+from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+from egocap_web.livekit_recording import LiveKitRecordingFeed
 from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator
 from recording_service import (
     Disposition,
@@ -253,4 +257,75 @@ async def test_an_interrupted_takes_evidence_does_not_describe_the_next_take(tmp
     await coordinator.stop_episode(two.episode_id)
 
     assert calls == [(two.episode_id, {"event_time": tracking})]
+    await coordinator.close()
+
+
+class _UnstampedReceiver:
+    """Delivers one frame with no publisher timestamp, then stays quiet."""
+
+    class _Clock:
+        discontinuity = False
+
+        def mapping(self):
+            return None
+
+    def __init__(self) -> None:
+        self.clock_sync = self._Clock()
+        self.counters = {16: StreamCounters()}
+        self._sent = False
+
+    async def next_frame_or_lost(self, stream_id, timeout=None):
+        if self._sent:
+            await asyncio.Event().wait()
+        self._sent = True
+        return ReceivedFrame(
+            stream_id=stream_id,
+            image=np.zeros((4, 6, 3), dtype=np.uint8),
+            receive_time_ns=0,
+            transport_timestamp_us=1,
+            user_timestamp_us=None,
+            frame_id=None,
+            user_data=None,
+        )
+
+
+class _RealFeedSource(FakeSource):
+    """A source whose ``start`` runs the real feed, so its own failure reason reaches the coordinator."""
+
+    def start(self, ingress, on_failure) -> None:
+        super().start(ingress, on_failure)
+        stream = p.LiveKitCameraStream(
+            stream_id=16,
+            name="head",
+            url="ws://lk",
+            room="r",
+            publisher="o",
+            track="t",
+            timestamp_basis=p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
+        )
+        self.feed = LiveKitRecordingFeed(
+            _UnstampedReceiver(), [stream], ingress, {16: "head"}, on_failure=on_failure
+        )
+        self.feed.start()
+
+    async def stop(self) -> None:
+        await super().stop()
+        await self.feed.stop()
+
+
+async def test_a_frame_without_a_publisher_timestamp_ends_the_take_and_leaves_it_recoverable(tmp_path):
+    source = _RealFeedSource([])
+    coordinator = make_coordinator(tmp_path, source)
+    await coordinator.open()
+    coordinator.set_task("t")
+    await coordinator.start_episode()
+    for _ in range(300):
+        snap = coordinator.snapshot()
+        if snap.service.phase is RecordingPhase.RECOVERY_REQUIRED and snap.active_operation is None:
+            break
+        await asyncio.sleep(0.01)
+    snap = coordinator.snapshot()
+    assert snap.service.phase is RecordingPhase.RECOVERY_REQUIRED
+    assert "a frame arrived without the publisher's frame timestamp" in (coordinator._last_issue or "")
+    assert snap.service.last_result is None or snap.service.last_result.disposition is not Disposition.KEPT
     await coordinator.close()
