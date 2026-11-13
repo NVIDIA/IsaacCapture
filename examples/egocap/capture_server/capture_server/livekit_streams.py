@@ -30,7 +30,6 @@ _ROOM_KEYS = {"url", "room", "publisher", "timestamp_basis", "streams"}
 _BASES = {
     "monotonic_us": p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US,
     "processing_unix_us": p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US,
-    "capture_unix_us": p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US,
     "capture_monotonic_us": p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US,
 }
 _STREAM_KEYS = {"name", "track", "width", "height", "fps"}
