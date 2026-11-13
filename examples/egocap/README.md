@@ -118,6 +118,16 @@ timing extension and clock responder on). Pass another file with `--sender-confi
 built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
 setting and lists every key.
 
+### Integration boundary
+
+The launcher composes the current capture, receiver and browser stack. Its orchestration may be consolidated with
+shared camera startup and transport provisioning once those services cover the same workflow (setup, preview,
+recording admission, recovery and shutdown); until then it is the supported way to start the stack.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `tools/start_system.py` | Camera startup and transport provisioning | Adapt the orchestration; retire duplicated setup only where it is covered | Consolidate operational setup with the shared services. Lands when setup, preview, recording admission, recovery and shutdown remain available. |
+
 ## Real hardware
 
 CaptureServer's real mode needs its own Python bindings built in an
