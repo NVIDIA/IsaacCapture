@@ -190,7 +190,7 @@ Collect Teleop Data
       It runs two interactive steps — hold the arm at mid-range and press ENTER (homing), then
       sweep every joint through its full range and press ENTER — and writes the calibration file.
       Pass a path ending in ``.json`` to write LeRobot's format instead; an **existing LeRobot
-      calibration** (``~/.cache/huggingface/lerobot/calibration/teleoperators/so101_leader/<id>.json``)
+      calibration** (``~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/<id>.json``)
       can be handed to the plugin as-is. See :ref:`so101-leader-plugin` and the
       :code-file:`plugin README <src/plugins/so101_leader/README.md>` for the file format and the
       LeRobot interoperability details.
