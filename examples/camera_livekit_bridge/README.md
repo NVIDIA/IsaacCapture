@@ -90,8 +90,12 @@ a consumer that needs a capture time says so instead of using a guess.
 (`sensor_capture_realtime_ns`, `sensor_capture_uncertainty_ns`, `sensor_capture_valid`) and the time-sync library in
 `src/core/timesync`. Each frame is converted from the sender's `CLOCK_REALTIME` to this host's monotonic clock, or
 refused with a typed reason, using chronyd's own report for both hosts, a bracketed read of this host's clocks, and the
-sender's stated uncertainty. A refused frame is published without a timestamp, and the frame-ready time is never
-offered in its place. It needs:
+sender's stated uncertainty. Two outcomes are different in kind. A conversion that cannot be vouched for (a stale or
+unsynchronised chrony report, another reference, an implausible age, an invalid sender record) is published without a
+timestamp, and the frame-ready time is never offered in its place. A conversion that passes every one of those checks
+but whose combined uncertainty is over the precision target (`over_budget`) still has a capture instant with a known
+bound, so it is published with that timestamp; the target classifies the frame in the statistics and does not remove its
+time. It needs:
 
 | Option | Meaning |
 | --- | --- |
@@ -101,9 +105,10 @@ offered in its place. It needs:
 | `--chronyc PATH` | The `chronyc` binary (default `chronyc` on `PATH`). |
 
 `src/core/timesync/README.md` describes the arrangement (this host measures the camera host, which serves its own clock) and how to set it up with `timesync_tool.py`. The
-`[stats]` line gains the number of frames that qualified, a count per refusal reason, the last combined uncertainty and
-the clock generation the frame was converted under. The caller of a recording should treat a frame without a
-timestamp as a timing fault.
+`[stats]` line gains the number of frames that met the precision target, a count per other verdict (`over_budget` frames
+carry a timestamp; the rest do not), the last combined uncertainty and the clock generation the frame was converted
+under. These are runtime diagnostics only and are not recorded with the video. The caller of a recording should treat a
+frame without a timestamp as a timing fault.
 
 `--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
 then signals full range, so players and recordings keep the black and white levels. Without it the stream signals
