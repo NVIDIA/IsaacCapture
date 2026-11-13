@@ -51,6 +51,10 @@ DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
 DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.camera_only.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
 TIMESTAMP_BASIS = "capture_monotonic_us"
+# Seconds a child gets to exit after SIGINT before it is killed. The backend closes an in-progress take, which its
+# coordinator bounds at 35 s and the aligner bounds again afterwards, so it gets a margin over both.
+DEFAULT_GRACE_S = 15.0
+BACKEND_GRACE_S = 90.0
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -217,6 +221,7 @@ class Managed:
     name: str
     process: subprocess.Popen
     log: Path
+    grace_s: float = DEFAULT_GRACE_S
 
 
 class Stack:
@@ -228,7 +233,12 @@ class Stack:
         self.children: list[Managed] = []
 
     def start(
-        self, name: str, command: Sequence[str], env: dict[str, str] | None = None, cwd: Path | None = None
+        self,
+        name: str,
+        command: Sequence[str],
+        env: dict[str, str] | None = None,
+        cwd: Path | None = None,
+        grace_s: float = DEFAULT_GRACE_S,
     ) -> Managed:
         """Launch a child in its own process group so stopping it also stops anything it spawned."""
         # Each child writes to its own file so a failed step can point the operator at the output to read.
@@ -245,7 +255,7 @@ class Stack:
             start_new_session=True,
         )
         # Registering the child here is what makes stop_all() cover it even if a later step fails.
-        child = Managed(name, process, log)
+        child = Managed(name, process, log, grace_s)
         self.children.append(child)
         print(f"started {name} (pid {process.pid}); log {log}")
         return child
@@ -264,19 +274,51 @@ class Stack:
             time.sleep(0.5)
         raise StartupError(f"{child.name} was not ready ({what}) within {timeout_s:.0f} s; see {child.log}")
 
+    @staticmethod
+    def _signal_group(child: Managed, sig: int) -> bool:
+        """Send ``sig`` to the child's process group; False when the group is already gone."""
+        try:
+            os.killpg(child.process.pid, sig)
+        except ProcessLookupError:
+            # The last process of the group exited after poll() looked, which is a stop, not an error.
+            return False
+        return True
+
+    def _kill(self, child: Managed) -> None:
+        """Kill the child's group and reap it, so no zombie or orphan outlives this script."""
+        self._signal_group(child, signal.SIGKILL)
+        try:
+            child.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print(f"{child.name} did not die after SIGKILL; leaving it", file=sys.stderr)
+
     def stop_all(self) -> None:
-        """Interrupt every child, last started first, and kill any that ignore it."""
+        """Stop the children last started first, waiting for each to exit before signalling the next.
+
+        A child later in the start order depends on the ones before it (the backend needs CaptureServer's live
+        connection to close a take), so it must be gone before its dependencies are signalled. Each child gets its
+        own grace period before it is killed. A second Ctrl-C while waiting kills the rest at once.
+        """
+        hard = False
         for child in reversed(self.children):
-            if child.process.poll() is None:
-                # SIGINT lets the receiver and sender drain and free the GPU and cameras.
-                os.killpg(child.process.pid, signal.SIGINT)
-        deadline = time.monotonic() + 15
-        for child in reversed(self.children):
-            remaining = max(0.1, deadline - time.monotonic())
+            if child.process.poll() is not None:
+                continue
+            if hard:
+                self._kill(child)
+                continue
+            # SIGINT lets the receiver and sender drain and free the GPU and cameras.
+            if not self._signal_group(child, signal.SIGINT):
+                child.process.poll()
+                continue
             try:
-                child.process.wait(timeout=remaining)
+                child.process.wait(timeout=child.grace_s)
             except subprocess.TimeoutExpired:
-                os.killpg(child.process.pid, signal.SIGKILL)
+                print(f"{child.name} did not exit within {child.grace_s:.0f} s; killing it", file=sys.stderr)
+                self._kill(child)
+            except KeyboardInterrupt:
+                # An impatient operator: stop waiting for this child and for every one after it.
+                hard = True
+                self._kill(child)
 
 
 def control_token(log: Path) -> str | None:
@@ -446,6 +488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 **({} if args.mock else {"EGOCAP_CAPTURE_SOURCES": "none"}),
             },
             cwd=EGOCAP_ROOT,
+            grace_s=BACKEND_GRACE_S,
         )
         stack.wait_until(
             backend, lambda: port_open("127.0.0.1", args.backend_port), f"listening on {args.backend_port}", 60
