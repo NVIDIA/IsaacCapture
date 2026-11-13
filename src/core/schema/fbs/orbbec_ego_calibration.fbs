@@ -1,0 +1,41 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 ORBBEC INC. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+table OrbbecEgoCameraIntrinsics {
+  width: uint32 (id: 0);
+  height: uint32 (id: 1);
+  fx: float (id: 2);
+  fy: float (id: 3);
+  cx: float (id: 4);
+  cy: float (id: 5);
+  distortion_model: int32 (id: 6);
+  distortion: [float] (id: 7);
+}
+
+table OrbbecEgoExtrinsics {
+  rotation: [float] (id: 0);
+  translation_mm: [float] (id: 1);
+}
+
+table OrbbecEgoCalibration {
+  device_uid: string (id: 0);
+  color_left: OrbbecEgoCameraIntrinsics (id: 1);
+  color_right: OrbbecEgoCameraIntrinsics (id: 2);
+  left_to_right: OrbbecEgoExtrinsics (id: 3);
+  accel_to_left: OrbbecEgoExtrinsics (id: 4);
+  gyro_to_left: OrbbecEgoExtrinsics (id: 5);
+  raw_alignment_yaml: string (id: 6);
+  raw_imu_yaml: string (id: 7);
+  capture_epoch: uint32 (id: 8);
+}
+
+table OrbbecEgoCalibrationRecord {
+  data: OrbbecEgoCalibration (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type OrbbecEgoCalibrationRecord;
