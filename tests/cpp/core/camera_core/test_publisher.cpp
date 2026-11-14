@@ -5,7 +5,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -543,6 +545,159 @@ TEST_CASE("a group with a slot-free callback hands out slots by claim only", "[u
 
     publisher.set_slot_free_callback(group, {});
     REQUIRE(publisher.acquire_slot(group, 0) == 1u);
+}
+
+TEST_CASE("a pool owned by the camera SDK never leaves the SDK short of its reserve", "[unit][camera_core][slots]")
+{
+    // The shape of a capture stack that is given its buffers up front and picks the one it
+    // fills: ten per eye, of which the SDK needs four in hand to keep capturing.
+    constexpr std::uint32_t BUFFERS = 10;
+    constexpr std::uint32_t RESERVE = 4;
+    Publisher publisher;
+    const GroupId group = publisher.add_group(make_group(BUFFERS, 2), RESERVE);
+
+    // What the SDK has to fill, per eye. A buffer goes back the moment nobody holds it.
+    std::array<std::deque<std::uint32_t>, 2> with_sdk;
+    for (std::deque<std::uint32_t>& buffers : with_sdk)
+    {
+        for (std::uint32_t buffer = 0; buffer < BUFFERS; ++buffer)
+        {
+            buffers.push_back(buffer);
+        }
+    }
+    publisher.set_slot_free_callback(
+        group, [&](std::size_t stream, std::uint32_t slot) { with_sdk[stream].push_back(slot); });
+
+    // An encoder that reads every frame set and holds two at a time, and a viewer that wants
+    // the newest. With the reserve they fit ten buffers; a recorder on top would not.
+    RecordingSink encoder;
+    RecordingSink viewer;
+    RecordingSink recorder;
+    const SubscribeResult encoding =
+        publisher.subscribe(encoder, group, { .window = 2, .order = DeliveryOrder::IN_ORDER });
+    const SubscribeResult viewing = publisher.subscribe(viewer, group, { .window = 1 });
+    REQUIRE(encoding);
+    REQUIRE(viewing);
+    REQUIRE_FALSE(publisher.subscribe(recorder, group, { .window = 2, .order = DeliveryOrder::IN_ORDER }));
+
+    std::uint32_t state = 12345;
+    const auto random = [&state]
+    {
+        state = state * 1664525u + 1013904223u;
+        return state >> 16;
+    };
+    std::size_t encoder_released = 0;
+    std::size_t viewer_released = 0;
+    for (int frame = 0; frame < 5000; ++frame)
+    {
+        // The SDK fills one buffer per eye, and must find its reserve waiting.
+        std::array<ImageInfo, 2> images;
+        for (std::size_t eye = 0; eye < 2; ++eye)
+        {
+            REQUIRE(with_sdk[eye].size() >= RESERVE);
+            images[eye].slot = with_sdk[eye].front();
+            with_sdk[eye].pop_front();
+            publisher.claim_slot(group, eye, images[eye].slot);
+        }
+        if (random() % 16 == 0)
+        {
+            // The eyes did not arrive as a pair: both are given up and go straight back.
+            for (std::size_t eye = 0; eye < 2; ++eye)
+            {
+                publisher.abandon_slot(group, eye, images[eye].slot);
+                with_sdk[eye].push_back(images[eye].slot);
+            }
+            continue;
+        }
+        publisher.publish(group, images, {});
+
+        // The encoder is done with a frame set after a frame or two. The viewer keeps up,
+        // except when it stalls for a while.
+        while (encoder_released < encoder.events.size() && random() % 3 != 0)
+        {
+            publisher.release(encoding.id, encoder.events[encoder_released++].lease_id);
+        }
+        if (random() % 50 != 0)
+        {
+            while (viewer_released < viewer.events.size())
+            {
+                publisher.release(viewing.id, viewer.events[viewer_released++].lease_id);
+            }
+        }
+    }
+
+    // Both readers were served throughout, and what either did not get is accounted for.
+    REQUIRE(publisher.stats(group).published > 4000);
+    REQUIRE(viewer.events.size() > 1000);
+    REQUIRE(encoder.events.size() > 1000);
+    for (std::size_t i = 1; i < encoder.events.size(); ++i)
+    {
+        REQUIRE(encoder.events[i].sequence == encoder.events[i - 1].sequence + 1 + encoder.events[i].skipped);
+    }
+}
+
+TEST_CASE("one camera does not wait for another camera's readers", "[unit][camera_core][threads]")
+{
+    using namespace std::chrono_literals;
+
+    // A reader whose sink does not come back. A sink must not do this; it stands in for the
+    // worst a reader of one camera can do to another camera.
+    struct StuckSink : EventSink
+    {
+        bool send_event(SubscriptionId, const FrameEvent&) noexcept override
+        {
+            entered = true;
+            const auto deadline = std::chrono::steady_clock::now() + 5s;
+            while (!let_go && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(1ms);
+            }
+            return true;
+        }
+
+        std::atomic<bool> entered{ false };
+        std::atomic<bool> let_go{ false };
+    };
+
+    Publisher publisher;
+    const GroupId head = publisher.add_group(make_group(4, 1, "head"));
+    const GroupId wrist = publisher.add_group(make_group(4, 1, "wrist"));
+    StuckSink stuck;
+    RecordingSink wrist_reader;
+    REQUIRE(publisher.subscribe(stuck, head, {}));
+    const SubscribeResult wrist_reading = publisher.subscribe(wrist_reader, wrist, {});
+    REQUIRE(wrist_reading);
+
+    std::thread head_capture(
+        [&]
+        {
+            ImageInfo image;
+            image.slot = publisher.acquire_slot(head, 0).value_or(0);
+            publisher.publish(head, { &image, 1 }, {});
+        });
+    while (!stuck.entered)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+
+    // The head camera is inside its reader's sink. The wrist camera publishes all the same,
+    // and readers can still come, go and ask what there is.
+    const auto before = std::chrono::steady_clock::now();
+    REQUIRE(publish_next(publisher, wrist) == 1);
+    REQUIRE(wrist_reader.events.size() == 1);
+    publisher.release(wrist_reading.id, wrist_reader.events[0].lease_id);
+    REQUIRE(publisher.find_group("wrist") == wrist);
+    REQUIRE(publisher.stats(wrist).events_sent == 1);
+    RecordingSink late;
+    const SubscribeResult joined = publisher.subscribe(late, wrist, {});
+    REQUIRE(joined);
+    publisher.unsubscribe(joined.id);
+    REQUIRE(std::chrono::steady_clock::now() - before < 2s);
+    REQUIRE_FALSE(stuck.let_go);
+
+    stuck.let_go = true;
+    head_capture.join();
+    REQUIRE(publisher.stats(head).events_sent == 1);
 }
 
 TEST_CASE("capture and a reader on different threads keep every frame set in order", "[unit][camera_core][threads]")

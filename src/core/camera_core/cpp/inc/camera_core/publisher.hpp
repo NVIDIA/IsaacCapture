@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,8 +35,9 @@ public:
     virtual ~EventSink() = default;
 
     /**
-     * @brief Hand one event to the reader. Called on the capture path with the publisher's
-     * lock held, so it must not block, throw or call back into the publisher.
+     * @brief Hand one event to the reader. Called on the capture path with the group's lock
+     * held, so it must not block, throw or call back into the publisher. Calls for one
+     * subscription never overlap.
      * @return false when the event could not be handed over; the reader then gets a later one.
      */
     virtual bool send_event(SubscriptionId subscription, const FrameEvent& event) noexcept = 0;
@@ -67,7 +69,8 @@ struct SubscribeResult
  * A group keeps a short ring of recent frame sets; a reader's window is how many are kept for
  * it at a time, unread and held together. A subscription is accepted only when
  * slots >= ring history + sum of reader windows + backend reserve. Events carry slot indices;
- * slot memory is never touched here. Thread-safe; no call blocks on a reader.
+ * slot memory is never touched here. Thread-safe; no call blocks on a reader, and each group
+ * has its own lock, so one camera never waits for another camera's readers.
  */
 class Publisher
 {
@@ -111,7 +114,7 @@ public:
 
     /**
      * @brief Be told when a published slot is no longer held by the ring or any reader, so a
-     * buffer the SDK owns can go back to it at once. Called outside the publisher's lock, on
+     * buffer the SDK owns can go back to it at once. Called outside the group's lock, on
      * the thread whose call released the last hold. A group with this callback hands out its
      * slots with claim_slot only, so a slot cannot be taken again before its callback has run.
      */
@@ -169,7 +172,6 @@ private:
 
     struct Subscription
     {
-        GroupId group = 0;
         std::uint32_t window = 1;
         DeliveryOrder order = DeliveryOrder::NEWEST;
         EventSink* sink = nullptr;
@@ -184,16 +186,21 @@ private:
         bool writing = false; // taken by the backend and not yet published
     };
 
+    // One camera. Everything that changes after add_group is guarded by `mutex`; one group's
+    // lock is never held while another's is taken.
     struct Group
     {
-        GroupDescription description;
+        GroupDescription description; // fixed once the group is added
         std::uint32_t reserve = 1;
         std::uint32_t slot_count = 0; // the smallest pool of the group
+
+        mutable std::mutex mutex;
         std::uint32_t generation = 0;
         std::uint64_t sequence = 0;
+        std::uint64_t next_lease = 1;
         std::vector<std::vector<Slot>> slots; // per stream
         std::deque<FrameSet> ring;
-        std::vector<SubscriptionId> subscriptions;
+        std::map<SubscriptionId, Subscription> subscriptions; // in the order they were made
         std::shared_ptr<const SlotFreeCallback> on_free;
         PublisherStats stats;
     };
@@ -205,22 +212,25 @@ private:
         std::uint32_t slot = 0;
     };
 
-    Group& group_at(GroupId group);
-    const Group& group_at(GroupId group) const;
+    Group& group_at(GroupId group) const;
+    Group* group_of(SubscriptionId subscription) const;
     static Slot& slot_at(Group& group, std::size_t stream, std::uint32_t slot);
-    std::size_t history_of(const Group& group) const;
-    void hold(Group& group, const FrameSet& set);
-    void unhold(Group& group, const FrameSet& set, std::vector<FreedSlot>& freed);
-    void trim_ring(Group& group, std::vector<FreedSlot>& freed);
-    void deliver(Group& group, SubscriptionId id, Subscription& subscription, std::vector<FreedSlot>& freed);
+    static std::size_t history_of(const Group& group);
+    static void hold(Group& group, const FrameSet& set);
+    static void unhold(Group& group, const FrameSet& set, std::vector<FreedSlot>& freed);
+    static void trim_ring(Group& group, std::vector<FreedSlot>& freed);
+    void deliver(Group& group, SubscriptionId id, Subscription& subscription, std::vector<FreedSlot>& freed) const;
     static void notify(const std::vector<FreedSlot>& freed);
 
     Clock m_clock;
-    mutable std::mutex m_mutex;
-    std::vector<std::unique_ptr<Group>> m_groups;
-    std::map<SubscriptionId, Subscription> m_subscriptions;
+
+    // Which groups exist and which group a subscription belongs to: read on every call, changed
+    // only when a group is added or a reader comes or goes. Held only to look a group up, never
+    // together with a group's lock.
+    mutable std::shared_mutex m_registry;
+    std::vector<std::unique_ptr<Group>> m_groups; // never removed, so a group's address is stable
+    std::map<SubscriptionId, GroupId> m_subscription_groups;
     SubscriptionId m_next_subscription = 1;
-    std::uint64_t m_next_lease = 1;
 };
 
 } // namespace core::camera

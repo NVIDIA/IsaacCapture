@@ -49,7 +49,25 @@ that callback, its slots are handed out with `claim_slot` only.
 A reader subscribes with a window and an order, receives `FrameEvent`s through an `EventSink`,
 and returns each one with `release`. Events carry slot indices, the frame set's timeline and the
 number of frame sets the reader skipped. A slow reader skips; it never slows capture or another
-reader, and no call blocks on a reader.
+reader, and no call blocks on a reader. Each group has its own lock, so one camera never waits
+while another camera's events are being sent.
+
+## A camera SDK that owns its buffers
+
+Some capture stacks are given their buffers up front and pick the one they fill, and stop
+capturing when they run out. They map onto the second way like this:
+
+- every buffer the SDK was given is a slot, and the group is added with a **backend reserve**
+  equal to the number of buffers the SDK needs in hand to keep capturing;
+- when the SDK hands a filled buffer over, the backend calls `claim_slot` for it, and
+  `publish` once the images of the group are there. An image whose partner does not arrive
+  in time is given up with `abandon_slot` and goes straight back to the SDK;
+- the slot-free callback returns a buffer to the SDK the moment the ring and every reader
+  have let go of it.
+
+Because the budget below counts the reserve, readers can never take so many buffers that the
+SDK is left short. An encoder inside the plugin is a reader like any other: it subscribes
+with its own sink and holds a buffer for as long as it encodes from it.
 
 ## Pool budget
 

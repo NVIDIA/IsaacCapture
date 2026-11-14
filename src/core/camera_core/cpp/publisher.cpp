@@ -96,7 +96,7 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
                                     "backend reserve of " + std::to_string(backend_reserve));
     }
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    const std::unique_lock<std::shared_mutex> registry(m_registry);
     for (const auto& existing : m_groups)
     {
         if (existing->description.id == description.id)
@@ -110,8 +110,8 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
 
 std::optional<std::uint32_t> Publisher::acquire_slot(GroupId group, std::size_t stream)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
     Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
     if (target.on_free)
     {
         throw std::logic_error("camera group '" + target.description.id +
@@ -132,8 +132,9 @@ std::optional<std::uint32_t> Publisher::acquire_slot(GroupId group, std::size_t 
 
 void Publisher::claim_slot(GroupId group, std::size_t stream, std::uint32_t slot)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    Slot& state = slot_at(group_at(group), stream, slot);
+    Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
+    Slot& state = slot_at(target, stream, slot);
     if (state.holds != 0 || state.writing)
     {
         throw std::invalid_argument("camera slot " + std::to_string(slot) + " is still in use and cannot be claimed");
@@ -143,8 +144,9 @@ void Publisher::claim_slot(GroupId group, std::size_t stream, std::uint32_t slot
 
 void Publisher::abandon_slot(GroupId group, std::size_t stream, std::uint32_t slot)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    Slot& state = slot_at(group_at(group), stream, slot);
+    Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
+    Slot& state = slot_at(target, stream, slot);
     if (!state.writing)
     {
         throw std::invalid_argument("camera slot " + std::to_string(slot) + " was not acquired and cannot be abandoned");
@@ -154,17 +156,18 @@ void Publisher::abandon_slot(GroupId group, std::size_t stream, std::uint32_t sl
 
 void Publisher::set_slot_free_callback(GroupId group, SlotFreeCallback callback)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    group_at(group).on_free = callback ? std::make_shared<const SlotFreeCallback>(std::move(callback)) : nullptr;
+    Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
+    target.on_free = callback ? std::make_shared<const SlotFreeCallback>(std::move(callback)) : nullptr;
 }
 
 std::uint64_t Publisher::publish(GroupId group, std::span<const ImageInfo> images, const FrameTimeline& timeline)
 {
     std::vector<FreedSlot> freed;
     std::uint64_t sequence = 0;
+    Group& target = group_at(group);
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        Group& target = group_at(group);
+        const std::lock_guard<std::mutex> lock(target.mutex);
         if (images.size() != target.description.streams.size())
         {
             throw std::invalid_argument("camera group '" + target.description.id + "' publishes " +
@@ -201,9 +204,9 @@ std::uint64_t Publisher::publish(GroupId group, std::span<const ImageInfo> image
         sequence = set.sequence;
 
         trim_ring(target, freed);
-        for (SubscriptionId id : target.subscriptions)
+        for (auto& [id, subscription] : target.subscriptions)
         {
-            deliver(target, id, m_subscriptions.at(id), freed);
+            deliver(target, id, subscription, freed);
         }
     }
     notify(freed);
@@ -213,9 +216,9 @@ std::uint64_t Publisher::publish(GroupId group, std::span<const ImageInfo> image
 void Publisher::restart_group(GroupId group)
 {
     std::vector<FreedSlot> freed;
+    Group& target = group_at(group);
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        Group& target = group_at(group);
+        const std::lock_guard<std::mutex> lock(target.mutex);
         ++target.generation;
         while (!target.ring.empty())
         {
@@ -229,61 +232,76 @@ void Publisher::restart_group(GroupId group)
 SubscribeResult Publisher::subscribe(EventSink& sink, GroupId group, const ReaderOptions& options)
 {
     SubscribeResult result;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (group >= m_groups.size())
-    {
-        result.error = "unknown camera group";
-        return result;
-    }
     if (options.window == 0)
     {
         result.error = "a reader's window must be at least 1";
         return result;
     }
-    Group& target = *m_groups[group];
-    const DeliveryOrder order = resolved_order(options);
-
-    // The ring keeps what in-order readers may still be waiting for; newest-only readers
-    // need the newest frame set and nothing older.
-    std::size_t history = order == DeliveryOrder::IN_ORDER ? options.window : 1;
-    std::size_t windows = options.window;
-    for (SubscriptionId id : target.subscriptions)
+    Group* target = nullptr;
+    SubscriptionId id = 0;
     {
-        const Subscription& other = m_subscriptions.at(id);
-        if (other.order == DeliveryOrder::IN_ORDER)
+        // The subscription is known to the registry before its group can send it an event, so
+        // a release that follows the very first event finds it.
+        const std::unique_lock<std::shared_mutex> registry(m_registry);
+        if (group >= m_groups.size())
         {
-            history = std::max<std::size_t>(history, other.window);
+            result.error = "unknown camera group";
+            return result;
         }
-        windows += other.window;
-    }
-    const std::size_t needed = history + windows + target.reserve;
-    if (needed > target.slot_count)
-    {
-        result.error = "subscription does not fit the pool of camera group '" + target.description.id + "': it needs " +
-                       std::to_string(needed) + " slots (" + std::to_string(history) + " ring history, " +
-                       std::to_string(windows) + " for reader windows, " + std::to_string(target.reserve) +
-                       " for the backend) and the pool has " + std::to_string(target.slot_count);
-        return result;
+        target = m_groups[group].get();
+        id = m_next_subscription++;
+        m_subscription_groups.emplace(id, group);
     }
 
-    Subscription subscription;
-    subscription.group = group;
-    subscription.window = options.window;
-    subscription.order = order;
-    subscription.sink = &sink;
-    result.id = m_next_subscription++;
-    m_subscriptions.emplace(result.id, std::move(subscription));
-    target.subscriptions.push_back(result.id);
+    {
+        const std::lock_guard<std::mutex> lock(target->mutex);
+        const DeliveryOrder order = resolved_order(options);
+
+        // The ring keeps what in-order readers may still be waiting for; newest-only readers
+        // need the newest frame set and nothing older.
+        std::size_t history = order == DeliveryOrder::IN_ORDER ? options.window : 1;
+        std::size_t windows = options.window;
+        for (const auto& [other_id, other] : target->subscriptions)
+        {
+            if (other.order == DeliveryOrder::IN_ORDER)
+            {
+                history = std::max<std::size_t>(history, other.window);
+            }
+            windows += other.window;
+        }
+        const std::size_t needed = history + windows + target->reserve;
+        if (needed <= target->slot_count)
+        {
+            Subscription subscription;
+            subscription.window = options.window;
+            subscription.order = order;
+            subscription.sink = &sink;
+            target->subscriptions.emplace(id, std::move(subscription));
+            result.id = id;
+            return result;
+        }
+        result.error = "subscription does not fit the pool of camera group '" + target->description.id + "': it needs " +
+                       std::to_string(needed) + " slots (" + std::to_string(history) + " ring history, " +
+                       std::to_string(windows) + " for reader windows, " + std::to_string(target->reserve) +
+                       " for the backend) and the pool has " + std::to_string(target->slot_count);
+    }
+    const std::unique_lock<std::shared_mutex> registry(m_registry);
+    m_subscription_groups.erase(id);
     return result;
 }
 
 void Publisher::release(SubscriptionId subscription, std::uint64_t lease_id)
 {
+    Group* target = group_of(subscription);
+    if (target == nullptr)
+    {
+        return;
+    }
     std::vector<FreedSlot> freed;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        const auto found = m_subscriptions.find(subscription);
-        if (found == m_subscriptions.end())
+        const std::lock_guard<std::mutex> lock(target->mutex);
+        const auto found = target->subscriptions.find(subscription);
+        if (found == target->subscriptions.end())
         {
             return;
         }
@@ -292,51 +310,56 @@ void Publisher::release(SubscriptionId subscription, std::uint64_t lease_id)
         {
             return;
         }
-        Group& target = *m_groups[found->second.group];
-        unhold(target, lease->second, freed);
+        unhold(*target, lease->second, freed);
         found->second.leases.erase(lease);
-        deliver(target, subscription, found->second, freed);
+        deliver(*target, subscription, found->second, freed);
     }
     notify(freed);
 }
 
 void Publisher::unsubscribe(SubscriptionId subscription)
 {
+    Group* target = group_of(subscription);
+    if (target == nullptr)
+    {
+        return;
+    }
     std::vector<FreedSlot> freed;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        const auto found = m_subscriptions.find(subscription);
-        if (found == m_subscriptions.end())
+        // Once this lock is let go, no send_event runs or will start for the subscription.
+        const std::lock_guard<std::mutex> lock(target->mutex);
+        const auto found = target->subscriptions.find(subscription);
+        if (found != target->subscriptions.end())
         {
-            return;
+            for (const auto& lease : found->second.leases)
+            {
+                unhold(*target, lease.second, freed);
+            }
+            target->subscriptions.erase(found);
+            trim_ring(*target, freed);
         }
-        Group& target = *m_groups[found->second.group];
-        for (const auto& lease : found->second.leases)
-        {
-            unhold(target, lease.second, freed);
-        }
-        std::erase(target.subscriptions, subscription);
-        m_subscriptions.erase(found);
-        trim_ring(target, freed);
+    }
+    {
+        const std::unique_lock<std::shared_mutex> registry(m_registry);
+        m_subscription_groups.erase(subscription);
     }
     notify(freed);
 }
 
 std::size_t Publisher::group_count() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> registry(m_registry);
     return m_groups.size();
 }
 
 GroupDescription Publisher::group_description(GroupId group) const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
     return group_at(group).description;
 }
 
 std::optional<GroupId> Publisher::find_group(std::string_view id) const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    const std::shared_lock<std::shared_mutex> registry(m_registry);
     for (std::size_t i = 0; i < m_groups.size(); ++i)
     {
         if (m_groups[i]->description.id == id)
@@ -349,18 +372,21 @@ std::optional<GroupId> Publisher::find_group(std::string_view id) const
 
 std::uint32_t Publisher::generation(GroupId group) const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return group_at(group).generation;
+    const Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
+    return target.generation;
 }
 
 PublisherStats Publisher::stats(GroupId group) const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return group_at(group).stats;
+    const Group& target = group_at(group);
+    const std::lock_guard<std::mutex> lock(target.mutex);
+    return target.stats;
 }
 
-Publisher::Group& Publisher::group_at(GroupId group)
+Publisher::Group& Publisher::group_at(GroupId group) const
 {
+    const std::shared_lock<std::shared_mutex> registry(m_registry);
     if (group >= m_groups.size())
     {
         throw std::out_of_range("unknown camera group");
@@ -368,13 +394,11 @@ Publisher::Group& Publisher::group_at(GroupId group)
     return *m_groups[group];
 }
 
-const Publisher::Group& Publisher::group_at(GroupId group) const
+Publisher::Group* Publisher::group_of(SubscriptionId subscription) const
 {
-    if (group >= m_groups.size())
-    {
-        throw std::out_of_range("unknown camera group");
-    }
-    return *m_groups[group];
+    const std::shared_lock<std::shared_mutex> registry(m_registry);
+    const auto found = m_subscription_groups.find(subscription);
+    return found == m_subscription_groups.end() ? nullptr : m_groups[found->second].get();
 }
 
 Publisher::Slot& Publisher::slot_at(Group& group, std::size_t stream, std::uint32_t slot)
@@ -387,12 +411,11 @@ Publisher::Slot& Publisher::slot_at(Group& group, std::size_t stream, std::uint3
     return group.slots[stream][slot];
 }
 
-std::size_t Publisher::history_of(const Group& group) const
+std::size_t Publisher::history_of(const Group& group)
 {
     std::size_t history = 1; // the newest frame set is always kept
-    for (SubscriptionId id : group.subscriptions)
+    for (const auto& [id, subscription] : group.subscriptions)
     {
-        const Subscription& subscription = m_subscriptions.at(id);
         if (subscription.order == DeliveryOrder::IN_ORDER)
         {
             history = std::max<std::size_t>(history, subscription.window);
@@ -431,7 +454,7 @@ void Publisher::trim_ring(Group& group, std::vector<FreedSlot>& freed)
     }
 }
 
-void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscription, std::vector<FreedSlot>& freed)
+void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscription, std::vector<FreedSlot>& freed) const
 {
     while (subscription.leases.size() < subscription.window)
     {
@@ -447,7 +470,7 @@ void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscript
         }
 
         FrameEvent event;
-        event.lease_id = m_next_lease++;
+        event.lease_id = group.next_lease++;
         event.sequence = target->sequence;
         event.generation = target->generation;
         if (subscription.started)
