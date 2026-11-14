@@ -99,6 +99,11 @@ if(TARGET ovxr_pip_layer)
     add_dependencies(python_package ovxr_pip_layer)
 endif()
 
+# The camera reader is Linux only, so its module is not in the DEPENDS list above.
+if(TARGET camera_reader_py)
+    add_dependencies(python_package camera_reader_py)
+endif()
+
 # viz_py only exists when BUILD_VIZ=ON. Use add_dependencies (not a
 # DEPENDS genex) so the build-order constraint is unconditional under
 # all generators — Windows ninja runs the wheel build in parallel
@@ -135,6 +140,9 @@ set(STUBGEN_MODULES
 # Omitted when BUILD_VIZ=OFF, where the target does not exist.
 if(BUILD_VIZ)
     list(APPEND STUBGEN_MODULES isaaccapture.viz._viz)
+endif()
+if(TARGET camera_reader_py)
+    list(APPEND STUBGEN_MODULES isaaccapture.camera._camera)
 endif()
 
 # --unset=VIRTUAL_ENV: an activated venv in the developer's shell is inherited
@@ -177,6 +185,7 @@ add_custom_command(
             # viz_py's .pyd file as a file-level dependency when BUILD_VIZ=ON
             # — keeps the wheel build from racing the link. Empty otherwise.
             $<$<BOOL:${BUILD_VIZ}>:$<TARGET_FILE:viz_py>>
+            $<$<TARGET_EXISTS:camera_reader_py>:$<TARGET_FILE:camera_reader_py>>
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     COMMENT "Generating .pyi stub files for isaaccapture modules"
 )

@@ -67,6 +67,38 @@ Not covered: a process that is stopped while it waits inside `next` is handed, w
 continues, the frame set that arrived meanwhile. A reader that needs to know how old its
 frame is has the times of every step in `timeline()`.
 
+## Python
+
+The same reader as `isaaccapture.camera`:
+
+```python
+from isaaccapture.camera import CameraReader
+
+with CameraReader.open("head") as reader:
+    for frames in reader:
+        left = frames.image(0).array()   # (height, width, 4) uint8, read-only
+```
+
+- An array is a view of the plugin's buffer, not a copy, and cannot be written to. **It
+  keeps its frame set held**: it shows that frame for as long as the array exists, after
+  `release()`, after the loop has moved on and after the reader is closed. The price is the
+  window: an array that is kept counts as a frame set the reader holds.
+- `open` takes the window, the order (`"newest"`, `"in_order"`) and where the plugin is as
+  keyword arguments. The window is two by default, not one as in C++: in the loop above
+  `left` still names the array of the frame before while the next frame set is asked for.
+- A reader that holds its window's worth raises `CameraWindowExhausted` from `next()`, with
+  what to do about it: drop an array, or copy what is needed from it.
+- `for frames in reader` lets go of the frame set before at each step. With `reader.next()`
+  the caller does: `frames.release()`, or a `with` block.
+- `with frames.borrow() as frames:` is for code that must not keep anything: the frame set
+  goes back to the plugin when the block ends, and an array of it that still exists then
+  raises `BufferError` instead of holding the frame set without a word.
+- Arrays are NumPy arrays over host memory. A DLPack export is added with the first pool
+  kind that is not host memory, where it is the way to hand a frame to a tensor library.
+- `bgra8` and `rgba8` images are `(height, width, 4)`, `gray8` is `(height, width)`; `nv12`
+  has two planes, `plane(0)` and `plane(1)`. `data` is the flat bytes, also for encoded video.
+- The plugin ships in the package under `plugins/camera`, where the plugin manager finds it.
+
 ## Tests
 
 `tests/cpp/core/camera_reader`, run with `ctest -L camera_reader`.
@@ -79,3 +111,6 @@ frame is has the times of every step in `timeline()`.
   handed a frame set published within the last few; a reader process that is killed while it
   holds frame sets gives them back; a reader is told when the plugin's process is killed and
   can still read what it holds.
+
+`tests/python/core/camera` (`ctest -R camera_python`) reads from the plugin that is bundled
+into the package, started as a process and, in one case, through the plugin manager.
