@@ -104,10 +104,39 @@ The synthetic camera writes frames whose every byte is known from the frame numb
 reader can check that it received the whole of the frame it was told about. It is what the
 tests and the latency bench read.
 
+### What a backend implements
+
+A backend is one function that returns a `Backend`
+(`core/inc/camera_plugin/camera_source.hpp`): a name and an `open` that is called once with
+every camera the configuration names for it and returns one `CameraSource` per camera. What
+the SDK has open is the backend's, not a camera's: an SDK that serves a whole rig from one
+object, or keeps state for the process, opens it once in that call and lets the sources
+share it. Each source publishes one group.
+
+A source gets the slot for an image through its `FrameOutput` in one of two ways:
+
+- **The plugin picks the slot.** `acquire()` hands out a free slot, the source writes the
+  image into it and calls `publish()`. When nothing is free the frame is dropped. This is the
+  way to start with.
+- **The SDK picks the buffer.** For an SDK that is given its buffers up front and says which
+  one it filled: the source hands the SDK the memory of every slot (`slot_count()`,
+  `slot_memory()`), asks to be told when a slot is free again (`on_slot_free()`), calls
+  `claim()` for the buffer the SDK filled, then `publish()`. `backend_reserve()` says how
+  many buffers the SDK needs in hand to keep capturing; readers are never given so many that
+  it is left with fewer.
+
+In both, `publish()` says the images are complete. A slot is not handed out or given back to
+the SDK while a reader holds it, also across `restart()`, which is how a source says that
+its camera restarted.
+
+Not here yet, and added with the first pool that needs it: memory the SDK allocates itself,
+and a way for a source to say that an image is still being written by a GPU when it is
+published.
+
 ### Adding a backend
 
 1. Put it in `backends/<name>/` as a library of its own that implements `CameraSource`
-   (`core/inc/camera_plugin/camera_source.hpp`) and returns a `Backend` from one function.
+   and returns a `Backend` from one function.
 2. Add an option `BUILD_CAMERA_BACKEND_<NAME>`, off by default, next to the other build
    options in the top-level `CMakeLists.txt`.
 3. In `backends/CMakeLists.txt`, add the directory and link the library only when the option
@@ -130,8 +159,9 @@ camera that names a backend the build does not have is refused with the list of 
 `tests/cpp/plugins/camera`, run with `ctest -L camera_plugin`.
 
 - **Unit** (`ctest -L unit`): camera arguments, options and configuration files; the host
-  with a camera that publishes on demand; the synthetic backend's options and layouts; two
-  synthetic cameras read through one host, every byte checked.
+  with a camera that publishes on demand, with one whose SDK owns the buffers, and across a
+  camera restart; a backend opened once with all its cameras; the synthetic backend's
+  options and layouts; two synthetic cameras read through one host, every byte checked.
 - **Integration** (`ctest -L integration`): `camera_plugin` and `camera_bench` as processes
   of their own. A reader in the test process reads from the plugin and checks every byte; a
   second plugin cannot take a running one's endpoint; `SIGTERM` is a clean stop; a plugin

@@ -7,7 +7,9 @@
 #include <camera_ipc/host_pool.hpp>
 #include <log_bridge/logger.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -46,6 +48,26 @@ public:
         return WritableImage{ *slot, m_pools.at(stream)->slot(*slot) };
     }
 
+    std::uint32_t slot_count(std::size_t stream) const override
+    {
+        return m_pools.at(stream)->slot_count();
+    }
+
+    std::span<std::byte> slot_memory(std::size_t stream, std::uint32_t slot) override
+    {
+        return m_pools.at(stream)->slot(slot);
+    }
+
+    void claim(std::size_t stream, std::uint32_t slot) override
+    {
+        m_publisher.claim_slot(m_group, stream, slot);
+    }
+
+    void on_slot_free(SlotFreeCallback callback) override
+    {
+        m_publisher.set_slot_free_callback(m_group, std::move(callback));
+    }
+
     void abandon(std::size_t stream, std::uint32_t slot) override
     {
         m_publisher.abandon_slot(m_group, stream, slot);
@@ -54,6 +76,11 @@ public:
     std::uint64_t publish(std::span<const ImageInfo> images, const FrameTimeline& timeline) override
     {
         return m_publisher.publish(m_group, images, timeline);
+    }
+
+    void restart() override
+    {
+        m_publisher.restart_group(m_group);
     }
 
 private:
@@ -87,6 +114,32 @@ const Backend& find_backend(std::span<const Backend> backends, const std::string
     }
     throw std::invalid_argument("this camera plugin was built without a '" + name + "' backend (it has: " + built +
                                 "). Backends are chosen when the plugin is built; see the plugin's README");
+}
+
+std::vector<std::unique_ptr<CameraSource>> open_cameras(std::span<const Backend> backends,
+                                                        std::span<const CameraConfig> cameras)
+{
+    std::vector<std::unique_ptr<CameraSource>> sources;
+    std::vector<std::string> opened;
+    for (const CameraConfig& first : cameras)
+    {
+        if (std::find(opened.begin(), opened.end(), first.backend) != opened.end())
+        {
+            continue;
+        }
+        opened.push_back(first.backend);
+        std::vector<CameraConfig> of_backend;
+        std::copy_if(cameras.begin(), cameras.end(), std::back_inserter(of_backend),
+                     [&](const CameraConfig& camera) { return camera.backend == first.backend; });
+        std::vector<std::unique_ptr<CameraSource>> of_sources = find_backend(backends, first.backend).open(of_backend);
+        if (of_sources.size() != of_backend.size())
+        {
+            throw std::logic_error("the '" + first.backend + "' backend was given " + std::to_string(of_backend.size()) +
+                                   " camera(s) and opened " + std::to_string(of_sources.size()));
+        }
+        std::move(of_sources.begin(), of_sources.end(), std::back_inserter(sources));
+    }
+    return sources;
 }
 
 class CameraHost::Impl
@@ -133,7 +186,7 @@ void CameraHost::add_camera(std::unique_ptr<CameraSource> source, std::uint32_t 
     auto camera = std::make_unique<Camera>();
     camera->id = description.id;
     // Refuses a description that is not usable before any memory is allocated for it.
-    const GroupId group = m_impl->publisher.add_group(description);
+    const GroupId group = m_impl->publisher.add_group(description, source->backend_reserve());
     camera->group = group;
     std::vector<int> descriptors;
     for (const StreamDescription& stream : description.streams)

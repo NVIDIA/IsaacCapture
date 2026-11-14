@@ -12,6 +12,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace plugins::camera
 {
@@ -25,6 +26,16 @@ inline constexpr std::uint32_t DEFAULT_SLOT_COUNT = 8;
  * @throws std::invalid_argument naming the backends this build has, and how a build gets more.
  */
 const Backend& find_backend(std::span<const Backend> backends, const std::string& name);
+
+/**
+ * @brief Open the cameras of a configuration. Each backend is opened once, with all of its
+ * cameras, so that what its SDK has open can be shared among them.
+ * @return One source per camera; a backend's cameras stay in the order they were named.
+ * @throws std::invalid_argument for a backend this build does not have or options a backend
+ * does not accept.
+ */
+std::vector<std::unique_ptr<CameraSource>> open_cameras(std::span<const Backend> backends,
+                                                        std::span<const CameraConfig> cameras);
 
 /**
  * @brief The cameras of one plugin process: gives each its pools and serves them all to

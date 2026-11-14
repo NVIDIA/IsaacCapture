@@ -191,7 +191,16 @@ private:
 Backend synthetic_backend()
 {
     return { "synthetic", "frames with known content at a set rate; needs no hardware",
-             [](const CameraConfig& config) { return std::make_unique<SyntheticSource>(config); } };
+             [](std::span<const CameraConfig> cameras)
+             {
+                 // Synthetic cameras have nothing in common, so there is nothing to open once.
+                 std::vector<std::unique_ptr<CameraSource>> sources;
+                 for (const CameraConfig& camera : cameras)
+                 {
+                     sources.push_back(std::make_unique<SyntheticSource>(camera));
+                 }
+                 return sources;
+             } };
 }
 
 std::uint64_t synthetic_frame_number(std::span<const std::byte> image)

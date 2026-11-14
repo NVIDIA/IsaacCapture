@@ -218,9 +218,9 @@ int main(int argc, char** argv)
         }
 
         CameraHost host(endpoint);
-        for (const CameraConfig& camera : config.cameras)
+        for (std::unique_ptr<CameraSource>& source : open_cameras(backends, config.cameras))
         {
-            host.add_camera(find_backend(backends, camera.backend).open(camera), config.slot_count);
+            host.add_camera(std::move(source), config.slot_count);
         }
         host.start();
         logger->info("camera plugin serves {} camera(s) on '{}'", host.camera_count(), endpoint);

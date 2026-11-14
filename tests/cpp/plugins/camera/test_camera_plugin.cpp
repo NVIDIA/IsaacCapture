@@ -108,7 +108,7 @@ std::unique_ptr<CameraSource> open_synthetic(const std::string& argument)
 {
     const CameraConfig config = parse_camera_argument(argument);
     const std::vector<Backend> backends = built_backends();
-    return find_backend(backends, config.backend).open(config);
+    return std::move(open_cameras(backends, { &config, 1 }).front());
 }
 
 // Every byte of a synthetic image is known from its frame number and its stream.
@@ -257,8 +257,8 @@ TEST_CASE("synthetic cameras reach readers whole and in step", "[unit][camera_pl
 
     const auto groups = CameraReader::list({ .endpoint = directory.socket_path() });
     REQUIRE(groups.size() == 2);
-    REQUIRE(groups[0].streams[0].slot_count == DEFAULT_SLOT_COUNT);
-    REQUIRE(groups[1].streams[0].slot_count == 6);
+    REQUIRE(groups[0].group.streams[0].slot_count == DEFAULT_SLOT_COUNT);
+    REQUIRE(groups[1].group.streams[0].slot_count == 6);
 
     // A pair arrives as one frame set: the same frame number in both eyes, each with its own fill.
     CameraReader head = CameraReader::open("head", {}, { .endpoint = directory.socket_path() });

@@ -12,12 +12,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -138,6 +142,114 @@ private:
     ManualControl& m_control;
 };
 
+// A camera whose SDK is given its buffers up front, fills the one it chooses and stops capturing
+// when it runs out. `control` plays the SDK and outlives the source, which the host owns.
+struct SdkControl
+{
+    static constexpr std::uint32_t BUFFERS = 6;
+    static constexpr std::uint32_t RESERVE = 3; // buffers the SDK needs in hand to keep capturing
+
+    FrameOutput* output = nullptr; // set while the camera runs
+    std::mutex mutex; // a buffer comes back on whichever thread let go of it
+    std::deque<std::uint32_t> with_sdk; // the buffers the SDK has to fill
+    std::vector<std::span<std::byte>> buffers; // the memory it was given, by slot
+
+    std::size_t in_hand()
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        return with_sdk.size();
+    }
+
+    // The SDK fills the next of its buffers with `value` and the camera publishes it.
+    void capture(std::uint8_t value)
+    {
+        std::uint32_t slot = 0;
+        {
+            const std::lock_guard<std::mutex> lock(mutex);
+            slot = with_sdk.front();
+            with_sdk.pop_front();
+        }
+        std::fill(buffers[slot].begin(), buffers[slot].end(), std::byte{ value });
+        output->claim(0, slot);
+        ImageInfo image;
+        image.slot = slot;
+        output->publish({ &image, 1 }, {});
+    }
+};
+
+class SdkSource final : public CameraSource
+{
+public:
+    explicit SdkSource(SdkControl& control) : m_control(control)
+    {
+    }
+
+    GroupDescription describe() const override
+    {
+        StreamDescription stream;
+        stream.id = "sdk/0";
+        stream.pixel_format = PixelFormat::GRAY8;
+        stream.width = WIDTH;
+        stream.height = HEIGHT;
+        stream.plane_count = 1;
+        stream.planes[0].stride_bytes = WIDTH;
+        stream.slot_bytes = WIDTH * HEIGHT;
+        stream.slot_count = SdkControl::BUFFERS;
+        stream.frame_rate = 30.0;
+        return { .id = "sdk", .streams = { stream } };
+    }
+
+    std::uint32_t backend_reserve() const override
+    {
+        return SdkControl::RESERVE;
+    }
+
+    void start(FrameOutput& output) override
+    {
+        m_control.output = &output;
+        output.on_slot_free(
+            [this](std::size_t, std::uint32_t slot)
+            {
+                const std::lock_guard<std::mutex> lock(m_control.mutex);
+                m_control.with_sdk.push_back(slot);
+            });
+        // The SDK is given every slot of the pool as one of its buffers.
+        for (std::uint32_t slot = 0; slot < output.slot_count(0); ++slot)
+        {
+            m_control.buffers.push_back(output.slot_memory(0, slot));
+            m_control.with_sdk.push_back(slot);
+        }
+    }
+
+    void stop() override
+    {
+        m_control.output = nullptr;
+    }
+
+private:
+    SdkControl& m_control;
+};
+
+bool wait_until(const std::function<bool()>& condition)
+{
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!condition())
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(1ms);
+    }
+    return true;
+}
+
+bool all_pixels_are(const FrameSet& frames, std::uint8_t value)
+{
+    const auto pixels = frames.image(0).data;
+    return std::all_of(pixels.begin(), pixels.end(), [value](std::byte pixel) { return pixel == std::byte{ value }; });
+}
+
 } // namespace
 
 TEST_CASE("a camera argument names an id, a backend and the backend's options", "[unit][camera_plugin]")
@@ -205,12 +317,12 @@ TEST_CASE("a host gives each camera its pools and serves them all on one endpoin
     REQUIRE(head.output != nullptr);
     REQUIRE_THROWS_AS(host.add_camera(std::make_unique<ManualSource>("late", 1, unused)), std::logic_error);
 
-    const std::vector<GroupDescription> groups = CameraReader::list({ .endpoint = directory.socket_path() });
+    const std::vector<core::camera::GroupListing> groups = CameraReader::list({ .endpoint = directory.socket_path() });
     REQUIRE(groups.size() == 2);
-    REQUIRE(groups[0].id == "head");
-    REQUIRE(groups[0].streams[0].slot_count == DEFAULT_SLOT_COUNT);
-    REQUIRE(groups[1].id == "wrist");
-    REQUIRE(groups[1].streams[0].slot_count == 4);
+    REQUIRE(groups[0].group.id == "head");
+    REQUIRE(groups[0].group.streams[0].slot_count == DEFAULT_SLOT_COUNT);
+    REQUIRE(groups[1].group.id == "wrist");
+    REQUIRE(groups[1].group.streams[0].slot_count == 4);
 
     CameraReader head_reader = CameraReader::open("head", {}, { .endpoint = directory.socket_path() });
     CameraReader wrist_reader = CameraReader::open("wrist", {}, { .endpoint = directory.socket_path() });
@@ -262,4 +374,124 @@ TEST_CASE("a camera drops a frame set when its pool is full, and never overwrite
 
     camera.output->abandon(0, forgotten->slot);
     REQUIRE(camera.publish(100));
+}
+
+TEST_CASE("a backend is opened once, with all of its cameras", "[unit][camera_plugin]")
+{
+    // "rig" stands for an SDK that serves all its cameras from one object, which it opens once.
+    int rig_opens = 0;
+    std::vector<std::string> rig_cameras;
+    std::deque<ManualControl> controls;
+    const auto one_source_each = [&controls](std::span<const CameraConfig> cameras)
+    {
+        std::vector<std::unique_ptr<CameraSource>> sources;
+        for (const CameraConfig& camera : cameras)
+        {
+            sources.push_back(std::make_unique<ManualSource>(camera.id, 1, controls.emplace_back()));
+        }
+        return sources;
+    };
+    const std::vector<Backend> backends = {
+        { "rig", "",
+          [&](std::span<const CameraConfig> cameras)
+          {
+              ++rig_opens;
+              for (const CameraConfig& camera : cameras)
+              {
+                  rig_cameras.push_back(camera.id);
+              }
+              return one_source_each(cameras);
+          } },
+        { "single", "", one_source_each },
+        { "broken", "", [](std::span<const CameraConfig>) { return std::vector<std::unique_ptr<CameraSource>>(); } },
+    };
+
+    const std::vector<CameraConfig> cameras = { { "left", "rig", {} }, { "top", "single", {} }, { "right", "rig", {} } };
+    const std::vector<std::unique_ptr<CameraSource>> sources = open_cameras(backends, cameras);
+    REQUIRE(rig_opens == 1);
+    REQUIRE(rig_cameras == std::vector<std::string>{ "left", "right" });
+    REQUIRE(sources.size() == 3);
+    REQUIRE(sources[0]->describe().id == "left");
+    REQUIRE(sources[1]->describe().id == "right");
+    REQUIRE(sources[2]->describe().id == "top");
+
+    const std::vector<CameraConfig> unknown = { { "head", "oak", {} } };
+    REQUIRE_THROWS_WITH(open_cameras(backends, unknown), ContainsSubstring("built without a 'oak' backend"));
+    const std::vector<CameraConfig> lost = { { "head", "broken", {} } };
+    REQUIRE_THROWS_WITH(open_cameras(backends, lost), ContainsSubstring("was given 1 camera(s) and opened 0"));
+}
+
+TEST_CASE("a camera whose SDK owns the buffers is never left short of them", "[unit][camera_plugin]")
+{
+    TemporaryDirectory directory;
+    SdkControl sdk;
+    CameraHost host(directory.socket_path());
+    host.add_camera(std::make_unique<SdkSource>(sdk));
+    host.start();
+    REQUIRE(sdk.in_hand() == SdkControl::BUFFERS);
+    REQUIRE_THROWS_AS(sdk.output->acquire(0), std::logic_error); // this camera names its slots itself
+
+    // Of six buffers the SDK keeps three. That leaves the newest frame set and two for readers.
+    using core::camera::DeliveryOrder;
+    REQUIRE_THROWS_WITH(CameraReader::open("sdk", { .window = 3, .order = DeliveryOrder::NEWEST },
+                                           { .endpoint = directory.socket_path() }),
+                        ContainsSubstring("3 for the backend"));
+    CameraReader reader = CameraReader::open(
+        "sdk", { .window = 2, .order = DeliveryOrder::NEWEST }, { .endpoint = directory.socket_path() });
+
+    sdk.capture(1);
+    std::optional<FrameSet> first = reader.next(2s);
+    REQUIRE(first.has_value());
+    sdk.capture(2);
+    std::optional<FrameSet> second = reader.next(2s);
+    REQUIRE(second.has_value());
+
+    // The camera runs on while the reader holds both. The SDK finds its reserve in hand before
+    // every capture, and is never handed a buffer a reader still looks at.
+    for (std::uint8_t value = 3; value < 40; ++value)
+    {
+        REQUIRE(sdk.in_hand() >= SdkControl::RESERVE);
+        sdk.capture(value);
+    }
+    REQUIRE(all_pixels_are(*first, 1));
+    REQUIRE(all_pixels_are(*second, 2));
+    REQUIRE_THROWS_AS(sdk.output->claim(0, first->image(0).info.slot), std::invalid_argument);
+
+    // A buffer goes back to the SDK when its last holder lets go of it.
+    const std::size_t before = sdk.in_hand();
+    first.reset();
+    REQUIRE(wait_until([&] { return sdk.in_hand() == before + 1; }));
+
+    // And when the readers are gone, every buffer but the newest frame set's is the SDK's again.
+    host.stop();
+    REQUIRE(sdk.in_hand() == SdkControl::BUFFERS - 1);
+    REQUIRE(all_pixels_are(*second, 2)); // still mapped, and as it was
+}
+
+TEST_CASE("a camera that restarts says so, and what a reader holds stays as it was", "[unit][camera_plugin]")
+{
+    TemporaryDirectory directory;
+    ManualControl camera;
+    CameraHost host(directory.socket_path());
+    host.add_camera(std::make_unique<ManualSource>("head", 1, camera), 4);
+    host.start();
+    CameraReader reader = CameraReader::open(
+        "head", { .window = 2, .order = core::camera::DeliveryOrder::NEWEST }, { .endpoint = directory.socket_path() });
+
+    REQUIRE(camera.publish(1));
+    const std::optional<FrameSet> held = reader.next(2s);
+    REQUIRE(held.has_value());
+    REQUIRE(held->generation() == 0);
+
+    camera.output->restart();
+    for (std::uint8_t value = 2; value <= 12; ++value)
+    {
+        REQUIRE(camera.publish(value));
+    }
+    REQUIRE(all_pixels_are(*held, 1));
+
+    const std::optional<FrameSet> after = reader.next(2s);
+    REQUIRE(after.has_value());
+    REQUIRE(after->generation() == 1);
+    REQUIRE(all_pixels_are(*after, 12));
 }

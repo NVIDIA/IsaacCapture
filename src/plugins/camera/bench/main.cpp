@@ -208,9 +208,17 @@ int run(const Arguments& arguments)
 {
     if (arguments.group.empty())
     {
-        for (const GroupDescription& group : CameraReader::list(arguments.plugin))
+        for (const core::camera::GroupListing& listing : CameraReader::list(arguments.plugin))
         {
-            print_group(group);
+            if (listing.unsupported.empty())
+            {
+                print_group(listing.group);
+            }
+            else
+            {
+                std::printf(
+                    "%s: cannot be read by this build: %s\n", listing.group.id.c_str(), listing.unsupported.c_str());
+            }
         }
         return 0;
     }

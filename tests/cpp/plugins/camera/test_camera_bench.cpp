@@ -97,7 +97,7 @@ TEST_CASE("the bench reads a camera from another process and reports each step",
     const std::vector<Backend> backends = built_backends();
     const CameraConfig config = parse_camera_argument("head:synthetic:width=320,height=240,fps=200");
     CameraHost host(endpoint);
-    host.add_camera(find_backend(backends, config.backend).open(config));
+    host.add_camera(std::move(open_cameras(backends, { &config, 1 }).front()));
     host.start();
 
     const BenchRun listing = run_bench(directory, { "--endpoint=" + endpoint });
