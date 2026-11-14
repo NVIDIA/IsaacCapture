@@ -73,7 +73,7 @@ uv run python tools/livekit_orin_emulator.py \
 ```
 
 `--add-stream sensor=N,livekit=NAME` is repeatable. `--timestamp-basis` takes `monotonic_us` (default),
-`capture_monotonic_us`, `capture_unix_us` or `processing_unix_us`; set the same value in the streams file. The Orin's
+`capture_monotonic_us` or `processing_unix_us`; set the same value in the streams file. The Orin's
 sender (`--timestamp-basis=` on the sensing app) takes `monotonic_us` (default), `capture_monotonic_us` or
 `processing_unix_us`. Both publishers answer the PC's clock-sync requests, which recording relies on. Frames go through a software
 encoder, so this checks the PC side and the metadata, not the Jetson encoder.

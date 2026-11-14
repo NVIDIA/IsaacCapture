@@ -27,7 +27,6 @@ from egocap_web.recording_adapter import RecordingIngress
 from recording_service import PixelFormat, SubmissionResult, SubmissionStatus, VideoSample
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
-UNIX_CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
 
@@ -412,8 +411,8 @@ async def test_feed_into_the_real_ingress_converts_and_submits_the_sample():
     assert submitted[0].image is frame.image
 
 
-@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
-async def test_non_capture_stream_fails_at_once_and_never_offers(basis):
+async def test_non_capture_stream_fails_at_once_and_never_offers():
+    basis = PROCESSING
     reasons: list[str] = []
     streams = [_stream(16, "Head left", basis)]
     receiver = FakeReceiver({16: [_received(16)]})
@@ -851,8 +850,8 @@ def test_publisher_monotonic_stream_is_recordable():
     assert unrecordable_reason(_started(_geometry(16, MONO), _geometry(17))) is None
 
 
-@pytest.mark.parametrize("basis", [PROCESSING, UNIX_CAPTURE])
-def test_non_monotonic_bases_are_still_refused(basis):
+def test_non_monotonic_basis_is_still_refused():
+    basis = PROCESSING
     assert unrecordable_reason(_started(_geometry(16, basis))) == (
         "LiveKit stream 'cam16': its timestamps are not on the publisher's monotonic clock, "
         "so it cannot be recorded"
