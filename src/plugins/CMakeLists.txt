@@ -44,3 +44,7 @@ endif()
 if(BUILD_PLUGIN_SHARPA_AVATAR)
     add_subdirectory(sharpa_avatar)
 endif()
+# Gated: Linux. Downloads the pinned RevoHuman C SDK release unless REVOHUMAN_SDK_ROOT is set.
+if(BUILD_PLUGIN_REVOHUMAN)
+    add_subdirectory(revohuman)
+endif()
