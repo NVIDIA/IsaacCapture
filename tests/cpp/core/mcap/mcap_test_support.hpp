@@ -13,11 +13,14 @@
 #include <schema/head_generated.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #    include <process.h>
@@ -43,10 +46,23 @@ inline int current_pid()
 //! A temp .mcap path unique to this process and call. `prefix` names the suite asking.
 inline std::string temp_mcap_path(std::string_view prefix)
 {
+#ifndef _WIN32
+    auto pattern = (fs::temp_directory_path() / (std::string(prefix) + "_XXXXXX")).string();
+    std::vector<char> buffer(pattern.begin(), pattern.end());
+    buffer.push_back('\0');
+    if (::mkdtemp(buffer.data()) == nullptr)
+    {
+        throw std::runtime_error("Failed to create private MCAP test directory");
+    }
+    // Keep the recording below an atomically created owner-only directory;
+    // McapWriter may safely create and reopen its predictable child name.
+    return (fs::path(buffer.data()) / "recording.mcap").string();
+#else
     static std::atomic<int> counter{ 0 };
     const auto name =
         std::string(prefix) + "_" + std::to_string(current_pid()) + "_" + std::to_string(counter++) + ".mcap";
     return (fs::temp_directory_path() / name).string();
+#endif
 }
 
 //! Removes the file when it goes out of scope, whether or not the case that wrote it passed.
@@ -59,7 +75,11 @@ public:
     ~TempFileCleanup() noexcept
     {
         std::error_code ec;
+#ifndef _WIN32
+        fs::remove_all(fs::path(path_).parent_path(), ec);
+#else
         fs::remove(path_, ec);
+#endif
     }
     TempFileCleanup(const TempFileCleanup&) = delete;
     TempFileCleanup& operator=(const TempFileCleanup&) = delete;
