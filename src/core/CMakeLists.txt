@@ -26,6 +26,7 @@ add_subdirectory(camera_core)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(camera_ipc)
     add_subdirectory(camera_wire)
+    add_subdirectory(camera_endpoint)
 endif()
 
 # Build OXR library (depends on oxr_utils for types)
