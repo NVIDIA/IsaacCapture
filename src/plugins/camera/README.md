@@ -1,0 +1,170 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Camera plugin
+
+One process that owns the cameras and serves their frames to any number of readers in other
+processes. Viewers, encoders and recorders read the plugin's buffers in place through
+[`camera_reader`](../../core/camera_reader); none of them links a camera SDK.
+
+```yaml
+# ~/.config/isaaccapture/cameras.yaml
+cameras:
+  head:
+    backend: synthetic
+```
+
+```bash
+camera_plugin
+```
+
+```cpp
+CameraReader reader = CameraReader::open("head");
+while (auto frames = reader.next(std::chrono::seconds(1)))
+{
+    const ImageView left = frames->image(0);
+}
+```
+
+Neither side is told where the other is: the plugin listens on this user's default endpoint
+and readers look there.
+
+## Running it
+
+**Which cameras.** A camera has an id that readers ask for, a backend that opens it, and that
+backend's options. The plugin takes them from, in this order:
+
+1. `--camera=ID:BACKEND[:KEY=VALUE,...]` on the command line, once per camera;
+2. `--config=FILE`, or without it `$XDG_CONFIG_HOME/isaaccapture/cameras.yaml`
+   (`~/.config/isaaccapture/cameras.yaml`) when that file exists. A camera takes three lines:
+   its id, `backend:`, and any option of that backend as `name: value`. `slots:` at the top
+   level sets the pool size;
+3. otherwise, or with `--auto`, every camera the backends of this build find plugged in.
+
+**Where it listens.** By default on `$XDG_RUNTIME_DIR/isaaccapture/camera.sock`. A second
+plugin on the same machine runs as a named instance, `--instance=NAME`, on its own endpoint,
+and readers name the same instance. `--endpoint=PATH` sets the socket file outright. Only one
+plugin serves an endpoint at a time.
+
+**Pool size.** `--slots=N`, 8 by default, is the number of frames kept per stream. A pool
+holds the newest frame set, one slot for the camera to write ahead, and the windows of all
+readers; a reader that does not fit is refused with the numbers. A reader that wants every
+frame in order counts its window twice, because the frames waiting for it are kept as well.
+
+**Who starts it.** The application, through the plugin manager, like every other Isaac
+Capture plugin: `plugin.yaml` sits next to the executable, and the handle the plugin manager
+returns stops the plugin when it goes away. A plugin can also be run by hand or from a
+service, as above. A reader never starts it; a reader that finds no plugin says where it
+looked.
+
+A misspelt argument, option or setting is an error, not something ignored. `SIGINT` and
+`SIGTERM` stop the plugin cleanly; readers see their connection close. `--list-backends`
+prints the backends of the build.
+
+Every ten seconds the plugin logs, per camera, how many frame sets it published. It warns
+when a camera had to drop frame sets because its pool was full, or when a reader did not take
+its events; both mean the pool or a reader's window needs another look.
+
+## Measuring
+
+Every frame set carries the times it passed each step, on the host's monotonic clock.
+`camera_bench` reads a group like any other reader and prints them:
+
+```text
+$ camera_bench --group=head --frames=600
+head: 2 stream(s)
+  head/left                1280x720 bgra8, 60.00 fps, 8 slots of 3686400 bytes
+  head/right               1280x720 bgra8, 60.00 fps, 8 slots of 3686400 bytes
+read 600 frame sets in 10.00 s (60.0 per second), skipped 0
+                                p50        p90        p99        max   (microseconds)
+  capture -> sdk ready        ...
+  sdk ready -> published      ...
+  published -> sent           ...
+  sent -> reader              ...
+  capture -> reader           ...
+```
+
+`published -> sent` and `sent -> reader` are what the plugin and the process boundary add; the
+steps before them belong to the camera and its SDK. Without `--group` the bench lists what the
+plugin publishes. `--window` and `--order` read as a recorder would, and `--check-synthetic`
+checks every byte of every image against the synthetic backend's pattern.
+
+## Backends
+
+A backend opens cameras through one SDK. **Which backends a plugin has is decided when it is
+built**, so nobody builds or installs an SDK they do not use.
+
+| Backend | Needs | Options |
+|---|---|---|
+| `synthetic` | nothing; always built | `width` (1280), `height` (720), `fps` (60), `streams` (2), `format` (`bgra8`, `rgba8`, `gray8`, `nv12`) |
+
+The synthetic camera writes frames whose every byte is known from the frame number, so a
+reader can check that it received the whole of the frame it was told about. It is what the
+tests and the latency bench read.
+
+### What a backend implements
+
+A backend is one function that returns a `Backend`
+(`core/inc/camera_plugin/camera_source.hpp`): a name and an `open` that is called once with
+every camera the configuration names for it and returns one `CameraSource` per camera. What
+the SDK has open is the backend's, not a camera's: an SDK that serves a whole rig from one
+object, or keeps state for the process, opens it once in that call and lets the sources
+share it. Each source publishes one group.
+
+A source gets the slot for an image through its `FrameOutput` in one of two ways:
+
+- **The plugin picks the slot.** `acquire()` hands out a free slot, the source writes the
+  image into it and calls `publish()`. When nothing is free the frame is dropped. This is the
+  way to start with.
+- **The SDK picks the buffer.** For an SDK that is given its buffers up front and says which
+  one it filled: the source hands the SDK the memory of every slot (`slot_count()`,
+  `slot_memory()`), asks to be told when a slot is free again (`on_slot_free()`), calls
+  `claim()` for the buffer the SDK filled, then `publish()`. `backend_reserve()` says how
+  many buffers the SDK needs in hand to keep capturing; readers are never given so many that
+  it is left with fewer.
+
+In both, `publish()` says the images are complete. A slot is not handed out or given back to
+the SDK while a reader holds it, also across `restart()`, which is how a source says that
+its camera restarted.
+
+Not here yet, and added with the first pool that needs it: memory the SDK allocates itself,
+and a way for a source to say that an image is still being written by a GPU when it is
+published.
+
+### Adding a backend
+
+1. Put it in `backends/<name>/` as a library of its own that implements `CameraSource`
+   and returns a `Backend` from one function.
+2. Add an option `BUILD_CAMERA_BACKEND_<NAME>`, off by default, next to the other build
+   options in the top-level `CMakeLists.txt`.
+3. In `backends/CMakeLists.txt`, add the directory and link the library only when the option
+   is on, and pass the option to `backends.cpp` as a compile definition; there, add the
+   backend to `built_backends()` under that definition.
+
+A backend that is off is not configured at all, so its SDK is neither looked for nor built. A
+camera that names a backend the build does not have is refused with the list of those it has.
+
+## Layout
+
+- `core/`: what a backend implements, and `CameraHost`, which gives each camera its pools and
+  puts all of them behind one endpoint.
+- `backends/`: the backends of this build.
+- `app/`: the `camera_plugin` executable.
+- `bench/`: the `camera_bench` executable.
+
+## Tests
+
+`tests/cpp/plugins/camera`, run with `ctest -L camera_plugin`.
+
+- **Unit** (`ctest -L unit`): camera arguments, options and configuration files; the host
+  with a camera that publishes on demand, with one whose SDK owns the buffers, and across a
+  camera restart; a backend opened once with all its cameras; the synthetic backend's
+  options and layouts; two synthetic cameras read through one host, every byte checked.
+- **Integration** (`ctest -L integration`): `camera_plugin` and `camera_bench` as processes
+  of their own. A reader in the test process reads from the plugin and checks every byte; a
+  second plugin cannot take a running one's endpoint; `SIGTERM` is a clean stop; a plugin
+  that was killed is replaced by the next; a plugin without arguments serves its
+  configuration file where readers look, and a named instance runs beside it; the plugin
+  manager starts and stops the plugin; the bench reads from a plugin and reports each step.
