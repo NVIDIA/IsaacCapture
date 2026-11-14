@@ -274,12 +274,20 @@ void Publisher::activate(SubscriptionId subscription)
     {
         return;
     }
-    const std::lock_guard<std::mutex> lock(target->mutex);
-    const auto found = target->subscriptions.find(subscription);
-    if (found != target->subscriptions.end())
+    std::vector<FreedSlot> freed;
     {
-        found->second.active = true;
+        const std::lock_guard<std::mutex> lock(target->mutex);
+        const auto found = target->subscriptions.find(subscription);
+        if (found != target->subscriptions.end())
+        {
+            found->second.active = true;
+            // An in-order reader starts with what the ring kept, which includes a frame set
+            // published between its reservation and this call. Without this it would get
+            // that frame set only when the next one is published.
+            deliver(*target, subscription, found->second, freed);
+        }
     }
+    notify(freed);
 }
 
 bool Publisher::request_newest(SubscriptionId subscription, std::uint64_t after_sequence)

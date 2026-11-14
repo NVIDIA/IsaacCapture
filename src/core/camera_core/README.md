@@ -64,7 +64,9 @@ subscribed to, so that answer always comes before the first frame set.
 
 ## When a frame set is held for a reader
 
-An in-order reader is sent each frame set as it is published, while its window has room.
+An in-order reader is sent each frame set as it is published, while its window has room. It
+starts, the moment its delivery is activated, with what the ring kept: nothing published
+between its reservation and its activation waits for the next publish.
 
 A newest-order reader is sent one only when it asks, with `request_newest`: the newest frame set
 there is at that moment, or the next one published if it already has the newest. Nothing is

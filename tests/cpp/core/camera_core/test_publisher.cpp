@@ -243,13 +243,15 @@ TEST_CASE("a subscription is sent nothing until it is activated", "[unit][camera
     RecordingSink third;
     REQUIRE_FALSE(publisher.subscribe(third, group, { .window = 3 }));
 
-    // Active: the in-order reader starts with what the ring kept.
+    // Active: the in-order reader starts at once with what the ring kept, which is what was
+    // published while it was only reserved. It does not have to wait for the next publish.
     publisher.activate(ordered.id);
     publisher.activate(latest.id);
-    publish_next(publisher, group);
-    REQUIRE(sequences(in_order) == std::vector<std::uint64_t>{ 3, 4 });
+    REQUIRE(sequences(in_order) == std::vector<std::uint64_t>{ 2, 3 });
     REQUIRE(in_order.events[0].skipped == 0);
     REQUIRE(newest.events.empty());
+    publish_next(publisher, group);
+    REQUIRE(in_order.events.size() == 2); // its window of two is full
 
     // Asking is for newest-order readers.
     REQUIRE_FALSE(publisher.request_newest(ordered.id, 0));

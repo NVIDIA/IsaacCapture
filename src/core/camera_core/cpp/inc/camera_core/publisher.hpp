@@ -148,8 +148,9 @@ public:
     SubscribeResult subscribe(EventSink& sink, GroupId group, const ReaderOptions& options);
 
     /**
-     * @brief Start delivery. An in-order reader is sent frame sets as they are published; a
-     * newest-order reader is sent one each time it asks with request_newest().
+     * @brief Start delivery. An in-order reader is sent what the ring kept, at once, and then
+     * every frame set as it is published; a newest-order reader is sent one each time it asks
+     * with request_newest().
      */
     void activate(SubscriptionId subscription);
 
