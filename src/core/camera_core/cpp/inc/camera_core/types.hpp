@@ -42,6 +42,31 @@ struct PlaneLayout
     std::uint32_t stride_bytes = 0; // from the start of one row to the start of the next
 };
 
+// The pixels of one plane: the bytes one row holds, without padding, and the number of rows.
+struct PlaneSize
+{
+    std::uint64_t row_bytes = 0;
+    std::uint64_t rows = 0;
+};
+
+constexpr PlaneSize plane_size_of(PixelFormat format, std::uint32_t width, std::uint32_t height, std::uint32_t plane)
+{
+    const std::uint64_t columns = width;
+    const std::uint64_t rows = height;
+    switch (format)
+    {
+    case PixelFormat::BGRA8:
+    case PixelFormat::RGBA8:
+        return { columns * 4, rows };
+    case PixelFormat::GRAY8:
+        return { columns, rows };
+    case PixelFormat::NV12:
+        // Luma at full size, then one interleaved chroma pair per two by two pixels.
+        return plane == 0 ? PlaneSize{ columns, rows } : PlaneSize{ (columns + 1) / 2 * 2, (rows + 1) / 2 };
+    }
+    return {};
+}
+
 // Whether a stream's slots hold pixels or one access unit of encoded video each.
 enum class Codec : std::uint32_t
 {
@@ -131,5 +156,15 @@ struct ReaderOptions
     std::uint32_t window = 1; // frame sets kept for this reader at a time, unread and held together
     DeliveryOrder order = DeliveryOrder::DEFAULT;
 };
+
+// The order a reader with these options gets: what it asked for, or the default for its window.
+constexpr DeliveryOrder resolved_order(const ReaderOptions& options)
+{
+    if (options.order != DeliveryOrder::DEFAULT)
+    {
+        return options.order;
+    }
+    return options.window == 1 ? DeliveryOrder::NEWEST : DeliveryOrder::IN_ORDER;
+}
 
 } // namespace core::camera

@@ -19,6 +19,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(camera_ipc)
     add_subdirectory(camera_wire)
     add_subdirectory(camera_endpoint)
+    add_subdirectory(camera_reader)
 endif()
 
 if(BUILD_OVXR_CAMERA_QUADS)

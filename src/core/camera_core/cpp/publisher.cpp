@@ -20,40 +20,6 @@ std::int64_t steady_now_ns()
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-DeliveryOrder resolve_order(const ReaderOptions& options)
-{
-    if (options.order != DeliveryOrder::DEFAULT)
-    {
-        return options.order;
-    }
-    return options.window == 1 ? DeliveryOrder::NEWEST : DeliveryOrder::IN_ORDER;
-}
-
-// The bytes one row of a plane holds and the number of its rows.
-struct PlaneSize
-{
-    std::uint64_t row_bytes = 0;
-    std::uint64_t rows = 0;
-};
-
-PlaneSize plane_size_of(const StreamDescription& stream, std::uint32_t plane)
-{
-    const std::uint64_t width = stream.width;
-    const std::uint64_t height = stream.height;
-    switch (stream.pixel_format)
-    {
-    case PixelFormat::BGRA8:
-    case PixelFormat::RGBA8:
-        return { width * 4, height };
-    case PixelFormat::GRAY8:
-        return { width, height };
-    case PixelFormat::NV12:
-        // Luma at full size, then one interleaved chroma pair per two by two pixels.
-        return plane == 0 ? PlaneSize{ width, height } : PlaneSize{ (width + 1) / 2 * 2, (height + 1) / 2 };
-    }
-    return {};
-}
-
 // A pixel stream names every plane of its format and every plane lies inside the slot; an
 // encoded stream has no planes.
 bool layout_is_valid(const StreamDescription& stream)
@@ -68,7 +34,7 @@ bool layout_is_valid(const StreamDescription& stream)
     }
     for (std::uint32_t i = 0; i < stream.plane_count; ++i)
     {
-        const PlaneSize size = plane_size_of(stream, i);
+        const PlaneSize size = plane_size_of(stream.pixel_format, stream.width, stream.height, i);
         const std::uint64_t stride = stream.planes[i].stride_bytes;
         // 64-bit sums of 32-bit fields, so nothing here can wrap.
         const std::uint64_t end = stream.planes[i].offset_bytes + stride * (size.rows - 1) + size.row_bytes;
@@ -275,7 +241,7 @@ SubscribeResult Publisher::subscribe(EventSink& sink, GroupId group, const Reade
         return result;
     }
     Group& target = *m_groups[group];
-    const DeliveryOrder order = resolve_order(options);
+    const DeliveryOrder order = resolved_order(options);
 
     // The ring keeps what in-order readers may still be waiting for; newest-only readers
     // need the newest frame set and nothing older.
