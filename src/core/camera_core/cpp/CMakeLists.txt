@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 # Camera capture core: which pool slots hold which frame sets and who may still read them.
 # Standard library only, so it builds and is tested on every platform.
 add_library(camera_core STATIC
+    description.cpp
     publisher.cpp
 )
 

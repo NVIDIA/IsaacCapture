@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <utility>
 
@@ -20,30 +21,18 @@ std::int64_t steady_now_ns()
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// A pixel stream names every plane of its format and every plane lies inside the slot; an
-// encoded stream has no planes.
-bool layout_is_valid(const StreamDescription& stream)
+// Never 0, which stands for "not chosen yet".
+std::uint64_t new_session_id()
 {
-    if (stream.is_encoded())
+    std::random_device source;
+    for (;;)
     {
-        return stream.plane_count == 0;
-    }
-    if (stream.width == 0 || stream.height == 0 || stream.plane_count != plane_count_of(stream.pixel_format))
-    {
-        return false;
-    }
-    for (std::uint32_t i = 0; i < stream.plane_count; ++i)
-    {
-        const PlaneSize size = plane_size_of(stream.pixel_format, stream.width, stream.height, i);
-        const std::uint64_t stride = stream.planes[i].stride_bytes;
-        // 64-bit sums of 32-bit fields, so nothing here can wrap.
-        const std::uint64_t end = stream.planes[i].offset_bytes + stride * (size.rows - 1) + size.row_bytes;
-        if (size.rows == 0 || stride < size.row_bytes || end > stream.slot_bytes)
+        const std::uint64_t id = (std::uint64_t{ source() } << 32) | source();
+        if (id != 0)
         {
-            return false;
+            return id;
         }
     }
-    return true;
 }
 
 } // namespace
@@ -54,14 +43,9 @@ Publisher::Publisher(Clock clock) : m_clock(clock ? std::move(clock) : Clock(ste
 
 GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t backend_reserve)
 {
-    if (description.id.empty())
+    if (const std::string problem = problem_with(description); !problem.empty())
     {
-        throw std::invalid_argument("camera group needs an id");
-    }
-    if (description.streams.empty() || description.streams.size() > MAX_STREAMS_PER_GROUP)
-    {
-        throw std::invalid_argument("camera group '" + description.id + "' needs between 1 and " +
-                                    std::to_string(MAX_STREAMS_PER_GROUP) + " streams");
+        throw std::invalid_argument(problem);
     }
     if (backend_reserve == 0)
     {
@@ -70,21 +54,14 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
 
     auto group = std::make_unique<Group>();
     group->description = description;
+    if (group->description.session_id == 0)
+    {
+        group->description.session_id = new_session_id();
+    }
     group->reserve = backend_reserve;
     group->slot_count = std::numeric_limits<std::uint32_t>::max();
     for (const StreamDescription& stream : description.streams)
     {
-        if (stream.id.empty() || stream.slot_bytes == 0 || stream.slot_count == 0 ||
-            stream.slot_count > MAX_SLOTS_PER_STREAM)
-        {
-            throw std::invalid_argument("camera group '" + description.id + "' has a stream without an id, a slot " +
-                                        "size or between 1 and " + std::to_string(MAX_SLOTS_PER_STREAM) + " slots");
-        }
-        if (!layout_is_valid(stream))
-        {
-            throw std::invalid_argument("camera stream '" + stream.id + "' needs a size and every plane of its " +
-                                        "pixel format inside the slot, or no planes at all when it is encoded");
-        }
         group->slot_count = std::min(group->slot_count, stream.slot_count);
         group->slots.emplace_back(stream.slot_count);
     }
@@ -290,6 +267,45 @@ SubscribeResult Publisher::subscribe(EventSink& sink, GroupId group, const Reade
     return result;
 }
 
+void Publisher::activate(SubscriptionId subscription)
+{
+    Group* target = group_of(subscription);
+    if (target == nullptr)
+    {
+        return;
+    }
+    const std::lock_guard<std::mutex> lock(target->mutex);
+    const auto found = target->subscriptions.find(subscription);
+    if (found != target->subscriptions.end())
+    {
+        found->second.active = true;
+    }
+}
+
+bool Publisher::request_newest(SubscriptionId subscription, std::uint64_t after_sequence)
+{
+    Group* target = group_of(subscription);
+    if (target == nullptr)
+    {
+        return false;
+    }
+    std::vector<FreedSlot> freed;
+    {
+        const std::lock_guard<std::mutex> lock(target->mutex);
+        const auto found = target->subscriptions.find(subscription);
+        if (found == target->subscriptions.end() || !found->second.active || found->second.order != DeliveryOrder::NEWEST)
+        {
+            return false;
+        }
+        found->second.wanted = true;
+        found->second.cursor = after_sequence;
+        found->second.started = after_sequence != 0;
+        deliver(*target, subscription, found->second, freed);
+    }
+    notify(freed);
+    return true;
+}
+
 void Publisher::release(SubscriptionId subscription, std::uint64_t lease_id)
 {
     Group* target = group_of(subscription);
@@ -456,8 +472,18 @@ void Publisher::trim_ring(Group& group, std::vector<FreedSlot>& freed)
 
 void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscription, std::vector<FreedSlot>& freed) const
 {
+    if (!subscription.active)
+    {
+        return;
+    }
     while (subscription.leases.size() < subscription.window)
     {
+        // A newest-order reader is held a frame set only while it asks for one: whatever was
+        // held ahead of time would be old by the time the reader came for it.
+        if (subscription.order == DeliveryOrder::NEWEST && !subscription.wanted)
+        {
+            return;
+        }
         if (group.ring.empty() || group.ring.back().sequence <= subscription.cursor)
         {
             return;
@@ -495,6 +521,7 @@ void Publisher::deliver(Group& group, SubscriptionId id, Subscription& subscript
         subscription.leases.emplace(event.lease_id, *target);
         subscription.cursor = target->sequence;
         subscription.started = true;
+        subscription.wanted = false;
     }
 }
 

@@ -20,12 +20,18 @@ behind the slots and the connection to other processes live in [`camera_ipc`](..
 - **Group**: one or more streams captured together, such as a stereo pair or a triggered rig.
   A group publishes one **frame set** at a time: one image per stream, under one sequence number.
 - **Window**: how many frame sets are kept for a reader at a time, unread and held together.
-- **Order**: `NEWEST` hands the reader the latest frame set each time it has room and skips the
-  rest (a viewer, a live encoder). `IN_ORDER` hands over every frame set in sequence (a recorder).
+- **Order**: `NEWEST` hands the reader the newest frame set there is each time it asks, and skips
+  the rest (a viewer, a live encoder). `IN_ORDER` sends every frame set in sequence (a recorder).
   The default is `NEWEST` for a window of one and `IN_ORDER` otherwise.
 - **Lease**: a reader's hold on a frame set. Its slots are not reused until the reader releases
   it or goes away.
-- **Generation**: changes when a camera restarts, so a reader can tell a restart from a skip.
+- **Session**: one run of a group, from the plugin starting to publish it until that plugin
+  ends, named by a random `session_id` in the group's description.
+- **Sequence**: a frame set's place among the group's captures in the session. It is the same
+  for every reader, so a reader that skips sees a gap, and with the session id it names a
+  capture for good.
+- **Generation**: counts restarts of the camera within the session, so a reader can tell a
+  restart from a skip. A restart does not reset the sequence.
 
 ## How frames move
 
@@ -52,6 +58,24 @@ number of frame sets the reader skipped. A slow reader skips; it never slows cap
 reader, and no call blocks on a reader. Each group has its own lock, so one camera never waits
 while another camera's events are being sent.
 
+A subscription starts in two steps: `subscribe` reserves it, which counts it in the pool's
+budget, and `activate` starts delivery. In between, whoever serves the reader tells it what it
+subscribed to, so that answer always comes before the first frame set.
+
+## When a frame set is held for a reader
+
+An in-order reader is sent each frame set as it is published, while its window has room.
+
+A newest-order reader is sent one only when it asks, with `request_newest`: the newest frame set
+there is at that moment, or the next one published if it already has the newest. Nothing is
+held for a reader that is not asking. Holding a frame set ahead of time, the moment it is
+published, would hand a reader that was busy for a second a frame that is a second old, and
+keep every newer one from it.
+
+The request names the last frame set the reader took. That lets a reader give back a frame
+set it did not use (it had stopped waiting when the frame set arrived) and ask again: it gets
+the same one back if nothing newer exists, and the newer one otherwise.
+
 ## A camera SDK that owns its buffers
 
 Some capture stacks are given their buffers up front and pick the one they fill, and stop
@@ -66,8 +90,25 @@ capturing when they run out. They map onto the second way like this:
   have let go of it.
 
 Because the budget below counts the reserve, readers can never take so many buffers that the
-SDK is left short. An encoder inside the plugin is a reader like any other: it subscribes
-with its own sink and holds a buffer for as long as it encodes from it.
+SDK is left short. A consumer that works on the buffers in place, such as an encoder, is a
+reader like any other: it holds a buffer until it has finished consuming it.
+
+## What publishing, holding and releasing mean
+
+Three different things are true of a slot at different times, and they are kept apart:
+
+- **Ready**: `publish` says the image is complete. A backend publishes a slot only when
+  everything that writes it has finished.
+- **Held**: a lease says a reader may read the slot. It is not reused or rewritten while any
+  lease or the ring refers to it, across a camera restart as well.
+- **Done**: `release` says everything the reader started on the slot has finished. For host
+  memory that is the moment it stops reading.
+
+When a reader goes away its leases are taken back at once. That is right for host memory: a
+reader that is gone reads nothing, and one that closed its connection while still reading
+gets changing pixels, never memory that is gone. It is not evidence that work a reader handed
+to a GPU or a hardware encoder has finished, so a pool kind where such work can outlive the
+connection has to bring its own rule for these slots before it is added.
 
 ## Pool budget
 

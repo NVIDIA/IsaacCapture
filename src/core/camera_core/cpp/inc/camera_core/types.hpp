@@ -16,6 +16,10 @@ namespace core::camera
 inline constexpr std::size_t MAX_STREAMS_PER_GROUP = 8;
 inline constexpr std::uint32_t MAX_SLOTS_PER_STREAM = 64;
 
+// Larger than any image or access unit, and small enough that no size worked out from a
+// description can wrap.
+inline constexpr std::uint64_t MAX_SLOT_BYTES = std::uint64_t{ 1 } << 32;
+
 // Marks a time that is not known. All times are nanoseconds on the host's monotonic clock.
 inline constexpr std::int64_t TIME_UNKNOWN = -1;
 
@@ -106,8 +110,22 @@ struct StreamDescription
 struct GroupDescription
 {
     std::string id;
+
+    // Names one run of the group: the same for every frame set from the moment the plugin
+    // starts publishing it until that plugin ends. With a frame set's sequence it identifies a
+    // capture for good. Left 0, Publisher::add_group draws one.
+    std::uint64_t session_id = 0;
+
     std::vector<StreamDescription> streams;
 };
+
+/**
+ * @brief Why a group cannot be published or read as described: sizes, the planes its pixel
+ * format needs, strides and offsets against the slot, slot counts. For both sides of a
+ * connection: what a backend declares and what a reader was sent.
+ * @return The reason, or nothing when the description is usable.
+ */
+std::string problem_with(const GroupDescription& group);
 
 enum ImageFlag : std::uint32_t
 {
@@ -135,9 +153,11 @@ struct FrameTimeline
 
 struct FrameEvent
 {
-    std::uint64_t lease_id = 0; // return it with Publisher::release
-    std::uint64_t sequence = 0; // counts frame sets of the group; never restarts
-    std::uint32_t generation = 0; // changes when the camera restarts
+    std::uint64_t lease_id = 0; // this reader's hold on the frame set; return it with Publisher::release
+    // The frame set's place among the group's captures in this session. The same for every
+    // reader, so readers see gaps rather than a numbering of their own; a restart does not reset it.
+    std::uint64_t sequence = 0;
+    std::uint32_t generation = 0; // restarts of the camera within the session
     std::uint32_t skipped = 0; // frame sets this reader did not receive since its previous one
     std::uint32_t image_count = 0;
     FrameTimeline timeline;
@@ -147,8 +167,8 @@ struct FrameEvent
 enum class DeliveryOrder
 {
     DEFAULT, // NEWEST for a window of one, IN_ORDER otherwise
-    NEWEST, // each time the reader has room it gets the newest frame set and skips older ones
-    IN_ORDER, // the reader gets every frame set in sequence while it keeps up
+    NEWEST, // each time the reader asks it gets the newest frame set there is then, and skips older ones
+    IN_ORDER, // the reader is sent every frame set in sequence while it keeps up
 };
 
 struct ReaderOptions

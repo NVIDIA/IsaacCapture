@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -74,6 +75,17 @@ std::uint64_t publish_next(Publisher& publisher, GroupId group, const FrameTimel
     return publisher.publish(group, images, timeline);
 }
 
+// A subscription as the endpoint sets one up: reserved, then, once the reader knows of it, active.
+SubscribeResult open(Publisher& publisher, EventSink& sink, GroupId group, const ReaderOptions& options = {})
+{
+    const SubscribeResult result = publisher.subscribe(sink, group, options);
+    if (result)
+    {
+        publisher.activate(result.id);
+    }
+    return result;
+}
+
 std::vector<std::uint64_t> sequences(const RecordingSink& sink)
 {
     std::vector<std::uint64_t> result;
@@ -86,27 +98,164 @@ std::vector<std::uint64_t> sequences(const RecordingSink& sink)
 
 } // namespace
 
-TEST_CASE("a window of one always gets the newest frame set", "[unit][camera_core][delivery]")
+TEST_CASE("a newest-order reader gets the newest frame set when it asks", "[unit][camera_core][delivery]")
 {
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
 
+    // Nothing is held for a reader that has not asked.
     publish_next(publisher, group);
-    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1 });
+    publish_next(publisher, group);
+    REQUIRE(sink.events.empty());
+
+    REQUIRE(publisher.request_newest(reader.id, 0));
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 2 });
     REQUIRE(sink.events[0].skipped == 0);
     REQUIRE(sink.events[0].image_count == 2);
 
-    // The reader still holds frame set 1, so the next ones wait.
+    // It asks again while it still holds frame set 2: the answer waits for room, and is the
+    // newest frame set there is when the room comes.
+    REQUIRE(publisher.request_newest(reader.id, 2));
     publish_next(publisher, group);
     publish_next(publisher, group);
     REQUIRE(sink.events.size() == 1);
 
     publisher.release(reader.id, sink.events[0].lease_id);
-    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1, 3 });
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 2, 4 });
     REQUIRE(sink.events[1].skipped == 1);
+}
+
+TEST_CASE("a newest-order reader that is waiting is sent a frame set as it is published", "[unit][camera_core][delivery]")
+{
+    Publisher publisher;
+    const GroupId group = publisher.add_group(make_group(8));
+    RecordingSink sink;
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
+    REQUIRE(reader);
+
+    REQUIRE(publisher.request_newest(reader.id, 0));
+    REQUIRE(sink.events.empty());
+    publish_next(publisher, group);
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1 });
+
+    // One request, one frame set.
+    publisher.release(reader.id, sink.events[0].lease_id);
+    publish_next(publisher, group);
+    REQUIRE(sink.events.size() == 1);
+}
+
+TEST_CASE("a reader that paused gets the newest frame set, not the one from when it stopped",
+          "[unit][camera_core][delivery]")
+{
+    std::int64_t now = 0;
+    Publisher publisher([&] { return now; });
+    const GroupId group = publisher.add_group(make_group(4, 1));
+    RecordingSink sink;
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
+    REQUIRE(reader);
+
+    REQUIRE(publisher.request_newest(reader.id, 0));
+    publish_next(publisher, group);
+    publisher.release(reader.id, sink.events[0].lease_id);
+
+    // The reader does something else for five frame periods, holding nothing and asking for
+    // nothing. Nothing is put aside for it: every slot but the ring's one is free throughout.
+    for (int i = 0; i < 5; ++i)
+    {
+        now += 10;
+        publish_next(publisher, group);
+        REQUIRE(sink.events.size() == 1);
+        std::vector<std::uint32_t> free_slots;
+        while (const auto slot = publisher.acquire_slot(group, 0))
+        {
+            free_slots.push_back(*slot);
+        }
+        REQUIRE(free_slots.size() == 3);
+        for (const std::uint32_t slot : free_slots)
+        {
+            publisher.abandon_slot(group, 0, slot);
+        }
+    }
+
+    // When it comes back it is handed the frame set published last, held from this moment.
+    now += 3;
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1, 6 });
+    REQUIRE(sink.events[1].skipped == 4);
+    REQUIRE(sink.events[1].timeline.published_ns == 50);
+    REQUIRE(sink.events[1].timeline.sent_ns == 53);
+}
+
+TEST_CASE("a frame set given back unseen is sent again while it is still the newest", "[unit][camera_core][delivery]")
+{
+    Publisher publisher;
+    const GroupId group = publisher.add_group(make_group(8));
+    RecordingSink sink;
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
+    REQUIRE(reader);
+
+    REQUIRE(publisher.request_newest(reader.id, 0));
+    publish_next(publisher, group);
+    publisher.release(reader.id, sink.events[0].lease_id);
+
+    // The reader asked, gave up waiting, and frame set 2 arrived for it later. It cannot tell
+    // whether 2 is still the newest, so it gives it back and asks again, naming the last one
+    // it took.
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    publish_next(publisher, group);
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1, 2 });
+    publisher.release(reader.id, sink.events[1].lease_id);
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1, 2, 2 });
+    REQUIRE(sink.events[2].skipped == 0);
+    REQUIRE(sink.events[2].lease_id != sink.events[1].lease_id);
+
+    // Had a newer one been published meanwhile, that is the one it gets.
+    publish_next(publisher, group);
+    publisher.release(reader.id, sink.events[2].lease_id);
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    REQUIRE(sink.events.back().sequence == 3);
+    REQUIRE(sink.events.back().skipped == 1);
+}
+
+TEST_CASE("a subscription is sent nothing until it is activated", "[unit][camera_core][delivery]")
+{
+    Publisher publisher;
+    const GroupId group = publisher.add_group(make_group(8));
+    RecordingSink in_order;
+    RecordingSink newest;
+    const SubscribeResult ordered = publisher.subscribe(in_order, group, { .window = 2 });
+    const SubscribeResult latest = publisher.subscribe(newest, group, { .window = 1 });
+    REQUIRE(ordered);
+    REQUIRE(latest);
+
+    // Reserved: both count in the budget (2 ring history + 3 windows + 1 reserve), neither
+    // is sent anything, and a request is refused.
+    for (int i = 0; i < 3; ++i)
+    {
+        publish_next(publisher, group);
+    }
+    REQUIRE(in_order.events.empty());
+    REQUIRE_FALSE(publisher.request_newest(latest.id, 0));
+    RecordingSink third;
+    REQUIRE_FALSE(publisher.subscribe(third, group, { .window = 3 }));
+
+    // Active: the in-order reader starts with what the ring kept.
+    publisher.activate(ordered.id);
+    publisher.activate(latest.id);
+    publish_next(publisher, group);
+    REQUIRE(sequences(in_order) == std::vector<std::uint64_t>{ 3, 4 });
+    REQUIRE(in_order.events[0].skipped == 0);
+    REQUIRE(newest.events.empty());
+
+    // Asking is for newest-order readers.
+    REQUIRE_FALSE(publisher.request_newest(ordered.id, 0));
+    REQUIRE(publisher.request_newest(latest.id, 0));
+    REQUIRE(sequences(newest) == std::vector<std::uint64_t>{ 4 });
+    REQUIRE_FALSE(publisher.request_newest(99, 0));
 }
 
 TEST_CASE("a larger window gets every frame set in order", "[unit][camera_core][delivery]")
@@ -114,7 +263,7 @@ TEST_CASE("a larger window gets every frame set in order", "[unit][camera_core][
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 3 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 3 });
     REQUIRE(reader);
 
     for (int i = 0; i < 4; ++i)
@@ -134,7 +283,7 @@ TEST_CASE("an in-order reader that falls behind is told what it skipped", "[unit
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 2 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 2 });
     REQUIRE(reader);
 
     for (int i = 0; i < 6; ++i)
@@ -158,14 +307,19 @@ TEST_CASE("newest order with a larger window skips to the newest frame set", "[u
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 2, .order = DeliveryOrder::NEWEST });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 2, .order = DeliveryOrder::NEWEST });
     REQUIRE(reader);
 
-    for (int i = 0; i < 4; ++i)
-    {
-        publish_next(publisher, group);
-    }
+    // It holds two frame sets at a time and asks for a third.
+    REQUIRE(publisher.request_newest(reader.id, 0));
+    publish_next(publisher, group);
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    publish_next(publisher, group);
     REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 1, 2 });
+    REQUIRE(publisher.request_newest(reader.id, 2));
+    publish_next(publisher, group);
+    publish_next(publisher, group);
+    REQUIRE(sink.events.size() == 2);
 
     // A viewer that holds one frame and wants the newest must not be handed frame set 3.
     publisher.release(reader.id, sink.events[0].lease_id);
@@ -218,13 +372,15 @@ TEST_CASE("a slot is reused only when neither the ring nor a reader holds it", "
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(3, 1));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     publish_next(publisher, group); // slot 0: held by the reader
     publish_next(publisher, group); // slot 1: held by the ring
     REQUIRE(sink.events.size() == 1);
     REQUIRE(sink.events[0].images[0].slot == 0);
+    REQUIRE(publisher.request_newest(reader.id, 1)); // waits for the reader to have room
 
     const auto third = publisher.acquire_slot(group, 0);
     REQUIRE(third == 2u);
@@ -252,8 +408,9 @@ TEST_CASE("the slot-free callback fires when the last holder lets go", "[unit][c
                                          freed.emplace_back(stream, slot);
                                      });
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     // The SDK owns the buffers and picks the slot it filled.
     const auto publish_slot = [&](std::uint32_t slot)
@@ -269,6 +426,7 @@ TEST_CASE("the slot-free callback fires when the last holder lets go", "[unit][c
     REQUIRE(freed.empty());
     REQUIRE_THROWS_AS(publisher.claim_slot(group, 0, 0), std::invalid_argument);
 
+    REQUIRE(publisher.request_newest(reader.id, 1));
     publisher.release(reader.id, sink.events[0].lease_id); // reader moves on to slot 1
     REQUIRE(freed == std::vector<std::pair<std::size_t, std::uint32_t>>{ { 0, 0 } });
 
@@ -288,7 +446,7 @@ TEST_CASE("unsubscribing returns every frame set the reader held", "[unit][camer
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(8, 1));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 3 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 3 });
     REQUIRE(reader);
     for (int i = 0; i < 3; ++i)
     {
@@ -313,14 +471,16 @@ TEST_CASE("a frame set that could not be sent is not counted as held", "[unit][c
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(3, 1));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     sink.accept = false;
     publish_next(publisher, group);
     REQUIRE(publisher.stats(group).send_failures == 1);
     REQUIRE(sink.events.empty());
 
+    // The reader is still waiting, so the next frame set is tried too.
     sink.accept = true;
     publish_next(publisher, group);
     REQUIRE(sequences(sink) == std::vector<std::uint64_t>{ 2 });
@@ -336,8 +496,9 @@ TEST_CASE("a restart changes the generation and empties the ring", "[unit][camer
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(4, 1));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     publish_next(publisher, group);
     REQUIRE(sink.events[0].generation == 0);
@@ -345,9 +506,16 @@ TEST_CASE("a restart changes the generation and empties the ring", "[unit][camer
     publisher.restart_group(group);
     REQUIRE(publisher.generation(group) == 1);
 
-    // The frame set the reader holds stays valid; the sequence keeps counting.
+    // The frame set the reader holds stays valid, and its slot out of use, until it is given
+    // back; the sequence keeps counting.
+    REQUIRE(publisher.acquire_slot(group, 0) == 1u);
+    publisher.abandon_slot(group, 0, 1);
     publisher.release(reader.id, sink.events[0].lease_id);
+    REQUIRE(publisher.acquire_slot(group, 0) == 0u);
+    publisher.abandon_slot(group, 0, 0);
     REQUIRE(sink.events.size() == 1);
+    REQUIRE(publisher.request_newest(reader.id, 1));
+    REQUIRE(sink.events.size() == 1); // the ring was emptied: nothing from before the restart
     publish_next(publisher, group);
     REQUIRE(sink.events.size() == 2);
     REQUIRE(sink.events[1].generation == 1);
@@ -363,7 +531,9 @@ TEST_CASE("a group publishes one image per stream", "[unit][camera_core][groups]
     REQUIRE(publisher.group_count() == 1);
 
     RecordingSink sink;
-    REQUIRE(publisher.subscribe(sink, group, { .window = 1 }));
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
+    REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     std::vector<ImageInfo> images(3);
     for (std::size_t i = 0; i < 3; ++i)
@@ -408,8 +578,9 @@ TEST_CASE("every frame set carries its timeline", "[unit][camera_core][timeline]
     Publisher publisher([&] { return now; });
     const GroupId group = publisher.add_group(make_group(4, 1));
     RecordingSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 1 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 1 });
     REQUIRE(reader);
+    REQUIRE(publisher.request_newest(reader.id, 0));
 
     FrameTimeline timeline;
     timeline.capture_ns = 100;
@@ -421,6 +592,7 @@ TEST_CASE("every frame set carries its timeline", "[unit][camera_core][timeline]
     REQUIRE(sink.events[0].timeline.sent_ns == 1000);
 
     // A frame set that waits for the reader is stamped as sent when it leaves.
+    REQUIRE(publisher.request_newest(reader.id, 1));
     now = 2000;
     publish_next(publisher, group);
     now = 2500;
@@ -532,6 +704,68 @@ TEST_CASE("a plane that does not lie inside the slot is rejected", "[unit][camer
     REQUIRE_NOTHROW(publisher.add_group(odd));
 }
 
+TEST_CASE("a description is checked without sums that can wrap", "[unit][camera_core][validation]")
+{
+    const auto with = [](auto&& change)
+    {
+        GroupDescription group = make_group(4, 2);
+        change(group);
+        return problem_with(group);
+    };
+    REQUIRE(problem_with(make_group(4, 2)).empty());
+
+    // The largest numbers the fields hold: a product of them would wrap 64 bits.
+    const std::uint32_t most = std::numeric_limits<std::uint32_t>::max();
+    REQUIRE_FALSE(with(
+                      [&](GroupDescription& group)
+                      {
+                          StreamDescription& stream = group.streams[0];
+                          stream.width = most;
+                          stream.height = most;
+                          stream.planes[0] = { .offset_bytes = most, .stride_bytes = most };
+                          stream.slot_bytes = MAX_SLOT_BYTES;
+                      })
+                      .empty());
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[0].slot_bytes = MAX_SLOT_BYTES + 1; }),
+                 Catch::Matchers::ContainsSubstring("slot size"));
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[1].id = group.streams[0].id; }),
+                 Catch::Matchers::ContainsSubstring("two streams called"));
+    REQUIRE_THAT(
+        with([](GroupDescription& group) { group.streams[0].frame_rate = std::numeric_limits<double>::quiet_NaN(); }),
+        Catch::Matchers::ContainsSubstring("frame rate"));
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[0].frame_rate = -1.0; }),
+                 Catch::Matchers::ContainsSubstring("frame rate"));
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[0].plane_count = MAX_PLANES_PER_IMAGE + 1; }),
+                 Catch::Matchers::ContainsSubstring("plane"));
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[0].id.clear(); }),
+                 Catch::Matchers::ContainsSubstring("without an id"));
+    REQUIRE_THAT(
+        with([](GroupDescription& group) { group.id.clear(); }), Catch::Matchers::ContainsSubstring("needs an id"));
+
+    // A frame rate that is not known is described as 0.
+    REQUIRE(with([](GroupDescription& group) { group.streams[0].frame_rate = 0.0; }).empty());
+}
+
+TEST_CASE("every group has a session id", "[unit][camera_core][groups]")
+{
+    Publisher publisher;
+    const GroupId head = publisher.add_group(make_group(4, 1, "head"));
+    const GroupId wrist = publisher.add_group(make_group(4, 1, "wrist"));
+    const std::uint64_t head_session = publisher.group_description(head).session_id;
+    REQUIRE(head_session != 0);
+    REQUIRE(publisher.group_description(wrist).session_id != 0);
+    REQUIRE(publisher.group_description(wrist).session_id != head_session);
+
+    // A restart of the camera is not a new session.
+    publisher.restart_group(head);
+    REQUIRE(publisher.group_description(head).session_id == head_session);
+
+    // A backend that has an identity of its own for the run gives it.
+    GroupDescription named = make_group(4, 1, "named");
+    named.session_id = 42;
+    REQUIRE(publisher.group_description(publisher.add_group(named)).session_id == 42);
+}
+
 TEST_CASE("a group with a slot-free callback hands out slots by claim only", "[unit][camera_core][slots]")
 {
     Publisher publisher;
@@ -573,11 +807,11 @@ TEST_CASE("a pool owned by the camera SDK never leaves the SDK short of its rese
     RecordingSink encoder;
     RecordingSink viewer;
     RecordingSink recorder;
-    const SubscribeResult encoding =
-        publisher.subscribe(encoder, group, { .window = 2, .order = DeliveryOrder::IN_ORDER });
-    const SubscribeResult viewing = publisher.subscribe(viewer, group, { .window = 1 });
+    const SubscribeResult encoding = open(publisher, encoder, group, { .window = 2, .order = DeliveryOrder::IN_ORDER });
+    const SubscribeResult viewing = open(publisher, viewer, group, { .window = 1 });
     REQUIRE(encoding);
     REQUIRE(viewing);
+    REQUIRE(publisher.request_newest(viewing.id, 0));
     REQUIRE_FALSE(publisher.subscribe(recorder, group, { .window = 2, .order = DeliveryOrder::IN_ORDER }));
 
     std::uint32_t state = 12345;
@@ -623,6 +857,7 @@ TEST_CASE("a pool owned by the camera SDK never leaves the SDK short of its rese
             {
                 publisher.release(viewing.id, viewer.events[viewer_released++].lease_id);
             }
+            publisher.request_newest(viewing.id, viewer.events.empty() ? 0 : viewer.events.back().sequence);
         }
     }
 
@@ -664,9 +899,12 @@ TEST_CASE("one camera does not wait for another camera's readers", "[unit][camer
     const GroupId wrist = publisher.add_group(make_group(4, 1, "wrist"));
     StuckSink stuck;
     RecordingSink wrist_reader;
-    REQUIRE(publisher.subscribe(stuck, head, {}));
-    const SubscribeResult wrist_reading = publisher.subscribe(wrist_reader, wrist, {});
+    const SubscribeResult head_reading = open(publisher, stuck, head);
+    REQUIRE(head_reading);
+    REQUIRE(publisher.request_newest(head_reading.id, 0));
+    const SubscribeResult wrist_reading = open(publisher, wrist_reader, wrist);
     REQUIRE(wrist_reading);
+    REQUIRE(publisher.request_newest(wrist_reading.id, 0));
 
     std::thread head_capture(
         [&]
@@ -725,7 +963,7 @@ TEST_CASE("capture and a reader on different threads keep every frame set in ord
     Publisher publisher;
     const GroupId group = publisher.add_group(make_group(16));
     QueueSink sink;
-    const SubscribeResult reader = publisher.subscribe(sink, group, { .window = 4 });
+    const SubscribeResult reader = open(publisher, sink, group, { .window = 4 });
     REQUIRE(reader);
 
     std::atomic<std::uint64_t> received{ 0 };

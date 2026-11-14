@@ -35,9 +35,9 @@ public:
     virtual ~EventSink() = default;
 
     /**
-     * @brief Hand one event to the reader. Called on the capture path with the group's lock
-     * held, so it must not block, throw or call back into the publisher. Calls for one
-     * subscription never overlap.
+     * @brief Hand one event to the reader. Called with the group's lock held, on the capture
+     * path or on the thread that released or asked for a frame set, so it must not block,
+     * throw or call back into the publisher. Calls for one subscription never overlap.
      * @return false when the event could not be handed over; the reader then gets a later one.
      */
     virtual bool send_event(SubscriptionId subscription, const FrameEvent& event) noexcept = 0;
@@ -68,9 +68,11 @@ struct SubscribeResult
  *
  * A group keeps a short ring of recent frame sets; a reader's window is how many are kept for
  * it at a time, unread and held together. A subscription is accepted only when
- * slots >= ring history + sum of reader windows + backend reserve. Events carry slot indices;
- * slot memory is never touched here. Thread-safe; no call blocks on a reader, and each group
- * has its own lock, so one camera never waits for another camera's readers.
+ * slots >= ring history + sum of reader windows + backend reserve. A frame set is held for a
+ * newest-order reader when the reader asks, so it is the newest at that moment; an in-order
+ * reader is sent each one as it is published. Events carry slot indices; slot memory is never
+ * touched here. Thread-safe; no call blocks on a reader, and each group has its own lock, so
+ * one camera never waits for another camera's readers.
  */
 class Publisher
 {
@@ -131,20 +133,38 @@ public:
 
     /**
      * @brief Tell readers the camera restarted: the generation changes and the ring is emptied.
-     * Frame sets readers already hold stay valid until released.
+     * Frame sets readers already hold stay valid, and their slots unused, until released.
      */
     void restart_group(GroupId group);
 
     // ---- reader side -----------------------------------------------------------------------
 
     /**
-     * @brief Start sending a group's frame events to a sink, which must outlive the subscription.
+     * @brief Reserve a subscription. It counts in the pool's budget from here on, and nothing
+     * is sent to the sink before activate(), so the reader can be told what it subscribed to
+     * first. The sink must outlive the subscription.
      * @return The subscription, or the reason it does not fit the pool.
      */
     SubscribeResult subscribe(EventSink& sink, GroupId group, const ReaderOptions& options);
 
     /**
-     * @brief Return a frame set. The reader's next one, if any is waiting, is sent at once.
+     * @brief Start delivery. An in-order reader is sent frame sets as they are published; a
+     * newest-order reader is sent one each time it asks with request_newest().
+     */
+    void activate(SubscriptionId subscription);
+
+    /**
+     * @brief A newest-order reader asks for a frame set: the newest one after `after_sequence`,
+     * held for it now if there is one and its window has room, and otherwise as soon as both
+     * are true. A reader has one request open at a time; asking again replaces it.
+     * @param after_sequence The sequence of the last frame set the reader took; 0 for none.
+     * @return false for a subscription that is not active or not newest-order.
+     */
+    bool request_newest(SubscriptionId subscription, std::uint64_t after_sequence);
+
+    /**
+     * @brief Return a frame set. What the reader is waiting for, if it now has room, is sent at
+     * once.
      */
     void release(SubscriptionId subscription, std::uint64_t lease_id);
 
@@ -175,8 +195,12 @@ private:
         std::uint32_t window = 1;
         DeliveryOrder order = DeliveryOrder::NEWEST;
         EventSink* sink = nullptr;
-        std::uint64_t cursor = 0; // sequence of the last frame set sent to this reader
-        bool started = false;
+        bool active = false; // nothing is sent before activate()
+        bool wanted = false; // newest order: the reader asked and has not been answered
+        // The reader is next sent a frame set after this sequence: the last one it was sent
+        // when in order, the last one it says it took when newest.
+        std::uint64_t cursor = 0;
+        bool started = false; // the cursor names a frame set the reader had, so skips count from it
         std::map<std::uint64_t, FrameSet> leases; // sent and not yet released
     };
 
