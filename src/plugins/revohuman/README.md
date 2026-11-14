@@ -121,7 +121,7 @@ whose taxel count has no SDK layout, gets no tactile collections and a disabled
 tactile status. Forces are the SDK's newtons (`rh_tactile_newtons`), unchanged.
 A sample is pushed when the firmware has not marked it invalid, it is
 calibrated, has the layout's taxel count, carries a sampling time no older than
-`tactile_max_age_ns` (`PipelineConfig` in `core/inc/revohuman_plugin/pipeline.hpp`),
+`kTactileMaxAgeNs` (100 ms, in `core/inc/revohuman_plugin/pipeline.hpp`),
 and both its sampling time and its device tick advanced. A skipped sample does
 not remove forces already pushed; they are removed once older than that, and
 the status names the skip reason. Consumers must check the tactile status as

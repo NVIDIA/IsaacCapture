@@ -13,8 +13,6 @@
 
 #include <XR_NVX1_device_interface.h>
 #include <algorithm>
-#include <cassert>
-#include <stdexcept>
 #include <utility>
 
 namespace plugins
@@ -164,38 +162,52 @@ public:
     {
         shape_.reset();
     }
-    void hand_create()
+
+    //! The injected hand; destroying it removes the hand, and readers then see isActive = false.
+    class InjectedHand
     {
-        injector_ = std::make_unique<plugin_utils::HandInjector>(
-            handles_.instance, handles_.session, hand_ == Hand::Left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT,
-            handles_.space);
-    }
-    void hand_destroy()
-    {
-        injector_.reset(); // Readers then see isActive = false.
-    }
-    bool hand_push(const HandJointPoses& poses, std::int64_t sample_ns)
-    {
-        const XrTime time = time_converter_.convert_monotonic_ns_to_xrtime(sample_ns);
-        const plugin_utils::WristSample wrist = wrists_.query(hand_ == Hand::Left, time);
-        const bool tracked = wrist.valid && wrist.tracked;
-        std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-        for (std::size_t i = 0; i < joints.size(); ++i)
+    public:
+        explicit InjectedHand(HandOutput& output)
+            : output_(&output),
+              injector_(std::make_unique<plugin_utils::HandInjector>(
+                  output.handles_.instance,
+                  output.handles_.session,
+                  output.hand_ == Hand::Left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT,
+                  output.handles_.space))
         {
-            const XrPosef local = oxr_utils::to_xr_posef(poses.joints[i]);
-            const bool position = (poses.position_valid_mask >> i) & 1u;
-            const bool orientation = (poses.orientation_valid_mask >> i) & 1u;
-            joints[i].locationFlags = (position ? XR_SPACE_LOCATION_POSITION_VALID_BIT : 0) |
-                                      (orientation ? XR_SPACE_LOCATION_ORIENTATION_VALID_BIT : 0) |
-                                      (position && tracked ? XR_SPACE_LOCATION_POSITION_TRACKED_BIT : 0) |
-                                      (orientation && tracked ? XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT : 0);
-            // Without a wrist pose the hand stays at the stage origin.
-            joints[i].pose = wrist.valid ? oxr_utils::multiply_poses(wrist.pose, local) : local;
-            joints[i].radius = 0.01f; // Nominal, for visualization.
         }
-        assert(injector_ && "the pipeline creates the hand before it pushes");
-        injector_->push(joints.data(), time);
-        return tracked;
+
+        bool push(const HandJointPoses& poses, std::int64_t sample_ns)
+        {
+            const XrTime time = output_->time_converter_.convert_monotonic_ns_to_xrtime(sample_ns);
+            const plugin_utils::WristSample wrist = output_->wrists_.query(output_->hand_ == Hand::Left, time);
+            const bool tracked = wrist.valid && wrist.tracked;
+            std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
+            for (std::size_t i = 0; i < joints.size(); ++i)
+            {
+                const XrPosef local = oxr_utils::to_xr_posef(poses.joints[i]);
+                const bool position = (poses.position_valid_mask >> i) & 1u;
+                const bool orientation = (poses.orientation_valid_mask >> i) & 1u;
+                joints[i].locationFlags = (position ? XR_SPACE_LOCATION_POSITION_VALID_BIT : 0) |
+                                          (orientation ? XR_SPACE_LOCATION_ORIENTATION_VALID_BIT : 0) |
+                                          (position && tracked ? XR_SPACE_LOCATION_POSITION_TRACKED_BIT : 0) |
+                                          (orientation && tracked ? XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT : 0);
+                // Without a wrist pose the hand stays at the stage origin.
+                joints[i].pose = wrist.valid ? oxr_utils::multiply_poses(wrist.pose, local) : local;
+                joints[i].radius = 0.01f; // Nominal, for visualization.
+            }
+            injector_->push(joints.data(), time);
+            return tracked;
+        }
+
+    private:
+        HandOutput* output_;
+        std::unique_ptr<plugin_utils::HandInjector> injector_; // HandInjector itself cannot move.
+    };
+
+    InjectedHand create_hand()
+    {
+        return InjectedHand(*this);
     }
 
 private:
@@ -208,13 +220,10 @@ private:
     std::unique_ptr<core::SchemaPusher> tactile_;
     std::unique_ptr<core::SchemaPusher> shape_;
     std::size_t shape_size_ = 0;
-    std::unique_ptr<plugin_utils::HandInjector> injector_;
 };
 
 RevoHumanPlugin::RevoHumanPlugin(const RevoHumanPluginConfig& config)
 {
-    if (config.plugin_root_id && config.plugin_root_id->empty())
-        throw std::invalid_argument("--plugin-root-id must not be empty");
     auto requirements = plugin_utils::WristPoseSource::collect_requirements(config.wrist.mode);
     session_ = std::make_shared<core::OpenXRSession>("RevoHumanPlugin", required_extensions(requirements));
     const auto handles = session_->get_handles();
@@ -225,9 +234,8 @@ RevoHumanPlugin::RevoHumanPlugin(const RevoHumanPluginConfig& config)
     {
         auto& output = outputs_[index_of(hand)];
         output = std::make_unique<HandOutput>(handles, *wrists_, hand, config.collection_prefix);
-        pipelines_[index_of(hand)] = std::make_unique<HandPipeline<HandOutput>>(hand, config.pipeline, *output);
+        pipelines_[index_of(hand)] = std::make_unique<HandPipeline<HandOutput>>(hand, *output);
     }
-    source_ = std::make_unique<GloveSource>();
     if (config.plugin_root_id)
         status_ = std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(handles, *config.plugin_root_id);
 }
@@ -237,7 +245,7 @@ RevoHumanPlugin::~RevoHumanPlugin() = default;
 void RevoHumanPlugin::update(std::int64_t now_ns)
 {
     deviceio_->update(); // WristPoseSource reads the controllers through this session, on this thread.
-    source_->poll(now_ns, std::array{ pipelines_[0].get(), pipelines_[1].get() });
+    source_.poll(now_ns, std::array{ pipelines_[0].get(), pipelines_[1].get() });
     for (auto& pipeline : pipelines_)
         pipeline->on_tick(now_ns);
 }
@@ -248,7 +256,7 @@ void RevoHumanPlugin::publish_status(std::int64_t now_ns)
         return;
     std::vector<PluginDeviceStatusEntry> entries;
     for (const Hand hand : kHands)
-        for (auto& row : hand_status(hand, pipelines_[index_of(hand)]->health(now_ns), source_->note(hand)))
+        for (auto& row : hand_status(hand, pipelines_[index_of(hand)]->health(now_ns), source_.note(hand)))
             entries.push_back(std::move(row));
     status_->publish_if_changed(entries, now_ns);
 }

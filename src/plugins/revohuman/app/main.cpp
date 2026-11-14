@@ -8,7 +8,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -66,19 +67,14 @@ XrPosef parse_pose(const std::string& text, std::string_view flag)
     for (std::size_t begin = 0; ok && begin <= text.size(); ++count)
     {
         const std::size_t end = std::min(text.find(',', begin), text.size());
-        const std::string item = text.substr(begin, end - begin);
-        std::size_t used = 0;
-        try
-        {
-            // std::stod skips leading blanks; an item must be the number alone.
-            if (count < v.size() && !item.empty() && !std::isspace(static_cast<unsigned char>(item[0])))
-                v[count] = std::stod(item, &used);
-        }
-        catch (const std::exception&)
-        {
-        }
-        ok = count < v.size() && used != 0 && used == item.size() && std::isfinite(v[count]) &&
-             std::abs(v[count]) <= std::numeric_limits<float>::max();
+        const char* const item_end = text.data() + end;
+        double value = 0;
+        // std::from_chars skips no blanks, so an item must be the number alone.
+        const auto [parsed_end, error] = std::from_chars(text.data() + begin, item_end, value);
+        ok = count < v.size() && error == std::errc() && parsed_end == item_end && std::isfinite(value) &&
+             std::abs(value) <= std::numeric_limits<float>::max();
+        if (ok)
+            v[count] = value;
         begin = end + 1;
     }
     const double n = std::sqrt(v[3] * v[3] + v[4] * v[4] + v[5] * v[5] + v[6] * v[6]);
@@ -120,6 +116,8 @@ try
     }
     if (config.collection_prefix.empty())
         throw std::invalid_argument("--collection-prefix must not be empty");
+    if (config.plugin_root_id && config.plugin_root_id->empty())
+        throw std::invalid_argument("--plugin-root-id must not be empty");
     // The hand capture labels a take with this variable, so a flag that disagrees is refused.
     if (const char* env = std::getenv("REVOHUMAN_WRIST_SOURCE"); env != nullptr && *env != '\0')
     {

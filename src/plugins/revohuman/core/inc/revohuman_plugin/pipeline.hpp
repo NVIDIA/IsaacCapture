@@ -28,16 +28,13 @@ constexpr std::size_t kTactileMaxBytes = 16384;
 // TactileDataArray: table, one 12-byte Point per taxel, slack.
 static_assert(40 + 12 * kMaxTaxels + 32 <= kTactileMaxBytes, "a full glove must fit one tactile push");
 
-struct PipelineConfig
-{
-    std::int64_t stall_ns = 50'000'000; //!< No hand push for this long removes the hand.
-    //! From the first tick until the glove's first sample, at most this long, the hand exists with no valid joints,
-    //! so readers do not show the headset's hand tracking in its place while the glove opens.
-    std::int64_t startup_hold_ns = 5'000'000'000;
-    std::int64_t shape_resend_ns = 1'000'000'000;
-    std::int64_t health_timeout_ns = 500'000'000;
-    std::int64_t tactile_max_age_ns = 100'000'000;
-};
+constexpr std::int64_t kStallNs = 50'000'000; //!< No hand push for this long removes the hand.
+//! From the first tick until the glove's first sample, at most this long, the hand exists with no valid joints, so
+//! readers do not show the headset's hand tracking in its place while the glove opens.
+constexpr std::int64_t kStartupHoldNs = 5'000'000'000;
+constexpr std::int64_t kShapeResendNs = 1'000'000'000;
+constexpr std::int64_t kHealthTimeoutNs = 500'000'000;
+constexpr std::int64_t kTactileMaxAgeNs = 100'000'000;
 
 //! Why tactile is not live.
 enum class TactileSkip
@@ -77,14 +74,15 @@ struct HandHealth
  * @tparam Sink Where the pipeline delivers; times are CLOCK_MONOTONIC ns, tactile raw times the device sampling
  * clock. It has push_joint_state(buffer, sample_ns), push_tactile(buffer, sample_ns, raw_ns), push_shape(buffer,
  * now_ns), clear_tactile() and clear_shape() (the tracker retains the last sample, so stale data must be removed
- * explicitly), hand_create(), hand_destroy(), and bool hand_push(joints, sample_ns), which places the WRIST-frame
- * joints at the host's wrist pose at the sample time and returns whether it was tracked.
+ * explicitly), and create_hand(), which injects the hand and returns a move-only handle that removes it when
+ * destroyed. The handle's bool push(joints, sample_ns) places the WRIST-frame joints at the host's wrist pose at the
+ * sample time and returns whether it was tracked.
  */
 template <typename Sink>
 class HandPipeline
 {
 public:
-    HandPipeline(Hand hand, PipelineConfig config, Sink& sink) : hand_(hand), config_(config), sink_(sink)
+    HandPipeline(Hand hand, Sink& sink) : hand_(hand), sink_(sink)
     {
     }
 
@@ -98,8 +96,6 @@ public:
             shape_push_ns_.reset(); // Pushed again before the first forces.
         else
             clear_shape();
-        if (!meta.has_tactile)
-            logger()->info("{}: product {} has no tactile sensors", hand_name(hand_), meta.product_code);
     }
 
     void on_glove(const GloveSample& sample, std::int64_t now_ns)
@@ -124,14 +120,16 @@ public:
         if (sample.tactile && meta_->has_tactile)
             accept_tactile(*sample.tactile, now_ns);
 
-        if (!stream_.last_hand_push_ns)
+        if (!stream_.hand)
         {
-            if (!std::exchange(held_push_ns_, std::nullopt)) // A held hand becomes the glove's.
-                sink_.hand_create();
+            if (held_hand_) // A held hand becomes the glove's.
+                stream_.hand = std::exchange(held_hand_, std::nullopt);
+            else
+                stream_.hand = sink_.create_hand();
             logger()->info("{}: hand injected", hand_name(hand_));
         }
         stream_.last_hand_push_ns = now_ns;
-        stream_.wrist_tracked = sink_.hand_push(sample.joint_poses, t_ns);
+        stream_.wrist_tracked = stream_.hand->push(sample.joint_poses, t_ns);
     }
 
     //! A tactile sample delivered apart from the glove samples (the SDK's split tactile transport), in sampling
@@ -149,13 +147,12 @@ public:
     void on_tick(std::int64_t now_ns)
     {
         hold_until_first_sample(now_ns);
-        if (stream_.last_hand_push_ns && now_ns - *stream_.last_hand_push_ns > config_.stall_ns)
+        if (stream_.hand && now_ns - stream_.last_hand_push_ns > kStallNs)
         {
-            sink_.hand_destroy();
-            stream_.last_hand_push_ns.reset();
+            stream_.hand.reset();
             logger()->info("{}: hand removed (stall)", hand_name(hand_));
         }
-        if (stream_.tactile_published && now_ns - *stream_.clock.sample_ns > config_.tactile_max_age_ns)
+        if (stream_.tactile_published && now_ns - *stream_.clock.sample_ns > kTactileMaxAgeNs)
         {
             clear_tactile();
             if (stream_.tactile_skip == TactileSkip::None)
@@ -164,27 +161,29 @@ public:
         push_shape_if_due(now_ns);
     }
 
-    //! The glove was reopened: everything derived from its earlier samples goes.
+    //! The glove was reopened: everything derived from its earlier meta and samples goes.
     void reset()
     {
-        if (stream_.last_hand_push_ns)
+        if (stream_.hand)
         {
-            sink_.hand_destroy();
+            stream_.hand.reset();
             logger()->info("{}: hand removed (glove reopened)", hand_name(hand_));
         }
         clear_tactile();
+        clear_shape();
+        meta_.reset();
         stream_ = {};
     }
 
     HandHealth health(std::int64_t now_ns) const
     {
         HandHealth h;
-        h.hand_active = stream_.last_hand_push_ns.has_value();
+        h.hand_active = stream_.hand.has_value();
         h.glove_seen = glove_seen_;
-        h.glove_live = stream_.last_glove_ns && now_ns - *stream_.last_glove_ns <= config_.health_timeout_ns;
+        h.glove_live = stream_.last_glove_ns && now_ns - *stream_.last_glove_ns <= kHealthTimeoutNs;
         h.wrist_tracked = h.hand_active && stream_.wrist_tracked;
         // A skipped sample does not end tactile while the last pushed forces are fresh.
-        h.tactile_live = stream_.tactile_published && now_ns - *stream_.clock.sample_ns <= config_.tactile_max_age_ns;
+        h.tactile_live = stream_.tactile_published && now_ns - *stream_.clock.sample_ns <= kTactileMaxAgeNs;
         h.tactile_seen = tactile_seen_;
         if (meta_ && !meta_->has_tactile)
             h.tactile_skip = TactileSkip::NoTactile;
@@ -204,12 +203,14 @@ private:
         std::optional<std::int64_t> sample_ns; //!< Of the last pushed forces.
         std::optional<std::int64_t> raw_ns;
     };
+    using InjectedHand = decltype(std::declval<Sink&>().create_hand());
     struct Stream
     {
         std::optional<std::uint32_t> generation;
         TactileClock clock;
         std::optional<std::int64_t> last_glove_ns;
-        std::optional<std::int64_t> last_hand_push_ns; //!< Set while the hand exists.
+        std::optional<InjectedHand> hand; //!< Pushed from the glove samples.
+        std::int64_t last_hand_push_ns = 0;
         bool tactile_published = false;
         bool wrist_tracked = false;
         TactileSkip tactile_skip = TactileSkip::None;
@@ -229,23 +230,23 @@ private:
             return;
         if (!first_tick_ns_)
             first_tick_ns_ = now_ns;
-        if (now_ns - *first_tick_ns_ >= config_.startup_hold_ns)
+        if (now_ns - *first_tick_ns_ >= kStartupHoldNs)
         {
-            if (std::exchange(held_push_ns_, std::nullopt))
+            if (held_hand_)
             {
-                sink_.hand_destroy();
+                held_hand_.reset();
                 logger()->info("{}: hand released, no glove sample since start-up", hand_name(hand_));
             }
             return;
         }
-        if (!held_push_ns_)
+        if (!held_hand_)
         {
-            sink_.hand_create();
+            held_hand_ = sink_.create_hand();
             logger()->info("{}: hand held with no valid joints until the glove streams", hand_name(hand_));
         }
-        else if (now_ns - *held_push_ns_ < kHeldPushPeriodNs)
+        else if (now_ns - held_push_ns_ < kHeldPushPeriodNs)
             return;
-        sink_.hand_push(HandJointPoses{}, now_ns);
+        held_hand_->push(HandJointPoses{}, now_ns);
         held_push_ns_ = now_ns;
     }
 
@@ -281,8 +282,8 @@ private:
             skip = TactileSkip::Uncalibrated;
         else if (tactile.values.size() != meta_->taxel_count)
             skip = TactileSkip::CountMismatch;
-        else if (!t_ns || now_ns - *t_ns > config_.tactile_max_age_ns ||
-                 (clock.sample_ns && *t_ns <= *clock.sample_ns) || (clock.raw_ns && raw_ns <= *clock.raw_ns))
+        else if (!t_ns || now_ns - *t_ns > kTactileMaxAgeNs || (clock.sample_ns && *t_ns <= *clock.sample_ns) ||
+                 (clock.raw_ns && raw_ns <= *clock.raw_ns))
             skip = TactileSkip::Stale;
         note_skip(skip, now_ns);
         if (skip != TactileSkip::None)
@@ -330,19 +331,19 @@ private:
     void push_shape_if_due(std::int64_t now_ns)
     {
         if (!meta_ || !meta_->has_tactile || !meta_->tactile_metadata ||
-            (shape_push_ns_ && now_ns - *shape_push_ns_ < config_.shape_resend_ns))
+            (shape_push_ns_ && now_ns - *shape_push_ns_ < kShapeResendNs))
             return;
         sink_.push_shape(*meta_->tactile_metadata, now_ns);
         shape_push_ns_ = now_ns;
     }
 
     Hand hand_;
-    PipelineConfig config_;
     Sink& sink_;
     std::optional<HandMeta> meta_;
     std::optional<std::int64_t> shape_push_ns_; //!< Set while TactileMetadata is published.
     std::optional<std::int64_t> first_tick_ns_;
-    std::optional<std::int64_t> held_push_ns_; //!< Set while the hand is held before the first glove sample.
+    std::optional<InjectedHand> held_hand_; //!< Held with no valid joints before the first glove sample.
+    std::int64_t held_push_ns_ = 0;
     bool glove_seen_ = false;
     bool tactile_seen_ = false;
     Stream stream_;

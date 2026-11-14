@@ -12,6 +12,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace plugins::revohuman;
@@ -34,6 +35,45 @@ struct Call
 class RecordingSink
 {
 public:
+    //! Removes the hand when destroyed, like the plugin's handle.
+    class MockHand
+    {
+    public:
+        explicit MockHand(RecordingSink& sink) : sink_(&sink)
+        {
+            sink_->calls.push_back({ "create" });
+        }
+        MockHand(MockHand&& other) noexcept : sink_(std::exchange(other.sink_, nullptr))
+        {
+        }
+        MockHand& operator=(MockHand&& other) noexcept
+        {
+            if (this != &other)
+            {
+                release();
+                sink_ = std::exchange(other.sink_, nullptr);
+            }
+            return *this;
+        }
+        ~MockHand()
+        {
+            release();
+        }
+        bool push(const HandJointPoses& joints, std::int64_t t)
+        {
+            sink_->calls.push_back({ "hand", {}, t, 0, joints });
+            return sink_->wrist_tracked;
+        }
+
+    private:
+        void release()
+        {
+            if (sink_)
+                std::exchange(sink_, nullptr)->calls.push_back({ "destroy" });
+        }
+        RecordingSink* sink_;
+    };
+
     void push_joint_state(std::span<const std::uint8_t> b, std::int64_t t)
     {
         calls.push_back({ "joint_state", { b.begin(), b.end() }, t, t, {} });
@@ -54,18 +94,9 @@ public:
     {
         calls.push_back({ "clear_shape" });
     }
-    void hand_create()
+    MockHand create_hand()
     {
-        calls.push_back({ "create" });
-    }
-    void hand_destroy()
-    {
-        calls.push_back({ "destroy" });
-    }
-    bool hand_push(const HandJointPoses& joints, std::int64_t t)
-    {
-        calls.push_back({ "hand", {}, t, 0, joints });
-        return wrist_tracked;
+        return MockHand(*this);
     }
 
     std::vector<std::string> kinds() const
@@ -85,7 +116,7 @@ public:
     }
 
     std::vector<Call> calls;
-    bool wrist_tracked = false; //!< What hand_push() reports about the host's wrist pose.
+    bool wrist_tracked = false; //!< What MockHand::push() reports about the host's wrist pose.
 };
 
 HandMeta meta(bool tactile = true)
@@ -128,7 +159,7 @@ GloveSample with_tactile(GloveSample s, std::uint32_t tick, std::int64_t t_ns, s
 struct Fixture
 {
     RecordingSink sink;
-    HandPipeline<RecordingSink> pipeline{ Hand::Left, PipelineConfig{}, sink };
+    HandPipeline<RecordingSink> pipeline{ Hand::Left, sink };
 };
 
 } // namespace
@@ -168,7 +199,7 @@ TEST_CASE("pipeline: the hand goes out in the WRIST frame and is removed after a
     f.pipeline.on_glove(glove(20 * kMs), 20 * kMs);
     CHECK_FALSE(f.pipeline.health(21 * kMs).wrist_tracked);
 
-    f.pipeline.on_tick(20 * kMs + PipelineConfig{}.stall_ns + 1);
+    f.pipeline.on_tick(20 * kMs + kStallNs + 1);
     CHECK(f.sink.kinds().back() == "destroy");
     CHECK_FALSE(f.pipeline.health(80 * kMs).hand_active);
 }
@@ -201,7 +232,7 @@ TEST_CASE("pipeline: before the first glove sample the hand is held with no vali
 TEST_CASE("pipeline: a held hand is released when no glove streams in time", "[unit]")
 {
     Fixture f;
-    const std::int64_t hold = PipelineConfig{}.startup_hold_ns;
+    const std::int64_t hold = kStartupHoldNs;
     f.pipeline.on_tick(10 * kMs);
     f.pipeline.on_tick(10 * kMs + hold);
     f.pipeline.on_tick(20 * kMs + hold);
@@ -233,7 +264,7 @@ TEST_CASE("pipeline: forces go out in newtons after their TactileMetadata, once 
     CHECK(f.pipeline.health(12 * kMs).tactile_live);
 
     // Forces expire after their maximum age; the metadata stays.
-    f.pipeline.on_tick(9 * kMs + PipelineConfig{}.tactile_max_age_ns + 1);
+    f.pipeline.on_tick(9 * kMs + kTactileMaxAgeNs + 1);
     CHECK(f.sink.kinds().back() == "clear_tactile");
     const auto h = f.pipeline.health(200 * kMs);
     CHECK_FALSE(h.tactile_live);
@@ -290,6 +321,23 @@ TEST_CASE("pipeline: a glove without tactile sensors removes the earlier glove's
     no_layout.tactile_metadata.reset();
     f.pipeline.set_meta(no_layout);
     CHECK(f.pipeline.health(20 * kMs).tactile_skip == TactileSkip::NoShape);
+}
+
+TEST_CASE("pipeline: a reopened glove keeps nothing of its earlier meta", "[unit]")
+{
+    Fixture f;
+    f.pipeline.set_meta(meta());
+    f.pipeline.on_glove(with_tactile(glove(10 * kMs), 1, 10 * kMs), 10 * kMs);
+    f.pipeline.reset();
+    CHECK(f.sink.kinds() == std::vector<std::string>{ "joint_state", "shape", "tactile", "create", "hand", "destroy",
+                                                      "clear_tactile", "clear_shape" });
+    // The source sets no meta for a reopened stream it cannot use: the earlier TactileMetadata is not resent and the
+    // earlier glove's tactile reasons are gone.
+    f.pipeline.on_tick(10 * kMs + kShapeResendNs + 1);
+    CHECK(f.sink.of("shape").size() == 1);
+    const auto h = f.pipeline.health(20 * kMs);
+    CHECK_FALSE(h.hand_active);
+    CHECK(h.tactile_skip == TactileSkip::None);
 }
 
 TEST_CASE("pipeline: a new stream generation may reuse tactile ticks", "[unit]")

@@ -26,7 +26,6 @@ struct RevoHumanPluginConfig
 {
     //! Collections are <prefix>_<side>_<stream>, e.g. revohuman_left_tactile.
     std::string collection_prefix = "revohuman";
-    PipelineConfig pipeline;
     //! The aim-to-wrist offsets end at the glove's WRIST; identity until a glove mount is calibrated.
     plugin_utils::WristSourceConfig wrist;
     //! Set by the plugin launcher; enables device status reporting.
@@ -46,12 +45,12 @@ public:
     void publish_status(std::int64_t now_ns);
     bool finished() const
     {
-        return source_->finished();
+        return source_.finished();
     }
     //! See GloveSource::request_tare().
     void request_tare()
     {
-        source_->request_tare();
+        source_.request_tare();
     }
 
 private:
@@ -63,7 +62,7 @@ private:
     std::unique_ptr<plugin_utils::WristPoseSource> wrists_;
     std::array<std::unique_ptr<HandOutput>, 2> outputs_;
     std::array<std::unique_ptr<HandPipeline<HandOutput>>, 2> pipelines_;
-    std::unique_ptr<GloveSource> source_;
+    GloveSource source_;
     std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> status_;
 };
 

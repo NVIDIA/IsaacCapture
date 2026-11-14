@@ -138,9 +138,9 @@ restarts. Gloves streaming without hardware sync to each other (paired in host
 time, unpaired after a lost pair, or opened separately) report their ``/glove``
 status as degraded with the reason.
 
-From start-up until a hand's first glove sample, for at most ``startup_hold_ns``
-of the plugin's ``PipelineConfig``, the plugin injects that hand with no valid
-joints. A client reading OpenXR hand tracking then gets no joints while the
+From start-up until a hand's first glove sample, for at most 5 s
+(``kStartupHoldNs`` in the plugin's pipeline), the plugin injects that hand with
+no valid joints. A client reading OpenXR hand tracking then gets no joints while the
 gloves open, not the headset's optical hand followed by the glove's.
 
 Each glove's mechanical model follows the product the SDK identifies: a PTV1
