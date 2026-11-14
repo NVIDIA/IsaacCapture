@@ -510,8 +510,9 @@ session, including after provider failure or shutdown.</p>
 <section id="reading-status">
 <h2>Reading status<a class="headerlink" href="#reading-status" title="Link to this heading">#</a></h2>
 <p>The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceState</span>
+OpenXR I/O. <code class="docutils literal notranslate"><span class="pre">config</span></code> is a <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig</span></code> as built in
+<a class="reference internal" href="../teleop/teleop_session.html"><span class="doc">Teleop Session</span></a>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceState</span><span class="p">,</span> <span class="n">TeleopSession</span>
 
 <span class="k">with</span> <span class="n">TeleopSession</span><span class="p">(</span><span class="n">config</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
     <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
@@ -781,7 +782,7 @@ caller-managed lifecycle behavior.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

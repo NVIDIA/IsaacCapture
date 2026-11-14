@@ -480,8 +480,8 @@
 <section id="components">
 <h2><a class="toc-backref" href="#id1" role="doc-backlink">Components</a><a class="headerlink" href="#components" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>Core library</strong> (<code class="docutils literal notranslate"><span class="pre">haptikos_core</span></code>) — wraps the Haptikos Core App(<code class="docutils literal notranslate"><span class="pre">libHaptikosCore.so</span></code>) and provides access to per-joint tracking data and haptics.</p></li>
-<li><p><strong>Plugin executable</strong> (<code class="docutils literal notranslate"><span class="pre">haptikos_plugin</span></code>) — the primary plugin binary that enables integration with the Teleop system via CloudXR and OpenXR.</p></li>
+<li><p><strong>Haptikos API</strong> (<code class="docutils literal notranslate"><span class="pre">libHaptikosAPI.so</span></code> and <code class="docutils literal notranslate"><span class="pre">libHaptikosCore.so</span></code> from <code class="docutils literal notranslate"><span class="pre">HaptikosCpp_API_Shared/lib</span></code>) — the vendor libraries that read per-joint tracking data from the Haptikos Core App.</p></li>
+<li><p><strong>Plugin executable</strong> (<code class="docutils literal notranslate"><span class="pre">haptikos_hands_plugin</span></code>) — the plugin binary that injects the hand tracking data into the Teleop system via CloudXR and OpenXR.</p></li>
 </ul>
 </section>
 <section id="prerequisites">
@@ -518,10 +518,9 @@
 </section>
 <section id="step-2-build-the-plugin">
 <h3><a class="toc-backref" href="#id5" role="doc-backlink">Step 2: Build the plugin</a><a class="headerlink" href="#step-2-build-the-plugin" title="Link to this heading">#</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>../../..<span class="w">  </span><span class="c1"># Navigate to TeleopCore root</span>
-cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
-<span class="nb">cd</span><span class="w"> </span>build
-make<span class="w"> </span>haptikos_hands_plugin
+<p>From the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>haptikos_hands_plugin
 </pre></div>
 </div>
 </section>
@@ -545,8 +544,7 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
 <p>In the shell that runs the plugin, source the environment file that the runtime writes on startup. This points the OpenXR loader at CloudXR:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>IsaacCapture/
-<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 </pre></div>
 </div>
 <p>In the same terminal, run the plugin with the following:</p>
@@ -560,7 +558,7 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 <ol class="arabic simple">
 <li><p>To use the plugin properly it is necessary to attach the controllers on our exoskeletons using the included mount.</p></li>
 <li><p>The orientation calibration defines the direction the Haptikos gloves define as forward. This needs to be aligned with the Head Mounted Display’s forward direction.</p></li>
-<li><p>To inject the hand tracking data and haptic feedback, the controllers, the Haptikos App and the exoskeletons need to be active.</p></li>
+<li><p>To inject the hand tracking data, the controllers, the Haptikos App and the exoskeletons need to be active.</p></li>
 <li><p>The executable will be located in the <code class="docutils literal notranslate"><span class="pre">build/src/plugins/haptikos</span></code>. If you installed the project by running <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code> the executable will also be found in the <code class="docutils literal notranslate"><span class="pre">install/plugins/haptikos</span></code> folder.</p></li>
 </ol>
 </section>
@@ -714,7 +712,7 @@ by this project.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

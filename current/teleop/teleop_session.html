@@ -558,7 +558,7 @@ details.</p>
 <p>When <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code> is provided (live mode), <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> uses the
 supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session’s lifetime. Construct handles with
-<code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> where each
+<code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">xr_get_instance_proc_addr)</span></code> where each
 argument is a <code class="docutils literal notranslate"><span class="pre">uint64</span></code> handle value.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
 
@@ -776,17 +776,25 @@ up faster.</p></li>
 </section>
 <section id="pluginconfig">
 <h3>PluginConfig<a class="headerlink" href="#pluginconfig" title="Link to this heading">#</a></h3>
-<p>Configure plugins:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">PluginConfig</span><span class="p">(</span>
+<p>Configure plugins and pass them as <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig(plugins=[...])</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">PluginConfig</span>
+
+<span class="n">plugin</span> <span class="o">=</span> <span class="n">PluginConfig</span><span class="p">(</span>
     <span class="n">plugin_name</span><span class="o">=</span><span class="s2">"controller_synthetic_hands"</span><span class="p">,</span>
     <span class="n">plugin_root_id</span><span class="o">=</span><span class="s2">"synthetic_hands"</span><span class="p">,</span>
-    <span class="n">search_paths</span><span class="o">=</span><span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="s2">"/path/to/plugins"</span><span class="p">)],</span>
+    <span class="n">search_paths</span><span class="o">=</span><span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="s2">"/path/to/IsaacCapture/install/plugins"</span><span class="p">)],</span>
     <span class="n">enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="n">plugin_args</span><span class="o">=</span><span class="p">[</span><span class="s2">"--arg1=val1"</span><span class="p">,</span> <span class="s2">"--arg2=val2"</span><span class="p">],</span>
     <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
+<p>A source build installs <code class="docutils literal notranslate"><span class="pre">controller_</span><wbr><span class="pre">synthetic_</span><wbr><span class="pre">hands</span></code> and the other plugins
+into <code class="docutils literal notranslate"><span class="pre">install/plugins/</span></code>. The plugins shipped inside the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>
+wheel are under <code class="docutils literal notranslate"><span class="pre">BUNDLED_PLUGINS_DIR</span></code>, which you import from
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">teleop_</span><wbr><span class="pre">session_</span><wbr><span class="pre">manager</span></code> and pass as a search path instead.</p>
 <p>Plugins are optional by default: if none of their search paths exist or the
 configured plugin is not discovered, session startup continues without them.
 Set <code class="docutils literal notranslate"><span class="pre">required=True</span></code> to make either condition fail session startup with a
@@ -913,8 +921,9 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
 <section id="before-vs-after">
 <h3>Before vs After<a class="headerlink" href="#before-vs-after" title="Link to this heading">#</a></h3>
 <p><strong>Before (verbose, manual setup):</strong></p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create trackers</span>
-<span class="n">controller_tracker</span> <span class="o">=</span> <span class="n">deviceio</span><span class="o">.</span><span class="n">ControllerTracker</span><span class="p">()</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create source and its tracker</span>
+<span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"controllers"</span><span class="p">)</span>
+<span class="n">controller_tracker</span> <span class="o">=</span> <span class="n">controllers</span><span class="o">.</span><span class="n">get_tracker</span><span class="p">()</span>
 
 <span class="c1"># Get extensions</span>
 <span class="n">required_extensions</span> <span class="o">=</span> <span class="n">deviceio</span><span class="o">.</span><span class="n">DeviceIOSession</span><span class="o">.</span><span class="n">get_required_extensions</span><span class="p">([</span><span class="n">controller_tracker</span><span class="p">])</span>
@@ -933,7 +942,6 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
 <span class="n">plugin_context</span> <span class="o">=</span> <span class="n">plugin_manager</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 
 <span class="c1"># Setup pipeline</span>
-<span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"controllers"</span><span class="p">)</span>
 <span class="n">gripper_left</span> <span class="o">=</span> <span class="n">GripperRetargeter</span><span class="p">(</span>
     <span class="n">GripperRetargeterConfig</span><span class="p">(</span><span class="n">hand_side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">),</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"gripper_left"</span><span class="p">,</span>
@@ -957,14 +965,7 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
 <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
     <span class="n">deviceio_session</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
     <span class="c1"># Manual data injection needed for new sources</span>
-    <span class="n">left_controller</span> <span class="o">=</span> <span class="n">controller_tracker</span><span class="o">.</span><span class="n">get_left_controller</span><span class="p">(</span><span class="n">deviceio_session</span><span class="p">)</span>
-    <span class="n">right_controller</span> <span class="o">=</span> <span class="n">controller_tracker</span><span class="o">.</span><span class="n">get_right_controller</span><span class="p">(</span><span class="n">deviceio_session</span><span class="p">)</span>
-    <span class="n">inputs</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">"controllers"</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">"deviceio_controller_left"</span><span class="p">:</span> <span class="p">[</span><span class="n">left_controller</span><span class="p">],</span>
-            <span class="s2">"deviceio_controller_right"</span><span class="p">:</span> <span class="p">[</span><span class="n">right_controller</span><span class="p">]</span>
-        <span class="p">}</span>
-    <span class="p">}</span>
+    <span class="n">inputs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"controllers"</span><span class="p">:</span> <span class="n">controllers</span><span class="o">.</span><span class="n">poll_tracker</span><span class="p">(</span><span class="n">deviceio_session</span><span class="p">)}</span>
     <span class="n">result</span> <span class="o">=</span> <span class="n">pipeline</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>
     <span class="c1"># ... error handling, cleanup ...</span>
 </pre></div>
@@ -1181,7 +1182,7 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.te
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

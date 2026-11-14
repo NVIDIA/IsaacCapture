@@ -616,7 +616,7 @@ root skips this plugin and the rest of Isaac Capture still configures. See
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Running the plugin</a><a class="headerlink" href="#running-the-plugin" title="Link to this heading">#</a></h2>
 <p>The plugin publishes through the CloudXR / OpenXR runtime. Start the runtime
 and source its environment in the shell that launches the plugin:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w">   </span><span class="c1"># runs in the background</span>
 <span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/plugins/sharpa_avatar/avatar_hand_plugin
 </pre></div>
@@ -627,7 +627,7 @@ and source its environment in the shell that launches the plugin:</p>
 visualization example does that for you (CloudXR and the plugin start unless
 you opt out). Run it from the repository root, in a venv set up as in
 <a class="reference internal" href="../../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/sharpa_avatar
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/sharpa_avatar<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.sharpa_avatar
 </pre></div>
 </div>
@@ -918,7 +918,7 @@ is subject to its own license; this project does not redistribute it.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

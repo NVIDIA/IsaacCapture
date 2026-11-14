@@ -107,7 +107,7 @@ and source its environment in the shell that launches the plugin:
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start   # runs in the background
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
    source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/sharpa_avatar/avatar_hand_plugin
 
@@ -121,7 +121,7 @@ you opt out). Run it from the repository root, in a venv set up as in
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/sharpa_avatar
+   uv pip install -e ./examples/sharpa_avatar --no-sources
    python -m isaaccapture_examples.sharpa_avatar
 
 Gloves reconnect from ``update()`` if they drop offline. Only one process

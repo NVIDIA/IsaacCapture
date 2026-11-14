@@ -636,7 +636,7 @@ additional source nodes (<code class="docutils literal notranslate"><span class=
 <p>For a live browser view of <strong>all</strong> human DeviceIO trackers at once (hands, head,
 controllers, and full body), see <code class="docutils literal notranslate"><span class="pre">examples/deviceio_live_view/</span></code> and its
 <code class="docutils literal notranslate"><span class="pre">README.md</span></code>. From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.deviceio_live_view<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
@@ -647,10 +647,21 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.de
 same channel base name as <code class="docutils literal notranslate"><span class="pre">FullBodySource</span></code>, so the resulting file replays
 with <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code>.</p></li>
 </ul>
+<p>The C++ recorder does not start CloudXR, so start the runtime and source its
+environment first. With no output argument it writes to the current directory;
+pass <code class="docutils literal notranslate"><span class="pre">recordings/</span></code> so <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> finds the take. From the repo root,
+after <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span></code> and with the example package installed as in
+<a class="reference internal" href="#live-preview">Live preview</a>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/examples/mcap_record_replay/cpp/record_full_body<span class="w"> </span><span class="m">5</span><span class="w"> </span>recordings/
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body
+</pre></div>
+</div>
 <section id="live-preview">
 <h3>Live preview<a class="headerlink" href="#live-preview" title="Link to this heading">#</a></h3>
 <p>From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w"> </span>--accept-eula
 </pre></div>
@@ -662,7 +673,7 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 <section id="recording">
 <h3>Recording<a class="headerlink" href="#recording" title="Link to this heading">#</a></h3>
 <p>From the repo root, in the same venv:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay<span class="w"> </span>--no-sources
 <span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.record_hand"</span>
 <span class="nv">$R</span><span class="w">              </span><span class="c1"># 5 s → ./recordings/hands_&lt;timestamp&gt;.mcap</span>
 <span class="nv">$R</span><span class="w"> </span><span class="m">10</span><span class="w">           </span><span class="c1"># record for 10 seconds</span>
@@ -671,10 +682,9 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 </div>
 <p>Recordings are written to <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> relative to where you run the
 command, and the replay scripts look there when given no path.</p>
-<p>The example never downloads a published wheel — it runs against the
-<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The install is editable,
-so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need no rebuild; for C++ changes see
-<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-editable-examples"><span class="std std-ref">step 4 of Build from source</span></a>.  From
+<p>The example runs against the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel installed in step 4, which
+<code class="docutils literal notranslate"><span class="pre">--no-sources</span></code> keeps in place; after a rebuild, rerun that install (see
+<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-editable-examples"><span class="std std-ref">step 4 of Build from source</span></a>).  From
 <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
 <span class="pre">--install</span></code>) it picks up the wheel you just built instead — see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
@@ -695,10 +705,13 @@ has no such requirement.</p>
 </div>
 <p>Open the printed URL (default <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">record_controller</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> /
-<code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
-<code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
-<code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">record_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> take the same arguments as
+<code class="docutils literal notranslate"><span class="pre">record_hand</span></code> (duration, output path, and the CloudXR launcher flags such as
+<code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>). <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> take the
+same arguments as <code class="docutils literal notranslate"><span class="pre">replay_hand</span></code> (MCAP path, <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>) and
+default to the newest <code class="docutils literal notranslate"><span class="pre">controllers_*.mcap</span></code> or <code class="docutils literal notranslate"><span class="pre">full_body_*.mcap</span></code> under
+<code class="docutils literal notranslate"><span class="pre">./recordings/</span></code>. <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the
+CloudXR launcher flags.</p>
 </section>
 </section>
 <section id="api-reference">
@@ -889,7 +902,7 @@ When empty, <code class="docutils literal notranslate"><span class="pre">TeleopS
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

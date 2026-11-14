@@ -522,9 +522,10 @@ you do <strong>not</strong> need to start the runtime in a separate terminal or 
 environment file. If nothing is serving yet, the example starts a CloudXR
 service in the background and prints how to stop it; that service outlives the
 example, so the headset stays connected from one run to the next.
-The first launch downloads the CloudXR Web Client SDK and asks you to review and
-accept the EULA on the terminal; answer the prompt once and the acceptance is
-remembered for subsequent runs.</p>
+When an example starts the service for the first time, it fetches the prebuilt
+web client assets (when hosting locally) and asks you to review and accept the
+EULA on the terminal; answer the prompt once and the acceptance is remembered
+for subsequent runs.</p>
 <p>The CloudXR runtime uses the <code class="docutils literal notranslate"><span class="pre">Quest3</span></code> device profile by default. The name is
 narrower than the profile: <code class="docutils literal notranslate"><span class="pre">Quest3</span></code> serves every WebXR client — Quest, PICO,
 and the desktop-browser IWER emulator — so PICO users should keep it. Apple
@@ -532,9 +533,10 @@ Vision Pro connects natively and needs <code class="docutils literal notranslate
 not derived from the connected headset, so set it yourself. The profile is set
 on the <em>runtime</em>, so applications inherit whatever the runtime they connect to
 was started with. To override it, or any other setting, write a <code class="docutils literal notranslate"><span class="pre">KEY=value</span></code>
-env file and start the service with it:</p>
+env file and start the service with it (<code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code> is required on the
+first detached start):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">echo</span><span class="w"> </span><span class="s1">'NV_DEVICE_PROFILE=auto-native'</span><span class="w"> </span>&gt;<span class="w"> </span>custom.env
-python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--cloudxr-env-config<span class="w"> </span>./custom.env
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w"> </span>--cloudxr-env-config<span class="w"> </span>./custom.env
 </pre></div>
 </div>
 <p>The same <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> flag is available on the teleop examples under
@@ -995,7 +997,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

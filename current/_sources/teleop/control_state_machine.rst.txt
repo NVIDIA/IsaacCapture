@@ -110,6 +110,17 @@ for the full runnable setup.
        }
    )
 
+To run the full example, install ``isaaccapture`` into the active environment
+first: from your source build as in
+:doc:`step 4 of Build from source </development/build_from_source/index>`, or
+from the package index as in the :doc:`Quick Start <quick_start>`. Then, from
+the project root:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/teleop_session_manager
+   python -m isaaccapture_examples.teleop_session_manager.teleop_controls_simple_example
+
 Debounce behavior is configurable in ``create_bool_selector``:
 
 - ``threshold`` / ``release_threshold`` for float hysteresis

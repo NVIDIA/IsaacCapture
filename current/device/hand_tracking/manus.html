@@ -480,18 +480,19 @@ tensors and consumes inbound haptic commands for vibration gloves.</p>
 <li><p><a class="reference internal" href="#start-the-cloudxr-runtime-and-load-its-environment" id="id8">1. Start the CloudXR runtime and load its environment</a></p></li>
 <li><p><a class="reference internal" href="#verify-with-the-cli-tool" id="id9">2. Verify with the CLI tool</a></p></li>
 <li><p><a class="reference internal" href="#run-the-plugin" id="id10">3. Run the plugin</a></p></li>
+<li><p><a class="reference internal" href="#load-glove-calibration-files-optional" id="id11">4. Load glove calibration files (optional)</a></p></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#data-paths" id="id11">Data paths</a></p>
+<li><p><a class="reference internal" href="#data-paths" id="id12">Data paths</a></p>
 <ul>
-<li><p><a class="reference internal" href="#human-openxr-hand-injection" id="id12">Human (OpenXR hand injection)</a></p></li>
-<li><p><a class="reference internal" href="#sensors-flex-tips-via-schemapusher" id="id13">Sensors (flex tips via SchemaPusher)</a></p></li>
-<li><p><a class="reference internal" href="#haptic-inbound-vibration" id="id14">Haptic (inbound vibration)</a></p></li>
+<li><p><a class="reference internal" href="#human-openxr-hand-injection" id="id13">Human (OpenXR hand injection)</a></p></li>
+<li><p><a class="reference internal" href="#sensors-flex-tips-via-schemapusher" id="id14">Sensors (flex tips via SchemaPusher)</a></p></li>
+<li><p><a class="reference internal" href="#haptic-inbound-vibration" id="id15">Haptic (inbound vibration)</a></p></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#wrist-positioning-controllers-vs-optical-hand-tracking" id="id15">Wrist Positioning — Controllers vs Optical Hand Tracking</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id16">Troubleshooting</a></p></li>
-<li><p><a class="reference internal" href="#license" id="id17">License</a></p></li>
+<li><p><a class="reference internal" href="#wrist-positioning-controllers-vs-optical-hand-tracking" id="id16">Wrist Positioning — Controllers vs Optical Hand Tracking</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id17">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id18">License</a></p></li>
 </ul>
 </nav>
 <section id="components">
@@ -505,6 +506,8 @@ integrates with the Teleop system via CloudXR / OpenXR.</p></li>
 that prints tracked joint data to the terminal and opens a real-time
 <strong>MANUS Data Visualizer</strong> window showing the hand skeleton from two orthographic
 views per hand.</p></li>
+<li><p><strong>Calibration worker</strong> (<code class="docutils literal notranslate"><span class="pre">manus_glove_calibrator</span></code>) — runs the Manus SDK glove
+calibration for the browser calibration example and exports MCAL files.</p></li>
 </ul>
 </section>
 <section id="prerequisites">
@@ -524,9 +527,8 @@ container). The two scripts below split along that line.</p>
 <h3><a class="toc-backref" href="#id4" role="doc-backlink">Step 1: grant the host access to the Manus dongle (one-time)</a><a class="headerlink" href="#step-1-grant-the-host-access-to-the-manus-dongle-one-time" title="Link to this heading">#</a></h3>
 <p>Run this <strong>on the host machine</strong>, not inside a container. udev rules are
 processed by <code class="docutils literal notranslate"><span class="pre">systemd-udevd</span></code>, which does not run inside Docker — so
-installing rules from a container has no effect.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>src/plugins/manus
-./install_udev_rules.sh
+installing rules from a container has no effect. From the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/manus/install_udev_rules.sh
 <span class="c1"># then unplug + replug the Manus dongle</span>
 </pre></div>
 </div>
@@ -536,9 +538,10 @@ applied the container will see the dongle with the right permissions.</p>
 </section>
 <section id="step-2-build-the-sdk-and-plugin">
 <h3><a class="toc-backref" href="#id5" role="doc-backlink">Step 2: build the SDK and plugin</a><a class="headerlink" href="#step-2-build-the-sdk-and-plugin" title="Link to this heading">#</a></h3>
-<p>Run this <strong>inside the build environment</strong> (devcontainer or Isaac ROS container):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>src/plugins/manus
-./install_manus.sh
+<p>Run this from the repository root wherever you build Isaac Capture: on a host
+that has the <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a>,
+or inside a build container such as the Isaac ROS dev container:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/manus/install_manus.sh
 </pre></div>
 </div>
 <p>Pass <code class="docutils literal notranslate"><span class="pre">--build-dir</span> <span class="pre">&lt;path&gt;</span></code> to reuse a non-default top-level CMake build
@@ -593,9 +596,8 @@ to install the dependencies and configure device permissions.</p></li>
 </div>
 <p>Then, after the <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a>,
 build from the root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>../../..<span class="w">  </span><span class="c1"># navigate to root</span>
-cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
-cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>manus_hand_plugin<span class="w"> </span>manus_hand_tracker_printer<span class="w"> </span>-j
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>manus_hand_plugin<span class="w"> </span>manus_hand_tracker_printer<span class="w"> </span>manus_glove_calibrator<span class="w"> </span>-j
 cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>manus
 </pre></div>
 </div>
@@ -610,7 +612,7 @@ runtime, so the runtime must be running and its environment sourced in the
 shell that launches the plugin.</p>
 <p>Start the CloudXR runtime. It runs as a background service that outlives
 this shell, until you stop it with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">stop</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 <p>In the shell you will use to run the plugin, source the environment file
@@ -649,17 +651,36 @@ haptic read. Restrict datasets with <code class="docutils literal notranslate"><
 </pre></div>
 </div>
 </section>
+<section id="load-glove-calibration-files-optional">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">4. Load glove calibration files (optional)</a><a class="headerlink" href="#load-glove-calibration-files-optional" title="Link to this heading">#</a></h3>
+<p>The plugin can apply a Manus glove calibration (MCAL) file to each glove when
+MANUS Core reports that glove. Pass each file with <code class="docutils literal notranslate"><span class="pre">=</span></code>; the plugin ignores
+the space-separated form:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/manus/manus_hand_plugin<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>--left-calibration<span class="o">=</span>/path/to/left.mcal<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>--right-calibration<span class="o">=</span>/path/to/right.mcal
+</pre></div>
+</div>
+<p>Either flag can be used alone. A file that cannot be read stops the plugin at
+startup with <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">open</span> <span class="pre">Manus</span> <span class="pre">calibration</span> <span class="pre">file:</span> <span class="pre">&lt;path&gt;</span></code>. A file that
+MANUS Core rejects is logged as <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">apply</span> <span class="pre">&lt;side&gt;</span> <span class="pre">glove</span> <span class="pre">calibration</span> <span class="pre">file</span></code>
+and that glove is reported as calibration failed.</p>
+<p>To record MCAL files, run the browser calibration page in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/manus_calibration/README.md" rel="noopener noreferrer" target="_blank">examples/manus_calibration/README.md</a>. Its worker,
+<code class="docutils literal notranslate"><span class="pre">manus_glove_calibrator</span></code>, is installed next to the plugin in
+<code class="docutils literal notranslate"><span class="pre">./install/plugins/manus/</span></code>.</p>
+</section>
 </section>
 <section id="data-paths">
-<h2><a class="toc-backref" href="#id11" role="doc-backlink">Data paths</a><a class="headerlink" href="#data-paths" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Data paths</a><a class="headerlink" href="#data-paths" title="Link to this heading">#</a></h2>
 <section id="human-openxr-hand-injection">
-<h3><a class="toc-backref" href="#id12" role="doc-backlink">Human (OpenXR hand injection)</a><a class="headerlink" href="#human-openxr-hand-injection" title="Link to this heading">#</a></h3>
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Human (OpenXR hand injection)</a><a class="headerlink" href="#human-openxr-hand-injection" title="Link to this heading">#</a></h3>
 <p>The Manus raw skeleton stream is mapped to 26 OpenXR hand joints and pushed
 through <code class="docutils literal notranslate"><span class="pre">HandInjector</span></code> (requires <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">NVX1_</span><wbr><span class="pre">device_</span><wbr><span class="pre">interface_</span><wbr><span class="pre">base</span></code>). Downstream
 hosts consume hands via <code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> as with any other hand-tracking plugin.</p>
 </section>
 <section id="sensors-flex-tips-via-schemapusher">
-<h3><a class="toc-backref" href="#id13" role="doc-backlink">Sensors (flex tips via SchemaPusher)</a><a class="headerlink" href="#sensors-flex-tips-via-schemapusher" title="Link to this heading">#</a></h3>
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Sensors (flex tips via SchemaPusher)</a><a class="headerlink" href="#sensors-flex-tips-via-schemapusher" title="Link to this heading">#</a></h3>
 <p>When gloves report at least five RawDeviceData flex sensors, the plugin pushes
 a <code class="docutils literal notranslate"><span class="pre">JointSe3PoseOutput</span></code> (tensor id <code class="docutils literal notranslate"><span class="pre">joint_se3_pose</span></code>) on:</p>
 <ul class="simple">
@@ -681,7 +702,7 @@ their own sensor-pose processing.</p>
 
 <span class="n">left</span> <span class="o">=</span> <span class="n">JointSe3PoseTracker</span><span class="p">(</span><span class="s2">"manus_sensors_left"</span><span class="p">)</span>
 <span class="c1"># ... register with a DeviceIOSession, then each tick:</span>
-<span class="n">data</span> <span class="o">=</span> <span class="n">left</span><span class="o">.</span><span class="n">get_data</span><span class="p">(</span><span class="n">session</span><span class="p">)</span><span class="o">.</span><span class="n">data</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">left</span><span class="o">.</span><span class="n">get_data</span><span class="p">(</span><span class="n">session</span><span class="p">)</span>  <span class="c1"># None until the plugin pushes a frame</span>
 <span class="k">assert</span> <span class="n">data</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">data</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">JointType</span><span class="o">.</span><span class="n">HAND_RAW</span>
 <span class="n">thumb</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">lookup</span><span class="p">(</span><span class="n">JointName</span><span class="o">.</span><span class="n">HAND_RAW_THUMB_TIP</span><span class="p">)</span> <span class="k">if</span> <span class="n">data</span> <span class="k">else</span> <span class="kc">None</span>
 <span class="k">if</span> <span class="n">thumb</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
@@ -693,7 +714,7 @@ runnable recorder. Run <code class="docutils literal notranslate"><span class="p
 to play one back without hardware.</p>
 </section>
 <section id="haptic-inbound-vibration">
-<h3><a class="toc-backref" href="#id14" role="doc-backlink">Haptic (inbound vibration)</a><a class="headerlink" href="#haptic-inbound-vibration" title="Link to this heading">#</a></h3>
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Haptic (inbound vibration)</a><a class="headerlink" href="#haptic-inbound-vibration" title="Link to this heading">#</a></h3>
 <p>The plugin reads <code class="docutils literal notranslate"><span class="pre">HapticCommand</span></code> on collection <code class="docutils literal notranslate"><span class="pre">manus_glove_haptic</span></code>
 (<code class="docutils literal notranslate"><span class="pre">XR_NVX1_tensor_data</span></code>) and drives five finger motors via the Manus SDK.
 See the haptic feedback example and
@@ -701,7 +722,7 @@ See the haptic feedback example and
 </section>
 </section>
 <section id="wrist-positioning-controllers-vs-optical-hand-tracking">
-<h2><a class="toc-backref" href="#id15" role="doc-backlink">Wrist Positioning — Controllers vs Optical Hand Tracking</a><a class="headerlink" href="#wrist-positioning-controllers-vs-optical-hand-tracking" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Wrist Positioning — Controllers vs Optical Hand Tracking</a><a class="headerlink" href="#wrist-positioning-controllers-vs-optical-hand-tracking" title="Link to this heading">#</a></h2>
 <p>Two sources are available for positioning the MANUS gloves in 3D space:</p>
 <ul class="simple">
 <li><p><strong>Controller adapters</strong> — attach Quest 3 controllers to the MANUS Universal
@@ -720,7 +741,7 @@ mid-session.</p>
 </div>
 </section>
 <section id="troubleshooting">
-<h2><a class="toc-backref" href="#id16" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id17" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 40.0%" />
@@ -767,7 +788,7 @@ and that <code class="docutils literal notranslate"><span class="pre">~/.cloudxr
 terminal as the plugin.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Permission denied for USB devices</p></td>
-<td><p>udev rules must be installed on the host. Run <code class="docutils literal notranslate"><span class="pre">./install_udev_rules.sh</span></code>
+<td><p>udev rules must be installed on the host. Run <code class="docutils literal notranslate"><span class="pre">./src/plugins/manus/install_udev_rules.sh</span></code>
 from the host (not inside a container), then unplug and replug the
 MANUS dongle. Verify on the host with <code class="docutils literal notranslate"><span class="pre">ls</span> <span class="pre">-l</span> <span class="pre">/dev/hidraw*</span></code> — entries for the
 dongle should be mode <code class="docutils literal notranslate"><span class="pre">0666</span></code>.</p></td>
@@ -789,7 +810,7 @@ Isaac ROS dev container does this automatically; for a custom
 </div>
 </section>
 <section id="license">
-<h2><a class="toc-backref" href="#id17" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
 <p>Source files are covered by their stated licenses (Apache-2.0). The Manus SDK is
 proprietary to MANUS and is subject to its own license; it is <strong>not</strong> redistributed
 by this project.</p>
@@ -857,6 +878,7 @@ by this project.</p>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-cloudxr-runtime-and-load-its-environment">1. Start the CloudXR runtime and load its environment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#verify-with-the-cli-tool">2. Verify with the CLI tool</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#run-the-plugin">3. Run the plugin</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#load-glove-calibration-files-optional">4. Load glove calibration files (optional)</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-paths">Data paths</a><ul class="nav section-nav flex-column">
@@ -950,7 +972,7 @@ by this project.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

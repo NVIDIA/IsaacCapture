@@ -869,10 +869,19 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaa
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
-<p id="build-from-source-editable-examples">An example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout replaces this
-wheel with an editable build of the checkout when you install it. Its first install compiles the
-extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
-<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-e</span> <span class="pre">./examples/&lt;name&gt;</span> <span class="pre">--reinstall-package</span> <span class="pre">isaaccapture</span></code>.</p>
+<p id="build-from-source-editable-examples">Install an example into this venv with <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/&lt;name&gt;<span class="w"> </span>--no-sources
+</pre></div>
+</div>
+<p>On aarch64 this command fails for <code class="docutils literal notranslate"><span class="pre">deviceio_live_view</span></code>, because SOMA-X pulls in <code class="docutils literal notranslate"><span class="pre">cholespy</span></code>,
+which has no aarch64 wheel. Use the aarch64 install in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a> instead.</p>
+<p>Without <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
+replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
+an example that starts CloudXR stops with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">CloudXR</span> <span class="pre">service</span> <span class="pre">exited</span> <span class="pre">during</span> <span class="pre">startup</span></code> and the
+service log reads <code class="docutils literal notranslate"><span class="pre">CloudXR</span> <span class="pre">SDK</span> <span class="pre">missing</span> <span class="pre">native/libcloudxr.so</span></code>. After a rebuild, run
+<code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code> so <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code> holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.</p>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
 in 1.9, so
 <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
@@ -888,6 +897,12 @@ the released wheels) is unchanged, so the two coexist.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">            </span><span class="c1"># build + install the compiled wheel from source</span>
 pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w">         </span><span class="c1"># editable / developer install</span>
 </pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Neither install carries the CloudXR runtime (<code class="docutils literal notranslate"><span class="pre">isaaccapture/cloudxr/native/</span></code>), so
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span></code> and every example that starts CloudXR fail under
+this path. Use the wheel from step 4 for those.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -1109,7 +1124,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

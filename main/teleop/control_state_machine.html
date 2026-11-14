@@ -605,6 +605,15 @@ for the full runnable setup.</p>
 <span class="p">)</span>
 </pre></div>
 </div>
+<p>To run the full example, install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> into the active environment
+first: from your source build as in
+<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">step 4 of Build from source</span></a>, or
+from the package index as in the <a class="reference internal" href="quick_start.html"><span class="doc">Quick Start</span></a>. Then, from
+the project root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop_session_manager
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop_session_manager.teleop_controls_simple_example
+</pre></div>
+</div>
 <p>Debounce behavior is configurable in <code class="docutils literal notranslate"><span class="pre">create_bool_selector</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">threshold</span></code> / <code class="docutils literal notranslate"><span class="pre">release_threshold</span></code> for float hysteresis</p></li>
@@ -772,7 +781,7 @@ or other high-level behavior:</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

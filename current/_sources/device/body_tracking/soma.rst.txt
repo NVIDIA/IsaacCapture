@@ -92,9 +92,9 @@ set up as in :ref:`step 4 of Build from source <build-from-source-install-packag
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/deviceio_live_view
-   uv pip install -e ./examples/soma_body_publisher
-   uv pip install -e ./examples/soma_hand_publisher
+   uv pip install -e ./examples/deviceio_live_view --no-sources
+   uv pip install -e ./examples/soma_body_publisher --no-sources
+   uv pip install -e ./examples/soma_hand_publisher --no-sources
 
 The example packages install ``py-soma-x==0.3.1``.
 The publishers use the Python-accessible ``TensorPushTracker`` and its native
@@ -216,7 +216,7 @@ Troubleshooting
 No module named ``isaaccapture_examples``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the corresponding example with ``uv pip install -e`` and launch it
+Install the corresponding example with ``uv pip install -e ./examples/<name> --no-sources`` and launch it
 with ``uv run --no-sync`` from the repository root.
 
 The publisher cannot connect

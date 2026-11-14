@@ -500,9 +500,9 @@
                   
   <section id="wheel-contents-sbom-and-license-evidence">
 <h1>Wheel contents SBOM and license evidence<a class="headerlink" href="#wheel-contents-sbom-and-license-evidence" title="Link to this heading">#</a></h1>
-<p>Every published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel lists what it redistributes and carries the license
-text behind each obligation. You can check both offline, without installing the wheel. The
-Release build refuses to ship a wheel with a gap in either.</p>
+<p>Every <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel published from 1.7 on lists what it redistributes and carries the
+license text behind each obligation; earlier wheels carry neither. You can check both offline,
+without installing the wheel. The Release build refuses to ship a wheel with a gap in either.</p>
 <p>To check a wheel, see <a class="reference internal" href="#verifying-a-wheel">Verifying a wheel</a>. To learn how the evidence is worked out, or why
 a build stopped, see the collector’s developer README, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/scripts/sbom/README.md" rel="noopener noreferrer" target="_blank">scripts/sbom/README.md</a>.</p>
 <section id="what-a-wheel-carries">
@@ -536,7 +536,7 @@ bundled.</p></li>
 </section>
 <section id="evidence-published-with-a-release">
 <h2>Evidence published with a release<a class="headerlink" href="#evidence-published-with-a-release" title="Link to this heading">#</a></h2>
-<p>Each tagged GitHub release carries one archive, <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;.zip</span></code>. Unpacked,
+<p>Each tagged GitHub release from 1.7 on carries one archive, <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;.zip</span></code>. Unpacked,
 its <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;/</span></code> directory holds, for every wheel:</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.spdx.json</span></code></dt><dd><p>An exact copy of the document embedded in the wheel.</p>
@@ -720,7 +720,7 @@ file’s <code class="docutils literal notranslate"><span class="pre">SPDXID</sp
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

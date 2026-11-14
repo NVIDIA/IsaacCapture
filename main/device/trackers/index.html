@@ -786,13 +786,13 @@ reads the PICO <code class="docutils literal notranslate"><span class="pre">XR_B
 <p>To run the examples from the repo root (the C++ ones need the CloudXR runtime
 started first; the Python modules start it themselves):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># C++ (after cmake --install)</span>
-python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w">   </span><span class="c1"># runs in the background</span>
 <span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/full_body_printer
 ./install/examples/mcap_record_replay/cpp/record_full_body<span class="w"> </span><span class="m">5</span><span class="w"> </span>recordings/
 
 <span class="c1"># Python</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.record_full_body<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body
@@ -932,7 +932,7 @@ utility internally.</p>
 a headset to connect to the CloudXR runtime; after that the printer reports
 <code class="docutils literal notranslate"><span class="pre">Waiting</span> <span class="pre">for</span> <span class="pre">data</span> <span class="pre">from</span> <span class="pre">prefix:</span> <span class="pre">...</span></code> until <code class="docutils literal notranslate"><span class="pre">camera_plugin_oak</span></code> pushes with
 the same <code class="docutils literal notranslate"><span class="pre">--collection-prefix</span></code>. Run each in its own shell:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w">   </span><span class="c1"># runs in the background</span>
 
 <span class="c1"># Shell 1: the plugin</span>
 <span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
@@ -1188,7 +1188,7 @@ construction; see <a class="reference internal" href="../../teleop/teleop_sessio
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

@@ -743,7 +743,7 @@ joint data each frame through <code class="docutils literal notranslate"><span c
 <code class="docutils literal notranslate"><span class="pre">tests/python/xr_runtime/test_full_body_tracker.py</span></code>. Neither embeds
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>, so start the runtime first and source its environment in
 the shell that launches them:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w">   </span><span class="c1"># runs in the background</span>
 <span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/full_body_printer
 </pre></div>
@@ -762,11 +762,15 @@ default. Contact PICO about enterprise activation, then use the
 enterprise features (see above). Verify all PICO motion trackers are
 paired, powered on, and calibrated. Confirm the PICO browser is up to
 date.</p></li>
-<li><p><strong>The printer prints</strong> <code class="docutils literal notranslate"><span class="pre">[body</span> <span class="pre">tracking</span> <span class="pre">inactive]</span></code>. The headset is
-connected but body tracking is unavailable: check that the Motion Trackers
-are paired and calibrated and that the headset has enterprise body-tracking
-support. A printer that never reaches <code class="docutils literal notranslate"><span class="pre">[Step</span> <span class="pre">4]</span> <span class="pre">Reading</span> <span class="pre">samples...</span></code> is
-still waiting for the runtime / headset instead.</p></li>
+<li><p><strong>The printer prints</strong> <code class="docutils literal notranslate"><span class="pre">valid=0/24</span> <span class="pre">pelvis=[not</span> <span class="pre">tracked]</span> <span class="pre">head=[not</span> <span class="pre">tracked]</span></code>
+<strong>on every sample.</strong> The runtime supports body tracking but no joint is
+tracked. This is also the output before a headset connects. With the headset
+connected, check that body tracking is enabled, the Motion Trackers are paired
+and calibrated, and the headset has enterprise body-tracking support.</p></li>
+<li><p><strong>The printer prints</strong> <code class="docutils literal notranslate"><span class="pre">[body</span> <span class="pre">tracking</span> <span class="pre">inactive]</span></code>. The OpenXR runtime
+reports that the system does not support body tracking, so the tracker
+returns no data. A printer that never reaches <code class="docutils literal notranslate"><span class="pre">[Step</span> <span class="pre">4]</span> <span class="pre">Reading</span> <span class="pre">samples...</span></code>
+is still waiting for the runtime / headset instead.</p></li>
 <li><p><strong>Some joints report</strong> <code class="docutils literal notranslate"><span class="pre">is_valid:</span> <span class="pre">false</span></code>. The PICO runtime may
 temporarily lose tracking for individual joints during fast movement or
 partial occlusion. These joints will recover automatically once tracking is
@@ -785,10 +789,15 @@ example.</p>
 to <code class="docutils literal notranslate"><span class="pre">DeviceIOSession::run()</span></code> with the tracker mapped to the <code class="docutils literal notranslate"><span class="pre">full_body</span></code>
 channel base name. <code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/cpp/record_full_body.cpp</span></code>
 demonstrates this — a file recorded there replays unchanged with
-<code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code>. Give it an output directory
-(<code class="docutils literal notranslate"><span class="pre">record_full_body</span> <span class="pre">5</span> <span class="pre">recordings/</span></code>) and each run writes a fresh timestamped
-take into it; <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> run from the same directory picks the
-newest one from <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> by default.</p>
+<code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code>. Give it an output directory and each run writes a
+fresh timestamped take into it. With the runtime started and its environment
+sourced as above, and the example package installed as in
+<a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a>, run from the repo root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/examples/mcap_record_replay/cpp/record_full_body<span class="w"> </span><span class="m">5</span><span class="w"> </span>recordings/
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body
+</pre></div>
+</div>
+<p>The replay picks the newest <code class="docutils literal notranslate"><span class="pre">full_body_*.mcap</span></code> under <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code>.</p>
 <figure class="align-default" id="id1">
 <img alt="Full body skeleton replayed from an MCAP recording in viser" class="no-image-zoom" src="../../_images/full-body-replay.gif" />
 <figcaption>
@@ -968,7 +977,7 @@ tracker-based PICO solution, particularly for lower-body joints.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

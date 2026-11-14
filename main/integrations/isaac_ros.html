@@ -496,10 +496,16 @@
                   
   <section id="isaac-ros">
 <h1>Isaac ROS<a class="headerlink" href="#isaac-ros" title="Link to this heading">#</a></h1>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>This integration guide is being prepared.</p>
+<p>Isaac ROS Teleop consumes <code class="docutils literal notranslate"><span class="pre">teleop_ros2</span></code>, the reference ROS 2 publisher for Isaac Teleop
+data. It runs in a Docker image and publishes hand, end-effector, root, head, controller and
+finger-joint data on <code class="docutils literal notranslate"><span class="pre">xr_teleop/*</span></code> topics, and TF on <code class="docutils literal notranslate"><span class="pre">/tf</span></code>.</p>
+<p>Build the image from the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>build<span class="w"> </span>-f<span class="w"> </span>examples/teleop_ros2/Dockerfile<span class="w"> </span>-t<span class="w"> </span>teleop_ros2_ref<span class="w"> </span>.
+</pre></div>
 </div>
+<p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/teleop_ros2/README.md" rel="noopener noreferrer" target="_blank">examples/teleop_ros2/README.md</a> covers running the container (including the
+Jetson <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span></code> flag), hand-tracking providers and retargeters, parameters, published
+topics, and MCAP replay.</p>
 </section>
 
 
@@ -618,7 +624,7 @@
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
       <br/>
     
   </p>

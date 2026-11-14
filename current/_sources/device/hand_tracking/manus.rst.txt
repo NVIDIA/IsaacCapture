@@ -26,6 +26,8 @@ Components
   that prints tracked joint data to the terminal and opens a real-time
   **MANUS Data Visualizer** window showing the hand skeleton from two orthographic
   views per hand.
+- **Calibration worker** (``manus_glove_calibrator``) — runs the Manus SDK glove
+  calibration for the browser calibration example and exports MCAL files.
 
 Prerequisites
 -------------
@@ -46,12 +48,11 @@ Step 1: grant the host access to the Manus dongle (one-time)
 
 Run this **on the host machine**, not inside a container. udev rules are
 processed by ``systemd-udevd``, which does not run inside Docker — so
-installing rules from a container has no effect.
+installing rules from a container has no effect. From the repository root:
 
 .. code-block:: bash
 
-   cd src/plugins/manus
-   ./install_udev_rules.sh
+   ./src/plugins/manus/install_udev_rules.sh
    # then unplug + replug the Manus dongle
 
 If you're using the Isaac ROS dev container (``isaac_ros run_dev``), it
@@ -61,12 +62,13 @@ applied the container will see the dongle with the right permissions.
 Step 2: build the SDK and plugin
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run this **inside the build environment** (devcontainer or Isaac ROS container):
+Run this from the repository root wherever you build Isaac Capture: on a host
+that has the :doc:`source-build prerequisites </development/build_from_source/index>`,
+or inside a build container such as the Isaac ROS dev container:
 
 .. code-block:: bash
 
-   cd src/plugins/manus
-   ./install_manus.sh
+   ./src/plugins/manus/install_manus.sh
 
 Pass ``--build-dir <path>`` to reuse a non-default top-level CMake build
 directory.
@@ -127,9 +129,8 @@ build from the root:
 
 .. code-block:: bash
 
-   cd ../../..  # navigate to root
    cmake -S . -B build
-   cmake --build build --target manus_hand_plugin manus_hand_tracker_printer -j
+   cmake --build build --target manus_hand_plugin manus_hand_tracker_printer manus_glove_calibrator -j
    cmake --install build --component manus
 
 Running the Plugin
@@ -147,7 +148,7 @@ this shell, until you stop it with ``python -m isaaccapture.cloudxr.service stop
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start
+   python -m isaaccapture.cloudxr.service start --accept-eula
 
 In the shell you will use to run the plugin, source the environment file
 that the runtime writes on startup. This points the OpenXR loader at CloudXR:
@@ -194,6 +195,29 @@ haptic read. Restrict datasets with ``--datasets=`` (comma-separated):
    ./install/plugins/manus/manus_hand_plugin --datasets=human          # skeleton only
    ./install/plugins/manus/manus_hand_plugin --datasets=sensors        # flex sensors only
 
+4. Load glove calibration files (optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The plugin can apply a Manus glove calibration (MCAL) file to each glove when
+MANUS Core reports that glove. Pass each file with ``=``; the plugin ignores
+the space-separated form:
+
+.. code-block:: bash
+
+   ./install/plugins/manus/manus_hand_plugin \
+      --left-calibration=/path/to/left.mcal \
+      --right-calibration=/path/to/right.mcal
+
+Either flag can be used alone. A file that cannot be read stops the plugin at
+startup with ``Failed to open Manus calibration file: <path>``. A file that
+MANUS Core rejects is logged as ``Failed to apply <side> glove calibration file``
+and that glove is reported as calibration failed.
+
+To record MCAL files, run the browser calibration page in
+:code-file:`examples/manus_calibration/README.md`. Its worker,
+``manus_glove_calibrator``, is installed next to the plugin in
+``./install/plugins/manus/``.
+
 Data paths
 ----------
 
@@ -233,7 +257,7 @@ Host-side consumption example:
 
    left = JointSe3PoseTracker("manus_sensors_left")
    # ... register with a DeviceIOSession, then each tick:
-   data = left.get_data(session).data
+   data = left.get_data(session)  # None until the plugin pushes a frame
    assert data is None or data.type == JointType.HAND_RAW
    thumb = data.lookup(JointName.HAND_RAW_THUMB_TIP) if data else None
    if thumb is not None:
@@ -308,7 +332,7 @@ Troubleshooting
        and that ``~/.cloudxr/run/cloudxr.env`` has been sourced in the same
        terminal as the plugin.
    * - Permission denied for USB devices
-     - udev rules must be installed on the host. Run ``./install_udev_rules.sh``
+     - udev rules must be installed on the host. Run ``./src/plugins/manus/install_udev_rules.sh``
        from the host (not inside a container), then unplug and replug the
        MANUS dongle. Verify on the host with ``ls -l /dev/hidraw*`` — entries for the
        dongle should be mode ``0666``.
