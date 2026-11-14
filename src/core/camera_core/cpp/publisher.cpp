@@ -29,7 +29,33 @@ DeliveryOrder resolve_order(const ReaderOptions& options)
     return options.window == 1 ? DeliveryOrder::NEWEST : DeliveryOrder::IN_ORDER;
 }
 
-// A pixel stream names every plane of its format; an encoded stream has none.
+// The bytes one row of a plane holds and the number of its rows.
+struct PlaneSize
+{
+    std::uint64_t row_bytes = 0;
+    std::uint64_t rows = 0;
+};
+
+PlaneSize plane_size_of(const StreamDescription& stream, std::uint32_t plane)
+{
+    const std::uint64_t width = stream.width;
+    const std::uint64_t height = stream.height;
+    switch (stream.pixel_format)
+    {
+    case PixelFormat::BGRA8:
+    case PixelFormat::RGBA8:
+        return { width * 4, height };
+    case PixelFormat::GRAY8:
+        return { width, height };
+    case PixelFormat::NV12:
+        // Luma at full size, then one interleaved chroma pair per two by two pixels.
+        return plane == 0 ? PlaneSize{ width, height } : PlaneSize{ (width + 1) / 2 * 2, (height + 1) / 2 };
+    }
+    return {};
+}
+
+// A pixel stream names every plane of its format and every plane lies inside the slot; an
+// encoded stream has no planes.
 bool layout_is_valid(const StreamDescription& stream)
 {
     if (stream.is_encoded())
@@ -42,7 +68,11 @@ bool layout_is_valid(const StreamDescription& stream)
     }
     for (std::uint32_t i = 0; i < stream.plane_count; ++i)
     {
-        if (stream.planes[i].stride_bytes == 0)
+        const PlaneSize size = plane_size_of(stream, i);
+        const std::uint64_t stride = stream.planes[i].stride_bytes;
+        // 64-bit sums of 32-bit fields, so nothing here can wrap.
+        const std::uint64_t end = stream.planes[i].offset_bytes + stride * (size.rows - 1) + size.row_bytes;
+        if (size.rows == 0 || stride < size.row_bytes || end > stream.slot_bytes)
         {
             return false;
         }
@@ -86,11 +116,18 @@ GroupId Publisher::add_group(const GroupDescription& description, std::uint32_t 
         }
         if (!layout_is_valid(stream))
         {
-            throw std::invalid_argument("camera stream '" + stream.id + "' needs a size and one stride per plane of " +
-                                        "its pixel format, or no planes at all when it is encoded");
+            throw std::invalid_argument("camera stream '" + stream.id + "' needs a size and every plane of its " +
+                                        "pixel format inside the slot, or no planes at all when it is encoded");
         }
         group->slot_count = std::min(group->slot_count, stream.slot_count);
         group->slots.emplace_back(stream.slot_count);
+    }
+    // Before any reader, the ring keeps one frame set and the backend keeps its reserve.
+    if (group->slot_count <= backend_reserve)
+    {
+        throw std::invalid_argument("camera group '" + description.id + "' has pools of " +
+                                    std::to_string(group->slot_count) + " slots, too few for one frame set and a " +
+                                    "backend reserve of " + std::to_string(backend_reserve));
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -109,6 +146,11 @@ std::optional<std::uint32_t> Publisher::acquire_slot(GroupId group, std::size_t 
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     Group& target = group_at(group);
+    if (target.on_free)
+    {
+        throw std::logic_error("camera group '" + target.description.id +
+                               "' has a slot-free callback, so its backend names slots with claim_slot");
+    }
     std::vector<Slot>& slots = target.slots.at(stream);
     for (std::uint32_t i = 0; i < slots.size(); ++i)
     {
@@ -168,6 +210,12 @@ std::uint64_t Publisher::publish(GroupId group, std::span<const ImageInfo> image
             {
                 throw std::invalid_argument("camera slot " + std::to_string(images[i].slot) +
                                             " was not acquired before it was published");
+            }
+            if (images[i].bytes_used > target.description.streams[i].slot_bytes)
+            {
+                throw std::invalid_argument("camera stream '" + target.description.streams[i].id + "' published " +
+                                            std::to_string(images[i].bytes_used) + " bytes into a slot of " +
+                                            std::to_string(target.description.streams[i].slot_bytes));
             }
         }
 

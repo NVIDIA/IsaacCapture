@@ -24,7 +24,7 @@ namespace
 // A reader that keeps every event it is sent.
 struct RecordingSink : EventSink
 {
-    bool send_event(SubscriptionId, const FrameEvent& event) override
+    bool send_event(SubscriptionId, const FrameEvent& event) noexcept override
     {
         if (!accept)
         {
@@ -437,6 +437,11 @@ TEST_CASE("misuse by a backend is rejected", "[unit][camera_core][validation]")
     REQUIRE_THROWS_AS(publisher.add_group(make_group(MAX_SLOTS_PER_STREAM + 1)), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.add_group(make_group(4), 0), std::invalid_argument);
 
+    // A pool holds at least one frame set for the ring on top of the backend's reserve.
+    REQUIRE_THROWS_AS(publisher.add_group(make_group(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(publisher.add_group(make_group(4), 4), std::invalid_argument);
+    REQUIRE_NOTHROW(publisher.add_group(make_group(4, 2, "tight"), 3));
+
     // A pixel stream names every plane of its format; an encoded stream has none.
     GroupDescription nv12 = make_group(4, 1, "nv12");
     nv12.streams[0].pixel_format = PixelFormat::NV12;
@@ -460,11 +465,84 @@ TEST_CASE("misuse by a backend is rejected", "[unit][camera_core][validation]")
     images[0].slot = *publisher.acquire_slot(group, 0);
     REQUIRE_THROWS_AS(publisher.publish(group, { images.data(), 1 }, {}), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.publish(group, images, {}), std::invalid_argument); // stream 1 not acquired
+
+    // An image cannot be larger than the slot it sits in.
+    images[1].slot = *publisher.acquire_slot(group, 1);
+    images[1].bytes_used = publisher.group_description(group).streams[1].slot_bytes + 1;
+    REQUIRE_THROWS_AS(publisher.publish(group, images, {}), std::invalid_argument);
     REQUIRE(publisher.stats(group).published == 0);
+    images[1].bytes_used = 0;
+    REQUIRE(publisher.publish(group, images, {}) == 1); // the slots were still the backend's to publish
 
     REQUIRE_THROWS_AS(publisher.abandon_slot(group, 1, 0), std::invalid_argument);
     REQUIRE_THROWS_AS(publisher.acquire_slot(99, 0), std::out_of_range);
     REQUIRE_THROWS_AS(publisher.claim_slot(group, 0, 99), std::invalid_argument);
+}
+
+TEST_CASE("a plane that does not lie inside the slot is rejected", "[unit][camera_core][validation]")
+{
+    Publisher publisher;
+    const auto with = [](auto&& change)
+    {
+        GroupDescription group = make_group(4, 1);
+        change(group.streams[0]);
+        return group;
+    };
+
+    // A row is as long as the format needs, and the last row ends inside the slot.
+    REQUIRE_THROWS_AS(
+        publisher.add_group(with([](StreamDescription& stream) { stream.planes[0].stride_bytes = 640 * 4 - 1; })),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(publisher.add_group(with([](StreamDescription& stream) { stream.planes[0].offset_bytes = 1; })),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        publisher.add_group(with([](StreamDescription& stream) { stream.slot_bytes -= 1; })), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        publisher.add_group(with([](StreamDescription& stream) { stream.planes[0].stride_bytes = 0xFFFFFFFF; })),
+        std::invalid_argument);
+
+    // Padding between rows is fine as long as the last row still fits.
+    const auto padded = [](StreamDescription& stream)
+    {
+        stream.planes[0].stride_bytes = 4096;
+        stream.slot_bytes = 4096 * 399 + 640 * 4;
+    };
+    REQUIRE_NOTHROW(publisher.add_group(with(padded)));
+
+    // NV12 with odd sides: chroma rows cover the rounded-up half, and both planes must fit.
+    const auto nv12 = [](std::uint64_t slot_bytes)
+    {
+        return [slot_bytes](StreamDescription& stream)
+        {
+            stream.id = "nv12";
+            stream.pixel_format = PixelFormat::NV12;
+            stream.width = 5;
+            stream.height = 3;
+            stream.plane_count = 2;
+            stream.planes[0] = { .offset_bytes = 0, .stride_bytes = 8 };
+            stream.planes[1] = { .offset_bytes = 24, .stride_bytes = 8 };
+            stream.slot_bytes = slot_bytes;
+        };
+    };
+    REQUIRE_THROWS_AS(publisher.add_group(with(nv12(24 + 8 + 5))), std::invalid_argument); // chroma row needs 6
+    GroupDescription odd = with(nv12(24 + 8 + 6));
+    odd.id = "odd";
+    REQUIRE_NOTHROW(publisher.add_group(odd));
+}
+
+TEST_CASE("a group with a slot-free callback hands out slots by claim only", "[unit][camera_core][slots]")
+{
+    Publisher publisher;
+    const GroupId group = publisher.add_group(make_group(4, 1));
+    REQUIRE(publisher.acquire_slot(group, 0) == 0u);
+    publisher.abandon_slot(group, 0, 0);
+
+    publisher.set_slot_free_callback(group, [](std::size_t, std::uint32_t) {});
+    REQUIRE_THROWS_AS(publisher.acquire_slot(group, 0), std::logic_error);
+    REQUIRE_NOTHROW(publisher.claim_slot(group, 0, 0));
+
+    publisher.set_slot_free_callback(group, {});
+    REQUIRE(publisher.acquire_slot(group, 0) == 1u);
 }
 
 TEST_CASE("capture and a reader on different threads keep every frame set in order", "[unit][camera_core][threads]")
@@ -473,7 +551,7 @@ TEST_CASE("capture and a reader on different threads keep every frame set in ord
     // reader's own thread takes them and releases.
     struct QueueSink : EventSink
     {
-        bool send_event(SubscriptionId, const FrameEvent& event) override
+        bool send_event(SubscriptionId, const FrameEvent& event) noexcept override
         {
             {
                 std::lock_guard<std::mutex> lock(mutex);

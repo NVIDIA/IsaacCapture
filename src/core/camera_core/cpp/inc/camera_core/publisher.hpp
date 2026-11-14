@@ -35,10 +35,10 @@ public:
 
     /**
      * @brief Hand one event to the reader. Called on the capture path with the publisher's
-     * lock held, so it must not block and must not call back into the publisher.
+     * lock held, so it must not block, throw or call back into the publisher.
      * @return false when the event could not be handed over; the reader then gets a later one.
      */
-    virtual bool send_event(SubscriptionId subscription, const FrameEvent& event) = 0;
+    virtual bool send_event(SubscriptionId subscription, const FrameEvent& event) noexcept = 0;
 };
 
 // Counters of one group since it was added.
@@ -93,6 +93,8 @@ public:
     /**
      * @brief Take a free slot to write the next image into.
      * @return The slot, or nothing when every slot is in use (the frame should be dropped).
+     * @throws std::logic_error for a group that has a slot-free callback: its backend owns the
+     * pool and names slots with claim_slot.
      */
     std::optional<std::uint32_t> acquire_slot(GroupId group, std::size_t stream);
 
@@ -110,7 +112,8 @@ public:
     /**
      * @brief Be told when a published slot is no longer held by the ring or any reader, so a
      * buffer the SDK owns can go back to it at once. Called outside the publisher's lock, on
-     * the thread whose call released the last hold.
+     * the thread whose call released the last hold. A group with this callback hands out its
+     * slots with claim_slot only, so a slot cannot be taken again before its callback has run.
      */
     void set_slot_free_callback(GroupId group, SlotFreeCallback callback);
 
@@ -119,7 +122,7 @@ public:
      * acquire_slot or claim_slot.
      * @param timeline capture_ns and sdk_ready_ns from the backend; the rest is filled in here.
      * @return The frame set's sequence number.
-     * @throws std::invalid_argument if the images do not match the group.
+     * @throws std::invalid_argument if the images do not match the group or do not fit its slots.
      */
     std::uint64_t publish(GroupId group, std::span<const ImageInfo> images, const FrameTimeline& timeline);
 

@@ -43,7 +43,8 @@ publisher.publish(group, images, timeline);
 ```
 
 For the second way, `set_slot_free_callback` tells the backend the moment a slot is held by
-nobody, so the buffer can go back to the SDK.
+nobody, so the buffer can go back to the SDK. A group uses one way or the other: once it has
+that callback, its slots are handed out with `claim_slot` only.
 
 A reader subscribes with a window and an order, receives `FrameEvent`s through an `EventSink`,
 and returns each one with `release`. Events carry slot indices, the frame set's timeline and the
