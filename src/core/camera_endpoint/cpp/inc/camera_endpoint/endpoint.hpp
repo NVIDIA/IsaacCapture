@@ -16,9 +16,11 @@ namespace core::camera
 /**
  * @brief Serves a Publisher's groups to readers in other processes.
  *
- * Listens on a socket file. Each reader is told what is published; when it subscribes it is
- * sent the group's pool descriptors and from then on the group's frame events. A reader that
- * goes away, cleanly or not, has every frame set it held taken back.
+ * Listens on a socket file. A reader's first message says what it came for, and the answer is
+ * the first thing it receives: what is published, or the group it asked for with the
+ * descriptors of the group's pools. After that an in-order reader is sent each frame set as
+ * it is published and a newest-order reader one each time it asks. A reader that goes away,
+ * cleanly or not, has every frame set it held taken back.
  */
 class Endpoint
 {

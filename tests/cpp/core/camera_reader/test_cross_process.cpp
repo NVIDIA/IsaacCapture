@@ -178,6 +178,35 @@ TEST_CASE("a reader gets whole frame sets from a plugin in another process", "[i
     require_whole(*held);
 }
 
+TEST_CASE("a reader that was away is handed a fresh frame set by a plugin in another process",
+          "[integration][camera_reader][newest]")
+{
+    TemporaryDirectory directory;
+    const std::string endpoint = directory.file("cameras.sock");
+    Peer plugin({ "serve", endpoint });
+    std::optional<CameraReader> reader = open_when_ready(endpoint);
+    REQUIRE(reader.has_value());
+    REQUIRE(reader->next(2s).has_value()); // taken and given back at once
+
+    for (int round = 0; round < 5; ++round)
+    {
+        // Away for sixty frame periods of the peer, holding nothing.
+        std::this_thread::sleep_for(300ms);
+        const std::optional<FrameSet> frames = reader->next(2s);
+        REQUIRE(frames.has_value());
+        const std::int64_t now_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+
+        // A frame set held for the reader when it left would be 300 ms old by now. This one was
+        // published within the last frame periods; the bound leaves room for a busy test machine.
+        const std::int64_t age_ns = now_ns - frames->timeline().published_ns;
+        REQUIRE(age_ns >= 0);
+        REQUIRE(age_ns < std::chrono::nanoseconds(100ms).count());
+        REQUIRE(frames->skipped() > 20);
+        require_whole(*frames);
+    }
+}
+
 TEST_CASE("a reader process that is killed gives back what it held", "[integration][camera_reader]")
 {
     TemporaryDirectory directory;
@@ -212,7 +241,8 @@ TEST_CASE("a reader is told when the plugin's process is killed", "[integration]
     TemporaryDirectory directory;
     const std::string endpoint = directory.file("cameras.sock");
     Peer plugin({ "serve", endpoint });
-    std::optional<CameraReader> reader = open_when_ready(endpoint);
+    // A window of two, so that the reader can hold one frame set and still ask for another.
+    std::optional<CameraReader> reader = open_when_ready(endpoint, { .window = 2, .order = DeliveryOrder::NEWEST });
     REQUIRE(reader.has_value());
     std::optional<FrameSet> held = reader->next(2s);
     REQUIRE(held.has_value());

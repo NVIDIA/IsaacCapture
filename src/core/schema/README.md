@@ -33,6 +33,11 @@ carries it. It is kept here, with a golden, because it is a contract of the same
 two ends can come from different releases, and a change the comparison rejects would make
 them misread each other.
 
+It is not a recorded schema in disguise. It has no `Record` root and does not use
+`DeviceDataTimestamp`: its times are the host's monotonic clock, and its lease ids, slot
+indices and attached descriptors mean something between two processes on one machine only.
+A recorder that stores camera frames maps those times in its own schema.
+
 ## Adding a field
 
 Append it to a table with a fresh `id`, and leave it optional. The test passes, and no

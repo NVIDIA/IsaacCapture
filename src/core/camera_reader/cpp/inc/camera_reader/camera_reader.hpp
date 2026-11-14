@@ -42,6 +42,26 @@ public:
     using CameraReaderError::CameraReaderError;
 };
 
+/**
+ * @brief next() was called by a reader that already holds as many frame sets as its window.
+ * Give one back first, or open the reader with a larger window.
+ */
+class CameraWindowExhausted : public std::logic_error
+{
+public:
+    using std::logic_error::logic_error;
+};
+
+// One group a plugin publishes, as list() reports it.
+struct GroupListing
+{
+    GroupDescription group; // the id only, when `unsupported` is set
+
+    // Why this build cannot read the group, for one that uses a codec, a pixel format or a
+    // kind of memory added after it; empty for a group it can open.
+    std::string unsupported;
+};
+
 // Which camera plugin to read from. Left empty, it is this user's plugin on this machine.
 struct PluginLocation
 {
@@ -69,7 +89,8 @@ struct ImageView
 
 /**
  * @brief One frame set, held for this reader: the plugin does not reuse its slots until the
- * object is destroyed or release() is called. Hold at most as many as the reader's window.
+ * object is destroyed or release() is called, also when the reader it came from is gone
+ * first. Hold at most as many as the reader's window.
  */
 class FrameSet
 {
@@ -85,7 +106,7 @@ public:
         return m_event.sequence;
     }
 
-    // Changes when the camera restarted.
+    // Restarts of the camera since the plugin began publishing the group.
     std::uint32_t generation() const
     {
         return m_event.generation;
@@ -114,7 +135,8 @@ public:
      */
     ImageView image(std::size_t stream) const;
 
-    // Gives the frame set back before the object is destroyed. Its views are no longer valid.
+    // Gives the frame set back before the object is destroyed. Its views are no longer valid:
+    // give it back only when nothing reads them any more.
     void release() noexcept;
 
 private:
@@ -140,15 +162,16 @@ class CameraReader
 {
 public:
     /**
-     * @brief What a camera plugin publishes.
+     * @brief What a camera plugin publishes, including groups this build cannot read.
      * @throws CameraReaderError if no plugin answers or the plugin refuses this reader.
      */
-    static std::vector<GroupDescription> list(const PluginLocation& plugin = {});
+    static std::vector<GroupListing> list(const PluginLocation& plugin = {});
 
     /**
      * @brief Subscribe to one group. A reader for a second group is a second CameraReader.
-     * @throws CameraReaderError if no plugin answers or the plugin refuses the subscription;
-     * the message says why.
+     * @throws CameraReaderError if no plugin answers, the plugin refuses the subscription, or
+     * what it answers is not the group that was asked for in a form this build can read; the
+     * message says why.
      */
     static CameraReader open(const std::string& group,
                              const ReaderOptions& options = {},
@@ -163,15 +186,27 @@ public:
     const GroupDescription& group() const;
 
     /**
-     * @brief Wait up to `timeout` for a frame set. With newest order this is the newest one the
-     * plugin has sent; older ones waiting behind it are given back and counted as skipped.
+     * @brief Wait up to `timeout` for a frame set.
+     *
+     * With newest order the call asks the plugin, which holds the newest frame set there is at
+     * that moment, or the next one published: a reader that was busy gets what the camera saw
+     * last, not what it saw when the reader stopped. A frame set that arrived for an earlier
+     * call that had stopped waiting is given back and exchanged for the newest; that exchange
+     * may outlast a short timeout by a few milliseconds.
+     * With in order the plugin sends every frame set and this returns the next.
+     *
      * @return The frame set, or nothing on timeout.
+     * @throws CameraWindowExhausted if the reader already holds its window's worth.
      * @throws CameraDisconnected if the plugin is gone.
-     * @throws CameraReaderError if the plugin sent a frame set that does not match the group.
+     * @throws CameraReaderError if the plugin sent something a reader cannot use.
      */
     std::optional<FrameSet> next(std::chrono::milliseconds timeout);
 
-    // Becomes readable when a frame set may be waiting; for waiting on several readers at once.
+    /**
+     * @brief Becomes readable when a frame set may be waiting; for waiting on several readers
+     * at once. A newest-order reader is sent a frame set only after next() asked for one, so
+     * call next() first, with a timeout of zero, and again when the descriptor is readable.
+     */
     int descriptor() const;
 
 private:

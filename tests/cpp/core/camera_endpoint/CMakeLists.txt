@@ -9,11 +9,13 @@ add_executable(camera_endpoint_tests
     test_endpoint.cpp
 )
 
-# The tests play the reader's part with the socket and the codec themselves.
+# The tests play the reader's part with the socket and the codec themselves. The schema is
+# linked to send what the codec never would: a message from a newer reader.
 target_link_libraries(camera_endpoint_tests PRIVATE
     camera::camera_endpoint
     camera::camera_ipc
     camera::camera_protocol
+    isaacteleop_schema
     Catch2::Catch2WithMain
     Threads::Threads
 )

@@ -11,12 +11,14 @@ add_executable(camera_reader_tests
 )
 
 # The reader is tested against a real endpoint, and against a stand-in plugin built from the
-# socket and the codec for what a real one does not do on demand.
+# socket and the codec for what a real one does not do on demand. The schema is linked for
+# what the codec never writes: a group from a newer plugin.
 target_link_libraries(camera_reader_tests PRIVATE
     camera::camera_reader
     camera::camera_endpoint
     camera::camera_ipc
     camera::camera_protocol
+    isaacteleop_schema
     Catch2::Catch2WithMain
     Threads::Threads
 )

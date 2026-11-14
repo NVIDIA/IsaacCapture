@@ -9,6 +9,7 @@
 #include <log_bridge/logger.hpp>
 #include <sys/eventfd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -35,8 +36,9 @@ namespace core::camera
 namespace
 {
 
-// One reader. As an EventSink it is called by the publisher, on whichever thread publishes or
-// releases, with its group's lock held; everything else runs on the endpoint's thread.
+// One reader. As an EventSink it is called by the publisher with its group's lock held: on the
+// capture thread when a frame set is published, on the endpoint's thread when the reader
+// released or asked for one. Everything else runs on the endpoint's thread.
 class Connection final : public EventSink
 {
 public:
@@ -269,9 +271,22 @@ private:
             }
             return true;
         }
+        if (const auto* acquire = std::get_if<AcquireMessage>(&message))
+        {
+            if (connection.subscription == 0 ||
+                !m_publisher.request_newest(connection.subscription, acquire->after_sequence))
+            {
+                m_logger->warn(
+                    "dropping camera reader '{}': it asked for the newest frame set without a "
+                    "newest-order subscription",
+                    connection.name);
+                return false;
+            }
+            return true;
+        }
         if (std::holds_alternative<std::monostate>(message))
         {
-            return true; // from a newer reader; not for this build
+            return true; // something a newer reader sends for information; not for this build
         }
         m_logger->warn("dropping camera reader '{}': it sent a message only a plugin sends", connection.name);
         return false;
@@ -279,6 +294,10 @@ private:
 
     // Answers a reader's first message: what is published, or the group it asked for with the
     // descriptors of its pools. A reader that is refused is told why and then dropped.
+    //
+    // A subscription is reserved, then the reader is told, then delivery starts: the answer is
+    // the first thing the reader receives, and capture never waits for it to be sent. A
+    // subscription whose answer could not be sent ends in drop(), like any other.
     bool shake_hands(Connection& connection, const HandshakeRequest& request)
     {
         if (connection.greeted)
@@ -290,19 +309,28 @@ private:
         connection.name = request.reader_name.empty() ? "unnamed" : request.reader_name;
 
         HandshakeResponse response;
+        // The connection uses the newest version both sides speak. A reader newer than this
+        // plugin is answered in the plugin's version and decides whether it still speaks it.
+        response.protocol_version = std::min(request.protocol_version, PROTOCOL_VERSION);
         std::span<const int> descriptors;
         const std::optional<GroupId> group = m_publisher.find_group(request.group);
-        if (request.protocol_version != PROTOCOL_VERSION)
+        if (request.protocol_version < OLDEST_PROTOCOL_VERSION)
         {
-            response.error = "this camera plugin speaks protocol version " + std::to_string(PROTOCOL_VERSION) +
-                             " and the reader version " + std::to_string(request.protocol_version);
+            response.protocol_version = OLDEST_PROTOCOL_VERSION;
+            response.error = "this camera plugin speaks protocol versions " + std::to_string(OLDEST_PROTOCOL_VERSION) +
+                             " to " + std::to_string(PROTOCOL_VERSION) + " and the reader version " +
+                             std::to_string(request.protocol_version);
+        }
+        else if (!request.unsupported.empty())
+        {
+            response.error = request.unsupported;
         }
         else if (request.group.empty())
         {
             const std::size_t group_count = m_publisher.group_count();
             for (std::size_t i = 0; i < group_count; ++i)
             {
-                response.groups.push_back(m_publisher.group_description(static_cast<GroupId>(i)));
+                response.groups.push_back({ m_publisher.group_description(static_cast<GroupId>(i)), {} });
             }
             m_logger->info("camera reader '{}' asked what is published", connection.name);
         }
@@ -316,16 +344,12 @@ private:
         }
         else
         {
-            // From here on the publisher may send this reader frame events at any moment, so a
-            // frame can reach it before the response below.
             const SubscribeResult result = m_publisher.subscribe(connection, *group, request.options);
             if (result)
             {
                 connection.subscription = result.id;
-                response.groups.push_back(m_publisher.group_description(*group));
+                response.groups.push_back({ m_publisher.group_description(*group), {} });
                 descriptors = m_memory.at(*group);
-                m_logger->info("camera reader '{}' reads '{}' (window {}, {})", connection.name, request.group,
-                               request.options.window, name_of(request.options.order));
             }
             else
             {
@@ -337,7 +361,17 @@ private:
         {
             m_logger->warn("refusing camera reader '{}': {}", connection.name, response.error);
         }
-        return send(connection, m_encoder.encode(response), descriptors) && response.error.empty();
+        if (!send(connection, m_encoder.encode(response), descriptors) || !response.error.empty())
+        {
+            return false;
+        }
+        if (connection.subscription != 0)
+        {
+            m_publisher.activate(connection.subscription);
+            m_logger->info("camera reader '{}' reads '{}' (window {}, {})", connection.name, request.group,
+                           request.options.window, name_of(resolved_order(request.options)));
+        }
+        return true;
     }
 
     static bool send(Connection& connection, std::span<const std::byte> bytes, std::span<const int> descriptors = {})
