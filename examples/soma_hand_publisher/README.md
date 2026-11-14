@@ -28,7 +28,7 @@ Install the example into a venv set up as in
 [Running an example](../README.md#running-an-example):
 
 ```bash
-uv pip install -e ./examples/soma_hand_publisher
+uv pip install -e ./examples/soma_hand_publisher --no-sources
 ```
 
 Start the DeviceIO viewer with SOMA hands, connect its client, then run the

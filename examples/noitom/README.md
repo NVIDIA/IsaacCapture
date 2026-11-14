@@ -69,7 +69,7 @@ the standard `full_body` channel, so the generic replay script can play it back:
 ![Noitom MCAP replay](assets/replay.gif)
 
 ```bash
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
   recordings/noitom_full_body.mcap
 ```
