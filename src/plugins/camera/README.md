@@ -53,6 +53,12 @@ holds the newest frame set, one slot for the camera to write ahead, and the wind
 readers; a reader that does not fit is refused with the numbers. A reader that wants every
 frame in order counts its window twice, because the frames waiting for it are kept as well.
 
+**Who starts it.** Any of: by hand or from a service, as above; the plugin manager, like
+every other plugin (`plugin.yaml` sits next to the executable); or a reader, when it finds no
+plugin on a default endpoint. A reader passes `--exit-when-idle=SECONDS`, so a plugin it
+started exits by itself once no reader has been connected for that long. A plugin started any
+other way runs until it is told to stop.
+
 A misspelt argument, option or setting is an error, not something ignored. `SIGINT` and
 `SIGTERM` stop the plugin cleanly; readers see their connection close. `--list-backends`
 prints the backends of the build.

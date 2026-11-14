@@ -17,6 +17,7 @@ target_link_libraries(camera_plugin_tests PRIVATE
     camera::plugin_backends
     camera::backend_synthetic
     camera::camera_reader
+    teleop_plugin_manager
     Catch2::Catch2WithMain
     Threads::Threads
 )
@@ -24,6 +25,7 @@ target_link_libraries(camera_plugin_tests PRIVATE
 # Some cases start the plugin or the bench as a process of its own.
 target_compile_definitions(camera_plugin_tests PRIVATE
     CAMERA_PLUGIN_EXECUTABLE="$<TARGET_FILE:camera_plugin>"
+    CAMERA_PLUGIN_DIRECTORY="$<TARGET_FILE_DIR:camera_plugin>"
     CAMERA_BENCH_EXECUTABLE="$<TARGET_FILE:camera_bench>"
 )
 add_dependencies(camera_plugin_tests camera_plugin camera_bench)

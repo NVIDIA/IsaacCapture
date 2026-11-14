@@ -6,6 +6,8 @@ cmake_minimum_required(VERSION 3.20)
 # What an application links to read cameras from the camera plugin.
 add_library(camera_reader STATIC
     camera_reader.cpp
+    plugin_launcher.cpp
+    plugin_launcher.hpp
 )
 
 target_include_directories(camera_reader INTERFACE

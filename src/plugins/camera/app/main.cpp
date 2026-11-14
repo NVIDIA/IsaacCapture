@@ -29,7 +29,7 @@ namespace
 
 constexpr std::string_view USAGE =
     "Usage: camera_plugin [--config=FILE | --camera=ID:BACKEND[:KEY=VALUE,...] ... | --auto]\n"
-    "                     [--endpoint=PATH | --instance=NAME] [--slots=N]\n"
+    "                     [--endpoint=PATH | --instance=NAME] [--slots=N] [--exit-when-idle=SECONDS]\n"
     "       camera_plugin --list-backends\n"
     "\n"
     "Owns cameras and serves their frames to readers in other processes. Without arguments it\n"
@@ -43,10 +43,13 @@ constexpr std::string_view USAGE =
     "  --instance=NAME   run as a named instance beside the default one, on its own endpoint\n"
     "  --endpoint=PATH   the socket file readers connect to, instead of a default endpoint\n"
     "  --slots=N         frames kept per stream (default 8); a reader with a larger window needs more\n"
+    "  --exit-when-idle=SECONDS\n"
+    "                    exit once no reader has been connected for this long; a reader that starts\n"
+    "                    the plugin itself passes this, so the plugin does not outstay its use\n"
     "  --list-backends   print the backends this build has and exit\n";
 
 // How often the plugin logs what each camera did.
-constexpr time_t ACTIVITY_LOG_SECONDS = 10;
+constexpr std::uint32_t ACTIVITY_LOG_SECONDS = 10;
 
 // The value of `--name=value` in `arg`, or nothing when `arg` is another flag.
 std::optional<std::string_view> flag_value(std::string_view arg, std::string_view name)
@@ -58,6 +61,17 @@ std::optional<std::string_view> flag_value(std::string_view arg, std::string_vie
     return std::nullopt;
 }
 
+std::uint32_t number_of(std::string_view flag, std::string_view text)
+{
+    std::uint32_t value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc() || end != text.data() + text.size())
+    {
+        throw std::invalid_argument(std::string(flag) + " takes a whole number, not '" + std::string(text) + "'");
+    }
+    return value;
+}
+
 struct Arguments
 {
     std::string endpoint;
@@ -65,6 +79,7 @@ struct Arguments
     std::string config_file;
     std::vector<CameraConfig> cameras;
     std::optional<std::uint32_t> slots;
+    std::uint32_t exit_when_idle_seconds = 0; // 0: run until told to stop
     bool automatic = false;
     bool list_backends = false;
     bool help = false;
@@ -106,13 +121,11 @@ Arguments parse(int argc, char** argv)
         }
         else if (const auto slots = flag_value(arg, "--slots"))
         {
-            std::uint32_t count = 0;
-            const auto [end, error] = std::from_chars(slots->data(), slots->data() + slots->size(), count);
-            if (error != std::errc() || end != slots->data() + slots->size())
-            {
-                throw std::invalid_argument("--slots takes a whole number, not '" + std::string(*slots) + "'");
-            }
-            arguments.slots = count;
+            arguments.slots = number_of("--slots", *slots);
+        }
+        else if (const auto idle = flag_value(arg, "--exit-when-idle"))
+        {
+            arguments.exit_when_idle_seconds = number_of("--exit-when-idle", *idle);
         }
         else if (flag_value(arg, "--plugin-root-id"))
         {
@@ -225,17 +238,35 @@ int main(int argc, char** argv)
         host.start();
         logger->info("camera plugin serves {} camera(s) on '{}'", host.camera_count(), endpoint);
 
-        // Sleeps until a signal says stop, waking now and then to log what the cameras did.
-        const timespec activity_interval = { ACTIVITY_LOG_SECONDS, 0 };
-        int received = 0;
-        while ((received = sigtimedwait(&stop_signals, nullptr, &activity_interval)) <= 0)
+        // Sleeps until a signal says stop, waking once a second to keep count: of the time
+        // since the cameras' activity was logged, and of the time without a reader.
+        const timespec second = { 1, 0 };
+        std::uint32_t since_activity_log = 0;
+        std::uint32_t idle_seconds = 0;
+        for (;;)
         {
-            if (errno == EAGAIN)
+            const int received = sigtimedwait(&stop_signals, nullptr, &second);
+            if (received > 0)
+            {
+                logger->info("camera plugin stops on signal {}", received);
+                break;
+            }
+            if (errno != EAGAIN)
+            {
+                continue; // interrupted; not a second gone by
+            }
+            if (++since_activity_log >= ACTIVITY_LOG_SECONDS)
             {
                 host.log_activity();
+                since_activity_log = 0;
+            }
+            idle_seconds = host.reader_count() == 0 ? idle_seconds + 1 : 0;
+            if (arguments.exit_when_idle_seconds != 0 && idle_seconds >= arguments.exit_when_idle_seconds)
+            {
+                logger->info("camera plugin stops: no reader for {} second(s)", idle_seconds);
+                break;
             }
         }
-        logger->info("camera plugin stops on signal {}", received);
         host.stop();
         return 0;
     }

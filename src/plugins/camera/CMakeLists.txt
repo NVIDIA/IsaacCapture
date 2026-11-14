@@ -7,6 +7,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     return()
 endif()
 
+# app/ copies the manifest next to the executable, which makes that directory one the plugin
+# manager can start the plugin from.
+set(CAMERA_PLUGIN_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/plugin.yaml")
+
 add_subdirectory(core)
 add_subdirectory(backends)
 add_subdirectory(app)

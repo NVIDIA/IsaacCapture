@@ -8,9 +8,11 @@
 #include <camera_reader/camera_reader.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <plugin_manager/plugin_manager.hpp>
 #include <sys/wait.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -18,6 +20,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -149,11 +153,20 @@ public:
         }
     }
 
-    // Waits for the process to end and returns its exit code, or -1 if it did not exit by itself.
-    int wait()
+    // Waits for the process to end and returns its exit code: -1 if a signal ended it, -2 if it
+    // was still running after `timeout`.
+    int wait(std::chrono::seconds timeout = 30s)
     {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
         int status = 0;
-        REQUIRE(::waitpid(m_pid, &status, 0) == m_pid);
+        while (::waitpid(m_pid, &status, WNOHANG) == 0)
+        {
+            if (std::chrono::steady_clock::now() > deadline)
+            {
+                return -2;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
         m_pid = -1;
         return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
@@ -187,6 +200,43 @@ std::optional<CameraReader> open_when_ready(const core::camera::PluginLocation& 
     }
     return std::nullopt;
 }
+
+bool wait_until(const std::function<bool()>& condition, std::chrono::seconds timeout = 20s)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!condition())
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    return true;
+}
+
+// A user's runtime and configuration directories for one test and the plugins it starts, with
+// one small synthetic camera named 'head' in the configuration file.
+struct UserDirectories
+{
+    TemporaryDirectory directory;
+    std::filesystem::path config_file = directory.path() / "config" / "isaaccapture" / "cameras.yaml";
+    std::filesystem::path default_socket = directory.path() / "run" / "isaaccapture" / "camera.sock";
+    ScopedEnvironment runtime{ "XDG_RUNTIME_DIR", (directory.path() / "run").string() };
+    ScopedEnvironment config_home{ "XDG_CONFIG_HOME", (directory.path() / "config").string() };
+
+    UserDirectories()
+    {
+        std::filesystem::create_directories(config_file.parent_path());
+        std::filesystem::create_directories(directory.path() / "run");
+        std::ofstream(config_file) << "cameras:\n"
+                                      "  head:\n"
+                                      "    backend: synthetic\n"
+                                      "    width: 160\n"
+                                      "    height: 120\n"
+                                      "    fps: 120\n";
+    }
+};
 
 // Reads whatever is still on its way; ends by throwing when the plugin's side has closed.
 void read_until_closed(CameraReader& reader)
@@ -370,6 +420,102 @@ TEST_CASE("a plugin without arguments serves its configuration file where reader
     REQUIRE(open_when_ready({ .instance = "third" }, "chest").has_value());
     REQUIRE(PluginProcess({ "--instance=fourth", "--auto" }).wait() == 1);
     REQUIRE(PluginProcess({ "--instance=fifth", "--config=" + (directory.path() / "missing.yaml").string() }).wait() == 1);
+}
+
+TEST_CASE("a plugin told to exit when idle leaves once its readers have", "[unit][camera_plugin][process]")
+{
+    TemporaryDirectory directory;
+    const std::string endpoint = directory.socket_path();
+    PluginProcess plugin({ "--endpoint=" + endpoint, "--camera=head:synthetic:width=64,height=48", "--exit-when-idle=2" });
+    {
+        std::optional<CameraReader> reader = open_when_ready({ .endpoint = endpoint }, "head");
+        REQUIRE(reader.has_value());
+        // With a reader connected it stays, for longer than its idle time.
+        const auto until = std::chrono::steady_clock::now() + 3s;
+        while (std::chrono::steady_clock::now() < until)
+        {
+            REQUIRE(reader->next(2s).has_value());
+        }
+    }
+    REQUIRE(plugin.wait() == 0);
+    REQUIRE_FALSE(std::filesystem::exists(endpoint));
+}
+
+TEST_CASE("a reader starts the plugin when none is running", "[unit][camera_plugin][process]")
+{
+    const UserDirectories user;
+    const core::camera::PluginLocation location{ .executable = CAMERA_PLUGIN_EXECUTABLE, .exit_when_idle_seconds = 2 };
+
+    // Two readers at the same moment each start a plugin. One plugin gets the endpoint and
+    // serves both readers; the other finds the endpoint taken and leaves.
+    std::array<std::optional<CameraReader>, 2> readers;
+    std::array<std::string, 2> errors;
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < readers.size(); ++i)
+    {
+        threads.emplace_back(
+            [&, i]
+            {
+                try
+                {
+                    readers[i] = CameraReader::open("head", {}, location);
+                }
+                catch (const std::exception& error)
+                {
+                    errors[i] = error.what();
+                }
+            });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+    for (std::size_t i = 0; i < readers.size(); ++i)
+    {
+        REQUIRE(errors[i].empty());
+        REQUIRE(readers[i].has_value());
+        const std::optional<FrameSet> frames = readers[i]->next(2s);
+        REQUIRE(frames.has_value());
+        require_synthetic(frames->image(0), 0);
+    }
+    REQUIRE(std::filesystem::is_socket(user.default_socket));
+
+    // The plugin does not outstay its readers.
+    readers[0].reset();
+    readers[1].reset();
+    REQUIRE(wait_until([&] { return !std::filesystem::exists(user.default_socket); }));
+
+    // Starting is the default but not forced, and only a plugin that exists can be started.
+    REQUIRE_THROWS_WITH(
+        CameraReader::open("head", {}, { .start_if_absent = false }), ContainsSubstring("no camera plugin answers on"));
+    REQUIRE_THROWS_WITH(CameraReader::open("head", {}, { .executable = "/nonexistent/camera_plugin" }),
+                        ContainsSubstring("there is no camera_plugin to start at '/nonexistent/camera_plugin'"));
+    REQUIRE_FALSE(std::filesystem::exists(user.default_socket));
+
+    // A plugin that starts and has no camera to serve is reported, not waited for.
+    std::filesystem::remove(user.config_file);
+    REQUIRE_THROWS_WITH(CameraReader::open("head", {}, location), ContainsSubstring("it stopped before it served"));
+}
+
+TEST_CASE("the plugin manager can start the camera plugin", "[unit][camera_plugin][process]")
+{
+    TemporaryDirectory directory;
+    const std::string endpoint = directory.socket_path();
+
+    // A plugin directory is a manifest next to its executable; the build tree has one.
+    core::PluginManager manager({ std::filesystem::path(CAMERA_PLUGIN_DIRECTORY).parent_path().string() });
+    const std::vector<std::string> names = manager.get_plugin_names();
+    REQUIRE(std::find(names.begin(), names.end(), "camera") != names.end());
+    {
+        const std::unique_ptr<core::Plugin> plugin = manager.start(
+            "camera", "camera_test", { "--endpoint=" + endpoint, "--camera=head:synthetic:width=64,height=48" });
+        std::optional<CameraReader> reader = open_when_ready({ .endpoint = endpoint }, "head");
+        REQUIRE(reader.has_value());
+        REQUIRE(reader->next(2s).has_value());
+        REQUIRE_NOTHROW(plugin->check_health());
+    }
+    // The handle going away stops the plugin, which removes its socket file on the way out.
+    REQUIRE_FALSE(std::filesystem::exists(endpoint));
 }
 
 TEST_CASE("the plugin refuses arguments it cannot use", "[unit][camera_plugin][process]")

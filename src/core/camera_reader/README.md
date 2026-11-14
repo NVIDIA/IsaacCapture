@@ -31,6 +31,13 @@ while (auto frames = reader.next(std::chrono::seconds(1)))
   endpoint, the group does not exist, or the subscription does not fit the pool.
 - **Which plugin.** By default the reader looks for this user's plugin on its default
   endpoint. A `PluginLocation` names another instance of the plugin, or a socket path.
+- **If no plugin is running, the reader starts one** and waits for it: the `camera_plugin`
+  next to the program, or on `PATH`, or the one named in `PluginLocation`. The plugin started
+  this way belongs to nobody, serves any other reader that comes along, and exits by itself
+  once no reader has been connected for a while (30 seconds unless told otherwise). When
+  several readers start one at the same moment, one plugin gets the endpoint and serves them
+  all. Set `start_if_absent` to false to be told instead; a plugin behind an explicit socket
+  path is never started.
 - **One reader reads one group.** For two groups, open two readers; `descriptor()` lets an
   application wait on several at once.
 - A `FrameSet` may be given back from another thread than the one that calls `next`, and

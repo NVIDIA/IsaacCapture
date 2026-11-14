@@ -42,11 +42,23 @@ public:
     using CameraReaderError::CameraReaderError;
 };
 
-// Which camera plugin to read from. Left empty, it is this user's plugin on this machine.
+// Which camera plugin to read from. Left as it is, it is this user's plugin on this machine,
+// started if it is not running.
 struct PluginLocation
 {
     std::string endpoint; // a socket path; empty for the default endpoint of `instance`
     std::string instance; // a named plugin instance; empty for the default one
+
+    // When no plugin answers on a default endpoint, start one and wait for it. A plugin behind
+    // an explicit `endpoint` is somebody else's to start.
+    bool start_if_absent = true;
+
+    // The camera_plugin to start; empty for the one next to this program, or on PATH.
+    std::string executable;
+
+    // A plugin started this way exits once no reader has been connected for this long;
+    // 0 keeps it running.
+    std::uint32_t exit_when_idle_seconds = 30;
 };
 
 /**
@@ -141,14 +153,15 @@ class CameraReader
 public:
     /**
      * @brief What a camera plugin publishes.
-     * @throws CameraReaderError if no plugin answers or the plugin refuses this reader.
+     * @throws CameraReaderError if no plugin answers and none could be started, or the plugin
+     * refuses this reader.
      */
     static std::vector<GroupDescription> list(const PluginLocation& plugin = {});
 
     /**
      * @brief Subscribe to one group. A reader for a second group is a second CameraReader.
-     * @throws CameraReaderError if no plugin answers or the plugin refuses the subscription;
-     * the message says why.
+     * @throws CameraReaderError if no plugin answers and none could be started, or the plugin
+     * refuses the subscription; the message says why.
      */
     static CameraReader open(const std::string& group,
                              const ReaderOptions& options = {},

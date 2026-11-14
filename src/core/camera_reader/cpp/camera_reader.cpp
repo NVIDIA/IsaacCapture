@@ -3,6 +3,8 @@
 
 #include "inc/camera_reader/camera_reader.hpp"
 
+#include "plugin_launcher.hpp"
+
 #include <camera_ipc/endpoint_path.hpp>
 #include <camera_ipc/host_pool.hpp>
 #include <camera_ipc/message_socket.hpp>
@@ -14,6 +16,7 @@
 #include <deque>
 #include <exception>
 #include <mutex>
+#include <poll.h>
 #include <system_error>
 #include <utility>
 #include <variant>
@@ -55,30 +58,8 @@ std::optional<Received> receive(MessageSocket& socket, std::span<std::byte> buff
     }
 }
 
-MessageSocket connect_to(const PluginLocation& plugin)
-{
-    if (!plugin.endpoint.empty() && !plugin.instance.empty())
-    {
-        throw CameraReaderError("a camera plugin is named by its endpoint or by its instance, not both");
-    }
-    std::string endpoint = plugin.endpoint;
-    try
-    {
-        if (endpoint.empty())
-        {
-            endpoint = default_endpoint_path(plugin.instance);
-        }
-        return MessageSocket::connect(endpoint);
-    }
-    catch (const std::system_error& error)
-    {
-        throw CameraReaderError("no camera plugin answers on '" + endpoint + "': " + error.code().message());
-    }
-    catch (const std::invalid_argument& error)
-    {
-        throw CameraReaderError(error.what());
-    }
-}
+// How long a plugin that this reader started gets until it answers.
+constexpr std::chrono::seconds START_TIMEOUT(20);
 
 // Says hello and returns what the plugin publishes.
 std::vector<GroupDescription> greet(MessageSocket& socket, WireEncoder& encoder, std::span<std::byte> buffer)
@@ -107,6 +88,114 @@ std::vector<GroupDescription> greet(MessageSocket& socket, WireEncoder& encoder,
             }
             return std::move(welcome->groups);
         }
+    }
+}
+
+// A connection that got through the handshake.
+struct Greeted
+{
+    MessageSocket socket;
+    std::vector<GroupDescription> groups;
+};
+
+// Whether the plugin behind `alive` is gone, waiting up to `wait` to find out.
+bool plugin_is_gone(const UniqueFd& alive, std::chrono::milliseconds wait)
+{
+    pollfd entry = { alive.get(), POLLIN, 0 };
+    return ::poll(&entry, 1, static_cast<int>(wait.count())) > 0;
+}
+
+// Starts a plugin for `endpoint` and connects to it once it serves.
+Greeted start_and_connect(const PluginLocation& plugin,
+                          const std::string& endpoint,
+                          WireEncoder& encoder,
+                          std::span<std::byte> buffer)
+{
+    const std::string nobody = "no camera plugin answers on '" + endpoint + "'";
+    const std::string executable = find_plugin_executable(plugin.executable);
+    if (executable.empty())
+    {
+        throw CameraReaderError(
+            nobody + ", and there is no camera_plugin to start" +
+            (plugin.executable.empty() ? " next to this program or on PATH" : " at '" + plugin.executable + "'"));
+    }
+    std::vector<std::string> arguments = { "--exit-when-idle=" + std::to_string(plugin.exit_when_idle_seconds) };
+    if (!plugin.instance.empty())
+    {
+        arguments.push_back("--instance=" + plugin.instance);
+    }
+    UniqueFd alive;
+    try
+    {
+        alive = launch_plugin(executable, arguments);
+    }
+    catch (const std::system_error& error)
+    {
+        throw CameraReaderError(nobody + ", and '" + executable + "' could not be started: " + error.code().message());
+    }
+
+    // Another reader may have started a plugin at the same moment. Only one of the two plugins
+    // gets the endpoint, so this one being gone does not mean nobody serves: keep trying.
+    const auto deadline = std::chrono::steady_clock::now() + START_TIMEOUT;
+    std::string last_failure = "it did not start serving";
+    bool gone = false;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        try
+        {
+            MessageSocket socket = MessageSocket::connect(endpoint);
+            std::vector<GroupDescription> groups = greet(socket, encoder, buffer);
+            return { std::move(socket), std::move(groups) };
+        }
+        catch (const CameraReaderError& error)
+        {
+            last_failure = error.what();
+        }
+        catch (const std::system_error&)
+        {
+            if (gone)
+            {
+                break; // the plugin ended and still nobody listens
+            }
+        }
+        gone = gone || plugin_is_gone(alive, std::chrono::milliseconds(20));
+        if (gone)
+        {
+            last_failure = "it stopped before it served; its log says why";
+        }
+    }
+    throw CameraReaderError(nobody + ". '" + executable + "' was started for it, but " + last_failure);
+}
+
+// Connects to the plugin, starting one first when that is wanted and needed, and says hello.
+Greeted connect_to(const PluginLocation& plugin, WireEncoder& encoder, std::span<std::byte> buffer)
+{
+    if (!plugin.endpoint.empty() && !plugin.instance.empty())
+    {
+        throw CameraReaderError("a camera plugin is named by its endpoint or by its instance, not both");
+    }
+    std::string endpoint = plugin.endpoint;
+    try
+    {
+        if (endpoint.empty())
+        {
+            endpoint = default_endpoint_path(plugin.instance);
+        }
+        MessageSocket socket = MessageSocket::connect(endpoint);
+        std::vector<GroupDescription> groups = greet(socket, encoder, buffer);
+        return { std::move(socket), std::move(groups) };
+    }
+    catch (const std::system_error& error)
+    {
+        if (plugin.endpoint.empty() && plugin.start_if_absent)
+        {
+            return start_and_connect(plugin, endpoint, encoder, buffer);
+        }
+        throw CameraReaderError("no camera plugin answers on '" + endpoint + "': " + error.code().message());
+    }
+    catch (const std::invalid_argument& error)
+    {
+        throw CameraReaderError(error.what());
     }
 }
 
@@ -262,17 +351,16 @@ void FrameSet::release() noexcept
 
 std::vector<GroupDescription> CameraReader::list(const PluginLocation& plugin)
 {
-    MessageSocket socket = connect_to(plugin);
     WireEncoder encoder;
     std::vector<std::byte> buffer(MAX_WIRE_MESSAGE_BYTES);
-    return greet(socket, encoder, buffer);
+    return connect_to(plugin, encoder, buffer).groups;
 }
 
 CameraReader CameraReader::open(const std::string& group, const ReaderOptions& options, const PluginLocation& plugin)
 {
-    auto state = std::make_shared<detail::ReaderState>(connect_to(plugin));
     WireEncoder encoder;
-    greet(state->socket, encoder, state->buffer);
+    std::vector<std::byte> handshake_buffer(MAX_WIRE_MESSAGE_BYTES);
+    auto state = std::make_shared<detail::ReaderState>(connect_to(plugin, encoder, handshake_buffer).socket);
 
     if (state->socket.send(encoder.encode(SubscribeMessage{ group, options })) != SendStatus::SENT)
     {
