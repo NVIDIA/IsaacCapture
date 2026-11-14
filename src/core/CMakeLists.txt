@@ -19,6 +19,15 @@ add_subdirectory(oxr_utils)
 # Build Plugin Manager
 add_subdirectory(plugin_manager)
 
+# Camera interface: which pool slot holds which frame, and who may still read it
+# (standard library only)
+add_subdirectory(camera_core)
+
+# Camera interface: shared memory and the socket between processes
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera_ipc)
+endif()
+
 # Build OXR library (depends on oxr_utils for types)
 add_subdirectory(oxr)
 
