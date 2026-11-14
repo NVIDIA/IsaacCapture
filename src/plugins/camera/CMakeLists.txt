@@ -10,5 +10,6 @@ endif()
 add_subdirectory(core)
 add_subdirectory(backends)
 add_subdirectory(app)
+add_subdirectory(bench)
 
 install(FILES plugin.yaml README.md DESTINATION plugins/camera)

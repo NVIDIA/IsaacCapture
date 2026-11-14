@@ -60,6 +60,12 @@ public:
     std::size_t camera_count() const;
     std::size_t reader_count() const;
 
+    /**
+     * @brief Log what each camera did since the previous call: frame sets published, and as a
+     * warning, frame sets it had to drop for lack of a free slot and events a reader did not take.
+     */
+    void log_activity();
+
     // For counters and descriptions; publishing goes through each camera's FrameOutput.
     const core::camera::Publisher& publisher() const;
 

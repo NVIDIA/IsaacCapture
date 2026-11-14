@@ -6,9 +6,11 @@
 #include <camera_plugin_backends/backends.hpp>
 #include <log_bridge/logger.hpp>
 
+#include <cerrno>
 #include <charconv>
 #include <csignal>
 #include <cstdint>
+#include <ctime>
 #include <exception>
 #include <iostream>
 #include <optional>
@@ -33,6 +35,9 @@ constexpr std::string_view USAGE =
     "                    backend's options; give it once per camera\n"
     "  --slots=N         frames kept per stream (default 8); a reader with a larger window needs more\n"
     "  --list-backends   print the backends this build has and exit\n";
+
+// How often the plugin logs what each camera did.
+constexpr time_t ACTIVITY_LOG_SECONDS = 10;
 
 // The value of `--name=value` in `arg`, or nothing when `arg` is another flag.
 std::optional<std::string_view> flag_value(std::string_view arg, std::string_view name)
@@ -154,8 +159,16 @@ int main(int argc, char** argv)
         host.start();
         logger->info("camera plugin serves {} camera(s) on '{}'", host.camera_count(), arguments.endpoint);
 
+        // Sleeps until a signal says stop, waking now and then to log what the cameras did.
+        const timespec activity_interval = { ACTIVITY_LOG_SECONDS, 0 };
         int received = 0;
-        sigwait(&stop_signals, &received);
+        while ((received = sigtimedwait(&stop_signals, nullptr, &activity_interval)) <= 0)
+        {
+            if (errno == EAGAIN)
+            {
+                host.log_activity();
+            }
+        }
         logger->info("camera plugin stops on signal {}", received);
         host.stop();
         return 0;

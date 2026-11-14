@@ -7,6 +7,7 @@
 #include <camera_ipc/host_pool.hpp>
 #include <log_bridge/logger.hpp>
 
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -65,8 +66,10 @@ struct Camera
 {
     std::unique_ptr<CameraSource> source;
     std::string id;
+    GroupId group = 0;
     std::vector<std::unique_ptr<HostPool>> pools; // one per stream
     std::unique_ptr<PoolOutput> output;
+    core::camera::PublisherStats logged; // the counters at the previous log_activity()
 };
 
 } // namespace
@@ -99,6 +102,7 @@ public:
     // Stable addresses: an output points at its camera's pools.
     std::vector<std::unique_ptr<Camera>> cameras;
     bool started = false;
+    std::chrono::steady_clock::time_point activity_logged = std::chrono::steady_clock::now();
     std::shared_ptr<spdlog::logger> logger;
 };
 
@@ -130,6 +134,7 @@ void CameraHost::add_camera(std::unique_ptr<CameraSource> source, std::uint32_t 
     camera->id = description.id;
     // Refuses a description that is not usable before any memory is allocated for it.
     const GroupId group = m_impl->publisher.add_group(description);
+    camera->group = group;
     std::vector<int> descriptors;
     for (const StreamDescription& stream : description.streams)
     {
@@ -189,6 +194,31 @@ std::size_t CameraHost::reader_count() const
 const Publisher& CameraHost::publisher() const
 {
     return m_impl->publisher;
+}
+
+void CameraHost::log_activity()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(now - m_impl->activity_logged).count();
+    m_impl->activity_logged = now;
+    for (const auto& camera : m_impl->cameras)
+    {
+        const core::camera::PublisherStats stats = m_impl->publisher.stats(camera->group);
+        const std::uint64_t published = stats.published - camera->logged.published;
+        const std::uint64_t dropped = stats.no_free_slot - camera->logged.no_free_slot;
+        const std::uint64_t unsent = stats.send_failures - camera->logged.send_failures;
+        camera->logged = stats;
+        m_impl->logger->info("camera '{}': {} frame sets in {:.1f} s ({:.1f} per second), {} reader(s) connected",
+                             camera->id, published, seconds, seconds > 0.0 ? published / seconds : 0.0,
+                             m_impl->endpoint.reader_count());
+        if (dropped != 0 || unsent != 0)
+        {
+            m_impl->logger->warn(
+                "camera '{}': dropped {} frame set(s) for lack of a free slot; {} event(s) "
+                "were not taken by a reader",
+                camera->id, dropped, unsent);
+        }
+    }
 }
 
 } // namespace plugins::camera
