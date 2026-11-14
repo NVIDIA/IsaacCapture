@@ -3,10 +3,12 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-# How camera frames cross between processes on one machine: pools of shared host memory that
-# readers can only map read-only. Linux only.
+# How camera frames and messages cross between processes on one machine: pools of shared host
+# memory that readers can only map read-only, and a socket that carries whole messages with
+# file descriptors. Linux only.
 add_library(camera_ipc STATIC
     host_pool.cpp
+    message_socket.cpp
 )
 
 target_include_directories(camera_ipc INTERFACE

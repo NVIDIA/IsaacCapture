@@ -22,7 +22,7 @@ add_subdirectory(plugin_manager)
 # Camera capture core (standard library only)
 add_subdirectory(camera_core)
 
-# Camera frames between processes (shared host memory)
+# Camera frames and messages between processes (shared host memory, descriptor passing)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(camera_ipc)
 endif()

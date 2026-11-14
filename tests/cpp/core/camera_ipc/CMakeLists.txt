@@ -3,13 +3,17 @@
 
 cmake_minimum_required(VERSION 3.20)
 
+find_package(Threads REQUIRED)
+
 add_executable(camera_ipc_tests
     test_host_pool.cpp
+    test_message_socket.cpp
 )
 
 target_link_libraries(camera_ipc_tests PRIVATE
     camera::camera_ipc
     Catch2::Catch2WithMain
+    Threads::Threads
 )
 
 message(STATUS "camera_ipc_tests target enabled with Catch2")
