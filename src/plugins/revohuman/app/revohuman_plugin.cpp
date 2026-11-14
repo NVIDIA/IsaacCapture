@@ -95,10 +95,12 @@ std::array<PluginDeviceStatusEntry, 3> hand_status(Hand hand, const HandHealth& 
     };
     if (h.tactile_live)
         tactile_row = { tactile_row.path, PluginDeviceState_CONNECTED, PluginDeviceReason_NONE, {} };
-    else if (h.tactile_skip == TactileSkip::NoShape || h.tactile_skip == TactileSkip::NoTactile)
+    else if (h.tactile_skip == TactileSkip::NoTactile)
         tactile_row = { tactile_row.path, PluginDeviceState_DISABLED, PluginDeviceReason_DISABLED_BY_CONFIGURATION,
-                        h.tactile_skip == TactileSkip::NoTactile ? "this glove has no tactile sensors" :
-                                                                   "the C SDK has no taxel layout for this glove" };
+                        "this glove has no tactile sensors" };
+    else if (h.tactile_skip == TactileSkip::NoShape) // Not expected with the C SDK release the plugin pins.
+        tactile_row = { tactile_row.path, PluginDeviceState_FAILED, PluginDeviceReason_DEVICE_ERROR,
+                        "the C SDK has no taxel layout for this glove" };
     else if (h.glove_live && h.tactile_skip == TactileSkip::Uncalibrated)
         tactile_row = { tactile_row.path, PluginDeviceState_DEGRADED, PluginDeviceReason_CALIBRATION_FAILED,
                         "uncalibrated" };

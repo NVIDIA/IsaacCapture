@@ -219,9 +219,10 @@ private:
 
     static constexpr std::int64_t kHeldPushPeriodNs = 5'000'000; //!< The glove's sample period.
 
-    static std::shared_ptr<spdlog::logger> logger()
+    static const std::shared_ptr<spdlog::logger>& logger()
     {
-        return isaaccapture::Logger::get("isaaccapture.plugins.revohuman.HandPipeline");
+        static const auto instance = isaaccapture::Logger::get("isaaccapture.plugins.revohuman.HandPipeline");
+        return instance;
     }
 
     void hold_until_first_sample(std::int64_t now_ns)

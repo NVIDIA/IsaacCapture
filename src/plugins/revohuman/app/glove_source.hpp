@@ -9,9 +9,11 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <revohuman.h>
 #include <string>
+#include <variant>
 
 namespace plugins
 {
@@ -45,7 +47,6 @@ class GloveSource
 public:
     //! Throws std::runtime_error when the SDK cannot start. Gloves that never open are reported, not thrown.
     GloveSource();
-    ~GloveSource();
     GloveSource(const GloveSource&) = delete;
     GloveSource& operator=(const GloveSource&) = delete;
 
@@ -57,28 +58,32 @@ public:
         for (const Hand hand : kHands)
         {
             Pipeline& pipeline = *pipelines[index_of(hand)];
-            const Stream stream = refresh(hand, now_ns);
-            if (stream == Stream::None)
-                continue;
-            if (stream == Stream::New)
+            if (const std::optional<Opened> opened = refresh(hand, now_ns))
             {
-                const std::optional<HandMeta> meta = adopt(hand);
+                const std::optional<HandMeta> meta = adopt(hand, *opened);
                 pipeline.reset();
                 if (meta)
                     pipeline.set_meta(*meta);
             }
+            if (!streaming(hand))
+                continue;
             watch_tare(hand, now_ns);
             const std::int64_t received_ns = core::os_monotonic_now_ns();
             // Tactile first: the SDK queues a split sample before the frames that carry it.
-            std::uint32_t generation = 0;
-            std::optional<TactileSample> tactile;
-            for (std::uint32_t n = 0; n < kTactileQueueSize && receive_tactile(hand, generation, tactile); ++n)
-                if (tactile)
-                    pipeline.on_tactile(generation, *tactile, received_ns);
-            std::optional<GloveSample> sample;
-            for (std::uint32_t n = 0; n < kQueueSize && receive(hand, sample); ++n)
-                if (sample)
-                    pipeline.on_glove(*sample, received_ns);
+            for (std::uint32_t n = 0; n < kTactileQueueSize; ++n)
+            {
+                const std::optional<SplitTactile> split = receive_tactile(hand);
+                if (!split)
+                    break;
+                pipeline.on_tactile(split->generation, split->tactile, received_ns);
+            }
+            for (std::uint32_t n = 0; n < kQueueSize; ++n)
+            {
+                const std::optional<GloveSample> sample = receive(hand);
+                if (!sample)
+                    break;
+                pipeline.on_glove(*sample, received_ns);
+            }
         }
     }
     //! nullopt while the hand's glove streams normally.
@@ -96,12 +101,6 @@ private:
     //! Frames of a new stream with tactile but no split sample before its tactile is taken from the frames (0.5 s).
     static constexpr std::uint32_t kSplitWaitFrames = 100;
 
-    enum class Stream
-    {
-        None, //!< Not streaming, or a new stream whose identity could not be read yet.
-        Adopted,
-        New, //!< Streaming, and not adopted yet.
-    };
     enum class TactileFrom
     {
         Undecided, //!< No split sample yet; the frames' tactile is not used.
@@ -112,9 +111,9 @@ private:
     struct AdoptedStream
     {
         std::uint32_t open_count = 0; //!< The SDK's open count of the stream, from 1.
-        std::optional<HandModel> model;
+        //! Its hand model, or why the model cannot be used, when its frames are dropped. None before a stream.
+        std::variant<std::monostate, HandModel, std::string> model;
         std::string product_code;
-        std::optional<std::string> unusable; //!< Why its hand model cannot be used; its frames are dropped.
         bool has_tactile = false;
         std::uint64_t rejected = 0;
         std::uint64_t tactile_rejected = 0;
@@ -126,8 +125,6 @@ private:
     struct Slot
     {
         RhAutoHandStatus status = RH_STRUCT_INIT(RhAutoHandStatus);
-        RhProductIdentity identity = RH_STRUCT_INIT(RhProductIdentity); //!< Of the stream refresh() found new.
-        RhGloveInfo info = RH_STRUCT_INIT(RhGloveInfo); //!< Of the stream refresh() found new.
         AdoptedStream adopted;
         std::string logged_error; //!< The last open error logged, so retries with the same error stay quiet.
         std::uint64_t dropped_logged = 0; //!< Of the stream in the status.
@@ -137,24 +134,55 @@ private:
         std::optional<std::uint32_t> tare_open;
     };
 
-    Stream refresh(Hand hand, std::int64_t now_ns);
+    //! A newly opened stream, as refresh() found it.
+    struct Opened
+    {
+        RhProductIdentity identity = RH_STRUCT_INIT(RhProductIdentity);
+        RhGloveInfo info = RH_STRUCT_INIT(RhGloveInfo);
+    };
+    //! A split tactile sample of the adopted stream.
+    struct SplitTactile
+    {
+        std::uint32_t generation = 0;
+        TactileSample tactile;
+    };
+    //! rh_init and the SDK log forwarding, for as long as the source lives.
+    struct Sdk
+    {
+        Sdk();
+        ~Sdk();
+        Sdk(const Sdk&) = delete;
+        Sdk& operator=(const Sdk&) = delete;
+    };
+    struct CloseKit
+    {
+        //! Waits for an open in progress, then closes every subscription and kit.
+        void operator()(RhAutoKit* kit) const
+        {
+            rh_autokit_close(kit);
+        }
+    };
+
+    //! Reads and reports the hand's status. Set for a stream that is not adopted yet; a new stream whose identity
+    //! could not be read yet is tried again on the next call.
+    std::optional<Opened> refresh(Hand hand, std::int64_t now_ns);
     void report(Hand hand, const RhAutoHandStatus& now, std::int64_t now_ns);
+    //! The hand streams on the adopted stream.
+    bool streaming(Hand hand) const;
     //! Logs what changed in the adopted stream's tactile tare.
     void watch_tare(Hand hand, std::int64_t now_ns);
     //! The HandMeta of the newly opened stream, or nullopt when its hand model cannot be used.
-    std::optional<HandMeta> adopt(Hand hand);
-    //! Pops one frame of the adopted stream, false when there is none; @p sample is set when the frame is usable.
-    bool receive(Hand hand, std::optional<GloveSample>& sample);
-    //! Pops one split tactile sample like receive().
-    bool receive_tactile(Hand hand, std::uint32_t& generation, std::optional<TactileSample>& tactile);
-    //! The forces view newtons_ until the next call.
-    TactileSample to_sample(const RhTactile& tactile);
+    std::optional<HandMeta> adopt(Hand hand, const Opened& opened);
+    //! The next usable frame of the adopted stream; unusable ones are dropped. nullopt when there is none.
+    std::optional<GloveSample> receive(Hand hand);
+    //! The next usable split tactile sample, like receive().
+    std::optional<SplitTactile> receive_tactile(Hand hand);
     //! Whether this frame's tactile is the stream's tactile (see TactileFrom).
     bool tactile_on_frames(Hand hand);
 
-    RhAutoKit* kit_ = nullptr;
+    Sdk sdk_;
+    std::unique_ptr<RhAutoKit, CloseKit> kit_; //!< After sdk_, so it is closed before rh_shutdown.
     std::array<Slot, 2> slots_;
-    std::array<float, RH_TACTILE_MAX_POINTS> newtons_{};
 };
 
 } // namespace revohuman

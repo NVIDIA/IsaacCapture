@@ -189,8 +189,9 @@ is no layout file or option. Each taxel is bound rigidly to the OpenXR joint its
 SDK link moves with, with its +Z along the outward normal. That joint is rigid
 on the link, so the skinned taxels stay on the SDK's taxels as the fingers bend.
 The log names the taxel count and whether the metadata was built; the debug log
-names the SDK's layout source. When the SDK has no layout, the plugin logs why
-and pushes no tactile data; the other outputs are unaffected.
+names the SDK's layout source. When the SDK has no layout, the plugin warns why,
+pushes no tactile data and reports the hand's tactile as failed; the other
+outputs are unaffected.
 
 A force sample is pushed only while it is calibrated, recent and newer than the
 last one, and its status names the reason when it is not. Consumers must check
@@ -222,6 +223,7 @@ Troubleshooting
        to, as from a C SDK release other than the one the plugin's CMake
        pins. These are not retried.
    * - Hands appear but a downstream client sees no tactile data
-     - A P1 glove has no tactile sensors. Otherwise check the start-up log for
-       why there is no ``TactileMetadata`` (an SDK without the taxel layout),
-       and the tactile status for the reason a sample was not pushed.
+     - A P1 glove has no tactile sensors. Otherwise check the tactile status:
+       failed means there is no ``TactileMetadata`` (the start-up log warns
+       why, such as an SDK without the glove's taxel layout); otherwise it names
+       the reason a sample was not pushed.

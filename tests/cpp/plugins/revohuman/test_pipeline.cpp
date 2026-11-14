@@ -8,7 +8,6 @@
 #include <schema/tactile_array_generated.h>
 
 #include <algorithm>
-#include <array>
 #include <memory>
 #include <span>
 #include <string>
@@ -146,13 +145,13 @@ GloveSample glove(std::int64_t t_ns)
     return s;
 }
 
-// Newtons per taxel; TactileSample only views them, so they outlive every sample.
-constexpr std::array<float, 2> kTwoTaxels{ 1.5f, 0.0f };
-constexpr std::array<float, 1> kOneTaxel{ 0.001f };
+// Newtons per taxel.
+const std::vector<float> kTwoTaxels{ 1.5f, 0.0f };
+const std::vector<float> kOneTaxel{ 0.001f };
 
-GloveSample with_tactile(GloveSample s, std::uint32_t tick, std::int64_t t_ns, std::span<const float> newtons = kTwoTaxels)
+GloveSample with_tactile(GloveSample s, std::uint32_t tick, std::int64_t t_ns, std::vector<float> newtons = kTwoTaxels)
 {
-    s.tactile = TactileSample{ tick, t_ns, true, true, newtons };
+    s.tactile = TactileSample{ tick, t_ns, true, true, std::move(newtons) };
     return s;
 }
 

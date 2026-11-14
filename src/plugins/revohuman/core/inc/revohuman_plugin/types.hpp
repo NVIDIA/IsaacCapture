@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <optional>
 #include <revohuman.h>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -64,7 +63,7 @@ struct TactileSample
     std::optional<std::int64_t> sample_mono_ns;
     bool valid = false;
     bool calibrated = false; //!< The SDK reports forces, not raw counts.
-    std::span<const float> values; //!< Newtons per taxel when calibrated; a view valid for the call it is given to.
+    std::vector<float> values; //!< Newtons per taxel when calibrated.
 };
 
 struct GloveSample
