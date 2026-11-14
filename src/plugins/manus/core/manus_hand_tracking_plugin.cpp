@@ -38,6 +38,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -123,8 +125,65 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
     return data;
 }
 
+// MANUS_GLOVE_AIM_TO_WRIST_{LEFT,RIGHT}="px,py,pz,qx,qy,qz,qw" (meters, then quaternion) replaces that hand's
+// controller-to-wrist offset
+XrPosef aim_to_wrist_from_env(const char* name, const XrPosef& fallback, spdlog::logger& logger)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value == '\0')
+    {
+        return fallback;
+    }
+
+    XrPosef pose{};
+    int consumed = -1;
+    // The spaces accept whitespace around each comma; %n then proves that only
+    // whitespace follows the seventh value.
+    const int parsed =
+        std::sscanf(value, "%f ,%f ,%f ,%f ,%f ,%f ,%f %n", &pose.position.x, &pose.position.y, &pose.position.z,
+                    &pose.orientation.x, &pose.orientation.y, &pose.orientation.z, &pose.orientation.w, &consumed);
+    if (parsed != 7 || consumed < 0 || value[consumed] != '\0')
+    {
+        logger.warn("Ignoring {}='{}': expected px,py,pz,qx,qy,qz,qw; using the built-in offset", name, value);
+        return fallback;
+    }
+
+    const std::array<float, 7> components{ pose.position.x,    pose.position.y,    pose.position.z,
+                                           pose.orientation.x, pose.orientation.y, pose.orientation.z,
+                                           pose.orientation.w };
+    if (!std::all_of(components.begin(), components.end(), [](float c) { return std::isfinite(c); }))
+    {
+        logger.warn("Ignoring {}='{}': values must be finite; using the built-in offset", name, value);
+        return fallback;
+    }
+
+    XrQuaternionf& q = pose.orientation;
+    const double norm = std::sqrt(static_cast<double>(q.x) * q.x + static_cast<double>(q.y) * q.y +
+                                  static_cast<double>(q.z) * q.z + static_cast<double>(q.w) * q.w);
+    if (norm < 1e-6f)
+    {
+        logger.warn("Ignoring {}='{}': the quaternion is zero; using the built-in offset", name, value);
+        return fallback;
+    }
+    // Rounding keeps a unit quaternion's norm well inside this band; a value
+    // written in XrPosef order (quaternion first) usually lands outside it.
+    if (std::abs(norm - 1.0f) > 0.05f)
+    {
+        logger.warn("{}: quaternion norm is {:.3f}, normalizing it; check the order is px,py,pz,qx,qy,qz,qw", name, norm);
+    }
+    q.x /= norm;
+    q.y /= norm;
+    q.z /= norm;
+    q.w /= norm;
+
+    logger.info("{} overrides the built-in controller-to-wrist offset: {},{},{},{},{},{},{}", name, pose.position.x,
+                pose.position.y, pose.position.z, q.x, q.y, q.z, q.w);
+    return pose;
+}
+
 } // anonymous namespace
 
+// Controller aim pose -> wrist joint, used unless aim_to_wrist_from_env() finds an override.
 static constexpr XrPosef kLeftHandOffset = { { -0.744f, -0.445f, -0.282f, 0.411f }, { -0.072f, -0.001f, -0.003f } };
 static constexpr XrPosef kRightHandOffset = { { -0.744f, 0.445f, 0.282f, 0.411f }, { 0.072f, -0.001f, -0.003f } };
 
@@ -358,6 +417,9 @@ void ManusTracker::initialize() noexcept(false)
 
         if (m_config.human)
         {
+            m_left_aim_to_wrist = aim_to_wrist_from_env("MANUS_GLOVE_AIM_TO_WRIST_LEFT", kLeftHandOffset, *m_logger);
+            m_right_aim_to_wrist = aim_to_wrist_from_env("MANUS_GLOVE_AIM_TO_WRIST_RIGHT", kRightHandOffset, *m_logger);
+
             // Create ControllerTracker unconditionally; HandTracker requires
             // XR_EXT_hand_tracking which is optional — only add it when the runtime
             // advertises support so xrCreateInstance does not fail with
@@ -1263,7 +1325,7 @@ bool ManusTracker::get_controller_wrist_pose(bool is_left, XrPosef& out_wrist_po
         return false;
     }
 
-    XrPosef offset_pose = is_left ? kLeftHandOffset : kRightHandOffset;
+    const XrPosef& offset_pose = is_left ? m_left_aim_to_wrist : m_right_aim_to_wrist;
     out_wrist_pose = oxr_utils::multiply_poses(raw_pose, offset_pose);
     return true;
 }

@@ -295,6 +295,25 @@ actively tracked wrist pose; otherwise it falls back to the controller pose.
    hand-tracking–to–controller switching to avoid unexpected source changes
    mid-session.
 
+Controller offsets
+~~~~~~~~~~~~~~~~~~
+
+When the wrist comes from a controller, the plugin applies a fixed per-hand
+offset from the controller's aim pose to the wrist. To use a different
+controller or mount, override it in the environment that starts the plugin:
+
+.. code-block:: bash
+
+   export MANUS_GLOVE_AIM_TO_WRIST_LEFT="px,py,pz,qx,qy,qz,qw"
+   export MANUS_GLOVE_AIM_TO_WRIST_RIGHT="px,py,pz,qx,qy,qz,qw"
+
+Each value is the wrist pose in the controller's aim frame: position in
+meters, then an ``(x, y, z, w)`` quaternion. For mirror-image mounts, the left
+value is the right one with ``px``, ``qy`` and ``qz`` negated. A plugin started
+by ``TeleopSession`` inherits these variables. The plugin logs each override it
+applies; a value it cannot use is reported as a warning and the built-in offset
+stays in effect.
+
 Troubleshooting
 ---------------
 
