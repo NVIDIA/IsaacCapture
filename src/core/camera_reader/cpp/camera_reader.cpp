@@ -1,0 +1,371 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include "inc/camera_reader/camera_reader.hpp"
+
+#include <camera_ipc/endpoint_path.hpp>
+#include <camera_ipc/host_pool.hpp>
+#include <camera_ipc/message_socket.hpp>
+#include <camera_protocol/messages.hpp>
+
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <deque>
+#include <exception>
+#include <mutex>
+#include <system_error>
+#include <utility>
+#include <variant>
+
+namespace core::camera
+{
+
+namespace
+{
+
+// How long the plugin gets to answer the handshake and the subscription.
+constexpr std::chrono::milliseconds ANSWER_TIMEOUT(2000);
+
+struct Received
+{
+    ProtocolMessage message;
+    std::vector<UniqueFd> descriptors;
+};
+
+// Waits for one message. Nothing on timeout.
+std::optional<Received> receive(MessageSocket& socket, std::span<std::byte> buffer, std::chrono::milliseconds timeout)
+{
+    ReceivedMessage received = socket.receive(buffer, timeout);
+    if (received.status == ReceiveStatus::TIMEOUT)
+    {
+        return std::nullopt;
+    }
+    if (received.status == ReceiveStatus::CLOSED)
+    {
+        throw CameraDisconnected("the camera plugin closed the connection");
+    }
+    try
+    {
+        return Received{ decode_message(buffer.first(received.bytes)), std::move(received.descriptors) };
+    }
+    catch (const ProtocolError& error)
+    {
+        throw CameraReaderError(std::string("the camera plugin sent something that is not a message: ") + error.what());
+    }
+}
+
+MessageSocket connect_to(const PluginLocation& plugin)
+{
+    if (!plugin.endpoint.empty() && !plugin.instance.empty())
+    {
+        throw CameraReaderError("a camera plugin is named by its endpoint or by its instance, not both");
+    }
+    std::string endpoint = plugin.endpoint;
+    try
+    {
+        if (endpoint.empty())
+        {
+            endpoint = default_endpoint_path(plugin.instance);
+        }
+        return MessageSocket::connect(endpoint);
+    }
+    catch (const std::system_error& error)
+    {
+        throw CameraReaderError("no camera plugin answers on '" + endpoint + "': " + error.code().message() +
+                                ". Start it through the plugin manager, or run camera_plugin");
+    }
+    catch (const std::invalid_argument& error)
+    {
+        throw CameraReaderError(error.what());
+    }
+}
+
+// What a handshake brought back: the plugin's answer and the descriptors that came with it.
+struct Answer
+{
+    HandshakeResponse response;
+    std::vector<UniqueFd> descriptors;
+};
+
+// Sends the reader's first message and waits for the plugin's answer. The plugin starts sending
+// a group's frame sets as soon as the subscription exists, which can be before its answer is
+// on the way; those are kept in `early`.
+Answer shake_hands(MessageSocket& socket,
+                   std::span<std::byte> buffer,
+                   const std::string& group,
+                   const ReaderOptions& options,
+                   std::deque<FrameEvent>& early)
+{
+    MessageEncoder encoder;
+    HandshakeRequest request;
+    request.reader_name = program_invocation_short_name;
+    request.group = group;
+    request.options = options;
+    if (socket.send(encoder.encode(request)) != SendStatus::SENT)
+    {
+        throw CameraDisconnected("the camera plugin closed the connection");
+    }
+    const auto deadline = std::chrono::steady_clock::now() + ANSWER_TIMEOUT;
+    for (;;)
+    {
+        const auto left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        std::optional<Received> received = receive(socket, buffer, left);
+        if (!received)
+        {
+            throw CameraReaderError("the camera plugin did not answer the reader's handshake");
+        }
+        if (const auto* event = std::get_if<FrameEvent>(&received->message))
+        {
+            early.push_back(*event);
+            continue;
+        }
+        if (auto* response = std::get_if<HandshakeResponse>(&received->message))
+        {
+            if (!response->error.empty())
+            {
+                throw CameraReaderError(response->error);
+            }
+            return { std::move(*response), std::move(received->descriptors) };
+        }
+    }
+}
+
+} // namespace
+
+namespace detail
+{
+
+// Shared by a reader and the frame sets it handed out, so a frame set can be given back after
+// its reader is gone.
+class ReaderState
+{
+public:
+    explicit ReaderState(MessageSocket connected) : socket(std::move(connected)), buffer(MAX_MESSAGE_BYTES)
+    {
+    }
+
+    // Called from a FrameSet, possibly on another thread than the one that reads.
+    void release(std::uint64_t lease_id) noexcept
+    {
+        try
+        {
+            const std::lock_guard<std::mutex> lock(m_release_mutex);
+            (void)socket.send(m_release_encoder.encode(ReleaseMessage{ lease_id }));
+        }
+        catch (const std::exception&)
+        {
+            // The plugin is gone or will drop this reader; either way it takes the frame set back.
+        }
+    }
+
+    // The next frame event, from the ones that arrived early or from the socket.
+    std::optional<FrameEvent> take(std::chrono::milliseconds timeout)
+    {
+        if (!early.empty())
+        {
+            const FrameEvent event = early.front();
+            early.pop_front();
+            return event;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;)
+        {
+            const auto left =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            const std::optional<Received> received = receive(socket, buffer, left);
+            if (!received)
+            {
+                return std::nullopt;
+            }
+            if (const auto* event = std::get_if<FrameEvent>(&received->message))
+            {
+                return *event;
+            }
+            // Anything else is not for a subscribed reader of this build; keep waiting.
+        }
+    }
+
+    // A frame set that names a slot or a size the pools do not have cannot be read safely.
+    void check(const FrameEvent& event) const
+    {
+        bool fits = event.image_count == group.streams.size();
+        for (std::size_t i = 0; fits && i < event.image_count; ++i)
+        {
+            fits = event.images[i].slot < group.streams[i].slot_count &&
+                   event.images[i].bytes_used <= group.streams[i].slot_bytes;
+        }
+        if (!fits)
+        {
+            throw CameraReaderError("the camera plugin sent a frame set that does not match group '" + group.id + "'");
+        }
+    }
+
+    MessageSocket socket;
+    GroupDescription group;
+    ReaderOptions options;
+    std::vector<HostPoolView> pools; // one per stream
+    std::deque<FrameEvent> early; // frame events that arrived before the answer to the subscription
+    std::vector<std::byte> buffer; // the reading thread only
+
+private:
+    std::mutex m_release_mutex;
+    MessageEncoder m_release_encoder;
+};
+
+} // namespace detail
+
+std::span<const std::byte> ImageView::plane(std::uint32_t index) const
+{
+    if (stream == nullptr || index >= stream->plane_count)
+    {
+        throw std::out_of_range("the image has no plane " + std::to_string(index));
+    }
+    const PlaneSize size = plane_size_of(stream->pixel_format, stream->width, stream->height, index);
+    const std::uint64_t offset = stream->planes[index].offset_bytes;
+    const std::uint64_t bytes = stream->planes[index].stride_bytes * (size.rows - 1) + size.row_bytes;
+    if (size.rows == 0 || offset + bytes > data.size())
+    {
+        throw std::out_of_range("plane " + std::to_string(index) + " does not lie inside the image's slot");
+    }
+    return data.subspan(offset, bytes);
+}
+
+FrameSet::FrameSet(std::shared_ptr<detail::ReaderState> state, const FrameEvent& event)
+    : m_state(std::move(state)), m_event(event)
+{
+}
+
+FrameSet::FrameSet(FrameSet&& other) noexcept : m_state(std::move(other.m_state)), m_event(other.m_event)
+{
+}
+
+FrameSet& FrameSet::operator=(FrameSet&& other) noexcept
+{
+    if (this != &other)
+    {
+        release();
+        m_state = std::move(other.m_state);
+        m_event = other.m_event;
+    }
+    return *this;
+}
+
+FrameSet::~FrameSet()
+{
+    release();
+}
+
+ImageView FrameSet::image(std::size_t stream) const
+{
+    if (!m_state)
+    {
+        throw std::logic_error("the frame set was given back");
+    }
+    if (stream >= m_event.image_count)
+    {
+        throw std::out_of_range("the frame set has no image " + std::to_string(stream));
+    }
+    const StreamDescription& description = m_state->group.streams[stream];
+    const ImageInfo& info = m_event.images[stream];
+    const std::span<const std::byte> slot = m_state->pools[stream].slot(info.slot);
+    return { &description, info, description.is_encoded() ? slot.first(info.bytes_used) : slot };
+}
+
+void FrameSet::release() noexcept
+{
+    if (m_state)
+    {
+        m_state->release(m_event.lease_id);
+        m_state.reset();
+    }
+}
+
+std::vector<GroupDescription> CameraReader::list(const PluginLocation& plugin)
+{
+    MessageSocket socket = connect_to(plugin);
+    std::vector<std::byte> buffer(MAX_MESSAGE_BYTES);
+    std::deque<FrameEvent> none;
+    return shake_hands(socket, buffer, {}, {}, none).response.groups;
+}
+
+CameraReader CameraReader::open(const std::string& group, const ReaderOptions& options, const PluginLocation& plugin)
+{
+    if (group.empty())
+    {
+        throw CameraReaderError("a camera reader is opened for a group; list() says which there are");
+    }
+    auto state = std::make_shared<detail::ReaderState>(connect_to(plugin));
+    Answer answer = shake_hands(state->socket, state->buffer, group, options, state->early);
+    if (answer.response.groups.size() != 1 || answer.descriptors.size() != answer.response.groups.front().streams.size())
+    {
+        throw CameraReaderError("the camera plugin did not send group '" + group + "' with one pool per stream");
+    }
+    state->group = std::move(answer.response.groups.front());
+    state->options = { options.window, resolved_order(options) };
+    try
+    {
+        for (std::size_t i = 0; i < state->group.streams.size(); ++i)
+        {
+            const StreamDescription& stream = state->group.streams[i];
+            state->pools.emplace_back(std::move(answer.descriptors[i]), stream.slot_count, stream.slot_bytes);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        throw CameraReaderError("cannot map the pools of '" + group + "': " + error.what());
+    }
+    return CameraReader(std::move(state));
+}
+
+CameraReader::CameraReader(std::shared_ptr<detail::ReaderState> state) : m_state(std::move(state))
+{
+}
+
+CameraReader::CameraReader(CameraReader&& other) noexcept = default;
+CameraReader& CameraReader::operator=(CameraReader&& other) noexcept = default;
+CameraReader::~CameraReader() = default;
+
+const GroupDescription& CameraReader::group() const
+{
+    return m_state->group;
+}
+
+std::optional<FrameSet> CameraReader::next(std::chrono::milliseconds timeout)
+{
+    std::optional<FrameEvent> event = m_state->take(timeout);
+    if (!event)
+    {
+        return std::nullopt;
+    }
+    // With a window of one nothing can be waiting behind this event, so the extra look at the
+    // socket is skipped.
+    if (m_state->options.order == DeliveryOrder::NEWEST && m_state->options.window > 1)
+    {
+        while (const std::optional<FrameEvent> newer = m_state->take(std::chrono::milliseconds(0)))
+        {
+            m_state->release(event->lease_id);
+            const std::uint64_t skipped = std::uint64_t{ event->skipped } + newer->skipped + 1;
+            event = newer;
+            event->skipped = static_cast<std::uint32_t>(std::min<std::uint64_t>(skipped, UINT32_MAX));
+        }
+    }
+    try
+    {
+        m_state->check(*event);
+    }
+    catch (const CameraReaderError&)
+    {
+        m_state->release(event->lease_id);
+        throw;
+    }
+    return FrameSet(m_state, *event);
+}
+
+int CameraReader::descriptor() const
+{
+    return m_state->socket.descriptor();
+}
+
+} // namespace core::camera

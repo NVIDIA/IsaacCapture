@@ -25,6 +25,14 @@ call `check_schema_compat()`, so they agree on what "unreadable" means. Note tha
 comparison reads the `.bfbs` out of the build tree, so `ctest` on its own re-checks
 whatever was built last: **build before you run it**, or a breaking edit reads as green.
 
+## A schema that is not recorded
+
+[`fbs/camera_protocol.fbs`](fbs/camera_protocol.fbs) is the conversation between the camera
+plugin and the readers of its frames ([`camera_protocol`](../camera_protocol)). No recording
+carries it. It is kept here, with a golden, because it is a contract of the same kind: the
+two ends can come from different releases, and a change the comparison rejects would make
+them misread each other.
+
 ## Adding a field
 
 Append it to a table with a fresh `id`, and leave it optional. The test passes, and no

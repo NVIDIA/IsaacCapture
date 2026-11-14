@@ -1,0 +1,99 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// What the camera plugin and a reader of its frames say to each other, one message per socket
+// message. See src/core/camera_protocol/README.md for the conversation.
+//
+// Nothing here is recorded. The file lives with the other schemas so that the same golden
+// check guards it: a plugin and a reader can come from different releases, and a change the
+// check rejects would make them misread each other.
+
+namespace core;
+
+// Zero means "a value this build does not know" for the kinds a newer peer may extend.
+enum CameraPixelFormat : uint32 { Unknown = 0, Bgra8 = 1, Rgba8 = 2, Nv12 = 3, Gray8 = 4 }
+enum CameraCodec : uint32 { None = 0, H264 = 1, H265 = 2 }
+enum CameraMemoryKind : uint32 { Unknown = 0, Host = 1 }
+enum CameraDeliveryOrder : uint32 { Default = 0, Newest = 1, InOrder = 2 }
+
+// One sensor's images or one encoded video stream, and the pool its frames are in.
+table CameraStream {
+  id: string (id: 0);
+  codec: CameraCodec (id: 1);
+  pixel_format: CameraPixelFormat (id: 2);
+  memory: CameraMemoryKind (id: 3);
+  width: uint32 (id: 4);
+  height: uint32 (id: 5);
+
+  // Per plane of a pixel image: where the plane starts inside a slot, and the bytes from one
+  // row to the next. Both have one entry per plane; an encoded stream has none.
+  plane_offsets: [uint32] (id: 6);
+  plane_strides: [uint32] (id: 7);
+
+  slot_bytes: uint64 (id: 8);
+  slot_count: uint32 (id: 9);
+  frame_rate: float64 (id: 10);
+}
+
+// Streams that are captured together and published as one frame set.
+table CameraGroup {
+  id: string (id: 0);
+  streams: [CameraStream] (id: 1);
+}
+
+// Reader to plugin, the first message on a connection. With a group it asks for that group's
+// frame sets; without one it only asks what the plugin publishes.
+table CameraHandshakeRequest {
+  protocol_version: uint32 (id: 0);
+  reader_name: string (id: 1);
+  group: string (id: 2);
+  window: uint32 = 1 (id: 3);
+  order: CameraDeliveryOrder (id: 4);
+}
+
+// Plugin to reader, the answer to the request. With `error` set the reader is refused and the
+// connection ends. Otherwise `groups` is the group that was asked for, and the message carries
+// one file descriptor per stream of it, in stream order, for the stream's pool; or it is
+// every group the plugin publishes, when the request named none.
+table CameraHandshakeResponse {
+  protocol_version: uint32 (id: 0);
+  error: string (id: 1);
+  groups: [CameraGroup] (id: 2);
+}
+
+// One image of a frame set: the slot it is in and what the camera SDK said about it.
+table CameraImage {
+  slot: uint32 (id: 0);
+  flags: uint32 (id: 1);
+  bytes_used: uint64 (id: 2);
+  device_frame_id: uint64 (id: 3);
+  device_time_ns: int64 = -1 (id: 4);
+}
+
+// Plugin to reader: one frame set, held for the reader until it sends CameraRelease with the
+// same lease. The times are nanoseconds on the host's monotonic clock, -1 where one is not
+// known. A frame can overtake the handshake response; it belongs to the reader all the same.
+table CameraFrame {
+  lease_id: uint64 (id: 0);
+  sequence: uint64 (id: 1);
+  generation: uint32 (id: 2);
+  skipped: uint32 (id: 3);
+  capture_ns: int64 = -1 (id: 4);
+  sdk_ready_ns: int64 = -1 (id: 5);
+  published_ns: int64 = -1 (id: 6);
+  sent_ns: int64 = -1 (id: 7);
+  images: [CameraImage] (id: 8);
+}
+
+// Reader to plugin: done with a frame set.
+table CameraRelease {
+  lease_id: uint64 (id: 0);
+}
+
+union CameraMessageBody { CameraHandshakeRequest, CameraHandshakeResponse, CameraFrame, CameraRelease }
+
+table CameraMessage {
+  body: CameraMessageBody (id: 1);
+}
+
+root_type CameraMessage;
