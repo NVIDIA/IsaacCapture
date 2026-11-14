@@ -5,6 +5,7 @@
 
 #include <log_bridge/logger.hpp>
 #include <oxr_utils/math.hpp>
+#include <plugin_utils/hand_pose_basis.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -77,35 +78,11 @@ constexpr auto kStaleThreshold = std::chrono::milliseconds(200);
 constexpr auto kDiscoveryInterval = std::chrono::seconds(1);
 constexpr auto kShutdownPollInterval = std::chrono::milliseconds(100);
 
-// Re-express a wrist-relative joint pose from the Wuji skeleton basis in the
-// OpenXR hand-joint basis.
-//
-// The SDK skeleton poses are FK link frames of wuji-sdk's default hand URDFs:
-// the bone runs along -Z (matching XR_EXT_hand_tracking's "+Z points away from
-// the fingertip"), and the palmar side is +Y on the right hand / -Y on the
-// left (the left URDF is Y-mirrored). OpenXR puts the dorsal side at +Y for
-// both hands, so the left hand already matches and the right hand differs by
-// a 180° rotation about Z — whose conjugation simply negates the x and y
-// components of both the position and the quaternion.
-constexpr XrPosef remap_to_openxr_basis(const XrPosef& pose, bool is_left)
-{
-    if (is_left)
-    {
-        return pose;
-    }
-    XrPosef out = pose;
-    out.position.x = -pose.position.x;
-    out.position.y = -pose.position.y;
-    out.orientation.x = -pose.orientation.x;
-    out.orientation.y = -pose.orientation.y;
-    return out;
-}
-
 constexpr bool remap_to_openxr_basis_is_correct()
 {
     constexpr XrPosef input{ { 1.0f, 2.0f, 3.0f, 4.0f }, { 5.0f, 6.0f, 7.0f } };
-    constexpr XrPosef left = remap_to_openxr_basis(input, true);
-    constexpr XrPosef right = remap_to_openxr_basis(input, false);
+    constexpr XrPosef left = plugin_utils::remap_to_openxr_basis(input, true);
+    constexpr XrPosef right = plugin_utils::remap_to_openxr_basis(input, false);
     return left.orientation.x == 1.0f && left.orientation.y == 2.0f && left.orientation.z == 3.0f &&
            left.orientation.w == 4.0f && left.position.x == 5.0f && left.position.y == 6.0f &&
            left.position.z == 7.0f && right.orientation.x == -1.0f && right.orientation.y == -2.0f &&
@@ -146,74 +123,11 @@ bool convert_skeleton(const WujiHandSkeleton* frame,
         const XrPosef sdk_pose{ XrQuaternionf{ src.pose.orientation.x, src.pose.orientation.y, src.pose.orientation.z,
                                                src.pose.orientation.w },
                                 XrVector3f{ src.pose.position[0], src.pose.position[1], src.pose.position[2] } };
-        dst.pose = remap_to_openxr_basis(sdk_pose, is_left);
+        dst.pose = plugin_utils::remap_to_openxr_basis(sdk_pose, is_left);
         dst.radius = kDefaultJointRadius;
         dst.locationFlags = kPoseValidFlags;
     }
     return true;
-}
-
-// Optional aim-to-wrist offset override.
-// WUJI_GLOVE_AIM_TO_WRIST_{LEFT,RIGHT}="px,py,pz,qx,qy,qz,qw" (meters + quat).
-XrPosef pose_from_env(const char* name, const XrPosef& fallback)
-{
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0')
-    {
-        return fallback;
-    }
-    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main");
-    XrPosef pose{};
-    if (std::sscanf(value, "%f,%f,%f,%f,%f,%f,%f", &pose.position.x, &pose.position.y, &pose.position.z,
-                    &pose.orientation.x, &pose.orientation.y, &pose.orientation.z, &pose.orientation.w) != 7)
-    {
-        logger->warn("could not parse {} ('{}', want px,py,pz,qx,qy,qz,qw); using the built-in offset", name, value);
-        return fallback;
-    }
-    // sscanf("%f") happily accepts "nan" and "inf"; a non-finite offset would
-    // poison every injected joint pose, and NaN also slips past the norm check
-    // below (every comparison against NaN is false).
-    if (!std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) || !std::isfinite(pose.position.z) ||
-        !std::isfinite(pose.orientation.x) || !std::isfinite(pose.orientation.y) ||
-        !std::isfinite(pose.orientation.z) || !std::isfinite(pose.orientation.w))
-    {
-        logger->warn("{} ('{}') has non-finite values; using the built-in offset", name, value);
-        return fallback;
-    }
-    const float norm = std::sqrt(pose.orientation.x * pose.orientation.x + pose.orientation.y * pose.orientation.y +
-                                 pose.orientation.z * pose.orientation.z + pose.orientation.w * pose.orientation.w);
-    if (norm < 1e-6f)
-    {
-        logger->warn("{} has a zero quaternion; using the built-in offset", name);
-        return fallback;
-    }
-    pose.orientation.x /= norm;
-    pose.orientation.y /= norm;
-    pose.orientation.z /= norm;
-    pose.orientation.w /= norm;
-    return pose;
-}
-
-// Wrist-source selection: WUJI_GLOVE_WRIST_SOURCE = auto (default) |
-// hand_tracking | controller.
-plugin_utils::WristSourceMode wrist_source_mode_from_env()
-{
-    const char* value = std::getenv("WUJI_GLOVE_WRIST_SOURCE");
-    if (value == nullptr || *value == '\0' || std::strcmp(value, "auto") == 0)
-    {
-        return plugin_utils::WristSourceMode::Auto;
-    }
-    if (std::strcmp(value, "hand_tracking") == 0)
-    {
-        return plugin_utils::WristSourceMode::HandTracking;
-    }
-    if (std::strcmp(value, "controller") == 0)
-    {
-        return plugin_utils::WristSourceMode::Controller;
-    }
-    isaaccapture::Logger::get("isaaccapture.plugins.wuji_glove.main")
-        ->warn("unknown WUJI_GLOVE_WRIST_SOURCE '{}', using 'auto'", value);
-    return plugin_utils::WristSourceMode::Auto;
 }
 
 // Resolve the glove's hand side explicitly via the device's "hand_side" GET
@@ -255,9 +169,10 @@ WujiGlovePlugin::WujiGlovePlugin(const std::string& plugin_root_id) noexcept(fal
     // OpenXR session exists for the push-device (injection) extension, the
     // wrist-source queries, and the XrTime base.
     plugin_utils::WristSourceConfig wrist_config;
-    wrist_config.mode = wrist_source_mode_from_env();
-    wrist_config.left_aim_to_wrist = pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_LEFT", kLeftAimToWrist);
-    wrist_config.right_aim_to_wrist = pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_RIGHT", kRightAimToWrist);
+    wrist_config.mode =
+        plugin_utils::wrist_source_mode_from_env("WUJI_GLOVE_WRIST_SOURCE", plugin_utils::WristSourceMode::Auto);
+    wrist_config.left_aim_to_wrist = plugin_utils::pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_LEFT", kLeftAimToWrist);
+    wrist_config.right_aim_to_wrist = plugin_utils::pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_RIGHT", kRightAimToWrist);
     auto wrist_requirements = plugin_utils::WristPoseSource::collect_requirements(wrist_config.mode);
 
     std::vector<std::shared_ptr<core::ITracker>> trackers = wrist_requirements.trackers;

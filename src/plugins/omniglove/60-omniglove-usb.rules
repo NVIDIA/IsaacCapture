@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Agibot Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+
+# Grant access to USB devices with the listed runtime product IDs.
+ACTION=="add|change", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="cafe", ATTR{idProduct}=="4001", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+ACTION=="add|change", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="cafe", ATTR{idProduct}=="4002", GROUP="plugdev", MODE="0660", TAG+="uaccess"

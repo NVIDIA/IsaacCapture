@@ -108,7 +108,9 @@ controller offsets when needed:
    export WUJI_GLOVE_AIM_TO_WRIST_RIGHT="px,py,pz,qx,qy,qz,qw"
 
 Position values are in meters and quaternion values use ``(x, y, z, w)``.
-The built-in offsets assume mirrored left/right mounts.
+The built-in offsets assume mirrored left/right mounts. Unknown wrist-source
+modes and malformed explicit offsets stop the plugin with an error; unset
+offsets use the built-in values.
 
 Troubleshooting
 ---------------
