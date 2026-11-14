@@ -203,7 +203,7 @@ std::optional<HandMeta> GloveSource::adopt(Hand hand)
     std::string tactile = "no tactile sensors";
     try
     {
-        adopted.model = HandModel::for_product(meta.product_code);
+        adopted.model.emplace(meta.product_code);
         for (std::size_t i = 0; i < kGloveJointCount; ++i)
         {
             char name[RH_ID_MAX + 16];

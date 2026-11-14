@@ -5,6 +5,7 @@
 add_library(revohuman_core STATIC
     hand_model.cpp
     hand_fit.inc
+    hand_points.hpp
     inc/revohuman_plugin/hand_model.hpp
     inc/revohuman_plugin/pipeline.hpp
     inc/revohuman_plugin/sdk.hpp

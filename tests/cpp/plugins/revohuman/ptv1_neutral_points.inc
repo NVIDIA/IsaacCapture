@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // SDK hand point positions of the fitted PTV1 model at the neutral pose, in the tracker frame (metres).
-constexpr std::array<std::array<double, 3>, 27> kNewNeutral = { {
+constexpr std::array<std::array<double, 3>, 27> kNeutralPoints = { {
     { 0.020314749347559731, -0.032418728320167858, 0.11729681821762047 },
     { 0.019542529378066911, -0.028039251246438978, 0.09167995156926928 },
     { 0.0064774040835088101, -0.023048489490109798, 0.050298859291164288 },

@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include <schema/hand_generated.h>
 #include <schema/pose_generated.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <revohuman.h>
 #include <span>
 #include <string>
 #include <vector>
@@ -18,15 +20,17 @@ namespace plugins
 namespace revohuman
 {
 
-//! Encoder joints per glove, in SDK order (RH_JOINT_COUNT).
-constexpr std::size_t kGloveJointCount = 21;
-//! OpenXR hand joints (XR_HAND_JOINT_COUNT_EXT); PALM = 0, WRIST = 1.
-constexpr std::size_t kHandJointCount = 26;
+//! Encoder joints per glove, in SDK order.
+constexpr std::size_t kGloveJointCount = RH_JOINT_COUNT;
+//! OpenXR hand joints.
+constexpr std::size_t kHandJointCount = core::HandJoint_NUM_JOINTS;
 //! The four non-thumb metacarpals are placeholders and never valid.
 constexpr std::uint32_t kMappedHandMask =
-    ((1u << kHandJointCount) - 1u) & ~((1u << 6) | (1u << 11) | (1u << 16) | (1u << 21));
-//! Protocol upper bound on taxels per glove (RH_TACTILE_MAX_POINTS).
-constexpr std::size_t kMaxTaxels = 350;
+    ((1u << kHandJointCount) - 1u) &
+    ~((1u << core::HandJoint_INDEX_METACARPAL) | (1u << core::HandJoint_MIDDLE_METACARPAL) |
+      (1u << core::HandJoint_RING_METACARPAL) | (1u << core::HandJoint_LITTLE_METACARPAL));
+//! Protocol upper bound on taxels per glove.
+constexpr std::size_t kMaxTaxels = RH_TACTILE_MAX_POINTS;
 
 enum class Hand : std::uint8_t
 {

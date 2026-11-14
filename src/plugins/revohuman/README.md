@@ -82,14 +82,14 @@ Each glove's mechanical model follows its identified product through
 `rh_variant_hand_model`, and `rh_hand_model_info` gives the model's URDF
 SHA-256. Every sample's angles go to `rh_hand_points`, the SDK's link poses and
 fingertip points. The plugin is fitted to the PTV1 and P1 models, pinned by
-URDF hash in `core/hand_fit.inc` (`kNewGeometryHashes`), and fails a glove of
+URDF hash in `core/hand_fit.inc` (`kFittedModelHashes`), and fails a glove of
 any other model. It places the keypoints at the OpenXR joints (wrist, joint
 centres inside the fingers, tips and palm) by fixed offsets in the frames of
-the SDK link poses (`kNewFingers`, `kNewPalmPad`, `kNewWristPad`, one table for
-both products); the palm frame is a fixed basis in `palm_link` (`kNewPalmBasis`).
+the SDK link poses (`kFingerFits`, `kPalmPad`, `kWristPad`, one table for
+both products); the palm frame is a fixed basis in `palm_link` (`kPalmBasis`).
 
 An SDK release that changes either pinned model's URDF moves it off the fitted
-table, so refit and update `kNewGeometryHashes` together with the SDK pin in
+table, so refit and update `kFittedModelHashes` together with the SDK pin in
 `install.sh`. The glove's open log line names the hand model and its hash.
 
 `core/hand_model.cpp` re-expresses the keypoints from WRIST and orients the
@@ -100,7 +100,7 @@ to it.
 
 WRIST is a model point, not the anatomical wrist: `palm_link` moved along its
 +X (towards the palm) by a depth `w`, with OpenXR X = -palm Y, Y = -palm X,
-Z = -palm Z. `w` is `kNewWristPad` in `core/hand_fit.inc`.
+Z = -palm Z. `w` is `kWristPad` in `core/hand_fit.inc`.
 The anatomical wrist centre is nominally about 4 cm towards the fingers. The
 plugin puts this WRIST at the host's wrist pose, so with optical hand tracking
 the injected hand sits that far off the tracked one; with a controller, set

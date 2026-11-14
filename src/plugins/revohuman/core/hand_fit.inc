@@ -5,21 +5,21 @@
 // extension. A finger's side shift moves its three distal points; side shifts are section midpoints, which agree within
 // 0.01 mm over DIP-local Z = 20..25 mm, and the thumb's is the measured PTV1 fingertip sleeve centre. The pads are
 // fitted separately.
-constexpr std::array<const char*, 2> kNewGeometryHashes = {
+constexpr std::array<const char*, 2> kFittedModelHashes = {
     "63960181839d5486cc0952bf7a4a5c09b6e9eca78fa4035294a74e13cef32805",
     "ea8e2e3a05091ba9fb229b1d932c612e2740004cfc4262a20471afebf1610d55",
 };
-constexpr M kNewPalmBasis = { -4.3368086899420177e-19, -0.99951526706354676,  0.031132473510575541,
-                              -0.99592691449259607,    0.0028070342275837352, 0.090120483510145774,
-                              -0.090164189062272859,   -0.031005668283909979, -0.99544415591484126 };
-constexpr V kNewPalmPad{ 0.018276321340487119, 0, 0 };
-constexpr V kNewWristPad{ 0.012600000174487119, 0, 0 };
+constexpr M kPalmBasis = { -4.3368086899420177e-19, -0.99951526706354676,  0.031132473510575541,
+                           -0.99592691449259607,    0.0028070342275837352, 0.090120483510145774,
+                           -0.090164189062272859,   -0.031005668283909979, -0.99544415591484126 };
+constexpr V kPalmPad{ 0.018276321340487119, 0, 0 };
+constexpr V kWristPad{ 0.012600000174487119, 0, 0 };
 // Per finger in kFingers order; the thumb has no placeholder.
 struct FingerFit
 {
     V side, proximal_pad, placeholder_pad;
 };
-constexpr std::array<FingerFit, 5> kNewFingers = { {
+constexpr std::array<FingerFit, 5> kFingerFits = { {
     { { 0.0021043985844464278, -0.011934637433200775, -0.0021037908489140032 },
       { 0.016150847149399378, 0.002847830113737538, 0 },
       { 0.016733295878679642, 0.0029505315395890099, 0 } },

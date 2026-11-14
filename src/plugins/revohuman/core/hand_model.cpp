@@ -3,6 +3,7 @@
 
 #include "inc/revohuman_plugin/hand_model.hpp"
 
+#include "hand_points.hpp"
 #include "inc/revohuman_plugin/sdk.hpp"
 
 #include <log_bridge/logger.hpp>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <revohuman_fk.h>
 #include <stdexcept>
 #include <utility>
@@ -26,8 +28,6 @@ namespace revohuman
 namespace
 {
 
-static_assert(RH_JOINT_COUNT == kGloveJointCount);
-static_assert(RH_TACTILE_MAX_POINTS == kMaxTaxels);
 // A new point set or taxel layout version may reorder points or change their rules: refit the mapping first.
 static_assert(RH_HAND_POINT_COUNT == 27 && RH_HAND_POINTS_VERSION == 1);
 static_assert(RH_TAXEL_LAYOUT_VERSION == 1);
@@ -42,13 +42,22 @@ constexpr V kDorsal{ -1, 0, 0 };
 constexpr M kWristAxes{ 0, -1, 0, -1, 0, 0, 0, 0, -1 };
 const core::Pose kIdentityPose(core::Point(0, 0, 0), core::Quaternion(0, 0, 0, 1));
 
-// Per finger (index, middle, ring, little, thumb): the SDK link of the DIP, the link that orients the proximal
-// point and the OpenXR proximal point (the next three follow it).
+// Per finger (index, middle, ring, little, thumb): its SDK points and the OpenXR joint at its proximal pad (the
+// next three joints follow it). The pad hangs from the pad point in the axes of the pad_axes link; the knuckle
+// link orients the proximal joint and, on the non-thumb fingers, carries the pad with it, since their MPR link
+// only spreads the finger sideways.
 struct Finger
 {
-    int base, orientation, proximal;
+    SdkPoint dip, pip, knuckle, pad, pad_axes, tip;
+    core::HandJoint proximal;
 };
-constexpr std::array<Finger, 5> kFingers = { { { 0, 2, 7 }, { 4, 6, 12 }, { 8, 10, 17 }, { 12, 14, 22 }, { 16, 19, 2 } } };
+constexpr std::array<Finger, 5> kFingers = { {
+    { kIndexDip, kIndexPip, kIndexMcp, kIndexMpr, kIndexMpr, kIndexTip, core::HandJoint_INDEX_PROXIMAL },
+    { kMiddleDip, kMiddlePip, kMiddleMcp, kMiddleMpr, kMiddleMpr, kMiddleTip, core::HandJoint_MIDDLE_PROXIMAL },
+    { kRingDip, kRingPip, kRingMcp, kRingMpr, kRingMpr, kRingTip, core::HandJoint_RING_PROXIMAL },
+    { kLittleDip, kLittlePip, kLittleMcp, kLittleMpr, kLittleMpr, kLittleTip, core::HandJoint_LITTLE_PROXIMAL },
+    { kThumbDip, kThumbPip, kThumbCmr, kThumbCmp, kThumbCmr, kThumbTip, core::HandJoint_THUMB_METACARPAL },
+} };
 constexpr std::size_t kThumb = kFingers.size() - 1;
 // The placeholders are the non-thumb metacarpals, the OpenXR joint before each proximal: the joints
 // kMappedHandMask leaves out.
@@ -67,9 +76,9 @@ constexpr std::array<V, kThumb> kPlaceholderAt = {
 
 #include "hand_fit.inc"
 
-bool new_geometry(const std::string& sha)
+bool fitted_model(const std::string& sha)
 {
-    return std::find(kNewGeometryHashes.begin(), kNewGeometryHashes.end(), sha) != kNewGeometryHashes.end();
+    return std::find(kFittedModelHashes.begin(), kFittedModelHashes.end(), sha) != kFittedModelHashes.end();
 }
 
 V add(V a, V b)
@@ -191,9 +200,9 @@ M rotation_of(const RhLinkPose& pose)
 HandJointPoses map_points(Hand hand, const RhHandPoints& sdk, bool retain_unmapped)
 {
     const bool right = hand == Hand::Right;
-    // The SDK points in palm_link: the joint links, then the TIPs in kFingers order, rigid on the finger's DIP link.
-    const V palm = position_of(sdk.points[26]);
-    const M to_palm = transpose(rotation_of(sdk.points[26]));
+    // The SDK points in palm_link; a TIP is rigid on its finger's DIP link.
+    const V palm = position_of(sdk.points[kPalmLink]);
+    const M to_palm = transpose(rotation_of(sdk.points[kPalmLink]));
     std::array<V, RH_HAND_POINT_COUNT> p{};
     std::array<M, kGloveJointCount> r{};
     for (std::size_t i = 0; i < p.size(); ++i)
@@ -201,30 +210,31 @@ HandJointPoses map_points(Hand hand, const RhHandPoints& sdk, bool retain_unmapp
     for (std::size_t i = 0; i < r.size(); ++i)
         r[i] = mul(to_palm, rotation_of(sdk.points[i]));
     // The PALM axes in palm_link; the right hand mirrors palm Y and OpenXR X.
-    M palm_basis = kNewPalmBasis;
+    M palm_basis = kPalmBasis;
     if (right)
         for (int i : { 0, 4, 5, 6 })
             palm_basis[i] = -palm_basis[i];
 
     std::array<V, kHandJointCount> points{};
     std::array<M, kHandJointCount> frames{};
-    points[0] = add(mv(to_palm, scale(palm, -1)), kNewPalmPad); // Offset from the tracker origin, not palm_link.
-    points[1] = kNewWristPad;
-    frames[0] = palm_basis;
-    frames[1] = kWristAxes;
+    // Offset from the tracker origin, not palm_link.
+    points[core::HandJoint_PALM] = add(mv(to_palm, scale(palm, -1)), kPalmPad);
+    points[core::HandJoint_WRIST] = kWristPad;
+    frames[core::HandJoint_PALM] = palm_basis;
+    frames[core::HandJoint_WRIST] = kWristAxes;
     for (std::size_t i = 0; i < kFingers.size(); ++i)
     {
         const Finger& f = kFingers[i];
-        const FingerFit& fit = kNewFingers[i];
-        const M& driver = r[i == kThumb ? 19 : f.base + 3];
+        const FingerFit& fit = kFingerFits[i];
+        const M& driver = r[f.pad_axes];
         const auto shifted = [&](const V& at, const V& offset) { return add(at, mv(driver, mirrored(offset, right))); };
-        const V pad = shifted(p[i == kThumb ? 20 : f.base + 3], fit.proximal_pad);
+        const V pad = shifted(p[f.pad], fit.proximal_pad);
         points[f.proximal] =
-            i == kThumb ? pad : add(p[f.base + 2], mv(mul(r[f.base + 2], transpose(driver)), sub(pad, p[f.base + 2])));
-        points[f.proximal + 1] = shifted(p[f.base + 1], fit.side);
-        points[f.proximal + 2] = shifted(p[f.base], fit.side);
-        points[f.proximal + 3] = shifted(p[21 + i], fit.side);
-        const V tip_dir = unit(sub(p[21 + i], p[f.base]));
+            i == kThumb ? pad : add(p[f.knuckle], mv(mul(r[f.knuckle], transpose(driver)), sub(pad, p[f.knuckle])));
+        points[f.proximal + 1] = shifted(p[f.pip], fit.side);
+        points[f.proximal + 2] = shifted(p[f.dip], fit.side);
+        points[f.proximal + 3] = shifted(p[f.tip], fit.side);
+        const V tip_dir = unit(sub(p[f.tip], p[f.dip]));
         if (i != kThumb)
         {
             V at = kPlaceholderAt[i];
@@ -233,19 +243,19 @@ HandJointPoses map_points(Hand hand, const RhHandPoints& sdk, bool retain_unmapp
             points[f.proximal - 1] = add(mv(palm_basis, at), mirrored(fit.placeholder_pad, right));
             frames[f.proximal - 1] = palm_basis;
         }
-        frames[f.proximal + 2] = frames[f.proximal + 3] = frame(scale(tip_dir, -1), mv(r[f.base], kDorsal));
+        frames[f.proximal + 2] = frames[f.proximal + 3] = frame(scale(tip_dir, -1), mv(r[f.dip], kDorsal));
     }
     for (const Finger& f : kFingers)
     {
-        frames[f.proximal] = frame(sub(points[f.proximal], points[f.proximal + 1]), mv(r[f.orientation], kDorsal));
-        frames[f.proximal + 1] = frame(sub(points[f.proximal + 1], points[f.proximal + 2]), mv(r[f.base + 1], kDorsal));
+        frames[f.proximal] = frame(sub(points[f.proximal], points[f.proximal + 1]), mv(r[f.knuckle], kDorsal));
+        frames[f.proximal + 1] = frame(sub(points[f.proximal + 1], points[f.proximal + 2]), mv(r[f.pip], kDorsal));
     }
     HandJointPoses out;
     out.joints.fill(kIdentityPose);
-    const M inv = transpose(frames[1]);
+    const M inv = transpose(frames[core::HandJoint_WRIST]);
     for (std::size_t i = 0; i < kHandJointCount; ++i)
     {
-        const V at = mv(inv, sub(points[i], points[1]));
+        const V at = mv(inv, sub(points[i], points[core::HandJoint_WRIST]));
         const auto q = quaternion(mul(inv, frames[i]));
         const std::uint32_t mapped = kMappedHandMask & (1u << i);
         if (finite(at) && (mapped || retain_unmapped))
@@ -262,51 +272,51 @@ HandJointPoses map_points(Hand hand, const RhHandPoints& sdk, bool retain_unmapp
     return out;
 }
 
-// The OpenXR point that moves with SDK link @p link, or -1 (MPR links, thumb MCP/CMR/CMP).
-int joint_of_link(std::uint32_t link)
+// The OpenXR joint that moves with SDK point @p link; none for the MPR links, the thumb MCP/CMR/CMP, the TIPs and
+// palm_link.
+std::optional<core::HandJoint> joint_of_link(std::uint32_t link)
 {
     for (std::size_t i = 0; i < kFingers.size(); ++i)
     {
         const Finger& f = kFingers[i];
-        if (link == static_cast<std::uint32_t>(f.base))
-            return f.proximal + 2;
-        if (link == static_cast<std::uint32_t>(f.base + 1))
-            return f.proximal + 1;
-        if (link == static_cast<std::uint32_t>(f.base + 2) && i != kThumb)
+        if (link == f.dip)
+            return static_cast<core::HandJoint>(f.proximal + 2);
+        if (link == f.pip)
+            return static_cast<core::HandJoint>(f.proximal + 1);
+        if (link == f.knuckle && i != kThumb)
             return f.proximal;
     }
-    return -1;
+    return std::nullopt;
 }
 
 } // namespace
 
-HandJointPoses fit_hand_points(const std::string& model_sha256,
-                               Hand hand,
-                               const RhHandPoints& points,
-                               bool retain_unmapped_positions)
+HandJointPoses map_hand_points(Hand hand, const RhHandPoints& points, bool retain_unmapped)
 {
-    if (!new_geometry(model_sha256))
-        throw std::runtime_error("no fitted table for hand model " + model_sha256);
     if (points.struct_size != sizeof(RhHandPoints) || points.points_version != RH_HAND_POINTS_VERSION ||
         points.hand != to_rh(hand))
         throw std::runtime_error("incompatible SDK hand point set");
-    return map_points(hand, points, retain_unmapped_positions);
+    return map_points(hand, points, retain_unmapped);
 }
 
-HandModel HandModel::for_product(const std::string& product_code)
+HandModel::HandModel(const std::string& product_code)
 {
-    RhHandModel model = 0;
-    if (rh_variant_hand_model(product_code.c_str(), &model) != RH_OK)
+    if (rh_variant_hand_model(product_code.c_str(), &sdk_model_) != RH_OK)
         throw std::runtime_error("the C SDK has no hand model for product '" + product_code + "': " + sdk_error());
     RhHandModelInfo info = RH_STRUCT_INIT(RhHandModelInfo);
-    if (rh_hand_model_info(model, &info) != RH_OK || info.points_version != RH_HAND_POINTS_VERSION)
-        throw std::runtime_error("the C SDK gives no hand point set for product '" + product_code + "'");
+    if (rh_hand_model_info(sdk_model_, &info) != RH_OK)
+        throw std::runtime_error("the C SDK cannot describe the hand model of product '" + product_code +
+                                 "': " + sdk_error());
+    if (info.points_version != RH_HAND_POINTS_VERSION)
+        throw std::runtime_error("the C SDK gives hand point set version " + std::to_string(info.points_version) +
+                                 " for product '" + product_code + "'; the plugin maps version " +
+                                 std::to_string(RH_HAND_POINTS_VERSION));
     const std::string name = sdk_text(info.name);
     const std::string sha = sdk_text(info.urdf_sha256);
-    if (!new_geometry(sha))
+    if (!fitted_model(sha))
         throw std::runtime_error("the plugin is not fitted to hand model '" + name + "' (URDF SHA-256 " + sha +
-                                 "); use the C SDK release that install.sh pins");
-    return HandModel(model, "sdk-points:" + name + ":new-geometry-v1-" + sha);
+                                 "); use the C SDK release the plugin pins");
+    id_ = "sdk-points:" + name + ":" + sha;
 }
 
 HandJointPoses HandModel::joint_poses(Hand hand,
@@ -335,8 +345,9 @@ std::vector<std::uint8_t> HandModel::tactile_metadata(Hand hand, std::uint32_t t
         ->debug("{}: taxel layout {}", hand_name(hand), sdk_text(layout->source));
 
     // WRIST in tracker_link, as map_points() places it.
-    const V wrist = add(position_of(sdk.points[26]), mv(rotation_of(sdk.points[26]), kNewWristPad));
-    const M to_wrist = transpose(mul(rotation_of(sdk.points[26]), kWristAxes));
+    const RhLinkPose& palm = sdk.points[kPalmLink];
+    const V wrist = add(position_of(palm), mv(rotation_of(palm), kWristPad));
+    const M to_wrist = transpose(mul(rotation_of(palm), kWristAxes));
 
     core::LBST lbs;
     core::HandSkeletonRefT skeleton;
@@ -347,8 +358,8 @@ std::vector<std::uint8_t> HandModel::tactile_metadata(Hand hand, std::uint32_t t
     for (std::uint32_t i = 0; i < layout->count; ++i)
     {
         const RhTaxel& taxel = layout->taxels[i];
-        const int joint = taxel.link < kGloveJointCount ? joint_of_link(taxel.link) : -1;
-        if (joint < 0)
+        const std::optional<core::HandJoint> joint = joint_of_link(taxel.link);
+        if (!joint)
             throw std::runtime_error("the C SDK puts taxel " + std::to_string(i) + " on link " +
                                      std::to_string(taxel.link) + ", which no OpenXR joint follows");
         const RhLinkPose& link = sdk.points[taxel.link];
@@ -363,7 +374,7 @@ std::vector<std::uint8_t> HandModel::tactile_metadata(Hand hand, std::uint32_t t
                                             std::array<double, 4>{ 1, 0, 0, 0 };
         const V p = mv(to_wrist, at);
         lbs.taxel_bind_poses.emplace_back(core::Point(p[0], p[1], p[2]), core::Quaternion(q[0], q[1], q[2], q[3]));
-        const std::array<std::uint32_t, 4> segments{ static_cast<std::uint32_t>(joint), 0, 0, 0 };
+        const std::array<std::uint32_t, 4> segments{ static_cast<std::uint32_t>(*joint), 0, 0, 0 };
         const std::array<float, 4> weights{ 1, 0, 0, 0 };
         lbs.taxel_segment_indices.emplace_back(flatbuffers::span<const std::uint32_t, 4>(segments));
         lbs.taxel_segment_weights.emplace_back(flatbuffers::span<const float, 4>(weights));
