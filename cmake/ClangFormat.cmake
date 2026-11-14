@@ -40,7 +40,6 @@ set(_cf_exclude_patterns
   ".*/deps/.*"
   ".*/manus/ManusSDK/.*"
   ".*/wuji_glove/wuji-sdk-c-.*"
-  ".*/revohuman/revohuman-c-sdk-.*"
   ".*/node_modules/.*"
   ".*/third_party/.*"
   ".*/venv/.*"

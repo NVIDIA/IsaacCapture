@@ -34,7 +34,7 @@ install(TARGETS revohuman_plugin RUNTIME DESTINATION plugins/revohuman COMPONENT
 get_filename_component(_revohuman_sdk_lib_dir "${REVOHUMAN_SDK_LIBRARY}" DIRECTORY)
 file(GLOB _revohuman_sdk_shared_libs LIST_DIRECTORIES false "${_revohuman_sdk_lib_dir}/librevohuman.so*")
 install(FILES ${_revohuman_sdk_shared_libs} DESTINATION plugins/revohuman COMPONENT revohuman)
-install(FILES "${REVOHUMAN_SDK_ROOT}/LICENSE"
+install(FILES "${_revohuman_sdk_dir}/LICENSE"
     DESTINATION plugins/revohuman
     COMPONENT revohuman
     RENAME LICENSE.revohuman-sdk-c

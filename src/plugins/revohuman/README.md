@@ -22,17 +22,16 @@ contract.
 
 ## Build and install
 
-Follow the repository's build-from-source prerequisites first. `install.sh`
-downloads the C SDK release pinned at its top, checks the pinned SHA-256 and
-extracts it next to the script; `--sdk-root <prefix>` (or `REVOHUMAN_SDK_ROOT`)
-uses an extracted package instead. A Python SDK wheel cannot replace the C
-headers and library. From the repository root:
+Follow the repository's build-from-source prerequisites first. With
+`BUILD_PLUGIN_REVOHUMAN=ON`, the configure downloads the C SDK release pinned in
+`CMakeLists.txt` and checks its SHA-256; `-DREVOHUMAN_SDK_ROOT=<prefix>` uses an
+extracted package instead. A Python SDK wheel cannot replace the C headers and
+library. From the repository root:
 
 ```bash
-CMAKE_BUILD_PARALLEL_LEVEL=4 ./src/plugins/revohuman/install.sh \
-    --build-dir "$PWD/build-revohuman" \
-    --install-prefix "$PWD/install" \
-    -- -DBUILD_VIZ=OFF -DBUILD_PYTHON_BINDINGS=OFF -DBUILD_EXAMPLES=OFF
+cmake -B build -DBUILD_PLUGIN_REVOHUMAN=ON
+cmake --build build --target revohuman_plugin
+cmake --install build --component revohuman
 ```
 
 `<install-prefix>/plugins/revohuman` then holds the plugin, the SDK shared
@@ -90,7 +89,7 @@ both products); the palm frame is a fixed basis in `palm_link` (`kPalmBasis`).
 
 An SDK release that changes either pinned model's URDF moves it off the fitted
 table, so refit and update `kFittedModelHashes` together with the SDK pin in
-`install.sh`. The glove's open log line names the hand model and its hash.
+`CMakeLists.txt`. The glove's open log line names the hand model and its hash.
 
 `core/hand_model.cpp` re-expresses the keypoints from WRIST and orients the
 finger joints from the SDK link poses; WRIST and PALM keep fixed axes in
@@ -161,10 +160,9 @@ was known.
 
 `revohuman_core_tests` is configured with the plugin while `BUILD_TESTING` is
 ON, the top-level default. It links the SDK library, not a fake, and needs
-neither a glove nor an OpenXR runtime. `install.sh` builds only the plugin;
-build and run the tests in its build directory:
+neither a glove nor an OpenXR runtime:
 
 ```bash
-cmake --build build-revohuman --target revohuman_core_tests
-ctest --test-dir build-revohuman/tests/cpp/plugins/revohuman --output-on-failure
+cmake --build build --target revohuman_core_tests
+ctest --test-dir build/tests/cpp/plugins/revohuman --output-on-failure
 ```

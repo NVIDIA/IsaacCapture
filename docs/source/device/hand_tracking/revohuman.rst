@@ -61,12 +61,11 @@ Prerequisites
 
 - **Linux** — x86_64 or aarch64.
 - **Source-build prerequisites** — the toolchain and system packages in
-  :doc:`/development/build_from_source/index`, for ``install.sh`` and the manual
-  CMake build alike.
+  :doc:`/development/build_from_source/index`.
 - **RevoHuman C SDK 0.1.3** — the ``c-sdk-v0.1.3`` release of
   `brainco-revohuman-sdk <https://github.com/BrainCoTech/brainco-revohuman-sdk>`_,
   which extracts to ``include/revohuman.h``, ``lib/librevohuman.so`` with its
-  versioned names, and ``LICENSE``. The install script downloads it
+  versioned names, and ``LICENSE``. The CMake configure downloads it
   automatically. A Python SDK wheel cannot replace it.
 - **RevoHuman gloves** connected over USB, with access to their serial ports.
 - **CloudXR runtime** running on the plugin host.
@@ -74,28 +73,19 @@ Prerequisites
 Installation
 ------------
 
-``install.sh`` downloads the pinned C SDK release, verifies it against a
-per-architecture SHA-256, extracts it next to the script (re-runs reuse the
-extracted copy), and configures, builds, and installs the plugin with the SDK
-library and its licence next to it:
+With ``BUILD_PLUGIN_REVOHUMAN=ON``, the CMake configure downloads the pinned C
+SDK release into the build directory and verifies it against a
+per-architecture SHA-256. Build and install the plugin with the SDK library and
+its licence next to it:
 
 .. code-block:: bash
 
-   ./src/plugins/revohuman/install.sh
-
-Pass ``--build-dir <path>`` to reuse a non-default top-level CMake build
-directory and ``--install-prefix <dir>`` to choose where the plugin goes.
-``--sdk-root <dir>`` (or ``REVOHUMAN_SDK_ROOT``) uses an SDK package you already
-extracted.
-
-To drive CMake directly:
-
-.. code-block:: bash
-
-   cmake -B build -DBUILD_PLUGINS=ON -DBUILD_PLUGIN_REVOHUMAN=ON \
-       -DREVOHUMAN_SDK_ROOT=/path/to/revohuman-c-sdk
+   cmake -B build -DBUILD_PLUGIN_REVOHUMAN=ON
    cmake --build build --target revohuman_plugin
    cmake --install build --component revohuman
+
+``-DREVOHUMAN_SDK_ROOT=<dir>`` uses an SDK package you already extracted
+instead of the download.
 
 The installed plugin finds the SDK library next to itself, so it needs neither
 the download nor the build directory afterwards. Keep the library's symlinks.
@@ -148,7 +138,7 @@ glove uses the DV1 model and a P1 glove the P model. A P1 glove has no tactile
 sensors, so it streams the hand and joint states without tactile outputs. A
 glove of the wrong product, with incompatible firmware or with a hand model the
 plugin is not fitted to is reported as failed; the plugin keeps running. The
-plugin is fitted to the models of the C SDK release that ``install.sh`` pins.
+plugin is fitted to the models of the C SDK release that its CMake pins.
 
 Wrist pose
 ----------
@@ -215,22 +205,22 @@ Troubleshooting
 
    * - Symptom
      - Fix
-   * - ``install.sh`` fails with a SHA-256 mismatch
-     - The downloaded package does not match the pinned release. Re-run to
+   * - CMake configuration fails with a hash mismatch for ``revohuman_sdk``
+     - The downloaded package does not match the pinned release. Reconfigure to
        rule out a corrupted download; if it persists, do not bypass the check
        — verify the release assets upstream.
    * - CMake configuration fails naming the RevoHuman SDK
      - The SDK at ``REVOHUMAN_SDK_ROOT`` is incomplete: its library, headers or
-       licence are missing. Point it at a complete C SDK release and
-       reconfigure.
+       licence are missing. Point it at a complete C SDK release, or clear it
+       to download the pinned one, and reconfigure.
    * - A glove is never opened and its status names a busy port
      - Another process, such as the SDK viewer, holds the glove's serial port.
        Close it; the plugin opens the glove on its next attempt.
    * - A glove is reported as failed
      - The status carries the reason: a product or variant the plugin does not
        support, incompatible firmware, or a hand model the plugin is not fitted
-       to, as from a C SDK release other than the one ``install.sh`` pins. These
-       are not retried.
+       to, as from a C SDK release other than the one the plugin's CMake
+       pins. These are not retried.
    * - Hands appear but a downstream client sees no tactile data
      - A P1 glove has no tactile sensors. Otherwise check the start-up log for
        why there is no ``TactileMetadata`` (an SDK without the taxel layout),

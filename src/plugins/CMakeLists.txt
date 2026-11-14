@@ -44,8 +44,7 @@ endif()
 if(BUILD_PLUGIN_SHARPA_AVATAR)
     add_subdirectory(sharpa_avatar)
 endif()
-# Gated: Linux + the RevoHuman C SDK (REVOHUMAN_SDK_ROOT). Missing SDK skips the plugin and its tests;
-# an incomplete one fails the configure.
+# Gated: Linux. Downloads the pinned RevoHuman C SDK release unless REVOHUMAN_SDK_ROOT is set.
 if(BUILD_PLUGIN_REVOHUMAN)
     add_subdirectory(revohuman)
 endif()
