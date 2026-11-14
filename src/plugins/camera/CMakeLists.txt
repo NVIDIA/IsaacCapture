@@ -8,3 +8,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 add_subdirectory(core)
+add_subdirectory(backends)
+add_subdirectory(app)
+
+install(FILES plugin.yaml README.md DESTINATION plugins/camera)

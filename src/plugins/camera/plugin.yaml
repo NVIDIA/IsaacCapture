@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: camera
+description: "Owns the cameras and serves their frames to readers in other processes"
+command: "./camera_plugin"
+version: "0.1.0"
