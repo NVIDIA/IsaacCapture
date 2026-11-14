@@ -279,8 +279,8 @@ std::optional<HandMeta> GloveSource::adopt(Hand hand, const Opened& opened)
                    opened.info.tactile_point_count, model.id(), status.paired ? "paired" : "on its own");
     if (meta.has_tactile)
     {
-        // Every product with tactile sensors has a taxel layout in the SDK release the plugin pins; without one the
-        // hand is still pushed, and device status reports its tactile as failed.
+        // The SDK release the plugin pins has a taxel layout for the taxel count of every product with tactile
+        // sensors; without one the hand is still pushed, and device status reports its tactile as failed.
         try
         {
             meta.tactile_metadata = model.tactile_metadata(hand, opened.info.tactile_point_count);

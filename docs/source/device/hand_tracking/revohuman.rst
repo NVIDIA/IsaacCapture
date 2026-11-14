@@ -189,9 +189,9 @@ is no layout file or option. Each taxel is bound rigidly to the OpenXR joint its
 SDK link moves with, with its +Z along the outward normal. That joint is rigid
 on the link, so the skinned taxels stay on the SDK's taxels as the fingers bend.
 The log names the taxel count and whether the metadata was built; the debug log
-names the SDK's layout source. When the SDK has no layout, the plugin warns why,
-pushes no tactile data and reports the hand's tactile as failed; the other
-outputs are unaffected.
+names the SDK's layout source. When the SDK has no layout for the glove's taxel
+count, the plugin warns why, pushes no tactile data and reports the hand's
+tactile as failed; the other outputs are unaffected.
 
 A force sample is pushed only while it is calibrated, recent and newer than the
 last one, and its status names the reason when it is not. Consumers must check

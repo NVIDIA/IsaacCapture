@@ -116,8 +116,10 @@ Alignment Position `(0, 0, -w)`; the editor does not save it.
 
 The metadata is built when a glove opens, from the SDK taxel layout of its model
 (`rh_hand_model_taxel_layout`); a glove without tactile sensors (P1) gets no
-tactile collections and a disabled tactile status. A glove whose model has no
-SDK layout gets none either, its tactile status is failed and the log warns why. Forces are the SDK's newtons (`rh_tactile_newtons`), unchanged.
+tactile collections and a disabled tactile status. A glove whose taxel count
+has no SDK layout for its model gets no tactile collections either; its tactile
+status is failed and the log warns why. Forces are the SDK's newtons
+(`rh_tactile_newtons`), unchanged.
 A sample is pushed when the firmware has not marked it invalid, it is
 calibrated, has the layout's taxel count, carries a sampling time no older than
 `kTactileMaxAgeNs` (100 ms, in `core/inc/revohuman_plugin/pipeline.hpp`),
