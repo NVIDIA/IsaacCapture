@@ -126,7 +126,7 @@ TEST_CASE("the bench reads a camera from another process and reports each step",
     REQUIRE(unknown.exit_code == 1);
     REQUIRE_THAT(unknown.output, ContainsSubstring("no group 'chest'"));
 
-    REQUIRE(run_bench(directory, { "--group=head" }).exit_code == 2);
+    REQUIRE(run_bench(directory, { "--endpoint=" + endpoint, "--instance=other" }).exit_code == 2);
     REQUIRE(run_bench(directory, { "--endpoint=" + endpoint, "--order=backwards" }).exit_code == 2);
     REQUIRE(run_bench(directory, { "--help" }).exit_code == 0);
 

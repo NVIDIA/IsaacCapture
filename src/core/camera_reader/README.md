@@ -12,7 +12,7 @@ buffers, mapped read-only; nothing is copied.
 ```cpp
 #include <camera_reader/camera_reader.hpp>
 
-CameraReader reader = CameraReader::open(endpoint, "head");
+CameraReader reader = CameraReader::open("head");
 while (auto frames = reader.next(std::chrono::seconds(1)))
 {
     const ImageView left = frames->image(0);
@@ -29,6 +29,8 @@ while (auto frames = reader.next(std::chrono::seconds(1)))
 - **`next` returns nothing on timeout** and throws `CameraDisconnected` when the plugin is
   gone. Opening fails with a `CameraReaderError` that says why: nothing listens on the
   endpoint, the group does not exist, or the subscription does not fit the pool.
+- **Which plugin.** By default the reader looks for this user's plugin on its default
+  endpoint. A `PluginLocation` names another instance of the plugin, or a socket path.
 - **One reader reads one group.** For two groups, open two readers; `descriptor()` lets an
   application wait on several at once.
 - A `FrameSet` may be given back from another thread than the one that calls `next`, and

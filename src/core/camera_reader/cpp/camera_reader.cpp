@@ -3,6 +3,7 @@
 
 #include "inc/camera_reader/camera_reader.hpp"
 
+#include <camera_ipc/endpoint_path.hpp>
 #include <camera_ipc/host_pool.hpp>
 #include <camera_ipc/message_socket.hpp>
 #include <camera_wire/messages.hpp>
@@ -54,15 +55,28 @@ std::optional<Received> receive(MessageSocket& socket, std::span<std::byte> buff
     }
 }
 
-MessageSocket connect_to(const std::string& endpoint)
+MessageSocket connect_to(const PluginLocation& plugin)
 {
+    if (!plugin.endpoint.empty() && !plugin.instance.empty())
+    {
+        throw CameraReaderError("a camera plugin is named by its endpoint or by its instance, not both");
+    }
+    std::string endpoint = plugin.endpoint;
     try
     {
+        if (endpoint.empty())
+        {
+            endpoint = default_endpoint_path(plugin.instance);
+        }
         return MessageSocket::connect(endpoint);
     }
     catch (const std::system_error& error)
     {
         throw CameraReaderError("no camera plugin answers on '" + endpoint + "': " + error.code().message());
+    }
+    catch (const std::invalid_argument& error)
+    {
+        throw CameraReaderError(error.what());
     }
 }
 
@@ -246,17 +260,17 @@ void FrameSet::release() noexcept
     }
 }
 
-std::vector<GroupDescription> CameraReader::list(const std::string& endpoint)
+std::vector<GroupDescription> CameraReader::list(const PluginLocation& plugin)
 {
-    MessageSocket socket = connect_to(endpoint);
+    MessageSocket socket = connect_to(plugin);
     WireEncoder encoder;
     std::vector<std::byte> buffer(MAX_WIRE_MESSAGE_BYTES);
     return greet(socket, encoder, buffer);
 }
 
-CameraReader CameraReader::open(const std::string& endpoint, const std::string& group, const ReaderOptions& options)
+CameraReader CameraReader::open(const std::string& group, const ReaderOptions& options, const PluginLocation& plugin)
 {
-    auto state = std::make_shared<detail::ReaderState>(connect_to(endpoint));
+    auto state = std::make_shared<detail::ReaderState>(connect_to(plugin));
     WireEncoder encoder;
     greet(state->socket, encoder, state->buffer);
 

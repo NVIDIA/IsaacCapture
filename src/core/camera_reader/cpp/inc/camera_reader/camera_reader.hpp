@@ -42,6 +42,13 @@ public:
     using CameraReaderError::CameraReaderError;
 };
 
+// Which camera plugin to read from. Left empty, it is this user's plugin on this machine.
+struct PluginLocation
+{
+    std::string endpoint; // a socket path; empty for the default endpoint of `instance`
+    std::string instance; // a named plugin instance; empty for the default one
+};
+
 /**
  * @brief One image of a frame set. The memory is the plugin's pool, mapped read-only, and
  * stays as it is for as long as the FrameSet the view came from is held.
@@ -122,7 +129,7 @@ private:
  * @brief Reads one group of cameras from the camera plugin.
  *
  * @code
- * CameraReader reader = CameraReader::open(endpoint, "head");
+ * CameraReader reader = CameraReader::open("head");
  * while (auto frames = reader.next(std::chrono::seconds(1)))
  * {
  *     std::span<const std::byte> left = frames->image(0).data;
@@ -133,17 +140,19 @@ class CameraReader
 {
 public:
     /**
-     * @brief What the plugin behind `endpoint` publishes.
-     * @throws CameraReaderError if nothing listens there or the plugin refuses this reader.
+     * @brief What a camera plugin publishes.
+     * @throws CameraReaderError if no plugin answers or the plugin refuses this reader.
      */
-    static std::vector<GroupDescription> list(const std::string& endpoint);
+    static std::vector<GroupDescription> list(const PluginLocation& plugin = {});
 
     /**
      * @brief Subscribe to one group. A reader for a second group is a second CameraReader.
-     * @throws CameraReaderError if nothing listens on the endpoint or the plugin refuses the
-     * subscription; the message says why.
+     * @throws CameraReaderError if no plugin answers or the plugin refuses the subscription;
+     * the message says why.
      */
-    static CameraReader open(const std::string& endpoint, const std::string& group, const ReaderOptions& options = {});
+    static CameraReader open(const std::string& group,
+                             const ReaderOptions& options = {},
+                             const PluginLocation& plugin = {});
 
     CameraReader(CameraReader&& other) noexcept;
     CameraReader& operator=(CameraReader&& other) noexcept;

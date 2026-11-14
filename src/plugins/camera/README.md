@@ -9,29 +9,53 @@ One process that owns the cameras and serves their frames to any number of reade
 processes. Viewers, encoders and recorders read the plugin's buffers in place through
 [`camera_reader`](../../core/camera_reader); none of them links a camera SDK.
 
+```yaml
+# ~/.config/isaaccapture/cameras.yaml
+cameras:
+  head:
+    backend: synthetic
+```
+
 ```bash
-camera_plugin --endpoint=/tmp/cameras.sock --camera=head:synthetic
+camera_plugin
 ```
 
 ```cpp
-CameraReader reader = CameraReader::open("/tmp/cameras.sock", "head");
+CameraReader reader = CameraReader::open("head");
 while (auto frames = reader.next(std::chrono::seconds(1)))
 {
     const ImageView left = frames->image(0);
 }
 ```
 
+Neither side is told where the other is: the plugin listens on this user's default endpoint
+and readers look there.
+
 ## Running it
 
-| Argument | Meaning |
-|---|---|
-| `--endpoint=PATH` | The socket file readers connect to. Only one plugin serves a path at a time. |
-| `--camera=ID:BACKEND[:KEY=VALUE,...]` | One camera: the id readers ask for, the backend that opens it, and that backend's options. Repeat it for each camera. |
-| `--slots=N` | Frames kept per stream, 8 by default. A pool holds the newest frame set, one slot for the camera to write ahead, and the windows of all readers; a reader that does not fit is refused with the numbers. |
-| `--list-backends` | Print the backends this build has. |
+**Which cameras.** A camera has an id that readers ask for, a backend that opens it, and that
+backend's options. The plugin takes them from, in this order:
 
-A misspelt argument or option is an error, not something ignored. `SIGINT` and `SIGTERM` stop
-the plugin cleanly; readers see their connection close.
+1. `--camera=ID:BACKEND[:KEY=VALUE,...]` on the command line, once per camera;
+2. `--config=FILE`, or without it `$XDG_CONFIG_HOME/isaaccapture/cameras.yaml`
+   (`~/.config/isaaccapture/cameras.yaml`) when that file exists. A camera takes three lines:
+   its id, `backend:`, and any option of that backend as `name: value`. `slots:` at the top
+   level sets the pool size;
+3. otherwise, or with `--auto`, every camera the backends of this build find plugged in.
+
+**Where it listens.** By default on `$XDG_RUNTIME_DIR/isaaccapture/camera.sock`. A second
+plugin on the same machine runs as a named instance, `--instance=NAME`, on its own endpoint,
+and readers name the same instance. `--endpoint=PATH` sets the socket file outright. Only one
+plugin serves an endpoint at a time.
+
+**Pool size.** `--slots=N`, 8 by default, is the number of frames kept per stream. A pool
+holds the newest frame set, one slot for the camera to write ahead, and the windows of all
+readers; a reader that does not fit is refused with the numbers. A reader that wants every
+frame in order counts its window twice, because the frames waiting for it are kept as well.
+
+A misspelt argument, option or setting is an error, not something ignored. `SIGINT` and
+`SIGTERM` stop the plugin cleanly; readers see their connection close. `--list-backends`
+prints the backends of the build.
 
 Every ten seconds the plugin logs, per camera, how many frame sets it published. It warns
 when a camera had to drop frame sets because its pool was full, or when a reader did not take
@@ -43,7 +67,7 @@ Every frame set carries the times it passed each step, on the host's monotonic c
 `camera_bench` reads a group like any other reader and prints them:
 
 ```text
-$ camera_bench --endpoint=/tmp/cameras.sock --group=head --frames=600
+$ camera_bench --group=head --frames=600
 head: 2 stream(s)
   head/left                1280x720 bgra8, 60.00 fps, 8 slots of 3686400 bytes
   head/right               1280x720 bgra8, 60.00 fps, 8 slots of 3686400 bytes

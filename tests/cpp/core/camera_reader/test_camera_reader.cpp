@@ -130,7 +130,7 @@ std::byte first_pixel(const FrameSet& frames, std::size_t stream)
 TEST_CASE("a reader lists what a plugin publishes", "[unit][camera_reader]")
 {
     Served served;
-    const std::vector<GroupDescription> groups = CameraReader::list(served.endpoint_path);
+    const std::vector<GroupDescription> groups = CameraReader::list({ .endpoint = served.endpoint_path });
     REQUIRE(groups.size() == 1);
     REQUIRE(groups[0].id == "head");
     REQUIRE(groups[0].streams.size() == 2);
@@ -140,7 +140,7 @@ TEST_CASE("a reader lists what a plugin publishes", "[unit][camera_reader]")
 TEST_CASE("a reader gets each frame set with its pixels and what is known about it", "[unit][camera_reader]")
 {
     Served served;
-    CameraReader reader = CameraReader::open(served.endpoint_path, "head");
+    CameraReader reader = CameraReader::open("head", {}, { .endpoint = served.endpoint_path });
     REQUIRE(reader.group().id == "head");
     REQUIRE(reader.group().streams.size() == 2);
     REQUIRE(reader.descriptor() >= 0);
@@ -175,7 +175,7 @@ TEST_CASE("a reader gets each frame set with its pixels and what is known about 
 TEST_CASE("a held frame set is not rewritten and the next one is the newest", "[unit][camera_reader]")
 {
     Served served;
-    CameraReader reader = CameraReader::open(served.endpoint_path, "head");
+    CameraReader reader = CameraReader::open("head", {}, { .endpoint = served.endpoint_path });
 
     served.publish(1);
     std::optional<FrameSet> held = reader.next(2s);
@@ -207,7 +207,7 @@ TEST_CASE("a held frame set is not rewritten and the next one is the newest", "[
 TEST_CASE("an in-order reader gets every frame set", "[unit][camera_reader]")
 {
     Served served;
-    CameraReader reader = CameraReader::open(served.endpoint_path, "head", { .window = 3 });
+    CameraReader reader = CameraReader::open("head", { .window = 3 }, { .endpoint = served.endpoint_path });
 
     served.publish(1);
     served.publish(2);
@@ -234,8 +234,8 @@ TEST_CASE("an in-order reader gets every frame set", "[unit][camera_reader]")
 TEST_CASE("a newest-order reader with a larger window skips to the newest waiting frame set", "[unit][camera_reader]")
 {
     Served served;
-    CameraReader reader =
-        CameraReader::open(served.endpoint_path, "head", { .window = 3, .order = DeliveryOrder::NEWEST });
+    CameraReader reader = CameraReader::open(
+        "head", { .window = 3, .order = DeliveryOrder::NEWEST }, { .endpoint = served.endpoint_path });
 
     served.publish(1);
     served.publish(2);
@@ -264,7 +264,7 @@ TEST_CASE("a frame set can be given back after its reader is gone", "[unit][came
     Served served;
     std::optional<FrameSet> frames;
     {
-        CameraReader reader = CameraReader::open(served.endpoint_path, "head");
+        CameraReader reader = CameraReader::open("head", {}, { .endpoint = served.endpoint_path });
         served.publish(5);
         frames = reader.next(2s);
         REQUIRE(frames.has_value());
@@ -279,23 +279,24 @@ TEST_CASE("a frame set can be given back after its reader is gone", "[unit][came
 TEST_CASE("a reader says why it could not be opened", "[unit][camera_reader]")
 {
     TemporaryDirectory directory;
-    REQUIRE_THROWS_WITH(
-        CameraReader::open(directory.socket_path(), "head"), ContainsSubstring("no camera plugin answers on"));
-    REQUIRE_THROWS_AS(CameraReader::list(directory.socket_path()), CameraReaderError);
+    REQUIRE_THROWS_WITH(CameraReader::open("head", {}, { .endpoint = directory.socket_path() }),
+                        ContainsSubstring("no camera plugin answers on"));
+    REQUIRE_THROWS_AS(CameraReader::list({ .endpoint = directory.socket_path() }), CameraReaderError);
 
     Served served;
-    REQUIRE_THROWS_WITH(CameraReader::open(served.endpoint_path, "chest"), ContainsSubstring("no group 'chest'"));
-    REQUIRE_THROWS_WITH(CameraReader::open(served.endpoint_path, "head", { .window = SLOTS }),
+    REQUIRE_THROWS_WITH(
+        CameraReader::open("chest", {}, { .endpoint = served.endpoint_path }), ContainsSubstring("no group 'chest'"));
+    REQUIRE_THROWS_WITH(CameraReader::open("head", { .window = SLOTS }, { .endpoint = served.endpoint_path }),
                         ContainsSubstring("does not fit the pool"));
 
     // A refusal leaves nothing behind: the pool still has room for a reader that fits.
-    REQUIRE_NOTHROW(CameraReader::open(served.endpoint_path, "head", { .window = 2 }));
+    REQUIRE_NOTHROW(CameraReader::open("head", { .window = 2 }, { .endpoint = served.endpoint_path }));
 }
 
 TEST_CASE("a reader is told when the plugin is gone", "[unit][camera_reader]")
 {
     Served served;
-    CameraReader reader = CameraReader::open(served.endpoint_path, "head");
+    CameraReader reader = CameraReader::open("head", {}, { .endpoint = served.endpoint_path });
     served.publish(1);
     std::optional<FrameSet> frames = reader.next(2s);
     REQUIRE(frames.has_value());
@@ -364,7 +365,7 @@ TEST_CASE("a reader copes with what a plugin may send", "[unit][camera_reader]")
             }
         });
 
-    CameraReader reader = CameraReader::open(directory.socket_path(), "head");
+    CameraReader reader = CameraReader::open("head", {}, { .endpoint = directory.socket_path() });
     std::optional<FrameSet> frames = reader.next(2s);
     REQUIRE(frames.has_value());
     REQUIRE(frames->sequence() == 1);

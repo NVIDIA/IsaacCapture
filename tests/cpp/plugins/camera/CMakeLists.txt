@@ -7,6 +7,7 @@ find_package(Threads REQUIRED)
 
 add_executable(camera_plugin_tests
     test_camera_bench.cpp
+    test_camera_config.cpp
     test_camera_host.cpp
     test_camera_plugin.cpp
 )

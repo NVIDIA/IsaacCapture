@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace plugins::camera
 {
@@ -90,6 +91,10 @@ struct Backend
 
     // Opens one camera. Throws std::invalid_argument for options the backend does not accept.
     std::function<std::unique_ptr<CameraSource>(const CameraConfig&)> open;
+
+    // The cameras of this backend that are plugged in, each ready to be opened. Left empty by
+    // a backend that has nothing to look for.
+    std::function<std::vector<CameraConfig>()> discover = {};
 };
 
 } // namespace plugins::camera

@@ -205,15 +205,15 @@ TEST_CASE("a host gives each camera its pools and serves them all on one endpoin
     REQUIRE(head.output != nullptr);
     REQUIRE_THROWS_AS(host.add_camera(std::make_unique<ManualSource>("late", 1, unused)), std::logic_error);
 
-    const std::vector<GroupDescription> groups = CameraReader::list(directory.socket_path());
+    const std::vector<GroupDescription> groups = CameraReader::list({ .endpoint = directory.socket_path() });
     REQUIRE(groups.size() == 2);
     REQUIRE(groups[0].id == "head");
     REQUIRE(groups[0].streams[0].slot_count == DEFAULT_SLOT_COUNT);
     REQUIRE(groups[1].id == "wrist");
     REQUIRE(groups[1].streams[0].slot_count == 4);
 
-    CameraReader head_reader = CameraReader::open(directory.socket_path(), "head");
-    CameraReader wrist_reader = CameraReader::open(directory.socket_path(), "wrist");
+    CameraReader head_reader = CameraReader::open("head", {}, { .endpoint = directory.socket_path() });
+    CameraReader wrist_reader = CameraReader::open("wrist", {}, { .endpoint = directory.socket_path() });
     REQUIRE(host.reader_count() == 2);
 
     REQUIRE(head.publish(0x21));
@@ -242,7 +242,7 @@ TEST_CASE("a camera drops a frame set when its pool is full, and never overwrite
     host.start();
 
     // A window of one in a pool of three: the newest, the reader's, and one to write ahead.
-    CameraReader reader = CameraReader::open(directory.socket_path(), "head");
+    CameraReader reader = CameraReader::open("head", {}, { .endpoint = directory.socket_path() });
     REQUIRE(camera.publish(1));
     const std::optional<FrameSet> held = reader.next(2s);
     REQUIRE(held.has_value());

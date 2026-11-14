@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.20)
 # memory that readers can only map read-only, and a socket that carries whole messages with
 # file descriptors. Linux only.
 add_library(camera_ipc STATIC
+    endpoint_path.cpp
     host_pool.cpp
     message_socket.cpp
 )

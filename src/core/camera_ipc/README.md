@@ -65,6 +65,14 @@ HostPoolView view(std::move(message.descriptors[0]), slot_count, slot_bytes);
   file left by a crashed process is replaced safely. Anything else found at the path is left
   alone. The lock file stays behind, empty.
 
+## Where the plugin listens
+
+`default_endpoint_path()` is the socket path a camera plugin and its readers agree on without
+being told: `$XDG_RUNTIME_DIR/isaaccapture/camera.sock`, or under `/tmp/isaaccapture-<uid>/`
+when that variable is not set. A second plugin on the same machine is a named instance and
+listens on `camera-<instance>.sock` beside it. The plugin makes the directory for its owner
+alone and refuses one that others can enter.
+
 ## Why a socket and shared memory, and not a messaging library
 
 Three things have to cross between the processes: the frame memory, a small event per frame

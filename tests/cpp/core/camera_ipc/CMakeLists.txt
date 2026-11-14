@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 find_package(Threads REQUIRED)
 
 add_executable(camera_ipc_tests
+    test_endpoint_path.cpp
     test_host_pool.cpp
     test_message_socket.cpp
 )

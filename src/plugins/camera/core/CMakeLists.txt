@@ -7,6 +7,7 @@ find_package(Threads REQUIRED)
 # them all behind one endpoint.
 add_library(camera_plugin_core STATIC
     camera_host.cpp
+    config.cpp
     options.cpp
 )
 
@@ -21,6 +22,7 @@ target_link_libraries(camera_plugin_core
         camera::camera_endpoint
         camera::camera_ipc
         log_bridge::log_bridge_core
+        yaml-cpp::yaml-cpp
         Threads::Threads
 )
 

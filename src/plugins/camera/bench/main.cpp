@@ -24,11 +24,13 @@ namespace
 {
 
 constexpr std::string_view USAGE =
-    "Usage: camera_bench --endpoint=PATH [--group=ID] [--frames=N] [--window=N] [--order=newest|in_order]\n"
-    "                    [--check-synthetic]\n"
+    "Usage: camera_bench [--group=ID] [--frames=N] [--window=N] [--order=newest|in_order] [--check-synthetic]\n"
+    "                    [--endpoint=PATH | --instance=NAME]\n"
     "\n"
     "Reads one group from a running camera plugin and prints where each frame set spent its time.\n"
     "Without --group it lists what the plugin publishes.\n"
+    "  --endpoint=PATH     the plugin's socket file, instead of this user's default endpoint\n"
+    "  --instance=NAME     a named plugin instance, instead of the default one\n"
     "  --frames=N          frame sets to read (default 300)\n"
     "  --window=N          frame sets held for this reader at a time (default 1)\n"
     "  --order=...         newest skips to the latest frame set, in_order reads every one\n"
@@ -60,7 +62,7 @@ std::uint32_t number_of(std::string_view flag, std::string_view text)
 
 struct Arguments
 {
-    std::string endpoint;
+    PluginLocation plugin;
     std::string group;
     std::uint32_t frames = 300;
     ReaderOptions options;
@@ -84,7 +86,11 @@ Arguments parse(int argc, char** argv)
         }
         else if (const auto endpoint = flag_value(arg, "--endpoint"))
         {
-            arguments.endpoint = *endpoint;
+            arguments.plugin.endpoint = *endpoint;
+        }
+        else if (const auto instance = flag_value(arg, "--instance"))
+        {
+            arguments.plugin.instance = *instance;
         }
         else if (const auto group = flag_value(arg, "--group"))
         {
@@ -111,9 +117,9 @@ Arguments parse(int argc, char** argv)
             throw std::invalid_argument("unknown argument '" + std::string(arg) + "'");
         }
     }
-    if (!arguments.help && arguments.endpoint.empty())
+    if (!arguments.plugin.endpoint.empty() && !arguments.plugin.instance.empty())
     {
-        throw std::invalid_argument("--endpoint is required");
+        throw std::invalid_argument("--endpoint and --instance both say which plugin to read from; give one");
     }
     return arguments;
 }
@@ -202,14 +208,14 @@ int run(const Arguments& arguments)
 {
     if (arguments.group.empty())
     {
-        for (const GroupDescription& group : CameraReader::list(arguments.endpoint))
+        for (const GroupDescription& group : CameraReader::list(arguments.plugin))
         {
             print_group(group);
         }
         return 0;
     }
 
-    CameraReader reader = CameraReader::open(arguments.endpoint, arguments.group, arguments.options);
+    CameraReader reader = CameraReader::open(arguments.group, arguments.options, arguments.plugin);
     print_group(reader.group());
 
     std::array<Stage, 5> stages = { { { "capture -> sdk ready", {} },

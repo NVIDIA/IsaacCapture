@@ -10,6 +10,7 @@ add_executable(camera_plugin
 target_link_libraries(camera_plugin PRIVATE
     camera::plugin_core
     camera::plugin_backends
+    camera::camera_ipc
     log_bridge::log_bridge_core
     Threads::Threads
 )
