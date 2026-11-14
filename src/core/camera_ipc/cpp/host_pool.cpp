@@ -63,7 +63,9 @@ HostPool::HostPool(std::uint32_t slot_count, std::uint64_t slot_bytes, const std
     {
         throw_errno("host pool '" + name + "': sizing the pool");
     }
-    void* memory = ::mmap(nullptr, pool_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd.get(), 0);
+    // MAP_POPULATE: the pages exist and are mapped before the first frame is written, so no
+    // frame pays for them with page faults on the capture path.
+    void* memory = ::mmap(nullptr, pool_bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, m_fd.get(), 0);
     if (memory == MAP_FAILED)
     {
         throw_errno("host pool '" + name + "': mapping the pool");
@@ -106,7 +108,8 @@ HostPoolView::HostPoolView(UniqueFd descriptor, std::uint32_t slot_count, std::u
     {
         throw std::invalid_argument("host pool view: the descriptor holds less than the pool needs");
     }
-    void* memory = ::mmap(nullptr, pool_bytes, PROT_READ, MAP_SHARED, descriptor.get(), 0);
+    // MAP_POPULATE: a reader's first look at each slot does not fault page by page either.
+    void* memory = ::mmap(nullptr, pool_bytes, PROT_READ, MAP_SHARED | MAP_POPULATE, descriptor.get(), 0);
     if (memory == MAP_FAILED)
     {
         throw_errno("host pool view: mapping the pool");

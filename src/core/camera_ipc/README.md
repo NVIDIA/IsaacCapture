@@ -27,6 +27,9 @@ HostPoolView view(std::move(received_descriptor), stream.slot_count, stream.slot
 std::span<const std::byte> image = view.slot(index);     // a reader sees the same bytes
 ```
 
+Both sides map the pool with its pages already in place (`MAP_POPULATE`), so neither the first
+frames a camera writes nor the first frames a reader looks at pay for page faults.
+
 Why an anonymous sealed file and not named shared memory (`shm_open`):
 
 - **Nothing to clean up.** There is no name to collide with another instance and no file left in

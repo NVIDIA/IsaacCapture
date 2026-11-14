@@ -4,6 +4,7 @@
 #include <camera_ipc/host_pool.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <sys/mman.h>
+#include <sys/resource.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -66,6 +67,43 @@ TEST_CASE("slots start on page boundaries", "[unit][camera_ipc][host_pool]")
     REQUIRE(reinterpret_cast<std::uintptr_t>(pool.slot(0).data()) % page == 0);
     REQUIRE(reinterpret_cast<std::uintptr_t>(pool.slot(1).data()) % page == 0);
     REQUIRE(pool.slot(1).data() >= pool.slot(0).data() + SLOT_BYTES);
+}
+
+TEST_CASE("writing and reading a pool for the first time causes no page faults", "[unit][camera_ipc][host_pool]")
+{
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    SKIP("a sanitizer's shadow memory faults on first touch whatever the pool does");
+#else
+    constexpr std::uint32_t SLOTS = 8;
+    constexpr std::uint64_t BYTES = 2 * 1024 * 1024;
+    const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+    const auto faults = []
+    {
+        rusage usage = {};
+        REQUIRE(::getrusage(RUSAGE_SELF, &usage) == 0);
+        return usage.ru_minflt + usage.ru_majflt;
+    };
+
+    HostPool pool(SLOTS, BYTES, "camera_ipc_test");
+    HostPoolView view(duplicate_descriptor(pool), SLOTS, BYTES);
+
+    // Touch every page of every slot: write as the owner, then read as a reader would.
+    const long before = faults();
+    unsigned sum = 0;
+    for (std::uint32_t slot = 0; slot < SLOTS; ++slot)
+    {
+        for (std::size_t offset = 0; offset < BYTES; offset += page)
+        {
+            pool.slot(slot)[offset] = std::byte{ 1 };
+            sum += std::to_integer<unsigned>(view.slot(slot)[offset]);
+        }
+    }
+    const long caused = faults() - before;
+    REQUIRE(sum == SLOTS * (BYTES / page));
+
+    // The pool has thousands of pages; without them mapped up front, each would fault twice.
+    REQUIRE(caused < 32);
+#endif
 }
 
 TEST_CASE("a process that is sent the pool cannot write to it or resize it", "[unit][camera_ipc][host_pool]")
