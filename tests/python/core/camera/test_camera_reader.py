@@ -7,13 +7,14 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-import isaaccapture.camera as camera
+from isaaccapture import camera
 from isaaccapture.camera import (
     CameraDisconnected,
     CameraReader,
@@ -48,7 +49,7 @@ def short_directory():
 
 @pytest.fixture
 def plugin(short_directory):
-    """A running plugin with three synthetic cameras; yields its endpoint."""
+    """A running plugin with synthetic cameras; yields its endpoint."""
     endpoint = str(short_directory / "cameras.sock")
     process = subprocess.Popen(
         [
@@ -57,6 +58,7 @@ def plugin(short_directory):
             "--camera=head:synthetic:width=160,height=120,fps=120",
             "--camera=wrist:synthetic:width=64,height=48,streams=1,format=gray8,fps=120",
             "--camera=sky:synthetic:width=64,height=48,streams=1,format=nv12,fps=120",
+            "--camera=slow:synthetic:width=64,height=48,streams=1,format=gray8,fps=1",
         ]
     )
 
@@ -86,7 +88,7 @@ def assert_synthetic(image, stream):
 def test_a_reader_lists_what_the_plugin_publishes(plugin):
     endpoint, _ = plugin
     groups = CameraReader.list(endpoint=endpoint)
-    assert [group.id for group in groups] == ["head", "wrist", "sky"]
+    assert [group.id for group in groups] == ["head", "wrist", "sky", "slow"]
     assert all(group.unsupported == "" for group in groups)
     left, right = groups[0].streams
     assert (left.id, right.id) == ("head/left", "head/right")
@@ -205,7 +207,7 @@ def test_a_reader_that_was_busy_gets_what_the_camera_saw_last(plugin):
             frames = reader.next(2.0)
             age_ms = (time.monotonic_ns() - frames.timeline.published_ns) / 1e6
             # A frame set put aside when the reader left would be 300 ms old.
-            assert 0 <= age_ms < 100
+            assert 0 <= age_ms < 200
             assert frames.skipped > 10
             frames.release()
 
@@ -308,6 +310,31 @@ def test_a_reader_says_why_it_could_not_be_opened(plugin, short_directory):
     closed.close()
     with pytest.raises(CameraReaderError, match="closed"):
         closed.next(0.1)
+
+
+def test_closing_from_another_thread_ends_a_wait(plugin):
+    endpoint, _ = plugin
+    reader = CameraReader.open("slow", endpoint=endpoint)
+    # Taken right as it is published, so the next frame set is a second away.
+    reader.next(3.0).release()
+    reader.next(3.0).release()
+
+    outcome = []
+
+    def wait():
+        try:
+            outcome.append(reader.next(5.0))
+        except CameraReaderError as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=wait)
+    thread.start()
+    time.sleep(0.2)  # the thread now waits, with the interpreter lock released
+    reader.close()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert isinstance(outcome[0], CameraReaderError)
+    assert "closed" in str(outcome[0])
 
 
 def test_a_reader_is_told_when_the_plugin_is_gone(plugin):

@@ -246,7 +246,8 @@ class Reader
 {
 public:
     explicit Reader(CameraReader reader)
-        : m_group(std::make_shared<const GroupDescription>(reader.group())), m_reader(std::move(reader))
+        : m_group(std::make_shared<const GroupDescription>(reader.group())),
+          m_reader(std::make_shared<CameraReader>(std::move(reader)))
     {
     }
 
@@ -263,10 +264,19 @@ public:
         {
             const auto left =
                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            // The wait holds the reader itself: close() on another thread, while this one waits
+            // without the interpreter lock, ends the reading and does not take the reader away
+            // from under the wait.
+            const std::shared_ptr<CameraReader> reader = open_reader();
             std::optional<FrameSet> frames;
             {
                 const py::gil_scoped_release release;
-                frames = open_reader().next(std::clamp(left, std::chrono::milliseconds(0), SIGNAL_CHECK_INTERVAL));
+                frames = reader->next(std::clamp(left, std::chrono::milliseconds(0), SIGNAL_CHECK_INTERVAL));
+            }
+            if (m_reader != reader)
+            {
+                frames.reset(); // closed meanwhile: what arrived goes back
+                open_reader();
             }
             if (frames)
             {
@@ -311,30 +321,22 @@ public:
 
     int fileno() const
     {
-        return open_reader().descriptor();
+        return open_reader()->descriptor();
     }
 
 private:
-    CameraReader& open_reader()
+    // Call with the interpreter lock held.
+    std::shared_ptr<CameraReader> open_reader() const
     {
         if (!m_reader)
         {
             throw CameraReaderError("the camera reader is closed");
         }
-        return *m_reader;
-    }
-
-    const CameraReader& open_reader() const
-    {
-        if (!m_reader)
-        {
-            throw CameraReaderError("the camera reader is closed");
-        }
-        return *m_reader;
+        return m_reader;
     }
 
     std::shared_ptr<const GroupDescription> m_group;
-    std::optional<CameraReader> m_reader;
+    std::shared_ptr<CameraReader> m_reader; // empty once closed
     std::shared_ptr<Frames> m_iterated;
 };
 
@@ -514,7 +516,8 @@ PYBIND11_MODULE(_camera, m)
              "The next frame set, waiting as long as it takes. The one handed out before is let go of first.")
         .def("close", &Reader::close,
              "Stop reading. Frame sets and arrays that still exist stay as they are, and the connection to the "
-             "plugin ends when the last of them is gone.")
+             "plugin ends when the last of them is gone. May be called from another thread than the one that "
+             "reads: a next() that is waiting then raises CameraReaderError within a tenth of a second.")
         .def("fileno", &Reader::fileno, "Readable when a frame set may be waiting; for select and asyncio")
         .def("__enter__", [](py::object self) { return self; })
         .def("__exit__", [](Reader& reader, const py::object&, const py::object&, const py::object&) { reader.close(); });
