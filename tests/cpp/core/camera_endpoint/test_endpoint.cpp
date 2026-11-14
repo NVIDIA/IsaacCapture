@@ -379,6 +379,9 @@ TEST_CASE("stopping the endpoint closes every reader, and it can serve again", "
     REQUIRE(served.endpoint.reader_count() == 0);
     served.endpoint.stop(); // nothing to stop
 
+    // A stopped endpoint refuses a reader at once; it does not leave it waiting for an answer.
+    REQUIRE_THROWS_AS(MessageSocket::connect(served.directory.socket_path()), std::system_error);
+
     served.endpoint.start();
     Reader next(served);
     REQUIRE(next.hello().groups.size() == 2);

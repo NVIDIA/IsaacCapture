@@ -85,7 +85,8 @@ class Endpoint::Impl
 public:
     Impl(Publisher& publisher, const std::string& path)
         : m_publisher(publisher),
-          m_listener(path),
+          m_path(path),
+          m_listener(std::in_place, path),
           m_wake(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)),
           m_buffer(MAX_WIRE_MESSAGE_BYTES),
           m_logger(isaaccapture::Logger::get("isaaccapture.camera_endpoint.Endpoint"))
@@ -121,9 +122,13 @@ public:
         {
             return;
         }
+        if (!m_listener)
+        {
+            m_listener.emplace(m_path);
+        }
         m_stopping = false;
         m_thread = std::thread([this] { run(); });
-        m_logger->info("serving cameras on '{}'", m_listener.path());
+        m_logger->info("serving cameras on '{}'", m_path);
     }
 
     void stop()
@@ -137,6 +142,9 @@ public:
         // Cannot fail in a way that matters: the counter only overflows after 2^64 wake-ups.
         [[maybe_unused]] const ssize_t written = ::write(m_wake.get(), &one, sizeof(one));
         m_thread.join();
+        // Without the listener a reader that tries to connect is refused at once, instead of
+        // waiting in a queue nobody serves.
+        m_listener.reset();
     }
 
     std::size_t reader_count() const
@@ -150,7 +158,7 @@ private:
         std::vector<pollfd> waits;
         while (!m_stopping)
         {
-            waits.assign({ { m_wake.get(), POLLIN, 0 }, { m_listener.descriptor(), POLLIN, 0 } });
+            waits.assign({ { m_wake.get(), POLLIN, 0 }, { m_listener->descriptor(), POLLIN, 0 } });
             for (const auto& connection : m_connections)
             {
                 waits.push_back({ connection->socket.descriptor(), POLLIN, 0 });
@@ -191,7 +199,7 @@ private:
     {
         try
         {
-            while (auto socket = m_listener.accept(std::chrono::milliseconds(0)))
+            while (auto socket = m_listener->accept(std::chrono::milliseconds(0)))
             {
                 m_connections.push_back(std::make_unique<Connection>(std::move(*socket)));
                 m_reader_count = m_connections.size();
@@ -352,7 +360,8 @@ private:
     }
 
     Publisher& m_publisher;
-    MessageListener m_listener;
+    std::string m_path;
+    std::optional<MessageListener> m_listener; // absent between stop() and the next start()
     UniqueFd m_wake;
     std::map<GroupId, std::vector<int>> m_memory;
 

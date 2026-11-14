@@ -46,11 +46,16 @@ public:
      */
     void set_group_memory(GroupId group, std::vector<int> descriptors);
 
+    /**
+     * @brief Serve readers. After a stop() this takes the path again.
+     * @throws std::system_error if another process took the path meanwhile.
+     */
     void start();
 
     /**
-     * @brief Stop serving: every subscription ends and every reader sees its connection close.
-     * Does nothing if the endpoint is not serving.
+     * @brief Stop serving: every subscription ends, every reader sees its connection close, and
+     * the path is given up, so a reader that tries to connect is refused at once. Does nothing
+     * if the endpoint is not serving.
      */
     void stop();
 
