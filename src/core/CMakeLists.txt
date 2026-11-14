@@ -22,6 +22,11 @@ add_subdirectory(plugin_manager)
 # Camera capture core (standard library only)
 add_subdirectory(camera_core)
 
+# Camera frames between processes (shared host memory)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera_ipc)
+endif()
+
 # Build OXR library (depends on oxr_utils for types)
 add_subdirectory(oxr)
 

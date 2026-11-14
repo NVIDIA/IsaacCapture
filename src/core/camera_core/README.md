@@ -11,7 +11,7 @@ encoders and recorders in other processes read those buffers in place.
 
 This module is the part with no memory and no sockets in it: it decides which pool slot holds
 which frame set and who may still read it. It uses the standard library only. The shared memory
-behind the slots and the connection to other processes live in separate modules.
+behind the slots and the connection to other processes live in [`camera_ipc`](../camera_ipc).
 
 ## Terms
 

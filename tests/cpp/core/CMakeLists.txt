@@ -15,6 +15,10 @@ add_subdirectory(log_bridge)
 add_subdirectory(plugin_manager)
 add_subdirectory(camera_core)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera_ipc)
+endif()
+
 if(BUILD_OVXR_CAMERA_QUADS)
     add_subdirectory(ovxr_pip_layer)
 endif()
