@@ -1,0 +1,157 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// What the camera plugin and a reader of its frames say to each other, one message per socket
+// message. See src/core/camera_protocol/README.md for the conversation.
+//
+// This is a protocol between two processes on one machine. Lease ids, slot indices and the
+// file descriptors that travel with a message name resources of that machine and mean nothing
+// anywhere else, so none of it is a network format or a recording format.
+//
+// Nothing here is recorded. The file lives with the other schemas so that the same golden
+// check guards it: a plugin and a reader can come from different releases, and a change the
+// check rejects would make them misread each other.
+
+namespace core;
+
+// Zero means "a value this build does not know" for the kinds a newer peer may extend.
+enum CameraPixelFormat : uint32 { Unknown = 0, Bgra8 = 1, Rgba8 = 2, Nv12 = 3, Gray8 = 4 }
+enum CameraCodec : uint32 { None = 0, H264 = 1, H265 = 2 }
+enum CameraMemoryKind : uint32 { Unknown = 0, Host = 1 }
+enum CameraDeliveryOrder : uint32 { Default = 0, Newest = 1, InOrder = 2 }
+
+// Bits of CameraFrameRef.flags. A bit this build does not know is passed on untouched.
+enum CameraFrameFlag : uint32 (bit_flags) {
+  Keyframe = 0,    // bit 0, value 1: an encoded stream's access unit decodes on its own
+  SdkWarning = 1   // bit 1, value 2: the camera SDK delivered the frame but flagged it as suspect
+}
+
+// Where one plane of a pixel image sits inside a slot. A struct, and so never extended: an
+// offset and the distance between rows are all a plane of rows has.
+struct CameraPlaneLayout {
+  offset_bytes: uint32;
+  stride_bytes: uint32;
+}
+
+// One sensor's images or one encoded video stream, and the pool its frames are in.
+table CameraStream {
+  id: string (id: 0);
+  codec: CameraCodec (id: 1);
+  pixel_format: CameraPixelFormat (id: 2);
+  memory: CameraMemoryKind (id: 3);
+  width: uint32 (id: 4);
+  height: uint32 (id: 5);
+
+  // One entry per plane of a pixel image, the same for every slot; none for an encoded stream.
+  planes: [CameraPlaneLayout] (id: 6);
+
+  slot_bytes: uint64 (id: 7);
+  slot_count: uint32 (id: 8);
+  frame_rate: float64 (id: 9);
+}
+
+// Streams that are captured together and published as one frame set.
+table CameraGroup {
+  id: string (id: 0);
+  streams: [CameraStream] (id: 1);
+
+  // Names one run of the group, from the plugin starting to publish it until that plugin
+  // ends. With CameraFrameSet.sequence it identifies a capture for good.
+  session_id: uint64 (id: 2);
+}
+
+// Reader to plugin, the first message on a connection. With a group it asks for that group's
+// frame sets; without one it only asks what the plugin publishes.
+table CameraHandshakeRequest {
+  // The newest protocol version the reader speaks.
+  protocol_version: uint32 (id: 0);
+  reader_name: string (id: 1);
+  group_id: string (id: 2);
+  window: uint32 = 1 (id: 3);
+  order: CameraDeliveryOrder (id: 4);
+}
+
+// Plugin to reader, the answer to the request and the first message the plugin sends. With
+// `error` set the reader is refused and the connection ends. Otherwise `groups` is the group
+// that was asked for, or every group the plugin publishes when the request named none.
+//
+// Attachments, for a group that was asked for: one file descriptor per stream, in stream
+// order, for the stream's pool. That is the rule for CameraMemoryKind.Host; a kind of memory
+// that needs something else says so when it is added.
+table CameraHandshakeResponse {
+  // The version both sides speak on this connection: the reader's or the plugin's newest,
+  // whichever is older.
+  protocol_version: uint32 (id: 0);
+  error: string (id: 1);
+  groups: [CameraGroup] (id: 2);
+}
+
+// One stream's part of a frame set: the slot its image is in and what the camera SDK said
+// about it.
+table CameraFrameRef {
+  slot_index: uint32 (id: 0);
+  flags: CameraFrameFlag (id: 1);
+  bytes_used: uint64 (id: 2);
+  device_frame_id: uint64 (id: 3);
+  device_time_ns: int64 = -1 (id: 4);
+}
+
+// Plugin to reader: one frame set, held for the reader until it sends CameraRelease with the
+// same lease. The times are nanoseconds on the host's monotonic clock, -1 where one is not
+// known.
+table CameraFrameSet {
+  // This reader's hold on the frame set. It means something on this connection only.
+  lease_id: uint64 (id: 0);
+
+  // The frame set's place among the group's captures in its session: the same for every
+  // reader, so a reader that skips sees a gap. A camera restart does not reset it.
+  sequence: uint64 (id: 1);
+
+  // Restarts of the camera within the session.
+  generation: uint32 (id: 2);
+
+  // Frame sets published since the reader's previous one and not given to it.
+  skipped: uint32 (id: 3);
+
+  capture_ns: int64 = -1 (id: 4);
+  sdk_ready_ns: int64 = -1 (id: 5);
+  published_ns: int64 = -1 (id: 6);
+  sent_ns: int64 = -1 (id: 7);
+
+  // One per stream of the group, in stream order.
+  frames: [CameraFrameRef] (id: 8);
+}
+
+// Reader to plugin: done with a frame set.
+table CameraRelease {
+  lease_id: uint64 (id: 0);
+}
+
+// Reader to plugin, on a newest-order subscription: hold the newest frame set for me, now if
+// there is one after `after_sequence` and otherwise as soon as there is. One CameraFrameSet
+// answers it. An in-order subscription is sent its frame sets without asking.
+table CameraAcquire {
+  // The sequence of the last frame set the reader took; 0 for none.
+  after_sequence: uint64 (id: 0);
+}
+
+// The numbers are part of the protocol: a member keeps its number, and a new one takes the next.
+union CameraMessageBody {
+  CameraHandshakeRequest = 1,
+  CameraHandshakeResponse = 2,
+  CameraFrameSet = 3,
+  CameraRelease = 4,
+  CameraAcquire = 5
+}
+
+// The union's type field takes id 0, so the body is id 1.
+table CameraMessage {
+  body: CameraMessageBody (id: 1);
+
+  // Set by the sender of a message that only informs. A receiver that does not know the body's
+  // type ignores such a message; one it does not know and that is not marked this way is an
+  // operation it cannot carry out, and it ends the connection.
+  skippable: bool (id: 2);
+}
+
+root_type CameraMessage;

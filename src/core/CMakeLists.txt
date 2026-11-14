@@ -26,6 +26,10 @@ add_subdirectory(camera_core)
 # Camera interface: shared memory and the socket between processes
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(camera_ipc)
+    # Camera interface: the messages, the plugin's end and the reader's end of the connection
+    add_subdirectory(camera_protocol)
+    add_subdirectory(camera_endpoint)
+    add_subdirectory(camera_reader)
 endif()
 
 # Build OXR library (depends on oxr_utils for types)
