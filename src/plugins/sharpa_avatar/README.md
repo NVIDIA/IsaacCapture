@@ -78,9 +78,11 @@ wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`.
 ## Run
 
 `TeleopSession` launches the installed binary through `plugin.yaml`. To start
-it yourself after CloudXR is up:
+it yourself after CloudXR is up, load the runtime environment in the same
+shell first:
 
 ```bash
+source ~/.cloudxr/run/cloudxr.env
 ./install/plugins/sharpa_avatar/avatar_hand_plugin
 ```
 
