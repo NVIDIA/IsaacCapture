@@ -10,8 +10,8 @@ Teleop / CloudXR (OpenXR) stack.
 
 Full documentation — components, prerequisites, installation, running, and
 troubleshooting — lives in the docs tree:
-[Isaac Teleop documentation](https://nvidia.github.io/IsaacCapture/main/device/wuji_glove.html)
-(rendered under **Device → Wuji Glove**).
+[Isaac Teleop documentation](https://nvidia.github.io/IsaacCapture/main/device/hand_tracking/wuji_glove.html)
+(rendered under **Devices → Hand tracking → Wuji Glove**).
 
 Quick start:
 
