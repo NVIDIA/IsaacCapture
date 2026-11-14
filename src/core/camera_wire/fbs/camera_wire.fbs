@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// The messages between the camera plugin and a reader, one per socket message. A reader and a
+// plugin may be built at different times, so this file only grows: append fields with fresh
+// ids and leave them optional, append union members, never reuse or renumber. See README.md.
+
+namespace core.camera.wire;
+
+// Zero means "a value this build does not know" for the kinds a newer peer may extend.
+enum PixelFormat : uint32 { Unknown = 0, Bgra8 = 1, Rgba8 = 2, Nv12 = 3, Gray8 = 4 }
+enum Codec : uint32 { None = 0, H264 = 1, H265 = 2 }
+enum MemoryKind : uint32 { Unknown = 0, Host = 1 }
+enum DeliveryOrder : uint32 { Default = 0, Newest = 1, InOrder = 2 }
+
+// Where one plane of an image sits inside a slot.
+table PlaneLayout {
+  offset_bytes: uint32 (id: 0);
+  stride_bytes: uint32 (id: 1);
+}
+
+// One sensor's images or one encoded video stream, and the pool its frames are in.
+table Stream {
+  id: string (id: 0);
+  codec: Codec (id: 1);
+  pixel_format: PixelFormat (id: 2);
+  memory: MemoryKind (id: 3);
+  width: uint32 (id: 4);
+  height: uint32 (id: 5);
+  planes: [PlaneLayout] (id: 6);
+  slot_bytes: uint64 (id: 7);
+  slot_count: uint32 (id: 8);
+  frame_rate: float64 (id: 9);
+}
+
+// Streams that are captured together and published as one frame set.
+table Group {
+  id: string (id: 0);
+  streams: [Stream] (id: 1);
+}
+
+// Reader to plugin, first message on a connection.
+table Hello {
+  protocol_version: uint32 (id: 0);
+  reader_name: string (id: 1);
+}
+
+// Plugin to reader, in answer to Hello. `error` is set when the plugin refuses the reader.
+table Welcome {
+  protocol_version: uint32 (id: 0);
+  groups: [Group] (id: 1);
+  error: string (id: 2);
+}
+
+// Reader to plugin: start sending this group's frame sets. One subscription per connection.
+table Subscribe {
+  group: string (id: 0);
+  window: uint32 = 1 (id: 1);
+  order: DeliveryOrder (id: 2);
+}
+
+// Plugin to reader, in answer to Subscribe. On success the message carries one file descriptor
+// per stream of the group, in stream order, for the stream's pool. `error` is set otherwise.
+table Subscribed {
+  error: string (id: 0);
+  group: Group (id: 1);
+}
+
+// One image of a frame set: the slot it is in and what the camera SDK said about it.
+table Image {
+  slot: uint32 (id: 0);
+  flags: uint32 (id: 1);
+  bytes_used: uint64 (id: 2);
+  device_frame_id: uint64 (id: 3);
+  device_time_ns: int64 = -1 (id: 4);
+}
+
+// Host monotonic times in nanoseconds; -1 where a time is not known.
+table Timeline {
+  capture_ns: int64 = -1 (id: 0);
+  sdk_ready_ns: int64 = -1 (id: 1);
+  published_ns: int64 = -1 (id: 2);
+  sent_ns: int64 = -1 (id: 3);
+}
+
+// Plugin to reader: one frame set, held for the reader until it sends Release with the same
+// lease. Frames may arrive before Subscribed; they belong to the subscription all the same.
+table Frame {
+  lease_id: uint64 (id: 0);
+  sequence: uint64 (id: 1);
+  generation: uint32 (id: 2);
+  skipped: uint32 (id: 3);
+  timeline: Timeline (id: 4);
+  images: [Image] (id: 5);
+}
+
+// Reader to plugin: done with a frame set.
+table Release {
+  lease_id: uint64 (id: 0);
+}
+
+union Body { Hello, Welcome, Subscribe, Subscribed, Frame, Release }
+
+table Message {
+  body: Body (id: 1);
+}
+
+root_type Message;

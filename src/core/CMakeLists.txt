@@ -25,6 +25,7 @@ add_subdirectory(camera_core)
 # Camera frames and messages between processes (shared host memory, descriptor passing)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(camera_ipc)
+    add_subdirectory(camera_wire)
 endif()
 
 # Build OXR library (depends on oxr_utils for types)
