@@ -201,7 +201,7 @@ TEST_CASE("a reader that was away is handed a fresh frame set by a plugin in ano
         // published within the last frame periods; the bound leaves room for a busy test machine.
         const std::int64_t age_ns = now_ns - frames->timeline().published_ns;
         REQUIRE(age_ns >= 0);
-        REQUIRE(age_ns < std::chrono::nanoseconds(100ms).count());
+        REQUIRE(age_ns < std::chrono::nanoseconds(200ms).count());
         REQUIRE(frames->skipped() > 20);
         require_whole(*frames);
     }

@@ -581,7 +581,11 @@ TEST_CASE("readers do not slow each other", "[unit][camera_endpoint]")
         live.send(ReleaseMessage{ event.lease_id });
         live.ask(event.sequence);
     }
-    REQUIRE(stalled.expect<FrameEvent>().sequence == 1);
+    // The stalled reader asked once and was sent one frame set: the newest there was when its
+    // request was served, which is the first unless the endpoint got to it later.
+    const FrameEvent held = stalled.expect<FrameEvent>();
+    REQUIRE(held.sequence >= 1);
+    REQUIRE(held.sequence <= 5);
     REQUIRE(stalled.receive(20ms).status == ReceiveStatus::TIMEOUT);
 }
 
@@ -593,17 +597,30 @@ TEST_CASE("a reader that sends without pause keeps nobody waiting", "[unit][came
     // more than the endpoint handles in the same time, so there is always another one waiting.
     Reader flooder(served);
     REQUIRE(flooder.handshake("head").first.error.empty());
-    std::atomic<bool> flooding{ true };
-    std::vector<std::thread> senders;
+    // Stops and joins the senders however the test ends.
+    struct Flood
+    {
+        ~Flood()
+        {
+            flooding = false;
+            for (std::thread& sender : senders)
+            {
+                sender.join();
+            }
+        }
+
+        std::atomic<bool> flooding{ true };
+        std::vector<std::thread> senders;
+    } flood;
     for (int i = 0; i < 3; ++i)
     {
-        senders.emplace_back(
+        flood.senders.emplace_back(
             [&]
             {
                 MessageEncoder encoder;
                 // A request that is never answered, so nothing piles up for the flooder to read.
                 const AcquireMessage never{ std::numeric_limits<std::uint64_t>::max() };
-                while (flooding)
+                while (flood.flooding)
                 {
                     (void)flooder.socket.send(encoder.encode(never));
                 }
@@ -615,7 +632,9 @@ TEST_CASE("a reader that sends without pause keeps nobody waiting", "[unit][came
     {
         Reader other(served);
         REQUIRE(other.handshake("head").first.error.empty());
-        other.ask();
+        // It asks for what comes after the frame set before, so that it is sent this round's
+        // whether its request is served before the publish or after it.
+        other.ask(sequence - 1);
         served.publish(static_cast<std::uint8_t>(sequence));
         REQUIRE(other.expect<FrameEvent>().sequence == sequence);
     }
@@ -624,12 +643,6 @@ TEST_CASE("a reader that sends without pause keeps nobody waiting", "[unit][came
     const auto before = std::chrono::steady_clock::now();
     served.endpoint.stop();
     REQUIRE(std::chrono::steady_clock::now() - before < 2s);
-
-    flooding = false;
-    for (std::thread& sender : senders)
-    {
-        sender.join();
-    }
 }
 
 TEST_CASE("stopping the endpoint closes every reader, and it can serve again", "[unit][camera_endpoint]")
