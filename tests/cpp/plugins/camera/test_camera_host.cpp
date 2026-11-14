@@ -345,6 +345,65 @@ TEST_CASE("a host gives each camera its pools and serves them all on one endpoin
     REQUIRE(host.reader_count() == 0);
 }
 
+TEST_CASE("a host whose camera cannot start is left stopped, and can be started again", "[unit][camera_plugin]")
+{
+    // A camera that fails to start the first time, as one does whose device is not ready yet.
+    class FailingOnce final : public CameraSource
+    {
+    public:
+        explicit FailingOnce(ManualControl& control) : m_inner("wrist", 1, control)
+        {
+        }
+
+        GroupDescription describe() const override
+        {
+            return m_inner.describe();
+        }
+
+        void start(FrameOutput& output) override
+        {
+            if (!m_failed)
+            {
+                m_failed = true;
+                throw std::runtime_error("the camera is not ready");
+            }
+            m_inner.start(output);
+        }
+
+        void stop() override
+        {
+            m_inner.stop();
+        }
+
+    private:
+        ManualSource m_inner;
+        bool m_failed = false;
+    };
+
+    TemporaryDirectory directory;
+    ManualControl head;
+    ManualControl wrist;
+    CameraHost host(directory.socket_path());
+    host.add_camera(std::make_unique<ManualSource>("head", 1, head));
+    host.add_camera(std::make_unique<FailingOnce>(wrist));
+
+    // The first camera had started when the second failed. It is stopped again, and no reader
+    // is served by a host that is only half there.
+    REQUIRE_THROWS_WITH(host.start(), ContainsSubstring("the camera is not ready"));
+    REQUIRE(head.output == nullptr);
+    REQUIRE(wrist.output == nullptr);
+    REQUIRE_THROWS_AS(CameraReader::list({ .endpoint = directory.socket_path() }), core::camera::CameraReaderError);
+
+    // Started again, everything runs.
+    host.start();
+    REQUIRE(head.output != nullptr);
+    REQUIRE(wrist.output != nullptr);
+    REQUIRE(CameraReader::list({ .endpoint = directory.socket_path() }).size() == 2);
+    CameraReader reader = CameraReader::open("wrist", {}, { .endpoint = directory.socket_path() });
+    REQUIRE(wrist.publish(7));
+    REQUIRE(reader.next(2s)->image(0).data.front() == std::byte{ 7 });
+}
+
 TEST_CASE("a camera drops a frame set when its pool is full, and never overwrites a held one", "[unit][camera_plugin]")
 {
     TemporaryDirectory directory;

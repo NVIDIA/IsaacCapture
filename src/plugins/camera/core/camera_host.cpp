@@ -212,10 +212,20 @@ void CameraHost::start()
         return;
     }
     m_impl->started = true;
-    m_impl->endpoint.start();
-    for (const auto& camera : m_impl->cameras)
+    try
     {
-        camera->source->start(*camera->output);
+        m_impl->endpoint.start();
+        for (const auto& camera : m_impl->cameras)
+        {
+            camera->source->start(*camera->output);
+        }
+    }
+    catch (...)
+    {
+        // Nothing is left half started: the cameras that did start are stopped and readers
+        // are not served, so start() can be called again.
+        stop();
+        throw;
     }
 }
 

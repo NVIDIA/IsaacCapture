@@ -62,7 +62,10 @@ public:
      */
     void add_camera(std::unique_ptr<CameraSource> source, std::uint32_t slot_count = DEFAULT_SLOT_COUNT);
 
-    // Starts serving readers, then the cameras.
+    /**
+     * @brief Start serving readers, then the cameras. When a camera cannot start, everything
+     * that did is stopped again before its error is passed on, and start() can be retried.
+     */
     void start();
 
     // Stops the cameras, then closes every reader.

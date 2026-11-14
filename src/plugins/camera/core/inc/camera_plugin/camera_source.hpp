@@ -128,7 +128,8 @@ public:
     // Start capturing into `output`, on a thread of the source's own.
     virtual void start(FrameOutput& output) = 0;
 
-    // Stop capturing. The output is not called once this has returned.
+    // Stop capturing. The output is not called once this has returned. Also called for a
+    // source that did not start, when another camera of the plugin failed to; it then does nothing.
     virtual void stop() = 0;
 };
 
