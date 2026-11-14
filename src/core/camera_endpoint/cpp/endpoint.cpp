@@ -67,6 +67,11 @@ private:
     MessageEncoder m_event_encoder; // used inside send_event only, which the group's lock serialises
 };
 
+// How many messages one reader is served before the others get their turn. A reader that sends
+// without pause then slows nobody but itself, and cannot keep the endpoint from stopping: its
+// socket stays readable, so the rest is handled in the next round.
+constexpr int MESSAGES_PER_TURN = 32;
+
 const char* name_of(DeliveryOrder order)
 {
     switch (order)
@@ -227,12 +232,13 @@ private:
         m_reader_count = m_connections.size();
     }
 
-    // Handles everything the reader has sent. Returns false when the connection is to be dropped.
+    // Handles what the reader has sent, up to one turn's worth. Returns false when the
+    // connection is to be dropped.
     bool serve(Connection& connection)
     {
         try
         {
-            for (;;)
+            for (int handled = 0; handled < MESSAGES_PER_TURN; ++handled)
             {
                 const ReceivedMessage received = connection.socket.receive(m_buffer, std::chrono::milliseconds(0));
                 if (received.status == ReceiveStatus::TIMEOUT)
@@ -249,6 +255,7 @@ private:
                     return false;
                 }
             }
+            return true;
         }
         catch (const std::exception& error)
         {

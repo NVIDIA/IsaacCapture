@@ -153,7 +153,11 @@ public:
     {
     }
 
-    // Called from a FrameSet, possibly on another thread than the one that reads.
+    // Called from a FrameSet, possibly on another thread than the one that reads. The send
+    // cannot find the plugin's queue full: a reader sends a release for a frame set it holds
+    // and a request for the next, and the plugin sends no further frame set before it has
+    // taken those, so no more than about two messages per frame set of the window are ever on
+    // their way. That is far below what the socket queues.
     void release(std::uint64_t lease_id) noexcept
     {
         try

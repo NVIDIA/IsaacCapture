@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -582,6 +583,53 @@ TEST_CASE("readers do not slow each other", "[unit][camera_endpoint]")
     }
     REQUIRE(stalled.expect<FrameEvent>().sequence == 1);
     REQUIRE(stalled.receive(20ms).status == ReceiveStatus::TIMEOUT);
+}
+
+TEST_CASE("a reader that sends without pause keeps nobody waiting", "[unit][camera_endpoint]")
+{
+    Served served;
+
+    // One connection, and three threads sending valid requests on it as fast as they can:
+    // more than the endpoint handles in the same time, so there is always another one waiting.
+    Reader flooder(served);
+    REQUIRE(flooder.handshake("head").first.error.empty());
+    std::atomic<bool> flooding{ true };
+    std::vector<std::thread> senders;
+    for (int i = 0; i < 3; ++i)
+    {
+        senders.emplace_back(
+            [&]
+            {
+                MessageEncoder encoder;
+                // A request that is never answered, so nothing piles up for the flooder to read.
+                const AcquireMessage never{ std::numeric_limits<std::uint64_t>::max() };
+                while (flooding)
+                {
+                    (void)flooder.socket.send(encoder.encode(never));
+                }
+            });
+    }
+
+    // Other readers are served all the same.
+    for (std::uint64_t sequence = 1; sequence <= 5; ++sequence)
+    {
+        Reader other(served);
+        REQUIRE(other.handshake("head").first.error.empty());
+        other.ask();
+        served.publish(static_cast<std::uint8_t>(sequence));
+        REQUIRE(other.expect<FrameEvent>().sequence == sequence);
+    }
+
+    // And the endpoint stops while the flood goes on.
+    const auto before = std::chrono::steady_clock::now();
+    served.endpoint.stop();
+    REQUIRE(std::chrono::steady_clock::now() - before < 2s);
+
+    flooding = false;
+    for (std::thread& sender : senders)
+    {
+        sender.join();
+    }
 }
 
 TEST_CASE("stopping the endpoint closes every reader, and it can serve again", "[unit][camera_endpoint]")
