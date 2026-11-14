@@ -20,3 +20,16 @@ add_custom_command(TARGET camera_plugin POST_BUILD
     COMMENT "Putting the camera plugin's manifest next to its executable")
 
 install(TARGETS camera_plugin RUNTIME DESTINATION plugins/camera)
+
+# Ship the plugin inside the isaaccapture package, so a reader in a wheel install can start it.
+# The binary links nothing beyond libc/libstdc++.
+if(TARGET python_package)
+    set(_bundle_dir "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/plugins/camera")
+    add_custom_command(TARGET camera_plugin POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_bundle_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:camera_plugin>" "${CAMERA_PLUGIN_MANIFEST}" "${_bundle_dir}/"
+        COMMENT "Bundling camera_plugin into the isaaccapture package")
+    # Files staged into the package tree must exist before the wheel is built from it.
+    add_dependencies(python_package camera_plugin)
+endif()

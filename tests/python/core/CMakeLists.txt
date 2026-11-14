@@ -12,4 +12,8 @@ if(BUILD_PYTHON_BINDINGS)
     # Needs `import isaaccapture`, and drives the C++ half through the emitter
     # built under tests/cpp/core/log_bridge.
     add_subdirectory(logging_config)
+    # Reads from the camera plugin bundled into the package: Linux, with plugins built.
+    if(TARGET camera_reader_py AND TARGET camera_plugin)
+        add_subdirectory(camera)
+    endif()
 endif()
