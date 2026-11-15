@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# For the camera streamer's camera_receiver on the workstation: the reBot rig's
+# head stereo pair, decoded into GPU slots for the camera frame bridge.
+# Give the Thor's address with --host or CAMERA_RECEIVER_HOST.
+
+version: 1
+
+receiver:
+  host: 127.0.0.1
+  port: 5000
+  # Device 0 of this process. Start the receiver with CUDA_DEVICE_ORDER=PCI_BUS_ID
+  # and CUDA_VISIBLE_DEVICES=0 (run_camera_receiver.sh): the bridge and the agent
+  # program use the same card, and the bridge refuses slots on any other device.
+  gpu_id: 0
+  max_record_bytes: 268435456
+  # Seconds between the decode and publish summaries; 0 switches them off.
+  stats_log_interval_s: 10
+  receive_fps_warning_threshold: 58.0
+  receive_fps_warning_interval_s: 10.0
+
+ipc:
+  # camera.receiver_socket of agent.yaml names the same path.
+  socket_path: /tmp/camera_receiver_avs1_cuda_ipc.sock
+  owner_name: camera_receiver_avs1
+  queue_size: 1024
+
+streams:
+  - index: 0
+    name: head
+    type: stereo
+    width: 2560
+    height: 1984
+    output_format: nv12
+    # Slots per eye. A slot is written again 12 publishes after it was filled,
+    # which leaves the bridge's copy 11 camera frames of room; about 180 MB of GPU
+    # memory for the pair.
+    ring_depth: 12
+    ipc:
+      left: head.left
+      right: head.right

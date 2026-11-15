@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# For the camera streamer's argus_sender on the Thor of the reBot rig: the head
+# stereo pair the stereo calibration was made with, and nothing else.
+#
+# The camera frame bridge on the workstation refuses any other device pair,
+# rotation or size, because the calibration would not fit the pixels.
+
+version: 1
+
+network:
+  bind: 0.0.0.0
+  port: 5000
+  reconnect_ms: 1000
+  dump_wire: ""
+
+runtime:
+  frames: 0
+  kpi: true
+  log_interval_s: 5
+  bench_encode: false
+
+alignment:
+  warmup_frames: 60
+  interval_frames: 60
+
+streams:
+  - id: head
+    type: stereo
+    # Left, then right: the Argus devices the calibration manifest names
+    # (camera_order.left.argus_device 5, camera_order.right.argus_device 7).
+    cameras:
+      - {device: 5, mode: 0}
+      - {device: 7, mode: 0}
+    output:
+      fps: 60
+      codec: hevc
+      # The calibration's raw image size and rotation (raw_image_size_wh,
+      # raw_rotation_degrees). "strict" refuses a sensor mode of another shape.
+      width: 2560
+      height: 1984
+      resize_mode: strict
+      rotation: 0
+      bitrate_mbps: 50
+      gop: 300
