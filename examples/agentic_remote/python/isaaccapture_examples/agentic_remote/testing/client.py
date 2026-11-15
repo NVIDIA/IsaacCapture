@@ -114,11 +114,14 @@ class WorkstationClient:
         *,
         name: str = "ws",
         quotable: Callable[[RobotState], bool] | None = None,
+        listeners: Sequence[Callable[[Message], None]] = (),
     ) -> None:
         """quotable says which ROBOT_STATE a command may take its numbers from.
 
         A command that fills them in waits for a state it accepts; None takes
         the newest one, which can be older than the last owner change.
+        listeners are added before the first link message is received; see
+        add_listener().
         """
         self._carrier = carrier
         self._clock = clock
@@ -133,6 +136,7 @@ class WorkstationClient:
         self._ids = itertools.count(1)
         self._prefix = f"{name}-{uuid.uuid4().hex[:8]}"
         self._feeds: list[PermitFeed] = []
+        self._listeners: tuple[Callable[[Message], None], ...] = tuple(listeners)
         self._closed = threading.Event()
         self._thread = threading.Thread(
             target=self._receive_loop, name="workstation-client", daemon=True
@@ -146,6 +150,20 @@ class WorkstationClient:
             feed.stop()
         if self._thread is not threading.current_thread():
             self._thread.join(WAIT_S)
+
+    def add_listener(self, fn: Callable[[Message], None]) -> None:
+        """Pass every link message received from now on to fn.
+
+        fn runs on the receive thread, after the client stored the link message
+        and outside the client's lock; it must not block.
+        """
+        with self._cond:
+            self._listeners = (*self._listeners, fn)
+
+    def forget(self, command_id: str) -> None:
+        """Drop every RESULT kept for this command."""
+        with self._cond:
+            self._results.pop(command_id, None)
 
     # What the robot app sent
 
@@ -545,6 +563,12 @@ class WorkstationClient:
                 else:
                     self._unexpected.append(message)
                 self._cond.notify_all()
+                listeners = self._listeners
+            for listener in listeners:
+                try:
+                    listener(message)
+                except Exception:
+                    _log.exception("a listener failed on a link message")
 
 
 def _joint(sample: Any) -> int:
