@@ -317,7 +317,9 @@ terminal.
 
 - "The agent has failed" means: a step returned "stuck" or "blocked", a model error could not be recovered, a set number
   of steps failed in a row (first value 3), the step budget ran out, or the agent program crashed (reported as in
-  section 5). One failed step is retried inside the task. Model thinking and waiting for consent never start the wait.
+  section 5). A task that ends without success while the agent owns the arm, for example because the planner gives up,
+  counts as well. One failed step is retried inside the task. Model thinking and waiting for consent never start the
+  wait.
 - The wait is cancelled by: a takeover the Thor has accepted, a new task confirmed with the typed "yes", a STOP from a
   person, a fault-stop, or loss of the robot connection. A headset that connects or is tracked does not cancel it.
 - Before the arm moves by itself the operator console and the Thor terminal ring the terminal bell at 30 s, at 10 s and
