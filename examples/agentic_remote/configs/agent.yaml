@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The agent program's settings: APAI's agent on the workstation, driving the arm
+# through the robot link service. Every number here is a first value; none was
+# measured on a robot. Angles are in rad, speeds in rad/s, times in s. A relative
+# path is taken from this file's folder.
+
+# Run folders (runs/<time>) and APAI's stores (apai/) go here, never into APAI's
+# checkout or the experiment folder.
+state_dir: ../.state
+
+# debug, info, warning or error.
+log_level: info
+
+link:
+  # The robot link service's local socket. Empty: the service's default path.
+  socket_path: ""
+  connect_timeout_s: 10.0
+  # The oldest ROBOT_STATE the arm adapter reads a pose from.
+  state_max_age_s: 0.5
+  # The profile id the robot app must name in WELCOME. Empty accepts any.
+  expected_profile_id: ""
+  # The name of the camera calibration. Empty: made from the hashes of
+  # camera.calibration_dir/manifest.json and camera.hand_eye_json. The robot app
+  # must name the same one (camera_calibration_id in its file).
+  calibration_id: ""
+  # true takes a robot app that names no camera calibration.
+  allow_unnamed_calibration: false
+
+# Copies of the Thor's settings that WELCOME does not carry. Keep them equal to
+# the robot app's file.
+thor:
+  first_wait_s: 0.5  # permits.first_wait_s
+  settle_timeout_s: 2.0  # executor.settle_timeout_s
+  agent_max_joint_speed: 0.1  # limits.agent.max_joint_speed
+
+move:
+  # A MOVE quotes the smaller of this and half a period's travel at the Thor's
+  # agent speed limit.
+  start_tol_rad: 0.02
+  fresh_wait_s: 0.6  # longest wait for joint readings taken after the call began
+  start_grid_age_s: 1.0  # the oldest obstacle grid a move starts on
+  start_grid_wait_s: 3.0  # longest wait for such a grid
+  expires_in_s: 2.0  # how long a MOVE stays valid on the Thor
+  cancel_wait_s: 2.0  # longest wait for the RESULT after a cancel
+
+permits:
+  reach_setpoints: 25  # how far a PERMIT reaches beyond the setpoints sent
+  renew_s: 0.05  # pause between two passes of the permit loop
+  life_s: 1.0  # how long a PERMIT lasts on the Thor
+
+jaws:
+  fresh_s: 1.0  # an older jaw reading counts as unknown
+  result_timeout_s: 12.0
+
+task:
+  # false for the first run: the timed return moves the arm by itself, and its
+  # bench tests on this arm come first.
+  timed_return: false
+  # This many failed steps in a row end the task with a help request.
+  failed_steps_limit: 3
+  # APAI's joint speed cap for the task; at most thor.agent_max_joint_speed.
+  max_joint_speed: 0.1
+  end_wait_s: 5.0  # longest wait for the RESULT of the task's own owner request
+  owner_wait_s: 2.0  # longest wait for the ROBOT_STATE that shows the agent as owner
+  grid_wait_s: 20.0  # longest wait for a usable obstacle grid at the start
+
+camera:
+  # The interpreter of the camera consumer (it has CuPy); the camera frame bridge
+  # runs under it: <camera pull request>/cuda_ipc_consumer/.venv/bin/python.
+  bridge_python: ""
+  # The camera_streamer example of the camera pull request. Empty: the
+  # environment variable AGENTIC_REMOTE_CAMERA_PR.
+  camera_pr: ""
+  # ipc.socket_path of camera_receiver_rebot.yaml.
+  receiver_socket: /tmp/camera_receiver_avs1_cuda_ipc.sock
+  streams: [head.left, head.right]
+  # The workstation's copy of the stereo calibration folder and of the hand-eye
+  # file in use on the Thor.
+  calibration_dir: ""
+  hand_eye_json: ""
+  max_skew_ms: 5.0  # the two eyes of a stereo pair lie at most this far apart
+  depth_backend: ffs  # ffs for the real run; opencv_cpu needs no GPU
+  fps: 7.0
+
+experiment:
+  # full: the experiment's behaviour hooks, its obstacle grid bridge on cuda:0
+  # and its cloud model (AGENTIC_REMOTE_EXPERIMENT_DIR names its folder).
+  # minimal: none of them; APAI's own profiles below. For dry runs and tests.
+  stack: full
+  arm_profile: mock
+  llm: mock
+
+# Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
+# configs/thor_operation.yaml (lines 6 to 18); that file extends a path that
+# exists only on the Thor.
+rig:
+  home_q: [-0.01966477744281292, 0.025, 0.025, 0.007842481136322021, -0.05901991203427315, 0.05646965652704239]
+  park_q: [0, 0, 0, 0, 0, 0]
+  body_mask_dilate_px: 6
+  motion_bounds:
+    joint_center_rad: [0, 0, 0, 0, 0, 0]
+    max_joint_deviation_rad: 2.0943951023931953  # 120 degrees; the model's limits still apply
+    tcp_center_m: [0.3008347961169637, -0.006035469615884467, 0.2226888836227443]
+    max_tcp_distance_m: 0.25
