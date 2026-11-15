@@ -337,7 +337,9 @@ class StatePublisher:
         config: RobotAppConfig,
         clock: Clock,
         read_failures: Callable[[], Sequence[int]] | None = None,
+        move_stage: Callable[[], str] | None = None,
     ) -> None:
+        self._move_stage = move_stage
         self._arm = arm
         self._history = history
         self._authority_state = authority_state
@@ -389,6 +391,10 @@ class StatePublisher:
         newest_result = self._last_result()
         authority = self._authority_state()
         move_id, move_index, move_total = self._move_progress() or ("", 0, 0)
+        # Read after the progress, and sent only with a move id: a stage is
+        # never shown for a move that had not reached it.
+        stage = "" if self._move_stage is None else self._move_stage()
+        move_stage = str(stage) if move_id else ""
         joints = [
             JointSample(joint, 0.0, 0.0, 0.0, False)
             if reading is None
@@ -448,6 +454,7 @@ class StatePublisher:
                 "clamped": clamped,
                 "not_finite": not_finite,
             },
+            move_stage=move_stage,
         )
 
     def maybe_publish(self, carrier: Carrier, now: float) -> bool:

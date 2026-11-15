@@ -763,6 +763,7 @@ class World:
         self.wait_s: float | None = None
         self.result: dict | None = None
         self.failures = [0] * config.n_joints
+        self.stage = ""
         self.publisher = StatePublisher(
             arm=self.arm,
             history=self.history,
@@ -776,6 +777,7 @@ class World:
             config=config,
             clock=clock,
             read_failures=lambda: self.failures,
+            move_stage=lambda: self.stage,
         )
 
     def read_every_joint(self) -> list[JointReading]:
@@ -802,6 +804,7 @@ def test_build_takes_every_field_from_its_source(world, clock, config):
         "session-1", Owner.NOBODY, 7, 4, StopLevel.FAULT, "motor 3 overheated"
     )
     world.progress = ("move-9", 12, 250)
+    world.stage = "sending"
     world.motion = MotionState.MOVING
     world.gripper = GripperState(0.4, 999.0, True, True, 0.35, True, JawLoad.LOADED)
     world.wait_s = 87.5
@@ -826,6 +829,7 @@ def test_build_takes_every_field_from_its_source(world, clock, config):
     assert state.limit_set_version == ""
     assert state.motion == "moving"
     assert (state.move_id, state.move_index, state.move_total) == ("move-9", 12, 250)
+    assert state.move_stage == "sending"
     assert state.last_result == world.result
     assert state.assistance_wait_s == 87.5
     assert state.torque_on is False
@@ -865,6 +869,46 @@ def test_no_running_move_may_be_reported_as_none(world):
     world.progress = None
     state = world.build()
     assert (state.move_id, state.move_index, state.move_total) == ("", 0, 0)
+
+
+def test_the_move_stage_is_sent_beside_the_move_it_belongs_to(world):
+    world.progress = ("move-9", 0, 250)
+    assert world.build().move_stage == ""  # its start checks are not done
+    world.stage = "armed"
+    state = world.build()
+    assert (state.move_id, state.move_index, state.move_stage) == ("move-9", 0, "armed")
+
+
+def test_no_stage_is_sent_without_a_running_move(world):
+    # The stage is read after the progress; a move may have begun in between.
+    world.stage = "armed"
+    assert world.build().move_stage == ""
+
+
+def test_the_move_stage_is_read_after_the_progress(world):
+    order: list[str] = []
+    world.publisher._move_progress = lambda: order.append("progress") or ("m", 0, 5)
+    world.publisher._move_stage = lambda: order.append("stage") or "armed"
+    assert world.build().move_stage == "armed"
+    assert order == ["progress", "stage"]
+
+
+def test_without_a_stage_source_the_stage_is_empty(clock, config):
+    arm = FakeArm(clock, n_joints=config.n_joints, reads_allowed=False)
+    publisher = StatePublisher(
+        arm,
+        JointHistory(config.n_joints, config.state.history_s),
+        lambda: AuthorityState("s", Owner.AGENT, 1, 0),
+        lambda: ("move-9", 3, 25),
+        lambda: MotionState.MOVING,
+        lambda: GripperState(None, None, False, False, None, False, "unknown"),
+        lambda: None,
+        lambda: None,
+        "s",
+        config,
+        clock,
+    )
+    assert publisher.build(clock.monotonic()).move_stage == ""
 
 
 def test_a_joint_without_a_reading_is_sent_not_valid_and_zero(world, clock):

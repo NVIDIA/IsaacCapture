@@ -226,6 +226,7 @@ STATE = RobotState(
     teleop_stage="",
     controller_age_s=0.04,
     health={"read_failures": 2, "oldest_reading_s": 0.11, "temperatures": [31.5]},
+    move_stage="sending",
 )
 STATE_UNPOWERED = dataclasses.replace(
     STATE,
@@ -256,6 +257,7 @@ STATE_UNPOWERED = dataclasses.replace(
     view_age_s=None,
     controller_age_s=None,
     health={},
+    move_stage="",
 )
 PERMIT = Permit(
     move_id="move-0001",
@@ -415,6 +417,8 @@ MESSAGE_FIELDS = {
         "detail": {},
     },
     Event: {"seq": ..., "kind": ..., "text": ..., "data": {}},
+    # move_stage came later and is declared last: a peer that does not send it
+    # means "".
     RobotState: dict.fromkeys(
         (
             "seq",
@@ -445,7 +449,8 @@ MESSAGE_FIELDS = {
             "health",
         ),
         ...,
-    ),
+    )
+    | {"move_stage": ""},
     Permit: {
         "move_id": ...,
         "session_id": ...,
@@ -627,6 +632,9 @@ def test_fields_with_defaults_may_be_absent():
     assert welcome.protocol_version == messages.PROTOCOL_VERSION == 1
     assert welcome.camera_calibration_id == ""
 
+    # A ROBOT_STATE from a peer that knows no move stage.
+    assert decode(RobotState.TYPE, _without(STATE, "move_stage")).move_stage == ""
+
 
 @pytest.mark.parametrize(
     ("message", "path", "value", "problem"),
@@ -682,6 +690,8 @@ def test_fields_with_defaults_may_be_absent():
         (STATE, ("view_age_s",), "old", "expected a number, got str"),
         (STATE, ("teleop_stage",), None, "expected a string, got NoneType"),
         (STATE, ("controller_age_s",), True, "expected a number, got bool"),
+        (STATE, ("move_stage",), None, "expected a string, got NoneType"),
+        (STATE, ("move_stage",), 1, "expected a string, got int"),
     ],
     ids=_id,
 )

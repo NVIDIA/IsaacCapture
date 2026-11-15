@@ -91,6 +91,15 @@ def _text(where: str, value: object) -> str:
     return value
 
 
+def _name_or_empty(where: str, value: object) -> str:
+    if not isinstance(value, str) or value != value.strip():
+        raise ConfigError(
+            f"{where} must be a string with no space around it, empty for "
+            f"none, got {value!r}"
+        )
+    return value
+
+
 def _items(where: str, value: object) -> list[object]:
     if hasattr(value, "tolist"):  # a numpy array
         value = value.tolist()
@@ -532,6 +541,8 @@ class RobotAppConfig:
     state: StateConfig = field(default_factory=StateConfig)
     human: HumanConfig = field(default_factory=HumanConfig)
     connection: ConnectionConfig = field(default_factory=ConnectionConfig)
+    # The name of the camera calibration in use, sent in WELCOME; "" for none.
+    camera_calibration_id: str = ""
 
     def __post_init__(self) -> None:
         _normalise(
@@ -551,6 +562,7 @@ class RobotAppConfig:
             state=_instance(StateConfig),
             human=_instance(HumanConfig),
             connection=_instance(ConnectionConfig),
+            camera_calibration_id=_name_or_empty,
         )
         # Each block has already checked that its own lists agree in length.
         per_joint: dict[str, tuple[object, ...]] = {

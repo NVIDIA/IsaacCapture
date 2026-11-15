@@ -27,6 +27,11 @@ PROTOCOL_VERSION = 1
 MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 RELIABLE_TYPES = range(64, 96)
 NEWEST_WINS_TYPES = range(96, 128)
+# ROBOT_STATE.move_stage of a running move. Armed: it passed every check that
+# needs no permit, sent nothing and waits for its first permit. Sending: a
+# permit covered its first setpoint, or it needs none, and it went on.
+MOVE_ARMED = "armed"
+MOVE_SENDING = "sending"
 
 
 class ProtocolError(ValueError):
@@ -300,6 +305,9 @@ class RobotState(Message):
     teleop_stage: str  # "" until human takeover is built
     controller_age_s: float | None  # age of the newest controller sample
     health: dict[str, Any]
+    # How far the move named by move_id has got: "" (none runs, or its start
+    # checks are not done), MOVE_ARMED or MOVE_SENDING.
+    move_stage: str = ""
 
 
 @dataclass(frozen=True)

@@ -147,6 +147,7 @@ def test_start_connects_the_arm_and_sends_welcome_and_state(robot_app):
     assert welcome.max_move_setpoints == config.executor.max_setpoints
     versions = {"agent": "sim-1", "human": "sim-1", "recovery": "sim-1"}
     assert welcome.limit_set_versions == versions
+    assert welcome.camera_calibration_id == ""  # the shipped file names none
     state = h.client.state
     assert state.session_id == welcome.session_id
     assert (state.owner, state.owner_number) == ("nobody", 0)
@@ -156,6 +157,12 @@ def test_start_connects_the_arm_and_sends_welcome_and_state(robot_app):
     assert [sample.valid for sample in state.joints] == [True] * 6
     assert h.app.running and h.app.link_alive
     assert h.arm.torque_on()
+
+
+def test_welcome_carries_the_configured_camera_calibration_id(make_robot_app, config):
+    named = dataclasses.replace(config, camera_calibration_id="rig-2026-11-14")
+    h = make_robot_app(config=named)
+    assert h.client.welcome.camera_calibration_id == "rig-2026-11-14"
 
 
 def test_the_arm_is_connected_once(robot_app):
@@ -792,6 +799,151 @@ def test_a_permit_quoting_an_old_value_moves_nothing(make_robot_app, config, quo
     h.client.move(PATH, start_q=REST, command_id=command_id)
     assert final(h, command_id).status == "refused"
     assert h.arm.sent == []
+
+
+# The stage of a move in ROBOT_STATE
+
+
+def patient(config, **state):
+    """The configuration with a first-permit wait no test runs into."""
+    return with_config(config, permits={"first_wait_s": 30.0}, state=state)
+
+
+def armed_move(h, path=PATH) -> str:
+    """An agent MOVE that ROBOT_STATE shows as armed; no permit was sent."""
+    command_id = h.client.move(path, start_q=REST)
+    h.client.wait_state(lambda s: s.move_id == command_id and s.move_stage == "armed")
+    return command_id
+
+
+def test_robot_state_shows_a_move_armed_then_sending_then_none(make_robot_app, config):
+    # No ROBOT_STATE falls due in this test: each one seen was sent at once.
+    h = make_robot_app(config=patient(config, publish_period_s=1000.0))
+    h.new_task()
+    assert h.client.state.move_stage == ""
+    command_id = h.client.move(PATH, start_q=REST)
+    armed = h.client.wait_state(
+        lambda s: s.move_id == command_id and s.move_stage == "armed"
+    )
+    assert (armed.move_index, armed.move_total) == (0, len(PATH))
+    assert armed.motion == "moving"
+    assert h.arm.sent == []
+    assert not h.checkers.agent.in_motion
+    reached, release = h.hold_move_after(6)
+    h.client.permit(command_id, len(PATH) - 1)
+    assert reached.wait(WAIT_S)
+    sending = h.client.wait_state(
+        lambda s: s.move_id == command_id and s.move_stage == "sending"
+    )
+    assert sending.move_total == len(PATH)
+    release.set()
+    assert final(h, command_id).status == "completed"
+    after = h.client.wait_state(lambda s: s.move_id == "")
+    assert (after.move_stage, after.move_index) == ("", 0)
+
+
+def test_a_move_from_another_start_pose_is_refused_without_a_wait_for_a_permit(
+    make_robot_app, config
+):
+    h = make_robot_app(config=patient(config))
+    h.new_task()
+    stages: list[str] = []
+    real = h.arm.read_all
+
+    def read_all() -> list:
+        stages.append(h.app._executor.stage())
+        return real()
+
+    h.arm.read_all = read_all
+    command_id = h.client.move(PATH, start_q=[0.1] * 6)
+    result = final(h, command_id)
+    assert statuses(h, command_id) == ["accepted", "refused"]
+    assert result.reason.startswith("start pose: joint index 0 is at 0.0000 rad")
+    assert result.end_q == REST
+    assert result.detail == {"outcome": "refused", "sent": 0, "total": len(PATH)}
+    assert stages == [""]  # never armed
+    assert h.arm.sent == []
+    assert h.app.motion_state is MotionState.REST_HOLD
+
+
+def test_no_permit_starts_a_move_from_another_start_pose(make_robot_app, config):
+    h = make_robot_app(config=patient(config))
+    h.new_task()
+    command_id = h.client.new_id()
+    h.client.permit(command_id, len(PATH) - 1)
+    h.client.move(PATH, start_q=[0.1] * 6, command_id=command_id)
+    assert final(h, command_id).reason.startswith("start pose: joint index 0")
+    assert h.arm.sent == []
+
+
+def test_the_joints_are_still_read_while_a_move_is_armed(make_robot_app, config):
+    h = make_robot_app(config=patient(config))
+    h.new_task()
+    command_id = armed_move(h)
+    h.advance(0.4, step_s=0.01)
+    # A ROBOT_STATE goes out every 0.05 s: one of the last two is enough.
+    newest = h.clock.monotonic() - 0.1
+    state = h.client.wait_state(lambda s: s.clock_mono_s >= newest)
+    assert (state.move_id, state.move_stage) == (command_id, "armed")
+    assert state.health["reading_age_s"] < 0.2
+    assert state.stop_level == "none"
+    assert h.arm.sent == []
+    h.client.permit(command_id, len(PATH) - 1)
+    assert final(h, command_id).status == "completed"
+    assert h.sent() == PATH
+
+
+def test_lost_joint_feedback_while_a_move_is_armed_is_a_fault_stop(
+    make_robot_app, config
+):
+    h = make_robot_app(config=patient(config))
+    h.new_task()
+    command_id = armed_move(h)
+    h.arm.fail_reads(2, 10_000)
+    h.advance(0.8, step_s=0.02)
+    state = h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert state.fault_reason.startswith("joint feedback lost for 0.")
+    result = final(h, command_id)
+    assert result.status == "cancelled"
+    assert h.arm.sent == []
+    assert h.arm.torque_on() and h.arm.released_at == []
+
+
+def test_a_stop_ends_an_armed_move_with_nothing_sent(make_robot_app, config):
+    h = make_robot_app(config=patient(config))
+    h.new_task()
+    command_id = armed_move(h)
+    h.client.stop("operator")
+    assert final(h, command_id).status == "cancelled"
+    state = h.client.wait_state(lambda s: s.move_id == "")
+    assert state.move_stage == ""
+    assert h.arm.sent == []
+    assert h.arm.torque_on() and h.arm.released_at == []
+
+
+def test_a_cancel_permit_ends_a_running_move_at_its_next_setpoint(robot_app):
+    h = robot_app
+    h.new_task()
+    reached, release = h.hold_move_after(6)
+    command_id = h.client.move(PATH, start_q=REST)
+    permit = h.client.permit(command_id, len(PATH) - 1)
+    assert reached.wait(WAIT_S)
+    # What the agent sends to cancel: through setpoint -1, on the same evidence.
+    h.client.permit(command_id, -1, evidence_wall_s=permit.evidence_wall_s)
+    for _ in range(1000):  # until the dispatcher has taken the cancel
+        if h.app._gate.covers(command_id, 6) is not None:
+            break
+        h.step()
+    release.set()
+    result = final(h, command_id)
+    assert (result.status, result.reason) == (
+        "refused",
+        "permit reaches setpoint -1, not 6",
+    )
+    assert h.sent() == PATH[:6]
+    assert h.arm.last_target()[0] == PATH[5]
+    assert h.arm.torque_on() and h.arm.holds == [] and h.arm.released_at == []
+    assert h.app.motion_state is MotionState.HOLD
 
 
 def test_when_permits_stop_the_arm_holds_at_the_last_permitted_setpoint(robot_app):

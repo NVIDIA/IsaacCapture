@@ -215,6 +215,23 @@ def test_default_robot(config):
     )
 
 
+def test_the_camera_calibration_is_unnamed_by_default(config, tmp_path):
+    assert config.camera_calibration_id == ""
+    left_out = _load_changed(tmp_path, _drop("camera_calibration_id"))
+    assert left_out.camera_calibration_id == ""
+
+
+def test_the_camera_calibration_id_is_loaded(tmp_path):
+    config = _load_changed(tmp_path, _put("camera_calibration_id", "rig-2026-11-14"))
+    assert config.camera_calibration_id == "rig-2026-11-14"
+
+
+@pytest.mark.parametrize("value", [7, None, " ", " rig-1", "rig-1\n"])
+def test_a_camera_calibration_id_that_is_not_a_plain_name_is_refused(tmp_path, value):
+    with pytest.raises(ConfigError, match=r"camera_calibration_id must be"):
+        _load_changed(tmp_path, _put("camera_calibration_id", value))
+
+
 def test_default_limit_sets(config):
     assert config.limits.agent == LimitSet(
         name="agent",

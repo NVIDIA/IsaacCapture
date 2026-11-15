@@ -13,7 +13,10 @@ import threading
 import pytest
 from isaaccapture_examples.agentic_remote.protocol.messages import Permit
 from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
-from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+from isaaccapture_examples.agentic_remote.robot_app.clock import (
+    FakeClock,
+    SystemClock,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import Owner
 from isaaccapture_examples.agentic_remote.robot_app.permits import (
     FUTURE_TOLERANCE_S,
@@ -352,6 +355,82 @@ def test_a_permit_with_older_evidence_is_ignored_without_a_reason(
     assert covers(gate, clock, 10) is None
     assert covers(gate, clock, 11) == "permit reaches setpoint 10, not 11"
     assert checker.fed == [clock.monotonic()]
+
+
+def test_a_permit_with_older_evidence_is_ignored_however_the_clocks_read(
+    gate, authority, checker, clock
+):
+    # The rule compares the quoted times, not what each arrival made of them.
+    first = make_permit(authority, clock, through_index=10, evidence_age_s=0.5)
+    update(gate, clock, first)
+    older = make_permit(authority, clock, through_index=20, evidence_age_s=0.75)
+    # With a wall clock that stepped back by 0.5 s this evidence converts to a
+    # later time than the held permit's did.
+    wall_minus_mono = clock.wall() - clock.monotonic() - 0.5
+    assert gate.update(older, clock.monotonic(), wall_minus_mono) is None
+    assert covers(gate, clock, 11) == "permit reaches setpoint 10, not 11"
+    assert len(checker.fed) == 1
+
+
+# The same evidence quoted again, on the system clock: two reads of its wall and
+# monotonic clocks never give the same difference twice.
+
+REPEATS = 200
+
+
+def system_permit(authority: Authority, evidence_wall_s: float, through_index: int):
+    state = authority.snapshot()
+    return Permit(
+        move_id=MOVE,
+        session_id=state.session_id,
+        owner_number=state.owner_number,
+        stop_number=state.stop_number,
+        through_index=through_index,
+        evidence_wall_s=evidence_wall_s,
+        expires_mono_s=SystemClock().monotonic() + 60.0,
+    )
+
+
+@pytest.fixture
+def system_gate(authority, checker, config) -> PermitGate:
+    return PermitGate(authority, checker, config.permits, SystemClock())
+
+
+def test_on_the_system_clock_every_permit_on_the_same_evidence_is_taken(
+    system_gate, authority, checker
+):
+    evidence = SystemClock().wall() - 0.1
+    for through_index in range(REPEATS):
+        permit = system_permit(authority, evidence, through_index)
+        assert system_gate.update(permit) is None
+        assert system_gate.covers(MOVE, through_index) is None, through_index
+        assert system_gate.covers(MOVE, through_index + 1) == (
+            f"permit reaches setpoint {through_index}, not {through_index + 1}"
+        )
+    assert len(checker.fed) == REPEATS
+
+
+def test_on_the_system_clock_a_cancel_on_the_same_evidence_always_ends_the_cover(
+    system_gate, authority
+):
+    # The agent cancels a move with a permit through setpoint -1 that quotes
+    # the evidence of the permit before it.
+    for _ in range(REPEATS):
+        evidence = SystemClock().wall() - 0.1
+        assert system_gate.update(system_permit(authority, evidence, 25)) is None
+        assert system_gate.covers(MOVE, 3) is None
+        assert system_gate.update(system_permit(authority, evidence, -1)) is None
+        assert system_gate.covers(MOVE, 3) == "permit reaches setpoint -1, not 3"
+        system_gate.clear()
+
+
+def test_on_the_system_clock_older_evidence_is_still_ignored(system_gate, authority):
+    evidence = SystemClock().wall() - 0.1
+    assert system_gate.update(system_permit(authority, evidence, 10)) is None
+    for _ in range(REPEATS):
+        older = system_permit(authority, evidence - 1e-6, 20)
+        assert system_gate.update(older) is None
+    assert system_gate.covers(MOVE, 11) == "permit reaches setpoint 10, not 11"
 
 
 def test_arrived_is_set_by_a_stored_permit_only(gate, authority, clock):

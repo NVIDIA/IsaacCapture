@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import TYPE_CHECKING
 
+from ..protocol.messages import MOVE_ARMED, MOVE_SENDING
 from .interfaces import (
     ArmFault,
     ContactStop,
@@ -142,8 +143,10 @@ class MoveExecutor:
         """first_wait_s is the longest a move waits for its first covering permit.
 
         on_missed_deadline is called for every setpoint that goes out later than
-        the small delay allows, and for a move that ends "late". A move runs
-        inside reads_paused(), from its start read on (IdleReader.paused).
+        the small delay allows, and for a move that ends "late". A move's start
+        read runs inside reads_paused() (IdleReader.paused), and so does the
+        move from its first setpoint on; the wait for the first permit that
+        lies between the two does not.
         """
         if not (_is_number(first_wait_s) and first_wait_s >= 0.0):
             raise ValueError(f"first_wait_s must be 0 or more, got {first_wait_s!r}")
@@ -156,13 +159,24 @@ class MoveExecutor:
         self._on_missed_deadline = on_missed_deadline
         self._reads_paused = reads_paused or contextlib.nullcontext
         self._busy = threading.Lock()  # held while a move runs
-        self._lock = threading.Lock()  # guards _progress
+        self._lock = threading.Lock()  # guards _progress and _stage
         self._progress = _IDLE
+        self._stage = ""
 
     def progress(self) -> tuple[str, int, int]:
         """(move id, setpoints sent, setpoints in the move); ("", 0, 0) when idle."""
         with self._lock:
             return self._progress
+
+    def stage(self) -> str:
+        """How far the running move has got: "", MOVE_ARMED or MOVE_SENDING.
+
+        "" when idle and until the move's start checks have passed. Armed: they
+        passed, nothing was sent and the move waits for its first permit.
+        Sending: from the first covering permit on, or at once without a gate.
+        """
+        with self._lock:
+            return self._stage
 
     @contextlib.contextmanager
     def claim_idle(self) -> Iterator[bool]:
@@ -272,27 +286,42 @@ class MoveExecutor:
         expired = self._expired(move)
         if expired is not None:
             return MoveOutcome("refused", expired)
-        if gate is not None:
-            # The first permit also feeds the watchdog that begin_motion checks.
-            ended = self._await_first_permit(move, gate, arrived)
-            if ended is not None:
-                return MoveOutcome(*ended)
-        # No idle read shares the bus, or the clock, with the move from here on.
+        # No idle read shares the bus, or the clock, with the start read.
         with self._reads_paused():
-            return self._from_start(move, rows, start, start_tol, gate, region, replan)
+            begun = self._read_start(move, rows, start, start_tol, replan)
+            if isinstance(begun, MoveOutcome):
+                return begun
+            rows, measured = begun
+            if gate is None:
+                self._set_stage(MOVE_SENDING)
+                return self._from_start(move, rows, measured, gate, region)
+        # Armed: every check that needs no permit has passed and nothing was
+        # sent. The idle reads go on during the wait, so the joint history and
+        # the lost-feedback rule of a hold stay live.
+        self._set_stage(MOVE_ARMED)
+        # The first permit also feeds the watchdog that begin_motion checks.
+        ended = self._await_first_permit(move, gate, arrived)
+        if ended is not None:
+            return MoveOutcome(*ended)
+        self._set_stage(MOVE_SENDING)
+        # Nor with the move from here on. The arm held since the start read, so
+        # the first setpoint is checked from the pose that read measured.
+        with self._reads_paused():
+            return self._from_start(move, rows, measured, gate, region)
 
-    def _from_start(
+    def _read_start(
         self,
         move: _Move,
         rows: list[list[float]],
         start: list[float],
         start_tol: float,
-        gate: PermitGate | None,
-        region: GraspRegion | None,
         replan: Replan | None,
-    ) -> MoveOutcome:
-        """Read the start pose, then send the move; how it ended."""
-        halt_count = move.halt_count
+    ) -> tuple[list[list[float]], list[float]] | MoveOutcome:
+        """Read the start pose and compare it with the move's.
+
+        Returns the setpoints, replanned when asked, and the measured pose; or
+        the refusal. Nothing is sent.
+        """
         try:
             readings = self._arm.read_all()
         except ReadFailed as failed:
@@ -315,6 +344,18 @@ class MoveExecutor:
                 return MoveOutcome("refused", refusal.reason, 0, measured)
             move.total = len(rows)
             self._set_progress((move.move_id, 0, move.total))
+        return rows, measured
+
+    def _from_start(
+        self,
+        move: _Move,
+        rows: list[list[float]],
+        measured: list[float],
+        gate: PermitGate | None,
+        region: GraspRegion | None,
+    ) -> MoveOutcome:
+        """Send the move from its measured start pose; how it ended."""
+        halt_count = move.halt_count
         try:
             move.checker.set_grasp_region(region)
             move.checker.begin_motion(halt_count)
@@ -611,6 +652,12 @@ class MoveExecutor:
     def _set_progress(self, progress: tuple[str, int, int]) -> None:
         with self._lock:
             self._progress = progress
+            if progress == _IDLE:
+                self._stage = ""
+
+    def _set_stage(self, stage: str) -> None:
+        with self._lock:
+            self._stage = stage
 
     @staticmethod
     def _leave(checker: Checker, watch: ContactWatch | None) -> None:

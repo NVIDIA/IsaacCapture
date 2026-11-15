@@ -536,6 +536,7 @@ class RobotApp:
             config,
             clock,
             read_failures=self._idle.failures,
+            move_stage=self._executor.stage,
         )
         self._handlers: dict[type, Callable[[Any], None]] = {
             Move: self._on_move,
@@ -1291,6 +1292,8 @@ class RobotApp:
             self._motion.get(),
             self._wait.active(),
             self._last_result,
+            # The agent waits for "armed" before it clears a move's first setpoints.
+            self._executor.stage(),
         )
         with self._lock:
             # Cleared before the state is built: a carrier attached after this
@@ -1799,6 +1802,7 @@ class RobotApp:
                 "human": limits.human.version,
                 "recovery": limits.recovery.version,
             },
+            camera_calibration_id=config.camera_calibration_id,
         )
 
     # The motion worker

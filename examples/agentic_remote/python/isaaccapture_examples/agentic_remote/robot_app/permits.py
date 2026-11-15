@@ -76,7 +76,9 @@ class PermitGate:
         wall_minus_mono (app wall clock minus monotonic clock) turns the evidence
         time into monotonic time; both times default to the clock. An accepted
         permit replaces the held one, except that for the move already held a
-        permit that rests on older evidence is ignored without a reason.
+        permit that quotes an older evidence time is ignored without a reason.
+        The quoted times are compared: two conversions of one quoted time
+        differ by the jitter of the clock reads.
         """
         if now_mono is None:
             now_mono = self._clock.monotonic()
@@ -95,7 +97,7 @@ class PermitGate:
             ignored = (
                 held is not None
                 and held.permit.move_id == permit.move_id
-                and evidence_mono < held.evidence_mono
+                and permit.evidence_wall_s < held.permit.evidence_wall_s
             )
             if not ignored:
                 # Fed under the lock, so a move that finds this permit covering its

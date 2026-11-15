@@ -129,6 +129,7 @@ def make_config(profile: apai_backend.ApaiProfile) -> RobotAppConfig:
             ),
         ),
         rest=RestConfig(rest_q=REST, region_min=low, region_max=high),
+        camera_calibration_id="apai-mock-calibration",
     )
 
 
@@ -458,6 +459,7 @@ def test_start_connects_the_driver_once_and_welcome_carries_the_model_limits(
         "human": "human-1",
         "recovery": "recovery-1",
     }
+    assert welcome.camera_calibration_id == "apai-mock-calibration"
     assert h.spy.calls.count("connect") == 1
     with pytest.raises(RuntimeError, match=r"start\(\) was already called"):
         h.app.start()

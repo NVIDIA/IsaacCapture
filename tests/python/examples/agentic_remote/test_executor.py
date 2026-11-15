@@ -6,6 +6,7 @@ isaaccapture_examples.agentic_remote.robot_app.executor."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import math
 import threading
@@ -825,8 +826,9 @@ def test_without_a_permit_nothing_is_sent(bare):
     assert outcome.status == "refused"
     assert outcome.reason == "no permit for this move (waited 0.5 s)"
     assert (bare.arm.sent, outcome.end_q) == ([], None)
-    # The wait ran on the clock, and no joint was read after it.
-    waited = bare.clock.monotonic() - began
+    # The start pose was read, the wait then ran on the clock from that moment,
+    # and no joint was read after it.
+    waited = bare.clock.monotonic() - began - START_READ_S
     assert waited == pytest.approx(bare.config.permits.first_wait_s, abs=0.002)
     assert not bare.agent.in_motion
 
@@ -838,7 +840,8 @@ def test_with_no_first_wait_a_missing_permit_is_refused_at_once(bare):
     )
     assert outcome.status == "refused"
     assert bare.arm.sent == []
-    assert bare.clock.monotonic() == began
+    # Only the start read took time.
+    assert bare.clock.monotonic() == pytest.approx(began + START_READ_S, abs=1e-9)
 
 
 def test_a_held_permit_starts_the_move_at_once_and_feeds_the_watchdog(bare):
@@ -891,7 +894,9 @@ def test_no_setpoint_is_sent_once_the_permit_has_expired(bare):
 def test_a_permit_that_expires_during_the_start_read_sends_nothing(bare):
     bare.permit(len(PATH) - 1, expires_in_s=START_READ_S / 2)
     outcome = bare.run(permit_gate=bare.gate)
-    assert (outcome.status, outcome.reason) == ("refused", "permit expired")
+    # The move was armed after the read and waited for a permit that is valid.
+    assert outcome.status == "refused"
+    assert outcome.reason == "permit expired (waited 0.5 s)"
     assert bare.arm.sent == []
 
 
@@ -1042,7 +1047,8 @@ def test_with_the_event_the_wait_runs_out_by_itself_and_leaves_the_clock_alone(b
     assert outcome.status == "refused"
     assert "no permit for this move" in outcome.reason
     assert bare.arm.sent == []
-    assert bare.clock.monotonic() == began
+    # The start read took its time on the clock; the wait took none.
+    assert bare.clock.monotonic() == pytest.approx(began + START_READ_S, abs=1e-9)
 
 
 def test_a_set_event_without_a_covering_permit_starts_nothing(bare):
@@ -1082,6 +1088,296 @@ def test_a_stop_number_raised_during_the_wait_is_reported_as_stopped(bare):
     assert outcome.status == "stopped"
     assert "stop number" in outcome.reason
     assert bare.arm.sent == []
+
+
+def test_a_cancel_permit_ends_the_move_at_the_next_setpoint(bare):
+    # The agent cancels with a permit through setpoint -1 that quotes the
+    # evidence of the permit before it.
+    permit = bare.permit(len(PATH) - 1)
+    cancel = dataclasses.replace(permit, through_index=-1)
+    bare.on_send(lambda: bare.gate.update(cancel), index=5)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "refused"
+    assert outcome.reason == "permit reaches setpoint -1, not 6"
+    assert bare.sent() == PATH[:6]
+    assert bare.arm.holds == []  # the last setpoint stands; torque stays on
+    assert bare.arm.torque_on()
+
+
+# The stage of a move: "" until its start checks passed, armed while it waits
+# for its first permit, sending from then on
+
+
+class Stages:
+    """Records the executor's stage at the steps of a move a test can see."""
+
+    def __init__(self, rig: Rig, executor: MoveExecutor | None = None) -> None:
+        self.rig = rig
+        self.executor = executor or rig.executor
+        self.in_start_read: list[str] = []
+        self.in_wait: list[str] = []
+        self.at_begin: list[str] = []
+        self.at_send: list[str] = []
+        self.sent_in_wait: list[int] = []
+        self.moving_in_wait: list[bool] = []
+        real_read, real_begin = rig.arm.read_all, rig.agent.begin_motion
+        real_covers, real_send = rig.gate.covers, rig.arm.send_target
+
+        def read_all() -> list:
+            self.in_start_read.append(self.executor.stage())
+            return real_read()
+
+        def covers(move_id: str, index: int, now: float) -> str | None:
+            if not rig.arm.sent and not rig.agent.in_motion:
+                self.in_wait.append(self.executor.stage())
+                self.sent_in_wait.append(len(rig.arm.sent))
+                self.moving_in_wait.append(rig.agent.in_motion)
+            return real_covers(move_id, index, now)
+
+        def begin_motion(halt_count: int | None = None) -> None:
+            self.at_begin.append(self.executor.stage())
+            real_begin(halt_count)
+
+        def send_target(q: Sequence[float]) -> None:
+            self.at_send.append(self.executor.stage())
+            real_send(q)
+
+        rig.patch.setattr(rig.arm, "read_all", read_all)
+        rig.patch.setattr(rig.gate, "covers", covers)
+        rig.patch.setattr(rig.agent, "begin_motion", begin_motion)
+        rig.patch.setattr(rig.arm, "send_target", send_target)
+
+
+def test_the_stage_is_empty_outside_a_move(rig):
+    assert rig.executor.stage() == ""
+    rig.run()
+    assert rig.executor.stage() == ""
+
+
+def test_a_move_with_a_gate_is_armed_after_its_start_read_and_sends_after_a_permit(
+    bare,
+):
+    stages = Stages(bare)
+    bare.permit(len(PATH) - 1)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "completed"
+    # The start read, and the end pose read after the move.
+    assert stages.in_start_read == ["", "sending"]
+    assert stages.in_wait == ["armed"]
+    assert stages.at_begin == ["sending"]
+    assert stages.at_send == ["sending"] * len(PATH)
+    assert bare.executor.stage() == ""
+
+
+def test_a_move_without_a_gate_is_never_armed(rig):
+    stages = Stages(rig)
+    seen = set()
+    rig.on_send(lambda: seen.add(rig.executor.stage()))
+    outcome = rig.run()
+    assert outcome.status == "completed"
+    assert stages.in_start_read == ["", "sending"]
+    assert stages.at_begin == ["sending"]
+    assert seen == {"sending"}
+    assert stages.in_wait == []
+
+
+def test_an_armed_move_has_sent_nothing_and_has_not_begun_its_motion(bare):
+    stages = Stages(bare)
+    outcome = bare.run(
+        executor=bare.executor, permit_gate=bare.gate, should_stop=StopProbe("halt")
+    )
+    assert outcome.status == "stopped"
+    assert stages.in_wait and set(stages.in_wait) == {"armed"}
+    assert set(stages.sent_in_wait) == {0}
+    assert set(stages.moving_in_wait) == {False}
+    assert stages.at_begin == []
+    assert bare.arm.sent == []
+    assert bare.executor.progress() == IDLE
+    assert bare.executor.stage() == ""
+
+
+def test_progress_names_the_armed_move_with_nothing_sent(bare):
+    seen = set()
+    real = bare.gate.covers
+    executor = bare.new_executor(first_wait_s=0.01)
+
+    def covers(move_id: str, index: int, now: float) -> str | None:
+        seen.add((executor.progress(), executor.stage()))
+        return real(move_id, index, now)
+
+    bare.patch.setattr(bare.gate, "covers", covers)
+    bare.run(executor=executor, permit_gate=bare.gate)
+    assert seen == {((MOVE_ID, 0, len(PATH)), "armed")}
+
+
+def test_a_wrong_start_pose_is_refused_before_the_wait_for_a_permit(bare):
+    stages = Stages(bare)
+    bare.arm.set_pose([0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+    began = bare.clock.monotonic()
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "refused"
+    assert "start pose: joint index 0 is at 0.5000 rad" in outcome.reason
+    assert outcome.end_q == [0.5, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # No wait for a permit, and the move was never armed.
+    assert bare.clock.monotonic() == pytest.approx(began + START_READ_S, abs=1e-9)
+    assert stages.in_wait == []
+    assert bare.arm.sent == []
+    assert not bare.agent.in_motion
+
+
+def test_a_wrong_start_pose_is_refused_although_a_permit_is_held(bare):
+    bare.arm.set_pose([0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+    bare.permit(len(PATH) - 1)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "refused"
+    assert "start pose" in outcome.reason
+    assert bare.arm.sent == []
+
+
+def test_a_failed_start_read_is_refused_before_the_wait_for_a_permit(bare):
+    stages = Stages(bare)
+    bare.arm.fail_reads(2, 1)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "refused"
+    assert "the start pose could not be read" in outcome.reason
+    assert "permit" not in outcome.reason
+    assert stages.in_wait == []
+    assert bare.arm.sent == []
+
+
+def test_with_the_motors_off_a_move_with_a_gate_is_not_armed_or_read(bare):
+    unpowered = SimArm(n_joints=N, clock=bare.clock, q0=REST)  # never connected
+    executor = MoveExecutor(
+        unpowered, bare.authority, None, bare.config.executor, bare.clock
+    )
+    began = bare.clock.monotonic()
+    outcome = bare.run(executor=executor, permit_gate=bare.gate)
+    assert (outcome.status, outcome.reason) == ("refused", "the motors are off")
+    assert bare.clock.monotonic() == began
+    assert unpowered.sent == []
+
+
+def test_the_first_setpoint_is_checked_from_the_pose_read_before_the_wait(rig):
+    # One full read before the wait, none between the permit and the first send.
+    executor = rig.new_executor(first_wait_s=30.0)
+    reads: list[int] = []
+    real_read = rig.arm.read_all
+
+    def read_all() -> list:
+        reads.append(len(rig.arm.sent))
+        return real_read()
+
+    checked: list[list[float]] = []
+    real_check = rig.agent.check_setpoint
+
+    def check(q_prev: Sequence[float], q_next: Sequence[float], dt: float) -> None:
+        checked.append(list(q_prev))
+        real_check(q_prev, q_next, dt)
+
+    rig.patch.setattr(rig.arm, "read_all", read_all)
+    rig.patch.setattr(rig.agent, "check_setpoint", check)
+    arrived = threading.Event()
+    probe = StopProbe()
+    thread, outcomes = in_thread(
+        lambda: rig.run(
+            executor=executor,
+            permit_gate=rig.gate,
+            permit_arrived=arrived,
+            should_stop=probe,
+        )
+    )
+    assert probe.waiting.wait(WAIT_S)
+    assert (executor.stage(), reads, rig.arm.sent) == ("armed", [0], [])
+    rig.permit(len(PATH) - 1)
+    arrived.set()
+    thread.join(WAIT_S)
+    assert not thread.is_alive()
+    assert outcomes[0].status == "completed"
+    assert reads == [0, len(PATH)]  # the start read and the end pose read
+    assert checked[0] == REST
+
+
+class Pauses:
+    """A reads_paused that records when its blocks are open."""
+
+    def __init__(self) -> None:
+        self.open = 0
+        self.entered = 0
+
+    @contextlib.contextmanager
+    def __call__(self):
+        self.open += 1
+        self.entered += 1
+        try:
+            yield
+        finally:
+            self.open -= 1
+
+
+def paused_executor(rig: Rig, pauses: Pauses, **settings: object) -> MoveExecutor:
+    return MoveExecutor(
+        rig.arm,
+        rig.authority,
+        rig.history,
+        rig.config.executor,
+        rig.clock,
+        reads_paused=pauses,
+        **settings,
+    )
+
+
+def test_the_idle_reads_are_paused_for_the_start_read_and_the_sends_not_the_wait(
+    bare,
+):
+    pauses = Pauses()
+    executor = paused_executor(bare, pauses)
+    stages = Stages(bare, executor)
+    in_read: list[int] = []
+    in_wait: list[int] = []
+    in_send: list[int] = []
+    read, covers, send = bare.arm.read_all, bare.gate.covers, bare.arm.send_target
+
+    def read_all() -> list:
+        in_read.append(pauses.open)
+        return read()
+
+    def asked(move_id: str, index: int, now: float) -> str | None:
+        if executor.stage() == "armed":
+            in_wait.append(pauses.open)
+        return covers(move_id, index, now)
+
+    def send_target(q: Sequence[float]) -> None:
+        in_send.append(pauses.open)
+        send(q)
+
+    bare.patch.setattr(bare.arm, "read_all", read_all)
+    bare.patch.setattr(bare.gate, "covers", asked)
+    bare.patch.setattr(bare.arm, "send_target", send_target)
+    bare.permit(len(PATH) - 1)
+    outcome = bare.run(executor=executor, permit_gate=bare.gate)
+    assert outcome.status == "completed"
+    assert in_read == [1, 1]  # the start read and the end pose read
+    assert in_wait == [0]
+    assert in_send == [1] * len(PATH)
+    assert (pauses.open, pauses.entered) == (0, 2)
+    assert stages.in_wait == ["armed"]
+
+
+def test_a_move_without_a_gate_runs_inside_one_pause_of_the_idle_reads(rig):
+    pauses = Pauses()
+    outcome = rig.run(executor=paused_executor(rig, pauses))
+    assert outcome.status == "completed"
+    assert (pauses.open, pauses.entered) == (0, 1)
+
+
+def test_a_move_refused_at_its_start_or_in_its_wait_leaves_no_pause_open(bare):
+    pauses = Pauses()
+    executor = paused_executor(bare, pauses, first_wait_s=0.01)
+    assert bare.run(executor=executor, permit_gate=bare.gate).status == "refused"
+    assert (pauses.open, pauses.entered) == (0, 1)
+    bare.arm.set_pose([0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+    assert bare.run(executor=executor, permit_gate=bare.gate).status == "refused"
+    assert (pauses.open, pauses.entered) == (0, 2)
 
 
 # Late setpoints
