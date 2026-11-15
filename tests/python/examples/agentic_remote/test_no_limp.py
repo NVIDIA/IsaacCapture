@@ -1208,3 +1208,197 @@ def test_the_one_release_call_stands_behind_its_guards():
     for check in ("_jaws_problem", "_rest_problem"):
         assert [line for line in calls(check, claimed) if line < cut]
     assert calls("release_torque", tree) == [cut]
+
+
+# The workstation agent side (agent/): the same rule
+
+
+# The files of the agent side the scan must have read.
+AGENT_FILES = (
+    "agent/__init__.py",
+    "agent/__main__.py",
+    "agent/arm_adapter.py",
+    "agent/checkahead.py",
+    "agent/config.py",
+    "agent/console_cmd.py",
+    "agent/launcher.py",
+    "agent/link_client.py",
+    "agent/self_mask.py",
+    "agent/setpoints.py",
+    "agent/task_gate.py",
+    "agent/camera/__init__.py",
+    "agent/camera/bridge_wire.py",
+    "agent/camera/frame_bridge.py",
+    "agent/camera/frame_source.py",
+    "agent/camera/stereo_camera.py",
+)
+
+
+def test_the_scan_reads_every_file_of_the_agent_side_and_finds_no_torque_cut():
+    scanned = {path.relative_to(PACKAGE).as_posix() for path in PACKAGE.rglob("*.py")}
+    assert set(AGENT_FILES) <= scanned
+    assert [site for site in package_sites() if site.file.startswith("agent/")] == []
+    # A cut written into one of these files would be found.
+    source = "def end(link, raw_arm):\n    link.release_torque()\n    raw_arm.stop()\n"
+    found = sites(source, "agent/launcher.py", cuts_torque)
+    assert [site.what for site in found] == ["link.release_torque", "raw_arm.stop"]
+
+
+def test_only_the_console_command_asks_the_robot_app_for_a_release_or_a_shutdown():
+    # RELEASE and SHUTDOWN are the two link messages whose work can end in a
+    # torque cut, and the robot app does that only with the arm measured at
+    # rest. Under agent/ only the operator's console command sends them.
+    def asks(name: str, target: str) -> bool:
+        from_a_client = bool(words(target) & {"client", "link", "ws", "made"})
+        return name in ("Release", "Shutdown") or (
+            name in ("release", "shutdown") and from_a_client
+        )
+
+    asked = [site for site in package_sites(asks) if site.file.startswith("agent/")]
+    assert asked == [
+        Site("agent/console_cmd.py", "_run", "client.release"),
+        Site("agent/console_cmd.py", "_run", "client.shutdown"),
+    ]
+    for file in AGENT_FILES:
+        tree = ast.parse((PACKAGE / file).read_text(encoding="utf-8"))
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        names |= {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert not names & {"Release", "Shutdown"}, file
+    # The agent's own link has no such call, and the robot link service lets
+    # the role "agent" send neither.
+    from isaaccapture_examples.agentic_remote.agent.link_client import AgentLink
+    from isaaccapture_examples.agentic_remote.link_service.service import (
+        ROLE_AGENT,
+        ROLE_TABLE,
+    )
+    from isaaccapture_examples.agentic_remote.protocol.messages import Shutdown
+
+    assert not {"release", "shutdown", "rest", "open_jaws", "reset"} & set(
+        dir(AgentLink)
+    )
+    assert not {Release.TYPE, Shutdown.TYPE} & ROLE_TABLE[ROLE_AGENT]
+
+
+def test_the_arm_adapters_driver_methods_cut_no_torque():
+    # APAI calls disconnect() and stop() on its arm at teardown and on a
+    # skill stop. On the robot link the first sends nothing and the second at
+    # most a STOP, which is a hold.
+    from isaaccapture_examples.agentic_remote.agent.arm_adapter import RobotLinkArm
+
+    tree = ast.parse((PACKAGE / "agent" / "arm_adapter.py").read_text("utf-8"))
+    (adapter,) = (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "RobotLinkArm"
+    )
+    methods = {
+        node.name: node for node in adapter.body if isinstance(node, ast.FunctionDef)
+    }
+
+    def link_calls(method: str) -> set[str]:
+        return {
+            node.func.attr
+            for node in ast.walk(methods[method])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and "link" in words(ast.unparse(node.func.value))
+        }
+
+    disconnect = methods["disconnect"]
+    assert not [node for node in ast.walk(disconnect) if isinstance(node, ast.Call)]
+    assert link_calls("stop") == {"stop"}
+    assert link_calls("close_task") == {"unpin"}
+    # What APAI reads before its teardown: no park, no torque cut at either end.
+    assert RobotLinkArm.shutdown_park_required is False
+    assert RobotLinkArm.disconnect_preserves_drive_state is True
+    assert RobotLinkArm.connect_cuts_torque is False
+
+
+def _obstacle(rig) -> None:
+    def switch_in(count: int) -> None:
+        if count == 30:
+            rig.obstacle_beyond(-10.0)  # every later setpoint is refused
+
+    rig.checker.before_approve = switch_in
+
+
+def _latched(rig) -> None:
+    def latch(count: int) -> None:
+        if count == 30:
+            rig.checker.estopped = True
+
+    rig.checker.before_approve = latch
+
+
+def _after(rig, count: int, act: Callable[[], None]) -> None:
+    """act() on another thread once the arm was sent `count` setpoints."""
+    reached, release = rig.h.hold_move_after(count)
+    release.set()
+
+    def later() -> None:
+        assert reached.wait(WAIT_S)
+        act()
+
+    threading.Thread(target=later, daemon=True).start()
+
+
+# What can end a move of the agent, seen from the agent program. Each sets the
+# ending up on a SimRig of test_arm_adapter.py before the move starts.
+AGENT_ENDINGS = {
+    "the check ahead refuses a setpoint": _obstacle,
+    "the workstation checker is latched": _latched,
+    "Ctrl+C at the agent terminal": lambda rig: _after(rig, 15, rig.adapter.stop),
+    "STOP at the Thor terminal": lambda rig: _after(
+        rig, 15, lambda: rig.h.app.stop("typed stop", "thor_terminal")
+    ),
+    "the link is lost": lambda rig: _after(rig, 15, rig.robot_end.break_link),
+    "the agent program is gone": lambda rig: _after(rig, 15, rig.link.close),
+    "nothing: the move completes": lambda rig: None,
+}
+
+
+@pytest.mark.apai
+@pytest.mark.parametrize("ending", AGENT_ENDINGS)
+def test_no_ending_of_an_agent_move_cuts_torque_away_from_rest(
+    make_realtime_robot_app, ending
+):
+    """The arm adapter's permit loop against the robot app, in real time."""
+    import numpy as np
+    from test_arm_adapter import SimRig
+
+    h = make_realtime_robot_app(pose=RAISED, connected=False)
+    rig = SimRig(h)
+    try:
+        rig.own()
+        goal = np.array(RAISED)
+        goal[0] += 0.2  # 60 setpoints in 1.2 s
+        AGENT_ENDINGS[ending](rig)
+        try:
+            completed = rig.move(goal, 1.2)
+        except Exception:
+            completed = False
+        assert completed is ending.startswith("nothing")
+        h.idle()
+        sent = len(h.sent())
+        assert (sent == 60) if completed else (0 < sent < 60)
+        # What the agent program still does at the end of a task and at its
+        # own end: a skill's stop, the end of the task, APAI's teardown, the
+        # close of its link. None of it may move the arm or cut its torque.
+        with rig.adapter.skill_scope():
+            rig.adapter.stop()
+        rig.adapter.close_task()
+        rig.adapter.stop()  # APAI's teardown latch: a person's STOP
+        rig.adapter.disconnect()
+        rig.link.close()
+        if h.app.running and h.robot_end is not None:
+            h.idle()
+        assert len(h.sent()) == sent
+        assert_torque_kept(h)
+        assert off_rest(h) > h.config.rest.rest_tol_rad
+    finally:
+        rig.close()
