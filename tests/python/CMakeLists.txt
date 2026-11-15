@@ -32,4 +32,5 @@ endif()
 
 if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(examples/teleop_keyboard)
+    add_subdirectory(examples/agentic_remote)
 endif()

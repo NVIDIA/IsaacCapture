@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "agentic-remote-example-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "numpy",
+    "pyyaml",
+]
+# Only for the tests marked "apai": what an APAI checkout imports. APAI itself is not on PyPI;
+# point AGENTIC_REMOTE_APAI_SRC at its src folder.
+apai = [
+    "opencv-python-headless",
+    "jsonschema",
+    "pin>=4.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "apai: needs an APAI checkout (set AGENTIC_REMOTE_APAI_SRC)",
+    "releases_away_from_rest: a test of the simulated arm that cuts torque off rest",
+]

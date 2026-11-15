@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-agentic-remote"
+version = "0.0.0"  # Internal example - not versioned
+description = "Isaac Capture agentic remote execution: the robot app and its link messages"
+requires-python = ">=3.11,<3.14"
+# What the package imports without APAI. isaaccapture is not required: the command
+# line sets the log level through it when it is installed, by itself when not.
+dependencies = [
+    "numpy>=1.23.0",
+    "pyyaml>=6.0",
+]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# agentic_remote -- see the packaging rules in examples/README.md.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/agentic_remote"]
+sources = ["python"]
