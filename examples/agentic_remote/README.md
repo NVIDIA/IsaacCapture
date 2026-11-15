@@ -138,9 +138,14 @@ the same link messages as on the robot connection. In Python `connect_local(path
 - **Anything else is refused by the service** and never reaches the Thor: with a RESULT
   `refused` under the command's id, or with a LOCAL_NOTICE when there is no id. Both name the
   role and the link message.
+- **A command id belongs to its sender until its final RESULT.** A command from another client
+  under the same id is `refused` with `command id in use` and not forwarded.
 - **Every role may send STOP**, and it goes out at once. From then until a ROBOT_STATE shows
   a higher stop number the service drops PERMITs and refuses a MOVE or GRIPPER that quotes the
-  old stop number.
+  old stop number. A PERMIT, MOVE or GRIPPER the service was already sending when the STOP
+  came can reach the Thor after it; the Thor's own stop-number check covers that one.
+- **A client over `local.max_clients` is closed** with a LOCAL_NOTICE. A STOP it sends first,
+  alone or right after its LOCAL_HELLO and within 0.2 s, still goes out.
 - **To every client**: WELCOME, ROBOT_STATE (the newest only), EVENT, and LOCAL_STATUS: whether
   the robot connection is up, why the last one ended, the session id, the Thor's clock against
   the workstation's, and how many clients are attached in each role. **RESULT** goes to the

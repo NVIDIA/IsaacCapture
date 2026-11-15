@@ -25,6 +25,7 @@ from link_bench import (
     quiet,
     read_message,
     received,
+    robot_state,
     until,
     welcome,
     write,
@@ -54,6 +55,7 @@ from isaaccapture_examples.agentic_remote.link_service.service import (
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair, send
 from isaaccapture_examples.agentic_remote.protocol.local_messages import (
     ROLES,
+    LocalHello,
     LocalNotice,
     LocalStatus,
 )
@@ -986,6 +988,167 @@ def test_the_too_many_clients_are_turned_away(folder):
         assert bench.service.roles() == {"console": 1, "viewer": 1}
     finally:
         bench.close()
+
+
+def _full_bench(folder: Path) -> Bench:
+    """A service with a robot connection and both of its two client slots held."""
+    bench = Bench(folder, max_clients=2)
+    bench.robot()
+    bench.client("console")
+    bench.client("viewer")
+    return bench
+
+
+@pytest.mark.parametrize("writes", [1, 2])
+def test_a_turned_away_clients_stop_after_its_hello_goes_out(folder, writes):
+    bench = _full_bench(folder)
+    try:
+        extra = bench.raw()
+        hello = LocalHello(role="tool", name="stop-button")
+        stop = Stop("operator pressed stop", "tool")
+        records = [pack_record(m.TYPE, m.to_payload()) for m in (hello, stop)]
+        for part in records if writes == 2 else [b"".join(records)]:
+            extra.sendall(part)
+        assert bench.thors[0].next_message() == stop
+        assert "too many local clients" in closed_by_service(extra)[-1].text
+        assert bench.service.roles() == {"console": 1, "viewer": 1}
+    finally:
+        bench.close()
+
+
+def test_a_turned_away_clients_move_after_its_hello_stays_here(folder):
+    bench = _full_bench(folder)
+    try:
+        extra = bench.raw()
+        write(extra, LocalHello(role="agent", name="raw"))
+        write(extra, move())
+        assert "too many local clients" in closed_by_service(extra)[-1].text
+        bench.thors[0].nothing()
+    finally:
+        bench.close()
+
+
+def test_turned_away_clients_do_not_hold_up_the_next_ones_stop(folder):
+    bench = _full_bench(folder)
+    try:
+        for _ in range(3):  # they say nothing
+            bench.raw()
+            time.sleep(0.02)
+        extra = bench.raw()
+        began = time.monotonic()
+        write(extra, MARKER)
+        assert bench.thors[0].next_message() == MARKER
+        assert time.monotonic() - began < 0.4
+    finally:
+        bench.close()
+
+
+def test_a_stop_goes_out_when_many_are_turned_away_at_once(folder):
+    bench = _full_bench(folder)
+    try:
+        for _ in range(service_module.TURN_AWAY_HELPERS + 1):  # they say nothing
+            bench.raw()
+            time.sleep(0.02)
+        extra = bench.raw()
+        write(extra, MARKER)
+        assert bench.thors[0].next_message() == MARKER
+        assert "too many local clients" in closed_by_service(extra)[-1].text
+    finally:
+        bench.close()
+
+
+def test_a_stop_before_the_first_state_is_not_confirmed_by_that_state(bench):
+    thor = bench.robot(session_id=None)  # connected, no ROBOT_STATE yet
+    agent = bench.client("agent")
+    console = bench.client("console")
+    send(console, Stop("pressed", "console"))
+    assert thor.next_message() == Stop("pressed", "console")
+    agent.wait_status(lambda s: s.stop_unconfirmed)
+    # A ROBOT_STATE the Thor may have built before it saw the STOP.
+    thor.send(welcome())
+    sent = thor.state(stop_number=4)
+    until(lambda: bench.service.robot_state == sent)
+    assert bench.service.status().stop_unconfirmed
+    send(agent, permit(stop_number=4))
+    send(agent, move("move-old", stop_number=4))
+    refusal = received(agent, Result, command_id="move-old")
+    assert "a STOP was sent after stop number 4" in refusal.reason
+    send(agent, MARKER)
+    assert thor.next_message() == MARKER
+
+    thor.state(stop_number=5)
+    agent.wait_status(lambda s: not s.stop_unconfirmed)
+    send(agent, move("move-new", stop_number=5))
+    assert thor.next_message() == move("move-new", stop_number=5)
+
+
+def test_a_stop_before_the_first_state_is_confirmed_by_a_later_one(bench):
+    thor = bench.robot(session_id=None)
+    agent = bench.client("agent")
+    send(agent, Stop("self", "agent"))
+    thor.next()
+    thor.send(welcome())
+    first = thor.state(stop_number=0)
+    until(lambda: bench.service.robot_state == first)
+    assert bench.service.status().stop_unconfirmed
+    thor.state(stop_number=1)
+    agent.wait_status(lambda s: s.session_id == "s1" and not s.stop_unconfirmed)
+
+
+def test_a_stop_shuts_the_gate_before_it_goes_out(bench):
+    robot_end, wrapped = _wrapped_robot(bench, hold=Stop.TYPE)
+    send(robot_end, welcome())
+    state = robot_state(stop_number=4)
+    send(robot_end, state)
+    until(lambda: bench.service.robot_state == state)
+    agent = bench.client("agent")
+    console = bench.client("console")
+    send(console, Stop("now", "console"))
+    assert wrapped.holding.wait(WAIT_S)  # the STOP is inside its send
+    send(agent, permit(stop_number=4))
+    send(agent, gripper("grip-old", stop_number=4))
+    send(agent, move("move-old", stop_number=4))
+    for command_id in ("grip-old", "move-old"):
+        refusal = received(agent, Result, command_id=command_id)
+        assert refusal.status == "refused"
+    wrapped.release.set()
+    assert decode(*robot_end.receive(WAIT_S)) == Stop("now", "console")
+    send(agent, MARKER)
+    assert decode(*robot_end.receive(WAIT_S)) == MARKER  # nothing else went out
+
+
+def test_a_command_id_another_client_has_under_way_is_refused(bench):
+    thor = bench.robot()
+    agent = bench.client("agent")
+    console = bench.client("console")
+    send(agent, move("m1"))
+    assert thor.next_message() == move("m1")
+    send(console, owner_request("rest", command_id="m1"))
+    refusal = received(console, Result, command_id="m1")
+    assert refusal.status == "refused"
+    assert "command id in use" in refusal.reason
+    quiet(agent, Result)  # the refusal is the console's alone
+    send(console, MARKER)
+    assert thor.next_message() == MARKER  # the OWNER_REQUEST did not go out
+    thor.send(Result("m1", "completed"))
+    assert received(agent, Result, command_id="m1").status == "completed"
+    assert received(console, Result, command_id="m1").status == "completed"
+    # With its final RESULT in, the id is free again.
+    send(console, owner_request("rest", command_id="m1"))
+    assert thor.next_message() == owner_request("rest", command_id="m1")
+    thor.send(Result("m1", "refused", "not now"))
+    assert received(console, Result, command_id="m1").reason == "not now"
+    quiet(agent, Result)
+
+
+def test_a_client_may_send_its_own_command_id_again(bench):
+    thor = bench.robot()
+    agent = bench.client("agent")
+    send(agent, move("m1"))
+    send(agent, move("m1"))
+    assert [thor.next_message(), thor.next_message()] == [move("m1"), move("m1")]
+    thor.send(Result("m1", "completed"))
+    assert received(agent, Result, command_id="m1").status == "completed"
 
 
 def test_a_status_is_a_local_status(bench):

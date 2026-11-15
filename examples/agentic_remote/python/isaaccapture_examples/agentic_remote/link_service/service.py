@@ -118,6 +118,11 @@ SMALL_PAYLOAD_BYTES = 64 * 1024
 # How long the payload of a STOP may take to follow its header before the STOP
 # is forwarded without it.
 STOP_PAYLOAD_WAIT_S = 0.2
+# How long a client there is no room for has to send a STOP, and as long again
+# to take the notice that tells it why it is closed.
+TURN_AWAY_S = 0.2
+# Threads that turn clients away; with all of them busy the accept thread does.
+TURN_AWAY_HELPERS = 4
 # Commands whose sender is remembered for their RESULTs.
 COMMANDS_KEPT = 1024
 
@@ -304,9 +309,9 @@ class RobotLinkService:
         self._ids = itertools.count(1)
         self._id_prefix = f"link-service-{uuid.uuid4().hex[:8]}"
         self._numbers = itertools.count(1)
+        self._turn_away_helpers = threading.BoundedSemaphore(TURN_AWAY_HELPERS)
 
-        # Under the lock. _carrier and _stop_key are also read without it, by a
-        # STOP on its way out.
+        # Under the lock, which is never held across a send to the Thor.
         self._carrier: Carrier | None = None
         self._close_reason = ""
         self._welcome: Welcome | None = None
@@ -315,8 +320,8 @@ class RobotLinkService:
         self._state_payload: bytes | None = None
         # (session id, stop number) of the newest ROBOT_STATE of this connection.
         self._stop_key: tuple[str | None, int] = (None, -1)
-        # Set by a forwarded STOP to the _stop_key of that moment; lifted by a
-        # ROBOT_STATE with a higher stop number or another session id.
+        # Set by a STOP on its way out to the _stop_key of that moment; lifted
+        # by a ROBOT_STATE with a higher stop number or another session id.
         self._gate: tuple[str | None, int] | None = None
         self._guests: dict[int, _Client] = {}  # before their LOCAL_HELLO
         self._clients: dict[int, _Client] = {}
@@ -624,7 +629,20 @@ class RobotLinkService:
                 if taken:
                     self._guests[client.number] = client
             if not taken:
-                self._turn_away(client)
+                self._note(
+                    logging.WARNING, "refused a local client: too many are attached"
+                )
+                if not self._turn_away_helpers.acquire(blocking=False):
+                    self._turn_away(client)
+                    continue
+                helper = threading.Thread(
+                    target=self._turn_away,
+                    args=(client, self._turn_away_helpers),
+                    name=f"link-service-away-{client.number}",
+                    daemon=True,
+                )
+                self._threads.append(helper)
+                helper.start()
                 continue
             reader = threading.Thread(
                 target=self._serve,
@@ -636,30 +654,50 @@ class RobotLinkService:
             client.writer.start()
             reader.start()
 
-    def _turn_away(self, client: _Client) -> None:
-        """Close a client there is no room for; a STOP it begins with still goes out."""
-        self._note(logging.WARNING, "refused a local client: too many are attached")
+    def _turn_away(
+        self, client: _Client, helper: threading.BoundedSemaphore | None = None
+    ) -> None:
+        """Close a client there is no room for, within about twice TURN_AWAY_S.
+
+        A STOP it begins with, alone or right after its LOCAL_HELLO, still goes
+        out. helper is the slot to give back when a helper thread runs this.
+        """
         sock = client.sock
         try:
-            wait = time.monotonic() + STOP_PAYLOAD_WAIT_S
-            msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, wait))
+            by = time.monotonic() + TURN_AWAY_S
+            msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
+            if msg_type == LocalHello.TYPE and length <= MAX_LOCAL_PAYLOAD_BYTES:
+                read_exact(sock, length, by)
+                msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
             if msg_type == Stop.TYPE:
-                self._stop_from(client, self._stop_payload(sock, length))
+                self._stop_from(client, self._stop_payload(sock, length, by))
         except (Stalled, EOFError):
             pass
-        notice = LocalNotice(text="too many local clients are attached")
-        with contextlib.suppress(OSError):
-            sock.settimeout(STOP_PAYLOAD_WAIT_S)
-            sock.sendall(pack_record(notice.TYPE, notice.to_payload()))
-        sock.close()
+        except Exception:
+            _log.exception("turning a local client away failed")
+        finally:
+            notice = LocalNotice(text="too many local clients are attached")
+            with contextlib.suppress(OSError):
+                sock.settimeout(TURN_AWAY_S)
+                sock.sendall(pack_record(notice.TYPE, notice.to_payload()))
+            sock.close()
+            if helper is not None:
+                helper.release()
 
     @staticmethod
-    def _stop_payload(sock: socket.socket, length: int) -> bytes | None:
-        """The payload of a STOP whose header was read; None if it does not come."""
+    def _stop_payload(
+        sock: socket.socket, length: int, by: float | None = None
+    ) -> bytes | None:
+        """The payload of a STOP whose header was read; None if it does not come.
+
+        It has until `by` (time.monotonic()), else STOP_PAYLOAD_WAIT_S from now.
+        """
         if length > SMALL_PAYLOAD_BYTES:
             return None
+        if by is None:
+            by = time.monotonic() + STOP_PAYLOAD_WAIT_S
         try:
-            return read_exact(sock, length, time.monotonic() + STOP_PAYLOAD_WAIT_S)
+            return read_exact(sock, length, by)
         except (Stalled, EOFError):
             return None
 
@@ -783,7 +821,13 @@ class RobotLinkService:
         )
 
     def _stop_from(self, client: _Client, payload: bytes | None) -> None:
-        """Forward a client's STOP at once; it waits for no lock of the service."""
+        """Forward a client's STOP at once; it waits behind no send to the Thor.
+
+        The gate is set before the STOP goes out, so a PERMIT, MOVE or GRIPPER
+        checked from then on stays here. One that is past its check when the
+        STOP arrives can follow it to the Thor: the Thor's stop-number check is
+        the guarantee for that one. A STOP whose send fails leaves the gate set.
+        """
         out = payload
         if out is not None:
             try:
@@ -793,36 +837,39 @@ class RobotLinkService:
         if out is None:
             sender = client.role or "unknown"
             out = Stop(reason=BAD_STOP, sender=sender).to_payload()
-        key = self._stop_key
-        carrier = self._carrier
+        with self._lock:
+            carrier = self._carrier
+            up = carrier is not None and carrier.alive
+            # A STOP sent before any ROBOT_STATE does not replace a gate that
+            # names a stop number.
+            if up and (self._stop_key[0] is not None or self._gate is None):
+                self._gate = self._stop_key
+                self._status_changed()
         sent = False
-        if carrier is not None and carrier.alive:
+        if up:
             try:
                 carrier.send_reliable(Stop.TYPE, out)
                 sent = True
             except Exception as error:
                 self._note(logging.ERROR, f"sending a STOP to the Thor failed: {error}")
-        with self._lock:
-            if sent:
-                # A STOP sent before any ROBOT_STATE does not replace a gate
-                # that names a stop number.
-                if key[0] is not None or self._gate is None:
-                    self._gate = key
-                self._lift_gate()
-                self._status_changed()
-            else:
-                client.tell(LocalNotice(text=STOP_UNDELIVERED, about_type=Stop.TYPE))
         if sent:
             _log.warning("STOP from the %s forwarded", client.label)
         else:
+            client.tell(LocalNotice(text=STOP_UNDELIVERED, about_type=Stop.TYPE))
             _log.warning("STOP from the %s not delivered: %s", client.label, LOST)
 
     def _lift_gate(self) -> None:
-        """End the gate once a ROBOT_STATE shows that the STOP took effect."""
+        """End the gate once a ROBOT_STATE shows that the STOP took effect.
+
+        A gate set before any ROBOT_STATE takes the first one's stop number
+        instead: that ROBOT_STATE may be older than the STOP.
+        """
         gate, state = self._gate, self._state
         if gate is None or state is None:
             return
-        if state.session_id != gate[0] or state.stop_number > gate[1]:
+        if gate[0] is None:
+            self._gate = (state.session_id, state.stop_number)
+        elif state.session_id != gate[0] or state.stop_number > gate[1]:
             self._gate = None
             self._status_changed()
 
@@ -871,6 +918,7 @@ class RobotLinkService:
                 if command_id is not None:
                     client.tell(Result(command_id, "refused", LOST))
                 return True
+            # The last check before the send; see _stop_from.
             gate = self._gate
             if gate is not None and msg_type == Permit.TYPE:
                 return True
@@ -882,10 +930,11 @@ class RobotLinkService:
                     )
                     client.tell(Result(command_id, "refused", reason))
                     return True
-            if command_id is not None and not self._remember(command_id, client.number):
-                reason = "too many commands wait for their RESULT"
-                client.tell(Result(command_id, "refused", reason))
-                return True
+            if command_id is not None:
+                reason = self._remember(command_id, client.number)
+                if reason:
+                    client.tell(Result(command_id, "refused", reason))
+                    return True
         self._send(carrier, msg_type, payload)
         return True
 
@@ -899,16 +948,22 @@ class RobotLinkService:
             client.tell(LocalNotice(text=why, about_type=msg_type))
         self._note(logging.INFO, f"refused ({client.label}): {why}")
 
-    def _remember(self, command_id: str, client: int | None) -> bool:
-        """Note who sent a command; False when too many wait for their RESULT."""
+    def _remember(self, command_id: str, client: int | None) -> str:
+        """Note who sent a command; the reason when it may not be forwarded."""
+        sent = self._commands.get(command_id)
+        if sent is not None and not sent.final and sent.client != client:
+            return (
+                "command id in use: another sender's command with this id has no "
+                "final RESULT yet"
+            )
         self._commands.pop(command_id, None)
         if len(self._commands) >= COMMANDS_KEPT:
             done = next((k for k, sent in self._commands.items() if sent.final), None)
             if done is None:
-                return False
+                return "too many commands wait for their RESULT"
             del self._commands[done]
         self._commands[command_id] = _Sent(client)
-        return True
+        return ""
 
     # Shared pieces; the lock is held
 
