@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot link service settings. These are demo values for one machine; set the
+# workstation's own address and the Thor's address for two machines.
+
+# Where the service waits for the robot app to dial in.
+listen:
+  address: 127.0.0.1
+  port: 47610
+
+# The robot connection is taken only from these addresses (the Thor).
+allowed_peers: [127.0.0.1]
+
+# The local API's Unix socket. Empty: $XDG_RUNTIME_DIR/agentic_remote/robot_link.sock,
+# else /tmp/agentic_remote-<uid>/robot_link.sock. Its folder must be the user's own,
+# with mode 0700.
+socket_path: ""
+
+# debug, info, warning or error.
+log_level: info
+
+local:
+  # Local clients at one time, those that have not said LOCAL_HELLO among them.
+  max_clients: 16
+  # Seconds a new client has for its LOCAL_HELLO.
+  hello_timeout_s: 2.0
+  # Seconds a client may take to read what it is sent before it is dropped.
+  send_timeout_s: 2.0
+  # What may wait for one client; a client with more waiting is dropped.
+  queue_messages: 256
+  queue_bytes: 8388608
