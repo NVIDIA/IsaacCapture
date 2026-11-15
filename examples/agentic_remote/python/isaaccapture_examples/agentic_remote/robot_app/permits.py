@@ -1,0 +1,181 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""The permit gate: which setpoints of an agent move may be sent, and until when."""
+
+from __future__ import annotations
+
+import logging
+import math
+import threading
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from .interfaces import Owner
+
+if TYPE_CHECKING:
+    from ..protocol.messages import Permit
+    from .authority import Authority
+    from .clock import Clock
+    from .config import PermitsConfig
+    from .interfaces import Checker
+
+_log = logging.getLogger("isaaccapture.examples.agentic_remote.permits")
+
+# Camera evidence may lead the app clock by this much before a permit is refused.
+FUTURE_TOLERANCE_S = 0.05
+
+
+@dataclass(frozen=True)
+class _Held:
+    permit: Permit
+    evidence_mono: float  # camera time of the evidence on the app's monotonic clock
+
+
+class PermitGate:
+    """Holds one permit and says whether it covers a setpoint of a move.
+
+    Thread-safe. A permit is used whole: its reach, expiry and evidence time are
+    never mixed with another permit's. The newest permit decides, so one that
+    reaches less far shortens how far the move may go.
+    """
+
+    def __init__(
+        self,
+        authority: Authority,
+        agent_checker: Checker,
+        config: PermitsConfig,
+        clock: Clock,
+    ) -> None:
+        self._authority = authority
+        self._agent_checker = agent_checker
+        self._age_limit_s = config.evidence_age_limit_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._held: _Held | None = None
+        # (move id, reason) of the newest permit that was refused.
+        self._refused: tuple[str, str] | None = None
+        self._arrived = threading.Event()
+
+    @property
+    def arrived(self) -> threading.Event:
+        """Set whenever a permit is stored; give it to MoveExecutor.run().
+
+        The move that waits for its first permit clears it.
+        """
+        return self._arrived
+
+    def update(
+        self,
+        permit: Permit,
+        now_mono: float | None = None,
+        wall_minus_mono: float | None = None,
+    ) -> str | None:
+        """Take in a permit; returns why it was refused, or None.
+
+        wall_minus_mono (app wall clock minus monotonic clock) turns the evidence
+        time into monotonic time; both times default to the clock. An accepted
+        permit replaces the held one, except that for the move already held a
+        permit that rests on older evidence is ignored without a reason.
+        """
+        if now_mono is None:
+            now_mono = self._clock.monotonic()
+        if wall_minus_mono is None:
+            wall_minus_mono = self._clock.wall() - self._clock.monotonic()
+        evidence_mono = permit.evidence_wall_s - wall_minus_mono
+        reason = self._refusal(permit, now_mono, evidence_mono)
+        if reason is not None:
+            with self._lock:
+                self._refused = (permit.move_id, reason)
+            return reason
+        # Evidence slightly ahead of the clock must not add to the permit's life.
+        evidence_mono = min(evidence_mono, now_mono)
+        with self._lock:
+            held = self._held
+            ignored = (
+                held is not None
+                and held.permit.move_id == permit.move_id
+                and evidence_mono < held.evidence_mono
+            )
+            if not ignored:
+                # Fed under the lock, so a move that finds this permit covering its
+                # first setpoint also finds the watchdog fed.
+                self._agent_checker.feed_watchdog(evidence_mono)
+                self._held = _Held(permit, evidence_mono)
+                if self._refused is not None and self._refused[0] == permit.move_id:
+                    self._refused = None  # the move has a newer permit than that
+        if ignored:
+            _log.debug(
+                "ignored a permit for move %s through setpoint %d: older evidence",
+                permit.move_id,
+                permit.through_index,
+            )
+            return None
+        self._arrived.set()
+        return None
+
+    def covers(
+        self, move_id: str, index: int, now_mono: float | None = None
+    ) -> str | None:
+        """Why setpoint index of this move may not be sent now, or None if it may.
+
+        The held permit must be for this move, still quote the authority's current
+        values, be unexpired, rest on evidence younger than the limit and reach
+        the index.
+        """
+        if now_mono is None:
+            now_mono = self._clock.monotonic()
+        with self._lock:
+            held = self._held
+        if held is None or held.permit.move_id != move_id:
+            return "no permit for this move"
+        permit = held.permit
+        reason = self._stale(permit)
+        if reason is not None:
+            return reason
+        if now_mono >= permit.expires_mono_s:
+            return "permit expired"
+        if now_mono - held.evidence_mono >= self._age_limit_s:
+            return "permit evidence is too old"
+        if index > permit.through_index:
+            return f"permit reaches setpoint {permit.through_index}, not {index}"
+        return None
+
+    def last_refusal(self, move_id: str) -> str | None:
+        """Why the newest refused permit was refused, if it was for this move.
+
+        None once a later permit for the move was taken, or one for another
+        move was refused.
+        """
+        with self._lock:
+            refused = self._refused
+        return refused[1] if refused is not None and refused[0] == move_id else None
+
+    def clear(self) -> None:
+        """Forget the held permit and the last refusal."""
+        with self._lock:
+            self._held = None
+            self._refused = None
+
+    def _refusal(
+        self, permit: Permit, now_mono: float, evidence_mono: float
+    ) -> str | None:
+        """Why a permit is not taken, or None when it is."""
+        reason = self._stale(permit)
+        if reason is not None:
+            return reason
+        if not (math.isfinite(permit.expires_mono_s) and math.isfinite(evidence_mono)):
+            return "permit times are not finite"
+        if permit.expires_mono_s <= now_mono:
+            return "permit expired"
+        if evidence_mono > now_mono + FUTURE_TOLERANCE_S:
+            return "permit evidence is in the future"
+        if now_mono - min(evidence_mono, now_mono) >= self._age_limit_s:
+            return "permit evidence is too old"
+        return None
+
+    def _stale(self, permit: Permit) -> str | None:
+        reason = self._authority.admit(
+            permit.session_id, permit.owner_number, permit.stop_number, Owner.AGENT
+        )
+        return None if reason is None else f"permit: {reason}"
