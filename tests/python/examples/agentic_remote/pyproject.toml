@@ -25,5 +25,7 @@ pythonpath = ["."]
 markers = [
     "apai: needs an APAI checkout (set AGENTIC_REMOTE_APAI_SRC)",
     "link: needs Isaac Capture's remote link (isaaccapture.remote_link on PYTHONPATH)",
+    "experiment: needs the experiment folder (set AGENTIC_REMOTE_EXPERIMENT_DIR)",
+    "gpu: needs torch with CUDA on GPU 0; never part of the gate",
     "releases_away_from_rest: a test of the simulated arm that cuts torque off rest",
 ]

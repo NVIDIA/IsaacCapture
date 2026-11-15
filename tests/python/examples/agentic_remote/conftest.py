@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
+import socket
 import sys
 import threading
+import types
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,7 +31,11 @@ if TYPE_CHECKING:
         RobotState,
     )
     from isaaccapture_examples.agentic_remote.robot_app.app import RobotApp
-    from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+    from isaaccapture_examples.agentic_remote.robot_app.clock import (
+        Clock,
+        FakeClock,
+        SystemClock,
+    )
     from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
     from isaaccapture_examples.agentic_remote.robot_app.interfaces import CheckerSet
     from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
@@ -40,6 +47,10 @@ APAI_SRC_ENV = "AGENTIC_REMOTE_APAI_SRC"
 # What the tests marked "apai" import besides APAI: pinocchio, which comes with
 # pin in the "apai" extra of pyproject.toml. APAI imports it late, at first use.
 APAI_EXTRA_MODULES = ("pinocchio",)
+# The experiment folder (read-only); tests marked "experiment" skip without it.
+EXPERIMENT_DIR_ENV = "AGENTIC_REMOTE_EXPERIMENT_DIR"
+# The camera_streamer example of the camera pull request (read-only).
+CAMERA_PR_ENV = "AGENTIC_REMOTE_CAMERA_PR"
 
 _apai_src = os.environ.get(APAI_SRC_ENV)
 if _apai_src:
@@ -81,10 +92,42 @@ def _link_unavailable() -> str | None:
     return None
 
 
+def _folder_unavailable(env: str) -> str | None:
+    """Why the folder an environment variable names cannot be used, or None."""
+    folder = os.environ.get(env)
+    if not folder:
+        return f"{env} is not set"
+    if not Path(folder).is_dir():
+        return f"{env}={folder} is not a folder"
+    return None
+
+
+def _experiment_unavailable() -> str | None:
+    """Why tests marked "experiment" are skipped, or None when they run."""
+    return _folder_unavailable(EXPERIMENT_DIR_ENV)
+
+
+def _gpu_unavailable() -> str | None:
+    """Why tests marked "gpu" are skipped, or None when they run.
+
+    They need torch with CUDA in this interpreter; the tests' own environment
+    has no torch, so there they are always skipped.
+    """
+    try:
+        torch = importlib.import_module("torch")
+    except ImportError as missing:
+        return f"needs torch with CUDA: {missing}"
+    if not torch.cuda.is_available():
+        return "torch finds no CUDA device"
+    return None
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for marker, unavailable in (
         ("apai", _apai_unavailable),
         ("link", _link_unavailable),
+        ("experiment", _experiment_unavailable),
+        ("gpu", _gpu_unavailable),
     ):
         marked = [item for item in items if item.get_closest_marker(marker)]
         reason = unavailable() if marked else None
@@ -107,6 +150,161 @@ def _apai_files_out_of_home(
         patch.setenv("APAI_ARM_HOLD_DIR", str(scratch / "arm_holds"))
         patch.setenv("APAI_REST_LOG", str(scratch / "rest_readings.jsonl"))
         yield
+
+
+def _env_folder(env: str) -> Path:
+    reason = _folder_unavailable(env)
+    if reason is not None:
+        pytest.skip(reason)
+    return Path(os.environ[env]).resolve()
+
+
+@pytest.fixture(scope="session")
+def experiment_dir() -> Path:
+    """The experiment folder; the test is skipped without it. Read-only."""
+    return _env_folder(EXPERIMENT_DIR_ENV)
+
+
+@pytest.fixture(scope="session")
+def camera_pr_dir() -> Path:
+    """The camera pull request's example folder; skipped without it. Read-only."""
+    return _env_folder(CAMERA_PR_ENV)
+
+
+def import_experiment(name: str) -> types.ModuleType:
+    """Import a module of the experiment folder, for a test marked "experiment".
+
+    The test is skipped, with the import error as the reason, when the folder
+    is not set or the module needs a package this interpreter lacks.
+    """
+    folder = str(_env_folder(EXPERIMENT_DIR_ENV))
+    if folder not in sys.path:
+        sys.path.append(folder)
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError as missing:
+        if missing.name == name:
+            raise
+        pytest.skip(f"the experiment's {name} cannot be imported here: {missing}")
+
+
+# Where APAI keeps a store: the environment variable and the name in the folder.
+_APAI_STORES = (
+    ("APAI_BELIEFS_PATH", "beliefs.json"),
+    ("APAI_ARM_HOLD_DIR", "arm_holds"),
+    ("APAI_REST_LOG", "rest_readings.jsonl"),
+    ("APAI_EPISODIC_PATH", "episodic.json"),
+    ("APAI_GRASP_MEMORY_PATH", "grasp_memory.json"),
+    ("APAI_ENVELOPE_PATH", "envelope.json"),
+    ("APAI_PROGRAMS_PATH", "programs.jsonl"),
+    ("APAI_ASPIRE_LIBRARY", "no-aspire-library"),
+)
+# Settings of a developer's shell that would change what APAI's runtime builds.
+_APAI_AMBIENT = (
+    "APAI_BELIEFS",
+    "APAI_EPISODIC",
+    "APAI_RUN_PURPOSE",
+    "APAI_MEMORY_EMBEDDER",
+    "APAI_MEMORY_EMBEDDER_MODEL",
+    "APAI_PROGRAMS",
+    "APAI_GRASP_EXECUTOR",
+    "APAI_VLA_PORT",
+    "APAI_JUDGE",
+    "APAI_JUDGE_CONFIG",
+    "APAI_OBSERVED_FINGER_GATE",
+    "APAI_GRASPGENX_HOST",
+    "APAI_OCCUPANCY",
+    "APAI_START_STOPPED",
+    "DISPLAY",
+)
+
+
+@contextlib.contextmanager
+def apai_runtime_env(folder: Path) -> Iterator[Path]:
+    """While open, a whole APAI runtime writes into `folder` and sees nothing ambient.
+
+    For tests that build APAI's runtime (demo.build_runtime, demo.main): its
+    stores go into this folder instead of the checkout or the home folder, its
+    learned-notes library is an absent folder, and its grasp server port is one
+    this process holds bound without listening, so the start-up probe is
+    refused at once. The occupancy grid is left as the configuration has it.
+    The run folder and memory.experience_path are the caller's to place here.
+    """
+    with contextlib.ExitStack() as stack:
+        patch = stack.enter_context(pytest.MonkeyPatch.context())
+        for env, leaf in _APAI_STORES:
+            patch.setenv(env, str(folder / leaf))
+        for env in _APAI_AMBIENT:
+            patch.delenv(env, raising=False)
+        notes = importlib.import_module("apai.skills.notes")
+        patch.setattr(notes, "DEFAULT_LIBRARY", folder / "no-aspire-library")
+        dead = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+        dead.bind(("127.0.0.1", 0))
+        patch.setenv("APAI_GRASPGENX_PORT", str(dead.getsockname()[1]))
+        yield folder
+
+
+@pytest.fixture
+def apai_scratch(tmp_path: Path) -> Iterator[Path]:
+    """apai_runtime_env() on the test's temporary folder; for tests marked "apai"."""
+    with apai_runtime_env(tmp_path) as folder:
+        yield folder
+
+
+class FakeGridClient:
+    """In place of APAI's OccupancyClient: a distance grid with nothing near.
+
+    After the pattern of FakeClient and GridClient in APAI's test_occupancy.py;
+    it needs no pyzmq and no msgpack. Every query answers with .grid (distances
+    in metres, here 1 m everywhere) from .origin with cubes of .voxel metres; a
+    test may replace .grid. .requests are the actions asked so far. Patch it in
+    with patch.object(apai.perception.occupancy, "OccupancyClient",
+    FakeGridClient) while the runtime is built, or hand an instance to
+    OccupancyMap(client=...).
+    """
+
+    def __init__(self, host: str = "", port: int = 0, timeout_ms: int = 0) -> None:
+        import numpy as np
+
+        self.voxel = 0.05
+        self.origin = np.full(3, -2.0)
+        self.grid = np.full((80, 80, 80), 1.0, dtype=np.float32)
+        self.requests: list[str] = []
+        self.closed = False
+
+    def request(self, payload: dict, timeout_ms: int | None = None) -> dict:
+        import numpy as np
+
+        action = payload["action"]
+        self.requests.append(action)
+        if action == "probe":
+            return {
+                "ok": True,
+                "backend": "fake",
+                "device": "cpu",
+                "voxel": self.voxel,
+                "esdf": True,
+            }
+        if action == "query":
+            return {
+                "points": np.empty((0, 3), dtype=np.float32),
+                "grid": self.grid,
+                "origin": self.origin,
+                "voxel": self.voxel,
+            }
+        if action in ("integrate", "integrate_depth", "clear"):
+            return {}
+        # As an old bridge answers: APAI then falls back to an action it knows.
+        occupancy = importlib.import_module("apai.perception.occupancy")
+        raise occupancy.OccupancyError(
+            f"occupancy bridge error: unknown action {action!r}"
+        )
+
+    def probe(self, timeout_ms: int = 300) -> dict:
+        return self.request({"action": "probe"})
+
+    def close(self) -> None:
+        self.closed = True
 
 
 @pytest.fixture
@@ -164,6 +362,11 @@ def sim_arm(
 @pytest.fixture
 def checkers(clock: FakeClock, config: RobotAppConfig) -> CheckerSet:
     """One BasicChecker per control owner; the recovery one has no watchdog."""
+    return basic_checkers(config, clock)
+
+
+def basic_checkers(config: RobotAppConfig, clock: Clock) -> CheckerSet:
+    """One BasicChecker per control owner on this clock; recovery has no watchdog."""
     from isaaccapture_examples.agentic_remote.robot_app.interfaces import CheckerSet
     from isaaccapture_examples.agentic_remote.robot_app.sim import BasicChecker
 
@@ -246,6 +449,10 @@ class AppHarness:
 
     The fake clock moves only when the test, a joint read, a jaw command or a
     running move moves it. advance() lets the app's dispatcher see every step.
+
+    On a SystemClock (the real-time variant, see make_realtime_robot_app) a
+    move takes its real length and waits for its permits; advance(),
+    advance_until() and permit_every() are for the fake clock only.
     """
 
     def __init__(
@@ -253,14 +460,22 @@ class AppHarness:
         config: RobotAppConfig,
         arm: SimArm,
         checkers: CheckerSet,
-        clock: FakeClock,
+        clock: Clock,
         confirm: Callable[[str], bool] | None = None,
         connected: bool = True,
+        step_period_s: float | None = APP_STEP_S,
     ) -> None:
-        """connected=False builds the app with no robot connection; see connect()."""
+        """connected=False builds the app with no robot connection; see connect().
+
+        step_period_s None leaves the app its own dispatcher period.
+        """
         from isaaccapture_examples.agentic_remote.robot_app.app import RobotApp
+        from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 
         self.config, self.arm, self.checkers, self.clock = config, arm, checkers, clock
+        # True when moves and waits take real time.
+        self.real_time = not isinstance(clock, FakeClock)
+        step = {} if step_period_s is None else {"step_period_s": step_period_s}
         # None until the app has a robot connection.
         self.robot_end: LoopbackCarrier | None = None
         self.workstation_end: LoopbackCarrier | None = None
@@ -276,7 +491,7 @@ class AppHarness:
             self.robot_end,
             clock,
             confirm=confirm,
-            step_period_s=APP_STEP_S,
+            **step,
         )
         # What a listener at the Thor terminal heard: (kind, text, data).
         self.local_events: list[tuple[str, str, dict[str, Any]]] = []
@@ -351,6 +566,7 @@ class AppHarness:
 
     def advance(self, seconds: float, step_s: float = 1.0) -> None:
         """Move the fake clock on in steps; the dispatcher makes a pass after each."""
+        assert not self.real_time, "advance() needs the fake clock"
         left = seconds
         while left > 1e-9:
             dt = min(step_s, left)
@@ -366,6 +582,7 @@ class AppHarness:
         Use it to run the assistance wait out: a step taken while the timed
         return is moving the arm would make that move late.
         """
+        assert not self.real_time, "advance_until() needs the fake clock"
         passed = 0.0
         while not done():
             assert passed < limit_s, f"not done after {limit_s:g} s of fake time"
@@ -565,3 +782,178 @@ def make_robot_app(
 def robot_app(make_robot_app: Callable[..., AppHarness]) -> AppHarness:
     """A started robot app at rest with a workstation client."""
     return make_robot_app()
+
+
+# The real-time variant: the same harnesses on the machine's clock.
+#
+# On the fake clock a move's setpoints go out without real time passing, so a
+# move never waits for a later permit. Whatever drives the robot app with
+# permits paced in real time (the arm adapter's permit loop, the agent program)
+# needs the app on SystemClock and its own dispatcher period: then a move of 25
+# setpoints takes 0.5 s. Keep such moves short and give each test a budget.
+
+# Real seconds one real-time test may take for all of its moves.
+REALTIME_BUDGET_S = 30.0
+
+
+@pytest.fixture
+def system_clock() -> SystemClock:
+    from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
+
+    return SystemClock()
+
+
+@pytest.fixture
+def make_realtime_robot_app(
+    config: RobotAppConfig, system_clock: SystemClock, request: pytest.FixtureRequest
+) -> Iterator[Callable[..., AppHarness]]:
+    """Builds a robot app on the simulated arm in real time; closed after the test.
+
+    make_realtime_robot_app(config=None, pose=None, confirm=None, start=True,
+    connected=True), as make_robot_app, with a simulated arm and checkers of
+    its own on the machine's clock. After the test every torque release of each
+    arm must have been at measured rest, unless the test is marked
+    "releases_away_from_rest".
+    """
+    from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
+
+    made: list[AppHarness] = []
+
+    def make(
+        config: RobotAppConfig = config,
+        pose: Sequence[float] | None = None,
+        confirm: Callable[[str], bool] | None = None,
+        start: bool = True,
+        connected: bool = True,
+    ) -> AppHarness:
+        arm = SimArm(
+            n_joints=config.n_joints,
+            clock=system_clock,
+            q0=list(config.rest.rest_q if pose is None else pose),
+        )
+        harness = AppHarness(
+            config,
+            arm,
+            basic_checkers(config, system_clock),
+            system_clock,
+            confirm,
+            connected,
+            step_period_s=None,
+        )
+        made.append(harness)
+        return harness.start() if start else harness
+
+    yield make
+    for harness in made:
+        harness.close()
+    if not request.node.get_closest_marker("releases_away_from_rest"):
+        for harness in made:
+            check_released_at_rest(harness.arm, harness.config)
+
+
+@pytest.fixture
+def realtime_robot_app(
+    make_realtime_robot_app: Callable[..., AppHarness],
+) -> AppHarness:
+    """A started robot app at rest in real time, with a workstation client."""
+    return make_realtime_robot_app()
+
+
+def realtime_apai_harness(
+    config: RobotAppConfig | None = None,
+    profile: Any = None,
+    connected: bool = True,
+) -> AppHarness:
+    """The robot app on APAI's mock arm and checkers, on the machine's clock.
+
+    An ApaiHarness of test_apai_app.py (its spy is .spy), not started. config
+    defaults to that file's make_config(profile), profile to APAI's mock
+    profile. connected=False builds it with no robot connection, as
+    UnconnectedApai of test_link_end_to_end.py, for a link_stack.Stack. APAI's
+    checker paces itself on a clock that is not a fake one.
+    """
+    import test_apai_app as apai
+    from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
+
+    backend = apai.apai_backend
+    profile = backend.load_apai_profile("mock") if profile is None else profile
+    config = apai.make_config(profile) if config is None else config
+    clock = SystemClock()
+
+    class RealtimeApai(apai.ApaiHarness):
+        def __init__(self) -> None:
+            checkers = backend.build_apai_checkers(config, profile, clock)
+            arm = backend.build_apai_arm(config, profile, clock)
+            self.spy = apai.BackendSpy(arm, checkers)
+            AppHarness.__init__(
+                self, config, arm, checkers, clock, None, connected, step_period_s=None
+            )
+
+    return RealtimeApai()
+
+
+def check_realtime_apai(harness: AppHarness) -> None:
+    """check_driver_use() of test_apai_app.py, also for a harness with no client.
+
+    A harness driven by the agent program has no test client of its own; the
+    rule about the driver (connected once, never stopped, disconnected at
+    measured rest only) holds for it all the same.
+    """
+    import test_apai_app as apai
+
+    if harness.client is None:
+        harness.client = types.SimpleNamespace(unexpected=[])
+    apai.check_driver_use(harness)
+
+
+@pytest.fixture
+def make_realtime_apai() -> Iterator[Callable[..., AppHarness]]:
+    """Builds and starts a robot app on APAI's mock arm in real time.
+
+    make_realtime_apai(config=None, profile=None, connected=True, start=True);
+    see realtime_apai_harness(). After the test each app is closed and
+    check_realtime_apai() is applied to it. For tests marked "apai".
+    """
+    made: list[AppHarness] = []
+
+    def make(
+        config: RobotAppConfig | None = None,
+        profile: Any = None,
+        connected: bool = True,
+        start: bool = True,
+    ) -> AppHarness:
+        harness = realtime_apai_harness(config, profile, connected)
+        made.append(harness)
+        return harness.start() if start else harness
+
+    yield make
+    for harness in made:
+        harness.close()
+    for harness in made:
+        check_realtime_apai(harness)
+
+
+@pytest.fixture
+def realtime_apai_app(make_realtime_apai: Callable[..., AppHarness]) -> AppHarness:
+    """A started robot app on APAI's mock arm at rest in real time, with a client."""
+    return make_realtime_apai()
+
+
+@pytest.fixture
+def realtime_apai_stack(
+    make_realtime_apai: Callable[..., AppHarness],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Any]:
+    """A link_stack.Stack on a started real-time app on APAI's mock arm.
+
+    The app has no robot connection yet: start_service() and dial() make it,
+    as with the fixture apai_stack of test_link_end_to_end.py. For tests
+    marked "apai" and "link".
+    """
+    from link_stack import Stack
+
+    harness = make_realtime_apai(connected=False)
+    # A short path: a socket path holds 107 bytes at most.
+    made = Stack(harness, tmp_path_factory.mktemp("ls"))
+    yield made
+    made.close()
