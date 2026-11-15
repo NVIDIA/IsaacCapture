@@ -207,7 +207,7 @@ session id, and the owner number and stop number its sender last saw. The table 
 | CHECKER_STATE | Agent to Thor | Reliable | Tells the agent checker to forget its contact spots, or to end the grasp region of a grasp that was finished or given up, when APAI's skills do so on the workstation |
 | STOP | Any client to Thor | Reliable | Reason and sender |
 | OWNER_REQUEST | Agent, console or robot link service to Thor | Reliable | Requested control owner (agent for a new confirmed task, recovery for a typed `rest`, nobody) or "help needed" with the reason. For "agent" it also says whether the timed return to rest (the one at the end of the assistance wait, section 10) applies to this task (default yes). A takeover is not requested here; it comes from right B on the teleop connection (section 12) |
-| RESET, RELEASE, OPEN, SHUTDOWN | Console to Thor | Reliable | Nothing more |
+| RESET, RELEASE, OPEN, SHUTDOWN | Console to Thor | Reliable | OPEN and SHUTDOWN say whether the operator typed the confirmation they need (the jaw opening, section 13; a clear path, section 11). RESET and RELEASE carry nothing more |
 | VIEW_STATUS | Live view program to Thor | Newest wins | Whether a browser is showing the live view, and the age of the newest camera frame shown |
 | RESULT | Thor to workstation | Reliable | For each command id: accepted or refused with the reason, then completed or cancelled with the measured end pose |
 | EVENT | Thor to workstation | Reliable | Text for the operator: help needed, countdowns, refusals with reasons |
@@ -303,7 +303,8 @@ The jaw rule is new code. The worst-case delay from a typed `stop` to the arm ho
 Ctrl+C at the Thor terminal is STOP: the arm holds and the robot app keeps running. A closed terminal is ignored. The
 app exits only on the operator's shutdown command, typed at the operator console or the Thor terminal, which is a return
 to rest followed by the permitted torque release; if that return is refused or fails, the arm holds and the app keeps
-running. The 48 V switch is the only hardware stop, and it drops the arm.
+running. A shutdown that has to move the arm asks the same path-clear confirmation as a typed `rest` (section 11). The
+48 V switch is the only hardware stop, and it drops the arm.
 
 ## 10. Faults and the assistance wait
 
@@ -365,9 +366,10 @@ A typed `rest`, the rest that ends a takeover and the return after the assistanc
    gives the same owner as one that reaches rest, except that a STOP always makes it nobody (section 9).
 
 Without the robot connection no timed return runs (section 10). A typed `rest`, at either terminal, first asks for a
-typed confirmation that the path is clear. This prompt is new: today's supervised exit move only prints "Keep the return
-path clear" and starts. The timed return has no such prompt; it relies on the tested recovery region, the warning bell
-and the contact monitor. No return to rest is checked against the obstacle grid in the first build (section 8).
+typed confirmation that the path is clear, and so does a shutdown typed while the arm is away from rest. This prompt is
+new: today's supervised exit move only prints "Keep the return path clear" and starts. The timed return has no such
+prompt; it relies on the tested recovery region, the warning bell and the contact monitor. No return to rest is checked
+against the obstacle grid in the first build (section 8).
 
 **Jaws proven empty.** All of these must hold: the gripper was referenced when the robot app started and the reference
 is still valid; the "may be holding" flag is clear; three jaw readings 50 ms apart are valid and agree; the reading is
