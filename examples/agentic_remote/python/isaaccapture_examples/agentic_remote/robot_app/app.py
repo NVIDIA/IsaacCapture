@@ -120,6 +120,10 @@ MOTORS_OFF = "the motors are off; restart the robot app"
 CONFIRM_PATH = rest_module.CONFIRM_PATH
 CONFIRM_OPEN = "confirm the jaw opening"
 LINK_LOST = "robot connection lost"
+# The text of the "connection" event of a new robot connection.
+LINK_CONNECTED = (
+    "robot connection made: the arm holds as it was; a new connection starts no motion"
+)
 CLOSING = "the robot app is closing"
 NOT_RUNNING = "the robot app is not running"
 _RACED = "a STOP or an owner change arrived while the request was checked"
@@ -232,6 +236,24 @@ class _Job:
 
 def _any_job(job: _Job) -> bool:
     return True
+
+
+class _NoCarrier:
+    """Stands for the robot connection while the app has none: a dead link."""
+
+    alive = False
+
+    def send_reliable(self, msg_type: int, payload: bytes) -> None:
+        return None
+
+    def send_latest(self, msg_type: int, payload: bytes) -> None:
+        return None
+
+    def receive(self, timeout_s: float) -> tuple[int, bytes] | None:
+        return None
+
+    def close(self) -> None:
+        return None
 
 
 class _MotionBox:
@@ -384,7 +406,7 @@ class RobotApp:
         config: RobotAppConfig,
         arm: ArmPort,
         checkers: CheckerSet,
-        carrier: Carrier,
+        carrier: Carrier | None,
         clock: Clock,
         *,
         confirm: Callable[[str], bool] | None = None,
@@ -394,6 +416,8 @@ class RobotApp:
 
         None means "never confirmed". step_period_s is the longest the
         dispatcher waits for a link message between two supervisor steps.
+        carrier None starts the app with no robot connection: it holds and
+        serves the Thor terminal until attach_carrier() gives it one.
         """
         if arm.n_joints != config.n_joints:
             raise ValueError(
@@ -405,7 +429,8 @@ class RobotApp:
         self._config = config
         self._arm = arm
         self._checkers = checkers
-        self._carrier = carrier
+        # Swapped only by attach_carrier(), under the app's lock.
+        self._carrier: Carrier = _NoCarrier() if carrier is None else carrier
         self._clock = clock
         self._confirm = confirm
         self._step_period_s = float(step_period_s)
@@ -429,7 +454,10 @@ class RobotApp:
         self._task_timed_return = True  # of the agent's current task
         self._grasp_region: GraspRegion | None = None  # of the agent's last grasp
         self._contact_hold = False  # the last move ended at a contact
-        self._link_lost = False
+        # True while no carrier is attached, and once the loss of the attached
+        # one was handled. Written under the app's lock.
+        self._link_lost = carrier is None
+        self._state_forced = False  # a ROBOT_STATE is owed to a new carrier
         self._view: ViewStatus | None = None
         self._permit_refusal: str | None = None
         self._dropped: set[str] = set()  # kinds of link messages not taken
@@ -554,6 +582,36 @@ class RobotApp:
     def link_alive(self) -> bool:
         """Whether the robot connection is alive."""
         return bool(self._carrier.alive)
+
+    @property
+    def wants_carrier(self) -> bool:
+        """Whether attach_carrier() would take a live carrier now.
+
+        True while the app runs and has no carrier, or has handled the loss of
+        the one it had.
+        """
+        return self.running and self._link_lost
+
+    def attach_carrier(self, carrier: Carrier) -> bool:
+        """Take a new robot connection; False, and nothing changes, if not taken.
+
+        Taken while wants_carrier holds and the carrier is alive; otherwise the
+        caller closes it. The app sends WELCOME with its session id, the event
+        "connection" and, from the dispatcher, a ROBOT_STATE. It starts no
+        motion and no wait, and sends nothing that was meant for an earlier
+        connection. Safe from any thread; it does not touch the arm.
+        """
+        with self._lock:
+            if not (self.wants_carrier and carrier.alive):
+                return False
+            # The carrier before the flag: the dispatcher reads them unlocked.
+            self._carrier = carrier
+            self._link_lost = False
+            self._send(self._welcome())
+            self._state_forced = True
+            self._emit(EVENT_CONNECTION, LINK_CONNECTED, {"connected": True})
+        _log.info("robot connection made")
+        return True
 
     @property
     def motion_state(self) -> MotionState:
@@ -810,22 +868,28 @@ class RobotApp:
                 except Exception:
                     _log.exception("an event listener raised")
 
-    def _send(self, message: Message, *plainer: Callable[[], Message]) -> None:
+    def _send(
+        self,
+        message: Message,
+        *plainer: Callable[[], Message],
+        via: Carrier | None = None,
+    ) -> None:
         """Send a link message; if it cannot be encoded, what `plainer` builds.
 
-        Each of `plainer` is tried in turn until one can be sent.
+        Each of `plainer` is tried in turn until one can be sent. It goes over
+        the attached carrier, or over `via`.
         """
         try:
-            send(self._carrier, message)
+            send(self._carrier if via is None else via, message)
         except ProtocolError as error:
             name = type(message).__name__
             # A byte count that differs each time does not make the line new.
             kind = f"a {name} was not sent: {_NUMBER.sub('#', str(error))}"
             self._note(logging.ERROR, f"a {name} was not sent: {error}", kind=kind)
             if plainer:
-                self._send(plainer[0](), *plainer[1:])
+                self._send(plainer[0](), *plainer[1:], via=via)
 
-    def _deliver(self, result: Result) -> None:
+    def _deliver(self, result: Result, via: Carrier | None = None) -> None:
         """Send a RESULT: whole, or without its detail, or with its reason cut."""
 
         def plain() -> Result:
@@ -834,11 +898,15 @@ class RobotApp:
         def cut() -> Result:
             return dataclasses.replace(plain(), reason=_cut(result.reason))
 
-        self._send(result, plain, cut)
+        self._send(result, plain, cut, via=via)
 
-    def _send_result(self, result: Result) -> None:
+    def _send_result(self, result: Result, via: Carrier | None = None) -> None:
         """Store and send a RESULT; a command's second final one is dropped."""
-        if not self._results.put(result, self._deliver):
+
+        def deliver(stored: Result) -> None:
+            self._deliver(stored, via)
+
+        if not self._results.put(result, deliver):
             if result.status != ACCEPTED:
                 _log.error(
                     "command %s already has its final RESULT; dropped %s (%s)",
@@ -851,7 +919,17 @@ class RobotApp:
             self._last_result = _summary(result)
 
     def _link_reply(self, command_id: str) -> _Reply:
-        return _Reply(command_id, self._send_result, announces=True)
+        """Where a link command's RESULTs go: the carrier it arrived on.
+
+        A RESULT that becomes final after that carrier was lost is stored and
+        not sent: a later connection gets it only for the same command id.
+        """
+        arrived_on = self._carrier
+
+        def deliver(result: Result) -> None:
+            self._send_result(result, arrived_on)
+
+        return _Reply(command_id, deliver, announces=True)
 
     def _local_reply(self, what: str, on_done: DoneFn | None) -> _Reply:
         def deliver(result: Result) -> None:
@@ -1179,7 +1257,12 @@ class RobotApp:
         if self._link_lost or self._carrier.alive:
             return
         with self._lock:
-            self._link_lost = True  # handled once; a dead link stays dead
+            if self._link_lost or self._carrier.alive:
+                return  # a new carrier was attached meanwhile
+            self._link_lost = True  # handled once per carrier; a dead link stays dead
+            # What came over the lost connection and was not handled goes with it.
+            self._inbox = Inbox()
+            self._view = None
             self._stop_motion(LINK_LOST, lambda job: job.needs_link)
             self._worker.stop_now()
             cancelled = self._wait.cancel(LINK_LOST)
@@ -1209,11 +1292,16 @@ class RobotApp:
             self._wait.active(),
             self._last_result,
         )
-        if key == self._published or not self._carrier.alive:
-            self._publisher.maybe_publish(self._carrier, now)
+        with self._lock:
+            # Cleared before the state is built: a carrier attached after this
+            # is owed one again.
+            forced, self._state_forced = self._state_forced, False
+            carrier = self._carrier
+        if not carrier.alive or (key == self._published and not forced):
+            self._publisher.maybe_publish(carrier, now)
             return
         self._published = key
-        self._send(self._publisher.build(now))
+        self._send(self._publisher.build(now), via=carrier)
 
     def _fault(self, reason: str) -> None:
         """Raise a fault-stop, unless one is latched already."""
@@ -1892,7 +1980,9 @@ class RobotApp:
         )
 
     def _run_timed_return(self, job: _Job, stop_number: int) -> _Ending:
-        if not self._carrier.alive:
+        # Told to stop by the loss of the connection it was queued under, it
+        # does not begin on a later one.
+        if not self._carrier.alive or job.should_stop() == LINK_LOST:
             return _Ending(REFUSED, self._no_timed_return())
         return self._run_rest(job, rest_module.WAIT, stop_number)
 

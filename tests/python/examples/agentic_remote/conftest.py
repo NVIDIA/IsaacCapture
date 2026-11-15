@@ -72,15 +72,26 @@ def _apai_unavailable() -> str | None:
     return None
 
 
+def _link_unavailable() -> str | None:
+    """Why tests marked "link" are skipped, or None when they run."""
+    try:
+        importlib.import_module("isaaccapture.remote_link")
+    except ImportError as missing:
+        return f"isaaccapture.remote_link cannot be imported: {missing}"
+    return None
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    apai_items = [item for item in items if item.get_closest_marker("apai")]
-    if not apai_items:
-        return
-    reason = _apai_unavailable()
-    if reason is None:
-        return
-    for item in apai_items:
-        item.add_marker(pytest.mark.skip(reason=reason))
+    for marker, unavailable in (
+        ("apai", _apai_unavailable),
+        ("link", _link_unavailable),
+    ):
+        marked = [item for item in items if item.get_closest_marker(marker)]
+        reason = unavailable() if marked else None
+        if reason is None:
+            continue
+        for item in marked:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -244,15 +255,20 @@ class AppHarness:
         checkers: CheckerSet,
         clock: FakeClock,
         confirm: Callable[[str], bool] | None = None,
+        connected: bool = True,
     ) -> None:
-        from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+        """connected=False builds the app with no robot connection; see connect()."""
         from isaaccapture_examples.agentic_remote.robot_app.app import RobotApp
-        from isaaccapture_examples.agentic_remote.testing.client import (
-            WorkstationClient,
-        )
 
         self.config, self.arm, self.checkers, self.clock = config, arm, checkers, clock
-        self.robot_end, self.workstation_end = loopback_pair()
+        # None until the app has a robot connection.
+        self.robot_end: LoopbackCarrier | None = None
+        self.workstation_end: LoopbackCarrier | None = None
+        self.client: WorkstationClient | None = None
+        self._ends: list[LoopbackCarrier] = []  # of every link made so far
+        self._clients: list[WorkstationClient] = []
+        if connected:
+            self._new_link()
         self.app: RobotApp = RobotApp(
             config,
             arm,
@@ -261,9 +277,6 @@ class AppHarness:
             clock,
             confirm=confirm,
             step_period_s=APP_STEP_S,
-        )
-        self.client: WorkstationClient = WorkstationClient(
-            self.workstation_end, clock, quotable=self._shows_the_apps_numbers
         )
         # What a listener at the Thor terminal heard: (kind, text, data).
         self.local_events: list[tuple[str, str, dict[str, Any]]] = []
@@ -275,9 +288,45 @@ class AppHarness:
     def start(self) -> AppHarness:
         """Start the app and wait for its WELCOME and its first ROBOT_STATE."""
         self.app.start()
+        if self.client is not None:
+            self.client.wait_welcome(APP_WAIT_S)
+            self.client.wait_state(timeout_s=APP_WAIT_S)
+        return self
+
+    def connect(self) -> WorkstationClient:
+        """Attach a new loopback link to the app, with a new client on it.
+
+        The app must take it: it has no robot connection, or has handled the
+        loss of the last one. Returns the client, which has the WELCOME and a
+        ROBOT_STATE of the new link.
+        """
+        earlier = self.robot_end, self.workstation_end, self.client
+        self._new_link()
+        if not self.app.attach_carrier(self.robot_end):
+            self.robot_end, self.workstation_end, self.client = earlier
+            raise AssertionError("the robot app did not take the new link")
         self.client.wait_welcome(APP_WAIT_S)
         self.client.wait_state(timeout_s=APP_WAIT_S)
-        return self
+        return self.client
+
+    def lose_link(self) -> None:
+        """Cut the robot connection and wait until the app has handled the loss."""
+        lost = len(self.heard("connection"))
+        self.robot_end.break_link()
+        self.wait_local_events("connection", lost + 1)
+
+    def _new_link(self) -> None:
+        from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+        from isaaccapture_examples.agentic_remote.testing.client import (
+            WorkstationClient,
+        )
+
+        self.robot_end, self.workstation_end = loopback_pair()
+        self._ends += [self.robot_end, self.workstation_end]
+        self.client = WorkstationClient(
+            self.workstation_end, self.clock, quotable=self._shows_the_apps_numbers
+        )
+        self._clients.append(self.client)
 
     def thor_terminal(self) -> ThorSession:
         """A Thor terminal on this app; closed with the harness."""
@@ -291,8 +340,9 @@ class AppHarness:
         for session in self._thor_sessions:
             session.close()
         self.app.close()
-        self.client.close()
-        for end in (self.robot_end, self.workstation_end):
+        for client in self._clients:
+            client.close()
+        for end in self._ends:
             end.close()
 
     def step(self) -> None:
@@ -448,6 +498,21 @@ class AppHarness:
             )
             return found()
 
+    def wait_local_events(
+        self, kind: str, count: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Wait until the Thor terminal's listener heard `count` events of this kind."""
+
+        def found() -> list[tuple[str, str, dict[str, Any]]]:
+            return [event for event in self.local_events if event[0] == kind]
+
+        with self._heard:
+            assert self._heard.wait_for(lambda: len(found()) >= count, APP_WAIT_S), (
+                f"{len(found())} of {count} {kind!r} events; heard "
+                f"{[e[0] for e in self.local_events]}"
+            )
+            return found()
+
     def _hear(self, kind: str, text: str, data: dict[str, Any]) -> None:
         with self._heard:
             self.local_events.append((kind, text, data))
@@ -472,8 +537,9 @@ def make_robot_app(
 ) -> Iterator[Callable[..., AppHarness]]:
     """Builds a robot app with a client on the simulated arm; closed after the test.
 
-    make_robot_app(config=None, pose=None, confirm=None, start=True): pose puts the
-    arm there before the app connects; start=False leaves the app unstarted.
+    make_robot_app(config=None, pose=None, confirm=None, start=True, connected=True):
+    pose puts the arm there before the app connects; start=False leaves the app
+    unstarted; connected=False builds it with no robot connection.
     """
     made: list[AppHarness] = []
 
@@ -482,10 +548,11 @@ def make_robot_app(
         pose: Sequence[float] | None = None,
         confirm: Callable[[str], bool] | None = None,
         start: bool = True,
+        connected: bool = True,
     ) -> AppHarness:
         if pose is not None:
             sim_arm.set_pose(pose)
-        harness = AppHarness(config, sim_arm, checkers, clock, confirm)
+        harness = AppHarness(config, sim_arm, checkers, clock, confirm, connected)
         made.append(harness)
         return harness.start() if start else harness
 

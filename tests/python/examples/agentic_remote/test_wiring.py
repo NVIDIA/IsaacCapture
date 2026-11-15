@@ -622,8 +622,11 @@ def test_lost_joint_feedback_during_a_move_is_reported_as_a_fault(app):
 # Rules that hold across the whole package
 
 
-def method_calls(name: str) -> list[str]:
-    """The package file of every call of a method called `name`; nothing is imported."""
+def method_calls(name: str, *, not_on: frozenset[str] = frozenset()) -> list[str]:
+    """The package file of every call of a method called `name`; nothing is imported.
+
+    A call on a bare name listed in `not_on` (a class, as in `Link.connect`) is left out.
+    """
     package = Path(agentic_remote.__file__).resolve().parent
     files: list[str] = []
     for path in sorted(package.rglob("*.py")):
@@ -634,6 +637,9 @@ def method_calls(name: str) -> list[str]:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == name
+            and not (
+                isinstance(node.func.value, ast.Name) and node.func.value.id in not_on
+            )
         ]
     return files
 
@@ -644,7 +650,8 @@ def test_torque_is_released_at_one_place_in_the_package():
 
 def test_only_the_app_connects_the_arm_and_only_once():
     # apai_backend.py connects its own backend inside ApaiArm.connect().
-    callers = method_calls("connect")
+    # Link.connect and LinkCarrier.connect dial the robot connection, not the arm.
+    callers = method_calls("connect", not_on=frozenset({"Link", "LinkCarrier"}))
     assert set(callers) <= {"apai_backend.py", "app.py"}
     assert callers.count("apai_backend.py") == 1
     assert callers.count("app.py") <= 1

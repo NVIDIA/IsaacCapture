@@ -20,6 +20,8 @@ import yaml
 # The assistance wait is never shorter than this; see section 10 of
 # docs/design/claude_agentic_remote_execution.md.
 MIN_ASSISTANCE_S = 90.0
+# The robot connection is never dialed more often than once in this many s.
+MIN_RETRY_S = 0.2
 
 _LIMIT_SET_NAMES = ("agent", "human", "recovery")
 
@@ -501,6 +503,20 @@ class HumanConfig:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ConnectionConfig:
+    # From a failed dial, or a lost robot connection, to the next dial.
+    retry_s: float = 1.0
+
+    def __post_init__(self) -> None:
+        _normalise(self, "connection", retry_s=_real)
+        if self.retry_s < MIN_RETRY_S:
+            raise ConfigError(
+                f"connection.retry_s must be at least {MIN_RETRY_S:g}, "
+                f"got {self.retry_s!r}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
 class RobotAppConfig:
     robot_id: str
     profile_id: str
@@ -515,6 +531,7 @@ class RobotAppConfig:
     grasp: GraspConfig = field(default_factory=GraspConfig)
     state: StateConfig = field(default_factory=StateConfig)
     human: HumanConfig = field(default_factory=HumanConfig)
+    connection: ConnectionConfig = field(default_factory=ConnectionConfig)
 
     def __post_init__(self) -> None:
         _normalise(
@@ -533,6 +550,7 @@ class RobotAppConfig:
             grasp=_instance(GraspConfig),
             state=_instance(StateConfig),
             human=_instance(HumanConfig),
+            connection=_instance(ConnectionConfig),
         )
         # Each block has already checked that its own lists agree in length.
         per_joint: dict[str, tuple[object, ...]] = {
@@ -687,6 +705,7 @@ _BLOCKS: dict[str, type] = {
     "grasp": GraspConfig,
     "state": StateConfig,
     "human": HumanConfig,
+    "connection": ConnectionConfig,
 }
 
 

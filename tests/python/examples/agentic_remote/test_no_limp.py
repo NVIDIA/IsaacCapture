@@ -20,13 +20,16 @@ from typing import NamedTuple
 
 import isaaccapture_examples.agentic_remote as agentic_remote
 import pytest
+from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     MESSAGE_TYPES,
     Event,
+    Release,
     Result,
     ViewStatus,
 )
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+from isaaccapture_examples.agentic_remote.robot_app.connection import RobotDialer
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ArmFault,
     CheckerSet,
@@ -203,6 +206,12 @@ def link_lost(h) -> Callable[[], None]:
     return nothing_held
 
 
+def link_made_again(h) -> Callable[[], None]:
+    link_lost(h)
+    h.connect()
+    return nothing_held
+
+
 STATES = {
     "pushed off rest": pushed_off_rest,
     "idle": idle,
@@ -214,6 +223,7 @@ STATES = {
     "contact hold": at_a_contact,
     "jaws loaded": jaws_loaded,
     "connection lost": link_lost,
+    "connection made again": link_made_again,
 }
 # The states from which a shutdown may bring the arm to rest and release there.
 MAY_RETURN = {
@@ -222,6 +232,7 @@ MAY_RETURN = {
     "hold after STOP",
     "wait running",
     "connection lost",
+    "connection made again",
 }
 
 # Payloads no link message decodes from; one of them is deeper than JSON may nest.
@@ -426,6 +437,83 @@ def close(h, finish: Callable[[], None]) -> None:
     h.app.close()
 
 
+def connection_lost(h, finish: Callable[[], None]) -> None:
+    """The robot connection is cut; what the workstation sends then goes nowhere."""
+    if live(h):
+        h.lose_link()
+    h.client.release()
+    h.client.shutdown()
+    h.client.stop()
+    h.step()
+
+
+def new_connections(h, finish: Callable[[], None]) -> None:
+    """A carrier offered to an app that has one, then two new connections.
+
+    On each new one: commands with the numbers of the connection before, a
+    command id of the connection before, a release and a move.
+    """
+    if live(h):
+        offered, _ = loopback_pair()
+        assert not h.app.attach_carrier(offered)
+        offered.close()
+    for _ in range(2):
+        before = h.app.snapshot()
+        earlier = h.client.release()
+        if live(h):
+            h.lose_link()
+        client = h.connect()
+        old = {
+            "owner_number": before.owner_number,
+            "stop_number": before.stop_number,
+        }
+        sent = [
+            client.release(command_id=earlier),
+            client.release(**old),
+            client.shutdown(**old),
+            client.rest(confirmed=False, **old),
+            client.gripper(1.0, **old),
+            client.move(LIFT, start_q=RAISED, **old),
+            client.release(),
+            a_move(h),
+        ]
+        answered(h, *sent)
+        sync(h)
+
+
+def dialer(h, finish: Callable[[], None]) -> None:
+    """A RobotDialer on the app: a failed dial, two connections and its close."""
+    far_ends = []
+
+    def connect():
+        if not far_ends:
+            far_ends.append(None)
+            raise RuntimeError("cannot connect to 127.0.0.1:5000")
+        near, far = loopback_pair()
+        far_ends.append(far)
+        return near
+
+    dialing = RobotDialer(h.app, connect, h.clock, retry_s=0.2, poll_s=0.001)
+    dialing.start()
+    try:
+        if live(h):
+            h.lose_link()
+        for _ in range(2):
+            events = len(h.heard("connection"))
+            # In fake time, until the dialer's next dial is due and was made.
+            h.advance_until(
+                lambda events=events: len(h.heard("connection")) > events, step_s=0.1
+            )
+            assert h.app.link_alive
+            far_ends[-1].send_reliable(Release.TYPE, b"{}")
+            far_ends[-1].break_link()
+            h.wait_local_events("connection", events + 2)
+        assert dialing.attempts == 3
+    finally:
+        dialing.close()
+    assert not dialing.running
+
+
 def error_in(thread: str) -> Callable:
     """An action: the thread's next arm call raises, then every thread gets work."""
 
@@ -470,6 +558,9 @@ ACTIONS = {
     "lines typed at the Thor terminal": lines_typed_at_the_thor_terminal,
     "quit typed at the Thor terminal": quit_typed_at_the_thor_terminal,
     "close()": close,
+    "the robot connection lost": connection_lost,
+    "new robot connections": new_connections,
+    "the dialer": dialer,
     "an error in the dispatcher": error_in(APP_THREADS[0]),
     "an error in the motion worker": error_in(APP_THREADS[1]),
     "an error in the gripper worker": error_in(APP_THREADS[2]),
@@ -836,8 +927,18 @@ def play_push(rig: Rig, dice: list[float]) -> None:
 
 def play_link_loss(rig: Rig, dice: list[float]) -> None:
     if rig.h.robot_end.alive:
-        rig.h.robot_end.break_link()
-        rig.h.wait_local_event("connection")
+        rig.h.lose_link()
+
+
+def play_new_link(rig: Rig, dice: list[float]) -> None:
+    """A new robot connection, or one offered to an app that has a live one."""
+    h = rig.h
+    if h.app.wants_carrier:
+        h.connect()
+    else:
+        offered, _ = loopback_pair()
+        assert not h.app.attach_carrier(offered)
+        offered.close()
 
 
 def play_close(rig: Rig, dice: list[float]) -> None:
@@ -864,6 +965,7 @@ PLAYS = (
     (play_block, 0.4),
     (play_push, 0.8),
     (play_link_loss, 0.12),
+    (play_new_link, 0.3),
     (play_close, 0.08),
 )
 # The only steps that may end with the motors off.
@@ -1060,7 +1162,7 @@ def test_torque_can_be_cut_at_two_places_in_the_package_and_nowhere_else():
 def test_the_app_its_terminal_and_its_entry_point_cut_no_torque_themselves():
     files = {site.file for site in package_sites()}
     assert (PACKAGE / "robot_app" / "app.py").is_file()
-    for module in ("app.py", "terminal.py", "__main__.py"):
+    for module in ("app.py", "terminal.py", "__main__.py", "connection.py"):
         assert f"robot_app/{module}" not in files
     assert not any(file.startswith(("protocol/", "testing/")) for file in files)
 

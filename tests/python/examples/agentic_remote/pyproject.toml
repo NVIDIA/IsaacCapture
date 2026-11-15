@@ -24,5 +24,6 @@ apai = [
 pythonpath = ["."]
 markers = [
     "apai: needs an APAI checkout (set AGENTIC_REMOTE_APAI_SRC)",
+    "link: needs Isaac Capture's remote link (isaaccapture.remote_link on PYTHONPATH)",
     "releases_away_from_rest: a test of the simulated arm that cuts torque off rest",
 ]
