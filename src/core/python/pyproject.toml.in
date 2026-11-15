@@ -74,6 +74,7 @@ isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed", "plugins/*/*"]
 "isaaccapture.mcap" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.oxr" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.plugin_manager" = ["*.so", "*.pyd", "*.pyi"]
+"isaaccapture.remote_link" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.schema" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.cloudxr" = ["native/*.so", "native/*.so.*", "native/openxr_cloudxr.json"]
 # Matches nothing when ENABLE_CLOUDXR_EXP_BUNDLE=OFF (default ON) skipped staging

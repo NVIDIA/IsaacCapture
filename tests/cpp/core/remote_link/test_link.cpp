@@ -1180,3 +1180,47 @@ TEST_CASE("RemoteLink: Link with peer_timeout_from_first_message waits for the t
         REQUIRE(link.close_reason() == "transport handshake failed: timed out");
     }
 }
+
+TEST_CASE("RemoteLink: Link delivers types outside the enum sent with send_reliable and send_latest",
+          "[remote_link][unit]")
+{
+    auto [sender_end, receiver_end] = socket_pair();
+    Inbox sender_inbox;
+    Inbox receiver_inbox;
+    Link sender(std::make_unique<TcpTransport>(std::move(sender_end)), Fixture::quiet_options(), sender_inbox.handler());
+    Link receiver(
+        std::make_unique<TcpTransport>(std::move(receiver_end)), Fixture::quiet_options(), receiver_inbox.handler());
+    sender.start();
+    receiver.start();
+
+    for (const uint8_t raw_type : { uint8_t{ 64 }, uint8_t{ 127 } })
+    {
+        const auto type = static_cast<LinkMessageType>(raw_type);
+        // Every byte value, so the payload is not text that happens to survive.
+        std::vector<uint8_t> payload(300);
+        for (size_t i = 0; i < payload.size(); ++i)
+        {
+            payload[i] = static_cast<uint8_t>(i + raw_type);
+        }
+
+        sender.send_reliable(type, payload);
+        const auto reliable = receiver_inbox.wait();
+        REQUIRE(reliable);
+        REQUIRE(static_cast<uint8_t>(reliable->type) == raw_type);
+        REQUIRE(reliable->payload == payload);
+
+        payload.push_back(raw_type);
+        sender.send_latest(type, payload);
+        const auto latest = receiver_inbox.wait();
+        REQUIRE(latest);
+        REQUIRE(static_cast<uint8_t>(latest->type) == raw_type);
+        REQUIRE(latest->payload == payload);
+    }
+    // Nothing else travelled: the quiet options send no HEARTBEAT.
+    REQUIRE(receiver.stats().messages_received == 4);
+    REQUIRE(receiver.stats().unknown_received == 4);
+    REQUIRE(sender.stats().latest_replaced == 0);
+    REQUIRE(sender_inbox.size() == 0);
+    REQUIRE(sender.alive());
+    REQUIRE(receiver.alive());
+}

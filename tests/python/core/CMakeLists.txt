@@ -11,6 +11,7 @@ if(BUILD_PYTHON_BINDINGS)
     # Needs `import isaaccapture`, and drives the C++ half through the emitter
     # built under tests/cpp/core/log_bridge.
     add_subdirectory(logging_config)
+    add_subdirectory(remote_link)
     add_subdirectory(remote_session)
     add_subdirectory(teleop_session_server)
 endif()
