@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """python -m isaaccapture_examples.agentic_remote.robot_app --config PATH
---arm sim|apai [--selftest].
+--arm sim|apai [--connect HOST:PORT | --selftest | --selftest-link].
 
-Phase P0 builds no link to the workstation, so the one thing that runs is the
-self-test: the robot app on the simulated arm, driven over a loopback link by a
-scripted workstation client and at a scripted Thor terminal.
+--connect runs the robot app with the Thor terminal and dials the robot link
+service. --selftest drives the app on the simulated arm over a loopback link;
+--selftest-link drives it through a robot link service over a real link on
+127.0.0.1. With --driver real the three confirmations are asked and the program
+stops: nothing in this phase connects to hardware.
 """
 
 from __future__ import annotations
@@ -15,43 +17,72 @@ import argparse
 import importlib
 import logging
 import os
+import select
+import signal
 import sys
+import tempfile
 import threading
-from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any
 
+from ..console_log import set_console_level
+from ..link_service.listen import RobotListener
+from ..link_service.local import connect_local
+from ..link_service.service import LOST, RobotLinkService
 from ..protocol.carrier import loopback_pair
+from ..protocol.link_carrier import LinkCarrier
+from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
 from .app import RobotApp
 from .clock import SystemClock
 from .config import ConfigError, load_config
-from .interfaces import CheckerSet
+from .connection import RobotDialer
+from .interfaces import CheckerSet, MotionState, Owner
 from .rest import planned_duration_s
 from .sim import BasicChecker, SimArm
-from .terminal import CONFIRM_REST, ThorTerminal, TypedLines
+from .terminal import CONFIRM_REST, YES, ThorTerminal, TypedLines
+from .text import MAX_WORD_CHARS, printable
 from ..testing.client import WorkstationClient
 
 if TYPE_CHECKING:
+    from ..link_service.local import LocalCarrier
     from ..protocol.messages import Result, RobotState
     from .clock import Clock
     from .config import RobotAppConfig
+    from .interfaces import ArmPort
 
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.main")
 
 EXIT_OK = 0
-EXIT_FAILED = 1  # a step of the self-test went wrong
-EXIT_NOT_RUN = 2  # nothing to run in phase P0, or the arguments cannot be used
+EXIT_FAILED = 1  # a step of a self-test went wrong, or the robot app did not start
+EXIT_NOT_RUN = 2  # nothing ran: the arguments, the installation or the phase
 
 LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 # The src folder of an APAI checkout, as the tests name it.
 APAI_SRC_ENV = "AGENTIC_REMOTE_APAI_SRC"
 
-NO_LINK = (
-    "phase P0 builds no link to the workstation, so the robot app has nothing to "
-    "connect to"
+NO_MODE = "needs --connect HOST:PORT, --selftest or --selftest-link"
+NO_CONNECT = "no --connect HOST:PORT was given"
+NO_REMOTE_LINK = (
+    "Isaac Capture's remote link cannot be imported (isaaccapture.remote_link on "
+    "the Python path)"
+)
+P2_LINE = "hardware runs start in phase P2"
+NOT_CONFIRMED = "not confirmed: nothing was connected"
+# What the operator confirms at the Thor terminal before the real driver may be
+# connected: connecting cuts motor torque.
+REAL_DRIVER_QUESTIONS = (
+    "Is the arm powered?",
+    "Connecting cuts motor torque. Is the arm at rest and supported?",
+    "Is the calibration in use {calibration}?",
 )
 
-_LOGGER_NAME = "isaaccapture.examples.agentic_remote"
-_HANDLER_NAME = "agentic_remote.console"
+# The longest one dial of the robot link service takes; the dialer's close()
+# waits for a dial under way.
+CONNECT_TIMEOUT_S = 2.0
+LINK_NAME = "robot-app"
+# How often the program looks at the robot app, the dialer and its signals.
+_WATCH_S = 0.2
+_READ_BYTES = 4096
 
 # Longest one wait of the self-test takes, in real time.
 STEP_WAIT_S = 10.0
@@ -102,9 +133,23 @@ def _parser() -> argparse.ArgumentParser:
         help="sim: the simulated arm; apai: APAI's checker and motor driver",
     )
     parser.add_argument(
+        "--connect",
+        type=_endpoint,
+        metavar="HOST:PORT",
+        help="run the robot app and dial the robot link service at this address",
+    )
+    parser.add_argument(
         "--selftest",
         action="store_true",
-        help="with --arm sim: run the scripted self-test and exit",
+        help="with --arm sim: run the scripted self-test on a loopback link and exit",
+    )
+    parser.add_argument(
+        "--selftest-link",
+        action="store_true",
+        help=(
+            "with --arm sim: run the scripted self-test through a robot link "
+            "service over a real link on 127.0.0.1 and exit"
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -115,34 +160,42 @@ def _parser() -> argparse.ArgumentParser:
         help=f"console log level, one of {', '.join(LOG_LEVELS)} (default: warning)",
     )
     parser.add_argument(
+        "--driver",
+        choices=("mock", "real"),
+        help=(
+            "with --arm apai: mock is APAI's software arm (default); real asks the "
+            "three confirmations and stops: hardware runs start in phase P2"
+        ),
+    )
+    parser.add_argument(
         "--apai-profile",
-        default="mock",
         metavar="NAME",
         help="with --arm apai: the APAI arm profile to load (default: mock)",
+    )
+    parser.add_argument(
+        "--calibration",
+        metavar="NAME",
+        help="with --driver real: the name of the calibration in use, to confirm",
     )
     return parser
 
 
-def _configure_logging(level: str) -> None:
-    """Set the console log level, through Isaac Capture's logging when it is there."""
+def _endpoint(text: str) -> str:
+    """A "host:port" the robot app can dial; the port is from 1 to 65535."""
+    host, colon, port = text.strip().rpartition(":")
+    usable = colon and host and port.isascii() and port.isdigit()
+    if not usable or not 1 <= int(port) <= 65535:
+        raise argparse.ArgumentTypeError(f"{text!r} is not HOST:PORT")
+    return f"{host}:{int(port)}"
+
+
+def _remote_link_missing() -> str | None:
+    """Why Isaac Capture's remote link cannot be used, or None when it can."""
     try:
-        from isaaccapture import logging_config
-    except ImportError:
-        logging_config = None
-    if logging_config is not None:
-        logging_config.set_console_level(level)
-        return
-    # Without Isaac Capture nothing shows this logger tree: the example's one
-    # stream handler is attached here and nowhere else.
-    logger = logging.getLogger(_LOGGER_NAME)
-    if not any(handler.get_name() == _HANDLER_NAME for handler in logger.handlers):
-        handler = logging.StreamHandler()
-        handler.set_name(_HANDLER_NAME)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
-        logger.addHandler(handler)
-    logger.setLevel(level.upper())
+        importlib.import_module("isaaccapture.remote_link")
+    except ImportError as error:
+        return f"{NO_REMOTE_LINK}: {error}"
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -152,34 +205,206 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exit_:  # argparse has printed the usage or the help
         code = exit_.code
         return code if isinstance(code, int) else EXIT_NOT_RUN
-    if args.selftest and args.arm != "sim":
-        _complain("--selftest runs on the simulated arm only: use --arm sim")
+    problem = _unusable(args)
+    if problem is not None:
+        _complain(problem)
         return EXIT_NOT_RUN
-    _configure_logging(args.log_level)
+    set_console_level(args.log_level)
     try:
         config = load_config(args.config)
     except (ConfigError, OSError) as error:
         _complain(f"the configuration cannot be used: {error}")
         return EXIT_NOT_RUN
     if args.arm == "apai":
-        return _describe_apai(config, args.config, args.apai_profile)
-    if not args.selftest:
-        _complain(f"{NO_LINK}; --arm sim runs only with --selftest")
+        return _run_apai(config, args)
+    if args.selftest:
+        return run_selftest(config)
+    if args.selftest_link:
+        return run_link_selftest(config)
+    if args.connect is None:
+        _complain(f"--arm sim {NO_MODE}")
         return EXIT_NOT_RUN
-    return run_selftest(config)
+    missing = _remote_link_missing()
+    if missing is not None:
+        _complain(f"--connect cannot run: {missing}")
+        return EXIT_NOT_RUN
+    clock = SystemClock()
+    arm = SimArm(
+        n_joints=config.n_joints,
+        clock=clock,
+        q0=list(config.rest.rest_q),
+        joint_names=config.joint_names,
+    )
+    return run_connected(config, arm, sim_checkers(config, clock), clock, args.connect)
+
+
+def _unusable(args: argparse.Namespace) -> str | None:
+    """Why these arguments cannot be used together, or None when they can."""
+    if args.selftest and args.arm != "sim":
+        return "--selftest runs on the simulated arm only: use --arm sim"
+    if args.selftest_link and args.arm != "sim":
+        return "--selftest-link runs on the simulated arm only: use --arm sim"
+    modes = [bool(args.selftest), bool(args.selftest_link), args.connect is not None]
+    if sum(modes) > 1:
+        return "--connect, --selftest and --selftest-link exclude each other"
+    apai_only = {
+        "--driver": args.driver,
+        "--apai-profile": args.apai_profile,
+        "--calibration": args.calibration,
+    }
+    given = [name for name, value in apai_only.items() if value is not None]
+    if args.arm != "apai" and given:
+        return f"{', '.join(given)} can be used with --arm apai only"
+    if args.driver != "real" and args.calibration is not None:
+        return "--calibration can be used with --driver real only"
+    if args.driver == "real":
+        if not args.apai_profile:
+            return "--driver real needs the arm's profile: --apai-profile NAME"
+        if not args.calibration or not args.calibration.strip():
+            return "--driver real needs the calibration's name: --calibration NAME"
+    return None
+
+
+# --connect
+
+
+class _FdLines:
+    """Lines typed at a file descriptor.
+
+    The standard input object is not used: a thread that waits in its readline
+    holds a lock the interpreter needs at exit. Iterating waits for the next
+    line; the input ends with the descriptor's end or soon after close().
+    """
+
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+        self._buffer = b""
+        self._ended = False
+        self._closed = threading.Event()
+
+    def close(self) -> None:
+        self._closed.set()
+
+    def __iter__(self) -> Iterator[str]:
+        return self
+
+    def __next__(self) -> str:
+        while True:
+            line, newline, rest = self._buffer.partition(b"\n")
+            if newline or (self._ended and line):
+                self._buffer = rest
+                return line.decode("utf-8", "replace")
+            if self._ended or self._closed.is_set():
+                raise StopIteration
+            ready, _, _ = select.select([self._fd], [], [], _WATCH_S)
+            if not ready:
+                continue
+            chunk = os.read(self._fd, _READ_BYTES)
+            self._ended = not chunk
+            self._buffer += chunk
+
+
+def typed_lines() -> Iterator[str]:
+    """The lines typed at the standard input."""
+    try:
+        return _FdLines(sys.stdin.fileno())
+    except (AttributeError, OSError, ValueError):  # no descriptor behind it
+        return iter(sys.stdin)
+
+
+def run_connected(
+    config: RobotAppConfig,
+    arm: ArmPort,
+    checkers: CheckerSet,
+    clock: Clock,
+    endpoint: str,
+    *,
+    typed: Iterator[str] | None = None,
+    say: Say = _say,
+) -> int:
+    """Run the robot app with the Thor terminal and dial the robot link service.
+
+    Returns when the robot app has closed (a typed quit, or a SHUTDOWN) or on
+    SIGTERM, which closes the app with the motors left on. typed yields the
+    lines of the Thor terminal; None reads the standard input. Ctrl+C is a STOP
+    when this runs on the main thread.
+    """
+    lines = typed_lines() if typed is None else typed
+    app = RobotApp(config, arm, checkers, None, clock)
+    terminal = ThorTerminal(app, lines, say)
+    dialer = RobotDialer(
+        app,
+        lambda: LinkCarrier.connect(endpoint, CONNECT_TIMEOUT_S, name=LINK_NAME),
+        clock,
+        retry_s=config.connection.retry_s,
+    )
+    reader = threading.Thread(
+        target=terminal.run, name="thor-terminal-input", daemon=True
+    )
+    on_main = threading.current_thread() is threading.main_thread()
+    terminated: list[int] = []
+    replaced: list[Any] = []  # the SIGTERM handler this run replaced
+    try:
+        try:
+            app.start()
+        except Exception as error:
+            _log.debug("the robot app did not start", exc_info=True)
+            _complain(f"the robot app did not start: {error}")
+            return EXIT_FAILED
+        if on_main:
+            terminal.install_signal_handlers()
+            handler = signal.signal(signal.SIGTERM, lambda *_: terminated.append(1))
+            replaced.append(signal.SIG_DFL if handler is None else handler)
+        reader.start()
+        say(
+            f"robot app: session {app.session_id[:8]}; dialing the robot link "
+            f"service at {endpoint}"
+        )
+        dialer.start()
+        shown = ""
+        while not app.wait_closed(_WATCH_S):
+            if terminated:
+                say("robot app: SIGTERM; closing with the motors left on")
+                break
+            error = "" if app.link_alive else dialer.last_error
+            if error and error != shown:
+                say(
+                    f"robot app: no robot connection: {error}; dialing again every "
+                    f"{config.connection.retry_s:g} s"
+                )
+            shown = error
+    finally:
+        dialer.close()
+        app.close()
+        _end_input(lines)
+        if reader.is_alive():
+            reader.join(2 * _WATCH_S)  # one that cannot be ended is left behind
+        terminal.close()
+        for handler in replaced:
+            signal.signal(signal.SIGTERM, handler)
+    return EXIT_OK
+
+
+def _end_input(lines: Iterator[str]) -> None:
+    """End typed input that can be ended, so that a wait for a line returns."""
+    for name in ("close", "end"):
+        end = getattr(lines, name, None)
+        if end is not None:
+            end()
+            return
 
 
 # --arm apai
 
 
-def _describe_apai(config: RobotAppConfig, config_path: str, profile_name: str) -> int:
-    """Build APAI's checkers and arm port, connect nothing, say what would run."""
+def _apai_backend() -> Any:
+    """The module that puts APAI behind the ports; None, and a line, without APAI."""
     src = os.environ.get(APAI_SRC_ENV)
     if src and src not in sys.path:
         sys.path.insert(0, src)
     try:
         # APAI is imported in this branch only, so --arm sim runs without it.
-        apai_backend = importlib.import_module(
+        return importlib.import_module(
             "isaaccapture_examples.agentic_remote.robot_app.apai_backend"
         )
     except ImportError as error:
@@ -187,7 +412,96 @@ def _describe_apai(config: RobotAppConfig, config_path: str, profile_name: str) 
             f"--arm apai needs APAI on the Python path (set {APAI_SRC_ENV} to its "
             f"src folder): {error}"
         )
+        return None
+
+
+def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
+    """--arm apai: the real driver's confirmations, a description, or the app."""
+    apai_backend = _apai_backend()
+    if apai_backend is None:
         return EXIT_NOT_RUN
+    if args.driver == "real":
+        return _real_driver(apai_backend, args.apai_profile, args.calibration)
+    profile_name = args.apai_profile or "mock"
+    if args.connect is None:
+        return _describe_apai(apai_backend, config, args.config, profile_name)
+    missing = _remote_link_missing()
+    if missing is not None:
+        _complain(f"--connect cannot run: {missing}")
+        return EXIT_NOT_RUN
+    clock = SystemClock()
+    try:
+        profile = apai_backend.load_apai_profile(profile_name)
+        if profile.arm_cfg.get("type") != "mock":
+            _complain(
+                f"APAI arm profile {profile_name!r} drives hardware: it needs "
+                "--driver real"
+            )
+            return EXIT_NOT_RUN
+        config = apai_backend.config_for_profile(config, profile)
+        checkers = apai_backend.build_apai_checkers(config, profile, clock)
+        arm = apai_backend.build_apai_arm(config, profile, clock)
+    except Exception as error:
+        _log.debug("building the APAI backend failed", exc_info=True)
+        _complain(
+            f"APAI arm profile {profile_name!r} cannot be used with {args.config}: "
+            f"{error}"
+        )
+        return EXIT_NOT_RUN
+    return run_connected(config, arm, checkers, clock, args.connect)
+
+
+def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> bool:
+    """Ask the three confirmations; True only when each was answered with yes.
+
+    The first other answer, or the end of the input, ends the asking.
+    """
+    named = repr(printable(calibration.strip(), MAX_WORD_CHARS))
+    total = len(REAL_DRIVER_QUESTIONS)
+    for number, question in enumerate(REAL_DRIVER_QUESTIONS, start=1):
+        asked = question.format(calibration=named)
+        say(f"Real driver, {number} of {total}: {asked} Type {YES} to confirm.")
+        try:
+            answer = next(typed, None)
+        except (OSError, ValueError):  # the terminal is gone
+            answer = None
+        if answer is None or answer.strip().lower() != YES:
+            return False
+    return True
+
+
+def _real_driver(apai_backend: Any, profile_name: str, calibration: str) -> int:
+    """--driver real: ask the confirmations, then stop; nothing is connected."""
+    try:
+        profile = apai_backend.load_apai_profile(profile_name)
+    except Exception as error:
+        _log.debug("loading the APAI profile failed", exc_info=True)
+        _complain(f"APAI arm profile {profile_name!r} cannot be used: {error}")
+        return EXIT_NOT_RUN
+    if profile.arm_cfg.get("type") == "mock":
+        _complain(
+            f"APAI arm profile {profile_name!r} is APAI's software arm: use "
+            "--driver mock"
+        )
+        return EXIT_NOT_RUN
+    _say(f"robot app: APAI arm profile {profile_name}, the real driver")
+    lines = typed_lines()
+    try:
+        confirmed = confirm_real_driver(calibration, lines, _say)
+    finally:
+        _end_input(lines)
+    if not confirmed:
+        _complain(NOT_CONFIRMED)
+        return EXIT_NOT_RUN
+    _say("robot app: confirmed three times; the arm was not connected")
+    _say(P2_LINE)
+    return EXIT_NOT_RUN
+
+
+def _describe_apai(
+    apai_backend: Any, config: RobotAppConfig, config_path: str, profile_name: str
+) -> int:
+    """Build APAI's checkers and arm port, connect nothing, say what would run."""
     clock = SystemClock()
     try:
         profile = apai_backend.load_apai_profile(profile_name)
@@ -222,7 +536,7 @@ def _describe_apai(config: RobotAppConfig, config_path: str, profile_name: str) 
         f"  at rest at start: within {config.rest.start_rest_tol_rad:g} rad of the "
         f"rest pose (the profile's); a release: within {config.rest.rest_tol_rad:g} rad"
     )
-    _say(f"{NO_LINK}: the arm was not connected and nothing runs (exit code 2)")
+    _say(f"{NO_CONNECT}: the arm was not connected and nothing runs (exit code 2)")
     return EXIT_NOT_RUN
 
 
@@ -244,6 +558,30 @@ def run_selftest(config: RobotAppConfig, say: Say = _say) -> int:
     """Run the self-test on the simulated arm; EXIT_OK when every step passed."""
     say("selftest: the robot app on the simulated arm, over a loopback link")
     return _SelfTest(config, say).run()
+
+
+def run_link_selftest(
+    config: RobotAppConfig, say: Say = _say, socket_folder: str | None = None
+) -> int:
+    """Run the self-test over a real link; EXIT_OK when every step passed.
+
+    In this process: a robot link service on 127.0.0.1 and a free port, the
+    robot app on the simulated arm dialing it, and two clients of the local
+    API. socket_folder holds the local API's socket; None makes a temporary
+    folder. EXIT_NOT_RUN without Isaac Capture's remote link.
+    """
+    missing = _remote_link_missing()
+    if missing is not None:
+        say(f"selftest-link: skipped: {missing} (exit code 2)")
+        return EXIT_NOT_RUN
+    say(
+        "selftest-link: the robot app on the simulated arm, through a robot link "
+        "service over a real link on 127.0.0.1"
+    )
+    if socket_folder is not None:
+        return _LinkSelfTest(config, say, socket_folder).run()
+    with tempfile.TemporaryDirectory(prefix="agentic_remote-") as folder:
+        return _LinkSelfTest(config, say, folder).run()
 
 
 class _StepFailed(Exception):
@@ -320,8 +658,10 @@ class _SelfTest:
             ("quit typed at the Thor terminal", self._typed_quit),
         )
 
+    _label = "selftest"  # how each line of the run begins
+
     def run(self) -> int:
-        total = len(self._steps)
+        total, label = len(self._steps), self._label
         began = self._clock.monotonic()
         failed = 0  # the number of the step that went wrong
         try:
@@ -330,20 +670,24 @@ class _SelfTest:
                     detail = step()
                 except Exception as error:
                     _log.debug("self-test step %r failed", title, exc_info=True)
-                    self._terminal.flush()
-                    self._say(f"selftest {number:2d}/{total} FAILED  {title}: {error}")
+                    self._flush()
+                    self._say(f"{label} {number:2d}/{total} FAILED  {title}: {error}")
                     failed = number
                     break
-                self._terminal.flush()
-                self._say(f"selftest {number:2d}/{total} ok  {title}: {detail}")
+                self._flush()
+                self._say(f"{label} {number:2d}/{total} ok  {title}: {detail}")
         finally:
             self._close()
         if failed:
-            self._say(f"selftest: FAILED at step {failed} of {total}")
+            self._say(f"{label}: FAILED at step {failed} of {total}")
             return EXIT_FAILED
         took = self._clock.monotonic() - began
-        self._say(f"selftest: all {total} steps passed in {took:.1f} s")
+        self._say(f"{label}: all {total} steps passed in {took:.1f} s")
         return EXIT_OK
+
+    def _flush(self) -> None:
+        """Let the Thor terminal's lines come out before the step's own line."""
+        self._terminal.flush()
 
     def _close(self) -> None:
         """End every thread; the simulated motors stay as the run left them."""
@@ -399,6 +743,10 @@ class _SelfTest:
         return f"refused, no setpoint sent: {result.reason}"
 
     def _stop_during_move(self) -> str:
+        return self._stopped_move(self._client)
+
+    def _stopped_move(self, stopper: WorkstationClient) -> str:
+        """The agent's move, ended by a STOP that `stopper` sends."""
         before = self._state()
         setpoints = self._plan(self._toward_middle(self._at, SECOND_MOVE_RAD))
         move_id = self._client.new_id()
@@ -413,7 +761,7 @@ class _SelfTest:
         try:
             self._client.move(setpoints, start_q=self._at, command_id=move_id)
             self._client.wait_until(under_way_or_ended, STEP_WAIT_S, "the move's start")
-            self._client.stop("self-test: the operator pressed stop")
+            stopper.stop("self-test: the operator pressed stop")
             result = self._client.wait_result(move_id, timeout_s=STEP_WAIT_S)
         finally:
             feed.stop()
@@ -505,8 +853,12 @@ class _SelfTest:
         return f"the arm holds at rest with the motors on, {off:.3f} rad from rest"
 
     def _release(self) -> str:
-        command_id = self._client.release()
-        _ended(self._client.wait_result(command_id, timeout_s=STEP_WAIT_S), "completed")
+        return self._released_by(self._client)
+
+    def _released_by(self, operator: WorkstationClient) -> str:
+        """A RELEASE this client sends, at rest."""
+        command_id = operator.release()
+        _ended(operator.wait_result(command_id, timeout_s=STEP_WAIT_S), "completed")
         self._state(lambda s: s.motion == "rest_unpowered" and not s.torque_on)
         _need(len(self._arm.released_at) == 1, "torque was not released exactly once")
         off = _distance(self._arm.released_at[0], self._config.rest.rest_q)
@@ -561,6 +913,235 @@ class _SelfTest:
             step = by if at <= (lowest + highest) / 2.0 else -by
             goal.append(min(max(at + step, lowest), highest))
         return goal
+
+
+class _LinkSelfTest(_SelfTest):
+    """The scripted run through a robot link service, over a real link.
+
+    The agent's commands come from a client in the agent role, the operator's
+    from one in the console role.
+    """
+
+    _label = "selftest-link"
+
+    def __init__(self, config: RobotAppConfig, say: Say, socket_folder: str) -> None:
+        self._config = config
+        self._say = say
+        self._clock = SystemClock()
+        rest_q = list(config.rest.rest_q)
+        self._arm = SimArm(
+            n_joints=config.n_joints,
+            clock=self._clock,
+            q0=rest_q,
+            joint_names=config.joint_names,
+        )
+        self._app = RobotApp(
+            config, self._arm, sim_checkers(config, self._clock), None, self._clock
+        )
+        self._socket_path = os.path.join(socket_folder, "robot_link.sock")
+        self._listener: RobotListener | None = None
+        self._service: RobotLinkService | None = None
+        self._dialer: RobotDialer | None = None
+        self._ends: list[LocalCarrier] = []  # agent, then console
+        self._client: WorkstationClient | None = None  # the agent role
+        self._console: WorkstationClient | None = None
+        self._at = rest_q
+        self._stop_number = 0
+        self._owner_before_cut = 0
+        self._sent_at_cut = 0  # setpoints the arm had been sent when it held
+        self._steps = (
+            ("start the robot link service", self._start_service),
+            ("start the robot app; it dials the service", self._start),
+            ("take ownership for the agent", self._take_ownership),
+            ("a move with permits", self._permitted_move),
+            ("a move without a permit", self._unpermitted_move),
+            ("STOP from the console during a move", self._console_stop),
+            ("a new task after the STOP, no reset", self._task_after_stop),
+            ("the robot connection is cut during a move", self._cut_during_move),
+            ("the robot app dials again", self._connected_again),
+            ("rest from the console", self._console_rest),
+            ("release from the console", self._console_release),
+            ("close the robot app", self._close_app),
+        )
+
+    def _flush(self) -> None:
+        return None  # no Thor terminal in this run
+
+    def _close(self) -> None:
+        """End every thread and connection; the simulated motors stay as they are."""
+        for client in (self._client, self._console):
+            if client is not None:
+                client.close()
+        for end in self._ends:
+            end.close()
+        if self._dialer is not None:
+            self._dialer.close()
+        self._app.close()
+        if self._service is not None:
+            self._service.close()
+        if self._listener is not None:
+            self._listener.close()
+
+    # Steps
+
+    def _start_service(self) -> str:
+        self._listener = RobotListener("127.0.0.1", 0)
+        self._service = RobotLinkService(
+            self._listener.accept,
+            socket_path=self._socket_path,
+            allowed_peers=("127.0.0.1",),
+        )
+        self._service.start()
+        return (
+            f"waits for the robot app on {self._listener.endpoint}; local API at "
+            f"{self._service.socket_path}"
+        )
+
+    def _start(self) -> str:
+        endpoint = self._listener.endpoint
+        self._dialer = RobotDialer(
+            self._app,
+            lambda: LinkCarrier.connect(endpoint, CONNECT_TIMEOUT_S, name=LINK_NAME),
+            self._clock,
+            retry_s=self._config.connection.retry_s,
+        )
+        self._app.start()
+        self._dialer.start()
+        for role in (ROLE_AGENT, ROLE_CONSOLE):
+            end = connect_local(
+                self._socket_path, role, f"selftest-{role}", STEP_WAIT_S
+            )
+            self._ends.append(end)
+        agent_end, console_end = self._ends
+        self._client = WorkstationClient(
+            agent_end, self._clock, name="agent", quotable=self._current
+        )
+        self._console = WorkstationClient(
+            console_end, self._clock, name="console", quotable=self._current
+        )
+        agent_end.wait_status(lambda s: s.robot_connected, STEP_WAIT_S)
+        welcome = self._client.wait_welcome(STEP_WAIT_S)
+        _need(welcome.session_id == self._app.session_id, "WELCOME of another session")
+        state = self._state(lambda s: s.motion == "rest_hold" and s.torque_on)
+        _need(state.gripper.load == "empty", f"the jaws read {state.gripper.load}")
+        return (
+            f"robot connection up after {self._dialer.attempts} dial(s), session "
+            f"{welcome.session_id[:8]}, at rest with the motors on; an agent and a "
+            "console client are attached"
+        )
+
+    def _console_stop(self) -> str:
+        return self._stopped_move(self._console)
+
+    def _cut_during_move(self) -> str:
+        before = self._state(self._current)
+        self._owner_before_cut = before.owner_number
+        self._at = self._client.measured_pose()
+        setpoints = self._plan(self._toward_middle(self._at, SECOND_MOVE_RAD))
+        move_id = self._client.new_id()
+
+        def under_way_or_ended() -> bool:
+            state = self._client.state
+            if state is not None and state.move_id == move_id:
+                return state.move_index >= STOP_AFTER
+            return any(r.status != "accepted" for r in self._client.results(move_id))
+
+        feed = self._client.feed_permits(move_id, len(setpoints) - 1)
+        try:
+            self._client.move(setpoints, start_q=self._at, command_id=move_id)
+            self._client.wait_until(under_way_or_ended, STEP_WAIT_S, "the move's start")
+            link = self._dialer.carrier
+            _need(link is not None, "the dialer holds no robot connection")
+            link.close()
+            result = self._client.wait_result(move_id, timeout_s=STEP_WAIT_S)
+        finally:
+            feed.stop()
+        _need(
+            _ended(result, "failed").reason == LOST,
+            f"the move's RESULT gives the reason {result.reason!r}, not {LOST!r}",
+        )
+        self._ends[0].wait_status(lambda s: not s.robot_connected, STEP_WAIT_S)
+        # A command sent while there is no robot connection goes nowhere.
+        numbers = {
+            "session_id": before.session_id,
+            "owner_number": before.owner_number,
+            "stop_number": before.stop_number,
+        }
+        command_id = self._client.move([self._at], start_q=self._at, **numbers)
+        _ended(self._client.wait_result(command_id, timeout_s=STEP_WAIT_S), "refused")
+        _need(self._app.wait_motion_idle(STEP_WAIT_S), "the move did not end")
+        now = self._app.snapshot()
+        _need(now.owner is Owner.NOBODY, f"the control owner is {now.owner}")
+        _need(self._app.motion_state is MotionState.HOLD, "the arm does not hold")
+        _need(self._arm.torque_on(), "the motors are off")
+        self._sent_at_cut = len(self._arm.sent)
+        return (
+            f"the move's RESULT is failed: {LOST}; the arm holds with the motors "
+            "on, nobody owns it; a command sent meanwhile is refused"
+        )
+
+    def _connected_again(self) -> str:
+        retry_s = self._config.connection.retry_s
+        status = self._ends[0].wait_status(
+            lambda s: s.robot_connected, retry_s + STEP_WAIT_S
+        )
+        _need(status.session_id == self._app.session_id, "another session id")
+        old = self._owner_before_cut
+        state = self._state(
+            lambda s: s.owner_number > old and s.motion == "hold" and s.torque_on
+        )
+        _need(state.owner == "nobody", f"the control owner is {state.owner}")
+        at = self._client.measured_pose()
+        command_id = self._client.move([at], start_q=at, owner_number=old)
+        result = self._client.wait_result(command_id, timeout_s=STEP_WAIT_S)
+        _ended(result, "refused")
+        _need(
+            len(self._arm.sent) == self._sent_at_cut,
+            "a setpoint was sent after the robot connection was lost",
+        )
+        self._stop_number = state.stop_number
+        return (
+            f"robot connection up again after {self._dialer.attempts} dial(s) in "
+            f"all, the same session; nothing moved; the agent's move quoting owner "
+            f"number {old} is refused: {result.reason}"
+        )
+
+    def _console_rest(self) -> str:
+        rest = self._config.rest
+        longest = planned_duration_s(
+            FIRST_MOVE_RAD + 2.0 * SECOND_MOVE_RAD,
+            rest.recovery_speed,
+            rest.min_duration_s,
+        )
+        command_id = self._console.rest(confirmed=True)
+        result = self._console.wait_result(command_id, timeout_s=STEP_WAIT_S + longest)
+        _ended(result, "completed")
+        self._state(lambda s: s.motion == "rest_hold" and s.torque_on)
+        off = _distance(self._arm.pose(), rest.rest_q)
+        return f"the arm holds at rest with the motors on, {off:.3f} rad from rest"
+
+    def _console_release(self) -> str:
+        return self._released_by(self._console)
+
+    def _close_app(self) -> str:
+        self._dialer.close()
+        self._app.close()
+        _need(self._app.wait_closed(STEP_WAIT_S), "the robot app did not close")
+        self._ends[0].wait_status(lambda s: not s.robot_connected, STEP_WAIT_S)
+        _need(len(self._arm.released_at) == 1, "torque was released a second time")
+        return (
+            "the robot app has closed; the service shows the robot connection as lost"
+        )
+
+    # Helpers
+
+    def _current(self, state: RobotState) -> bool:
+        """Whether a ROBOT_STATE shows the numbers the robot app has now."""
+        if not (self._app.running and self._app.link_alive):
+            return True  # no newer ROBOT_STATE will come
+        now = self._app.snapshot()
+        shown = (state.session_id, state.owner_number, state.stop_number)
+        return shown == (now.session_id, now.owner_number, now.stop_number)
 
 
 def _need(holds: bool, problem: str) -> None:

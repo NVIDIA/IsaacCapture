@@ -34,7 +34,7 @@ SELFTEST_BOUND_S = 30.0
 STEPS = 11
 # Threads the self-test starts; none may outlive it.
 THREADS = ("robot-app-", "gripper-worker", "thor-terminal-", "workstation-client")
-NO_LINK = "phase P0 builds no link to the workstation"
+NO_MODE = "--arm sim needs --connect HOST:PORT, --selftest or --selftest-link"
 
 
 @pytest.fixture(autouse=True)
@@ -138,7 +138,17 @@ def test_arguments_that_cannot_be_used_give_exit_code_2(argv, capsys, monkeypatc
 def test_help_names_every_argument_and_exits_with_0(capsys):
     assert robot_main.main(["--help"]) == 0
     out = capsys.readouterr().out
-    for argument in ("--config PATH", "--arm {sim,apai}", "--selftest", "--log-level"):
+    for argument in (
+        "--config PATH",
+        "--arm {sim,apai}",
+        "--connect HOST:PORT",
+        "--selftest",
+        "--selftest-link",
+        "--log-level",
+        "--driver {mock,real}",
+        "--apai-profile NAME",
+        "--calibration NAME",
+    ):
         assert argument in out
 
 
@@ -162,10 +172,7 @@ def test_arm_sim_without_selftest_has_nothing_to_connect_to(capsys, monkeypatch)
     monkeypatch.setattr(robot_main, "RobotApp", None)  # no app may be built
     assert robot_main.main(["--config", str(CONFIG_YAML), "--arm", "sim"]) == 2
     captured = capsys.readouterr()
-    assert captured.err == (
-        f"robot app: {NO_LINK}, so the robot app has nothing to connect to; "
-        "--arm sim runs only with --selftest\n"
-    )
+    assert captured.err == f"robot app: {NO_MODE}\n"
     assert captured.out == ""
 
 
@@ -187,7 +194,7 @@ def test_the_package_runs_as_a_program_with_mains_exit_code(capsys, monkeypatch)
             "isaaccapture_examples.agentic_remote.robot_app", run_name="__main__"
         )
     assert exit_.value.code == 2
-    assert NO_LINK in capsys.readouterr().err
+    assert NO_MODE in capsys.readouterr().err
 
 
 # Logging
@@ -573,8 +580,8 @@ def test_arm_apai_builds_the_backend_and_never_connects(capsys, monkeypatch, apa
         "a release: within 0.05 rad"
     )
     assert lines[-1] == (
-        f"{NO_LINK}, so the robot app has nothing to connect to: the arm was not "
-        "connected and nothing runs (exit code 2)"
+        "no --connect HOST:PORT was given: the arm was not connected and nothing "
+        "runs (exit code 2)"
     )
     assert captured.err == ""
     assert left_threads() == []
