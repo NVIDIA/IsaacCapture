@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot app settings. These are demo values for the simulated arm; none was measured on
+# a robot. Angles are in rad, speeds in rad/s, times in s, jaw openings run from 0
+# (closed) to 1 (open).
+
+robot_id: sim-arm
+profile_id: sim-6dof
+n_joints: 6
+joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
+
+# One limit set per control owner. The recovery joint box must contain the human one.
+limits:
+  agent:
+    version: sim-1
+    joint_min: [-2.0, -2.0, -2.0, -2.0, -2.0, -2.0]
+    joint_max: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+    max_joint_speed: 0.4
+    # The agent's working box: a setpoint outside it is refused, with no way back in.
+    envelope_min: [-1.5, -1.5, -1.5, -1.5, -1.5, -1.5]
+    envelope_max: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+  human:
+    version: sim-1
+    joint_min: [-3.0, -3.0, -3.0, -3.0, -3.0, -3.0]
+    joint_max: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    max_joint_speed: 1.5
+    # The clamp per command of human driving. Checked when the file is loaded;
+    # nothing uses it until a human can drive (phase P3).
+    max_step_rad: 0.1
+  recovery:
+    version: sim-1
+    joint_min: [-3.0, -3.0, -3.0, -3.0, -3.0, -3.0]
+    joint_max: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    max_joint_speed: 0.1
+
+executor:
+  period_s: 0.02
+  # Must hold the longest return to rest, from the far end of rest.region_*; checked
+  # when the file is loaded.
+  max_setpoints: 3000
+  # A late setpoint moves the later ones back with it; none is sent sooner to catch up.
+  small_delay_s: 0.005  # a setpoint later than this counts as a missed deadline
+  large_delay_s: 0.1  # a setpoint later than this ends the move in a hold
+  settle_tol_rad: 0.03
+  settle_timeout_s: 2.0
+  reads_per_step: 2
+  max_start_tol_rad: 0.05  # a move that asks for a wider start tolerance is refused
+
+permits:
+  evidence_age_limit_s: 3.0
+  required_for_agent: true
+  first_wait_s: 0.5  # longest a move waits for its first covering permit
+
+waits:
+  assistance_s: 120.0  # never below 90
+  bell_at_s: [30.0, 10.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+
+rest:
+  rest_q: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  rest_tol_rad: 0.05  # at rest for a release and at the end of a return to rest
+  # At rest when the app connects: how far the arm may lie from rest_q with its
+  # motors off. Not below rest_tol_rad.
+  start_rest_tol_rad: 0.05
+  agree_tol_rad: 0.02
+  read_gap_s: 0.2
+  recovery_speed: 0.1
+  min_duration_s: 2.0
+  # Start poses from which a return to rest is allowed.
+  region_min: [-2.5, -2.5, -2.5, -2.5, -2.5, -2.5]
+  region_max: [2.5, 2.5, 2.5, 2.5, 2.5, 2.5]
+  auto_return: true  # the timed return when the assistance wait runs out
+  # How far above the table the gripper tip must be before a return to rest. Used
+  # with --arm apai only: the simulated arm's checker has no table.
+  table_clearance_m: 0.02
+
+gripper:
+  closed_frac: 0.04
+  # Jaws proven empty: how far a reading may lie from the last jaw target. At
+  # most 0.1 rad of the gripper's travel; --arm apai tightens it to that.
+  target_tol: 0.03
+  # A jaw command has reached its target within this.
+  reach_tol: 0.03
+  # A reading within this of 1 after a command to full open is a full open.
+  full_open_tol: 0.03
+  agree_tol: 0.02
+  reads: 3
+  read_gap_s: 0.05
+  open_step: 0.05
+  reference_at_start: true
+
+# The grasp region a MOVE may carry; one beyond these is refused, never cut down.
+grasp:
+  max_radius_m: 0.3
+  max_depth_m: 0.06  # how far below the table plane the region may reach
+
+state:
+  publish_period_s: 0.05
+  recent_window_s: 0.5
+  history_s: 6.0
+  idle_read_period_s: 0.02
+
+# The oldest live view and the oldest controller sample a human may drive on. Checked
+# when the file is loaded; nothing uses them until a human can drive (phase P3).
+human:
+  view_age_limit_s: 0.5
+  sample_age_limit_s: 0.25
