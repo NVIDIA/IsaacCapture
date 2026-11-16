@@ -25,8 +25,10 @@ from isaaccapture_examples.agentic_remote.human import logic as logic_module
 from isaaccapture_examples.agentic_remote.human.logic import (
     COUNT_KEYS,
     NOTE_AT_REST,
+    NOTE_AT_REST_JAWS,
     NOTE_CUT,
     NOTE_MAX_CHARS,
+    NOTE_RELEASE_A,
     NOTE_RELEASE_B,
     NOTE_RELEASE_FIRST,
     NOTE_SQUEEZE,
@@ -55,6 +57,7 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Welcome,
     decode,
 )
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import JawLoad
 
 PASS_S = 0.02
 T0 = 100.0
@@ -289,6 +292,12 @@ def nobody(stop_number: int, owner_number: int = 5, **human: Any) -> RobotState:
     )
 
 
+def with_jaws(state: RobotState, load: str) -> RobotState:
+    """state with this jaw load; the jaws are the gripper's fingers."""
+    gripper = dataclasses.replace(state.gripper, load=load)
+    return dataclasses.replace(state, gripper=gripper)
+
+
 def of(messages: Sequence[Message], kind: Any) -> list[Any]:
     return [message for message in messages if isinstance(message, kind)]
 
@@ -297,6 +306,11 @@ def setpoint(messages: Sequence[Message]) -> HumanSetpoint:
     """The one HUMAN_SETPOINT among the link messages of a pass."""
     [found] = of(messages, HumanSetpoint)
     return found
+
+
+def notes(messages: Sequence[Message]) -> set[str]:
+    """The notes of the HUMAN_SETPOINTs among these link messages."""
+    return {sent.note for sent in of(messages, HumanSetpoint)}
 
 
 def none_engaged(messages: Sequence[Message]) -> bool:
@@ -1630,6 +1644,209 @@ def test_the_note_asks_for_a_released_b_while_b_is_down_without_a_press_that_cou
     assert bench.status(b=True).note == NOTE_AT_REST
 
 
+def test_the_note_says_release_b_while_b_is_held_after_a_press_that_cannot_ask():
+    def held_on(bench: Bench, stop_number: int, **human: Any) -> None:
+        """B stays down for 3 s with the grip released; then a new press asks."""
+        held = bench.run(150, b=True)
+        assert of(held, (Stop, OwnerRequest)) == []
+        assert notes(held) == {NOTE_RELEASE_B}
+        assert bench.status().note == NOTE_TAKE_OVER  # B is up
+        assert bench.step(b=True)[0] == STOP_B
+        bench.state = nobody(stop_number + 1, **human)
+        again = bench.run(50, b=True)
+        assert len(of(again, OwnerRequest)) == 1
+        assert notes(again) == {NOTE_TAKE_OVER}
+
+    # The grip was squeezed as B went down: the press counts, and its hold
+    # asks for nothing, also once the grip is released.
+    bench = Bench()
+    bench.state = robot_state(owner="agent", owner_number=4, stop_number=7)
+    bench.step(squeeze=1.0)
+    assert bench.step(b=True, squeeze=1.0)[0] == STOP_B
+    assert bench.logic.counts()["b_pressed"] == 1
+    bench.state = nobody(8)
+    assert notes(bench.run(10, b=True, squeeze=1.0)) == {NOTE_RELEASE_B}
+    held_on(bench, 8)
+
+    # Right B as the STOP of an engagement: the grip is squeezed at its press.
+    bench = Bench()
+    bench.engage()
+    assert bench.step(b=True, squeeze=1.0)[0] == STOP_B
+    bench.state = nobody(2, takeover_open=True)
+    held_on(bench, 2, takeover_open=True)
+
+    # One squeezed pass in the middle of a hold that began with the grip
+    # released.
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(8)
+    assert notes(bench.run(20, b=True)) == {NOTE_TAKE_OVER}
+    assert setpoint(bench.step(b=True, squeeze=1.0)).note == NOTE_RELEASE_B
+    held_on(bench, 8)
+
+
+def test_a_hold_that_can_ask_keeps_the_takeover_note_until_its_result():
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()
+    bench.step(b=True)
+    bench.state = nobody(8)
+    assert notes(bench.run(49, b=True)) == {NOTE_TAKE_OVER}
+    due = bench.step(b=True)  # the pass that sends the request
+    [request] = of(due, OwnerRequest)
+    assert setpoint(due).note == NOTE_TAKE_OVER
+    # B stays down while the RESULT is pending: 2 s without one, an
+    # "accepted", 0.4 s more. "release right B" would be wrong here.
+    pending = bench.run(100, b=True)
+    accepted = [Result(request.command_id, "accepted")]
+    pending += bench.step(b=True, results=accepted) + bench.run(20, b=True)
+    assert of(pending, (Stop, OwnerRequest)) == []
+    assert len(of(pending, HumanSetpoint)) == 121
+    assert notes(pending) == {NOTE_TAKE_OVER}
+
+
+def test_at_rest_with_loaded_jaws_the_note_names_their_opening_first():
+    # The robot app refuses a hand-back while the jaws may hold something.
+    assert logic_module._JAWS_LOADED == JawLoad.LOADED.value
+    assert len(NOTE_AT_REST_JAWS) <= NOTE_MAX_CHARS
+    assert NOTE_AT_REST_JAWS == (
+        "at rest: jaws not proven empty: at the console type stop, open, yes; "
+        "then hold right A for 1 s"
+    )
+    wanted = {
+        "loaded": NOTE_AT_REST_JAWS,
+        "empty": NOTE_AT_REST,
+        "unknown": NOTE_AT_REST,
+    }
+
+    # After a STOP at rest, with the takeover still open.
+    stopped = nobody(3, takeover_open=True, motion="rest_hold")
+    for load, note in wanted.items():
+        bench = Bench()
+        bench.state = with_jaws(stopped, load)
+        assert bench.status().note == note, load
+
+    # While the person owns the arm, back at rest after moving it.
+    at_rest = robot_state(motion="rest_hold")
+    for load, note in wanted.items():
+        bench = Bench()
+        bench.engage()
+        bench.state = with_jaws(at_rest, load)
+        assert setpoint(bench.step()).note == note, load
+
+    # Loaded jaws change no other note: before the arm was moved, away from
+    # rest, and with no takeover open.
+    bench = Bench()
+    bench.state = with_jaws(at_rest, "loaded")
+    assert setpoint(bench.step()).note == NOTE_SQUEEZE
+    bench.state = with_jaws(nobody(2, takeover_open=True), "loaded")
+    assert bench.status().note == NOTE_TAKE_OVER
+    bench.state = with_jaws(nobody(2, motion="rest_hold"), "loaded")
+    assert bench.status().note == NOTE_TAKE_OVER
+
+
+def test_the_note_says_release_a_while_a_is_down_with_no_press_that_can_ask():
+    assert NOTE_RELEASE_A == (
+        "release right A, then hold it for 1 s with the grip released "
+        "to give the arm back"
+    )
+    assert len(NOTE_RELEASE_A) <= NOTE_MAX_CHARS
+    # After a STOP at rest, with the takeover still open.
+    open_at_rest = nobody(3, takeover_open=True, motion="rest_hold")
+
+    def held_on(bench: Bench) -> None:
+        """A stays down for 3 s with the grip released; then a new press asks."""
+        held = bench.run(150, a=True)
+        assert of(held, (Stop, OwnerRequest)) == []
+        assert notes(held) == {NOTE_RELEASE_A}
+        assert bench.status().note == NOTE_AT_REST  # A is up
+        again = bench.run(51, a=True)
+        assert len(of(again, OwnerRequest)) == 1
+        assert notes(again) == {NOTE_AT_REST}
+
+    # The grip was squeezed as A went down: the press counts, and its hold
+    # asks for nothing, also once the grip is released.
+    bench = Bench()
+    bench.state = open_at_rest
+    bench.step(squeeze=1.0)
+    assert notes(bench.run(10, a=True, squeeze=1.0)) == {NOTE_RELEASE_A}
+    assert bench.logic.counts()["a_pressed"] == 1
+    held_on(bench)
+
+    # One squeezed pass in the middle of a hold that began with the grip
+    # released.
+    bench = Bench()
+    bench.state = open_at_rest
+    bench.step()
+    assert notes(bench.run(20, a=True)) == {NOTE_AT_REST}
+    bench.step(a=True, squeeze=1.0)
+    held_on(bench)
+
+    # One pass that is not fresh ends the hold, and A is still down.
+    bench = Bench()
+    bench.state = open_at_rest
+    bench.step()
+    assert notes(bench.run(30, a=True)) == {NOTE_AT_REST}
+    bench.step(a=True, **POSE_LOST)
+    held_on(bench)
+
+    # A is down as the first data arrive: no press that counts.
+    bench = Bench()
+    bench.state = open_at_rest
+    held_on(bench)
+    assert bench.logic.counts()["a_pressed"] == 1  # the new press alone
+
+    # A's last known reading stays over passes without known buttons.
+    bench = Bench()
+    bench.state = open_at_rest
+    bench.step()
+    bench.run(5, a=True)
+    assert notes(bench.run(10, a=True, age=None)) == {NOTE_RELEASE_A}
+    held_on(bench)
+
+    # While the person owns the arm, back at rest after moving it.
+    bench = Bench()
+    bench.engage()
+    bench.state = robot_state(motion="rest_hold")
+    assert setpoint(bench.step()).note == NOTE_AT_REST
+    bench.step(a=True, **POSE_LOST)
+    held_on(bench)
+
+    # Loaded jaws come first: their opening is the next step, A down or not.
+    bench = Bench()
+    bench.state = with_jaws(open_at_rest, "loaded")
+    assert notes(bench.run(20, a=True)) == {NOTE_AT_REST_JAWS}
+    bench.state = with_jaws(open_at_rest, "empty")  # opened at the console
+    held_on(bench)
+
+    # A that is down changes no other note: away from rest, with no takeover
+    # open, and before the arm was moved.
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True)
+    assert notes(bench.run(20, a=True)) == {NOTE_TAKE_OVER}
+    bench.state = nobody(3, motion="rest_hold")
+    assert notes(bench.run(20, a=True)) == {NOTE_TAKE_OVER}
+    bench.state = robot_state(motion="rest_hold")
+    assert notes(bench.run(20, a=True)) == {NOTE_SQUEEZE}
+
+
+def test_a_hold_of_a_that_can_ask_keeps_the_hand_back_note_until_its_result():
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True, motion="rest_hold")
+    bench.step()
+    held = bench.run(51, a=True)
+    [request] = of(held, OwnerRequest)
+    # A stays down while the RESULT is pending: 2 s without one, an
+    # "accepted", 0.4 s more. "release right A" would be wrong here.
+    pending = bench.run(100, a=True)
+    accepted = [Result(request.command_id, "accepted")]
+    pending += bench.step(a=True, results=accepted) + bench.run(20, a=True)
+    assert of(pending, (Stop, OwnerRequest)) == []
+    assert notes(held + pending) == {NOTE_AT_REST}
+
+
 def test_the_feeds_note_is_sent_while_the_stage_is_not_ready():
     text = "server did not answer at 127.0.0.1:47600"
     bench = Bench()
@@ -1786,15 +2003,21 @@ def test_a_long_note_is_cut_and_every_setpoint_stays_under_512_bytes():
     assert engaged.engaged and len(engaged.q) == N_JOINTS
     assert len(engaged.to_payload()) < 512
 
-    # The reason of a refusal and of an ended engagement are cut as well.
+    # The reason of a refusal is cut as well.
     refused = refused_handback(bench, long, age=age)
     assert refused.note == cut("handback refused: " + long)
     assert len(refused.to_payload()) < 512
 
+    # Behind "release the grip and squeeze again: " the reason is cut by
+    # itself: its first 40 characters, "..." and its last 21. The robot app
+    # removes that prefix from the note, so the prefix stays whole.
     bench.step(age=age)
     bench.solver.answer = lambda target, seed: IkStep(None, "IK jump: " + long)
     ended = setpoint(bench.step(squeeze=1.0, age=age))
-    assert ended.note == cut(NOTE_SQUEEZE_AGAIN + "IK jump: " + long)
+    why = "IK jump: " + long
+    assert ended.note == NOTE_SQUEEZE_AGAIN + why[:40] + NOTE_CUT + why[-21:]
+    assert ended.note.startswith(NOTE_SQUEEZE_AGAIN)
+    assert len(ended.note) <= NOTE_MAX_CHARS
     assert len(ended.to_payload()) < 512
 
     # The cut keeps what the robot app's refusals end with: what to do next.
@@ -1808,6 +2031,43 @@ def test_a_long_note_is_cut_and_every_setpoint_stays_under_512_bytes():
         note = refused_handback(bench, reason, age=age).note
         assert len(note) == 100 and note.endswith(remedy)
         assert note.startswith("handback refused: the arm is not at rest")
+
+
+def ended_by_the_thor(why: str) -> HumanSetpoint:
+    """The HUMAN_SETPOINT of the pass on which the Thor's reason ends an engagement."""
+    bench = Bench()
+    bench.engage()
+    bench.state = robot_state(needs_release=True, ended=why)
+    ended = setpoint(bench.step(squeeze=1.0))
+    assert (ended.engaged, ended.q) == (False, None)
+    return ended
+
+
+def test_a_long_reason_behind_squeeze_again_keeps_its_first_forty_characters():
+    # The Thor's reason for a joint target too far from the arm: 75 characters.
+    why = "the target is 0.123 rad from the arm on joint index 2, the limit is 0.1 rad"
+    ended = ended_by_the_thor(why)
+    assert ended.note == (
+        "release the grip and squeeze again: the target is 0.123 rad from the"
+        " arm on ... the limit is 0.1 rad"
+    )
+    assert ended.note == AGAIN + why[:40] + NOTE_CUT + why[-21:]
+    assert len(ended.note) == NOTE_MAX_CHARS and len(ended.to_payload()) < 512
+
+    # Behind the prefix there is room for 64 characters: a reason of 64 goes
+    # out whole, one of 65 does not.
+    letters = "abcdefghijklmnopqrstuvwxyz" * 3
+    whole = ended_by_the_thor(letters[:64]).note
+    assert whole == AGAIN + letters[:64] and len(whole) == NOTE_MAX_CHARS
+    shortened = ended_by_the_thor(letters[:65]).note
+    assert shortened == AGAIN + letters[:40] + NOTE_CUT + letters[44:65]
+    assert len(shortened) == NOTE_MAX_CHARS
+
+    # A character outside printable ASCII in the reason becomes "?".
+    odd = "caf\xe9: " + "the hand \N{RIGHTWARDS ARROW} the arm, " * 3 + "tab\there"
+    plain = "caf?: " + "the hand ? the arm, " * 3 + "tab?here"
+    assert ended_by_the_thor(odd).note == AGAIN + plain[:40] + NOTE_CUT + plain[-21:]
+    assert ended_by_the_thor("caf\xe9").note == AGAIN + "caf?"
 
 
 def test_a_note_goes_out_as_printable_ascii_and_stays_under_512_bytes():

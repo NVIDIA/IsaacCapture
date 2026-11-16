@@ -61,7 +61,8 @@ STOP_SENDER = "controller"
 
 # HUMAN_SETPOINT.note: what the operator does next, or why nothing moves.
 NOTE_TAKE_OVER = "hold right B for 1 s with the grip released to take over"
-# While right B is down with no press that counts: holding on asks for nothing.
+# While right B is down with no press that can ask: none that counts, or one
+# with the grip squeezed on a pass of it. Holding on asks for nothing.
 NOTE_RELEASE_B = (
     "release right B, then hold it for 1 s with the grip released to take over"
 )
@@ -69,9 +70,21 @@ NOTE_RELEASE_FIRST = "release the grip, then squeeze it to move"
 NOTE_SQUEEZE = "squeeze the grip to move"
 NOTE_SQUEEZE_AGAIN = "release the grip and squeeze again: "  # then why
 NOTE_AT_REST = "at rest: hold right A for 1 s to give the arm back"
+# In place of NOTE_AT_REST while right A is down with no press that can ask:
+# none that counts, or one with the grip squeezed on a pass of it.
+NOTE_RELEASE_A = (
+    "release right A, then hold it for 1 s with the grip released to give the arm back"
+)
+# In place of both while the ROBOT_STATE shows the jaws, the gripper's
+# fingers, as loaded: the robot app refuses that hand-back.
+NOTE_AT_REST_JAWS = (
+    "at rest: jaws not proven empty: at the console type stop, open, yes; "
+    "then hold right A for 1 s"
+)
 # A note goes out as printable ASCII of at most this many characters, which
 # keeps every HUMAN_SETPOINT under 512 bytes. A longer one loses its middle:
-# a refusal ends with what to do about it.
+# a refusal ends with what to do about it. The reason behind
+# NOTE_SQUEEZE_AGAIN is cut by itself, so that its own first characters stay.
 NOTE_MAX_CHARS = 100
 NOTE_CUT = "..."
 _NOTE_TAIL = 57  # as long as the longest remedy the robot app writes
@@ -107,6 +120,7 @@ _STAGE_READY = "ready"
 _OWNER_HUMAN = "human"
 _STOP_LEVEL_NONE = "none"
 _MOTION_REST_HOLD = "rest_hold"
+_JAWS_LOADED = "loaded"  # ROBOT_STATE.gripper.load: the jaws may hold something
 # RESULT.status of a command that goes on, and of one that was done.
 _ACCEPTED = "accepted"
 _COMPLETED = "completed"
@@ -184,6 +198,10 @@ class _Button:
         self.asked = False
         return True
 
+    def clean(self) -> bool:
+        """A press that counts is on, with the grip released on each pass of it."""
+        return self.pressed_at is not None and self._clean
+
     def held(self, now_mono: float, hold_s: float) -> bool:
         """The press lasted hold_s with the grip released and has not asked yet."""
         return (
@@ -224,6 +242,7 @@ class HumanLogic:
         # Right B on the last pass with known buttons. While it is down, the
         # STOP of its stretch went out.
         self._b_down = False
+        self._a_down = False  # right A on the last pass with known buttons
         self._known_at: float | None = None  # the last pass with known buttons
         # (session id, stop number) of the ROBOT_STATE at right B's last STOP.
         self._b_stop: tuple[str, int] | None = None
@@ -415,6 +434,7 @@ class HumanLogic:
             self._counts["b_pressed"] += 1
             self._every_pass = True
         if p.known:
+            self._a_down = bool(step.a)
             b_down = bool(step.b)
             known_at, self._known_at = self._known_at, p.now_mono
             if known_at is not None and p.now_mono - known_at > _STRETCH_KEEP_S + _EPS:
@@ -623,7 +643,9 @@ class HumanLogic:
         if p.owns and self._engaged:
             return ""
         if p.owns and self._ended:
-            return NOTE_SQUEEZE_AGAIN + self._ended
+            # The prefix stays whole: the reason alone is cut to what is left.
+            room = NOTE_MAX_CHARS - len(NOTE_SQUEEZE_AGAIN)
+            return NOTE_SQUEEZE_AGAIN + _cut(self._ended, room)
         if self._refusal is not None:
             return self._refusal[1]
         if p.feed.stage != _STAGE_READY:
@@ -631,9 +653,9 @@ class HumanLogic:
         at_rest = state.motion == _MOTION_REST_HOLD
         if not p.owns:
             if p.takeover_open and at_rest:
-                return NOTE_AT_REST
-            # B is down with no press that counts: its hold asks for nothing.
-            waiting = self._b_down and self._b.pressed_at is None
+                return self._give_back(state)
+            # B is down with no press that can ask: its hold asks for nothing.
+            waiting = self._b_down and not self._b.clean()
             return NOTE_RELEASE_B if waiting else NOTE_TAKE_OVER
         if gate is not None:
             key, why = gate
@@ -644,18 +666,29 @@ class HumanLogic:
         if p.squeezed:
             return NOTE_RELEASE_FIRST
         # Before the arm was moved, the next step is the squeeze, also at rest.
-        return NOTE_AT_REST if at_rest and self._moved else NOTE_SQUEEZE
+        return self._give_back(state) if at_rest and self._moved else NOTE_SQUEEZE
+
+    def _give_back(self, state: RobotState) -> str:
+        """The note at rest with a takeover open: the hand-back's next step."""
+        if state.gripper.load == _JAWS_LOADED:
+            return NOTE_AT_REST_JAWS  # the jaws' opening comes first
+        # A is down with no press that can ask: its hold asks for nothing.
+        waiting = self._a_down and not self._a.clean()
+        return NOTE_RELEASE_A if waiting else NOTE_AT_REST
 
 
-def _cut(text: str) -> str:
-    """text as a note: printable ASCII of at most NOTE_MAX_CHARS characters.
+def _cut(text: str, limit: int = NOTE_MAX_CHARS) -> str:
+    """text as a note: printable ASCII of at most limit characters.
 
-    Any other character becomes "?"; a longer text loses its middle.
+    Any other character becomes "?". A longer text loses its middle: its first
+    _NOTE_HEAD characters stay, then NOTE_CUT, then as much of its end as
+    fits. limit is at least the length of those two.
     """
     text = "".join(char if " " <= char <= "~" else "?" for char in text)
-    if len(text) <= NOTE_MAX_CHARS:
+    if len(text) <= limit:
         return text
-    return text[:_NOTE_HEAD] + NOTE_CUT + text[-_NOTE_TAIL:]
+    tail = limit - _NOTE_HEAD - len(NOTE_CUT)
+    return text[:_NOTE_HEAD] + NOTE_CUT + text[len(text) - tail :]
 
 
 def _shown(state: RobotState | None) -> tuple[Any, ...] | None:
