@@ -83,7 +83,7 @@ ASK_HANDBACK = (
     f'the jaws empty. Type "{YES}" to hand back: '
 )
 # ROBOT_STATE.motion with the arm at rest: a shutdown then moves nothing.
-AT_REST = ("rest_hold", "rest_unpowered")
+AT_REST = ("rest_hold", "rest_unpowered", "release_failed")
 # The OWNER_REQUEST each typed fallback sends, and the reason it carries.
 TYPED_REQUESTS = {"takeover": REQUEST_HUMAN, "handback": REQUEST_HANDBACK}
 TYPED_REASON = "typed at the operator console"
@@ -507,11 +507,14 @@ def state_text(state: RobotState) -> str:
     wait = state.assistance_wait_s
     fault = f" ({state.fault_reason})" if state.fault_reason else ""
     move = f", move {state.move_index}/{state.move_total}" if state.move_id else ""
+    torque = "on" if state.torque_on else "off"
+    if state.motion == "release_failed":  # the motors may be on or off
+        torque = "unknown"
     return (
         f"ROBOT_STATE: control owner {state.owner} (owner number "
         f"{state.owner_number}), stop number {state.stop_number}, stop level "
         f"{state.stop_level}{fault}, motion {state.motion}{move}, jaws "
-        f"{state.gripper.load}, torque {'on' if state.torque_on else 'off'}, "
+        f"{state.gripper.load}, torque {torque}, "
         f"assistance wait {f'{wait:.0f} s left' if wait is not None else 'none'}"
     )
 

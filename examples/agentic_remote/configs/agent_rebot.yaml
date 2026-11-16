@@ -124,6 +124,14 @@ experiment:
   codex_bin: ${AGENTIC_REMOTE_ENV_DIR}/codex/node_modules/.bin/codex
   # The rig runs on the experiment's grid bridge; clear is refused with the full stack.
   grid: bridge
+  # Two recordings of the experiment, on as in its own launcher. timing: how long
+  # each step of a task took (timing.jsonl in the run folder; timing-report.txt and
+  # timeline.html when the program ends); --no-timing switches it off for one run,
+  # and --record-debug needs it. model_trace: every request to the model and its
+  # answer, with the pictures sent (model-trace/ in the run folder). Neither has
+  # run on the workstation against the real arm yet; false switches one off.
+  timing: true
+  model_trace: true
 
 # Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
 # configs/thor_operation.yaml (lines 6 to 18); that file extends a path that

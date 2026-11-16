@@ -37,6 +37,13 @@ STACKS = (STACK_MINIMAL, STACK_FULL)
 GRID_BRIDGE = "bridge"
 GRID_CLEAR = "clear"
 GRIDS = (GRID_BRIDGE, GRID_CLEAR)
+# --motion-approval, as the experiment's own launcher names it: one typed yes
+# per task, or one per motion tool. The task gate asks once per task.
+APPROVAL_TASK = "task"
+APPROVAL_TOOL = "tool"
+APPROVALS = (APPROVAL_TASK, APPROVAL_TOOL)
+# The debug recording's size on disk without --debug-max-gib, in GiB.
+DEBUG_MAX_GIB = 16.0
 LOG_LEVELS = ("debug", "info", "warning", "error")
 # The camera a run uses: the camera connection, APAI's mock camera, or a
 # folder of recorded stereo pairs ("recorded:<folder>").
@@ -215,6 +222,27 @@ class ExperimentSettings:
     # GRID_CLEAR puts the clear grid in place of a grid bridge: no move is
     # checked against obstacles. The minimal stack and a simulated driver only.
     grid: str = GRID_BRIDGE
+    # The experiment's timing of a run, and its transcript of the model's
+    # requests and answers. Read by the full stack only.
+    timing: bool = True
+    model_trace: bool = True
+
+
+@dataclass(frozen=True)
+class RunOptions:
+    """What one run takes of the experiment's own launcher; nothing by default.
+
+    timing and model_trace are the experiment's two sessions around a run.
+    record_debug is its debug recording, at most debug_max_gib GiB on disk.
+    batch_milestones makes one model request of the milestones (the steps the
+    agent splits a task into) that are checked on one camera frame.
+    """
+
+    timing: bool = False
+    model_trace: bool = False
+    record_debug: bool = False
+    debug_max_gib: float = DEBUG_MAX_GIB
+    batch_milestones: bool = False
 
 
 @dataclass(frozen=True)
@@ -470,6 +498,63 @@ def _joint_counts(rig: RigSettings) -> dict[str, int]:
     return counts
 
 
+def run_options(
+    settings: AgentSettings,
+    *,
+    motion_approval: str = APPROVAL_TASK,
+    batch_milestones: bool = False,
+    no_timing: bool = False,
+    record_debug: bool = False,
+    debug_max_gib: float | None = None,
+) -> RunOptions:
+    """The RunOptions of a run from its arguments; ConfigError when refused.
+
+    The four arguments of the experiment's modules need the full stack. With
+    it the timing and the model transcript are on as the file says, and the
+    debug recording needs the timing.
+    """
+    if motion_approval != APPROVAL_TASK:
+        raise ConfigError(
+            f"--motion-approval {motion_approval} is not built: the agent program "
+            f"asks for one typed yes per task (--motion-approval {APPROVAL_TASK}), "
+            "before the task's first motion tool"
+        )
+    given = [
+        name
+        for name, on in (
+            ("--batch-milestones", batch_milestones),
+            ("--no-timing", no_timing),
+            ("--record-debug", record_debug),
+            ("--debug-max-gib", debug_max_gib is not None),
+        )
+        if on
+    ]
+    if settings.minimal:
+        if given:
+            raise ConfigError(
+                f"{', '.join(given)} {'needs' if len(given) == 1 else 'need'} "
+                f"experiment.stack {STACK_FULL} (it is {STACK_MINIMAL}): the "
+                "minimal stack loads none of the experiment's modules"
+            )
+        return RunOptions()
+    size = DEBUG_MAX_GIB if debug_max_gib is None else debug_max_gib
+    if not _is_number(size) or size <= 0:
+        raise ConfigError(
+            f"--debug-max-gib must be a finite number above 0, not {size!r}"
+        )
+    timing = settings.experiment.timing and not no_timing
+    if record_debug and not timing:
+        how = "omit --no-timing" if no_timing else "set experiment.timing to true"
+        raise ConfigError(f"--record-debug needs the timing; {how}")
+    return RunOptions(
+        timing=timing,
+        model_trace=settings.experiment.model_trace,
+        record_debug=record_debug,
+        debug_max_gib=float(size),
+        batch_milestones=batch_milestones,
+    )
+
+
 def check_joint_count(settings: AgentSettings, joints: int) -> None:
     """ConfigError when a per-joint list of the rig is not of the arm's joints."""
     for name, count in _joint_counts(settings.rig).items():
@@ -686,11 +771,13 @@ def build_apai_config(
     *,
     camera: str = CAMERA_LINK,
     environ: Mapping[str, str] | None = None,
+    batch_milestones: bool = False,
 ) -> Any:
     """APAI's configuration (a Cfg) for this run; ConfigError when refused.
 
     Writes arm_profile.yaml and, for a stereo camera, camera_profile.yaml into
-    the run folder. Nothing is connected or started.
+    the run folder. Nothing is connected or started. batch_milestones sets
+    the experiment's key thor_batch_milestones, which the launcher reads.
     """
     refused_environment(environ)
     kind, recorded = camera_kind(camera)
@@ -725,6 +812,8 @@ def build_apai_config(
                 store_folder(settings) / "experience.json"
             )
         _refuse(data, views, settings)
+        if batch_milestones:
+            data["thor_batch_milestones"] = True
     except ConfigError:
         raise
     except Exception as problem:

@@ -34,7 +34,9 @@ experiment:
   # APAI's own mock arm profile, mock detector and mock model. The check ahead (the
   # program's check, on the obstacle grid, of setpoints the robot app has not sent
   # yet) computes APAI's mock arm model, so the robot app must declare a simulated
-  # driver.
+  # driver. The minimal stack loads none of the experiment's modules: the program
+  # refuses --batch-milestones, --record-debug, --debug-max-gib and --no-timing
+  # with this file, and records neither a timing nor a model transcript.
   stack: minimal
   # The clear grid: a stand-in for the grid bridge that reports nothing near. APAI's
   # obstacle map, the check ahead and the PERMITs (the link messages that say how far

@@ -48,6 +48,9 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.arm_adapter")
 ARM_TYPE = "robot_link"
 # The sender of a STOP made by stop() outside a skill: a person's STOP.
 AGENT_TERMINAL = "agent_terminal"
+# The sender of a STOP the adapter makes itself: the agent's own, not a
+# person's (AGENT_SENDER in stop.py).
+AGENT_SENDER = "agent"
 # The two CHECKER_STATE actions (CLOSE_GRASP, CLEAR_CONTACT_SPOTS in app.py).
 CLOSE_GRASP = "close_grasp"
 CLEAR_CONTACT_SPOTS = "clear_contact_spots"
@@ -904,7 +907,12 @@ class RobotLinkArm:
         return float(last) if _is_number(last) else None
 
     def _jaw(self, opening: float, effort: float, mode: str) -> Result:
-        """Send one GRIPPER and wait for its final RESULT."""
+        """Send one GRIPPER and wait for its final RESULT.
+
+        Without one in result_timeout_s the adapter gives up and sends a STOP,
+        also inside skill_scope(): the robot app then starts nothing of the
+        command, and holds the jaws lightly where a running one left them.
+        """
         timeout_s = self._settings.result_timeout_s
         effort = min(1.0, max(0.0, float(effort)))
         try:
@@ -916,8 +924,12 @@ class RobotLinkArm:
             raise RobotLinkError(str(error)) from error
         except CommandTimeout:
             self._stopped = True
+            self._link.stop(
+                f"the agent gave up on a jaw command: no RESULT within {timeout_s:g} s",
+                AGENT_SENDER,
+            )
             raise RobotLinkError(
-                f"no RESULT for the jaw command within {timeout_s:g} s"
+                f"no RESULT for the jaw command within {timeout_s:g} s; a STOP was sent"
             ) from None
 
     def _await_later_states(self) -> None:

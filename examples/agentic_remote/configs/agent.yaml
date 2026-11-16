@@ -128,6 +128,14 @@ experiment:
   codex_bin: ""
   # clear: a stand-in with nothing near replaces the grid bridge; simulated driver only.
   grid: bridge
+  # Two recordings of the experiment, which its own launcher runs by default; read
+  # by the full stack only. timing: how long each step of a task took (timing.jsonl
+  # in the run folder; timing-report.txt and timeline.html when the program ends);
+  # --no-timing switches it off for one run, and --record-debug needs it.
+  # model_trace: every request to the model and its answer, with the pictures
+  # sent (model-trace/ in the run folder).
+  timing: true
+  model_trace: true
 
 # Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
 # configs/thor_operation.yaml (lines 6 to 18); that file extends a path that

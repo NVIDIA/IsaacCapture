@@ -503,9 +503,13 @@ class AgentLink:
     ) -> Result:
         """GRIPPER with the pinned numbers; blocks until its final RESULT.
 
-        RuntimeError without a pin; LinkLost; CommandTimeout.
+        It expires timeout_s from now on the Thor's monotonic clock, so the
+        robot app starts nothing of it once this wait has ended. RuntimeError
+        without a pin; LinkLost; CommandTimeout; StaleState before the first
+        ROBOT_STATE.
         """
         pinned = self._need_pin("GRIPPER")
+        mono, _ = self.thor_now()
         command_id = self.new_id()
         self._send(
             Gripper(
@@ -514,6 +518,7 @@ class AgentLink:
                 opening=float(opening),
                 max_effort=float(max_effort),
                 mode=mode,
+                expires_mono_s=mono + float(timeout_s),
             )
         )
         return self._take_final(command_id, timeout_s)

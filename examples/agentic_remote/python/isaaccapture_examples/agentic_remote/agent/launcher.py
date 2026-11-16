@@ -37,10 +37,10 @@ from unittest.mock import patch
 
 from ..console_log import set_console_level
 from . import config as agent_config
-from .arm_adapter import AGENT_TERMINAL, ARM_TYPE, arm_factory
+from .arm_adapter import AGENT_TERMINAL, ARM_TYPE, RobotLinkArm, arm_factory
 from .checkahead import CheckAhead, FrameTimes
 from .clear_grid import ClearGrid
-from .config import AgentSettings, ConfigError
+from .config import AgentSettings, ConfigError, RunOptions
 from .link_client import AgentLink, LinkLost, StaleState
 from .self_mask import EXPERIMENT_DIR_ENV, JointFeed, experiment_module, frame_context
 from .task_gate import READ_ONLY_TOOLS, REST_SKILL, TaskGate
@@ -192,12 +192,16 @@ def agent_hooks(
     invented_times: bool = False,
     say: Say = _say,
     task_input: Callable[[str], str] = terminal_input,
+    timing: Any = None,
 ) -> Iterator[dict[str, Any]]:
     """APAI's demo.main, while this is open, runs on the robot link.
 
     Yields a dict the hooks fill: "runtime", "adapter", "harness", "grid";
     "invented_times" is there from the start. Only with invented_times does a
     camera frame that did not come over the camera link get an evidence time.
+    timing is the recorder of the experiment's timing, which then times the
+    wait for each task line. With thor_batch_milestones in cfg the agent gets
+    the experiment's milestone batching.
     """
     from apai.agent import orchestrator
     from apai.apps import demo
@@ -307,6 +311,8 @@ def agent_hooks(
 
     def make_agent(*args: Any, **kwargs: Any) -> Any:
         agent = original_agent(*args, **kwargs)
+        if cfg.get("thor_batch_milestones", False):
+            _batched_milestones()(agent)
         agent.run_task = gate.bind_run_task(agent.run_task)
         if full:
             agent._base_system_prompt += "\n" + experiment["guidance"]
@@ -334,6 +340,10 @@ def agent_hooks(
         if task_input is terminal_input:
             return terminal_input(prompt, idle=gate.return_late_ownership)
         return task_input(prompt)
+
+    if timing is not None:
+        # The span the experiment's timing gives the wait for a task line.
+        next_task = timing.wrap(next_task, "operator.terminal_input", "Operator")
 
     try:
         stereo_camera.register_camera(link, frame_times, source)
@@ -464,6 +474,108 @@ def _record_experiment_files(run_dir: Path) -> None:
         _log.warning("experiment-files.json was not written: %s", problem)
 
 
+def _batched_milestones() -> Callable[[Any], None]:
+    """The experiment's install_batched_milestones(agent)."""
+    return experiment_module("thor_milestones").install_batched_milestones
+
+
+class _TimedParts:
+    """What the experiment's timing takes in place of its own launcher's module.
+
+    It times that module's Admission.execute as the tools of a task and its
+    operator_answer as the wait for the typed yes. Here they are the task
+    gate's execute and the program's question.
+    """
+
+    Admission = TaskGate
+
+    def __init__(self, ask: Callable[[str], str]) -> None:
+        self.operator_answer = ask
+
+
+# Spans (timed stretches) the experiment's timing takes from its motor arm and
+# its camera, which this program does not build. The robot link arm and the
+# link's stereo camera give them under the same names: (method, span, category).
+_ARM_SPANS = (
+    ("stream_to", "motor.stream_to", "Execution"),
+    ("close_gripper_two_stage", "gripper.close_two_stage", "Execution"),
+)
+_CAMERA_SPANS = (("_grab", "camera.pair_wait_read_depth", "Look"),)
+
+
+def _link_spans(stack: ExitStack, timing: Any) -> None:
+    """Time _ARM_SPANS and _CAMERA_SPANS until the stack closes."""
+    from .camera import stereo_camera
+
+    for owner, spans in (
+        (RobotLinkArm, _ARM_SPANS),
+        (stereo_camera.LinkStereoCamera, _CAMERA_SPANS),
+    ):
+        for method, name, category in spans:
+            measured = timing.wrap(getattr(owner, method), name, category)
+            stack.enter_context(patch.object(owner, method, measured))
+            timing.hooks.append(f"{owner.__module__}.{owner.__name__}.{method}")
+
+
+@contextmanager
+def experiment_sessions(
+    options: RunOptions, run_dir: Path, ask: Callable[[str], str]
+) -> Iterator[tuple[Callable[[str], str], Any]]:
+    """The experiment's recordings around a run, in its own launcher's order.
+
+    The timing, then the model transcript, then the debug recording, each
+    only when its option is on; they end in the reverse order. Yields the
+    question the task gate asks with, which is timed while the timing runs,
+    and the timing's recorder or None.
+    """
+    parts = _TimedParts(ask)
+    timing = None
+    with ExitStack() as stack:
+        if options.batch_milestones:
+            _batched_milestones()  # missing: said before anything is attached
+        if options.timing:
+            session = experiment_module("thor_timing").timing_session
+            timing = stack.enter_context(session(run_dir, runtime_module=parts))
+            if timing is not None:
+                _link_spans(stack, timing)
+        if options.model_trace:
+            session = experiment_module("thor_model_trace").model_trace_session
+            stack.enter_context(session(run_dir, timing_recorder=timing))
+        if options.record_debug:
+            session = experiment_module("thor_recording").recording_session
+            limit = int(options.debug_max_gib * 1024**3)
+            stack.enter_context(session(run_dir, max_bytes=limit))
+        yield parts.operator_answer, timing
+
+
+def _option_lines(options: RunOptions, run_dir: Path) -> list[str]:
+    """What this run records, and what it cannot; said at the start."""
+    lines = []
+    if options.timing:
+        lines.append(
+            f"timing: {run_dir / 'timing.jsonl'}; timing-report.txt and "
+            "timeline.html are written when the program ends. Not timed here: "
+            "the motor reads and sends and the camera's capture, which run on "
+            "the Thor. A move is timed from its MOVE to its final RESULT"
+        )
+    if options.model_trace:
+        lines.append(f"model transcript: {run_dir / 'model-trace' / 'report.txt'}")
+    if options.record_debug:
+        lines.append(
+            f"debug recording: {run_dir / 'debug'}, at most "
+            f"{options.debug_max_gib:g} GiB. Not recorded here: the motor "
+            "feedback and the motor commands (robot.feedback, robot.call, "
+            "robot.return, mask.state_source), which are the robot app's on the "
+            "Thor. The camera frames in it are the ones APAI took on this machine"
+        )
+    if options.batch_milestones:
+        lines.append(
+            "milestone batching: one model request for the milestones that are "
+            "checked on one camera frame"
+        )
+    return lines
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m isaaccapture_examples.agentic_remote.agent",
@@ -496,6 +608,50 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--run-dir", default=None, metavar="PATH", help="this run's folder"
+    )
+    parser.add_argument(
+        "--motion-approval",
+        default=agent_config.APPROVAL_TASK,
+        choices=agent_config.APPROVALS,
+        help="task (default): one typed yes before the first motion tool of "
+        "each task, which is what the program does. tool is not built",
+    )
+    # Two arguments of the experiment's launcher, so that its command line can
+    # be reused: both name what this program does anyway.
+    parser.add_argument(
+        "--operate",
+        action="store_true",
+        help="accepted and ignored: the program always asks before it moves",
+    )
+    parser.add_argument(
+        "--depth-backend",
+        choices=("ffs",),
+        help="accepted and ignored: the stereo matcher is camera.depth_backend",
+    )
+    parser.add_argument(
+        "--batch-milestones",
+        action="store_true",
+        help="full stack: the experiment's milestone batching, one model "
+        "request for the milestones that are checked on one camera frame",
+    )
+    parser.add_argument(
+        "--no-timing",
+        action="store_true",
+        help="full stack: run without the experiment's timing",
+    )
+    parser.add_argument(
+        "--record-debug",
+        action="store_true",
+        help="full stack: the experiment's debug recording (obstacle map "
+        "inputs, masks, map revisions) in the run folder; needs the timing",
+    )
+    parser.add_argument(
+        "--debug-max-gib",
+        type=float,
+        default=None,
+        metavar="GIB",
+        help="the debug recording's size on disk at which it stops (default "
+        f"{agent_config.DEBUG_MAX_GIB:g})",
     )
     parser.add_argument(
         "--log-level",
@@ -533,10 +689,13 @@ def _state_folder(settings: AgentSettings) -> None:
         ignore.write_text("*\n", encoding="utf-8")
 
 
-def _check(settings: AgentSettings, camera: str, say: Say) -> int:
+def _check(settings: AgentSettings, options: RunOptions, camera: str, say: Say) -> int:
     with tempfile.TemporaryDirectory(prefix="agentic-remote-check-") as folder:
-        cfg = agent_config.build_apai_config(settings, folder, camera=camera)
+        cfg = agent_config.build_apai_config(
+            settings, folder, camera=camera, batch_milestones=options.batch_milestones
+        )
         report = agent_config.summary(settings, cfg, camera)
+    report["run_options"] = asdict(options)
     say(json.dumps(report, indent=2, default=str))
     return EXIT_OK
 
@@ -596,6 +755,18 @@ def _check_arguments(args: argparse.Namespace) -> None:
         raise ConfigError(f"--max-steps must be at least 1, not {args.max_steps}")
 
 
+def _run_options(args: argparse.Namespace, settings: AgentSettings) -> RunOptions:
+    """What the run takes of the experiment's launcher; ConfigError when refused."""
+    return agent_config.run_options(
+        settings,
+        motion_approval=args.motion_approval,
+        batch_milestones=args.batch_milestones,
+        no_timing=args.no_timing,
+        record_debug=args.record_debug,
+        debug_max_gib=args.debug_max_gib,
+    )
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -616,6 +787,7 @@ def main(
     try:
         _check_arguments(args)
         settings = agent_config.load_settings(args.config)
+        options = _run_options(args, settings)
         invented = agent_config.invented_times(settings, args.camera)
         agent_config.refused_environment()
         caches = agent_config.experiment_caches(settings)
@@ -626,7 +798,9 @@ def main(
     # own folder. Taken back at the end: a test runs main() again.
     os.environ.update(caches)
     try:
-        return _program(args, settings, invented, attach, ask, say, source, task_input)
+        return _program(
+            args, settings, options, invented, attach, ask, say, source, task_input
+        )
     finally:
         for name in caches:
             os.environ.pop(name, None)
@@ -635,6 +809,7 @@ def main(
 def _program(
     args: argparse.Namespace,
     settings: AgentSettings,
+    options: RunOptions,
     invented: bool,
     attach: Callable[..., AgentLink] | None,
     ask: Callable[[str], str],
@@ -652,16 +827,25 @@ def _program(
         return EXIT_NOT_RUN
     try:
         if args.check:
-            return _check(settings, args.camera, lambda text: print(text, flush=True))
+            return _check(
+                settings, options, args.camera, lambda text: print(text, flush=True)
+            )
         _state_folder(settings)
         agent_config.redirect_apai_stores(settings)
         run_dir = _run_folder(settings, args.run_dir)
-        cfg = agent_config.build_apai_config(settings, run_dir, camera=args.camera)
+        cfg = agent_config.build_apai_config(
+            settings,
+            run_dir,
+            camera=args.camera,
+            batch_milestones=options.batch_milestones,
+        )
         calibration = agent_config.calibration_id(settings, args.camera)
     except (ConfigError, OSError) as problem:
         _complain(str(problem))
         return EXIT_NOT_RUN
     agent_config.write_json(run_dir / "agent-settings.json", settings.as_dict())
+    if options != RunOptions():
+        agent_config.write_json(run_dir / "run-options.json", asdict(options))
     say(f"run folder {run_dir}; camera calibration {calibration or '(unnamed)'}")
     if invented:
         say(
@@ -679,6 +863,62 @@ def _program(
             "declares a simulated driver"
         )
 
+    for line in _option_lines(options, run_dir):
+        say(line)
+    # The recordings stand around the whole robot connection: a STOP and the
+    # close of the link come before any of them writes its report.
+    code = EXIT_FAILED
+    try:
+        with ExitStack() as sessions:
+            try:
+                recordings = experiment_sessions(options, run_dir, ask)
+                ask, timing = sessions.enter_context(recordings)
+            except Exception as problem:
+                _log.debug("the recordings did not start", exc_info=True)
+                _complain(
+                    "the experiment's recordings cannot start "
+                    f"({type(problem).__name__}: {problem}); nothing was attached"
+                )
+                return EXIT_NOT_RUN
+            code = _drive(
+                demo,
+                args,
+                settings,
+                (cfg, run_dir, calibration, invented),
+                attach,
+                ask,
+                say,
+                source,
+                task_input,
+                timing,
+            )
+    except Exception as problem:
+        _log.debug("a recording did not end", exc_info=True)
+        _complain(
+            "a recording of this run did not end as it should: "
+            f"{type(problem).__name__}: {problem}"
+        )
+    return code
+
+
+def _drive(
+    demo: Any,
+    args: argparse.Namespace,
+    settings: AgentSettings,
+    run: tuple[Any, Path, str, bool],
+    attach: Callable[..., AgentLink] | None,
+    ask: Callable[[str], str],
+    say: Say,
+    source: Any,
+    task_input: Callable[[str], str],
+    timing: Any,
+) -> int:
+    """Attach to the robot link service, run APAI's command line, close the link.
+
+    run is (APAI's configuration, the run folder, the camera calibration's
+    name, whether the camera's capture times are invented).
+    """
+    cfg, run_dir, calibration, invented = run
     link: AgentLink | None = None
     gate: TaskGate | None = None
     code, settled = EXIT_FAILED, True
@@ -742,6 +982,7 @@ def _program(
             invented_times=invented,
             say=say,
             task_input=task_input,
+            timing=timing,
         ):
             status = demo.main(arguments)
         if status == 0 and not gate.restart_told and not gate.wrong_robot_app:
