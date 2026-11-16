@@ -126,6 +126,8 @@ experiment:
   # stack; a path. Empty: the one the experiment's own file names, inside the
   # experiment folder. One that names no program that can be run is refused.
   codex_bin: ""
+  # clear: a stand-in with nothing near replaces the grid bridge; simulated driver only.
+  grid: bridge
 
 # Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
 # configs/thor_operation.yaml (lines 6 to 18); that file extends a path that

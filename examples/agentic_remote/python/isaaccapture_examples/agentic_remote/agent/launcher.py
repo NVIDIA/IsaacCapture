@@ -39,6 +39,7 @@ from ..console_log import set_console_level
 from . import config as agent_config
 from .arm_adapter import AGENT_TERMINAL, ARM_TYPE, arm_factory
 from .checkahead import CheckAhead, FrameTimes
+from .clear_grid import ClearGrid
 from .config import AgentSettings, ConfigError
 from .link_client import AgentLink, LinkLost, StaleState
 from .self_mask import EXPERIMENT_DIR_ENV, JointFeed, experiment_module, frame_context
@@ -268,9 +269,10 @@ def agent_hooks(
                 output, low, high, device="cuda:0", target_retirement=True
             ).start()
             selected._data["occupancy"].update(host="127.0.0.1", port=bridge.port)
-        runtime, raw = original_build(
-            selected, output, lazy_arm=False, view=False, serve=False
-        )
+        with _grid_client(settings):
+            runtime, raw = original_build(
+                selected, output, lazy_arm=False, view=False, serve=False
+            )
         # From here demo.main owns the runtime; a failure below tears it down.
         try:
             safe = runtime.arm
@@ -369,6 +371,24 @@ def agent_hooks(
         if bridge is not None:
             bridge.close()
         _record_experiment_files(run_dir)
+
+
+@contextmanager
+def _grid_client(settings: AgentSettings) -> Iterator[None]:
+    """While open, APAI makes the client of its obstacle map as the file says.
+
+    With the minimal stack and experiment.grid clear that client is ClearGrid,
+    the stand-in that reports nothing near; else APAI's own, which dials a grid
+    bridge. The map itself, the check ahead and the PERMITs are the same.
+    """
+    clear = settings.experiment.grid == agent_config.GRID_CLEAR
+    if not (settings.minimal and clear):
+        yield
+        return
+    from apai.perception import occupancy
+
+    with patch.object(occupancy, "OccupancyClient", ClearGrid):
+        yield
 
 
 def _experiment_parts() -> dict[str, Any]:
@@ -649,6 +669,13 @@ def _program(
             "capture times (camera.allow_invented_times is true): a permit rests "
             "on evidence that nobody captured. For a simulated or mock arm only, "
             "never against a real arm: the program ends unless the robot app "
+            "declares a simulated driver"
+        )
+    if settings.experiment.grid == agent_config.GRID_CLEAR:
+        say(
+            "WARNING: experiment.grid is clear: the obstacle grid is a stand-in "
+            "with nothing near; no move is checked against obstacles. For a "
+            "simulated or mock arm only: the program ends unless the robot app "
             "declares a simulated driver"
         )
 

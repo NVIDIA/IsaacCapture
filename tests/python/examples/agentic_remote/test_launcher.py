@@ -46,8 +46,14 @@ EXAMPLE = Path(agent_config.__file__).resolve().parents[4]
 PACKAGE = Path(agent_config.__file__).resolve().parents[1]
 AGENT = PACKAGE / "agent"
 SHIPPED = EXAMPLE / "configs" / "agent.yaml"
-# The agent program's own files (unit F).
-PROGRAM_FILES = ("config.py", "task_gate.py", "launcher.py", "__main__.py")
+# The agent program's own files (unit F), and the clear grid's.
+PROGRAM_FILES = (
+    "config.py",
+    "task_gate.py",
+    "launcher.py",
+    "__main__.py",
+    "clear_grid.py",
+)
 # The agent's joint speed in the runs, in rad/s: the mock profile's cap.
 SPEED = 1.2
 # Tasks APAI's reflex tier turns into one skill, without a model.
@@ -784,15 +790,21 @@ def scene_robot_config() -> Any:
 def make_stage(
     make_realtime_apai: Callable[..., Any], tmp_path: Path
 ) -> Iterator[Callable[..., Stage]]:
-    """make_stage(**app_options): a Stage; driver= is what its WELCOME declares."""
+    """make_stage(config=None, **app_options): a Stage.
+
+    config is the robot app's configuration, scene_robot_config() when None;
+    driver= is what its WELCOME declares.
+    """
     import test_apai_app
     from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
 
-    def make(**app_options: Any) -> Stage:
+    def make(config: Any = None, **app_options: Any) -> Stage:
         # Started at rest, so the jaws are referenced; then put off the joint
         # stops, holding, where APAI's checker lets the arm move.
         harness = make_realtime_apai(
-            config=scene_robot_config(), connected=False, **app_options
+            config=scene_robot_config() if config is None else config,
+            connected=False,
+            **app_options,
         )
         harness.spy.backend._q[:] = test_apai_app.RAISED
         harness.app._motion.set(MotionState.HOLD)
@@ -1021,7 +1033,7 @@ def ended_before_any_task(stage: Stage, driver: str) -> None:
     assert f"driver {shown}, session" in stage.said("robot connection up")[0]
     assert stage.order == ["close:nobody"] and stage.asked == []
     assert stage.h.heard("owner") == [] and stage.h.spy.targets == []
-    assert not stage.said("obstacle grid")  # APAI's runtime was not built
+    assert not stage.said("obstacle grid: ")  # APAI's runtime was not built
     assert not (stage.run_dir / "task-reports.jsonl").exists()
 
 
@@ -1198,6 +1210,243 @@ def test_what_the_declared_driver_allows(tmp_path: Path) -> None:
                 check(settings, driver, True)
         with pytest.raises(ConfigError, match=r"experiment\.stack is minimal"):
             check(minimal, driver, False)
+
+
+# The clear grid (experiment.grid): a stand-in for the grid bridge, the program
+# that keeps the obstacle grid, which reports nothing near
+
+
+def test_a_clear_grid_needs_the_minimal_stack(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert agent_config.GRIDS == ("bridge", "clear")
+    assert (agent_config.GRID_BRIDGE, agent_config.GRID_CLEAR) == agent_config.GRIDS
+    # A file that does not name the grid runs on a grid bridge.
+    plain = agent_config.load_settings(settings_file(tmp_path))
+    assert plain.minimal and plain.experiment.grid == "bridge"
+    clear = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"grid": "clear"})
+    )
+    assert clear.minimal and clear.experiment.grid == "clear"
+    assert clear.as_dict()["experiment"]["grid"] == "clear"
+    # The full stack starts a grid bridge of its own: a stand-in for it is refused.
+    refused = settings_file(tmp_path, experiment={"stack": "full", "grid": "clear"})
+    says = (
+        "experiment.grid is clear, but experiment.stack is full: the clear grid "
+        "stands in for the grid bridge of the minimal stack only"
+    )
+    with pytest.raises(ConfigError) as raised:
+        agent_config.load_settings(refused)
+    assert str(raised.value) == says
+    # The program does not start on such a file, whatever it is asked to do.
+    code = launcher.main(["--config", str(refused), "--camera", "mock", "--check"])
+    assert code == launcher.EXIT_NOT_RUN
+    assert capsys.readouterr().err == f"agent program: {says}\n"
+    assert not (tmp_path / "state").exists()
+    full = settings_file(tmp_path, experiment={"stack": "full", "grid": "bridge"})
+    assert agent_config.load_settings(full).experiment.grid == "bridge"
+
+
+@pytest.mark.parametrize(
+    ("grid", "message"),
+    [
+        ("none", "experiment.grid must be one of bridge, clear"),
+        ("Clear", "experiment.grid must be one of bridge, clear"),
+        ("clear ", "experiment.grid must be one of bridge, clear"),
+        ("", "experiment.grid must be one of bridge, clear"),
+        (None, "experiment.grid must be one of bridge, clear"),
+        (True, "experiment.grid must be text"),
+        (0, "experiment.grid must be text"),
+    ],
+)
+@pytest.mark.parametrize("stack", ["minimal", "full"])
+def test_an_unknown_grid_is_refused(
+    tmp_path: Path, stack: str, grid: Any, message: str
+) -> None:
+    path = settings_file(tmp_path, experiment={"stack": stack, "grid": grid})
+    with pytest.raises(ConfigError) as raised:
+        agent_config.load_settings(path)
+    assert str(raised.value) == message
+
+
+def test_a_clear_grid_is_refused_against_a_driver_that_is_not_simulated(
+    tmp_path: Path,
+) -> None:
+    clear = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"grid": "clear"})
+    )
+    check = agent_config.check_robot_driver
+    for driver in ("sim", "apai-mock"):
+        for invented in (True, False):
+            check(clear, driver, invented)
+    # Any other declaration counts as real, the missing one too. The clear grid
+    # is named first, whatever else the file has that a real arm may not get.
+    for driver, declared in (
+        ("real", "the robot app declares the driver 'real'"),
+        ("", "the robot app declares the driver '' (none, which counts as real)"),
+        ("Sim", "the robot app declares the driver 'Sim'"),
+        ("mock", "the robot app declares the driver 'mock'"),
+    ):
+        for invented in (True, False):
+            with pytest.raises(ConfigError) as raised:
+                check(clear, driver, invented)
+            assert str(raised.value) == (
+                f"experiment.grid is clear, but {declared}: a clear grid checks "
+                "nothing against obstacles. For a simulated or mock arm only"
+            )
+    # With a grid bridge the same drivers are refused for what was refused before.
+    bridge = agent_config.load_settings(settings_file(tmp_path))
+    with pytest.raises(ConfigError, match=r"^camera\.allow_invented_times is true"):
+        check(bridge, "real", True)
+    with pytest.raises(ConfigError, match=r"^experiment\.stack is minimal"):
+        check(bridge, "", False)
+
+
+@apai
+@pytest.mark.parametrize(
+    ("driver", "declared"),
+    [("real", "'real'"), ("", "'' (none, which counts as real)")],
+)
+def test_a_clear_grid_against_a_driver_that_is_not_simulated_ends_the_program(
+    make_stage: Callable[..., Stage],
+    capsys: pytest.CaptureFixture[str],
+    driver: str,
+    declared: str,
+) -> None:
+    stage = make_stage(driver=driver)
+    code = stage.run("--task", QUICK, experiment={"grid": "clear"})
+    assert code == launcher.EXIT_FAILED
+    assert capsys.readouterr().err == (
+        "agent program: experiment.grid is clear, but the robot app declares the "
+        f"driver {declared}: a clear grid checks nothing against obstacles. For a "
+        "simulated or mock arm only\n"
+    )
+    # The warning was said, and then nothing was built, asked or sent.
+    assert len(stage.said("WARNING: experiment.grid is clear: ")) == 1
+    ended_before_any_task(stage, driver)
+
+
+def test_the_shipped_agent_files_keep_the_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, "/absolute")
+    assert agent_config.ExperimentSettings().grid == "bridge"
+    configs = EXAMPLE / "configs"
+    for name in ("agent.yaml", "agent_rebot.yaml"):
+        # The key is written in the file, not left to the default.
+        written = yaml.safe_load((configs / name).read_text())["experiment"]
+        assert written["grid"] == "bridge" and written["stack"] == "full", name
+        settings = agent_config.load_settings(configs / name)
+        assert settings.experiment.grid == "bridge" and not settings.minimal
+        # Neither is refused against the real driver for its grid.
+        agent_config.check_robot_driver(settings, "real", False)
+    # Of the shipped agent files only the mock one takes the clear grid.
+    grids = {
+        file.name: yaml.safe_load(file.read_text())["experiment"].get("grid")
+        for file in configs.glob("agent*.yaml")
+    }
+    assert grids == {
+        "agent.yaml": "bridge",
+        "agent_rebot.yaml": "bridge",
+        "agent_mock.yaml": "clear",
+    }
+
+
+@apai
+def test_the_clear_grid_stands_in_only_while_the_runtime_is_built(
+    tmp_path: Path,
+) -> None:
+    from isaaccapture_examples.agentic_remote.agent.clear_grid import ClearGrid
+
+    occupancy = importlib.import_module("apai.perception.occupancy")
+    theirs = occupancy.OccupancyClient
+    clear = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"grid": "clear"})
+    )
+    with launcher._grid_client(clear):
+        assert occupancy.OccupancyClient is ClearGrid
+    assert occupancy.OccupancyClient is theirs
+    # APAI's name is its own again also when the runtime cannot be built.
+    with pytest.raises(RuntimeError, match="cannot be built"):
+        with launcher._grid_client(clear):
+            raise RuntimeError("the runtime cannot be built")
+    assert occupancy.OccupancyClient is theirs
+    # With a grid bridge APAI makes its own client.
+    bridge = agent_config.load_settings(settings_file(tmp_path))
+    with launcher._grid_client(bridge):
+        assert occupancy.OccupancyClient is theirs
+    # A stack that is not minimal never gets the stand-in, also from settings
+    # that were not loaded from a file.
+    full = dataclasses.replace(
+        clear, experiment=dataclasses.replace(clear.experiment, stack="full")
+    )
+    with launcher._grid_client(full):
+        assert occupancy.OccupancyClient is theirs
+
+
+@apai
+def test_the_clear_grid_answers_as_apais_client_would() -> None:
+    import numpy as np
+    from apai.types import Frame
+    from isaaccapture_examples.agentic_remote.agent.clear_grid import ClearGrid
+
+    occupancy = importlib.import_module("apai.perception.occupancy")
+    # It takes what APAI gives its client (occupancy.py, from_config).
+    client = ClearGrid(host="127.0.0.1", port=5557, timeout_ms=500)
+    grid = occupancy.OccupancyMap(
+        client=client,
+        region_min=np.full(3, -0.5),
+        region_max=np.full(3, 0.5),
+        required=True,
+        max_age_s=3.0,
+    )
+    # The probe names the stand-in.
+    probed = {
+        "ok": True,
+        "backend": "clear",
+        "device": "cpu",
+        "voxel": 0.05,
+        "esdf": True,
+    }
+    assert grid.probe() == probed and grid.probe_error is None
+    assert client.probe() == probed == client.request({"action": "probe"})
+    assert grid.describe() == "clear on cpu (5.0 cm voxels, ESDF)"
+    # A query: 80 x 80 x 80 cubes of 5 cm from -2 m, each 1 m from an obstacle.
+    answer = client.request({"action": "query"}, timeout_ms=300)
+    assert answer["grid"].shape == (80, 80, 80)
+    assert answer["grid"].dtype == np.float32 and (answer["grid"] == 1.0).all()
+    assert answer["origin"].tolist() == [-2.0, -2.0, -2.0] and answer["voxel"] == 0.05
+    assert answer["points"].shape == (0, 3)
+    # What a reader does to one answer does not change the next.
+    answer["grid"][:] = 0.0
+    assert (client.request({"action": "query"})["grid"] == 1.0).all()
+    for action in ("integrate", "integrate_depth", "clear"):
+        assert client.request({"action": action, "points": []}) == {}
+    # Any other action: APAI's own error, as an old bridge answers.
+    with pytest.raises(occupancy.OccupancyError) as raised:
+        client.request({"action": "integrate_masked_depth"})
+    assert str(raised.value) == (
+        "occupancy bridge error: unknown action 'integrate_masked_depth'"
+    )
+    # A required map is usable once a camera frame went in, as with a bridge.
+    assert grid.usable() is False and grid.report()["state"] == "waiting"
+    frame = Frame(
+        rgb=np.zeros((8, 8, 3), dtype=np.uint8),
+        depth_m=np.full((8, 8), 0.5, dtype=np.float32),
+        K=np.array([[50.0, 0.0, 4.0], [0.0, 50.0, 4.0], [0.0, 0.0, 1.0]]),
+    )
+    grid.refresh(frame, np.eye(4))
+    assert grid.last_error is None and grid.refreshes == 1
+    assert grid.usable() is True and grid.wait_until_usable(0.0) is True
+    report = grid.report()
+    assert report["state"] == "live" and report["occupied_voxels"] == 0
+    assert report["backend"] == "clear on cpu (5.0 cm voxels, ESDF)"
+    # Nothing near: every point is 1 m from the nearest obstacle.
+    points = np.array([[0.0, 0.0, 0.0], [0.3, -0.2, 0.4], [-0.45, 0.45, 0.1]])
+    assert grid.clearance(points) == pytest.approx([1.0, 1.0, 1.0])
+    client.close()
+    assert grid.clearance(points) == pytest.approx([1.0, 1.0, 1.0])
 
 
 # Variables in paths (N4) and the model client's path (N3)
@@ -1901,6 +2150,9 @@ def test_a_run_on_invented_times_says_so_at_its_start(
     (warning,) = stage.said("camera.allow_invented_times")
     assert warning.startswith("WARNING: the camera frames of --camera mock carry")
     assert "never against a real arm" in warning
+    # It is the only warning: this run is on a grid bridge, not on the clear grid.
+    assert stage.said("WARNING: ") == [warning]
+    assert not stage.said("experiment.grid is clear")
     assert stage.lines.index(warning) < stage.lines.index(
         stage.said("robot connection up")[0]
     )

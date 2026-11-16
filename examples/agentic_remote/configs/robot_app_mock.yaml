@@ -1,0 +1,144 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot app settings for APAI's software arm, the mock arm: --arm apai --driver mock.
+# The robot app then declares the driver apai-mock. For demo 1 by hand on one machine,
+# together with configs/agent_mock.yaml, and for demo 2 on one machine after a task of
+# the agent failed. None of these values was measured on a robot. Angles are in rad,
+# speeds in rad/s, times in s, jaw openings run from 0 (closed) to 1 (open).
+#
+# The values are those of the mock scene the tests run the agent on
+# (scene_robot_config() of the tests' test_launcher.py). Where each block comes from:
+# - robot_id, profile_id, joint_names, the limit sets' versions and
+#   camera_calibration_id: that configuration's own names.
+# - limits.recovery's joint box and rest.region_*: the joint limits of the arm model
+#   of APAI's mock profile.
+# - limits.agent and limits.human: that joint box, narrower on the first joint. The
+#   agent's envelope is as wide as its joint box. Both speeds are the mock profile's
+#   speed cap of 1.2; a faster limit set is refused with --arm apai.
+# - every other block: the values of configs/robot_app.yaml.
+#
+# This file differs from that configuration in exactly three keys:
+# - human.enabled is true and human.require_live_view is false, so that the same
+#   robot app serves demo 2. The human joint box lies inside rest.region_*.
+# - executor.max_setpoints is 3300, not 3000: a loaded file must leave room for the
+#   longest return to rest, here 3.14 rad at rest.recovery_speed, 3271 setpoints.
+
+robot_id: apai-mock-arm
+profile_id: apai-rs-model
+n_joints: 6
+joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
+
+# One limit set per control owner. The recovery joint box must contain the human one.
+# With human.enabled the human joint box must also lie inside rest.region_*.
+limits:
+  agent:
+    version: agent-1
+    joint_min: [-2.0, 0.0, 0.0, -1.69, -1.57, -3.14]
+    joint_max: [2.0, 3.14, 3.14, 1.79, 1.57, 3.14]
+    max_joint_speed: 1.2
+    # The agent's working box: a setpoint outside it is refused, with no way back in.
+    envelope_min: [-2.0, 0.0, 0.0, -1.69, -1.57, -3.14]
+    envelope_max: [2.0, 3.14, 3.14, 1.79, 1.57, 3.14]
+  human:
+    version: human-1
+    joint_min: [-2.0, 0.0, 0.0, -1.69, -1.57, -3.14]
+    joint_max: [2.0, 3.14, 3.14, 1.79, 1.57, 3.14]
+    max_joint_speed: 1.2
+    # The farthest, on any joint, a human target may lie from the last joint target
+    # sent. A target beyond it is refused.
+    max_step_rad: 0.1
+  recovery:
+    version: recovery-1
+    joint_min: [-2.8, 0.0, 0.0, -1.69, -1.57, -3.14]
+    joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
+    max_joint_speed: 0.1
+
+executor:
+  period_s: 0.02
+  # Must hold the longest return to rest, from the far end of rest.region_*; checked
+  # when the file is loaded. 3271 are needed here.
+  max_setpoints: 3300
+  small_delay_s: 0.005  # a setpoint later than this counts as a missed deadline
+  large_delay_s: 0.1  # a setpoint later than this ends the move in a hold
+  settle_tol_rad: 0.03
+  settle_timeout_s: 2.0
+  reads_per_step: 2
+  max_start_tol_rad: 0.05  # a move that asks for a wider start tolerance is refused
+
+permits:
+  evidence_age_limit_s: 3.0
+  # No setpoint of the agent goes to the motors without a valid PERMIT.
+  required_for_agent: true
+  first_wait_s: 0.5  # longest a move waits for its first covering permit
+
+waits:
+  assistance_s: 120.0  # never below 90
+  bell_at_s: [30.0, 10.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+
+rest:
+  rest_q: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  rest_tol_rad: 0.05  # at rest for a release and at the end of a return to rest
+  # At rest when the app connects. --arm apai takes the profile's own tolerance.
+  start_rest_tol_rad: 0.05
+  agree_tol_rad: 0.02
+  read_gap_s: 0.2
+  recovery_speed: 0.1
+  min_duration_s: 2.0
+  # Start poses from which a return to rest is allowed: the arm model's joint limits.
+  region_min: [-2.8, 0.0, 0.0, -1.69, -1.57, -3.14]
+  region_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
+  auto_return: true  # the timed return when the assistance wait runs out
+  # How far above the table the gripper tip must be before a return to rest.
+  table_clearance_m: 0.02
+
+gripper:
+  closed_frac: 0.04
+  # Jaws proven empty: how far a reading may lie from the last jaw target.
+  target_tol: 0.03
+  # A jaw command has reached its target within this.
+  reach_tol: 0.03
+  # A reading within this of 1 after a command to full open is a full open.
+  full_open_tol: 0.03
+  agree_tol: 0.02
+  reads: 3
+  read_gap_s: 0.05
+  open_step: 0.05
+  reference_at_start: true
+
+# The grasp region a MOVE may carry; one beyond these is refused, never cut down.
+grasp:
+  max_radius_m: 0.3
+  max_depth_m: 0.06  # how far below the table plane the region may reach
+
+state:
+  publish_period_s: 0.05
+  recent_window_s: 0.5
+  history_s: 6.0
+  idle_read_period_s: 0.02
+
+# A person driving the arm with the headset's controller.
+human:
+  enabled: true  # a person may take the arm over and drive it
+  # false: a takeover needs no live view. Accepted only with a simulated driver.
+  require_live_view: false
+  view_age_limit_s: 0.5  # read only where the live view is required
+  # The oldest controller data that count as fresh; older ones end a drive in a hold.
+  sample_age_limit_s: 0.25
+  # How long ROBOT_STATE shows the stage of the human program after its last
+  # link message. The human program is the workstation program that turns
+  # controller data into joint targets; its stage is how far it is with them.
+  stage_keep_s: 4.0
+
+# The robot connection, which the robot app dials. retry_s is the time from a failed
+# dial, or from a lost connection, to the next dial; never below 0.2.
+connection:
+  retry_s: 1.0
+
+# Whether "reference" may be typed at the Thor terminal. Off: the command is refused.
+jaws:
+  allow_reference: false
+
+# The name of the camera calibration; the agent program must name the same one
+# (link.calibration_id of configs/agent_mock.yaml).
+camera_calibration_id: apai-mock-calibration

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The agent program's settings for demo 1 by hand on one machine: APAI's mock scene,
+# against the robot app on APAI's software arm (configs/robot_app_mock.yaml, started
+# with --arm apai --driver mock). No GPU, no model, no camera and no grid bridge (the
+# program that keeps the obstacle grid). Start the program with --camera mock. Every
+# key that is not here takes its default; they are described in configs/agent.yaml.
+# Speeds are in rad/s, times in s.
+
+link:
+  # profile_id of configs/robot_app_mock.yaml.
+  expected_profile_id: apai-rs-model
+  # camera_calibration_id of configs/robot_app_mock.yaml. The mock camera has no
+  # calibration files to make a name from.
+  calibration_id: apai-mock-calibration
+  connect_timeout_s: 5.0  # the robot link service is on this machine
+
+thor:
+  # limits.agent.max_joint_speed of configs/robot_app_mock.yaml: the speed cap of
+  # APAI's mock profile.
+  agent_max_joint_speed: 1.2
+
+task:
+  max_joint_speed: 1.2  # the mock arm moves at the cap, which keeps the moves short
+  grid_wait_s: 10.0  # the obstacle grid is usable with the first mock camera frame
+
+camera:
+  # The mock camera makes its capture times up. With true the program runs only
+  # against a robot app that declares a simulated driver (sim or apai-mock).
+  allow_invented_times: true
+
+experiment:
+  # APAI's own mock arm profile, mock detector and mock model. The check ahead (the
+  # program's check, on the obstacle grid, of setpoints the robot app has not sent
+  # yet) computes APAI's mock arm model, so the robot app must declare a simulated
+  # driver.
+  stack: minimal
+  # The clear grid: a stand-in for the grid bridge that reports nothing near. APAI's
+  # obstacle map, the check ahead and the PERMITs (the link messages that say how far
+  # the robot app may send a move) run as with a bridge, but no move is checked
+  # against obstacles. The program ends unless the robot app declares a simulated
+  # driver.
+  grid: clear

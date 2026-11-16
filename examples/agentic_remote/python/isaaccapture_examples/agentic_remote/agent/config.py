@@ -31,6 +31,12 @@ from .self_mask import EXPERIMENT_DIR_ENV
 STACK_MINIMAL = "minimal"
 STACK_FULL = "full"
 STACKS = (STACK_MINIMAL, STACK_FULL)
+# What answers APAI's obstacle map. A grid bridge is the program that keeps
+# the obstacle grid. The clear grid (clear_grid.py) stands in for it and
+# reports nothing near: for the minimal stack on a simulated or mock arm only.
+GRID_BRIDGE = "bridge"
+GRID_CLEAR = "clear"
+GRIDS = (GRID_BRIDGE, GRID_CLEAR)
 LOG_LEVELS = ("debug", "info", "warning", "error")
 # The camera a run uses: the camera connection, APAI's mock camera, or a
 # folder of recorded stereo pairs ("recorded:<folder>").
@@ -206,6 +212,9 @@ class ExperimentSettings:
     # The model client's program for the full stack. "" takes the path of the
     # experiment's own file, inside the experiment folder.
     codex_bin: str = ""
+    # GRID_CLEAR puts the clear grid in place of a grid bridge: no move is
+    # checked against obstacles. The minimal stack and a simulated driver only.
+    grid: str = GRID_BRIDGE
 
 
 @dataclass(frozen=True)
@@ -415,6 +424,14 @@ def _check(settings: AgentSettings) -> None:
     """The rules that span keys."""
     if settings.experiment.stack not in STACKS:
         raise ConfigError(f"experiment.stack must be one of {', '.join(STACKS)}")
+    if settings.experiment.grid not in GRIDS:
+        raise ConfigError(f"experiment.grid must be one of {', '.join(GRIDS)}")
+    if settings.experiment.grid == GRID_CLEAR and not settings.minimal:
+        raise ConfigError(
+            f"experiment.grid is {GRID_CLEAR}, but experiment.stack is "
+            f"{settings.experiment.stack}: the clear grid stands in for the grid "
+            "bridge of the minimal stack only"
+        )
     speed, limit = settings.task.max_joint_speed, settings.thor.agent_max_joint_speed
     if speed > limit:
         raise ConfigError(
@@ -589,14 +606,20 @@ def check_robot_driver(settings: AgentSettings, driver: str, invented: bool) -> 
     """ConfigError when this program must not drive what WELCOME declares.
 
     driver is Welcome.driver. One that is not simulated, "" (not declared)
-    included, counts as real: no invented capture times, and no minimal stack,
-    whose check ahead computes APAI's mock arm model and not the arm that moves.
+    included, counts as real: no clear grid, no invented capture times, and no
+    minimal stack, whose check ahead computes APAI's mock arm model and not the
+    arm that moves.
     """
     if driver in SIMULATED_DRIVERS:
         return
     declared = f"the robot app declares the driver {driver!r}"
     if not driver:
         declared += " (none, which counts as real)"
+    if settings.experiment.grid == GRID_CLEAR:
+        raise ConfigError(
+            f"experiment.grid is {GRID_CLEAR}, but {declared}: a clear grid "
+            "checks nothing against obstacles. For a simulated or mock arm only"
+        )
     if invented:
         raise ConfigError(
             f"camera.allow_invented_times is true, but {declared}: a permit "
