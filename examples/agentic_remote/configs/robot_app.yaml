@@ -111,6 +111,11 @@ human:
 connection:
   retry_s: 1.0
 
+# Whether "reference" may be typed at the Thor terminal: the jaws then close slowly
+# to their stop on a person's word that they are empty. Off: the command is refused.
+jaws:
+  allow_reference: false
+
 # The name of the camera calibration in use; the workstation gets it in WELCOME and
 # compares it with its own. "" names none.
 camera_calibration_id: ""

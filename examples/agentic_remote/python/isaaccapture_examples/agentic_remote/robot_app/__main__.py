@@ -7,8 +7,9 @@
 --connect runs the robot app with the Thor terminal and dials the robot link
 service. --selftest drives the app on the simulated arm over a loopback link;
 --selftest-link drives it through a robot link service over a real link on
-127.0.0.1. With --driver real the three confirmations are asked and the program
-stops: nothing in this phase connects to hardware.
+127.0.0.1. --arm apai --driver real connects APAI's motor driver, whose connect
+cuts motor torque: only after its checks and three typed confirmations, and
+APAI's driver itself refuses an arm it does not measure at rest.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import signal
 import sys
 import tempfile
 import threading
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ..console_log import set_console_level
@@ -30,9 +31,10 @@ from ..link_service.listen import RobotListener
 from ..link_service.local import connect_local
 from ..link_service.service import LOST, RobotLinkService
 from ..protocol.carrier import loopback_pair
-from ..protocol.confirm import PATH_IS_CLEAR
+from ..protocol.confirm import PATH_IS_CLEAR, YES, agent_environment, confirms
 from ..protocol.link_carrier import LinkCarrier
 from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
+from ..protocol.messages import DRIVER_APAI_MOCK, DRIVER_REAL, DRIVER_SIM
 from .app import RobotApp
 from .clock import SystemClock
 from .config import ConfigError, load_config
@@ -40,7 +42,7 @@ from .connection import RobotDialer
 from .interfaces import CheckerSet, MotionState, Owner
 from .rest import planned_duration_s
 from .sim import BasicChecker, SimArm
-from .terminal import CONFIRM_REST, YES, ThorTerminal, TypedLines
+from .terminal import CONFIRM_REST, ThorTerminal, TypedLines
 from .text import MAX_WORD_CHARS, printable
 from ..testing.client import WorkstationClient
 
@@ -55,7 +57,9 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.main")
 
 EXIT_OK = 0
 EXIT_FAILED = 1  # a step of a self-test went wrong, or the robot app did not start
-EXIT_NOT_RUN = 2  # nothing ran: the arguments, the installation or the phase
+# Nothing ran and nothing was connected: the arguments, the installation, or a
+# check or a typed confirmation of the real driver.
+EXIT_NOT_RUN = 2
 
 LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 # The src folder of an APAI checkout, as the tests name it.
@@ -67,14 +71,31 @@ NO_REMOTE_LINK = (
     "Isaac Capture's remote link cannot be imported (isaaccapture.remote_link on "
     "the Python path)"
 )
-P2_LINE = "hardware runs start in phase P2"
 NOT_CONFIRMED = "not confirmed: nothing was connected"
+NOT_CONNECTED = "the real driver was not connected"
+NO_REAL_CONNECT = (
+    "--driver real needs the robot link service's address: --connect HOST:PORT"
+)
+NO_TERMINAL = "the confirmations are typed by a person: standard input is no terminal"
 # What the operator confirms at the Thor terminal before the real driver may be
 # connected: connecting cuts motor torque.
 REAL_DRIVER_QUESTIONS = (
     "Is the arm powered?",
     "Connecting cuts motor torque. Is the arm at rest and supported?",
     "Is the calibration in use {calibration}?",
+)
+# The connect that follows the three answers. APAI's driver reads every joint
+# twice before anything that cuts torque and refuses an arm that is not at rest.
+CONNECTING = (
+    "robot app: confirmed three times; connecting the arm. APAI's driver measures "
+    "it first and refuses an arm that is not at rest"
+)
+# APAI's refusal of a connect: a hold marker, or an arm not measured at rest.
+_ARM_HELD = "ArmHeldError"
+NOT_AT_REST = (
+    "APAI's driver refused the connect before anything that cuts torque. This "
+    "program never connects on an operator's confirmation: bring the arm to rest "
+    "(48 V off only with the arm held by hand or at rest) and start again"
 )
 
 # The longest one dial of the robot link service takes; the dialer's close()
@@ -164,8 +185,9 @@ def _parser() -> argparse.ArgumentParser:
         "--driver",
         choices=("mock", "real"),
         help=(
-            "with --arm apai: mock is APAI's software arm (default); real asks the "
-            "three confirmations and stops: hardware runs start in phase P2"
+            "with --arm apai: mock is APAI's software arm (default); real is APAI's "
+            "motor driver, connected after its checks and three typed "
+            "confirmations (needs --apai-profile, --calibration and --connect)"
         ),
     )
     parser.add_argument(
@@ -176,7 +198,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--calibration",
         metavar="NAME",
-        help="with --driver real: the name of the calibration in use, to confirm",
+        help=(
+            "with --driver real: the name of the calibration in use; it must be "
+            "camera_calibration_id of the file"
+        ),
     )
     return parser
 
@@ -236,7 +261,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         q0=list(config.rest.rest_q),
         joint_names=config.joint_names,
     )
-    return run_connected(config, arm, sim_checkers(config, clock), clock, args.connect)
+    return run_connected(
+        config,
+        arm,
+        sim_checkers(config, clock),
+        clock,
+        args.connect,
+        driver=DRIVER_SIM,
+    )
 
 
 def _unusable(args: argparse.Namespace) -> str | None:
@@ -263,6 +295,8 @@ def _unusable(args: argparse.Namespace) -> str | None:
             return "--driver real needs the arm's profile: --apai-profile NAME"
         if not args.calibration or not args.calibration.strip():
             return "--driver real needs the calibration's name: --calibration NAME"
+        if args.connect is None:
+            return NO_REAL_CONNECT
     return None
 
 
@@ -322,16 +356,25 @@ def run_connected(
     *,
     typed: Iterator[str] | None = None,
     say: Say = _say,
+    driver: str = "",
 ) -> int:
     """Run the robot app with the Thor terminal and dial the robot link service.
 
     Returns when the robot app has closed (a typed quit, or a SHUTDOWN) or on
     SIGTERM, which closes the app with the motors left on. typed yields the
     lines of the Thor terminal; None reads the standard input. Ctrl+C is a STOP
-    when this runs on the main thread.
+    when this runs on the main thread. driver is what WELCOME declares.
     """
     lines = typed_lines() if typed is None else typed
-    app = RobotApp(config, arm, checkers, None, clock)
+    app = RobotApp(
+        config,
+        arm,
+        checkers,
+        None,
+        clock,
+        driver=driver,
+        allow_reference=config.jaws.allow_reference,
+    )
     terminal = ThorTerminal(app, lines, say)
     dialer = RobotDialer(
         app,
@@ -351,7 +394,11 @@ def run_connected(
         except Exception as error:
             _log.debug("the robot app did not start", exc_info=True)
             _complain(f"the robot app did not start: {error}")
+            if driver == DRIVER_REAL and type(error).__name__ == _ARM_HELD:
+                _complain(NOT_AT_REST)
             return EXIT_FAILED
+        if driver == DRIVER_REAL:
+            say(_connected_line(app, arm))
         if on_main:
             terminal.install_signal_handlers()
             handler = signal.signal(signal.SIGTERM, lambda *_: terminated.append(1))
@@ -384,6 +431,23 @@ def run_connected(
         for handler in replaced:
             signal.signal(signal.SIGTERM, handler)
     return EXIT_OK
+
+
+def _connected_line(app: RobotApp, arm: ArmPort) -> str:
+    """What the real driver's connect left: motors, motion state and jaws."""
+    motors = "motors on" if arm.torque_on() else "MOTORS OFF"
+    jaws = "referenced" if arm.gripper_referenced() else "NOT referenced"
+    # APAI's driver sets this when it went ahead on an operator's confirmation.
+    on_word = getattr(getattr(arm, "backend", None), "connected_on_confirmation", False)
+    how = (
+        "on an operator's confirmation, NOT at measured rest"
+        if on_word
+        else "at measured rest"
+    )
+    return (
+        f"robot app: the real driver is connected {how}: {motors}, motion "
+        f"{app.motion_state.value}, jaws {jaws}"
+    )
 
 
 def _end_input(lines: Iterator[str]) -> None:
@@ -422,7 +486,7 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
     if apai_backend is None:
         return EXIT_NOT_RUN
     if args.driver == "real":
-        return _real_driver(apai_backend, args.apai_profile, args.calibration)
+        return _real_driver(apai_backend, config, args)
     profile_name = args.apai_profile or "mock"
     if args.connect is None:
         return _describe_apai(apai_backend, config, args.config, profile_name)
@@ -449,7 +513,9 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
             f"{error}"
         )
         return EXIT_NOT_RUN
-    return run_connected(config, arm, checkers, clock, args.connect)
+    return run_connected(
+        config, arm, checkers, clock, args.connect, driver=DRIVER_APAI_MOCK
+    )
 
 
 def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> bool:
@@ -466,37 +532,164 @@ def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> boo
             answer = next(typed, None)
         except (OSError, ValueError):  # the terminal is gone
             answer = None
-        if answer is None or answer.strip().lower() != YES:
+        if not confirms(answer, YES):
             return False
     return True
 
 
-def _real_driver(apai_backend: Any, profile_name: str, calibration: str) -> int:
-    """--driver real: ask the confirmations, then stop; nothing is connected."""
+def _stdin_is_terminal() -> bool:
     try:
-        profile = apai_backend.load_apai_profile(profile_name)
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):  # no standard input, or a closed one
+        return False
+
+
+def _bus(apai_backend: Any, profile: Any) -> str | None:
+    """The motor bus APAI names the profile's arm by in its hold markers."""
+    return apai_backend.arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
+
+
+def _speed_cap(apai_backend: Any, profile: Any) -> float:
+    """The APAI profile's joint speed cap, rad/s."""
+    limits = apai_backend.SafetyLimits.from_config(profile.apai_cfg.safety)
+    return float(limits.max_joint_vel)
+
+
+def real_driver_refusal(
+    config: RobotAppConfig,
+    profile: Any,
+    calibration: str,
+    apai_backend: Any,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Why the real driver may not be connected; None when nothing speaks against it.
+
+    In turn, with nothing built or sent: an AI agent's environment (environ
+    None: the process's); a --calibration that is not the file's
+    camera_calibration_id; APAI's hold marker for the arm's motor bus; an
+    operator's confirmation on file, with which APAI's driver would connect
+    an arm it does not measure at rest.
+    """
+    marker = agent_environment(environ)
+    if marker is not None:
+        return (
+            f"{NOT_CONFIRMED}: the real driver is started by a person, outside "
+            f"an agent environment ({marker} is set)"
+        )
+    in_file = config.camera_calibration_id
+    if not in_file or calibration != in_file:
+        named = repr(printable(calibration, MAX_WORD_CHARS))
+        return (
+            f"{NOT_CONNECTED}: --calibration names {named} but "
+            f"camera_calibration_id of the file is {in_file!r}; the two must be "
+            "the same name, and not empty"
+        )
+    hold = apai_backend.unresolved_hold(profile)
+    if hold is not None:
+        when = hold.get("at_text") or "an unknown time"
+        return (
+            f"{NOT_CONNECTED}: the arm on {hold.get('key')} has an unresolved "
+            f"hold: APAI's hold marker of {when} says {hold.get('reason')!r}. "
+            "Connecting would cut the torque of an arm that may be raised. Do "
+            "APAI's operator recovery first; a typed yes never releases a hold"
+        )
+    bus = _bus(apai_backend, profile)
+    pending = apai_backend.arm_hold.pending_confirmations()
+    if any(found.get("key") in (None, bus) for found in pending):
+        return (
+            f"{NOT_CONNECTED}: an operator's confirmation for APAI's connect is "
+            f"on file for the arm on {bus}: with it APAI's driver would connect "
+            "an arm it does not measure at rest. Revoke it with APAI's own tool, "
+            "or wait until it has lapsed"
+        )
+    return None
+
+
+def _real_driver(
+    apai_backend: Any,
+    config: RobotAppConfig,
+    args: argparse.Namespace,
+    *,
+    typed: Iterator[str] | None = None,
+    say: Say = _say,
+) -> int:
+    """--driver real: the checks, the three typed confirmations, then the app.
+
+    EXIT_NOT_RUN when a check or a confirmation failed: nothing was connected.
+    Else run_connected()'s exit code; it connects the arm once, and APAI's
+    driver refuses there an arm it does not measure at rest. typed yields the
+    answers and then the Thor terminal's lines; None reads the standard input,
+    which must be a terminal.
+    """
+    name = args.apai_profile
+    try:
+        profile = apai_backend.load_apai_profile(name)
     except Exception as error:
         _log.debug("loading the APAI profile failed", exc_info=True)
-        _complain(f"APAI arm profile {profile_name!r} cannot be used: {error}")
+        _complain(f"APAI arm profile {name!r} cannot be used: {error}")
         return EXIT_NOT_RUN
     if profile.arm_cfg.get("type") == "mock":
         _complain(
-            f"APAI arm profile {profile_name!r} is APAI's software arm: use "
-            "--driver mock"
+            f"APAI arm profile {name!r} is APAI's software arm: use --driver mock"
         )
         return EXIT_NOT_RUN
-    _say(f"robot app: APAI arm profile {profile_name}, the real driver")
-    lines = typed_lines()
-    try:
-        confirmed = confirm_real_driver(calibration, lines, _say)
-    finally:
-        _end_input(lines)
-    if not confirmed:
-        _complain(NOT_CONFIRMED)
+    if typed is None and not _stdin_is_terminal():
+        _complain(f"{NOT_CONFIRMED}: {NO_TERMINAL}")
         return EXIT_NOT_RUN
-    _say("robot app: confirmed three times; the arm was not connected")
-    _say(P2_LINE)
-    return EXIT_NOT_RUN
+    refusal = real_driver_refusal(config, profile, args.calibration, apai_backend)
+    if refusal is not None:
+        _complain(refusal)
+        return EXIT_NOT_RUN
+    clock = SystemClock()
+    try:
+        config = apai_backend.config_for_profile(config, profile)
+        checkers = apai_backend.build_apai_checkers(config, profile, clock)
+        arm = apai_backend.build_apai_arm(config, profile, clock)
+        cap = _speed_cap(apai_backend, profile)
+    except Exception as error:
+        _log.debug("building the APAI backend failed", exc_info=True)
+        _complain(
+            f"{NOT_CONNECTED}: APAI arm profile {name!r} cannot be used with "
+            f"{args.config}: {error}"
+        )
+        return EXIT_NOT_RUN
+    missing = _remote_link_missing()
+    if missing is not None:
+        _complain(f"{NOT_CONNECTED}: --connect cannot run: {missing}")
+        return EXIT_NOT_RUN
+    say(
+        f"robot app: APAI arm profile {name}, the real driver on "
+        f"{_bus(apai_backend, profile)}: built, not connected. No hold marker; "
+        f"calibration {config.camera_calibration_id}; speed cap {cap:g} rad/s; "
+        f"at rest at start within {config.rest.start_rest_tol_rad:g} rad"
+    )
+    lines = typed_lines() if typed is None else typed
+    try:
+        confirmed = confirm_real_driver(args.calibration, lines, say)
+    except KeyboardInterrupt:  # Ctrl+C at a question confirms nothing
+        confirmed = False
+    # A hold marker or a confirmation may have been written during the questions.
+    late = (
+        real_driver_refusal(config, profile, args.calibration, apai_backend)
+        if confirmed
+        else NOT_CONFIRMED
+    )
+    if late is not None:
+        if typed is None:
+            _end_input(lines)
+        _complain(late)
+        return EXIT_NOT_RUN
+    say(CONNECTING)
+    return run_connected(
+        config,
+        arm,
+        checkers,
+        clock,
+        args.connect,
+        typed=lines,
+        say=say,
+        driver=DRIVER_REAL,
+    )
 
 
 def _describe_apai(
@@ -509,6 +702,7 @@ def _describe_apai(
         config = apai_backend.config_for_profile(config, profile)
         checkers = apai_backend.build_apai_checkers(config, profile, clock)
         arm = apai_backend.build_apai_arm(config, profile, clock)
+        cap = _speed_cap(apai_backend, profile)
     except Exception as error:
         _log.debug("building the APAI backend failed", exc_info=True)
         _complain(
@@ -518,6 +712,11 @@ def _describe_apai(
         return EXIT_NOT_RUN
     backend = type(arm.backend).__name__
     versions = ", ".join(f"{c.name} {c.version}" for c in checkers.all())
+    limits = config.limits
+    speeds = ", ".join(
+        f"{limit_set.name} {limit_set.max_joint_speed:g}"
+        for limit_set in (limits.agent, limits.human, limits.recovery)
+    )
     _say("robot app with --arm apai would run:")
     _say(
         f"  configuration {config_path}: robot {config.robot_id}, profile "
@@ -525,6 +724,10 @@ def _describe_apai(
     )
     _say(f"  APAI arm profile {profile_name}: driver {backend}, built, not connected")
     _say(f"  one APAI checker per control owner, no obstacle grid: {versions}")
+    _say(
+        f"  the profile's speed cap: {cap:g} rad/s; the limit sets' joint speeds: "
+        f"{speeds} rad/s"
+    )
     travel, jaw_tol = apai_backend.jaw_travel_rad(profile), config.gripper.target_tol
     in_rad = (
         "" if travel is None else f" ({jaw_tol * travel:.3g} rad of {travel:g} rad)"
@@ -635,6 +838,8 @@ class _SelfTest:
             sim_checkers(config, self._clock),
             self._robot_end,
             self._clock,
+            driver=DRIVER_SIM,
+            allow_reference=config.jaws.allow_reference,
         )
         self._client = WorkstationClient(self._workstation_end, self._clock)
         self._typed = TypedLines()
@@ -937,7 +1142,13 @@ class _LinkSelfTest(_SelfTest):
             joint_names=config.joint_names,
         )
         self._app = RobotApp(
-            config, self._arm, sim_checkers(config, self._clock), None, self._clock
+            config,
+            self._arm,
+            sim_checkers(config, self._clock),
+            None,
+            self._clock,
+            driver=DRIVER_SIM,
+            allow_reference=config.jaws.allow_reference,
         )
         self._socket_path = os.path.join(socket_folder, "robot_link.sock")
         self._listener: RobotListener | None = None

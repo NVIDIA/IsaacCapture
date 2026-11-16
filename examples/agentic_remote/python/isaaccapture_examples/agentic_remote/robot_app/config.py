@@ -526,6 +526,16 @@ class ConnectionConfig:
 
 
 @dataclass(frozen=True, kw_only=True)
+class JawsConfig:
+    # Whether "reference" may be typed at the Thor terminal: the jaws then close
+    # to their stop on a person's word that they are empty.
+    allow_reference: bool = False
+
+    def __post_init__(self) -> None:
+        _normalise(self, "jaws", allow_reference=_flag)
+
+
+@dataclass(frozen=True, kw_only=True)
 class RobotAppConfig:
     robot_id: str
     profile_id: str
@@ -541,6 +551,7 @@ class RobotAppConfig:
     state: StateConfig = field(default_factory=StateConfig)
     human: HumanConfig = field(default_factory=HumanConfig)
     connection: ConnectionConfig = field(default_factory=ConnectionConfig)
+    jaws: JawsConfig = field(default_factory=JawsConfig)
     # The name of the camera calibration in use, sent in WELCOME; "" for none.
     camera_calibration_id: str = ""
 
@@ -562,6 +573,7 @@ class RobotAppConfig:
             state=_instance(StateConfig),
             human=_instance(HumanConfig),
             connection=_instance(ConnectionConfig),
+            jaws=_instance(JawsConfig),
             camera_calibration_id=_name_or_empty,
         )
         # Each block has already checked that its own lists agree in length.
@@ -718,6 +730,7 @@ _BLOCKS: dict[str, type] = {
     "state": StateConfig,
     "human": HumanConfig,
     "connection": ConnectionConfig,
+    "jaws": JawsConfig,
 }
 
 

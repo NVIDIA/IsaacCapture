@@ -3,10 +3,11 @@
 
 """The programs of the robot connection: the robot link service and the robot app.
 
-The arguments, the real driver's confirmations and the robot app with a dialer
-are tested without Isaac Capture. The tests marked "link" run the programs over
-a real link on 127.0.0.1: in this process, and as processes of their own that
-are ended with signals. Every process a test signals is one it started.
+The arguments and the robot app with a dialer are tested without Isaac Capture;
+the real driver's start is tested in test_real_driver.py. The tests marked
+"link" run the programs over a real link on 127.0.0.1: in this process, and as
+processes of their own that are ended with signals. Every process a test
+signals is one it started.
 """
 
 from __future__ import annotations
@@ -73,13 +74,6 @@ APAI = ["--config", ROBOT_YAML, "--arm", "apai"]
 REAL = [*APAI, "--driver", "real", "--apai-profile", "rebot_rs"]
 REST = [0.0] * 6
 PATH = [[0.004 * (index + 1)] * 6 for index in range(25)]
-P2_LINE = "hardware runs start in phase P2"
-QUESTIONS = [
-    "Real driver, 1 of 3: Is the arm powered? Type yes to confirm.",
-    "Real driver, 2 of 3: Connecting cuts motor torque. Is the arm at rest and "
-    "supported? Type yes to confirm.",
-    "Real driver, 3 of 3: Is the calibration in use 'bench-7'? Type yes to confirm.",
-]
 # Threads of the programs; none may outlive one that ran in this process.
 THREADS = (
     "robot-app-",
@@ -200,6 +194,10 @@ def test_a_connect_address_that_is_not_host_and_port_gives_exit_code_2(
             [*REAL, "--calibration", " "],
             "--driver real needs the calibration's name: --calibration NAME",
         ),
+        (
+            [*REAL, "--calibration", "bench-7"],
+            "--driver real needs the robot link service's address: --connect HOST:PORT",
+        ),
     ],
 )
 def test_arguments_that_do_not_go_together_give_exit_code_2(
@@ -246,7 +244,7 @@ def test_the_link_selftest_without_isaac_capture_is_skipped_with_exit_code_2(
     assert left_threads() == []
 
 
-# The real driver's confirmations
+# A hardware profile without --driver real
 
 
 def fake_backend(monkeypatch, kind: str = "rebot_rs") -> list[str]:
@@ -273,115 +271,6 @@ def fake_backend(monkeypatch, kind: str = "rebot_rs") -> list[str]:
     return loaded
 
 
-def answer(monkeypatch, *typed: str) -> None:
-    """What the operator types at the Thor terminal, then the input ends."""
-    monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(typed))
-
-
-def real_driver(capsys, *extra: str) -> tuple[int, list[str], str]:
-    code = robot_main.main([*REAL, "--calibration", "bench-7", *extra])
-    captured = capsys.readouterr()
-    return code, captured.out.splitlines(), captured.err
-
-
-def test_three_typed_confirmations_then_the_real_driver_stops_before_connecting(
-    capsys, monkeypatch
-):
-    monkeypatch.setattr(robot_main, "RobotApp", None)  # no app may be built
-    monkeypatch.setattr(robot_main, "RobotDialer", None)
-    loaded = fake_backend(monkeypatch)
-    answer(monkeypatch, "yes", " Yes ", "YES")
-    code, out, err = real_driver(capsys, "--connect", "127.0.0.1:47610")
-    assert code == 2
-    assert loaded == ["rebot_rs"]
-    assert out == [
-        "robot app: APAI arm profile rebot_rs, the real driver",
-        *QUESTIONS,
-        "robot app: confirmed three times; the arm was not connected",
-        P2_LINE,
-    ]
-    assert err == ""
-    assert left_threads() == []
-
-
-@pytest.mark.parametrize("wrong", ["no", "", "y", "yes please", "yes yes", "ok"])
-@pytest.mark.parametrize("at", [0, 1, 2])
-def test_any_other_answer_ends_the_program_before_anything_is_connected(
-    capsys, monkeypatch, at, wrong
-):
-    monkeypatch.setattr(robot_main, "RobotApp", None)
-    fake_backend(monkeypatch)
-    typed = ["yes", "yes", "yes"]
-    typed[at] = wrong
-    answer(monkeypatch, *typed)
-    code, out, err = real_driver(capsys)
-    assert code == 2
-    # The questions after the one that was not confirmed are not asked.
-    assert out[1:] == QUESTIONS[: at + 1]
-    assert err == "robot app: not confirmed: nothing was connected\n"
-    assert P2_LINE not in out
-
-
-@pytest.mark.parametrize("answers", [0, 1, 2])
-def test_an_input_that_ends_confirms_nothing(capsys, monkeypatch, answers):
-    monkeypatch.setattr(robot_main, "RobotApp", None)
-    fake_backend(monkeypatch)
-    answer(monkeypatch, *["yes"] * answers)
-    code, out, err = real_driver(capsys)
-    assert code == 2
-    assert out[1:] == QUESTIONS[: answers + 1]
-    assert err == "robot app: not confirmed: nothing was connected\n"
-
-
-def test_a_terminal_that_cannot_be_read_confirms_nothing(capsys, monkeypatch):
-    fake_backend(monkeypatch)
-
-    def gone() -> Iterator[str]:
-        yield "yes"
-        raise OSError("the terminal is gone")
-
-    monkeypatch.setattr(robot_main, "typed_lines", gone)
-    code, out, err = real_driver(capsys)
-    assert code == 2
-    assert out[1:] == QUESTIONS[:2]
-    assert err == "robot app: not confirmed: nothing was connected\n"
-
-
-def test_the_calibration_is_shown_as_one_printable_word(capsys):
-    said: list[str] = []
-    name = "bench\x07-7\n" + "x" * 100
-    assert robot_main.confirm_real_driver(name, iter(["yes"] * 3), said.append)
-    assert len(said) == 3
-    shown = said[2].removeprefix("Real driver, 3 of 3: Is the calibration in use ")
-    assert shown.startswith("'bench -7 xxx")
-    assert shown.isprintable() and len(shown) < 100
-
-
-def test_the_real_driver_is_not_asked_for_with_apais_software_arm(capsys, monkeypatch):
-    fake_backend(monkeypatch, kind="mock")
-    monkeypatch.setattr(robot_main, "typed_lines", None)  # nothing may be asked
-    code, out, err = real_driver(capsys)
-    assert code == 2
-    assert out == []
-    assert err == (
-        "robot app: APAI arm profile 'rebot_rs' is APAI's software arm: use "
-        "--driver mock\n"
-    )
-
-
-def test_a_real_driver_profile_that_cannot_be_loaded_asks_nothing(capsys, monkeypatch):
-    fake_backend(monkeypatch)
-    monkeypatch.setattr(robot_main, "typed_lines", None)
-    argv = [*APAI, "--driver", "real", "--apai-profile", "no_arm"]
-    assert robot_main.main([*argv, "--calibration", "bench-7"]) == 2
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == (
-        "robot app: APAI arm profile 'no_arm' cannot be used: there is no arm "
-        "profile no_arm\n"
-    )
-
-
 def test_a_hardware_profile_is_not_run_as_the_mock_driver(capsys, monkeypatch):
     monkeypatch.setattr(robot_main, "RobotApp", None)
     monkeypatch.setattr(robot_main, "_remote_link_missing", lambda: None)
@@ -395,29 +284,6 @@ def test_a_hardware_profile_is_not_run_as_the_mock_driver(capsys, monkeypatch):
             "--driver real\n"
         )
         assert captured.out == ""
-
-
-@pytest.mark.apai
-def test_the_real_driver_of_an_apai_profile_is_confirmed_and_never_connected(
-    capsys, monkeypatch
-):
-    from isaaccapture_examples.agentic_remote.robot_app import apai_backend
-
-    def forbidden(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("the arm was built or connected")
-
-    monkeypatch.setattr(sys, "path", list(sys.path))  # the driver adds its SDK path
-    monkeypatch.setattr(apai_backend, "build_apai_arm", forbidden)
-    monkeypatch.setattr(apai_backend.ApaiArm, "connect", forbidden)
-    answer(monkeypatch, "yes", "yes", "yes")
-    code, out, err = real_driver(capsys)
-    assert (code, err) == (2, "")
-    assert out[1:4] == QUESTIONS
-    assert out[-1] == P2_LINE
-    # The mock profile is no real driver.
-    argv = [*APAI, "--driver", "real", "--apai-profile", "mock"]
-    assert robot_main.main([*argv, "--calibration", "bench-7"]) == 2
-    assert "is APAI's software arm: use --driver mock" in capsys.readouterr().err
 
 
 # Lines typed at a file descriptor

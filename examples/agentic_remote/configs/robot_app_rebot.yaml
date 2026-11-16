@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot app settings for the rig: the reBot B601 arm (RobStride build) on the Thor,
+# with --arm apai --driver real and the rig's APAI arm profile. Nothing here was
+# run on the arm. A value marked "first value" was not measured: measure it in the
+# hardware session. Angles are in rad, speeds in rad/s, times in s, jaw openings
+# run from 0 (closed) to 1 (open).
+
+robot_id: rebot-thor-can4
+# configs/agent_rebot.yaml expects this name (link.expected_profile_id).
+profile_id: rebot-b601-rs-thor
+n_joints: 6
+# The arm group of the rig's motor file (sdk-can4.yaml, groups.arm.joints).
+joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
+
+# One limit set per control owner. The joint boxes are the limits of APAI's arm
+# model of the rebot_rs profile, -2.8..2.8, 0..3.14, 0..3.14, -1.69..1.79,
+# -1.57..1.57, -3.14..3.14, with one change: joint indices 1 and 2 lie on their
+# stops at rest and read a few mrad below 0 there, so their boxes begin at -0.05.
+# The limits are the model's, not a measurement of this arm.
+# Every speed is 0.1: the rig's profile caps the joint speed at 0.1 or 0.2, and a
+# limit set faster than the profile's cap is refused.
+limits:
+  agent:
+    version: rebot-p2-1
+    joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
+    joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
+    max_joint_speed: 0.1
+    # The agent's working box: 120 degrees around 0 (the rig profile's
+    # motion_bounds.max_joint_deviation_rad), cut to the joint box.
+    envelope_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
+    envelope_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
+  human:
+    version: rebot-p2-1
+    joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
+    joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
+    # First value; nothing uses the human limit set until a human can drive
+    # (phase P3). It may not exceed the profile's cap.
+    max_joint_speed: 0.1
+    max_step_rad: 0.1
+  recovery:
+    version: rebot-p2-1
+    joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
+    joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
+    max_joint_speed: 0.1
+
+# First values, equal to configs/robot_app.yaml; measure in the hardware session.
+executor:
+  period_s: 0.02
+  # Holds the longest return to rest from the far end of rest.region_*: 2182
+  # setpoints for 2.0944 rad at 0.1 rad/s.
+  max_setpoints: 3000
+  small_delay_s: 0.005
+  large_delay_s: 0.1
+  settle_tol_rad: 0.03
+  settle_timeout_s: 2.0  # configs/agent_rebot.yaml copies it (thor.settle_timeout_s)
+  reads_per_step: 2
+  max_start_tol_rad: 0.05
+
+# First values; measure in the hardware session.
+permits:
+  evidence_age_limit_s: 3.0
+  required_for_agent: true
+  first_wait_s: 0.5  # configs/agent_rebot.yaml copies it (thor.first_wait_s)
+
+waits:
+  assistance_s: 120.0  # never below 90
+  bell_at_s: [30.0, 10.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+
+rest:
+  # The rig profile's park pose (park_q): the arm folded on its stops.
+  rest_q: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  rest_tol_rad: 0.05  # at rest for a release and at the end of a return to rest
+  # --arm apai raises this to the profile's rest check tolerance
+  # (rest_check_tol_rad, 0.12 in APAI's rebot_rs profile).
+  start_rest_tol_rad: 0.05
+  agree_tol_rad: 0.02
+  read_gap_s: 0.2
+  recovery_speed: 0.1
+  min_duration_s: 2.0
+  # Start poses from which a return to rest is allowed: the agent's working box.
+  # First value; no return to rest has been run on the bench with this program.
+  # Measure in the hardware session, with the arm supported.
+  region_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
+  region_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
+  # The timed return moves the arm by itself: off until its bench tests on this
+  # arm. The arm holds when the assistance wait runs out.
+  auto_return: false
+  table_clearance_m: 0.02  # first value; measure in the hardware session
+
+# First values; measure in the hardware session. --arm apai tightens target_tol to
+# 0.1 rad of the profile's jaw travel.
+gripper:
+  closed_frac: 0.04
+  target_tol: 0.03
+  reach_tol: 0.03
+  full_open_tol: 0.03
+  agree_tol: 0.02
+  reads: 3
+  read_gap_s: 0.05
+  open_step: 0.05
+  reference_at_start: true
+
+grasp:
+  max_radius_m: 0.3  # first value; measure in the hardware session
+  max_depth_m: 0.06  # first value; measure in the hardware session
+
+state:
+  publish_period_s: 0.05
+  recent_window_s: 0.5
+  history_s: 6.0
+  idle_read_period_s: 0.02  # first value; measure in the hardware session
+
+# Checked when the file is loaded; nothing uses them until a human can drive
+# (phase P3).
+human:
+  view_age_limit_s: 0.5
+  sample_age_limit_s: 0.25
+
+connection:
+  retry_s: 1.0
+
+# The typed "reference" at the Thor terminal closes the jaws on a person's word
+# that they are empty. Off: it is a new jaw rule that waits for the owner's yes.
+jaws:
+  allow_reference: false
+
+# The calibration in use on the rig, named by the first 12 hex digits of the
+# SHA-256 of the stereo calibration's manifest.json and of the camera mounting's
+# handeye.json (mounting 20261107T005443Z), computed on 2026-11-15 from the
+# workstation's copies. The agent program builds the same name from its copies
+# and prints it with --check: if that prints another name, that one is right.
+# --calibration on the command line must repeat this name.
+camera_calibration_id: stereo-c50bf5b2b899+mount-41d3ce701628

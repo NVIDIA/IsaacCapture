@@ -20,6 +20,7 @@ from isaaccapture_examples.agentic_remote.robot_app.config import (
     GraspConfig,
     GripperConfig,
     HumanConfig,
+    JawsConfig,
     Limits,
     LimitSet,
     PermitsConfig,
@@ -185,6 +186,37 @@ def test_human_defaults():
     assert HumanConfig() == HumanConfig(view_age_limit_s=0.5, sample_age_limit_s=0.25)
 
 
+def test_the_typed_jaw_reference_is_off_by_default(config, tmp_path):
+    assert JawsConfig() == JawsConfig(allow_reference=False)
+    assert config.jaws == JawsConfig()
+    assert _load_changed(tmp_path, _drop("jaws")).jaws.allow_reference is False
+    shipped = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))
+    assert shipped["jaws"] == {"allow_reference": False}
+
+
+def test_the_typed_jaw_reference_setting_is_loaded(tmp_path):
+    config = _load_changed(tmp_path, _put("jaws.allow_reference", True))
+    assert config.jaws.allow_reference is True
+    assert dataclasses.replace(config, jaws=JawsConfig()) == RobotAppConfig.default()
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", "yes", None, [True]])
+def test_a_jaw_reference_setting_that_is_not_a_flag_is_refused(tmp_path, value):
+    with pytest.raises(
+        ConfigError, match=r"jaws\.allow_reference must be true or false"
+    ):
+        _load_changed(tmp_path, _put("jaws.allow_reference", value))
+
+
+def test_the_jaws_block_takes_no_other_key(tmp_path):
+    with pytest.raises(ConfigError, match=r"jaws has unknown key\(s\) reference"):
+        _load_changed(tmp_path, _put("jaws.reference", True))
+    with pytest.raises(ConfigError, match=r"jaws must be a mapping of settings"):
+        _load_changed(tmp_path, _put("jaws", True))
+    with pytest.raises(ConfigError, match=r"jaws must be a JawsConfig"):
+        dataclasses.replace(RobotAppConfig.default(), jaws={"allow_reference": True})
+
+
 def test_rest_defaults(config):
     assert config.rest == RestConfig(
         rest_q=_every_joint(0.0),
@@ -272,6 +304,7 @@ def test_default_blocks_are_the_block_defaults(config):
     assert config.gripper == GripperConfig()
     assert config.state == StateConfig()
     assert config.human == HumanConfig()
+    assert config.jaws == JawsConfig()
 
 
 def test_default_recovery_accepts_every_pose_the_human_set_accepts(config):
@@ -313,6 +346,7 @@ def test_settings_left_out_take_their_defaults(tmp_path):
         "grasp",
         "state",
         "human",
+        "jaws",
     )
     optional_rest = (
         "rest_tol_rad",
@@ -990,6 +1024,7 @@ def test_every_block_setting_has_a_rejected_value(tmp_path):
         "gripper": GripperConfig,
         "state": StateConfig,
         "human": HumanConfig,
+        "jaws": JawsConfig,
     }
     for block, kind in blocks.items():
         for field in dataclasses.fields(kind):

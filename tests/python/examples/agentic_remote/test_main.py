@@ -8,21 +8,33 @@ The self-test runs on the machine's clock, so these tests take real seconds.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import os
 import runpy
+import subprocess
 import sys
 import threading
 import types
 from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
+from isaaccapture_examples.agentic_remote.agent import config as agent_config
+from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+from isaaccapture_examples.agentic_remote.protocol.messages import SIMULATED_DRIVERS
 from isaaccapture_examples.agentic_remote.robot_app import __main__ as robot_main
 from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
-from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
+from isaaccapture_examples.agentic_remote.robot_app.config import (
+    JawsConfig,
+    RobotAppConfig,
+)
 from isaaccapture_examples.agentic_remote.robot_app.permits import PermitGate
 from isaaccapture_examples.agentic_remote.robot_app.sim import BasicChecker, SimArm
+from isaaccapture_examples.agentic_remote.robot_app.terminal import TypedLines
 from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
 from repo_paths import repo_root
 
@@ -618,3 +630,245 @@ def test_arm_apai_with_a_profile_that_cannot_be_used_gives_exit_code_2(capsys):
         f"robot app: APAI arm profile 'no_arm' cannot be used with {CONFIG_YAML}: "
     )
     assert captured.out == ""
+
+
+@pytest.mark.apai
+@pytest.mark.parametrize(("profile", "cap"), [("mock", "1.2"), ("rebot_rs", "0.8")])
+def test_arm_apai_names_the_profiles_speed_cap(
+    capsys, monkeypatch, apai_yaml, profile, cap
+):
+    monkeypatch.setattr(sys, "path", list(sys.path))  # the driver adds its SDK path
+    argv = ["--config", apai_yaml, "--arm", "apai", "--apai-profile", profile]
+    assert robot_main.main(argv) == 2
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-4] == (
+        f"  the profile's speed cap: {cap} rad/s; the limit sets' joint speeds: "
+        "agent 0.4, human 0.8, recovery 0.1 rad/s"
+    )
+
+
+# What WELCOME declares, and the setting jaws.allow_reference
+
+
+class Dialed:
+    """Stands in for LinkCarrier in the program: each dial is a loopback link."""
+
+    def __init__(self) -> None:
+        self.workstation_ends: list[Any] = []
+        self._made = threading.Condition()
+
+    def connect(self, endpoint: str, timeout_s: float, *, name: str = "robot") -> Any:
+        robot_end, workstation_end = loopback_pair()
+        with self._made:
+            self.workstation_ends.append(workstation_end)
+            self._made.notify_all()
+        return robot_end
+
+    def first(self) -> Any:
+        """The workstation's end of the first dial."""
+        with self._made:
+            assert self._made.wait_for(lambda: self.workstation_ends, 10.0)
+            return self.workstation_ends[0]
+
+
+def built_apps(monkeypatch) -> list[dict[str, Any]]:
+    """The keywords of every RobotApp the program builds from here on."""
+    built: list[dict[str, Any]] = []
+    real = robot_main.RobotApp
+
+    def robot_app(*args: Any, **kwargs: Any) -> Any:
+        built.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(robot_main, "RobotApp", robot_app)
+    return built
+
+
+def unconnected_arm(config: RobotAppConfig, clock: SystemClock) -> SimArm:
+    """A simulated arm whose connect fails: the program ends before it dials."""
+    arm = SimArm(n_joints=6, clock=clock, q0=list(config.rest.rest_q))
+
+    def no_bus() -> None:
+        raise RuntimeError("the CAN bus is down")
+
+    arm.connect = no_bus
+    return arm
+
+
+def invented_times_settings(folder: Path) -> Any:
+    """Agent settings for --camera mock: its capture times are made up."""
+    data = {"camera": {"allow_invented_times": True}, "state_dir": str(folder)}
+    path = folder / "agent.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return agent_config.load_settings(path)
+
+
+@pytest.mark.parametrize(
+    ("arm", "driver"),
+    [
+        (["--arm", "sim"], "sim"),
+        pytest.param(["--arm", "apai"], "apai-mock", marks=pytest.mark.apai),
+        pytest.param(
+            ["--arm", "apai", "--driver", "mock"], "apai-mock", marks=pytest.mark.apai
+        ),
+    ],
+)
+def test_sim_and_mock_arms_declare_a_simulated_driver(
+    monkeypatch, tmp_path, apai_yaml, arm, driver
+):
+    links, typed, returned = Dialed(), TypedLines(), []
+    built = built_apps(monkeypatch)
+    monkeypatch.setattr(robot_main, "LinkCarrier", links)
+    monkeypatch.setattr(robot_main, "_remote_link_missing", lambda: None)
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: typed)
+    argv = ["--config", apai_yaml, *arm, "--connect", "127.0.0.1:47610"]
+    program = threading.Thread(
+        target=lambda: returned.append(robot_main.main(argv)), daemon=True
+    )
+    program.start()
+    client = WorkstationClient(links.first(), SystemClock())
+    try:
+        welcome = client.wait_welcome(10.0)
+        assert welcome.driver == driver
+        assert driver in SIMULATED_DRIVERS
+        # The agent program takes --camera mock against this robot app; against
+        # one that declares no driver it ends.
+        settings = invented_times_settings(tmp_path)
+        agent_config.check_robot_driver(settings, welcome.driver, invented=True)
+        with pytest.raises(agent_config.ConfigError, match="allow_invented_times"):
+            agent_config.check_robot_driver(settings, "", invented=True)
+        state = client.wait_state(lambda s: s.motion == "rest_hold", 10.0)
+        assert state.torque_on
+        typed.type("quit")
+        program.join(20.0)
+        assert returned == [0]
+    finally:
+        typed.end()
+        client.close()
+    assert [kwargs["driver"] for kwargs in built] == [driver]
+    assert built[0]["allow_reference"] is False
+    assert left_threads() == []
+
+
+def test_the_two_selftests_declare_the_simulated_driver(monkeypatch, tmp_path):
+    built = built_apps(monkeypatch)
+    config = RobotAppConfig.default()
+    said: list[str] = []
+    for run in (
+        robot_main._SelfTest(config, said.append),
+        robot_main._LinkSelfTest(config, said.append, str(tmp_path)),
+    ):
+        run._close()  # nothing was started
+    assert [kwargs["driver"] for kwargs in built] == ["sim", "sim"]
+    assert [kwargs["allow_reference"] for kwargs in built] == [False, False]
+    assert left_threads() == []
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_every_robot_app_takes_the_files_jaw_reference_setting(
+    monkeypatch, tmp_path, allowed
+):
+    built = built_apps(monkeypatch)
+    config = dataclasses.replace(
+        RobotAppConfig.default(), jaws=JawsConfig(allow_reference=allowed)
+    )
+    clock = SystemClock()
+    code = robot_main.run_connected(
+        config,
+        unconnected_arm(config, clock),
+        robot_main.sim_checkers(config, clock),
+        clock,
+        "127.0.0.1:47610",
+        typed=iter(()),
+        driver="sim",
+    )
+    assert code == 1
+    for run in (
+        robot_main._SelfTest(config, lambda line: None),
+        robot_main._LinkSelfTest(config, lambda line: None, str(tmp_path)),
+    ):
+        run._close()
+    assert [kwargs["allow_reference"] for kwargs in built] == [allowed] * 3
+    assert left_threads() == []
+
+
+def test_run_connected_declares_the_driver_its_caller_names(monkeypatch):
+    built = built_apps(monkeypatch)
+    config, clock = RobotAppConfig.default(), SystemClock()
+    arm = unconnected_arm(config, clock)
+    checkers = robot_main.sim_checkers(config, clock)
+    # Without a name WELCOME declares nothing, which every reader takes for real.
+    assert (
+        robot_main.run_connected(config, arm, checkers, clock, "h:1", typed=iter(()))
+        == 1
+    )
+    with pytest.raises(ValueError, match="driver must be one of"):
+        robot_main.run_connected(config, arm, checkers, clock, "h:1", driver="mock")
+    assert [kwargs["driver"] for kwargs in built] == ["", "mock"]
+    assert left_threads() == []
+
+
+# The Thor start script
+
+EXAMPLE = CONFIG_YAML.parents[1]
+
+
+def test_run_robot_app_sh_sets_the_environment_and_names_what_is_missing(tmp_path):
+    script = EXAMPLE / "run_robot_app.sh"
+    text = script.read_text(encoding="utf-8")
+    assert os.access(script, os.X_OK)
+    assert "[ " not in text.replace("[[ ", "")  # [[ ]] only
+    assert "set -euo pipefail" in text
+    assert "SPDX-License-Identifier: Apache-2.0" in text
+    env = {"PATH": os.environ["PATH"], "APAI_ARM_HOLD_DIR": "/elsewhere"}
+    fake = tmp_path / "python"
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "${APAI_ROBOT:-unset} ${APAI_BASE:-unset} ${APAI_ARM_HOLD_DIR:-unset} '
+        '$PYTHONDONTWRITEBYTECODE $AGENTIC_REMOTE_APAI_SRC $PYTHONPATH $*"\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    package = tmp_path / "isaac_capture_py"
+    package.mkdir()
+    needed = {
+        "AGENTIC_REMOTE_THOR_PYTHON": (str(fake), "the Python of APAI's environment"),
+        "AGENTIC_REMOTE_APAI_SRC": (str(tmp_path), "the src folder of the APAI"),
+        "AGENTIC_REMOTE_ISAAC_CAPTURE_PY": (
+            str(package),
+            "the folder of the Isaac Capture Python package",
+        ),
+    }
+    for name, (value, said) in needed.items():
+        # One line and exit code 2 without the variable, and with a wrong one.
+        for wrong in ({}, {name: str(tmp_path / "missing")}):
+            done = subprocess.run(
+                [str(script), "--help"],
+                check=False,
+                env={**env, **wrong},
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert done.returncode == 2 and done.stdout == ""
+            assert done.stderr.startswith(f"run_robot_app.sh: {name} must name {said}")
+            assert done.stderr.count("\n") == 1
+        env[name] = value
+    env.update(APAI_ROBOT="another", APAI_BASE="another", PYTHONPATH="/before")
+    done = subprocess.run(
+        [str(script), "--config", "configs/robot_app.yaml", "--arm", "sim"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == [
+        *("unset", "unset", "unset", "1"),
+        str(tmp_path),
+        f"{EXAMPLE}/python:{package}:/before",
+        *("-m", "isaaccapture_examples.agentic_remote.robot_app"),
+        *("--config", "configs/robot_app.yaml", "--arm", "sim"),
+    ]
