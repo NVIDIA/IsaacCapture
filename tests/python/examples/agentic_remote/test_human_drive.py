@@ -53,7 +53,11 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     Refusal,
 )
 from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
-from isaaccapture_examples.agentic_remote.robot_app.state import JointHistory
+from isaaccapture_examples.agentic_remote.robot_app.state import (
+    IDLE_AFTER_TARGET_S,
+    IdleReader,
+    JointHistory,
+)
 from test_apai_backend import HOME, make_config, with_speed
 
 try:
@@ -1852,3 +1856,86 @@ def test_the_idle_reads_are_paused_from_the_start_read_to_the_last_setpoint(rig)
     rig.release()
     assert rig.run(drive=drive).status == "released"
     assert (pauses.open, pauses.entered) == (0, 1)
+
+
+@pytest.mark.parametrize("failed_reads", [0, 1], ids=["first try", "second try"])
+def test_the_hold_after_a_contact_runs_with_the_idle_reads_paused(rig, failed_reads):
+    pauses = Pauses()
+    drive = rig.new_drive(reads_paused=pauses)
+    rig.arm.block_joint(0, 0.05)
+    in_hold: list[int] = []
+    real = rig.arm.hold_measured
+
+    def hold() -> None:
+        in_hold.append(pauses.open)
+        if len(in_hold) <= failed_reads:
+            raise ReadFailed("joint index 2: the read failed")
+        real()
+
+    rig.patch.setattr(rig.arm, "hold_measured", hold)
+    rig.lead(FAR)
+    end = rig.run(drive=drive)
+    assert (end.status, len(rig.arm.holds)) == ("contact", 1)
+    # Every try of the hold reads the joints inside the drive's one pause.
+    assert in_hold == [1] * (failed_reads + 1)
+    assert (pauses.open, pauses.entered) == (0, 1)
+
+
+def test_no_idle_read_begins_while_the_hold_after_a_contact_is_tried_again(rig):
+    # The robot app's idle reader: it reads one joint when a read is due.
+    idle = IdleReader(rig.arm, rig.history, rig.config.state, rig.clock)
+    drive = rig.new_drive(reads_paused=idle.paused)
+    rig.arm.block_joint(0, 0.05)
+    real = rig.arm.hold_measured
+    tries: list[int] = []
+    in_retry: list[tuple[float, float | None, object]] = []
+
+    def hold() -> None:
+        tries.append(1)
+        if len(tries) == 1:
+            # A read of every joint that takes long and then fails.
+            rig.clock.advance(IDLE_AFTER_TARGET_S)
+            raise ReadFailed("joint index 2: the read failed")
+        now = rig.clock.monotonic()
+        since_setpoint = now - rig.arm.last_target()[1]
+        in_retry.append((since_setpoint, idle.due_in(now), idle.step(now)))
+        real()
+
+    rig.patch.setattr(rig.arm, "hold_measured", hold)
+    rig.lead(FAR)
+    end = rig.run(drive=drive)
+    assert (end.status, len(rig.arm.holds)) == ("contact", 1)
+    [(since_setpoint, due_in, read)] = in_retry
+    # The last setpoint is old enough for an idle read, and none is due or made.
+    assert since_setpoint >= IDLE_AFTER_TARGET_S
+    assert (due_in, read) == (None, None)
+    # After the drive the idle reads go on.
+    rig.clock.advance(IDLE_AFTER_TARGET_S)
+    assert idle.step(rig.clock.monotonic()) is not None
+
+
+@pytest.mark.parametrize(
+    ("asked", "pauses_entered"),
+    [("feed_watchdog", 0), ("begin_motion", 1), ("contact_watch", 1)],
+)
+def test_a_contact_before_the_drive_has_a_watch_ends_it_contact_with_no_hold(
+    rig, asked, pauses_entered
+):
+    # The checker reports a contact where the drive has no watch yet: before
+    # the start read, with nothing paused, or after it. A ContactStop is a
+    # Refusal, and the drive still ends "contact", not "refused".
+    pauses = Pauses()
+    drive = rig.new_drive(reads_paused=pauses)
+
+    def contact(*args: object) -> None:
+        raise ContactStop("contact: joint index 3")
+
+    rig.patch.setattr(rig.checker, asked, contact)
+    rig.squeeze(GOAL)
+    end = rig.run(drive=drive)
+    assert (end.status, end.reason) == ("contact", "contact: joint index 3")
+    # Nothing was sent, so there is no hold: the target before the drive stands.
+    assert (rig.sends, rig.arm.holds) == ([], [])
+    assert rig.arm.torque_on()
+    assert not rig.checker.in_motion
+    assert (pauses.open, pauses.entered) == (0, pauses_entered)

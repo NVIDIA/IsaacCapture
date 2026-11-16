@@ -250,15 +250,20 @@ class HumanDrive:
                 try:
                     ended = self._start(drive)
                     if ended is None:
-                        # No idle read shares the bus, or the clock, with the drive.
+                        # No idle read shares the bus, or the clock, with the
+                        # drive, the hold after a contact included.
                         with self._reads_paused():
-                            ended = self._begin(drive)
-                            while ended is None:
-                                ended = self._next_setpoint(drive)
-                                if ended is None:
-                                    self._arm.send_target(drive.q_next)
-                                    ended = self._after_send(drive)
+                            try:
+                                ended = self._begin(drive)
+                                while ended is None:
+                                    ended = self._next_setpoint(drive)
+                                    if ended is None:
+                                        self._arm.send_target(drive.q_next)
+                                        ended = self._after_send(drive)
+                            except ContactStop as contact:
+                                ended = self._after_contact(drive.watch, contact.reason)
                 except ContactStop as contact:
+                    # Raised before the start read: nothing is paused yet.
                     ended = self._after_contact(drive.watch, contact.reason)
                 except FeedbackLost as lost:
                     # Like a driver fault: the caller raises a fault-stop.
