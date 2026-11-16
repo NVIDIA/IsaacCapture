@@ -67,8 +67,7 @@ XrPosef parse_aim_to_wrist(const std::string& arg, spdlog::logger& logger)
 
     XrPosef pose{};
     int consumed = -1;
-    // The spaces accept whitespace around each comma; %n then proves that only
-    // whitespace follows the seventh value.
+
     const int parsed = std::sscanf(value.c_str(), "%f ,%f ,%f ,%f ,%f ,%f ,%f %n", &pose.position.x, &pose.position.y,
                                    &pose.position.z, &pose.orientation.x, &pose.orientation.y, &pose.orientation.z,
                                    &pose.orientation.w, &consumed);

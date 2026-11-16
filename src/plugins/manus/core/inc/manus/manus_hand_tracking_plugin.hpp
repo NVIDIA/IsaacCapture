@@ -44,12 +44,10 @@ namespace manus
 inline constexpr std::size_t kManusFingerCount = 5;
 
 // Controller aim pose -> wrist joint, the default ManusPluginConfig offsets.
+// These values are optimised for the Meta Quest 3 with the official MANUS Meta Quest 3 mount.
 inline constexpr XrPosef kLeftHandOffset = { { -0.744f, -0.445f, -0.282f, 0.411f }, { -0.072f, -0.001f, -0.003f } };
 inline constexpr XrPosef kRightHandOffset = { { -0.744f, 0.445f, 0.282f, 0.411f }, { 0.072f, -0.001f, -0.003f } };
 
-/// manus_hand_plugin settings, parsed from command-line flags in app/main.cpp.
-/// TeleopSession forwards PluginConfig.plugin_args to the plugin, so new
-/// settings belong here as flags rather than in environment variables.
 struct ManusPluginConfig
 {
     std::string app_name = "ManusHandPlugin";
