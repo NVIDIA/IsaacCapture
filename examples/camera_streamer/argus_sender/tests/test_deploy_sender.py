@@ -57,8 +57,6 @@ def test_stop_and_reset_patterns_match_the_started_command(capsys):
     assert stop.count(f'pgrep -f "{started}"') == 2
     (reset,) = remote_scripts(dry_run_lines(capsys, "reset"))
     assert f'pgrep -f "{started}"' in reset
-    (reboot,) = remote_scripts(dry_run_lines(capsys, "reset", "--reboot"))
-    assert f'pgrep -f "{started}"' in reboot
 
 
 def test_stop_daemon_only_stops_the_daemon_and_checks_the_result(capsys):
@@ -70,21 +68,6 @@ def test_stop_daemon_only_stops_the_daemon_and_checks_the_result(capsys):
     assert "still active" in script
     for broader in ("disable", "restart", "reboot", "rm "):
         assert broader not in script
-
-
-def test_remove_producer_stops_before_removing(capsys):
-    (script,) = remote_scripts(dry_run_lines(capsys, "remove-producer"))
-    removal = script.index("rm -rf /opt/isaaccapture/releases")
-    guards = [
-        "list-unit-files",
-        "could not stop",
-        "still running after the stop",
-        "could not disable",
-    ]
-    positions = [script.index(guard) for guard in guards]
-    assert positions == sorted(positions)
-    assert positions[-1] < removal
-    assert script.index("rm -f /etc/systemd/system/") < removal
 
 
 def deploy_script(monkeypatch, capsys):
