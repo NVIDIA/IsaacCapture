@@ -266,12 +266,12 @@ the same session step, after the configured world-frame coordinate conversion
 and any controller-to-hand calibration. Head-relative poses stay fixed when the
 head and EEs undergo the same rigid motion; moving only the head changes them.
 
-If the head pose is absent or invalid, the EE message keeps the configured
-`head_frame`, both entries are marked `is_valid: false`, and no wrist TFs are
-broadcast until a valid head pose returns. There is no fallback to `world_frame`.
-Consumers must honor `is_valid`; invalid entries contain placeholder poses, not
-robot targets. The head pose and head TF remain relative to `world_frame`, and
-other topics are unchanged.
+If the head pose is absent, invalid, or untracked, the EE message keeps the
+configured `head_frame`, both entries are marked `is_valid: false`, and no wrist
+TFs are broadcast until active head tracking returns. There is no fallback to
+`world_frame`. Consumers must honor `is_valid`; invalid entries contain
+placeholder poses, not robot targets. The head pose and head TF are also not
+published while the head is untracked; other topics are unchanged.
 
 ```bash
 docker run --rm --gpus all --net=host --ipc=host \

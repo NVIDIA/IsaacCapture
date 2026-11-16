@@ -467,7 +467,10 @@ def build_head_output(
     transform_rot: Rotation | None = None,
     transform_trans: Sequence[float] | None = None,
 ) -> tuple[PoseStamped, TransformStamped] | None:
-    """Build the head pose message and matching TF, or None when invalid."""
+    """Build the head pose message and matching TF, or None when untracked."""
+    if not head_is_tracked(head):
+        return None
+
     pose = _compute_head_pose(head, transform_rot, transform_trans)
     if pose is None:
         return None
