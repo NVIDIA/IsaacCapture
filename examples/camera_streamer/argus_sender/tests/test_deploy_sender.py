@@ -51,6 +51,19 @@ def test_run_uploads_to_and_starts_with_the_run_config(capsys, tmp_path):
     assert f"./build/argus_sender --config {RUN_CONFIG}" in script
 
 
+def test_run_checks_for_other_senders_without_matching_itself_and_keeps_its_exit_status(
+    monkeypatch, capsys, tmp_path
+):
+    config = tmp_path / "c.yaml"
+    config.write_text("x: 1\n")
+    lines = dry_run_lines(capsys, "run", "--name", "rel", "--config", str(config))
+    (script,) = remote_scripts(lines[1:])
+    # An exact process-name match; a command-line match would also find the shell whose command line holds this script.
+    assert "pgrep -x argus_sender" in script
+    assert "pgrep -f '/argus_sender'" not in script
+    assert script.index("set +e") < script.index("exit 0")
+
+
 def test_stop_and_reset_patterns_match_the_started_command(capsys):
     started = f"^\\./build/argus_sender --config {RUN_CONFIG}"
     (stop,) = remote_scripts(dry_run_lines(capsys, "stop"))

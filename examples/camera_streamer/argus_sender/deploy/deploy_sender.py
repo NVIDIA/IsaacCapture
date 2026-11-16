@@ -261,7 +261,7 @@ d={directory}
 if systemctl is-active --quiet camera-argus-sender.service 2>/dev/null; then
     echo "note: camera-argus-sender.service is active and may hold the cameras" >&2
 fi
-if pgrep -f '/argus_sender' >/dev/null; then
+if pgrep -x argus_sender >/dev/null; then
     echo "note: another camera process is running" >&2
 fi
 """
@@ -280,6 +280,9 @@ cd $d
 # SIGINT first: the sender drains its encoder and returns every camera buffer on SIGINT/SIGTERM.
 status=0
 {env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config {RUN_CONFIG} || status=$?
+# errexit off for the rest: a login shell also runs the target's logout files on exit, and a failing last command in
+# one would otherwise replace the exit status chosen here.
+set +e
 # 124 is the time limit this command set; any other nonzero status is the sender's own and fails the run.
 if [[ $status -eq 124 ]]; then echo "sender stopped at its {seconds} s time limit"; exit 0; fi
 if [[ $status -ne 0 ]]; then echo "sender exited with status $status" >&2; exit $status; fi
