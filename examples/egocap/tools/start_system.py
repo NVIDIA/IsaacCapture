@@ -334,6 +334,19 @@ class Managed:
     optional: bool = False
 
 
+def raise_if_a_child_exited(stack: "Stack") -> None:
+    """Stop startup when a required child has already exited; an optional one is left to ``watch``.
+
+    A sender that ended cleanly is the requested end of its run, which ``watch`` reports, not a startup failure.
+    """
+    for child in stack.children:
+        if child.optional or child.process.poll() is None:
+            continue
+        if child.name == "sender" and child.process.returncode == 0:
+            continue
+        raise StartupError(f"{child.name} exited with {child.process.returncode}; see {child.log}")
+
+
 def watch(stack: "Stack") -> Managed:
     """Block until a required child exits and return it.
 
@@ -840,11 +853,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                 ],
             )
+        url = f"http://127.0.0.1:{args.backend_port}/"
+        token = control_token(backend.log)
+        print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
+        if args.mock:
+            # Everything the page shows and records in this mode is synthetic.
+            print("--mock: tracking, the CaptureServer cameras and the camera stream are synthetic.")
+        print("Ctrl-C stops everything.")
+        if args.open:
+            webbrowser.open(url)
         if args.orin:
-            # Each step has a timeout, and a failure only degrades capture times (the bridge refuses unqualified
-            # times, so a take cannot start until time sync is up); but the banner, --open and supervision wait for
-            # these steps, so the preview comes up after them, not before.
-            print("setting up time sync", flush=True)
+            # The page address is already printed and the browser open, so a slow or failed step never holds the
+            # preview. Each step has a timeout; a failure only degrades capture times (the bridge refuses
+            # unqualified times, so a take cannot start until time sync is up). A child that dies meanwhile is
+            # noticed between steps.
+            print("setting up time sync; capture times are unavailable until it finishes", flush=True)
             settled = False
             try:
                 provisioned = (
@@ -857,6 +880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             except (OSError, subprocess.TimeoutExpired):
                 provisioned = False
+            raise_if_a_child_exited(stack)
             if provisioned:
                 # An unprivileged chronyd on this PC measures the Orin's clock and never adjusts this PC's. Nothing
                 # has to reach this PC from the Orin, so a firewall here does not matter.
@@ -896,6 +920,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 except subprocess.TimeoutExpired:
                     configured = False
+                raise_if_a_child_exited(stack)
                 settled = (
                     configured
                     and subprocess.run(
@@ -919,15 +944,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.require_chrony:
                     raise StartupError(message)
                 print("WARNING:", message)
-        url = f"http://127.0.0.1:{args.backend_port}/"
-        token = control_token(backend.log)
-        print(f"\nEgo Capture is up at {url}\nrecording control token: {token}\nlogs: {workdir}")
-        if args.mock:
-            # Everything the page shows and records in this mode is synthetic.
-            print("--mock: tracking, the CaptureServer cameras and the camera stream are synthetic.")
-        print("Ctrl-C stops everything.")
-        if args.open:
-            webbrowser.open(url)
+            else:
+                print("time sync: settled", flush=True)
         # Stay up until a child dies or the operator interrupts.
         dead = watch(stack)
         if dead.name == "sender" and dead.process.returncode == 0:

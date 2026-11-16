@@ -524,6 +524,7 @@ def recorded_main(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
     # The fake children are not real processes, so there is nothing to signal.
     monkeypatch.setattr(ss.Stack, "stop_all", lambda self: None)
+    monkeypatch.setattr(ss, "ensure_receiver_environment", lambda: None)
     # Every deploy, stop and timesync step is recorded and reports success.
     monkeypatch.setattr(
         ss.subprocess, "run", lambda command, **_: deploys.append(list(command)) or SimpleNamespace(returncode=0)
@@ -648,6 +649,8 @@ def test_every_timesync_command_the_launcher_issues_is_accepted_by_the_real_time
 ):
     spec = importlib.util.spec_from_file_location("timesync_tool_real", TIMESYNC_TOOL)
     tool = importlib.util.module_from_spec(spec)
+    # The tool's dataclasses look their module up by name while the class bodies run.
+    monkeypatch.setitem(sys.modules, spec.name, tool)
     spec.loader.exec_module(tool)
     dispatched: list[str] = []
     # The tool looks its commands up by module-level name when it runs, so replacing them records the dispatch
@@ -661,6 +664,31 @@ def test_every_timesync_command_the_launcher_issues_is_accepted_by_the_real_time
     for command in issued:
         assert tool.main(command) == 0, command
     assert len(dispatched) == len(issued)
+
+
+def test_the_page_address_is_printed_before_time_sync_starts(recorded_main, capsys):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    out = capsys.readouterr().out
+    assert out.index("Ego Capture is up") < out.index("setting up time sync")
+    assert "time sync: settled" in out
+
+
+def test_a_child_that_dies_during_time_sync_stops_startup(recorded_main, monkeypatch, capsys):
+    real_start = ss.Stack.start
+
+    def start(self, name, command, *args, **kwargs):
+        managed = real_start(self, name, command, *args, **kwargs)
+        if name == "bridge":
+            managed.process.poll = lambda: 3
+            managed.process.returncode = 3
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    captured = capsys.readouterr()
+    assert "bridge exited with 3" in captured.err
+    # The banner was printed first: the preview is up while time sync runs.
+    assert "Ego Capture is up" in captured.out
 
 
 def test_the_receiver_python_follows_the_receivers_own_environment_variables(monkeypatch, tmp_path: Path):
