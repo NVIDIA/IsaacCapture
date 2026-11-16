@@ -13,25 +13,35 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import yaml
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
+from isaaccapture_examples.agentic_remote.human.ik import Solver
+from isaaccapture_examples.agentic_remote.human.types import IkSettings
 from isaaccapture_examples.agentic_remote.link_service import __main__ as service_main
 from isaaccapture_examples.agentic_remote.link_service import config as service_config
+from isaaccapture_examples.agentic_remote.protocol.messages import HumanSetpoint
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import (
     ConfigError,
     RobotAppConfig,
     load_config,
 )
-from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
+from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    MotionState,
+    Owner,
+)
 from repo_paths import repo_root
 
 import test_apai_backend as rs
 from conftest import AppHarness
+from test_takeover import drives, feed, keep_human_fed, setpoint, take_over
 
 CONFIGS = repo_root() / "examples" / "agentic_remote" / "configs"
 ROBOT_RIG = CONFIGS / "robot_app_rebot.yaml"
@@ -322,6 +332,130 @@ def test_a_new_task_starts_from_each_rig_reading_with_the_rig_file(
         # A move at twice the agent's speed limit is refused whole.
         back = rs.rs_move(h, rs.straight(raised, list(reading), 25), raised)
         assert back.status == "refused", back.reason
+        assert sdk.disconnects == 0 and arm.torque_on()
+    finally:
+        h.close()
+
+
+# A person on the rig file. A takeover makes a person the control owner; the
+# hand-back ends it at rest. A human drive is one stretch of human motion: the
+# arm follows the joint targets of HUMAN_SETPOINT link messages. The human
+# program makes them on the workstation by inverse kinematics (IK): from a
+# pose of the gripper tip to joint values.
+
+# The rig's limit on the hand's speed, m/s: retarget.max_linear_velocity of
+# configs/human_rebot.yaml, which is not loaded here. The hand below keeps its
+# orientation, so that file's limit on turning is not met.
+HAND_SPEED = 0.01
+LIFT_M = 0.03  # the first human motion planned on the rig: 3 cm straight up
+
+
+class LiftingHand:
+    """A hand that squeezes and rises LIFT_M: keep_human_fed's setpoint.
+
+    Its target, a pose of the gripper tip, rises by HAND_SPEED times the period
+    after each setpoint the arm was sent, and the human program's IK solves it
+    from the solution before. The grip is released once the arm is there.
+    """
+
+    def __init__(self, h: AppHarness, sdk: rs.MotorSdk, solver: Solver) -> None:
+        self.h, self.sdk, self.solver = h, sdk, solver
+        self.rise = HAND_SPEED * h.config.executor.period_s
+        self.tip: np.ndarray | None = None  # None: the grip is released
+        self.top = 0.0  # the height the hand rises to, m
+        self.q: tuple[float, ...] = ()  # the newest IK solution
+        self.problem = ""  # why a solve gave no joint values
+        self.ahead = 0.0  # the most a solution led the last setpoint sent, rad
+
+    def squeeze(self, measured: Sequence[float]) -> HumanSetpoint:
+        """The first engaged target: the measured pose inside the IK's margin."""
+        self.q = self.solver.inside(measured)
+        self.tip = self.solver.fk(self.q)
+        self.top = float(self.tip[2, 3]) + LIFT_M
+        return setpoint(self.h, self.q)
+
+    def __call__(self) -> HumanSetpoint:
+        if self.tip is None:
+            return setpoint(self.h)
+        if self.tip[2, 3] < self.top:
+            self.tip[2, 3] = min(self.top, self.tip[2, 3] + self.rise)
+            step = self.solver.solve(self.tip, self.q)
+            if step.q is None:
+                self.problem, self.tip = step.problem, None
+                return setpoint(self.h)
+            self.q = step.q
+        last = self.sdk.arm.sent[-1][0]
+        lead = max(abs(to - at) for at, to in zip(last, self.q))
+        self.ahead = max(self.ahead, lead)
+        if lead < 1e-6 and self.tip[2, 3] >= self.top:
+            self.tip = None  # the arm is at the top
+            return setpoint(self.h)
+        return setpoint(self.h, self.q)
+
+
+@apai
+@pytest.mark.parametrize("reading", rs.RIG_REST_READINGS)
+def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
+    robot_rig, clock, monkeypatch, reading
+):
+    backend = rs.apai_backend
+    # Human driving ships switched off in the rig file: on here, in memory only.
+    on = dataclasses.replace(robot_rig.human, enabled=True)
+    profile = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.1}})
+    config = backend.config_for_profile(
+        dataclasses.replace(robot_rig, human=on), profile
+    )
+    arm, sdk = rs.rs_arm(config, profile, clock, monkeypatch)
+    for motor, value in zip(sdk.arm.joint_names, reading):
+        sdk.arm._mm[motor].value = value
+    checkers = backend.build_apai_checkers(config, profile, clock)
+    h = AppHarness(config, arm, checkers, clock)
+    solver = Solver(profile.kinematics)
+    try:
+        h.start()
+        # The takeover at measured rest sends the motors nothing.
+        take_over(h)
+        assert h.app.snapshot().owner is Owner.HUMAN
+        assert sdk.arm.sent == []
+
+        # A squeeze, then 3 cm straight up, ended by the released grip.
+        ended = drives(h)
+        hand = LiftingHand(h, sdk, solver)
+        keep_human_fed(h, hand)
+        feed(h)  # fresh controller data: the grip is released
+        feed(h, hand.squeeze(reading))
+        h.idle()
+        assert hand.problem == ""
+        assert h.heard("human") == []
+        sent = [q for q, _ in sdk.arm.sent]
+        assert [(end.status, end.sent) for end in ended] == [("released", len(sent))]
+        # APAI's human checker of the rig's profile approved every setpoint.
+        assert checkers.human.harness.approved_commands == len(sent)
+        # No step is above the speed clamp of the rig's 0.1 rad/s.
+        human, period = config.limits.human, config.executor.period_s
+        steps = np.abs(np.diff(np.array([reading, *sent]), axis=0))
+        assert steps.max() <= SPEED_MARGIN * human.max_joint_speed * period + 1e-12
+        # No solution lay as far ahead of the last setpoint sent as makes the
+        # human program end the squeeze: ik.max_ahead_rad, here the default of
+        # human/types.py (0.08), which configs/human_rebot.yaml repeats.
+        assert hand.ahead < IkSettings().max_ahead_rad
+        start_tip = solver.fk(solver.inside(reading))[:3, 3]
+        rise = solver.fk(sent[-1])[:3, 3] - start_tip
+        assert rise == pytest.approx([0.0, 0.0, LIFT_M], abs=1e-3)
+        assert sdk.disconnects == 0 and arm.torque_on()
+
+        # The typed rest, then the hand-back.
+        rest = h.client.wait_result(h.client.rest(), timeout_s=5.0)
+        assert rest.status == "completed", rest.reason
+        assert h.app.motion_state is MotionState.REST_HOLD
+        assert sdk.arm.sent[-1][0] == [0.0] * 6
+        count = len(sdk.arm.sent), len(sdk.gripper.sent)
+        handback = h.client.request_owner("handback", reason="right A held 1.0 s")
+        back = h.client.wait_result(handback, timeout_s=5.0)
+        assert back.status == "completed", back.reason
+        assert not h.app.takeover_open
+        # The hand-back sends the motors nothing, the jaw motor included.
+        assert (len(sdk.arm.sent), len(sdk.gripper.sent)) == count
         assert sdk.disconnects == 0 and arm.torque_on()
     finally:
         h.close()

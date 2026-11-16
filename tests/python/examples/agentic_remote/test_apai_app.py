@@ -19,17 +19,42 @@ from typing import Any
 
 import numpy as np
 import pytest
-from isaaccapture_examples.agentic_remote.protocol.messages import GraspRegion, Result
-from isaaccapture_examples.agentic_remote.robot_app.app import MOTORS_OFF
+from isaaccapture_examples.agentic_remote.protocol.messages import (
+    DRIVER_APAI_MOCK,
+    GraspRegion,
+    HumanSetpoint,
+    Result,
+)
+from isaaccapture_examples.agentic_remote.robot_app.app import (
+    MOTORS_OFF,
+    NEEDS_RELEASE,
+    REST_FIRST,
+    TAKEOVER_OPEN,
+)
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import (
     Limits,
     LimitSet,
     RestConfig,
     RobotAppConfig,
+    load_config,
 )
-from isaaccapture_examples.agentic_remote.robot_app.interfaces import CheckerSet
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    CheckerSet,
+    MotionState,
+    Owner,
+)
+from repo_paths import repo_root
+
 from conftest import AppHarness
+from test_takeover import (
+    feed,
+    human_config,
+    keep_human_fed,
+    setpoint,
+    state_now,
+    take_over,
+)
 
 try:
     from isaaccapture_examples.agentic_remote.robot_app import apai_backend
@@ -277,16 +302,23 @@ class ApaiHarness(AppHarness):
         config: RobotAppConfig,
         profile: apai_backend.ApaiProfile,
         clock: FakeClock,
+        **app_options: Any,
     ) -> None:
+        """app_options are further keywords of RobotApp, such as driver."""
         checkers = apai_backend.build_apai_checkers(config, profile, clock)
         arm = apai_backend.build_apai_arm(config, profile, clock)
         self.spy = BackendSpy(arm, checkers)
-        super().__init__(config, arm, checkers, clock)
+        super().__init__(config, arm, checkers, clock, app_options=app_options)
 
     @property
     def harnesses(self) -> list[Any]:
         """The agent's, the human's and the recovery checker's SafetyHarness."""
         return [checker.harness for checker in self.checkers.all()]
+
+    def hold_at(self, pose: Sequence[float]) -> None:
+        """Put the mock arm at this pose, holding, as after a move that ended there."""
+        self.spy.place(pose)
+        self.app._motion.set(MotionState.HOLD)
 
     def sent(self) -> list[list[float]]:
         """Every joint target the driver took so far."""
@@ -342,16 +374,18 @@ def make_app(
 ) -> Iterator[Callable[..., ApaiHarness]]:
     """Builds and starts a robot app on APAI's mock arm, at rest.
 
-    make_app(config=..., profile=...). After the test each app is closed and
-    check_driver_use() is applied to it.
+    make_app(config=..., profile=...); further keywords, such as driver, go to
+    RobotApp. After the test each app is closed and check_driver_use() is
+    applied to it.
     """
     made: list[ApaiHarness] = []
 
     def make(
         config: RobotAppConfig = config,
         profile: apai_backend.ApaiProfile = profile,
+        **app_options: Any,
     ) -> ApaiHarness:
-        harness = ApaiHarness(config, profile, clock)
+        harness = ApaiHarness(config, profile, clock, **app_options)
         made.append(harness)
         harness.start()
         return harness
@@ -1308,3 +1342,309 @@ def test_no_joint_value_comes_from_the_drivers_cached_state(
     assert final(h, h.client.release()).status == "completed"
     # The return and the release also read the jaws, through the arm port.
     assert set(h.spy.state_reads) == {FRESH_READ, JAW_READ}
+
+
+# A person takes the arm over
+#
+# A takeover makes a person the control owner; the hand-back ends it at rest. A
+# human drive is one stretch of human motion: while the grip is squeezed the arm
+# follows human targets, the joint targets of HUMAN_SETPOINT link messages. A
+# typed rest is the operator's return to rest, confirmed with "path is clear".
+
+ROBOT_MOCK = repo_root() / "examples/agentic_remote/configs/robot_app_mock.yaml"
+RIGHT_A = "right A held 1.0 s"
+STRIDE = 0.05  # rad a hand's target runs ahead of the last joint target sent
+TURNED = moved(RAISED, 0, 0.42)  # where SWEEP ends
+# Inside the human limits of robot_app_mock.yaml, the gripper tip about 10 cm
+# above the table. The straight joint path from here to rest passes under the
+# table clearance.
+OFF_PATH = [-0.381, 1.091, 0.171, -1.238, -1.348, 1.513]
+
+
+class Hand:
+    """A person's hand on the grip: what keep_human_fed sends after each target.
+
+    While it squeezes, its target runs at most STRIDE per joint ahead of the
+    last joint target the driver took, toward the goal. It lets go once the
+    arm was sent the goal, not before.
+    """
+
+    def __init__(self, h: ApaiHarness) -> None:
+        self.h = h
+        self.goal: list[float] | None = None  # None: the grip is released
+        self._unfed = h.arm.send_target  # as it is without keep_human_fed
+        keep_human_fed(h, self)
+
+    def __call__(self) -> HumanSetpoint:
+        if self.goal is None:
+            return setpoint(self.h)
+        last = self.h.sent()[-1]
+        if max(abs(to - at) for at, to in zip(last, self.goal)) < 1e-9:
+            self.goal = None
+            return setpoint(self.h)
+        return setpoint(self.h, self.ahead(last))
+
+    def ahead(self, last: Sequence[float]) -> list[float]:
+        """The target that leads `last` toward the goal."""
+        return [
+            at + max(-STRIDE, min(STRIDE, to - at)) for at, to in zip(last, self.goal)
+        ]
+
+    def squeeze(self, goal: Sequence[float]) -> None:
+        """Let go, then squeeze toward goal; the human drive has ended on return."""
+        h = self.h
+        self.goal = None
+        feed(h)  # fresh controller data: the grip is released
+        self.goal = [float(value) for value in goal]
+        feed(h, setpoint(h, self.ahead(h.spy.pose())))
+        h.idle()
+
+    def put_down(self) -> None:
+        """The controller is put down: no HUMAN_SETPOINT is sent from here on."""
+        self.goal = None
+        self.h.arm.send_target = self._unfed
+
+
+@pytest.fixture
+def person_app(
+    make_app: Callable[..., ApaiHarness], config: RobotAppConfig
+) -> ApaiHarness:
+    """As apai_app, with human driving switched on in the configuration."""
+    return make_app(config=human_config(config))
+
+
+@pytest.fixture
+def mock_file_app(
+    make_app: Callable[..., ApaiHarness], profile: apai_backend.ApaiProfile
+) -> ApaiHarness:
+    """The robot app of robot_app_mock.yaml, as robot_app/__main__.py builds it."""
+    config = apai_backend.config_for_profile(load_config(ROBOT_MOCK), profile)
+    return make_app(config=config, driver=DRIVER_APAI_MOCK)
+
+
+def ask_hand_back(h: ApaiHarness) -> Result:
+    """OWNER_REQUEST "handback", as right A held for a second sends it.
+
+    Taken or refused, it sends the driver no joint target and no jaw command.
+    """
+    sent = len(h.sent()), len(h.spy.jaw_commands)
+    result = final(h, h.client.request_owner("handback", reason=RIGHT_A))
+    assert (len(h.sent()), len(h.spy.jaw_commands)) == sent
+    return result
+
+
+def spots(h: ApaiHarness) -> list[int]:
+    """How many contact spots the agent's, the human's and the recovery checker keep."""
+    return [len(harness.contact_zones) for harness in h.harnesses]
+
+
+def agent_contact_then_takeover(h: ApaiHarness) -> Hand:
+    """The agent meets something at RAISED and asks for help; a person takes over.
+
+    Right B is a STOP first; the takeover is asked from control owner nobody.
+    """
+    contact_while_sweeping(h)
+    stuck = final(h, h.client.request_owner("help_needed", reason="blocked"))
+    assert stuck.status == "completed", stuck.reason
+    number = stuck.detail["owner_number"]
+    h.client.wait_state(lambda s: s.owner == "nobody" and s.owner_number == number)
+    h.client.stop(reason="right B", sender="controller")
+    h.client.wait_state(lambda s: s.stop_number == 1 and s.owner == "nobody")
+    take_over(h)
+    return Hand(h)
+
+
+def test_where_the_path_to_rest_is_refused_only_a_human_drive_moves_the_arm(
+    mock_file_app: ApaiHarness,
+) -> None:
+    # A known gap: a person cannot leave the arm outside rest.region_*, but the
+    # return to rest can still refuse its path.
+    h = mock_file_app
+    h.hold_at(OFF_PATH)
+    # A pose a person may hold: the human checker takes it and the tip is clear.
+    h.checkers.human.check_pose(OFF_PATH)
+    assert h.checkers.recovery.tip_blocked(OFF_PATH, None) is None
+    take_over(h)
+    before = h.app.snapshot()
+    assert before.owner is Owner.HUMAN
+
+    def nothing_changed() -> None:
+        assert h.app.snapshot() == before and h.app.takeover_open
+        assert h.app.motion_state is MotionState.HOLD
+        assert h.sent() == [] and h.spy.pose() == OFF_PATH
+        assert h.arm.torque_on() and "disconnect" not in h.spy.calls
+
+    rest = final(h, h.client.rest())
+    assert statuses(h, rest.command_id) == ["accepted", "refused"]
+    assert rest.reason.startswith("the path to rest was refused: setpoint ")
+    nothing_changed()
+    # No other typed command moves the arm either: it holds with its motors on.
+    back = ask_hand_back(h)
+    assert back.status == "refused"
+    assert back.reason.startswith("the arm is not at rest: ")
+    assert back.reason.endswith(REST_FIRST)
+    task = h.client.start_task()
+    assert (task.status, task.reason) == ("refused", TAKEOVER_OPEN)
+    down = final(h, h.client.shutdown())
+    assert down.status == "refused"
+    assert down.reason.startswith(
+        "the return to rest ended refused: the path to rest was refused: setpoint "
+    )
+    off = final(h, h.client.release())
+    assert off.status == "refused"
+    assert off.reason.startswith("the arm is not at rest: ")
+    nothing_changed()
+
+    # The way out needs a working controller: a human drive to a plain pose.
+    hand = Hand(h)
+    hand.squeeze(HOME)
+    assert h.heard("human") == []
+    assert h.spy.pose() == pytest.approx(HOME, abs=1e-6)
+    hand.put_down()
+    rest = final(h, h.client.rest())
+    assert rest.status == "completed", rest.reason
+    assert h.spy.pose() == pytest.approx(REST)
+    assert h.app.snapshot().owner is Owner.HUMAN
+
+
+def test_a_typed_rest_during_a_takeover_is_not_refused_by_the_agents_contact_spot(
+    person_app: ApaiHarness, profile: apai_backend.ApaiProfile
+) -> None:
+    h = person_app
+    hand = agent_contact_then_takeover(h)
+    assert spots(h) == [1, 0, 1]
+    # The person lifts the gripper out of the spot the agent's move left.
+    hand.squeeze(HIGHER)
+    assert h.heard("human") == []
+    assert h.spy.pose() == pytest.approx(HIGHER, abs=1e-6)
+    spot = h.checkers.recovery.harness.contact_zones[0]
+    tip = profile.kinematics.fk(np.array(HIGHER))[:3, 3]
+    assert spot["radius_m"] == 0.05
+    assert np.linalg.norm(tip - spot["center"]) > spot["radius_m"]
+    hand.put_down()
+
+    # Without "path is clear" nothing is cleared and nothing moves.
+    sent = len(h.sent())
+    unconfirmed = final(h, h.client.rest(confirmed=False))
+    assert unconfirmed.status == "refused"
+    assert spots(h) == [1, 0, 1] and len(h.sent()) == sent
+    # "path is clear" is the person's word for the spot: the return runs.
+    rest = final(h, h.client.rest())
+    assert rest.status == "completed", rest.reason
+    assert h.spy.pose() == pytest.approx(REST)
+    # Only the recovery checker's spot went; the agent's is the agent's to clear.
+    assert spots(h) == [1, 0, 0]
+    back = ask_hand_back(h)
+    assert back.status == "completed", back.reason
+    assert not h.app.takeover_open
+    # The agent's next task is taken. Its lift begins inside the spot it kept,
+    # which is no entry into it.
+    h.new_task()
+    lifted = run(h, LIFT, REST)
+    assert lifted.status == "completed", lifted.reason
+    assert spots(h) == [1, 0, 0]
+
+
+def test_a_shutdown_that_needs_no_confirmation_clears_no_contact_spot(
+    person_app: ApaiHarness,
+) -> None:
+    h = person_app
+    contact_while_sweeping(h)
+    # The agent moves the arm a little inside its spot, which ends the contact
+    # hold; the return to rest that follows starts inside the spot.
+    near = [0.0, 0.15, 0.15, 0.0, 0.0, 0.0]
+    assert run(h, straight(RAISED, near, 10), RAISED).status == "completed"
+    give_back(h)
+    rest = final(h, h.client.rest())
+    assert rest.status == "completed", rest.reason
+    h.client.wait_state(lambda s: s.motion == "rest_hold" and s.owner == "nobody")
+    # No takeover was open: the typed rest cleared nothing.
+    assert spots(h) == [1, 0, 1]
+    take_over(h)
+    # At rest a shutdown moves nothing and needs no "path is clear". Nobody
+    # said that the path is clear, so no spot is cleared.
+    sent = len(h.sent())
+    command_id = h.client.shutdown(confirmed=False)
+    result = h.client.wait_result(command_id, timeout_s=WAIT_S)
+    assert result.status == "completed", result.reason
+    assert h.app.wait_closed(WAIT_S)
+    assert len(h.sent()) == sent
+    assert spots(h) == [1, 0, 1]
+
+
+def test_a_contact_under_a_person_holds_at_the_measured_pose_and_notes_no_spot(
+    person_app: ApaiHarness,
+) -> None:
+    h = person_app
+    take_over(h)
+    hand = Hand(h)
+    hand.squeeze(RAISED)  # off the joint stops
+    assert h.spy.pose() == pytest.approx(RAISED, abs=1e-6)
+    assert h.heard("human") == []
+
+    # The first joint meets something while the person turns the arm.
+    h.spy.backend.block_joint(0)
+    before = len(h.sent())
+    hand.squeeze(TURNED)
+    (event,) = h.heard("human")
+    assert re.match(
+        r"human drive ended: contact detected at joint 1: tracking error 0\.\d+ "
+        r"rad for \d+ ms -- something is blocking the arm",
+        event[1],
+    )
+    # The driver's last target is the pose it measured, not the joint target
+    # the arm could not reach.
+    *followed, held = h.sent()[before:]
+    assert (event[2]["status"], event[2]["sent"]) == ("contact", len(followed))
+    assert 0.1 < followed[-1][0] < TURNED[0]
+    assert held == pytest.approx(RAISED, abs=1e-9)
+    assert h.spy.pose() == pytest.approx(RAISED, abs=1e-9)
+    # A hold, not a fault-stop: the person still owns the arm.
+    state = state_now(h)
+    assert (state.owner, state.stop_level, state.motion) == ("human", "none", "hold")
+    assert state.torque_on and h.app.takeover_open
+    assert state.health["contact_hold"] is True
+    assert not any(harness.estopped for harness in h.harnesses)
+    # The contact spots are the agent's: a person's contact leaves none.
+    assert spots(h) == [0, 0, 0]
+
+    # The grip is still squeezed: nothing moves before it was released.
+    sent = len(h.sent())
+    for _ in range(5):
+        feed(h, setpoint(h, hand.ahead(h.sent()[-1])))
+    h.idle()
+    assert len(h.sent()) == sent
+    assert state_now(h).health["human"]["refusal"] == NEEDS_RELEASE
+    # The thing is taken away; a release and a new squeeze move the arm on.
+    h.spy.backend.unblock_joints()
+    hand.squeeze(HIGHER)
+    assert h.spy.pose() == pytest.approx(HIGHER, abs=1e-6)
+    assert len(h.heard("human")) == 1
+    assert state_now(h).health["contact_hold"] is False
+
+
+def test_after_a_contact_under_a_person_the_typed_rest_and_the_hand_back_run(
+    person_app: ApaiHarness,
+) -> None:
+    h = person_app
+    take_over(h)
+    hand = Hand(h)
+    hand.squeeze(RAISED)
+    h.spy.backend.block_joint(0)
+    hand.squeeze(TURNED)
+    assert h.heard("human")[-1][2]["status"] == "contact"
+    assert state_now(h).health["contact_hold"] is True
+    # Without a headset: the thing is taken away by hand, then rest is typed.
+    h.spy.backend.unblock_joints()
+    hand.put_down()
+    rest = final(h, h.client.rest())
+    assert rest.status == "completed", rest.reason
+    assert h.spy.pose() == pytest.approx(REST)
+    assert h.app.snapshot().owner is Owner.HUMAN
+    back = ask_hand_back(h)
+    assert back.status == "completed", back.reason
+    assert not h.app.takeover_open
+    # The agent's next task is taken and its first move runs.
+    h.new_task()
+    lifted = run(h, LIFT, REST)
+    assert lifted.status == "completed", lifted.reason
