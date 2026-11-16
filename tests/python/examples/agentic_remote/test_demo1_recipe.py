@@ -264,6 +264,11 @@ def test_the_mock_files_load_and_the_robot_file_is_the_mock_scenes(
         ("state_dir",),
         ("experiment", "grid"),
     }
+    # What --check prints of this file says that the obstacle grid is a stand-in.
+    with apai_runtime_env(tmp_path):
+        cfg = agent_config.build_apai_config(settings, tmp_path / "run", camera="mock")
+    report = agent_config.summary(settings, cfg, "mock")
+    assert report["obstacle_grid"]["stand_in"] is True
     # It runs against a simulated driver and no other.
     invented = agent_config.invented_times(settings, "mock")
     assert invented is True
@@ -302,6 +307,9 @@ def test_a_mock_task_runs_in_process_on_the_shipped_files(
 
     stage.typed = [QUICK, PICK]
     stage.answers = ["yes", "yes"]
+    # APAI's name for the client of its obstacle map, at each task's question.
+    seen: list[Any] = []
+    stage.on_ask = lambda: seen.append(occupancy.OccupancyClient)
     arguments = ["--config", str(file), "--camera", "mock", "--interactive"]
     began = time.monotonic()
     # No stand-in of the test: the launcher itself puts the clear grid in.
@@ -329,6 +337,8 @@ def test_a_mock_task_runs_in_process_on_the_shipped_files(
     assert grid.required is True and grid.refreshes >= 1
     assert stage.said("obstacle grid: live")
     assert occupancy.OccupancyClient is theirs
+    # Already at each task's question, with the runtime built, it was APAI's own.
+    assert seen == [theirs, theirs]
 
     # The first task opened the jaws and succeeded.
     opened, picked = stage.reports()

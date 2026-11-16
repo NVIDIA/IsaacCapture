@@ -1891,6 +1891,8 @@ def test_check_connects_to_nothing_and_prints_the_resolved_values(
     assert report["arm_type"] == "robot_link" and report["camera_type"] == "mock"
     assert report["max_joint_vel_rad_s"] == SPEED
     assert report["obstacle_grid"]["required"] is True
+    # The stage's file leaves experiment.grid at bridge: nothing stands in.
+    assert report["obstacle_grid"]["stand_in"] is False
     assert report["settings"]["task"]["failed_steps_limit"] == 3
     assert not (stage.folder / "state").exists() and not stage.run_dir.exists()
 

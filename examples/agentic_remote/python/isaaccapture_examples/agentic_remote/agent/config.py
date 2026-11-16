@@ -889,6 +889,8 @@ def summary(settings: AgentSettings, cfg: Any, camera: str) -> dict[str, Any]:
         "obstacle_grid": {
             "required": cfg.occupancy.required,
             "max_age_s": cfg.occupancy.get("max_age_s"),
+            # True: the clear grid answers; no move is checked against obstacles.
+            "stand_in": settings.experiment.grid == GRID_CLEAR,
         },
         "motion_bounds": _plain(cfg.arm.get("motion_bounds")),
     }
