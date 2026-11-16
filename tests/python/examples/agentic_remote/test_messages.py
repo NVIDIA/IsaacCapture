@@ -32,6 +32,7 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     GraspRegion,
     Gripper,
     GripperState,
+    HumanSetpoint,
     JointSample,
     Move,
     Open,
@@ -68,7 +69,7 @@ RELIABLE = {
     "Result": 74,
     "Event": 75,
 }
-NEWEST_WINS = {"RobotState": 96, "Permit": 97, "ViewStatus": 98}
+NEWEST_WINS = {"RobotState": 96, "Permit": 97, "ViewStatus": 98, "HumanSetpoint": 99}
 
 NAN = float("nan")
 INF = float("inf")
@@ -269,6 +270,32 @@ PERMIT = Permit(
     expires_mono_s=1000.9,
 )
 VIEW_STATUS = ViewStatus(live=True, age_s=0.12)
+# The grip is squeezed: a joint target for the arm to follow.
+HUMAN_SETPOINT = HumanSetpoint(
+    session_id=SESSION,
+    owner_number=5,
+    stop_number=2,
+    seq=1234,
+    source="teleop",
+    stage="ready",
+    sample_age_s=0.031,
+    engaged=True,
+    grip_released=False,
+    q=[0.12, -1.4, 1.52, 0.03, 0.31, -0.2],
+    jaw_opening=None,
+    state_clock_mono_s=1000.06,
+)
+# Status only: no controller data yet, so no joint target.
+HUMAN_SETPOINT_STATUS = dataclasses.replace(
+    HUMAN_SETPOINT,
+    seq=1235,
+    stage="waiting_for_headset",
+    sample_age_s=None,
+    engaged=False,
+    q=None,
+    state_clock_mono_s=None,
+    note="no headset is tracked yet",
+)
 
 EXAMPLES = [
     WELCOME,
@@ -296,6 +323,8 @@ EXAMPLES = [
     STATE_UNPOWERED,
     PERMIT,
     VIEW_STATUS,
+    HUMAN_SETPOINT,
+    HUMAN_SETPOINT_STATUS,
 ]
 
 
@@ -462,6 +491,26 @@ MESSAGE_FIELDS = {
         "expires_mono_s": ...,
     },
     ViewStatus: {"live": ..., "age_s": ...},
+    # It quotes the session id and both numbers and carries no command id: no
+    # RESULT answers it. A value that may be None is still sent.
+    HumanSetpoint: dict.fromkeys(
+        (
+            "session_id",
+            "owner_number",
+            "stop_number",
+            "seq",
+            "source",
+            "stage",
+            "sample_age_s",
+            "engaged",
+            "grip_released",
+            "q",
+            "jaw_opening",
+            "state_clock_mono_s",
+        ),
+        ...,
+    )
+    | {"note": ""},
     GraspRegion: {"center_xy": ..., "radius_m": ..., "z_min": ..., "z_max": ...},
     JointSample: dict.fromkeys(("joint", "value", "t_start", "t_end", "valid"), ...),
     GripperState: dict.fromkeys(
@@ -563,7 +612,7 @@ def test_non_ascii_text_round_trips():
     assert decode(Stop.TYPE, raw) == stop
 
 
-@pytest.mark.parametrize("msg_type", [-1, 0, 1, 32, 63, 76, 95, 99, 127, 128, 255])
+@pytest.mark.parametrize("msg_type", [-1, 0, 1, 32, 63, 76, 95, 100, 127, 128, 255])
 def test_unknown_type_is_refused(msg_type):
     with pytest.raises(ProtocolError, match=r"^unknown link message type -?\d+$"):
         decode(msg_type, STOP.to_payload())
@@ -657,6 +706,74 @@ def test_welcome_carries_the_driver_and_an_old_welcome_reads_as_not_declared():
         decode(Welcome.TYPE, _changed(WELCOME, ("driver",), 1))
 
 
+def test_human_setpoint_round_trips_and_is_newest_wins():
+    assert HumanSetpoint.TYPE == 99
+    assert messages.MESSAGE_TYPES[99] is HumanSetpoint
+    assert 99 in messages.NEWEST_WINS_TYPES and not is_reliable(99)
+    # No RESULT answers it, and the protocol version did not change for it.
+    assert HumanSetpoint.TYPE not in COMMAND_TYPES
+    assert messages.PROTOCOL_VERSION == 1
+
+    payload = HUMAN_SETPOINT.to_payload()
+    decoded = decode(HumanSetpoint.TYPE, payload)
+    assert decoded == HUMAN_SETPOINT and decoded.to_payload() == payload
+    assert decoded.q == [0.12, -1.4, 1.52, 0.03, 0.31, -0.2]
+    assert (decoded.engaged, decoded.grip_released, decoded.note) == (True, False, "")
+    # A joint target written with every digit stays a small link message.
+    long_q = [-(1.0 + joint / 3.0 + 1.0 / 7.0) for joint in range(6)]
+    assert len(dataclasses.replace(HUMAN_SETPOINT, q=long_q).to_payload()) < 512
+
+    # The words its fields carry, and the two requests of a takeover.
+    assert (messages.HUMAN_SOURCE_TELEOP, messages.HUMAN_SOURCE_SYNTHETIC) == (
+        "teleop",
+        "synthetic",
+    )
+    assert messages.HUMAN_STAGES == (
+        "no_server",
+        "connecting_openxr",
+        "waiting_for_headset",
+        "ready",
+        "stale",
+        "no_controller",
+    )
+    assert messages.HUMAN_MOVE_ID == "human"
+    assert (messages.REQUEST_HUMAN, messages.REQUEST_HANDBACK) == ("human", "handback")
+    for request in (messages.REQUEST_HUMAN, messages.REQUEST_HANDBACK):
+        asked = dataclasses.replace(OWNER_REQUEST_BARE, request=request)
+        assert decode(OwnerRequest.TYPE, asked.to_payload()) == asked
+
+    # 100 is a newest-wins number no link message has: the unknown type here.
+    assert 100 in messages.NEWEST_WINS_TYPES and 100 not in messages.MESSAGE_TYPES
+    with pytest.raises(ProtocolError, match=r"^unknown link message type 100$"):
+        decode(100, payload)
+
+
+def test_a_human_setpoint_without_a_target_is_valid():
+    status = HUMAN_SETPOINT_STATUS
+    assert (status.engaged, status.q, status.sample_age_s) == (False, None, None)
+    payload = status.to_payload()
+    obj = json.loads(payload)
+    for name in ("sample_age_s", "q", "jaw_opening", "state_clock_mono_s"):
+        assert obj[name] is None, name
+    assert decode(HumanSetpoint.TYPE, payload) == status
+
+    # A None is sent, never left out; only the note may be absent.
+    with pytest.raises(ProtocolError, match=r"^HumanSetpoint: missing field 'q'$"):
+        decode(HumanSetpoint.TYPE, _without(status, "q"))
+    assert decode(HumanSetpoint.TYPE, _without(status, "note")).note == ""
+
+    # Every stage and both sources travel as they are, without a target too.
+    for stage in messages.HUMAN_STAGES:
+        for source in (messages.HUMAN_SOURCE_TELEOP, messages.HUMAN_SOURCE_SYNTHETIC):
+            sent = dataclasses.replace(status, stage=stage, source=source)
+            assert decode(HumanSetpoint.TYPE, sent.to_payload()) == sent
+    # A released grip, and a jaw value the Thor does not act on.
+    released = dataclasses.replace(status, stage="ready", grip_released=True)
+    assert decode(HumanSetpoint.TYPE, released.to_payload()) == released
+    with_jaw = dataclasses.replace(HUMAN_SETPOINT, jaw_opening=0.0)
+    assert decode(HumanSetpoint.TYPE, with_jaw.to_payload()).jaw_opening == 0.0
+
+
 @pytest.mark.parametrize(
     ("message", "path", "value", "problem"),
     [
@@ -713,6 +830,18 @@ def test_welcome_carries_the_driver_and_an_old_welcome_reads_as_not_declared():
         (STATE, ("controller_age_s",), True, "expected a number, got bool"),
         (STATE, ("move_stage",), None, "expected a string, got NoneType"),
         (STATE, ("move_stage",), 1, "expected a string, got int"),
+        (HUMAN_SETPOINT, ("q",), 0.5, "expected a list, got float"),
+        (HUMAN_SETPOINT, ("q", 2), None, "expected a number, got NoneType"),
+        (HUMAN_SETPOINT, ("q", 0), [0.1], "expected a number, got list"),
+        (HUMAN_SETPOINT, ("seq",), 1234.0, "expected an integer, got float"),
+        (HUMAN_SETPOINT, ("owner_number",), None, "expected an integer, got NoneType"),
+        (HUMAN_SETPOINT, ("engaged",), 1, "expected a boolean, got int"),
+        (HUMAN_SETPOINT, ("grip_released",), None, "expected a boolean, got NoneType"),
+        (HUMAN_SETPOINT, ("sample_age_s",), "new", "expected a number, got str"),
+        (HUMAN_SETPOINT, ("stage",), None, "expected a string, got NoneType"),
+        (HUMAN_SETPOINT, ("jaw_opening",), True, "expected a number, got bool"),
+        (HUMAN_SETPOINT, ("state_clock_mono_s",), "t", "expected a number, got str"),
+        (HUMAN_SETPOINT_STATUS, ("note",), None, "expected a string, got NoneType"),
     ],
     ids=_id,
 )
@@ -854,6 +983,16 @@ def test_integer_is_accepted_for_a_float_field():
             RESULT,
             {"detail": {"x": object()}},
             "Result: cannot encode: object is not a JSON value",
+        ),
+        (
+            HUMAN_SETPOINT,
+            {"q": [0.0, NAN, 0.0, 0.0, 0.0, 0.0]},
+            "HumanSetpoint.q[1]: non-finite number",
+        ),
+        (
+            HUMAN_SETPOINT,
+            {"sample_age_s": INF},
+            "HumanSetpoint.sample_age_s: non-finite number",
         ),
     ],
     ids=_id,
@@ -1015,7 +1154,7 @@ def test_the_error_of_a_command_that_does_not_decode_carries_its_id(message):
         (ViewStatus.TYPE, b'{"command_id":"c-1"}'),
         (Stop.TYPE, b'{"command_id":"c-1"}'),
         (Result.TYPE, b'{"command_id":"c-1"}'),
-        (99, b'{"command_id":"c-1"}'),
+        (100, b'{"command_id":"c-1"}'),
     ],
     ids=["PERMIT", "VIEW_STATUS", "STOP", "RESULT", "an unknown type"],
 )

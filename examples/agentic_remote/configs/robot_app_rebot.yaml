@@ -115,8 +115,14 @@ state:
 # Checked when the file is loaded; nothing uses them until a human can drive
 # (phase P3).
 human:
+  enabled: false  # whether a person may take the arm over and drive it
+  require_live_view: true  # false is accepted only with a simulated driver
   view_age_limit_s: 0.5
   sample_age_limit_s: 0.25
+  # How long ROBOT_STATE shows the stage of the human program after its last
+  # link message. The human program is the workstation program that turns
+  # controller data into joint targets; its stage is how far it is with them.
+  stage_keep_s: 4.0
 
 connection:
   retry_s: 1.0

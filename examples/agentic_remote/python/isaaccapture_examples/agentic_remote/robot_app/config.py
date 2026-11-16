@@ -502,12 +502,26 @@ class StateConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class HumanConfig:
+    """A person driving the arm: the switch for it and the ages it is held to."""
+
+    enabled: bool = False  # whether a person may take the arm over and drive it
+    require_live_view: bool = True  # False is accepted only with a simulated driver
     view_age_limit_s: float = 0.5  # oldest live view a person may drive with
     sample_age_limit_s: float = 0.25  # oldest controller sample that counts as fresh
+    # How long ROBOT_STATE shows the stage of the human program after its last
+    # link message. The human program is the workstation program that turns
+    # controller data into joint targets; its stage is how far it is with them.
+    stage_keep_s: float = 4.0
 
     def __post_init__(self) -> None:
         _normalise(
-            self, "human", view_age_limit_s=_positive, sample_age_limit_s=_positive
+            self,
+            "human",
+            enabled=_flag,
+            require_live_view=_flag,
+            view_age_limit_s=_positive,
+            sample_age_limit_s=_positive,
+            stage_keep_s=_positive,
         )
 
 
@@ -600,6 +614,23 @@ class RobotAppConfig:
                 "rest.recovery_speed must not exceed limits.recovery.max_joint_speed, "
                 f"got {self.rest.recovery_speed!r} and {recovery.max_joint_speed!r}"
             )
+        # A typed rest starts only from inside rest.region_*.
+        if self.human.enabled:
+            human = self.limits.human
+            boxes = zip(
+                human.joint_min,
+                human.joint_max,
+                self.rest.region_min,
+                self.rest.region_max,
+            )
+            for i, (hum_min, hum_max, reg_min, reg_max) in enumerate(boxes):
+                if hum_min < reg_min or hum_max > reg_max:
+                    raise ConfigError(
+                        "human.enabled needs limits.human inside rest.region_*: "
+                        f"joint index {i} has human {hum_min!r}..{hum_max!r} and "
+                        f"region {reg_min!r}..{reg_max!r}; a person could leave the "
+                        "arm where a typed rest is refused"
+                    )
 
     @classmethod
     def default(cls) -> RobotAppConfig:

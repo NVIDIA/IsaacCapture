@@ -38,6 +38,26 @@ DRIVER_SIM = "sim"
 DRIVER_APAI_MOCK = "apai-mock"
 DRIVER_REAL = "real"
 SIMULATED_DRIVERS = frozenset({DRIVER_SIM, DRIVER_APAI_MOCK})
+# HUMAN_SETPOINT.source: where the human program, the workstation program that
+# turns controller data into joint targets, gets those data: from Isaac
+# Capture's Teleop Session Server, which reads the headset, or from a script.
+HUMAN_SOURCE_TELEOP = "teleop"
+HUMAN_SOURCE_SYNTHETIC = "synthetic"
+# HUMAN_SETPOINT.stage: how far the human program is with its controller data.
+# Ready: the data are fresh and the right controller is active.
+HUMAN_STAGES = (
+    "no_server",
+    "connecting_openxr",
+    "waiting_for_headset",
+    "ready",
+    "stale",
+    "no_controller",
+)
+# ROBOT_STATE.move_id while a human drive runs: the arm follows a person's hand.
+HUMAN_MOVE_ID = "human"
+# OWNER_REQUEST.request: a person takes the arm over, and gives it back at rest.
+REQUEST_HUMAN = "human"
+REQUEST_HANDBACK = "handback"
 
 
 class ProtocolError(ValueError):
@@ -198,7 +218,7 @@ class OwnerRequest(Message):
     session_id: str
     owner_number: int
     stop_number: int
-    request: str  # "agent", "human", "rest", "nobody" or "help_needed"
+    request: str  # "agent", "human", "handback", "rest", "nobody" or "help_needed"
     reason: str = ""
     timed_return: bool = True  # with "agent": this task may end in a timed return
     confirmed: bool = False  # with "rest": the operator typed that the path is clear
@@ -342,6 +362,38 @@ class ViewStatus(Message):
     age_s: float
 
 
+@dataclass(frozen=True)
+class HumanSetpoint(Message):
+    """Human program to Thor: a joint target from a person's hand, or status only.
+
+    No RESULT answers it.
+    """
+
+    TYPE: ClassVar[int] = 99
+
+    session_id: str
+    owner_number: int
+    stop_number: int
+    seq: int  # counts up per human program run; for the record, never compared
+    source: str  # HUMAN_SOURCE_TELEOP or HUMAN_SOURCE_SYNTHETIC
+    stage: str  # one of HUMAN_STAGES
+    # Age of the controller data when this was sent; None: none or stale.
+    sample_age_s: float | None
+    # The clutch is engaged and the workstation's checks passed. The clutch lets
+    # the arm follow the hand only while the controller's grip is squeezed.
+    engaged: bool
+    # The controller data of this pass of the human program's loop are fresh and
+    # show the squeeze below the threshold; False when they are absent or stale.
+    grip_released: bool
+    # Joint target, rad, in the order of WELCOME.joint_names; None unless engaged.
+    q: list[float] | None
+    # Always None: the trigger moves no jaw. Kept so that it needs no new field.
+    jaw_opening: float | None
+    # clock_mono_s of the ROBOT_STATE this was computed on; None: none yet.
+    state_clock_mono_s: float | None
+    note: str = ""  # why the human program does not engage, for the operator
+
+
 MESSAGE_TYPES: dict[int, type[Message]] = {
     cls.TYPE: cls
     for cls in (
@@ -360,6 +412,7 @@ MESSAGE_TYPES: dict[int, type[Message]] = {
         RobotState,
         Permit,
         ViewStatus,
+        HumanSetpoint,
     )
 }
 

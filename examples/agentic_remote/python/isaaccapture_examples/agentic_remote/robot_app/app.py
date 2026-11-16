@@ -110,6 +110,7 @@ FAILED = "failed"
 # stops' and rest.py's pass through unchanged.
 EVENT_HELP_NEEDED = "help_needed"
 EVENT_OWNER = "owner"
+EVENT_HUMAN = "human"
 EVENT_CONNECTION = "connection"
 EVENT_REFUSED = "refused"
 EVENT_SHUTDOWN = "shutdown"
