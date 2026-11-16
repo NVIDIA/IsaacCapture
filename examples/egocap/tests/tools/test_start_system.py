@@ -10,6 +10,7 @@ import hmac
 import importlib.util
 import json
 import os
+import shlex
 import signal
 import sys
 import threading
@@ -30,7 +31,7 @@ EXAMPLE_CAMERAS = [
     for source in next(iter(yaml.safe_load(EXAMPLE_STATION.read_text())["stations"].values()))["video_sources"]
 ]
 TIMESYNC_STUB = (
-    "def lan_address_toward(host):\n    return '10.0.0.2'\n\n\ndef reference_id_for(host):\n    return 'REFID'\n"
+    "def lan_address_toward(host):\n    return '192.0.2.2'\n\n\ndef reference_id_for(host):\n    return 'REFID'\n"
 )
 CAMERA_ARGS = [arg for name in EXAMPLE_CAMERAS for arg in ("--capture-camera", f"{name}=dev0")]
 
@@ -154,8 +155,8 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
     monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
     monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda *_, **__: None)
-    argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *CAMERA_ARGS]
+    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS]
     assert ss.main(argv) == 1
     assert "stop after the bridge" in capsys.readouterr().err
 
@@ -636,6 +637,70 @@ def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Pat
     assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
 
 
+TIMESYNC_TOOL = ss.REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
+
+
+@pytest.mark.skipif(
+    not TIMESYNC_TOOL.is_file(), reason="the timesync tool comes from the timesync PR, absent from this tree"
+)
+def test_every_timesync_command_the_launcher_issues_is_accepted_by_the_real_timesync_tool(
+    recorded_main, monkeypatch
+):
+    spec = importlib.util.spec_from_file_location("timesync_tool_real", TIMESYNC_TOOL)
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    dispatched: list[str] = []
+    # The tool looks its commands up by module-level name when it runs, so replacing them records the dispatch
+    # without installing or configuring anything.
+    for name in ("cmd_ensure_local", "cmd_follow", "cmd_configure_remote", "cmd_status"):
+        monkeypatch.setattr(tool, name, lambda args, _name=name: dispatched.append(_name) or 0)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--timesync-tool", str(TIMESYNC_TOOL)]) == 0
+    issued = [d[2:] for d in recorded_main.deploys if d[1] == str(TIMESYNC_TOOL)]
+    issued += [c.command[2:] for c in recorded_main.children if c.command[1] == str(TIMESYNC_TOOL)]
+    assert {command[0] for command in issued} == {"ensure-local", "follow", "configure-remote", "status"}
+    for command in issued:
+        assert tool.main(command) == 0, command
+    assert len(dispatched) == len(issued)
+
+
+def test_the_receiver_python_follows_the_receivers_own_environment_variables(monkeypatch, tmp_path: Path):
+    spaced = tmp_path / "a dir" / "python"
+    spaced.parent.mkdir()
+    spaced.write_text("")
+    monkeypatch.setenv("CAMERA_RECEIVER_PYTHON", str(spaced))
+    words = shlex.split(ss.default_receiver_command())
+    assert words[0] == str(spaced)
+    assert words[1].endswith("camera_receiver.py")
+    monkeypatch.delenv("CAMERA_RECEIVER_PYTHON")
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin/python").write_text("")
+    monkeypatch.setenv("CAMERA_RECEIVER_VENV", str(venv))
+    assert shlex.split(ss.default_receiver_command())[0] == str(venv / "bin/python")
+
+
+def test_the_remote_stop_on_exit_is_skipped_when_the_orin_was_never_contacted(recorded_main, monkeypatch):
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", Path("/nonexistent/index.html"))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    assert not any(d[-1] == "stop" for d in recorded_main.deploys)
+
+
+def test_a_remote_stop_that_times_out_on_exit_does_not_raise(recorded_main, monkeypatch, capsys):
+    stops: list[int] = []
+    real_run = ss.subprocess.run
+
+    def run(command, **kwargs):
+        if command[-1] == "stop":
+            stops.append(1)
+            if len(stops) == 2:  # the one on exit; the first clears a sender an earlier run left
+                raise ss.subprocess.TimeoutExpired(command, kwargs.get("timeout", 0))
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(ss.subprocess, "run", run)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert "could not confirm that the Orin sender stopped" in capsys.readouterr().err
+
+
 DEPLOY_TOOL = ss.REPO_ROOT / "examples/camera_streamer/argus_sender/deploy/deploy_sender.py"
 
 
@@ -859,7 +924,9 @@ class _FakeProcess:
 
 
 def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[str], exit_codes=None):
-    """Run main() against a REPO_ROOT without a receiver venv; returns (exit code, argv per child, run calls).
+    """Run main() against a REPO_ROOT without a receiver venv.
+
+    Returns (exit code, argv per child, run calls, receiver dir).
 
     ``exit_codes`` maps a child name to the code its poll() reports; other children keep running.
     """
@@ -897,8 +964,8 @@ def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[s
     monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **__: runs.append(list(cmd)) or _Done())
     monkeypatch.setattr(ss.time, "sleep", lambda *_: None)
-    argv = ["--orin", "user@10.0.0.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "10.0.0.2", *CAMERA_ARGS, *extra_argv]
+    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS, *extra_argv]
     return ss.main(argv), started, runs, receiver_dir
 
 

@@ -6,20 +6,24 @@
 
     uv run python tools/start_system.py --orin user@orin --deploy-script PATH --bridge PATH --livekit-server PATH
 
-In order: deploy and start the Orin sender over ssh, a LiveKit server, CaptureServer, the backend (which owns
-the recorder), the camera receiver and the camera-to-LiveKit bridge. Without ``--orin`` no sender is started, so
-only the PC side comes up. The servers, the backend and the receiver are waited on until they are ready before the
-next one starts, and all children are stopped, last started first, when this script ends on Ctrl-C, on SIGTERM or
-after an error. The Orin sender runs for ``--seconds``; when it ends the whole stack is stopped.
+In order: deploy and start the Orin sender over ssh (for the SIPL backend this first stops nvargus-daemon, which
+holds the cameras), a LiveKit server, CaptureServer, the backend (which owns the recorder), the camera receiver
+and the camera-to-LiveKit bridge, then time sync through the timesync tool: ``ensure-local`` (which may install
+chrony on this PC), an unprivileged follower here that measures the Orin's clock, and ``configure-remote`` on
+the Orin. Without ``--orin`` no sender is started, so only the PC side comes up.
+The servers, the backend and the receiver are waited on until they are ready before the next one starts, and all
+children are stopped, last started first, when this script ends on Ctrl-C, on SIGTERM or after an error. The
+Orin sender runs for ``--seconds``; when it ends the whole stack is stopped.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
 CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
 unless ``--mock`` gives it synthetic tracking and cameras. ``--mock`` also replaces the Orin sender with a local
 mock sender (no ``--orin``), so nothing real is started; the receiver, bridge and page are the same.
 
-The sender release the profile describes, its deploy tool, the LiveKit server, the bridge and the mock sender are
-not part of this tree, so the tools' paths are options (or ``EGOCAP_DEPLOY_SCRIPT``, ``EGOCAP_LIVEKIT_SERVER``,
-``EGOCAP_BRIDGE``, ``EGOCAP_MOCK_SENDER``). The pure helpers sit above the supervisor so they can be tested without
+The sender release the profile describes, its deploy tool, the timesync tool, the LiveKit server, the bridge and
+the mock sender are not part of this tree's base, so the tools' paths are options (or ``EGOCAP_DEPLOY_SCRIPT``,
+``EGOCAP_TIMESYNC_TOOL``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``, ``EGOCAP_MOCK_SENDER``). The pure
+helpers sit above the supervisor so they can be tested without
 starting anything.
 """
 
@@ -58,11 +62,15 @@ DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.e
 TIMESTAMP_BASIS = "capture_monotonic_us"
 # Seconds a child gets to exit after SIGINT before it is killed. The backend closes an in-progress take, which its
 # coordinator bounds at 35 s and the aligner bounds again afterwards, so it gets a margin over both.
+# A deploy-tool command that only signals or queries the Orin; the deploy itself is not bounded by this.
+ORIN_COMMAND_TIMEOUT_S = 60.0
+# Installing chrony may download packages, so it gets longer than a query.
+ENSURE_LOCAL_TIMEOUT_S = 300.0
 DEFAULT_GRACE_S = 15.0
 BACKEND_GRACE_S = 90.0
 # Signals that mean "stop the stack"; while it is stopping they mean "stop faster".
 STOP_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
-# The mock sender has no clock responder, so the bridge stamps the frame-ready time on its own clock instead.
+# The mock sender sends no capture time, so the bridge stamps the frame-ready time on its own clock instead.
 MOCK_TIMESTAMP_BASIS = "monotonic_us"
 # The bridge shrinks the picture by this integer factor before encoding, so the descriptor declares the shrunken
 # size: the recorder refuses a take whose frames differ from the declared one.
@@ -508,7 +516,7 @@ def control_token(log: Path) -> str | None:
 def ensure_receiver_environment() -> None:
     """Run the receiver's own ``setup.sh`` when its venv or its native decoder is missing; it is idempotent."""
     receiver_dir = REPO_ROOT / "examples/camera_streamer/camera_receiver"
-    has_venv = (receiver_dir / ".venv/bin/python").is_file()
+    has_venv = receiver_venv_python(receiver_dir).is_file()
     has_codec = any((receiver_dir / "codec").glob("_camera_receiver_codec*.so"))
     if has_venv and has_codec:
         return
@@ -516,12 +524,24 @@ def ensure_receiver_environment() -> None:
     subprocess.run(["bash", str(receiver_dir / "setup.sh")], check=True)
 
 
+def receiver_venv_python(receiver_dir: Path) -> Path:
+    """The Python of the receiver's own environment, where its ``setup.sh`` put it.
+
+    ``setup.sh`` honours ``CAMERA_RECEIVER_VENV`` and ``run.sh`` ``CAMERA_RECEIVER_PYTHON``, so they decide here
+    too.
+    """
+    explicit = os.environ.get("CAMERA_RECEIVER_PYTHON")
+    if explicit:
+        return Path(explicit)
+    return Path(os.environ.get("CAMERA_RECEIVER_VENV", receiver_dir / ".venv")) / "bin/python"
+
+
 def default_receiver_command() -> str:
     """Run the receiver with the Python from its own ``setup.sh`` environment, which has CuPy, when it exists."""
     receiver_dir = REPO_ROOT / "examples/camera_streamer/camera_receiver"
-    venv_python = receiver_dir / ".venv/bin/python"
+    venv_python = receiver_venv_python(receiver_dir)
     python = str(venv_python) if venv_python.is_file() else "python3"
-    return f"{python} {receiver_dir / 'camera_receiver.py'}"
+    return shlex.join([python, str(receiver_dir / "camera_receiver.py")])
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -617,6 +637,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     workdir = Path(tempfile.mkdtemp(prefix="egocap-start-"))
     ipc_socket = str(workdir / "camera_receiver.sock")
     stack = Stack(workdir)
+    orin_contacted = False
     # Children run in their own sessions, so a signal to this script reaches none of them; turn the ones that mean
     # stop into the Ctrl-C path so the finally below always runs stop_all().
     for sig in STOP_SIGNALS:
@@ -697,23 +718,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             ]
         )
 
-        if args.orin and args.receiver == default_receiver_command():
+        if chain and args.receiver == default_receiver_command():
             ensure_receiver_environment()
             # The default was resolved before this setup created the receiver's environment, so resolve it again.
             # An explicit --receiver or EGOCAP_RECEIVER is not the default and is never replaced.
             args.receiver = default_receiver_command()
-        # Time sync is set up after the page is up (below), so a slow or failed install never holds the preview.
         if args.orin:
             tool = load_timesync_tool(args.timesync_tool)
             lan_ip = args.host_lan_ip or tool.lan_address_toward(orin_host)
         # 1. The Orin sender: deploy a release (never activating a service), then run it for a bounded time.
         if args.orin:
+            orin_contacted = True
             deploy = [python, args.deploy_script, args.orin]
             # nvargus-daemon returns at boot and holds the cameras, which SIPL capture needs free; a sender left
             # by an earlier run outlives its ssh session.
-            subprocess.run([*deploy, "stop"], check=False)
+            subprocess.run([*deploy, "stop"], check=False, timeout=ORIN_COMMAND_TIMEOUT_S)
             if sender.sipl:
-                subprocess.run([*deploy, "stop-daemon"], check=True)
+                subprocess.run([*deploy, "stop-daemon"], check=True, timeout=ORIN_COMMAND_TIMEOUT_S)
             if not args.skip_deploy:
                 print("deploying the sender to", args.orin)
                 subprocess.run(
@@ -820,16 +841,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ],
             )
         if args.orin:
-            # Every step is bounded: the page and preview do not need qualified times, and a slow Orin or a missing
-            # package must not keep them down. The bridge refuses unqualified times, so a take cannot start until
-            # time sync is up.
+            # Each step has a timeout, and a failure only degrades capture times (the bridge refuses unqualified
+            # times, so a take cannot start until time sync is up); but the banner, --open and supervision wait for
+            # these steps, so the preview comes up after them, not before.
             print("setting up time sync", flush=True)
             settled = False
             try:
                 provisioned = (
-                    subprocess.run([python, str(args.timesync_tool), "ensure-local"], check=False).returncode == 0
+                    subprocess.run(
+                        [python, str(args.timesync_tool), "ensure-local"],
+                        check=False,
+                        timeout=ENSURE_LOCAL_TIMEOUT_S,
+                    ).returncode
+                    == 0
                 )
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
                 provisioned = False
             if provisioned:
                 # An unprivileged chronyd on this PC measures the Orin's clock and never adjusts this PC's. Nothing
@@ -911,14 +937,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise StartupError(f"{dead.name} exited with {dead.process.returncode}; see {dead.log}")
     except KeyboardInterrupt:
         return 0
-    except (StartupError, subprocess.CalledProcessError) as error:
+    except (StartupError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     finally:
         stack.stop_all()
-        if args.orin and args.deploy_script:
+        if orin_contacted:
             # Ending the local ssh does not end the remote sender; ask it to stop so it frees the cameras.
-            subprocess.run([sys.executable, args.deploy_script, args.orin, "stop"], check=False)
+            try:
+                subprocess.run(
+                    [sys.executable, args.deploy_script, args.orin, "stop"],
+                    check=False,
+                    timeout=ORIN_COMMAND_TIMEOUT_S,
+                )
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                print(
+                    "could not confirm that the Orin sender stopped; check it with the deploy tool",
+                    file=sys.stderr,
+                )
 
 
 if __name__ == "__main__":

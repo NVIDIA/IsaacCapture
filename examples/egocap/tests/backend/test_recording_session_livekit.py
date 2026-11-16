@@ -326,6 +326,6 @@ async def test_a_frame_without_a_publisher_timestamp_ends_the_take_and_leaves_it
         await asyncio.sleep(0.01)
     snap = coordinator.snapshot()
     assert snap.service.phase is RecordingPhase.RECOVERY_REQUIRED
-    assert "a frame arrived without the publisher's frame timestamp" in (coordinator._last_issue or "")
+    assert "a frame arrived without the publisher's frame timestamp" in (snap.issue or "")
     assert snap.service.last_result is None or snap.service.last_result.disposition is not Disposition.KEPT
     await coordinator.close()

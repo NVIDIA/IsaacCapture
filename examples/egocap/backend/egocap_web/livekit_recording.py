@@ -389,7 +389,8 @@ class LiveKitRecordingSource:
                 # A take records the publisher's capture time, so a source that sends none cannot start one.
                 if frame.user_timestamp_us is None:
                     raise RuntimeError(
-                        f"{stream.name}: the first frame carries no capture time, so it cannot be recorded"
+                        f"{stream.name}: the first frame carries no capture time, so it cannot be recorded "
+                        "(the bridge publishes none while time sync is not up)"
                     )
                 if frame.image.shape[:2] != (stream.height, stream.width):
                     raise RuntimeError(
