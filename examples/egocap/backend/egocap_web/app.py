@@ -40,6 +40,7 @@ from .auto_align import AutoAligner
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
+from .day_report_routes import router as day_report_router
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
@@ -582,6 +583,7 @@ app.include_router(settings_router)
 app.include_router(operator_settings_router)
 app.include_router(station_router)
 app.include_router(setup_router)
+app.include_router(day_report_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
 # recordings.py's own module docstring.

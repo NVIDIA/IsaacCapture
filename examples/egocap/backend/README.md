@@ -35,11 +35,13 @@ or restarts it.
 | `GET /api/headset-address` | The addresses to enter in the headset, wireless first, the one saved for the station in use, and whether that one is stale. Needs `X-Control-Token`. |
 | `GET`/`POST /api/station-activity` | Today's active and inactive time for the station in use. `POST` (`X-Control-Token`) sets `state` (`active` or `inactive`), the blocker `notes`, or both, and rewrites that station's daily activity log. |
 | `GET /api/setup`, `POST /api/setup/connection-test` | The start-of-day flow: each step's state, the last device connection test, the system checks, and `blocked_reason`, why station setup holds a take. `POST` (`X-Control-Token`) tests every device the station in use needs now and answers with the new flow. See [Start-of-day flow](#start-of-day-flow). |
+| `GET /api/day-report`, `POST /api/day-report/save`, `POST /api/day-report/correct` | The end-of-day report, all with `X-Control-Token`. `GET` (`?date=YYYY-MM-DD`, `?station=NAME` or `*` for all) returns the day's takes by session with a count and duration per disposition (kept, flagged, rejected, discarded, pending, recording), read from the recording service's manifests, plus the station's activity. `save` writes `<station>_<date>_report.json` beside the activity log and refreshes that log's recorded time. `correct` rewrites the task (and optionally the studio label) of a range of a session's episodes. See [End-of-day report](#end-of-day-report). |
 | `POST /api/task-files/import`, `DELETE /api/task-files/{name}` | Import a task catalog the operator supplies — by `name` + `content` (text uploaded from the browser) — into the imported-catalog directory beside the operator settings, once it parses; and remove an imported one. `POST` and `DELETE` use the `X-Control-Token` header (legacy JSON tokens remain accepted for `POST`); `DELETE` refuses removal of the selected catalog (409); imports also refuse replacement of that catalog until it is deselected. Imports appear in `GET /api/task-files` (as `imported`) and shadow a shipped catalog of the same name. |
 | `GET /api/tools` | The operator tools the Settings drawer offers (headset calibration, glove calibration, fisheye rectification for the SENSING cameras), each with whether this build can launch it. None can yet. |
 | `GET /api/livekit-token?room=ROOM` | Viewer token (subscribe and data messages, no media publishing) for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. |
 | `GET /api/task-files`, `GET /api/task-files/{name}` | Read-only task-catalog API; see [`../data/taskfiles/README.md`](../data/taskfiles/README.md). |
-| `GET /recordings/...` | The optional recordings browser's API and file routes, off unless `EGOCAP_RECORDINGS_ENABLED=1`; see [`../recordings_frontend/README.md`](../recordings_frontend/README.md). |
+| `POST /recordings/api/session` | Exchanges `X-Control-Token` for the recordings browser's same-site, HTTP-only cookie, scoped to `/recordings`. |
+| `GET /recordings/...` | The optional recordings browser's API and file routes, off unless `EGOCAP_RECORDINGS_ENABLED=1`. The listing and every file need the control token (header) or that cookie, else 401, and a request from another site is 403; see [`../recordings_frontend/README.md`](../recordings_frontend/README.md). |
 
 Both frontends' built `dist/` directories are served as static assets from this same process
 once present (`uv run python build_support.py` from the project root builds them).
@@ -87,6 +89,29 @@ The flow is station, devices, calibration, record, wrap-up ([`setup_service.py`]
   mock session.
 - **The gate** is asked when a take is admitted and when readiness is published, never while a take records: a setup
   fact changing mid-take does not interrupt it, unlike a capture source going stale.
+
+### End-of-day report
+
+[`egocap.analytics.day_report`](../recording/egocap/analytics/day_report.py) reads each session's manifests, so every
+take is counted with what became of it:
+
+| Disposition | Meaning |
+| --- | --- |
+| kept | Finalized, and capture quality did not mark it bad. |
+| flagged | Finalized and kept, but capture quality marked its data bad. |
+| rejected | Failed its check; a camera failure also removed its media. |
+| discarded | The operator discarded it. |
+| pending | Interrupted before it finished; it waits to be recovered or discarded. |
+| recording | The take being written right now. |
+
+A take belongs to the day in its finalized episode's `recorded_at`, else the day its manifest was last checkpointed.
+A manifest that cannot be read is reported with its session, never dropped.
+
+A correction ([`day_report_routes.py`](egocap_web/day_report_routes.py)) is confined to the recording output: the
+path is resolved first, so a traversal, an absolute path or a link out is refused. It is refused while a take is being
+written and for the session still open for recording, including that session's routed groups. Each metadata file is
+replaced whole. A session the recording service recorded is never moved; `relocate` applies only to an older session
+filed under a studio folder.
 
 - **Activity.** `station_status/<date>.json` under the recording output holds each station's active and inactive
   intervals for that day, and `station_status/<station>_<date>_activity.json` is the daily log, rewritten on every

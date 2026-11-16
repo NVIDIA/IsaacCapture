@@ -17,7 +17,9 @@ own pages invoke: a caller that also sets "Studio (metadata)" should call
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -83,17 +85,24 @@ def _update_session_config_yaml(
         if studio:
             meta["studio"] = studio
         data["meta"] = meta
-        with open(cfg_p, "w", encoding="utf-8") as f:
-            yaml.dump(
-                data,
-                f,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+        _replace_yaml(cfg_p, data)
         return True
     except (OSError, TypeError, yaml.YAMLError):
         return False
+
+
+def _replace_yaml(path: Path, data: Any) -> None:
+    """Replace a YAML file through a temporary file beside it, so a crash never leaves half of one."""
+    fd, staged = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(staged, path)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
 
 
 @dataclass

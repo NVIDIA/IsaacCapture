@@ -797,6 +797,170 @@ hero card so the tracking tree below starts near the top of the viewport. */
   font-weight: 400;
 }
 
+/* --- End-of-day dialog ---------------------------------------------------- */
+
+.wrap-up-modal {
+  width: min(1040px, 96vw);
+  height: min(760px, 94vh);
+}
+
+.wrap-up-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.wrap-up-tile {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  border-left-width: 3px;
+}
+
+.wrap-up-tile-count {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.wrap-up-tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.wrap-up-tile-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* One colour per outcome, shared by the tiles and the table. */
+.wrap-up-tile--kept {
+  border-left-color: var(--positive);
+}
+
+.wrap-up-tile--flagged,
+.wrap-up-tile--pending {
+  border-left-color: var(--warning);
+}
+
+.wrap-up-tile--rejected {
+  border-left-color: var(--critical);
+}
+
+.wrap-up-tile--recording {
+  border-left-color: var(--accent);
+}
+
+.wrap-up-outcome {
+  font-weight: 600;
+}
+
+.wrap-up-outcome--kept {
+  color: var(--positive);
+}
+
+.wrap-up-outcome--flagged,
+.wrap-up-outcome--pending {
+  color: var(--warning);
+}
+
+.wrap-up-outcome--rejected {
+  color: var(--critical);
+}
+
+.wrap-up-outcome--discarded {
+  color: var(--text-secondary);
+}
+
+.wrap-up-outcome--recording {
+  color: var(--accent);
+}
+
+.wrap-up-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-notes-text {
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+.wrap-up-session {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.wrap-up-session > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.wrap-up-session > summary .settings-note {
+  margin: 0;
+}
+
+.wrap-up-table {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+/* Mostly text, unlike the tracking tables this style comes from: read left to right, numbers still right-aligned. */
+.wrap-up-table th,
+.wrap-up-table td {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.wrap-up-table th:first-child,
+.wrap-up-table th:nth-child(3),
+.wrap-up-table td.num-cell {
+  text-align: right;
+}
+
+.wrap-up-correction {
+  margin-top: var(--space-3);
+}
+
+.wrap-up-correction legend {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-range {
+  flex: 0 1 220px;
+}
+
+.wrap-up-task {
+  flex: 1 1 260px;
+}
+
 /* The station's active/inactive toggle, beside its name. */
 .station-activity {
   display: inline-flex;

@@ -39,6 +39,7 @@ import { SetupDialog } from "./SetupDialog";
 import type { StepId } from "./setupApi";
 import { StepRail } from "./StepRail";
 import { useSetup } from "./useSetup";
+import { WrapUpDialog } from "./WrapUpDialog";
 import { StationActivityToggle } from "./StationActivityToggle";
 import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
@@ -497,7 +498,7 @@ export default function App() {
   }, []);
   const unavailable = response === null && feedHealth === "unavailable";
   // At most one dialog is open over the page; while one is, the page behind it takes no input.
-  const [dialog, setDialog] = useState<"settings" | "setup" | null>(null);
+  const [dialog, setDialog] = useState<"settings" | "setup" | "wrap_up" | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("station");
   // Counts Settings openings: each one starts the dialog afresh on the tab that was asked for.
   const [settingsOpenings, countSettingsOpening] = useReducer((n: number) => n + 1, 0);
@@ -531,6 +532,7 @@ export default function App() {
     else if (step === "devices" || step === "calibration") setDialog("setup");
     // Recording is the page itself: put the operator on its main control.
     else if (step === "record") document.querySelector<HTMLElement>(".recording-button--record")?.focus();
+    else setDialog("wrap_up");
   };
   // Every camera the session offers can fill a role, whichever path its video takes to the page.
   const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
@@ -540,6 +542,7 @@ export default function App() {
       <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => openSettings("station")} />
       <StepRail steps={setup?.steps ?? null} onOpen={openStep} />
       <SetupDialog open={dialog === "setup"} onClose={closeSetup} setup={setup} controlToken={controlToken} onChanged={refreshSetup} />
+      <WrapUpDialog open={dialog === "wrap_up"} onClose={closeSetup} controlToken={controlToken} />
       <SettingsPanel
         key={settingsOpenings}
         initialTab={settingsTab}

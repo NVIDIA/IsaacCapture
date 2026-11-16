@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from egocap.analytics.station_status_log import ACTIVE, INACTIVE, StationStatusTracker
+from egocap.recording.episode_layout import write_json_atomic
 
 STATES = (ACTIVE, INACTIVE)
 
@@ -98,6 +99,15 @@ class StationActivity:
             return self._tracker.save_daily_log(
                 station, now=now, data_seconds=data_seconds, valid_seconds=valid_seconds
             ).name
+
+    def save_report(self, station: str, date: str, report: dict[str, Any]) -> str:
+        """Write a day's report beside that station's activity log, atomically; returns the file's name."""
+        with self._lock:
+            # Named like the activity log, so the two files of one station and day sort together.
+            log_path = self._tracker.daily_log_path(station, date)
+            path = log_path.with_name(log_path.name.replace("_activity.json", "_report.json"))
+            write_json_atomic(path, report)
+            return path.name
 
     def _write_log(self, station: str, now: float) -> None:
         """Rewrite the daily log after a change, keeping the recorded time a report last measured."""

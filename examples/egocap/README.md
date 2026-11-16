@@ -94,9 +94,10 @@ process that differs.
 - The **capture/recording page** (`frontend/`) is always served once built; see
   [`frontend/README.md`](frontend/README.md) for its development setup and the live protocol it
   consumes.
-- The **recordings browser** (`recordings_frontend/`) is an optional, unauthenticated file
-  browser over the recording output root — off by default (`EGOCAP_RECORDINGS_ENABLED=1` to
-  enable). See [`recordings_frontend/README.md`](recordings_frontend/README.md).
+- The **recordings browser** (`recordings_frontend/`) is an optional file browser over the
+  recording output root — off by default (`EGOCAP_RECORDINGS_ENABLED=1` to enable), and it asks
+  for the control token before it lists or serves anything. See
+  [`recordings_frontend/README.md`](recordings_frontend/README.md).
 
 ## Configuration
 

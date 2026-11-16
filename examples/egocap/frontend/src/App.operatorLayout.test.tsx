@@ -209,6 +209,16 @@ describe("start-of-day rail", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("opens the end-of-day report from the last step", async () => {
+    stubSetup(SETUP_PASSED);
+    const { container } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: /Step 5, Wrap up/ }));
+    expect(screen.getByRole("dialog", { name: "End of day" })).not.toBeNull();
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("shows no rail while the flow cannot be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
     const { container } = mount();

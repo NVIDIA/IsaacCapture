@@ -243,3 +243,24 @@ def test_update_episode_task_description_relocating_a_managed_session_raises_and
         update_episode_task_description(session, "0", task_description="x", studio="Kitchen", relocate=True)
     after = {str(f.relative_to(tmp_path)): f.read_bytes() for f in sorted(tmp_path.rglob("*")) if f.is_file()}
     assert after == before and not (tmp_path / "EOD" / "Kitchen").exists()
+
+
+def test_a_failed_config_write_leaves_the_file_as_it_was_and_no_temporary_file(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("meta:\n  task_description: before\n", encoding="utf-8")
+
+    def refuse(*_args, **_kwargs):
+        raise yaml.YAMLError("cannot represent")
+
+    monkeypatch.setattr(yaml, "dump", refuse)
+    assert _update_session_config_yaml(tmp_path, task_description="after", task_name="", studio="") is False
+    assert cfg.read_text(encoding="utf-8") == "meta:\n  task_description: before\n"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["config.yaml"]
+
+
+def test_the_config_is_replaced_whole_and_keeps_non_ascii_text(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("meta: {}\n", encoding="utf-8")
+    assert _update_session_config_yaml(tmp_path, task_description="Café table", task_name="", studio="") is True
+    assert "Café table" in cfg.read_text(encoding="utf-8")
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["config.yaml"]

@@ -86,6 +86,10 @@ The page is built for an operator mid-take: the cameras fill it, and everything 
   station needs as passed, failed with the reason, or not needed; below it are the calibration and system checks. It
   opens over the page, so the cameras stay live while a device is being fixed (`SetupDialog.tsx`). While any dialog is
   open the page behind it is inert and the recording shortcuts are suspended.
+- **End of day (dialog).** Opened from the rail's last step (`WrapUpDialog.tsx`). It shows the day's takes by outcome,
+  the station's active and blocked time with a notes field, and each session with its takes: outcome, duration, task,
+  operator and issues. A task can be corrected for one take or a range. *Save report* writes the report on the station
+  and names the files. The day and "Every station" can be changed at the top. It needs the control token.
 - **Status strip (under the bar).** The station in use, its active/inactive toggle, and the capture headline. The toggle
   (`StationActivityToggle.tsx`) marks the station active while it is collecting and blocked while it is not; nothing is
   counted before the first press of the day, and both totals stay in view. It needs the control token to change.

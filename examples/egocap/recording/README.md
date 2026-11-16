@@ -98,6 +98,9 @@ store.
   time tracker: `toggle`/`set_state` persist to `<log_dir>/<date>.json`,
   `compute_totals`/`save_daily_log` produce the operator-facing daily activity JSON
   (`<station>_<date>_activity.json`).
+- `day_report.py`'s `build_day_report()` lists a day's takes by session from the recording service's episode
+  manifests, each with its disposition (kept, flagged, rejected, discarded, pending, recording) and duration, and totals
+  them. It is what the backend's end-of-day report serves. Read-only.
 - `count_daily_trajectories.py`'s `count_trajectories()`/`compute_station_data_breakdown()` walk
   `<data_dir>/<Studio>/<timestamp>/episode_*`, grouping by session and attributing each episode
   to the day it was actually recorded (not the session folder's own date, which can predate a

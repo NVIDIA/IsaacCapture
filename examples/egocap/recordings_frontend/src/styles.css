@@ -138,3 +138,68 @@ ul.grid {
   color: var(--text-secondary);
   font-size: 12px;
 }
+
+/* The control-token form, shown until the page has signed in. */
+form.sign-in {
+  max-width: 480px;
+  margin: var(--space-8) auto;
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+/* `hidden` must win over the display rules below. */
+form.sign-in[hidden],
+nav.breadcrumbs[hidden] {
+  display: none;
+}
+
+form.sign-in label {
+  font-weight: 700;
+}
+
+.sign-in-help {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--text-secondary);
+}
+
+.sign-in-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sign-in-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.sign-in-row button {
+  height: 34px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sign-in-row input:focus-visible,
+.sign-in-row button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sign-in-error {
+  margin: var(--space-3) 0 0;
+  color: var(--critical);
+}
