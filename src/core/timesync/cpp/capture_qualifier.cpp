@@ -63,6 +63,21 @@ bool source_quiet(const ChronyEvidence& e, int64_t max_age_ns, int64_t future_to
     return !(age_s <= static_cast<double>(max_age_ns) * 1e-9 && age_s >= -lead_s); // also true for a NaN
 }
 
+// Sender CLOCK_REALTIME minus PC CLOCK_REALTIME, from the two hosts' reports. chrony's CSV `System time` is the NTP
+// clock minus the system clock (positive when the system clock is slow). The PC follows the camera host, so the two NTP
+// clocks agree: PC_sys + system_time(PC) = sender_sys + system_time(sender). False when the value is not finite or
+// does not fit.
+bool inter_host_offset_ns(const ChronyEvidence& follower, const ChronyEvidence& server, int64_t& offset_ns)
+{
+    const double ns = (follower.tracking.system_time_s - server.tracking.system_time_s) * 1e9;
+    if (!std::isfinite(ns) || std::fabs(ns) >= static_cast<double>(kSaturated))
+    {
+        return false;
+    }
+    offset_ns = static_cast<int64_t>(std::llround(ns));
+    return true;
+}
+
 } // namespace
 
 const char* to_string(Verdict v)
@@ -120,9 +135,12 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
     const double copy_slack_s = p.skew_ppm * 1e-6 * s.update_interval_s;
     const double follower_age_s = static_cast<double>(std::max<int64_t>(follower_age_ns, 0)) * 1e-9;
     const double server_age_s = static_cast<double>(std::max<int64_t>(server_age_ns, 0)) * 1e-9;
-    const double bound_s = std::fabs(s.system_time_s) + std::fabs(p.system_time_s) + link_dispersion_s +
-                           0.5 * link_delay_s + copy_slack_s + s.skew_ppm * 1e-6 * follower_age_s +
-                           p.skew_ppm * 1e-6 * server_age_s;
+    // The hosts' System time offsets are applied as a correction (see qualify_capture) and are not part of the bound.
+    // What remains is how far each correction can have moved since its report: the system clock's own rate error
+    // times the report's age, charged by magnitude.
+    const double bound_s = link_dispersion_s + 0.5 * link_delay_s + copy_slack_s + s.skew_ppm * 1e-6 * follower_age_s +
+                           p.skew_ppm * 1e-6 * server_age_s + std::fabs(s.frequency_ppm) * 1e-6 * follower_age_s +
+                           std::fabs(p.frequency_ppm) * 1e-6 * server_age_s;
     return to_ns_saturating(bound_s);
 }
 
@@ -187,9 +205,14 @@ Qualification qualify_capture(const SenderCapture& capture,
 
     q.generation = pc_clock.generation;
     int64_t offset = 0;
+    int64_t capture_pc_realtime = 0;
     int64_t capture_age = 0;
-    if (__builtin_sub_overflow(pc_clock.sample.realtime_ns, pc_clock.sample.monotonic_ns, &offset) ||
-        __builtin_sub_overflow(capture.realtime_ns, offset, &q.capture_monotonic_ns) ||
+    // The sender's wall time is moved onto the PC's wall clock by the measured inter-host offset, then onto the PC's
+    // monotonic clock by the PC's own realtime-minus-monotonic offset.
+    if (!inter_host_offset_ns(follower, server, q.inter_host_offset_ns) ||
+        __builtin_sub_overflow(pc_clock.sample.realtime_ns, pc_clock.sample.monotonic_ns, &offset) ||
+        __builtin_sub_overflow(capture.realtime_ns, q.inter_host_offset_ns, &capture_pc_realtime) ||
+        __builtin_sub_overflow(capture_pc_realtime, offset, &q.capture_monotonic_ns) ||
         __builtin_sub_overflow(now_monotonic_ns, q.capture_monotonic_ns, &capture_age) ||
         capture_age < -std::max<int64_t>(config.future_tolerance_ns, 0) || capture_age > config.max_capture_age_ns)
     {

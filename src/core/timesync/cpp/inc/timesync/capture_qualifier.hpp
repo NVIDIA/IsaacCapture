@@ -86,6 +86,9 @@ struct Qualification
     /// it met the budget.
     int64_t uncertainty_ns = 0;
     uint64_t generation = 0; ///< The PC local-clock generation the conversion used.
+    /// The correction applied: sender CLOCK_REALTIME minus PC CLOCK_REALTIME, from the two hosts' `System time`.
+    /// It is a measured offset, not an uncertainty, and may be large; `uncertainty_ns` bounds what is left after it.
+    int64_t inter_host_offset_ns = 0;
     UncertaintyTerms terms;
 
     /// Whether `capture_monotonic_ns` is a converted capture instant with a stated bound. `OverBudget` is usable: every
@@ -104,8 +107,9 @@ struct Qualification
 /// understates, and saturating.
 int64_t chrony_error_bound_ns(const ChronyTracking& t, int64_t age_ns);
 
-/// The bound between a following host's wall clock and the host it follows, as `qualify_capture` charges it (see
-/// below). The ages are of each report, on the PC's monotonic clock. Rounded up and saturating.
+/// The residual bound between a following host's wall clock and the host it follows, once `qualify_capture` has
+/// applied their measured offset (see below). The ages are of each report, on the PC's monotonic clock. Rounded up and
+/// saturating.
 int64_t inter_host_bound_ns(const ChronyEvidence& follower,
                             const ChronyEvidence& server,
                             int64_t follower_age_ns,
@@ -114,10 +118,12 @@ int64_t inter_host_bound_ns(const ChronyEvidence& follower,
 /// Converts a sender realtime capture stamp to PC monotonic and says how well the conversion can be vouched for: not
 /// at all (a refusal), vouched for but over the budget, or within it.
 ///
-/// The inter-host term bounds sender realtime against PC realtime along camera host system clock -> camera host
-/// NTP clock -> PC chronyd's measurement -> PC system clock: both hosts' |System time|, the PC's full Root dispersion
-/// and Root delay / 2, a slack for the camera host's dispersion growing since the PC copied it, and each report's
-/// skew times its age. The camera host's own root values are not subtracted: nothing in chrony's report shows that its
+/// The sender's realtime stamp is first moved onto the PC's realtime clock by the measured offset along camera host
+/// system clock -> camera host NTP clock -> PC chronyd's measurement -> PC system clock, which is the difference of the
+/// two hosts' `System time` (a measuring-only follower never removes it, and a fixed offset of either sign is
+/// converted correctly). The inter-host term bounds what is left: the PC's full Root dispersion and Root delay / 2, a
+/// slack for the camera host's dispersion growing since the PC copied it, and each report's skew and frequency times
+/// its age. The camera host's own root values are not subtracted: nothing in chrony's report shows that its
 /// root fields and the PC's copy describe the same upstream sample (`Ref time` is each host's own), and a subtraction
 /// without that correspondence can shrink the bound with no new measurement of the link. The charge therefore
 /// includes the camera host's upstream error and is larger than the link alone, never smaller. The assumption is

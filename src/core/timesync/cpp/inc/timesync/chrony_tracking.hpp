@@ -17,7 +17,8 @@ struct ChronyTracking
     std::string reference_name;
     int stratum = 0;
     double ref_time_unix_s = 0.0;
-    double system_time_s = 0.0; ///< Signed; only the magnitude is used, so the sign convention does not matter.
+    double system_time_s = 0.0; ///< chrony's NTP clock minus the system clock, signed: positive when the system clock
+                                ///< is slow.
     double last_offset_s = 0.0;
     double rms_offset_s = 0.0;
     double frequency_ppm = 0.0;

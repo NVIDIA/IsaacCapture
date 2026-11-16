@@ -55,8 +55,10 @@ error (see "What the bound assumes").
 
 A camera host with no upstream source is served as synchronised only if its chrony has a `local` reference; pass
 `configure-remote --offline` to write one. It is off by default, so a host that follows UTC keeps its configuration.
-`status` is a readiness check on the PC's follower (synchronised, the camera host's reference id, root dispersion and
-System time offset under `--max-dispersion-ms`); it does not state the per-frame bound.
+`status` is a readiness check on the PC's follower (synchronised, the camera host's reference id and root dispersion under
+`--max-dispersion-ms`, finite values). The measured offset to the camera host is reported, not limited: the follower
+never adjusts the PC's clock, so it stays, and `qualify_capture` applies it to each capture. `status` does not state
+the per-frame bound.
 
 ## Running and deploying it
 
@@ -83,8 +85,12 @@ launch tools call this tool; they do not carry their own chrony setup.
 
 ## What the bound assumes
 
-The inter-host term is both hosts' `System time`, the PC's full root dispersion and root delay / 2, a slack for the
-camera host's dispersion growing since the PC copied it, and each report's skew times its age.
+`qualify_capture` first moves the sender's wall stamp onto the PC's wall clock by the measured offset, the difference
+of the two hosts' `System time` (chrony's NTP clock minus the system clock; in `chronyc -c` output a positive value means
+the system clock is slow). The PC's NTP clock is the camera host's, so the offset is the PC's `System time` minus the
+camera host's, and a fixed offset of either sign is converted correctly. The inter-host term bounds what is left: the
+PC's full root dispersion and root delay / 2, a slack for the camera host's dispersion growing since the PC copied it,
+and each report's skew and frequency times its age (how far the correction can have moved since the report).
 
 The camera host's own root values are not subtracted. They would cancel its upstream error only if both hosts' root
 fields described the same upstream sample, and chrony's report carries no identifier that shows it: `Ref time` is when

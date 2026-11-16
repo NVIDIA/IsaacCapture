@@ -207,18 +207,20 @@ class JudgeTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("dispersion", problems[0])
 
-    def test_large_system_time_is_not_ready(self) -> None:
-        problems = self.judge(make_tracking(root_dispersion=0.0003, system_time=0.050))
-        self.assertEqual(len(problems), 1)
-        self.assertIn("System time", problems[0])
-        # The sign does not matter.
-        problems = self.judge(make_tracking(root_dispersion=0.0003, system_time=-0.050))
-        self.assertEqual(len(problems), 1)
-        self.assertIn("System time", problems[0])
+    def test_a_large_measured_offset_of_either_sign_is_ready(self) -> None:
+        # A measuring-only follower never removes the offset; it is applied per frame, so it is not a readiness fault.
+        for offset in (0.100, -0.100, 0.0005):
+            self.assertEqual(
+                self.judge(make_tracking(root_dispersion=0.0003, system_time=offset)),
+                [],
+            )
 
-    def test_small_system_time_stays_ready(self) -> None:
-        self.assertEqual(self.judge(make_tracking(system_time=0.0005)), [])
-        self.assertEqual(self.judge(make_tracking(system_time=-0.0005)), [])
+    def test_non_finite_values_are_not_ready(self) -> None:
+        for field in ("system_time", "root_dispersion", "root_delay"):
+            problems = self.judge(make_tracking(**{field: float("nan")}))
+            self.assertTrue(
+                any("non-finite" in p or "dispersion" in p for p in problems)
+            )
 
     def test_problems_accumulate(self) -> None:
         bad = make_tracking(

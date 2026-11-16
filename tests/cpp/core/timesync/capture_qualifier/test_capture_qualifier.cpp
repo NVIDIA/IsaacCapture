@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -193,11 +195,12 @@ void test_inter_host_terms()
     f.sender->tracking.skew_ppm = 5.0;
     f.config.budget_ns = 10 * kMs;
     const Qualification q = f.run();
-    // Both reports are one second old, follower (PC) update interval 0. |system time|: 100 us + 200 us; the PC's
-    // full root dispersion 200 us; its root delay / 2 = 200 us; skew * age: 10 us + 5 us.
+    // Both reports are one second old, follower (PC) update interval 0. The System time offsets are applied as a
+    // correction and are not charged: the PC's full root dispersion 200 us; its root delay / 2 = 200 us; skew * age:
+    // 10 us + 5 us.
     CHECK(q.verdict == Verdict::Qualified);
-    CHECK(within(q.terms.inter_host_ns, 715'000, 2));
-    CHECK(q.terms.inter_host_ns >= old_cancelled_bound_ns(f.pc->tracking, f.sender->tracking) + 300'000);
+    CHECK(within(q.terms.inter_host_ns, 415'000, 2));
+    CHECK(q.terms.inter_host_ns >= old_cancelled_bound_ns(f.pc->tracking, f.sender->tracking));
     CHECK(q.uncertainty_ns == q.terms.sensor_ns + q.terms.inter_host_ns + q.terms.pc_local_ns);
 }
 
@@ -278,24 +281,88 @@ void test_aging_charged_per_host()
     CHECK(f.run().terms.inter_host_ns == 10'000);
 }
 
-void test_both_system_times_charged()
+void test_system_time_is_corrected_not_charged()
 {
     ChronyEvidence s = zero_evidence();
     ChronyEvidence p = zero_evidence();
-    s.tracking.system_time_s = 100e-6;
-    CHECK(within(inter_host_bound_ns(s, p, 0, 0), 100'000, 1));
-    s.tracking.system_time_s = 0.0;
-    p.tracking.system_time_s = 250e-6;
-    CHECK(within(inter_host_bound_ns(s, p, 0, 0), 250'000, 1));
-    s.tracking.system_time_s = 100e-6;
-    CHECK(within(inter_host_bound_ns(s, p, 0, 0), 350'000, 1));
-    // The sign does not matter: only the magnitude is charged.
-    s.tracking.system_time_s = -100e-6;
-    p.tracking.system_time_s = -250e-6;
-    CHECK(within(inter_host_bound_ns(s, p, 0, 0), 350'000, 1));
-    s.tracking.system_time_s = 100e-6;
-    p.tracking.system_time_s = -250e-6;
-    CHECK(within(inter_host_bound_ns(s, p, 0, 0), 350'000, 1));
+    s.tracking.system_time_s = 0.1;
+    p.tracking.system_time_s = -0.25;
+    CHECK(inter_host_bound_ns(s, p, kSecond, kSecond) == 0);
+}
+
+void test_frequency_charged_by_age_per_host()
+{
+    ChronyEvidence s = zero_evidence();
+    ChronyEvidence p = zero_evidence();
+    s.tracking.frequency_ppm = -20.0;
+    p.tracking.frequency_ppm = 5.0;
+    // The correction can have moved by the rate error times the report's age; the sign does not matter.
+    CHECK(inter_host_bound_ns(s, p, 2 * kSecond, 4 * kSecond) == 40'000 + 20'000);
+}
+
+// A camera wall clock off from the PC's by a known amount, with the PC's measuring-only follower reporting that
+// offset as its System time: the capture is converted by the measured correction and the offset is not uncertainty.
+void test_fixed_offset_of_either_sign_is_corrected()
+{
+    for (const int64_t ahead_ns : { 100 * kMs, -100 * kMs })
+    {
+        Fixture f;
+        // The camera clock reads `ahead_ns` more than the PC's; the real capture age is kCaptureAge.
+        f.capture.realtime_ns = kWallMinusMono + (kNow - kCaptureAge) + ahead_ns;
+        // The PC's NTP clock (the camera host's) is ahead of the PC system clock by ahead_ns: PC system time is slow.
+        f.pc->tracking.system_time_s = static_cast<double>(ahead_ns) * 1e-9;
+        f.pc->tracking.root_dispersion_s = 50e-6;
+        const Qualification q = f.run();
+        CHECK(q.verdict == Verdict::Qualified);
+        CHECK(q.capture_monotonic_ns == kNow - kCaptureAge);
+        CHECK(q.inter_host_offset_ns == ahead_ns);
+        CHECK(within(q.terms.inter_host_ns, 50'000, 2)); // the offset is not charged as uncertainty
+    }
+}
+
+void test_offset_without_correction_would_be_implausible()
+{
+    // The same camera-ahead capture with no measured offset is refused: the conversion has nothing to correct with.
+    Fixture f;
+    f.capture.realtime_ns = kWallMinusMono + (kNow - kCaptureAge) + 100 * kMs;
+    CHECK(f.run().verdict == Verdict::ImplausibleAge);
+}
+
+void test_camera_host_own_system_time_is_part_of_the_offset()
+{
+    // The camera host's system clock is itself 30 ms slow of the NTP clock it serves, so its wall stamps trail that
+    // clock.
+    Fixture f;
+    f.sender->tracking.system_time_s = 0.030;
+    f.pc->tracking.system_time_s = 0.0; // the PC's system clock agrees with the served NTP clock
+    f.capture.realtime_ns = kWallMinusMono + (kNow - kCaptureAge) - 30 * kMs;
+    const Qualification q = f.run();
+    CHECK(q.verdict == Verdict::Qualified);
+    CHECK(q.capture_monotonic_ns == kNow - kCaptureAge);
+    CHECK(q.inter_host_offset_ns == -30 * kMs);
+}
+
+void test_unrepresentable_or_nonfinite_offset_is_refused()
+{
+    Fixture f;
+    f.pc->tracking.system_time_s = std::numeric_limits<double>::infinity();
+    CHECK(f.run().verdict == Verdict::ImplausibleAge);
+    f.pc->tracking.system_time_s = std::nan("");
+    CHECK(f.run().verdict == Verdict::ImplausibleAge);
+    f.pc->tracking.system_time_s = 1e12;
+    CHECK(f.run().verdict == Verdict::ImplausibleAge);
+}
+
+void test_large_correct_offset_with_high_uncertainty_is_over_budget_not_invalid()
+{
+    Fixture f;
+    f.capture.realtime_ns = kWallMinusMono + (kNow - kCaptureAge) + 100 * kMs;
+    f.pc->tracking.system_time_s = 0.1;
+    f.pc->tracking.root_dispersion_s = 0.02;
+    const Qualification q = f.run();
+    CHECK(q.verdict == Verdict::OverBudget);
+    CHECK(q.usable());
+    CHECK(q.capture_monotonic_ns == kNow - kCaptureAge);
 }
 
 void test_inter_host_bound_direct()
@@ -330,9 +397,9 @@ void test_inter_host_bound_direct()
 
     // Rounds up and saturates.
     ChronyEvidence s4 = zero_evidence();
-    s4.tracking.system_time_s = 1.5e-9;
+    s4.tracking.root_dispersion_s = 1.5e-9;
     CHECK(inter_host_bound_ns(s4, zero_evidence(), 0, 0) == 2);
-    s4.tracking.system_time_s = 1e12;
+    s4.tracking.root_dispersion_s = 1e12;
     CHECK(inter_host_bound_ns(s4, zero_evidence(), 0, 0) == INT64_MAX / 4); // the saturation value
 }
 
@@ -381,7 +448,8 @@ void test_server_root_fields_and_ref_time_do_not_change_the_bound()
     f.sender->tracking.system_time_s = -2e-4;
     f.config.budget_ns = 10 * kSecond;
     const int64_t base = f.run().terms.inter_host_ns;
-    CHECK(within(base, kFollowerBoundNs + 300'000, 2));
+    // The System time offsets are corrected, not charged.
+    CHECK(within(base, kFollowerBoundNs, 2));
     for (double v : { 0.0, 0.1, 0.5, 0.6, 5.0 })
     {
         f.sender->tracking.root_dispersion_s = v;
@@ -848,7 +916,13 @@ int main()
     test_pc_below_camera_host_is_still_charged_in_full();
     test_copy_slack();
     test_aging_charged_per_host();
-    test_both_system_times_charged();
+    test_system_time_is_corrected_not_charged();
+    test_frequency_charged_by_age_per_host();
+    test_fixed_offset_of_either_sign_is_corrected();
+    test_offset_without_correction_would_be_implausible();
+    test_camera_host_own_system_time_is_part_of_the_offset();
+    test_unrepresentable_or_nonfinite_offset_is_refused();
+    test_large_correct_offset_with_high_uncertainty_is_over_budget_not_invalid();
     test_inter_host_bound_direct();
     test_server_root_fields_and_ref_time_do_not_change_the_bound();
     test_simple_rejections();

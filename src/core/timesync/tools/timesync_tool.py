@@ -19,6 +19,7 @@ succeeds when that instance has selected the camera host and is settled. POSIX o
 from __future__ import annotations
 
 import argparse
+import math
 import shlex
 import shutil
 import signal
@@ -181,10 +182,11 @@ def chronyc_tracking(
 def judge(local: Tracking, expected_id: str, max_dispersion_s: float) -> list[str]:
     """What keeps this machine's measuring instance from being usable, one message each; empty when it is usable.
 
-    The same limit applies to the root dispersion and to the size of the System time offset, so a follower that reports
-    a small dispersion while its clock is tens of milliseconds off is not called ready. This is a readiness check on
-    the follower only: it does not state the inter-host bound, which the capture qualifier computes per frame from both
-    hosts' reports.
+    The follower only measures the camera host's clock; it never adjusts this machine's, so a settled follower reports
+    the whole fixed offset as its System time. That offset is a measurement the capture qualifier applies, not a fault,
+    and is not limited here; readiness requires a synchronised follower of the expected reference whose root dispersion
+    is small and whose reported values are finite. This is a readiness check on the follower only: it does not state the
+    inter-host bound, which the capture qualifier computes per frame from both hosts' reports.
     """
     problems = []
     if not local.synchronised:
@@ -201,11 +203,11 @@ def judge(local: Tracking, expected_id: str, max_dispersion_s: float) -> list[st
             f"this machine's root dispersion is {local.root_dispersion * 1e3:.1f} ms, "
             f"above {max_dispersion_s * 1e3:.1f} ms; it is still settling"
         )
-    if abs(local.system_time) > max_dispersion_s:
-        problems.append(
-            f"this machine's System time offset is {abs(local.system_time) * 1e3:.1f} ms, "
-            f"above {max_dispersion_s * 1e3:.1f} ms; it is still settling"
-        )
+    if not all(
+        math.isfinite(value)
+        for value in (local.system_time, local.root_dispersion, local.root_delay)
+    ):
+        problems.append("this machine's tracking report has a non-finite value")
     return problems
 
 
@@ -338,7 +340,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(
                 f"ok: this machine follows {local.reference_id} (stratum {local.stratum}), "
                 f"root delay {local.root_delay * 1e3:.3f} ms, root dispersion {local.root_dispersion * 1e3:.3f} ms, "
-                f"System time {abs(local.system_time) * 1e6:.1f} us"
+                f"measured offset to the camera host {local.system_time * 1e3:+.3f} ms (applied per frame)"
             )
             return 0
         if time.monotonic() >= deadline:
