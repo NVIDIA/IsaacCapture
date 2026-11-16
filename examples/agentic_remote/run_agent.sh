@@ -12,6 +12,8 @@
 #   AGENTIC_REMOTE_EXPERIMENT_DIR  the experiment folder (experiment.stack: full)
 #   AGENTIC_REMOTE_CAMERA_PR       the camera_streamer example of the camera pull
 #                                  request (--camera link)
+#   AGENTIC_REMOTE_ENV_DIR         the workstation's APAI Python environment
+#                                  (setup_workstation_env.sh); optional
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +34,15 @@ fi
 if [[ -n "${AGENTIC_REMOTE_CAMERA_PR:-}" ]]; then
   export AGENTIC_REMOTE_CAMERA_PR
 fi
+# The experiment's code keeps these caches inside the experiment folder unless
+# the variables name another place. One that is set and not empty is kept.
+if [[ -n "${AGENTIC_REMOTE_ENV_DIR:-}" ]]; then
+  export AGENTIC_REMOTE_ENV_DIR
+  caches="${AGENTIC_REMOTE_ENV_DIR}/caches"
+  export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${caches}/triton}"
+  export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${caches}/torchinductor}"
+  export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-${caches}/ultralytics}"
+fi
 
 # One card for this program and its children: index 0 in PCI order. The camera
 # receiver and the camera frame bridge must sit on the same card.
@@ -42,6 +53,8 @@ export CUDA_VISIBLE_DEVICES=0
 export APAI_REQUIRE_CUDA="${APAI_REQUIRE_CUDA:-1}"
 # Nothing is written into APAI's checkout or the experiment folder.
 export PYTHONDONTWRITEBYTECODE=1
+# A git status the experiment runs on its tools must not rewrite their index.
+export GIT_OPTIONAL_LOCKS=0
 # torch brings its own CUDA libraries.
 unset LD_LIBRARY_PATH
 export PYTHONPATH="${here}/python:${AGENTIC_REMOTE_APAI_SRC}${PYTHONPATH:+:${PYTHONPATH}}"

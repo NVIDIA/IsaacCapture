@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The packages of the workstation's APAI Python environment, installed by
+# setup_workstation_env.sh. torch and torchvision are not here: they come from
+# PyTorch's own index (step 2 of that script). APAI itself is not installed
+# either: run_agent.sh puts its src folder on PYTHONPATH.
+#
+# The pins are the versions the Thor ran (the experiment folder's
+# .state/thor/ffs/python-packages.txt). Whether each has a wheel for x86_64 is
+# found out by the install; the versions actually installed are recorded in
+# <AGENTIC_REMOTE_ENV_DIR>/freeze.txt.
+
+# APAI's own requirements (its pyproject.toml, dependencies).
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+pyyaml==6.0.3
+jsonschema==4.26.0
+
+# APAI's kinematics (extra "kinematics").
+pin==4.1.0
+
+# The obstacle grid bridge (extra "occupancy").
+warp-lang==1.18.0
+scipy==1.18.1
+pyzmq==27.2.0
+msgpack==1.2.4
+msgpack-numpy==0.4.8
+
+# Segmentation (SAM 2.1 Tiny). The install leaves opencv-python out: the
+# headless build above already provides cv2.
+ultralytics==8.4.197
+
+# Stereo depth (Fast FoundationStereo).
+timm==1.0.31
+omegaconf==2.4.0
+einops==0.8.2
+scikit-image==0.26.0
+imageio==2.38.1
+
+# The tests.
+pytest==9.2.0
