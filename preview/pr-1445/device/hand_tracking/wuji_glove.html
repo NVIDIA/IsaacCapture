@@ -555,7 +555,9 @@ controller offsets when needed:</p>
 </pre></div>
 </div>
 <p>Position values are in meters and quaternion values use <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z,</span> <span class="pre">w)</span></code>.
-The built-in offsets assume mirrored left/right mounts.</p>
+The built-in offsets assume mirrored left/right mounts. Unknown wrist-source
+modes and malformed explicit offsets stop the plugin with an error; unset
+offsets use the built-in values.</p>
 </section>
 <section id="troubleshooting">
 <h2><a class="toc-backref" href="#id6" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
@@ -732,7 +734,7 @@ that the runtime was up before both, and that hands are streaming
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 16, 2026.
       <br/>
     
   </p>

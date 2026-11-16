@@ -473,12 +473,14 @@ host’s hand retargeter.</p>
 <li><p><a class="reference internal" href="#published-collections-and-joint-contract" id="id6">Published collections and joint contract</a></p></li>
 <li><p><a class="reference internal" href="#device-status-and-cts" id="id7">Device status and CTS</a></p></li>
 <li><p><a class="reference internal" href="#troubleshooting" id="id8">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id9">License</a></p></li>
 </ul>
 </nav>
 <section id="hardware-and-prerequisites">
 <h2><a class="toc-backref" href="#id1" role="doc-backlink">Hardware and prerequisites</a><a class="headerlink" href="#hardware-and-prerequisites" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p>Linux x86_64 or aarch64; the current hardware validation used x86_64.</p></li>
+<li><p>Linux x86_64 or aarch64 with the system libusb runtime (<code class="docutils literal notranslate"><span class="pre">libusb-1.0-0</span></code>
+on Ubuntu); the current hardware validation used x86_64.</p></li>
 <li><p>The Isaac Capture source-build dependencies and the
 <a class="reference external" href="https://github.com/AgibotTech/agilink_omniglove_sdk" rel="noopener noreferrer" target="_blank">AgiLink OmniGlove SDK</a>.</p></li>
 <li><p>One left and one right OmniGlove for two-hand CTS, connected over USB.
@@ -509,18 +511,17 @@ Optical hand / controller pose ─┘
 </pre></div>
 </div>
 <p>CMake retrieves the pinned SDK into the build directory and validates its
-release checksums. The target architecture selects the SDK package. Runtime
-libraries and license notices are installed with the plugin.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>out<span class="w"> </span>-DBUILD_PLUGIN_OMNIGLOVE<span class="o">=</span>ON
-cmake<span class="w"> </span>--build<span class="w"> </span>out
-cmake<span class="w"> </span>--install<span class="w"> </span>out<span class="w"> </span>--component<span class="w"> </span>omniglove
+release checksums. The target architecture selects the SDK package. The SDK
+runtime library and its license notices are installed with the plugin. libusb
+is supplied by the operating system.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGIN_OMNIGLOVE<span class="o">=</span>ON
+cmake<span class="w"> </span>--build<span class="w"> </span>build
+cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>omniglove
 </pre></div>
 </div>
-<p>For an explicit local release, set
-<code class="docutils literal notranslate"><span class="pre">-DOMNIGLOVE_SDK_ROOT=/path/to/agilink_omniglove_sdk</span></code>; CMake does not modify it.
-<code class="docutils literal notranslate"><span class="pre">-DOMNIGLOVE_SDK_REF=&lt;commit-or-ref&gt;</span></code> selects another managed release. Use a
-full commit SHA for a reproducible override. Source build options remain under
-the user’s control.</p>
+<p>Existing build directories using <code class="docutils literal notranslate"><span class="pre">OMNIGLOVE_SDK_ROOT</span></code> or <code class="docutils literal notranslate"><span class="pre">OMNIGLOVE_SDK_REF</span></code>
+should remove those cache entries. Local SDK checkouts use CMake’s standard
+<code class="docutils literal notranslate"><span class="pre">-DFETCHCONTENT_SOURCE_DIR_OMNIGLOVE_SDK=/path/to/agilink_omniglove_sdk</span></code> override.</p>
 </section>
 <section id="running">
 <h2><a class="toc-backref" href="#id4" role="doc-backlink">Running</a><a class="headerlink" href="#running" title="Link to this heading">#</a></h2>
@@ -584,8 +585,8 @@ composed with the same world-space wrist transform.</p></li>
 <code class="docutils literal notranslate"><span class="pre">XrTimeConverter</span></code>; the wrist is queried at that same time.</p></li>
 <li><p>Unmapped, unconverged IK, invalid bone data, non-finite poses, zero
 quaternions and stale frames are withheld. A sample is pushed only once.
-After 200 ms without fresh data the injector is destroyed, reporting the
-hand inactive. A fresh valid sample and wrist pose recreate it.</p></li>
+Each hand is reported inactive when fresh, usable glove data or a valid
+wrist pose is unavailable. Tracking resumes when both are available.</p></li>
 </ul>
 <p>The plugin publishes the operator’s skeleton. It emits no robot joint
 commands or hand <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> data and defines no vendor hand schema.</p>
@@ -593,12 +594,13 @@ commands or hand <code class="docutils literal notranslate"><span class="pre">Jo
 <section id="device-status-and-cts">
 <h2><a class="toc-backref" href="#id7" role="doc-backlink">Device status and CTS</a><a class="headerlink" href="#device-status-and-cts" title="Link to this heading">#</a></h2>
 <p>The shared device status publisher reports left and right hand availability
-under the configured plugin root. Stale SDK frames report a disconnected hand;
-a fresh frame without a usable wrist reports a degraded hand. A discovered
-glove that fails stream configuration or startup stops the plugin with an error.</p>
+under the configured plugin root. A glove that stops streaming reports a
+disconnected hand. A glove still streaming without a usable skeleton or wrist
+reports a degraded hand. A transient rejected sample retains the last usable
+pose until it becomes stale. Stream configuration or startup failures and
+incompatible SDK sample contracts stop the plugin with an error.</p>
 <p>Follow <a class="reference internal" href="../../conformance/setup.html"><span class="doc">Set Up the Tools</span></a>, <a class="reference internal" href="../../conformance/hand.html"><span class="doc">Hand Suite</span></a> and
-<a class="reference internal" href="../../conformance/submit.html"><span class="doc">Submit Your Results</span></a> for recording, review and submission. Keep the take
-summary and hardware evidence in the integration PR description.</p>
+<a class="reference internal" href="../../conformance/submit.html"><span class="doc">Submit Your Results</span></a> for recording, review and submission.</p>
 </section>
 <section id="troubleshooting">
 <h2><a class="toc-backref" href="#id8" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
@@ -617,6 +619,16 @@ invalid skeleton frames are intentionally withheld.</p></li>
 <li><p><strong>Header/runtime ABI mismatch:</strong> rebuild against the selected SDK and
 verify that the installed executable loads its accompanying runtime library.</p></li>
 </ul>
+</section>
+<section id="license">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<p>The plugin source is Apache-2.0. The AgiLink OmniGlove SDK is licensed under
+MulanPSL-2.0; its shared library is redistributed with the plugin, together with
+<code class="docutils literal notranslate"><span class="pre">LICENSE.omniglove-sdk</span></code> and <code class="docutils literal notranslate"><span class="pre">THIRD_PARTY_NOTICES.omniglove-sdk.md</span></code>.</p>
+<p>The SDK depends on libusb, licensed under LGPL-2.1-or-later. This plugin uses
+the operating system’s libusb and does not redistribute the SDK’s bundled
+libusb binary. The SDK notices describe the vendor’s complete release;
+only the SDK runtime library is copied into this plugin’s install tree.</p>
 </section>
 </section>
 
@@ -677,6 +689,7 @@ verify that the installed executable loads its accompanying runtime library.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#published-collections-and-joint-contract">Published collections and joint contract</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#device-status-and-cts">Device status and CTS</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#license">License</a></li>
 </ul>
   </nav></div>
 
@@ -759,7 +772,7 @@ verify that the installed executable loads its accompanying runtime library.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 16, 2026.
       <br/>
     
   </p>
