@@ -76,6 +76,32 @@ std::vector<uint8_t> gradient(const ImageSize& s)
     return host;
 }
 
+// Host reference: 2x2 box average (rounded) of an NV12 picture stored Y then UV with pitch = width.
+std::vector<uint8_t> box_downscale_by_two(const std::vector<uint8_t>& src, const ImageSize& s)
+{
+    const uint32_t w = s.width / 2;
+    const uint32_t h = s.height / 2;
+    std::vector<uint8_t> out(static_cast<size_t>(w) * h * 3 / 2);
+    auto average = [](uint32_t sum) { return static_cast<uint8_t>((sum + 2) / 4); };
+    for (uint32_t r = 0; r < h; ++r)
+        for (uint32_t c = 0; c < w; ++c)
+        {
+            const size_t i = static_cast<size_t>(2 * r) * s.width + 2 * c;
+            out[static_cast<size_t>(r) * w + c] = average(src[i] + src[i + 1] + src[i + s.width] + src[i + s.width + 1]);
+        }
+    const size_t src_uv = static_cast<size_t>(s.width) * s.height;
+    const size_t dst_uv = static_cast<size_t>(w) * h;
+    for (uint32_t r = 0; r < h / 2; ++r)
+        for (uint32_t c = 0; c < w / 2; ++c)
+            for (uint32_t comp = 0; comp < 2; ++comp)
+            {
+                const size_t i = src_uv + static_cast<size_t>(2 * r) * s.width + (2 * c) * 2 + comp;
+                out[dst_uv + static_cast<size_t>(r) * w + c * 2 + comp] =
+                    average(src[i] + src[i + 2] + src[i + s.width] + src[i + s.width + 2]);
+            }
+    return out;
+}
+
 std::vector<uint8_t> run(const std::vector<std::string>& steps, const ImageSize& size, ImageSize& result)
 {
     GpuPipeline pipeline;
@@ -117,25 +143,36 @@ int main()
     const auto rippled = run({ "sine-warp=8,32" }, size, out);
     check(out == size && rippled != gradient(size), "sine-warp changes the picture and keeps its size");
 
-    // Steps run in series: warp(0) then a downscale equals the downscale alone; two warps differ from one.
-    ImageSize shrunk;
-    GpuPipeline plain;
-    plain.add(camera_bridge::make_box_downscale_step(2));
-    check(plain.prepare(size).empty() && plain.output_size() == ImageSize{ 64, 48 }, "downscale output size");
-    const auto in_series = run({ "sine-warp=0" }, size, shrunk); // series of one, then compare chain of two below
+    // Steps run in series: a non-identity warp then a downscale equals the host-side box downscale of the warped
+    // picture, and differs from skipping the warp or applying the steps in the other order.
+    const std::string warp = "sine-warp=8,32";
+    ImageSize warped_size;
+    const auto warped = run({ warp }, size, warped_size);
+    const auto expected = box_downscale_by_two(warped, size);
+    const auto skipped_warp = box_downscale_by_two(gradient(size), size);
+    check(expected != skipped_warp, "the warp changes what the downscale sees");
+
+    const ImageSize half{ 64, 48 };
     GpuPipeline chain;
-    chain.add(camera_bridge::make_gpu_step("sine-warp=0"));
+    chain.add(camera_bridge::make_gpu_step(warp));
     chain.add(camera_bridge::make_box_downscale_step(2));
-    check(chain.prepare(size).empty() && chain.output_size() == ImageSize{ 64, 48 }, "chain output size");
+    check(chain.prepare(size).empty() && chain.output_size() == half, "warp then downscale output size");
     Image source(size);
     source.upload(gradient(size));
-    Image chained_out({ 64, 48 });
-    Image direct_out({ 64, 48 });
+    Image chained_out(half);
     check(chain.enqueue(source.in(), chained_out.out(), nullptr) == cudaSuccess, "chain enqueue");
-    check(plain.enqueue(source.in(), direct_out.out(), nullptr) == cudaSuccess, "plain enqueue");
+
+    GpuPipeline reversed;
+    reversed.add(camera_bridge::make_box_downscale_step(2));
+    reversed.add(camera_bridge::make_gpu_step(warp));
+    check(reversed.prepare(size).empty() && reversed.output_size() == half, "downscale then warp output size");
+    Image reversed_out(half);
+    check(reversed.enqueue(source.in(), reversed_out.out(), nullptr) == cudaSuccess, "reversed enqueue");
     cudaDeviceSynchronize();
-    check(chained_out.download() == direct_out.download(), "identity warp then downscale equals the downscale alone");
-    (void)in_series;
+    const auto chained = chained_out.download();
+    check(chained == expected, "warp then downscale equals the downscale of the warped picture");
+    check(chained != skipped_warp, "the chain does not bypass the warp");
+    check(chained != reversed_out.download(), "the chain is order dependent");
 
     // Refusals.
     bool threw = false;
