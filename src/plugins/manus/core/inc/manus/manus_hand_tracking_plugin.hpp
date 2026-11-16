@@ -43,13 +43,21 @@ namespace manus
 // different actuator count would change this and the values it consumes.
 inline constexpr std::size_t kManusFingerCount = 5;
 
-/// Runtime feature flags for manus_hand_plugin (parsed from --datasets=...).
+// Controller aim pose -> wrist joint, the default ManusPluginConfig offsets.
+inline constexpr XrPosef kLeftHandOffset = { { -0.744f, -0.445f, -0.282f, 0.411f }, { -0.072f, -0.001f, -0.003f } };
+inline constexpr XrPosef kRightHandOffset = { { -0.744f, 0.445f, 0.282f, 0.411f }, { 0.072f, -0.001f, -0.003f } };
+
+/// manus_hand_plugin settings, parsed from command-line flags in app/main.cpp.
+/// TeleopSession forwards PluginConfig.plugin_args to the plugin, so new
+/// settings belong here as flags rather than in environment variables.
 struct ManusPluginConfig
 {
     std::string app_name = "ManusHandPlugin";
     std::optional<std::string> monitoring_plugin_root_id;
     std::string left_calibration_file;
     std::string right_calibration_file;
+    XrPosef left_aim_to_wrist = kLeftHandOffset;
+    XrPosef right_aim_to_wrist = kRightHandOffset;
     bool human = true; // OpenXR HandInjector
     bool sensors = true; // RawDeviceData -> SchemaPusher
     bool haptic = true; // inbound HapticCommandReaderTracker
@@ -157,10 +165,6 @@ private:
     std::unique_ptr<plugin_utils::HandInjector> m_left_injector;
     std::unique_ptr<plugin_utils::HandInjector> m_right_injector;
     std::shared_ptr<core::ControllerTracker> m_controller_tracker;
-    // Controller aim pose -> wrist joint per hand; set in initialize() from the
-    // built-in offsets or their environment override.
-    XrPosef m_left_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    XrPosef m_right_aim_to_wrist = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
     std::shared_ptr<core::HandTracker> m_hand_tracker;
     // Inbound HapticCommand tensor; collection identity in
     // inc/manus/manus_glove_collection.hpp. Read each frame in update().
