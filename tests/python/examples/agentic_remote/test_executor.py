@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import logging
 import math
 import threading
 from collections.abc import Callable, Sequence
@@ -18,10 +19,15 @@ from isaaccapture_examples.agentic_remote.protocol.messages import GraspRegion, 
 from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
-from isaaccapture_examples.agentic_remote.robot_app.executor import MoveExecutor
+from isaaccapture_examples.agentic_remote.robot_app.executor import (
+    HOLD_FAILED,
+    MoveExecutor,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ArmFault,
     CheckerSet,
+    ContactStop,
+    FeedbackLost,
     MoveOutcome,
     Owner,
     ReadFailed,
@@ -41,6 +47,7 @@ MOVE_ID = "move-1"
 IDLE = ("", 0, 0)
 REGION = GraspRegion((0.3, 0.0), 0.05, 0.01, None)
 WAIT_S = 5.0  # longest a test waits for another thread
+LOGGER = "isaaccapture.examples.agentic_remote.executor"
 
 
 def ramp(
@@ -1513,7 +1520,7 @@ def test_a_hold_that_fails_once_is_tried_again(rig):
     assert (len(calls), len(rig.arm.holds)) == (2, 1)
 
 
-def test_a_hold_that_keeps_failing_is_named_in_the_reason(rig):
+def test_a_hold_that_keeps_failing_is_named_in_the_reason(rig, caplog):
     rig.arm.block_joint(0, 0.05)
     calls = []
 
@@ -1522,11 +1529,64 @@ def test_a_hold_that_keeps_failing_is_named_in_the_reason(rig):
         raise ReadFailed("joint index 2: the read failed")
 
     rig.patch.setattr(rig.arm, "hold_measured", hold)
-    outcome = rig.run(LONG_PATH)
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        outcome = rig.run(LONG_PATH)
+    # Two failed reads are no fault: the move still ends in contact.
     assert outcome.status == "contact"
     assert outcome.reason.startswith("contact: joint index 0")
-    assert "the hold at the measured pose failed: joint index 2" in outcome.reason
+    assert outcome.reason.endswith(
+        f"{HOLD_FAILED}joint index 2: the read failed; the last setpoint stands"
+    )
     assert len(calls) == 2
+    # Nothing went out after the last setpoint, which stands with the motors on.
+    assert rig.sent() == LONG_PATH[: outcome.index]
+    assert rig.arm.last_target()[0] == rig.sent()[-1]
+    assert rig.arm.holds == []
+    assert rig.arm.torque_on()
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert [record.getMessage() for record in errors] == [
+        "no hold at the measured pose after a contact: joint index 2: the read failed"
+    ]
+
+
+@pytest.mark.parametrize("kind", [Refusal, ContactStop, FeedbackLost])
+def test_a_refusal_from_the_hold_after_a_contact_leaves_run_with_everything_in_order(
+    rig, leaving, watches, kind
+):
+    # No contact watch of the package raises a Refusal from its hold. It is not
+    # caught: the robot app turns an error that leaves run() into a fault-stop.
+    pauses = Pauses()
+    executor = paused_executor(rig, pauses)
+    rig.arm.block_joint(0, 0.05)
+    error = kind("the watch refuses the hold")
+    calls = []
+
+    def hold() -> None:
+        calls.append(1)
+        raise error
+
+    rig.patch.setattr(rig.arm, "hold_measured", hold)
+    with pytest.raises(kind) as raised:
+        rig.run(LONG_PATH, executor=executor, grasp_region=REGION)
+    assert raised.value is error
+    assert len(calls) == 1  # only a failed read is tried again
+    # Nothing went out after the last setpoint, which stands with the motors on.
+    sent = rig.sent()
+    assert 0 < len(sent) < len(LONG_PATH)
+    assert sent == LONG_PATH[: len(sent)]
+    assert rig.arm.last_target()[0] == sent[-1]
+    assert rig.arm.holds == []
+    assert rig.arm.torque_on()
+    assert rig.arm.released_at == []
+    # The checker, the watch and the idle reads got what every exit owes them.
+    assert leaving[-2:] == ["region off", "end"]
+    assert rig.agent.grasp_region is None
+    assert not rig.agent.in_motion
+    assert [watch.finished for watch in watches] == [True]
+    assert (pauses.open, pauses.entered) == (0, 1)
+    assert (executor.progress(), executor.stage()) == (IDLE, "")
+    # It is free for the next move.
+    assert rig.run([], executor=executor).reason == "the move has no setpoints"
 
 
 def test_a_setpoint_outside_the_limits_is_refused_and_nothing_further_is_sent(rig):
