@@ -1,0 +1,110 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The human program's settings for the rig, the reBot arm. The human program is
+# the workstation program through which a person drives the arm with the
+# headset's right controller: it turns the controller's motion into joint targets
+# and sends them to the Thor, the machine on the robot. A takeover makes the
+# person the control owner, the one who may move the arm; the hand-back ends it
+# with the arm at rest. Every number is a first value; none was measured on the
+# arm or with a headset. Times are in s, lengths in m, angles in rad unless a
+# key says deg.
+#
+# It differs from configs/human.yaml in four keys: teleop.attempts,
+# retarget.max_linear_velocity, retarget.max_angular_velocity and ik.apai_arm.
+#
+# The program refuses a key it does not know and a number outside the bound its
+# comment names; a number without a named bound must be above 0.
+
+# The robot link service's local socket, as socket_path of its file names it.
+# Empty: the service's default path.
+socket_path: ""
+
+# debug, info, warning or error.
+log_level: info
+
+# The headset path. The Teleop Session Server is Isaac Capture's program that
+# reads the headset and its controllers and sends them to one client, here this
+# program. SAMPLES is its link message with the newest controller data; a tick
+# is one pass of its loop, and the tick age is now minus the tick time of the
+# newest SAMPLES.
+teleop:
+  endpoint: "127.0.0.1:47600"
+  tick_rate_hz: 90.0  # the tick rate asked of the server
+  # SAMPLES with a tick age above this are stale: the arm does not follow them.
+  max_tick_age_s: 0.15
+  # One attempt to connect lasts at most this long. The program sends nothing
+  # meanwhile; keep it below human.stage_keep_s of the robot app's file, for
+  # which the Thor goes on showing the program's stage.
+  connect_timeout_s: 3.0
+  retry_s: 5.0  # from a failed attempt, or a lost connection, to the next; at least 2
+  # The program ends after this many failed attempts in a row: a session day
+  # without a server or without a tracked headset. A whole number.
+  attempts: 8640
+
+# The retargeting graph: Isaac Capture's nodes that turn the controller's pose
+# into a target for the gripper tip. The clutch lets the target follow the hand
+# only while the grip is squeezed; the rate limiter bounds the target's speed.
+retarget:
+  controller_pose: grip  # the controller pose that is followed: grip or aim
+  position_scale: 1.0  # the target's motion per motion of the hand
+  squeeze_threshold: 0.5  # the grip counts as squeezed above this; below 1
+  # The rate limiter's bounds on the target's speed. A pass that asks for more is
+  # clamped. They are low so that the joint targets stay near the 0.1 rad/s the
+  # Thor moves a person's target with (limits.human.max_joint_speed of
+  # configs/robot_app_rebot.yaml). Computed on the arm model, not measured on
+  # the arm: 1 m/s at the gripper tip asks a joint for 10 to 13 rad/s, and
+  # 1 rad/s of the tip's turning for up to 3 rad/s.
+  max_linear_velocity: 0.01  # m/s
+  max_angular_velocity: 0.03  # rad/s
+  # A hand faster than this is not followed at all, and the arm holds until the
+  # grip was released and squeezed again. Not below the bound above; null: none.
+  reject_linear_velocity: 2.0  # m/s
+  reject_angular_velocity: 10.0  # rad/s
+  # The rotation, by rows, from the stage space to the robot's base axes. The
+  # stage space is the space the controller poses are given in: after the
+  # headset view was recentred with the person behind the arm, x points to the
+  # person's right, y up and z toward the person. The robot's base axes are x
+  # forward, y left, z up.
+  controller_to_base:
+    - [0.0, 0.0, -1.0]
+    - [-1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+  # A turn about the stage's vertical axis, applied first, for a recentre that
+  # left the stage at an angle. Any number, in degrees.
+  stage_yaw_deg: 0.0
+
+# The inverse kinematics (IK): from the target of the gripper tip to joint values.
+ik:
+  # The APAI arm profile whose arm model is solved on: the reBot arm's.
+  apai_arm: rebot_rs
+  max_iter: 50  # iterations of one solve; a whole number
+  tol: 0.0001  # a solve has converged below this error
+  # A solution further than this, on any joint, from the one before it is a jump
+  # and ends the engagement, the stretch in which the arm follows the hand.
+  max_jump_rad: 0.05
+  # The farthest, on any joint, a solution may run ahead of the Thor's last joint
+  # target before the engagement ends.
+  max_ahead_rad: 0.08
+  # The farthest the hand's target may run ahead of the rate-limited target.
+  max_ahead_m: 0.05
+  max_failures: 5  # failed solves in a row that end the engagement; a whole number
+
+buttons:
+  # How long right B is held for the takeover and right A for the hand-back.
+  hold_s: 1.0
+
+rates:
+  # Passes of the program's loop per second; the arm is sent a joint target on
+  # each one while it follows the hand. The rate limiter gives one pass at most
+  # 20 ms of motion (human/retarget.py, LIMITER_PASS_S): below 50 the hand speed
+  # limits shrink in proportion.
+  loop_hz: 50.0
+  # HUMAN_SETPOINT link messages per second while nothing is to be moved: they
+  # carry the program's stage for the operator console.
+  idle_hz: 20.0
+
+state:
+  # The arm follows the hand only on a ROBOT_STATE, the Thor's link message with
+  # the measured pose and the control owner, that arrived less than this ago.
+  max_age_s: 0.2
