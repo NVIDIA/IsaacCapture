@@ -183,7 +183,74 @@ def test_state_defaults():
 
 
 def test_human_defaults():
-    assert HumanConfig() == HumanConfig(view_age_limit_s=0.5, sample_age_limit_s=0.25)
+    assert HumanConfig() == HumanConfig(
+        enabled=False,
+        require_live_view=True,
+        view_age_limit_s=0.5,
+        sample_age_limit_s=0.25,
+        stage_keep_s=4.0,
+    )
+
+
+def test_the_human_settings_ship_in_the_safe_position():
+    # Human driving off, and no person driving without a live view.
+    data = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))["human"]
+    assert data["enabled"] is False and data["require_live_view"] is True
+    shipped = load_config(CONFIG_YAML).human
+    assert (shipped.enabled, shipped.require_live_view) == (False, True)
+    # A file that names neither gets the same.
+    assert (HumanConfig().enabled, HumanConfig().require_live_view) == (False, True)
+
+
+def _human_box(config: RobotAppConfig, low, high) -> RobotAppConfig:
+    """The configuration with this human joint box."""
+    human = dataclasses.replace(
+        config.limits.human, joint_min=tuple(low), joint_max=tuple(high)
+    )
+    return dataclasses.replace(
+        config, limits=dataclasses.replace(config.limits, human=human)
+    )
+
+
+def test_human_driving_needs_the_human_box_inside_the_recovery_region(config, tmp_path):
+    # A return to rest starts only from inside rest.region_*: a person who
+    # could drive beyond it could leave the arm where a typed rest is refused.
+    rest = config.rest
+    assert config.limits.human.joint_max[0] > rest.region_max[0]
+    assert not config.human.enabled  # accepted while human driving is off
+    on = HumanConfig(enabled=True)
+    with pytest.raises(ConfigError) as refused:
+        dataclasses.replace(config, human=on)
+    assert str(refused.value) == (
+        "human.enabled needs limits.human inside rest.region_*: joint index 0 has "
+        "human -3.0..3.0 and region -2.5..2.5; a person could leave the arm where "
+        "a typed rest is refused"
+    )
+    # The loader refuses the same file.
+    with pytest.raises(ConfigError, match=r"human\.enabled needs limits\.human"):
+        _load_changed(tmp_path, _put("human.enabled", True))
+    # With the human box equal to the region it is taken, from a file too.
+    inside = _human_box(config, rest.region_min, rest.region_max)
+    assert dataclasses.replace(inside, human=on).human.enabled
+    loaded = _load_changed(
+        tmp_path,
+        _put("human.enabled", True),
+        _put("limits.human.joint_min", list(rest.region_min)),
+        _put("limits.human.joint_max", list(rest.region_max)),
+    )
+    assert loaded.human.enabled
+    # One bound of one joint outside is refused and names that joint.
+    low = list(rest.region_min)
+    low[4] -= 0.01
+    below = _human_box(config, low, rest.region_max)
+    assert not below.human.enabled
+    with pytest.raises(ConfigError, match=r"joint index 4 has human -2\.51\.\.2\.5 "):
+        dataclasses.replace(below, human=on)
+    high = list(rest.region_max)
+    high[5] += 0.5
+    above = _human_box(config, rest.region_min, high)
+    with pytest.raises(ConfigError, match=r"joint index 5 has human -2\.5\.\.3\.0 "):
+        dataclasses.replace(above, human=on)
 
 
 def test_the_typed_jaw_reference_is_off_by_default(config, tmp_path):

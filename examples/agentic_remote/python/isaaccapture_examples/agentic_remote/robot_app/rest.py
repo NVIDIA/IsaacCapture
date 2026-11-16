@@ -273,6 +273,15 @@ class ReturnToRest:
             _log.warning("torque release refused: %s", reason)
         return reason
 
+    def proven_at_rest(self) -> str | None:
+        """Why the arm is not proven at rest with empty jaws; None when it is.
+
+        The jaws must be proven empty, and two fresh full reads read_gap_s
+        apart must lie within rest_tol_rad of rest and of each other. It reads
+        the jaws and the joints and sends nothing.
+        """
+        return self._jaws_problem() or self._rest_problem()
+
     # A request, step by step
 
     def _request(

@@ -24,10 +24,15 @@ from ..protocol.messages import (
     DRIVER_APAI_MOCK,
     DRIVER_REAL,
     DRIVER_SIM,
+    HUMAN_SOURCE_SYNTHETIC,
     MESSAGE_TYPES,
+    REQUEST_HANDBACK,
+    REQUEST_HUMAN,
+    SIMULATED_DRIVERS,
     CheckerState,
     Event,
     Gripper,
+    HumanSetpoint,
     Move,
     Open,
     OwnerRequest,
@@ -46,6 +51,7 @@ from ..protocol.messages import (
 )
 from . import rest as rest_module
 from .authority import Authority
+from .config import ConfigError
 from .executor import HOLD_FAILED, MoveExecutor
 from .gripper import (
     ALREADY_REFERENCED,
@@ -55,6 +61,7 @@ from .gripper import (
     GripperWorker,
     JawState,
 )
+from .human import HumanDrive, HumanInput, HumanTarget
 from .inbox import Inbox
 from .interfaces import (
     ArmFault,
@@ -84,6 +91,7 @@ if TYPE_CHECKING:
     from ..protocol.messages import GraspRegion, Message
     from .clock import Clock
     from .config import RobotAppConfig
+    from .human import DriveEnd
     from .interfaces import (
         ArmPort,
         CheckerSet,
@@ -144,6 +152,47 @@ CLOSING = "the robot app is closing"
 NOT_RUNNING = "the robot app is not running"
 _RACED = "a STOP or an owner change arrived while the request was checked"
 
+# A person drives the arm. A takeover makes a person the control owner; the
+# hand-back ends it at rest; from the one to the other a takeover is open. A
+# human target is a joint target from a person's hand; a human drive is one
+# stretch of human motion.
+HUMAN_OFF = "human driving is switched off in this robot app's file (human.enabled)"
+TAKEOVER_OPEN = "takeover not finished: give the arm back with right A at rest"
+NO_TAKEOVER = "no takeover is open"
+NO_CONTROLLER_DATA = "no fresh controller data: "
+VIEW_NOT_FRESH = "the live view is not fresh: "
+OPEN_THE_VIEW = "; open the live view page in a visible browser tab"
+OUTSIDE_HUMAN_LIMITS = "the arm is outside the human limits: "
+# What a refused hand-back tells the person to do: by what is not proven.
+REST_FIRST = "; type rest first"
+OPEN_FIRST = "; type stop, then open, then yes, then hold right A again"
+# How rest.py's text begins when the jaws are not proven empty.
+_JAWS_NOT_EMPTY = "the jaws are not proven empty"
+TAKEN_OVER = (
+    "TAKEOVER: a person owns the arm, owner number {number}; release the grip, "
+    "then squeeze it to move"
+)
+HANDED_BACK = "takeover ended: the arm is given back; nobody owns it"
+# Why an engaged human target moves nothing: the grip was squeezed before the
+# person could move the arm, since a drive that the grip did not end, or while
+# the controller data were away.
+NEEDS_RELEASE = "release the grip, then squeeze it to move"
+DRIVE_ENDED = (
+    "human drive ended: {why}; the arm holds; release the grip and squeeze again"
+)
+# How the note of a human target begins after its sender ended a drive; the
+# sender's copy is NOTE_SQUEEZE_AGAIN of human/logic.py. DRIVE_ENDED says it.
+NOTE_SQUEEZE_AGAIN = "release the grip and squeeze again: "
+PERSON_KEEPS_ARM = (
+    "; the person keeps the arm: squeeze again when the connection is back"
+)
+# The stage of HUMAN_STAGES at which the controller data count as fresh.
+STAGE_READY = "ready"
+# The statuses of a human drive that a released grip, or a STOP, ended.
+_DRIVE_RELEASED = "released"
+_DRIVE_STOPPED = "stopped"
+_DRIVE_CONTACT = "contact"
+
 CLEAR_CONTACT_SPOTS = "clear_contact_spots"
 CLOSE_GRASP = "close_grasp"
 
@@ -160,6 +209,8 @@ _TEXT_LIMITS = {
     "request": MAX_WORD_CHARS,
     "action": MAX_WORD_CHARS,
     "mode": MAX_WORD_CHARS,
+    "source": MAX_WORD_CHARS,
+    "stage": MAX_WORD_CHARS,
 }
 _ID_FIELDS = ("command_id", "move_id")
 # What an operator's command is called when it is refused undecoded.
@@ -243,6 +294,7 @@ class _Job:
     reply: _Reply | None  # None for the timed return: no command asked for it
     needs_link: bool  # ends in a hold when the robot connection is lost
     is_move: bool = False  # an agent MOVE
+    is_human_drive: bool = False
     # Written under the motion lock; read by the move before every setpoint.
     stop_reason: str | None = None
 
@@ -252,6 +304,14 @@ class _Job:
 
 def _any_job(job: _Job) -> bool:
     return True
+
+
+def _a_human_drive(job: _Job) -> bool:
+    return job.is_human_drive
+
+
+def _no_human_drive(job: _Job) -> bool:
+    return not job.is_human_drive
 
 
 class _NoCarrier:
@@ -408,13 +468,73 @@ def _cut(text: str) -> str:
     return text if len(text) <= MAX_OUT_CHARS else printable(text, MAX_OUT_CHARS)
 
 
+def _declared(driver: str) -> str:
+    """How a refusal names what WELCOME declares the arm to be."""
+    return f"driver {driver}" if driver else "no driver"
+
+
+def _span_s(value: float | None) -> float | None:
+    """A time span in seconds; None unless it is a finite number of 0 or more."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        span = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return span if math.isfinite(span) and span >= 0.0 else None
+
+
+def live_view_problem(config: RobotAppConfig, driver: str) -> str | None:
+    """Why this driver may not run the configuration's human settings, else None.
+
+    driver is what WELCOME declares. A person drives without a live view only
+    on a simulated driver.
+    """
+    human = config.human
+    unseen = human.enabled and not human.require_live_view
+    if not unseen or driver in SIMULATED_DRIVERS:
+        return None
+    return (
+        "human.require_live_view false is accepted only with a simulated "
+        f"driver; this robot app declares {_declared(driver)}"
+    )
+
+
+def human_target(m: HumanSetpoint, arrived_mono: float) -> HumanTarget:
+    """The human target a HUMAN_SETPOINT carries; the only place one is read.
+
+    arrived_mono is the app's monotonic clock when the link message arrived.
+    A sample age that is not a finite number of 0 or more becomes None. The
+    round trip is the time since the ROBOT_STATE the setpoint was computed on,
+    None when it names none or the time is not a finite number of 0 or more.
+    """
+    round_trip_s = None
+    if m.state_clock_mono_s is not None:
+        round_trip_s = _span_s(arrived_mono - m.state_clock_mono_s)
+    return HumanTarget(
+        seq=m.seq,
+        owner_number=m.owner_number,
+        stop_number=m.stop_number,
+        source=m.source,
+        stage=m.stage,
+        note=m.note,
+        engaged=bool(m.engaged),
+        grip_released=bool(m.grip_released),
+        q=None if m.q is None else tuple(m.q),
+        sample_age_s=_span_s(m.sample_age_s),
+        arrived_mono=arrived_mono,
+        round_trip_s=round_trip_s,
+    )
+
+
 class RobotApp:
     """The one program that talks to the motors.
 
     A dispatcher thread receives link messages and runs the supervisor step; a
-    motion worker runs moves, returns to rest and releases; the gripper worker
-    runs jaw commands. STOP, fault-stop, the assistance wait's step and every
-    start of motion work happen under one reentrant lock, so a STOP always wins.
+    motion worker runs moves, human drives, returns to rest and releases; the
+    gripper worker runs jaw commands. STOP, fault-stop, the assistance wait's
+    step and every start of motion work happen under one reentrant lock, so a
+    STOP always wins.
     """
 
     def __init__(
@@ -438,11 +558,16 @@ class RobotApp:
         serves the Thor terminal until attach_carrier() gives it one. driver
         is what WELCOME declares the arm to be: one of DRIVERS (ValueError
         otherwise). allow_reference is the setting jaws.allow_reference: False
-        refuses request_reference().
+        refuses request_reference(). A configuration that lets a person drive
+        without a live view is refused (ConfigError, a ValueError) unless the
+        driver is a simulated one.
         """
         if driver not in DRIVERS:
             names = ", ".join(repr(name) for name in DRIVERS)
             raise ValueError(f"driver must be one of {names}, got {driver!r}")
+        problem = live_view_problem(config, driver)
+        if problem is not None:
+            raise ConfigError(problem)
         self._driver = driver
         self._allow_reference = bool(allow_reference)
         if arm.n_joints != config.n_joints:
@@ -487,6 +612,16 @@ class RobotApp:
         # The newest VIEW_STATUS of this robot connection and the app-clock
         # time it arrived; one value, so a reader never sees half of a change.
         self._view: tuple[ViewStatus, float] | None = None
+        # The four below are written under the app's lock.
+        self._takeover_open = False  # a takeover was accepted, no hand-back yet
+        # The owner number at which a released grip was noted. While it is not
+        # the current one, the next human drive needs a released grip first:
+        # the needs-release flag, which every change of the control owner sets.
+        # Controller data that were away set it too.
+        self._release_seen: int | None = None
+        self._drive_ended = ""  # why the last human drive ended; "" while one runs
+        self._human_refusal = ""  # why the newest engaged human target moves nothing
+        self._human_input = HumanInput()
         self._permit_refusal: str | None = None
         self._dropped: set[str] = set()  # kinds of link messages not taken
         self._inbox = Inbox()  # taken off the link, not yet handled
@@ -523,6 +658,19 @@ class RobotApp:
             on_missed_deadline=lambda: self._publisher.note_missed_deadline(),
             reads_paused=lambda: self._idle.paused(),
         )
+        self._human_drive = HumanDrive(
+            arm,
+            self._authority,
+            checkers.human,
+            self._history,
+            config,
+            clock,
+            self._human_input,
+            self.view_age_s,
+            claim_idle=self._executor.claim_idle,
+            note_clamped=lambda: self._publisher.note_clamped(),
+            reads_paused=lambda: self._idle.paused(),
+        )
         self._jaw_state = JawState(config.gripper, clock)
         self._worker = GripperWorker(arm, self._jaw_state, self._authority, clock)
         self._wait = AssistanceWait(config.waits, clock, self._on_expire)
@@ -547,8 +695,11 @@ class RobotApp:
             self._emit,
             self._motion,
             lambda: self._grasp_region,
-            lambda: self._contact_hold,
-            lambda: False,  # rest.py asks the executor itself
+            # While a takeover is open no agent move can end a contact hold, so
+            # a return the operator confirmed may start from one.
+            lambda: self._contact_hold and not self.takeover_open,
+            # rest.py asks the executor itself; a human drive is a move too.
+            lambda: self._human_drive.progress() is not None,
             jaws_busy=self._worker.busy,
         )
         self._idle = IdleReader(arm, self._history, config.state, clock)
@@ -556,7 +707,8 @@ class RobotApp:
             arm,
             self._history,
             self._authority.snapshot,
-            self._executor.progress,
+            # A human drive's progress while one runs, else the executor's.
+            lambda: self._human_drive.progress() or self._executor.progress(),
             self._motion.get,
             lambda: self._jaw_state.gripper_state(arm),
             lambda: self._wait.remaining(clock.monotonic()),
@@ -569,6 +721,12 @@ class RobotApp:
             view_age=self.view_age_s,
             permit_facts=self._gate.held_facts,
             permit_refusal=self._gate.last_refusal,
+            human_stage=lambda now: self._human_input.stage(
+                now, config.human.stage_keep_s
+            ),
+            controller_age=self._human_input.sample_age_s,
+            human_facts=self._human_facts,
+            contact_hold=lambda: self._contact_hold,
         )
         self._handlers: dict[type, Callable[[Any], None]] = {
             Move: self._on_move,
@@ -582,6 +740,7 @@ class RobotApp:
             Open: self._on_open,
             Shutdown: self._on_shutdown,
             ViewStatus: self._on_view_status,
+            HumanSetpoint: self._on_human_setpoint,
         }
         # Type number -> class of the link messages the app takes.
         self._takes = {cls.TYPE: cls for cls in self._handlers}
@@ -653,6 +812,15 @@ class RobotApp:
     def snapshot(self) -> AuthorityState:
         """Session id, control owner, owner number, stop number and stop level."""
         return self._authority.snapshot()
+
+    @property
+    def takeover_open(self) -> bool:
+        """Whether a takeover was accepted and no hand-back has ended it yet.
+
+        A STOP and a lost robot connection leave it open. While it is open no
+        agent task is taken.
+        """
+        return self._takeover_open
 
     def start(self) -> None:
         """Connect the arm, once, send WELCOME and start the threads.
@@ -812,7 +980,8 @@ class RobotApp:
         reply = self._local_reply("rest", on_done)
         with self._lock:
             reason = self._not_running() or (None if confirmed else CONFIRM_PATH)
-            reason = reason or self._busy()
+            # A return would wait behind a jaw reference and begin as it ends.
+            reason = reason or self._busy() or self._referencing()
             if reason is None:
                 stop_number = self._authority.stop_number
                 self._queue(
@@ -909,6 +1078,71 @@ class RobotApp:
         if not status.live or not status.age_s >= 0.0:
             return None
         return status.age_s + max(0.0, now - arrived)
+
+    def offer_human_target(self, target: HumanTarget) -> None:
+        """Take one human target, whoever made it; safe from any thread.
+
+        It is kept as the newest one. A released grip it shows is noted, and
+        an engaged one that passes the admission starts one human drive. Why
+        an engaged target moves nothing shows in ROBOT_STATE, in
+        health["human"]["refusal"].
+        """
+        with self._lock:
+            now = self._clock.monotonic()
+            # Controller data that come back after a gap are a new start: a
+            # grip squeezed meanwhile moves nothing until it was released.
+            if self._controller_problem(now) is not None:
+                self._release_seen = None
+            self._human_input.put(target)
+            state = self._authority.snapshot()
+            # Why the target is not a person's who owns the arm now.
+            not_owner = self._authority.admit(
+                state.session_id, target.owner_number, target.stop_number, Owner.HUMAN
+            )
+            if not target.engaged:
+                self._human_refusal = ""
+                fresh = self._controller_problem(now) is None
+                if target.grip_released and fresh and not_owner is None:
+                    self._release_seen = state.owner_number
+                return
+            reason = (
+                self._human_off()
+                or self._source_problem()
+                or not_owner
+                or self._motors_off()
+                or self._busy(_no_human_drive)
+                or self._referencing()
+            )
+            if reason is None and self._busy(_a_human_drive) is not None:
+                self._human_refusal = ""  # the drive under way follows it
+                return
+            # A drive starts on the controller data a takeover needs.
+            reason = reason or self._controller_problem(now)
+            if reason is None and self._release_seen != state.owner_number:
+                reason = NEEDS_RELEASE
+            reason = reason or self._shape_problem(target)
+            if reason is not None:
+                if reason != self._human_refusal:
+                    line = f"an engaged human target moves nothing: {reason}"
+                    # A sample age that differs each time makes no new kind.
+                    self._note(logging.INFO, line, kind=_NUMBER.sub("#", line))
+                self._human_refusal = reason
+                return
+            self._human_refusal = ""
+            # The numbers the target quoted and admit() found current: the
+            # drive ends as soon as one of them changes.
+            admitted = AuthorityState(
+                state.session_id, Owner.HUMAN, target.owner_number, target.stop_number
+            )
+            self._queue(
+                _Job(
+                    "human driving",
+                    lambda job: self._run_human_drive(job, admitted),
+                    None,
+                    needs_link=True,
+                    is_human_drive=True,
+                )
+            )
 
     def shutdown_moves_arm(self) -> bool:
         """Whether a shutdown asked for now would first move the arm to rest.
@@ -1360,10 +1594,17 @@ class RobotApp:
             if self._link_lost or self._carrier.alive:
                 return  # a new carrier was attached meanwhile
             self._link_lost = True  # handled once per carrier; a dead link stays dead
+            # Told to stop before the view and the human targets go: a human
+            # drive then ends on the lost connection, not on what it took away.
+            self._stop_motion(LINK_LOST, lambda job: job.needs_link)
             # What came over the lost connection and was not handled goes with it.
             self._inbox = Inbox()
             self._view = None
-            self._stop_motion(LINK_LOST, lambda job: job.needs_link)
+            # The human targets of the lost connection go too, and a grip that
+            # stays squeezed moves nothing on the next one.
+            self._human_input.clear()
+            self._release_seen = None
+            self._human_refusal = ""
             # A jaw reference was typed at the Thor terminal: it needs no link.
             self._worker.stop_now(keep_reference=True)
             cancelled = self._wait.cancel(LINK_LOST)
@@ -1378,6 +1619,8 @@ class RobotApp:
             text = f"{LINK_LOST}: the arm holds"
             if state.owner is Owner.AGENT:
                 text += "; the agent's ownership ended"
+            if state.owner is Owner.HUMAN:
+                text += PERSON_KEEPS_ARM
             if cancelled:
                 text += "; the assistance wait is cancelled"
             text += "; rest can still be typed at the Thor terminal"
@@ -1504,8 +1747,15 @@ class RobotApp:
         self.stop(m.reason, m.sender)
 
     def _on_view_status(self, m: ViewStatus) -> None:
-        # Only shown in ROBOT_STATE: nothing acts on the live view's age yet.
+        # A takeover and every setpoint of a human drive need this view fresh.
         self._view = (m, self._clock.monotonic())
+
+    def _on_human_setpoint(self, m: HumanSetpoint) -> None:
+        if m.session_id != self._authority.session_id:
+            line = "a HUMAN_SETPOINT of another session was dropped"
+            self._note(logging.DEBUG, line)
+            return
+        self.offer_human_target(human_target(m, self._clock.monotonic()))
 
     def _on_permit(self, m: Permit) -> None:
         reason = self._gate.update(m)
@@ -1676,8 +1926,10 @@ class RobotApp:
             reason = self._give_up(m, reply)
         elif m.request == "rest":
             reason = self._typed_rest(m, reply)
-        elif m.request == "human":
-            reason = "human path not built yet"
+        elif m.request == REQUEST_HUMAN:
+            reason = self._takeover(m, reply)
+        elif m.request == REQUEST_HANDBACK:
+            reason = self._handback(m, reply)
         else:
             reason = f"unknown request {m.request!r}"
         if reason is not None:
@@ -1686,6 +1938,8 @@ class RobotApp:
     def _new_task(self, m: OwnerRequest, reply: _Reply) -> str | None:
         """OWNER_REQUEST "agent": why it is refused, or None once it was answered."""
         with self._lock:
+            if self._takeover_open:
+                return TAKEOVER_OPEN  # also when a STOP made nobody the owner
             reason = self._session_mismatch(m.session_id) or self._motors_off()
             reason = reason or self._authority.admit(
                 m.session_id, m.owner_number, m.stop_number, Owner.NOBODY
@@ -1811,6 +2065,104 @@ class RobotApp:
             )
         return None
 
+    def _takeover(self, m: OwnerRequest, reply: _Reply) -> str | None:
+        """OWNER_REQUEST "human": the numbers it quotes, then _grant_takeover()."""
+        with self._lock:
+            reason = self._human_off() or self._authority.admit(
+                m.session_id, m.owner_number, m.stop_number, Owner.NOBODY
+            )
+            if reason is not None:
+                return reason
+            seen = self._authority.snapshot()
+        return self._grant_takeover(seen, m.reason, reply)
+
+    def _handback(self, m: OwnerRequest, reply: _Reply) -> str | None:
+        """OWNER_REQUEST "handback": the numbers it quotes, then _end_takeover()."""
+        with self._lock:
+            reason = self._no_takeover() or self._authority.admit(
+                m.session_id, m.owner_number, m.stop_number, None
+            )
+            if reason is not None:
+                return reason
+            seen = self._authority.snapshot()
+        return self._end_takeover(seen, m.reason, reply)
+
+    def _grant_takeover(
+        self, seen: AuthorityState, reason: str, reply: _Reply
+    ) -> str | None:
+        """Make a person the control owner; why not, or None once it was answered.
+
+        seen is the authority as the request found it, with nobody the owner;
+        reason is the request's own. No link message is read here. No jaw
+        command is sent: the jaws stay as they are.
+        """
+        with self._lock:
+            problem = self._takeover_problem(self._clock.monotonic(), seen)
+            if problem is not None:
+                return problem
+        # Read outside the lock: a STOP does not wait for the joint read, and
+        # set_owner_if() below lets one that came meanwhile win.
+        try:
+            pose = self._read_pose()
+        except ReadFailed as failed:
+            return f"the measured pose could not be read: {failed}"
+        try:
+            self._checkers.human.check_pose(pose)
+        except Refusal as refusal:
+            if self._authority.stop_number != seen.stop_number:
+                return _RACED  # a fault-stop latches the checker
+            return f"{OUTSIDE_HUMAN_LIMITS}{refusal.reason}; type rest"
+        with self._lock:
+            # What began or ended while the pose was read.
+            problem = self._motors_off() or self._busy() or self._jaws_busy()
+            if problem is not None:
+                return problem
+            number = self._authority.set_owner_if(
+                Owner.HUMAN,
+                f"takeover: {reason.strip() or 'no reason given'}",
+                stop_number=seen.stop_number,
+                owner_number=seen.owner_number,
+            )
+            if number is None:
+                return _RACED
+            self._wait.cancel("a person took over")
+            self._takeover_open = True
+            detail = {"owner": Owner.HUMAN.value, "owner_number": number}
+            self._emit(EVENT_OWNER, TAKEN_OVER.format(number=number), dict(detail))
+            reply.final(COMPLETED, detail=detail)
+        return None
+
+    def _end_takeover(
+        self, seen: AuthorityState, reason: str, reply: _Reply
+    ) -> str | None:
+        """Queue the hand-back; why not, or None once it was accepted.
+
+        seen is the authority as the request found it: a person or nobody the
+        owner. The takeover ends once the jaws are proven empty and the arm is
+        measured still at rest. Nothing is moved and nothing is cut.
+        """
+        with self._lock:
+            now = self._authority.snapshot()
+            problem = self._no_takeover() or self._authority.admit(
+                seen.session_id, seen.owner_number, seen.stop_number, None
+            )
+            if problem is None and now.owner not in (Owner.HUMAN, Owner.NOBODY):
+                problem = f"control owner is {now.owner}"
+            problem = problem or self._busy()
+            problem = problem or (JAWS_BUSY if self._worker.busy() else None)
+            if problem is not None:
+                return problem
+            reply.accepted()
+            self._queue(
+                _Job(
+                    "a hand-back",
+                    lambda job: self._run_handback(job, now, reason),
+                    reply,
+                    needs_link=True,
+                )
+            )
+        return None
+
     # Admission helpers
 
     def _session_mismatch(self, session_id: str) -> str | None:
@@ -1825,6 +2177,124 @@ class RobotApp:
 
     def _not_running(self) -> str | None:
         return None if self.running else NOT_RUNNING
+
+    def _human_off(self) -> str | None:
+        return None if self._config.human.enabled else HUMAN_OFF
+
+    def _no_takeover(self) -> str | None:
+        return None if self._takeover_open else NO_TAKEOVER
+
+    def _takeover_problem(
+        self, now: float, seen: AuthorityState | None = None
+    ) -> str | None:
+        """Why a takeover is refused at the app-clock time `now`, else None.
+
+        The first reason, in the order of the refusals. Without `seen`, only
+        what needs no joint read and depends neither on the owner nor on
+        running work: what ROBOT_STATE shows. With `seen`, the numbers a
+        request was made on, also that they stand, that nobody owns the arm
+        and that no motion work and no jaw command runs or waits.
+        """
+        reason = self._human_off()
+        if reason is not None:
+            return reason
+        with self._lock:
+            # Without `seen` the app's own numbers: only the fault-stop counts.
+            quoted = self._authority.snapshot() if seen is None else seen
+            reason = self._authority.admit(
+                quoted.session_id,
+                quoted.owner_number,
+                quoted.stop_number,
+                None if seen is None else Owner.NOBODY,
+            )
+            reason = reason or self._motors_off()
+            if reason is None and seen is not None:
+                reason = self._busy() or self._jaws_busy()
+            return (
+                reason
+                or self._controller_problem(now)
+                or self._source_problem()
+                or self._view_problem(now)
+            )
+
+    def _controller_problem(self, now: float) -> str | None:
+        """Why the newest human target is no fresh controller data, else None."""
+        target = self._human_input.newest()
+        if target is None:
+            return f"{NO_CONTROLLER_DATA}no HUMAN_SETPOINT has arrived"
+        if target.stage != STAGE_READY:
+            return f"{NO_CONTROLLER_DATA}stage {target.stage or 'unknown'}"
+        age = self._human_input.sample_age_s(now)
+        limit = self._config.human.sample_age_limit_s
+        if age is None:
+            return f"{NO_CONTROLLER_DATA}the sample age is unknown"
+        if age > limit:
+            return f"{NO_CONTROLLER_DATA}{age:.3f} s old, the limit is {limit:g} s"
+        return None
+
+    def _source_problem(self) -> str | None:
+        """Why the newest human target's source may not drive this arm, else None."""
+        target = self._human_input.newest()
+        if target is None or target.source != HUMAN_SOURCE_SYNTHETIC:
+            return None
+        if self._driver in SIMULATED_DRIVERS:
+            return None
+        return (
+            "a synthetic controller may drive only a simulated arm; this robot "
+            f"app declares {_declared(self._driver)}"
+        )
+
+    def _view_problem(self, now: float) -> str | None:
+        """Why the live view is not fresh enough for a person to drive, else None."""
+        human = self._config.human
+        if not human.require_live_view:
+            return None
+        age = self.view_age_s(now)
+        if age is None:
+            view = self._view
+            if view is None:
+                why = "no VIEW_STATUS has arrived"
+            elif not view[0].live:
+                why = "the view is not live"
+            else:
+                why = "the view's age is unknown"
+        elif age > human.view_age_limit_s:
+            why = f"{age:.3f} s old, the limit is {human.view_age_limit_s:g} s"
+        else:
+            return None
+        return f"{VIEW_NOT_FRESH}{why}{OPEN_THE_VIEW}"
+
+    def _shape_problem(self, target: HumanTarget) -> str | None:
+        """Why an engaged target's joint values cannot be followed, else None."""
+        n = self._config.n_joints
+        if target.q is None:
+            return "the engaged target carries no joint values"
+        if len(target.q) != n:
+            return f"the target has {len(target.q)} values, the arm {n} joints"
+        return None
+
+    def _human_facts(self) -> dict[str, Any]:
+        """ROBOT_STATE's health["human"]: the takeover, the drive, the newest target."""
+        now = self._clock.monotonic()
+        with self._lock:
+            target = self._human_input.newest()
+            # Controller data that are away set the flag when they come back.
+            away = self._controller_problem(now) is not None
+            unseen = self._release_seen != self._authority.owner_number
+            return {
+                "enabled": self._config.human.enabled,
+                "takeover_open": self._takeover_open,
+                "driving": self._human_drive.progress() is not None,
+                "needs_release": unseen or away,
+                "source": "" if target is None else target.source,
+                "seq": None if target is None else target.seq,
+                "round_trip_s": None if target is None else target.round_trip_s,
+                "note": "" if target is None else target.note,
+                "ended": self._drive_ended,
+                "refusal": self._human_refusal,
+                # "" or why a takeover would be refused now, whoever owns the arm.
+                "takeover": self._takeover_problem(now) or "",
+            }
 
     def _shutdown_unconfirmed(self, confirmed: bool) -> str | None:
         """Why a shutdown is not taken: it would move the arm and is unconfirmed."""
@@ -1849,6 +2319,13 @@ class RobotApp:
         and refuses both: nobody owns the arm meanwhile.
         """
         return JAWS_BUSY if self._worker.referencing() else None
+
+    def _jaws_busy(self) -> str | None:
+        """Why no takeover is taken: a jaw command or a jaw reference goes on.
+
+        The owner change would end a guarded opening with the jaws part open.
+        """
+        return JAWS_BUSY if self._worker.busy() else None
 
     def _expired(self, expires_mono_s: float) -> str | None:
         late = self._clock.monotonic() - expires_mono_s
@@ -2073,6 +2550,91 @@ class RobotApp:
         if outcome.reason.startswith("fault: "):
             # A driver fault or joint feedback lost during the move.
             self._fault(outcome.reason.removeprefix("fault: "))
+
+    def _run_human_drive(self, job: _Job, admitted: AuthorityState) -> _Ending:
+        """One human drive: every end of it is a hold with the motors on."""
+        self._drive_ended = ""
+        before = self._motion.get()
+        self._motion.set(MotionState.MOVING)
+        end: DriveEnd | None = None
+        try:
+            end = self._human_drive.run(admitted, job.should_stop)
+        finally:
+            # With no setpoint sent the arm is where it was and keeps its state.
+            unmoved = end is not None and end.sent == 0
+            self._motion.set(before if unmoved else MotionState.HOLD)
+            if end is None:  # an error left the drive: a fault-stop follows
+                with self._lock:
+                    self._release_seen = None
+                    self._drive_ended = "failed"
+        self._after_drive(end)
+        detail = {"outcome": end.status, "sent": end.sent}
+        return _Ending(end.status, end.reason, end.end_q, detail)
+
+    def _after_drive(self, end: DriveEnd) -> None:
+        """What the end of a human drive means for what follows."""
+        # The EVENT has the note's first words once: DRIVE_ENDED says them.
+        reason = end.reason.removeprefix(NOTE_SQUEEZE_AGAIN)
+        why = reason or end.status
+        with self._lock:
+            if end.status == _DRIVE_CONTACT:
+                # A hold at the measured pose, not latched. No contact spot is
+                # noted: the spots are the agent's.
+                self._contact_hold = True
+            elif end.sent > 0:
+                self._contact_hold = False  # the arm was moved since the contact
+            if end.status != _DRIVE_RELEASED:
+                self._release_seen = None  # a released grip comes first
+            self._drive_ended = why
+        if end.reason.startswith("fault: "):
+            # A driver fault or joint feedback lost during the drive.
+            self._fault(end.reason.removeprefix("fault: "))
+        if end.status in (_DRIVE_RELEASED, _DRIVE_STOPPED):
+            return  # a drive that a STOP ended has the STOP's own event
+        if end.status == _DRIVE_CONTACT and not why.startswith(_DRIVE_CONTACT):
+            why = f"{_DRIVE_CONTACT}: {why}"
+        data = {"status": end.status, "reason": reason, "sent": end.sent}
+        self._emit(EVENT_HUMAN, DRIVE_ENDED.format(why=why), data)
+
+    def _run_handback(self, job: _Job, admitted: AuthorityState, why: str) -> _Ending:
+        """The hand-back: the proof of rest, then the takeover ends.
+
+        admitted is the authority as the hand-back was accepted. It reads the
+        jaws and the joints and sends nothing.
+        """
+        problem = self._rest.proven_at_rest()
+        with self._lock:
+            now = self._authority.snapshot()
+            stood = (now.stop_number, now.owner_number) == (
+                admitted.stop_number,
+                admitted.owner_number,
+            )
+            stopped = job.should_stop()
+            number: int | None = admitted.owner_number
+            if not stood:
+                problem = _RACED  # the takeover stays open
+            elif stopped is not None:
+                # The robot connection it came over was lost, or the app closes.
+                return _Ending(CANCELLED, stopped)
+            elif problem is not None:
+                jaws = problem.startswith(_JAWS_NOT_EMPTY)
+                problem += OPEN_FIRST if jaws else REST_FIRST
+            elif admitted.owner is Owner.HUMAN:
+                number = self._authority.set_owner_if(
+                    Owner.NOBODY,
+                    f"hand-back: {why.strip() or 'no reason given'}",
+                    stop_number=admitted.stop_number,
+                    owner_number=admitted.owner_number,
+                )
+                problem = _RACED if number is None else None
+            if problem is None:
+                self._takeover_open = False
+                detail = {"owner": Owner.NOBODY.value, "owner_number": number}
+                self._emit(EVENT_OWNER, HANDED_BACK, dict(detail))
+                return _Ending(COMPLETED, detail=detail)
+        what = f"owner request {REQUEST_HANDBACK!r}"
+        self._emit(EVENT_REFUSED, f"{what} refused: {problem}", {"reason": problem})
+        return _Ending(REFUSED, problem)
 
     def _run_rest(
         self, job: _Job, source: str, stop_number: int, confirmed: bool = False

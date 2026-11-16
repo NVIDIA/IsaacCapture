@@ -11,6 +11,7 @@ profile and run the robot app with it on a stand-in motor SDK.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from isaaccapture_examples.agentic_remote.link_service import __main__ as servic
 from isaaccapture_examples.agentic_remote.link_service import config as service_config
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import (
+    ConfigError,
     RobotAppConfig,
     load_config,
 )
@@ -79,9 +81,16 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
     assert robot_rig.joint_names == tuple(f"joint{i}" for i in range(1, 7))
     limits = robot_rig.limits
     for limit_set in (limits.agent, limits.human, limits.recovery):
-        assert limit_set.version == "rebot-p2-1"
         assert limit_set.max_joint_speed == 0.1
+    for limit_set in (limits.agent, limits.recovery):
+        assert limit_set.version == "rebot-p2-1"
         assert (limit_set.joint_min, limit_set.joint_max) == (BOX_LOW, MODEL_HIGH)
+    # The human joint box is the recovery region, which is the agent's working box.
+    assert limits.human.version == "rebot-p3-1"
+    assert (limits.human.joint_min, limits.human.joint_max) == (
+        ENVELOPE_LOW,
+        ENVELOPE_HIGH,
+    )
     assert limits.human.max_step_rad == 0.1
     assert (limits.agent.envelope_min, limits.agent.envelope_max) == (
         ENVELOPE_LOW,
@@ -118,6 +127,42 @@ def test_the_rig_robot_file_keeps_the_shipped_values_elsewhere(robot_rig):
     changed = {"auto_return", "region_min", "region_max"}
     for key, value in demo["rest"].items():
         assert (rig["rest"][key] == value) == (key not in changed), key
+
+
+def test_the_human_settings_ship_in_the_safe_position(robot_rig):
+    # Human driving off on the rig, and no person driving without a live view.
+    assert (robot_rig.human.enabled, robot_rig.human.require_live_view) == (
+        False,
+        True,
+    )
+    for name in ("robot_app.yaml", "robot_app_rebot.yaml"):
+        human = shipped(name)["human"]
+        assert human["enabled"] is False and human["require_live_view"] is True, name
+        text = (CONFIGS / name).read_text(encoding="utf-8")
+        assert "\nhuman:\n  enabled: false" in text, name
+
+
+def test_the_rig_file_keeps_a_person_inside_the_recovery_region(robot_rig):
+    human, rest = robot_rig.limits.human, robot_rig.rest
+    assert (human.joint_min, human.joint_max) == (rest.region_min, rest.region_max)
+    # So the rig file passes the check that human.enabled brings.
+    on = dataclasses.replace(robot_rig.human, enabled=True)
+    assert dataclasses.replace(robot_rig, human=on).human.enabled
+    # With the arm model's full joint box for the person it would not.
+    wide = dataclasses.replace(human, joint_min=BOX_LOW, joint_max=MODEL_HIGH)
+    limits = dataclasses.replace(robot_rig.limits, human=wide)
+    full_box = dataclasses.replace(robot_rig, limits=limits)
+    with pytest.raises(
+        ConfigError,
+        match=r"human\.enabled needs limits\.human inside rest\.region_\*: joint "
+        r"index 0 has human -2\.8\.\.2\.8 and region -2\.0944\.\.2\.0944",
+    ):
+        dataclasses.replace(full_box, human=on)
+    # The recovery joint box still contains the human one.
+    recovery = robot_rig.limits.recovery
+    for joint in range(robot_rig.n_joints):
+        assert recovery.joint_min[joint] <= human.joint_min[joint]
+        assert recovery.joint_max[joint] >= human.joint_max[joint]
 
 
 def test_the_typed_jaw_reference_ships_off_in_every_robot_file(robot_rig):

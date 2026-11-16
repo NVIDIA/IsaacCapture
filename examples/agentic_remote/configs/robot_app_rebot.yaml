@@ -18,7 +18,9 @@ joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
 # model of the rebot_rs profile, -2.8..2.8, 0..3.14, 0..3.14, -1.69..1.79,
 # -1.57..1.57, -3.14..3.14, with one change: joint indices 1 and 2 lie on their
 # stops at rest and read a few mrad below 0 there, so their boxes begin at -0.05.
-# The limits are the model's, not a measurement of this arm.
+# The limits are the model's, not a measurement of this arm. The human joint box
+# is narrower: it is rest.region_*, so that a person cannot leave the arm where a
+# typed rest is refused; with human.enabled a wider one is refused.
 # Every speed is 0.1: the rig's profile caps the joint speed at 0.1 or 0.2, and a
 # limit set faster than the profile's cap is refused.
 limits:
@@ -32,12 +34,18 @@ limits:
     envelope_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
     envelope_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
   human:
-    version: rebot-p2-1
-    joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
-    joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
-    # First value; nothing uses the human limit set until a human can drive
-    # (phase P3). It may not exceed the profile's cap.
+    version: rebot-p3-1
+    # The values of rest.region_*, which are also the agent's working box: a
+    # takeover, which makes a person the control owner, stays possible wherever
+    # the agent can stop.
+    joint_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
+    joint_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
+    # First value. It may not exceed the profile's cap. A person's motion is
+    # clamped at 0.98 of it.
     max_joint_speed: 0.1
+    # A human target is a joint target that follows a person's hand. This is
+    # the farthest, on any joint, one may lie from the last joint target sent;
+    # one beyond it is refused and the arm holds. First value.
     max_step_rad: 0.1
   recovery:
     version: rebot-p2-1
@@ -112,13 +120,14 @@ state:
   history_s: 6.0
   idle_read_period_s: 0.02  # first value; measure in the hardware session
 
-# Checked when the file is loaded; nothing uses them until a human can drive
-# (phase P3).
+# A person driving the arm with the headset's controller. Off: it has not been
+# run on this arm. While it is off a takeover is refused and no human target
+# moves the arm.
 human:
   enabled: false  # whether a person may take the arm over and drive it
   require_live_view: true  # false is accepted only with a simulated driver
-  view_age_limit_s: 0.5
-  sample_age_limit_s: 0.25
+  view_age_limit_s: 0.5  # first value; measure in the hardware session
+  sample_age_limit_s: 0.25  # first value; measure in the hardware session
   # How long ROBOT_STATE shows the stage of the human program after its last
   # link message. The human program is the workstation program that turns
   # controller data into joint targets; its stage is how far it is with them.

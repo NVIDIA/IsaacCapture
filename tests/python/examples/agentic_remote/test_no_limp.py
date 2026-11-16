@@ -356,7 +356,7 @@ def refused_and_malformed(h, finish: Callable[[], None]) -> None:
         Event(1, "release", "torque released at rest: the motors are off"),
     ):
         client.send(message)
-    for msg_type in (*MESSAGE_TYPES, 0, 63, 99, 255):
+    for msg_type in (*MESSAGE_TYPES, 0, 63, 100, 255):
         for payload in GARBAGE:  # a STOP with a bad payload is still a STOP
             h.workstation_end.send_reliable(msg_type, payload)
     answered(h, *sent, client.checker_state("probe"))
@@ -950,7 +950,7 @@ def play_fault(rig: Rig, dice: list[float]) -> None:
 
 
 def play_garbage(rig: Rig, dice: list[float]) -> None:
-    msg_type = pick([*MESSAGE_TYPES, 0, 99], dice[0])
+    msg_type = pick([*MESSAGE_TYPES, 0, 100], dice[0])
     rig.h.workstation_end.send_reliable(msg_type, pick(GARBAGE, dice[1]))
     rig.command(lambda c: c.checker_state("probe"))
 

@@ -210,7 +210,10 @@ class Stop(Message):
 
 @dataclass(frozen=True)
 class OwnerRequest(Message):
-    """Agent or console to Thor: change the control owner, or ask for help."""
+    """Agent, console or human program to Thor: a request about the control owner.
+
+    A new task, a help request, a takeover, a hand-back or a typed rest.
+    """
 
     TYPE: ClassVar[int] = 69
 
@@ -329,8 +332,10 @@ class RobotState(Message):
     assistance_wait_s: float | None  # time left, None when no wait runs
     torque_on: bool
     view_age_s: float | None  # age of the operator's live view, None if unknown
-    teleop_stage: str  # "" until human takeover is built
-    controller_age_s: float | None  # age of the newest controller sample
+    # The human program's stage, one of HUMAN_STAGES; "" while it is silent.
+    teleop_stage: str
+    # Age of the controller data behind the newest HUMAN_SETPOINT; None: unknown.
+    controller_age_s: float | None
     health: dict[str, Any]
     # How far the move named by move_id has got: "" (none runs, or its start
     # checks are not done), MOVE_ARMED or MOVE_SENDING.

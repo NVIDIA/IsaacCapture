@@ -41,6 +41,8 @@ from isaaccapture_examples.agentic_remote.robot_app.terminal import TypedLines
 from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
 from repo_paths import repo_root
 
+from test_takeover import human_config
+
 CONFIG_YAML = repo_root() / "examples" / "agentic_remote" / "configs" / "robot_app.yaml"
 BACKEND = "isaaccapture_examples.agentic_remote.robot_app.apai_backend"
 LOGGER = "isaaccapture.examples.agentic_remote"
@@ -808,6 +810,84 @@ def test_run_connected_declares_the_driver_its_caller_names(monkeypatch):
     with pytest.raises(ValueError, match="driver must be one of"):
         robot_main.run_connected(config, arm, checkers, clock, "h:1", driver="mock")
     assert [kwargs["driver"] for kwargs in built] == ["", "mock"]
+    assert left_threads() == []
+
+
+def test_no_live_view_needs_a_simulated_driver(monkeypatch, capsys):
+    # A file that lets a person drive without a live view runs on a simulated
+    # arm only: with any other driver nothing is built, connected or dialed.
+    unseen = human_config(RobotAppConfig.default(), require_live_view=False)
+    clock = SystemClock()
+    monkeypatch.setattr(robot_main, "LinkCarrier", None)  # no dial is made
+    for driver, declared in (("real", "driver real"), ("", "no driver")):
+        arm = SimArm(n_joints=6, clock=clock, q0=list(unseen.rest.rest_q))
+        typed = types.SimpleNamespace(ended=False)
+        typed.end = lambda typed=typed: setattr(typed, "ended", True)
+        code = robot_main.run_connected(
+            unseen,
+            arm,
+            robot_main.sim_checkers(unseen, clock),
+            clock,
+            "h:1",
+            typed=typed,
+            driver=driver,
+        )
+        assert code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == (
+            "robot app: the configuration cannot be used: human.require_live_view "
+            "false is accepted only with a simulated driver; this robot app "
+            f"declares {declared}\n"
+        )
+        assert not arm.torque_on()  # the arm was never connected
+        assert typed.ended  # the typed input was ended: no thread waits on it
+    # A simulated driver gets as far as the arm's connect.
+    code = robot_main.run_connected(
+        unseen,
+        unconnected_arm(unseen, clock),
+        robot_main.sim_checkers(unseen, clock),
+        clock,
+        "h:1",
+        typed=iter(()),
+        driver="sim",
+    )
+    assert code == 1
+    assert "the robot app did not start" in capsys.readouterr().err
+    assert left_threads() == []
+
+
+def test_no_live_view_with_the_real_driver_is_refused_before_any_question(
+    tmp_path, capsys, monkeypatch
+):
+    rest = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))["rest"]
+    unseen = quick_config(
+        tmp_path,
+        {
+            "human.enabled": True,
+            "human.require_live_view": False,
+            "limits.human.joint_min": rest["region_min"],
+            "limits.human.joint_max": rest["region_max"],
+            "camera_calibration_id": "bench-7",
+        },
+    )
+    # Stands in for the APAI backend module: nothing may be asked of it.
+    monkeypatch.setitem(sys.modules, BACKEND, types.ModuleType(BACKEND))
+    monkeypatch.setattr(robot_main, "typed_lines", None)  # no question is asked
+    monkeypatch.setattr(robot_main, "RobotApp", None)  # no app is built
+    argv = [
+        *("--config", unseen, "--arm", "apai", "--driver", "real"),
+        *("--apai-profile", "rebot_rs", "--calibration", "bench-7"),
+        *("--connect", "h:1"),
+    ]
+    assert robot_main.main(argv) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "robot app: the configuration cannot be used: human.require_live_view "
+        "false is accepted only with a simulated driver; this robot app "
+        "declares driver real\n"
+    )
     assert left_threads() == []
 
 

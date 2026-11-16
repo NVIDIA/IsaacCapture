@@ -36,7 +36,7 @@ from ..protocol.confirm import PATH_IS_CLEAR, YES, agent_environment, confirms
 from ..protocol.link_carrier import LinkCarrier
 from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
 from ..protocol.messages import DRIVER_APAI_MOCK, DRIVER_REAL, DRIVER_SIM
-from .app import RobotApp
+from .app import RobotApp, live_view_problem
 from .clock import SystemClock
 from .config import ConfigError, load_config
 from .connection import RobotDialer
@@ -475,20 +475,27 @@ def run_connected(
     that closes ends neither the start nor the program: its SIGHUP is ignored
     and the lines it does not take are lost. signals are the caller's, noted
     since before this call; None notes them from here on. driver is what
-    WELCOME declares.
+    WELCOME declares. A configuration this driver may not run with gives one
+    line and EXIT_NOT_RUN, with nothing connected.
     """
     lines = typed_lines() if typed is None else typed
     signals = _StartSignals() if signals is None else signals
     tell = _lossy(say)
-    app = RobotApp(
-        config,
-        arm,
-        checkers,
-        None,
-        clock,
-        driver=driver,
-        allow_reference=config.jaws.allow_reference,
-    )
+    try:
+        app = RobotApp(
+            config,
+            arm,
+            checkers,
+            None,
+            clock,
+            driver=driver,
+            allow_reference=config.jaws.allow_reference,
+        )
+    except ConfigError as error:
+        # A setting this driver may not run with: nothing was connected.
+        _complain(f"the configuration cannot be used: {error}")
+        _end_input(lines)
+        return EXIT_NOT_RUN
     terminal = ThorTerminal(app, lines, say)
     dialer = RobotDialer(
         app,
@@ -785,6 +792,11 @@ def _real_driver(
     answers and then the Thor terminal's lines; None reads the standard input,
     which must be a terminal.
     """
+    problem = live_view_problem(config, DRIVER_REAL)
+    if problem is not None:
+        # Said before any check or question, as every configuration error.
+        _complain(f"the configuration cannot be used: {problem}")
+        return EXIT_NOT_RUN
     name = args.apai_profile
     try:
         profile = apai_backend.load_apai_profile(name)

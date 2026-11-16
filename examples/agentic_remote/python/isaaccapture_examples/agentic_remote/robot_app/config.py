@@ -166,7 +166,9 @@ class LimitSet:
     joint_min: tuple[float, ...]  # rad
     joint_max: tuple[float, ...]  # rad
     max_joint_speed: float  # rad/s
-    max_step_rad: float | None = None  # per-command clamp; the human set only
+    # The human set only: the farthest, on any joint, a human target may lie
+    # from the last joint target sent. A target beyond it is refused.
+    max_step_rad: float | None = None
     envelope_min: tuple[float, ...] | None = None  # the agent's joint box, rad
     envelope_max: tuple[float, ...] | None = None
 
@@ -232,7 +234,7 @@ class Limits:
             if getattr(self, slot).max_step_rad is not None:
                 raise ConfigError(
                     f"limits.{slot}.max_step_rad must not be set: "
-                    "only human targets are clamped"
+                    "only the human limit set has a step limit"
                 )
         for slot in ("human", "recovery"):
             if getattr(self, slot).envelope_min is not None:

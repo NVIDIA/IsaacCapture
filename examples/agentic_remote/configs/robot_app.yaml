@@ -11,6 +11,8 @@ n_joints: 6
 joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
 
 # One limit set per control owner. The recovery joint box must contain the human one.
+# With human.enabled the human joint box must also lie inside rest.region_*, so that
+# a person cannot leave the arm where a typed rest is refused; this file's does not.
 limits:
   agent:
     version: sim-1
@@ -25,8 +27,10 @@ limits:
     joint_min: [-3.0, -3.0, -3.0, -3.0, -3.0, -3.0]
     joint_max: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
     max_joint_speed: 1.5
-    # The clamp per command of human driving. Checked when the file is loaded;
-    # nothing uses it until a human can drive (phase P3).
+    # A human target is a joint target that follows a person's hand. This is the
+    # farthest, on any joint, one may lie from the last joint target sent. One
+    # beyond it is refused: the arm holds until the grip is squeezed again. The
+    # speed is not refused but clamped, at 0.98 of max_joint_speed.
     max_step_rad: 0.1
   recovery:
     version: sim-1
@@ -100,12 +104,18 @@ state:
   history_s: 6.0
   idle_read_period_s: 0.02
 
-# The oldest live view and the oldest controller sample a human may drive on. Checked
-# when the file is loaded; nothing uses them until a human can drive (phase P3).
+# A person driving the arm with the headset's controller. Off: a takeover, which
+# makes a person the control owner, is refused and no human target moves the arm.
 human:
   enabled: false  # whether a person may take the arm over and drive it
   require_live_view: true  # false is accepted only with a simulated driver
+  # The oldest live view a person may take the arm over and drive with. An older
+  # one refuses the takeover and ends a drive in a hold.
   view_age_limit_s: 0.5
+  # The oldest controller data that count as fresh: their age when the workstation
+  # sent them plus the time since they arrived. Older ones refuse a takeover and
+  # end a drive in a hold; after them the grip moves the arm only once it was
+  # released and squeezed again.
   sample_age_limit_s: 0.25
   # How long ROBOT_STATE shows the stage of the human program after its last
   # link message. The human program is the workstation program that turns

@@ -341,17 +341,30 @@ class StatePublisher:
         view_age: Callable[[float], float | None] | None = None,
         permit_facts: Callable[[float], dict[str, Any] | None] | None = None,
         permit_refusal: Callable[[str], str | None] | None = None,
+        human_stage: Callable[[float], str] | None = None,
+        controller_age: Callable[[float], float | None] | None = None,
+        human_facts: Callable[[], dict[str, Any]] | None = None,
+        contact_hold: Callable[[], bool] | None = None,
     ) -> None:
         """view_age(now) is the age of the operator's live view, None if unknown.
 
         permit_facts(now) is the held permit (PermitGate.held_facts) and
         permit_refusal(move_id) why that move's newest permit was refused
-        (PermitGate.last_refusal). Each of the three may be left out.
+        (PermitGate.last_refusal). human_stage(now) is the stage of the human
+        program, the workstation program that turns controller data into joint
+        targets (HumanInput.stage), controller_age(now) the age of its newest
+        controller data (HumanInput.sample_age_s), human_facts() the content
+        of health["human"], and contact_hold() whether the arm holds at a
+        contact. Each of the seven may be left out.
         """
         self._move_stage = move_stage
         self._view_age = view_age
         self._permit_facts = permit_facts
         self._permit_refusal = permit_refusal
+        self._human_stage = human_stage
+        self._controller_age = controller_age
+        self._human_facts = human_facts
+        self._contact_hold = contact_hold
         self._arm = arm
         self._history = history
         self._authority_state = authority_state
@@ -424,6 +437,16 @@ class StatePublisher:
         if view_age_s is not None and not math.isfinite(view_age_s):
             not_finite.append("view_age_s")
             view_age_s = None
+        teleop_stage = "" if self._human_stage is None else self._human_stage(now)
+        controller_age_s = None
+        if self._controller_age is not None:
+            controller_age_s = self._controller_age(now)
+        if controller_age_s is not None and not math.isfinite(controller_age_s):
+            not_finite.append("controller_age_s")
+            controller_age_s = None
+        human = {} if self._human_facts is None else self._human_facts()
+        human = _clean(human, "human", not_finite)
+        contact_hold = False if self._contact_hold is None else self._contact_hold()
         permit = None if self._permit_facts is None else self._permit_facts(now)
         permit = _clean(permit, "permit", not_finite)
         refusal = None
@@ -464,8 +487,8 @@ class StatePublisher:
             assistance_wait_s=wait_s,
             torque_on=bool(self._arm.torque_on()),
             view_age_s=view_age_s,
-            teleop_stage="",
-            controller_age_s=None,
+            teleop_stage=str(teleop_stage),
+            controller_age_s=controller_age_s,
             health={
                 "reading_age_s": self._history.age(now),
                 "read_failures": None if failures is None else list(failures),
@@ -477,6 +500,10 @@ class StatePublisher:
                 # The held permit and why the move's newest permit was refused.
                 "permit": permit,
                 "permit_refusal": refusal or "",
+                # A person driving the arm: the takeover, the human drive and
+                # the newest human target; empty without a source.
+                "human": human,
+                "contact_hold": bool(contact_hold),
             },
             move_stage=move_stage,
         )

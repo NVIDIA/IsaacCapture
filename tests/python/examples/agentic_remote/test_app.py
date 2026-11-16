@@ -53,6 +53,8 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     StopLevel,
 )
 
+from test_takeover import human_config
+
 WAIT_S = 5.0  # real seconds a test gives another thread before it fails
 BLOCKED_S = 0.05  # real seconds after which a thread counts as kept waiting
 REST = [0.0] * 6
@@ -644,7 +646,14 @@ def test_a_return_to_rest_is_not_ended_by_an_owner_request(robot_app):
 
 @pytest.mark.parametrize(
     ("request_kind", "reason"),
-    [("human", "human path not built yet"), ("dance", "unknown request 'dance'")],
+    [
+        (
+            "human",
+            "human driving is switched off in this robot app's file (human.enabled)",
+        ),
+        ("handback", "no takeover is open"),
+        ("dance", "unknown request 'dance'"),
+    ],
 )
 def test_owner_requests_the_app_does_not_take_are_refused(
     robot_app, request_kind, reason
@@ -2966,6 +2975,28 @@ def test_the_app_refuses_a_driver_name_it_does_not_know(
             RobotApp(config, sim_arm, checkers, None, clock, driver=driver)
     # Refused before anything was built or started.
     assert not sim_arm.torque_on()
+
+
+def test_no_live_view_needs_a_simulated_driver(config, sim_arm, checkers, clock):
+    # A person may drive without a live view only where no arm can be hurt.
+    unseen = human_config(config, require_live_view=False)
+    for driver, declared in (("", "no driver"), ("real", "driver real")):
+        with pytest.raises(ValueError) as refused:
+            RobotApp(unseen, sim_arm, checkers, None, clock, driver=driver)
+        assert str(refused.value) == (
+            "human.require_live_view false is accepted only with a simulated "
+            f"driver; this robot app declares {declared}"
+        )
+    assert not sim_arm.torque_on()
+    # Taken: a simulated driver; the view required; human driving switched off.
+    switched_off = human_config(config, enabled=False, require_live_view=False)
+    for taken, driver in (
+        (unseen, "sim"),
+        (unseen, "apai-mock"),
+        (human_config(config), "real"),
+        (switched_off, "real"),
+    ):
+        RobotApp(taken, sim_arm, checkers, None, clock, driver=driver).close()
 
 
 # The live view's age in ROBOT_STATE: the reported age plus the time since

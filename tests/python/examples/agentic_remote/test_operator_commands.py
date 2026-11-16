@@ -1236,6 +1236,31 @@ def test_an_open_is_refused_while_the_reference_runs_and_taken_after_it(referenc
     assert opened.detail == {"outcome": "reached", "opening": 1.0}
 
 
+def test_a_typed_rest_is_refused_while_a_jaw_reference_runs(referencing):
+    h, release, done = referencing
+    rest = Done()
+    refused = len(h.heard("refused"))
+    assert h.app.request_rest(True, rest) == JAWS_BUSY
+    result = rest.wait()
+    assert (result.status, result.reason) == ("refused", JAWS_BUSY)
+    told = f"rest typed at the Thor terminal refused: {JAWS_BUSY}"
+    assert h.heard("refused")[refused][1] == told
+    # It never waited behind the reference: no return to rest was asked for.
+    assert h.app.wait_motion_idle(0.0)
+    assert h.heard("rest") == [] and h.arm.sent == []
+    thor = h.thor_terminal()
+    typed = thor.ask("rest", "path is clear", answer="rest: ")
+    assert typed == f"rest: refused: {JAWS_BUSY}"
+    release.set()
+    assert done.wait().status == "completed" and h.arm.gripper_referenced()
+    assert h.app._worker.wait_idle(WAIT_S)
+    # The arm stays where it is until a rest that is typed now.
+    assert h.arm.sent == [] and h.arm.pose() == RAISED
+    assert thor.ask("rest", "path is clear", answer="rest: ") == "rest: completed"
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    assert h.arm.torque_on() and h.arm.released_at == []
+
+
 NOT_RETURNED = (
     "a cancelled jaw command has not returned: until it does the jaws take no "
     "other command, and rest and release are refused"
@@ -1252,12 +1277,10 @@ def test_a_stop_says_that_the_cancelled_jaw_command_has_not_returned(referencing
         f"{NOT_RETURNED}"
     )
     assert h.client.wait_event("stop").text == text  # the console is told too
+    # The cancelled command is a jaw reference: the rest is refused at once.
     rest = Done()
-    h.app.request_rest(True, rest)
-    assert (rest.wait().status, rest.results[0].reason) == (
-        "refused",
-        "a jaw command is running",
-    )
+    assert h.app.request_rest(True, rest) == JAWS_BUSY
+    assert (rest.wait().status, rest.results[0].reason) == ("refused", JAWS_BUSY)
     release.set()
     assert done.wait().status == "cancelled"
     assert h.app._worker.wait_idle(WAIT_S)

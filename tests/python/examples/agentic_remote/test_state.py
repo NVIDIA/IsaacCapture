@@ -37,6 +37,8 @@ from isaaccapture_examples.agentic_remote.robot_app.state import (
     StatePublisher,
 )
 
+from test_takeover import feed, human_config, setpoint, state_now, take_over
+
 LOGGER = "isaaccapture.examples.agentic_remote.state"
 PERIOD_S = 0.02  # state.idle_read_period_s of the default configuration
 JOIN_S = 10.0
@@ -848,6 +850,9 @@ def test_build_takes_every_field_from_its_source(world, clock, config):
         "not_finite": [],
         "permit": None,
         "permit_refusal": "",
+        # This publisher has no source of the human path's facts.
+        "human": {},
+        "contact_hold": False,
     }
 
 
@@ -912,6 +917,134 @@ def test_robot_state_names_the_last_permit_refusal(world):
     assert world.build().health["permit_refusal"] == ""
     # Asked for the move the state itself names.
     assert asked == ["", "move-9", "move-10"]
+
+
+def test_robot_state_shows_the_stage_the_controller_age_the_takeover_and_the_round_trip(
+    make_robot_app, config
+):
+    h = make_robot_app(config=human_config(config))
+    limit = h.config.human.sample_age_limit_s
+    # No human program yet. The human program is the workstation program that
+    # turns controller data into joint targets and sends them as HUMAN_SETPOINT.
+    state = state_now(h)
+    assert (state.teleop_stage, state.controller_age_s) == ("", None)
+    no_data = "no fresh controller data: no HUMAN_SETPOINT has arrived"
+    assert state.health["human"] == {
+        "enabled": True,
+        "takeover_open": False,
+        "driving": False,
+        "needs_release": True,
+        "source": "",
+        "seq": None,
+        "round_trip_s": None,
+        "note": "",
+        "ended": "",
+        "refusal": "",
+        "takeover": no_data,
+    }
+    assert state.health["contact_hold"] is False
+    # It waits for the headset; it computed this on a ROBOT_STATE 0.25 s old.
+    computed_on = h.clock.monotonic() - 0.25
+    waiting = setpoint(
+        h,
+        seq=7,
+        stage="waiting_for_headset",
+        sample_age_s=None,
+        note="put the headset on",
+        state_clock_mono_s=computed_on,
+    )
+    feed(h, waiting, view=False)
+    arrived = h.app._human_input.newest().arrived_mono
+    state = state_now(h)
+    assert (state.teleop_stage, state.controller_age_s) == (
+        "waiting_for_headset",
+        None,
+    )
+    human = state.health["human"]
+    assert (human["source"], human["seq"], human["note"]) == (
+        "teleop",
+        7,
+        "put the headset on",
+    )
+    # The round trip: from that ROBOT_STATE to the arrival of what was made of it.
+    assert human["round_trip_s"] == pytest.approx(arrived - computed_on)
+    assert 0.25 <= human["round_trip_s"] < 0.35
+    assert human["takeover"] == "no fresh controller data: stage waiting_for_headset"
+    # The controller is ready: its age is the reported one plus the time since.
+    feed(h, setpoint(h, sample_age_s=0.02), view=False)
+    arrived = h.app._human_input.newest().arrived_mono
+    state = state_now(h)
+    assert state.teleop_stage == "ready"
+    assert state.controller_age_s == pytest.approx(0.02 + state.clock_mono_s - arrived)
+    assert state.controller_age_s < limit
+    human = state.health["human"]
+    assert human["round_trip_s"] is None  # this one named no ROBOT_STATE
+    assert human["takeover"] == (
+        "the live view is not fresh: no VIEW_STATUS has arrived; open the live "
+        "view page in a visible browser tab"
+    )
+    # With a live view nothing speaks against a takeover.
+    feed(h)
+    assert state_now(h).health["human"]["takeover"] == ""
+    take_over(h)
+    state = state_now(h)
+    human = state.health["human"]
+    assert (state.owner, human["takeover_open"]) == ("human", True)
+    assert (human["needs_release"], human["driving"]) == (True, False)
+    feed(h)  # the grip is released
+    assert state_now(h).health["human"]["needs_release"] is False
+    assert decode(RobotState.TYPE, state.to_payload()).health == state.health
+    # The human program goes silent: its stage is shown for human.stage_keep_s.
+    arrived = h.app._human_input.newest().arrived_mono
+    h.advance(3.0)
+    state = state_now(h)
+    assert state.teleop_stage == "ready"
+    assert state.controller_age_s == pytest.approx(0.02 + state.clock_mono_s - arrived)
+    h.advance(1.5)
+    state = state_now(h)
+    assert state.clock_mono_s - arrived > h.config.human.stage_keep_s
+    assert state.teleop_stage == ""
+    assert state.controller_age_s > 4.5
+    human = state.health["human"]
+    assert human["takeover"].startswith("no fresh controller data: 4.")
+    assert human["takeover"].endswith(f" s old, the limit is {limit:g} s")
+    assert human["takeover_open"] is True
+    # A grip squeezed while the data are away needs a release when they are back.
+    assert human["needs_release"] is True
+
+
+def test_the_human_sources_are_asked_at_the_states_time(world, clock):
+    asked: list[tuple[str, float]] = []
+    facts = {"enabled": True, "takeover": "", "round_trip_s": 0.125}
+
+    def stage(now: float) -> str:
+        asked.append(("stage", now))
+        return "ready"
+
+    def age(now: float) -> float | None:
+        asked.append(("age", now))
+        return 0.04
+
+    world.publisher._human_stage = stage
+    world.publisher._controller_age = age
+    world.publisher._human_facts = lambda: dict(facts)
+    world.publisher._contact_hold = lambda: True
+    clock.advance(0.004)  # the caller took its time a little earlier
+    now = clock.monotonic() - 0.004
+    state = world.publisher.build(now)
+    assert (state.teleop_stage, state.controller_age_s) == ("ready", 0.04)
+    assert asked == [("stage", now), ("age", now)]
+    assert state.health["human"] == facts
+    assert state.health["contact_hold"] is True
+    assert decode(RobotState.TYPE, state.to_payload()).health == state.health
+    # A number that is not finite is sent as unknown and named.
+    world.publisher._controller_age = lambda now: math.inf
+    world.publisher._human_facts = lambda: {**facts, "round_trip_s": math.nan}
+    state = world.build()
+    assert state.controller_age_s is None
+    assert state.health["human"]["round_trip_s"] is None
+    assert state.health["not_finite"] == ["controller_age_s", "human"]
+    state.to_payload()
 
 
 def test_enum_sources_are_sent_as_plain_strings(world):
@@ -1129,6 +1262,8 @@ def test_health_reports_the_arm_and_the_counters(world, clock):
         "not_finite": [],
         "permit": None,
         "permit_refusal": "",
+        "human": {},
+        "contact_hold": False,
     }
 
 

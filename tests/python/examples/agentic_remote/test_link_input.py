@@ -33,6 +33,7 @@ NASTY = "\x1b[2J\x1b[H\r\nARM IS AT REST - SAFE TO APPROACH\n"
 MOVE, GRIPPER, CHECKER_STATE, STOP, OWNER_REQUEST = 65, 66, 67, 68, 69
 RESET, RELEASE, OPEN = 70, 71, 72
 RESULT, EVENT, ROBOT_STATE, PERMIT, VIEW_STATUS = 74, 75, 96, 97, 98
+HUMAN_SETPOINT = 99
 
 
 def raw(obj: dict, ascii_only: bool = True) -> bytes:
@@ -498,7 +499,9 @@ def test_two_long_ids_that_begin_alike_are_not_one_command(robot_app):
     # A command whose id is the cut text is a command of its own.
     command_id = h.client.request_owner("human", command_id=cut)
     h.client.wait_until(lambda: len(h.client.results(cut)) == 3, WAIT_S)
-    assert h.client.results(command_id)[2].reason == "human path not built yet"
+    assert h.client.results(command_id)[2].reason == (
+        "human driving is switched off in this robot app's file (human.enabled)"
+    )
 
 
 @pytest.mark.parametrize("command_id", ["\x1b[2Jid", "line\nbreak", "bell\x07"])
@@ -675,7 +678,7 @@ def test_only_a_command_is_answered_when_it_does_not_decode(robot_app):
     h = robot_app
     h.new_task()
     base = {"command_id": "not-a-command", **quoted(h)}
-    h.workstation_end.send_reliable(99, raw(base))
+    h.workstation_end.send_reliable(100, raw(base))
     h.workstation_end.send_latest(PERMIT, raw({**base, "move_id": 5}))
     h.workstation_end.send_latest(VIEW_STATUS, raw({**base, "live": "yes"}))
     h.workstation_end.send_reliable(STOP, raw({**base, "reason": 5}))
@@ -807,3 +810,73 @@ def test_a_flood_of_bad_link_messages_adds_few_lines(robot_app, caplog):
     assert all(f"{count - 1} more" in text for text in warnings[2:])
     assert len(thor.written("[refused]")) == 2
     assert f"{count - 1} more" in thor.written("[refused]")[1]
+
+
+# HUMAN_SETPOINT: a joint target from a person's hand, newest-wins, no RESULT
+
+
+def human_setpoint(h, **fields) -> dict:
+    """A HUMAN_SETPOINT of a ready controller with the grip released, then changed."""
+    return {
+        **quoted(h),
+        "seq": 1,
+        "source": "teleop",
+        "stage": "ready",
+        "sample_age_s": 0.02,
+        "engaged": False,
+        "grip_released": True,
+        "q": None,
+        "jaw_opening": None,
+        "state_clock_mono_s": None,
+        **fields,
+    }
+
+
+def test_a_human_setpoint_that_cannot_be_used_is_dropped_and_moves_nothing(
+    robot_app, caplog
+):
+    h = robot_app
+    caplog.set_level(logging.WARNING)
+    before = h.app.snapshot()
+    without_stage = human_setpoint(h)
+    del without_stage["stage"]
+    too_large = raw(human_setpoint(h, engaged=True, q=[0.0] * 5000))
+    assert len(too_large) > 16 * 1024
+    unusable = [
+        (raw(human_setpoint(h, sample_age_s="fresh")), "HumanSetpoint.sample_age_s"),
+        (raw(human_setpoint(h, engaged=1)), "HumanSetpoint.engaged"),
+        (raw(human_setpoint(h, q=[0.0, "x"])), "HumanSetpoint.q[1]"),
+        (raw(without_stage), "missing field 'stage'"),
+        (b'{"seq":', "bad JSON"),
+        (too_large, "over the limit of 16384 bytes"),
+    ]
+    for payload, _ in unusable:
+        h.workstation_end.send_latest(HUMAN_SETPOINT, payload)
+        h.step()
+    h.step()
+    # None of them is kept, and none is answered: it is no command.
+    assert h.app._human_input.newest() is None
+    logged = [record.getMessage() for record in caplog.records]
+    for _, problem in unusable:
+        dropped = [text for text in logged if problem in text]
+        assert len(dropped) == 1, problem
+        assert dropped[0].startswith("dropped a link message of type 99: HumanSetpoint")
+    assert h.client.unexpected == [] and h.client.events == []
+    # A whole one is kept, with its texts cut and made printable.
+    texts = {"stage": "s" * 300, "source": NASTY, "note": NASTY + "n" * 400}
+    h.workstation_end.send_latest(HUMAN_SETPOINT, raw(human_setpoint(h, **texts)))
+    h.step()
+    h.step()
+    target = h.app._human_input.newest()
+    assert target.stage == "s" * 61 + "..." and len(target.note) == 256
+    assert not unprintable(target.source) and not unprintable(target.note)
+    assert "ARM IS AT REST - SAFE TO APPROACH" in target.source
+    # An engaged one with a thousand joint values is kept and starts nothing.
+    many = human_setpoint(h, engaged=True, grip_released=False, q=[0.0] * 1000)
+    h.workstation_end.send_latest(HUMAN_SETPOINT, raw(many))
+    h.step()
+    h.step()
+    assert len(h.app._human_input.newest().q) == 1000
+    h.idle()
+    assert h.app.snapshot() == before
+    assert h.arm.sent == [] and h.arm.torque_on()
