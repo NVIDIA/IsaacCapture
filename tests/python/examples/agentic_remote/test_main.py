@@ -12,6 +12,7 @@ import dataclasses
 import logging
 import os
 import runpy
+import select
 import signal
 import subprocess
 import sys
@@ -863,6 +864,372 @@ def test_ctrl_c_while_the_arm_connects_is_a_stop_once_the_app_has_started(monkey
     assert arm.torque_on() and arm.released_at == []
     assert signal.getsignal(signal.SIGINT) is before
     assert left_threads() == []
+
+
+# A terminal that is gone: the program runs on and ends as it would with one
+
+RAISED = [0.2, -0.15, 0.1, 0.0, 0.05, -0.05]  # a pose the arm may hold away from rest
+GONE = OSError(5, "Input/output error")  # what a write to a closed terminal raises
+
+
+def started_apps(monkeypatch) -> list[Any]:
+    """Every RobotApp the program builds from here on."""
+    apps: list[Any] = []
+    real = robot_main.RobotApp
+
+    def robot_app(*args: Any, **kwargs: Any) -> Any:
+        apps.append(real(*args, **kwargs))
+        return apps[-1]
+
+    monkeypatch.setattr(robot_main, "RobotApp", robot_app)
+    return apps
+
+
+def until(holds: Any, what: str, wait_s: float = 10.0) -> None:
+    by = time.monotonic() + wait_s
+    while not holds():
+        assert time.monotonic() < by, f"not in {wait_s:g} s: {what}"
+        time.sleep(0.02)
+
+
+def sim_program(config: RobotAppConfig, pose: list[float] | None = None) -> Any:
+    """What run_connected() takes for the simulated arm: (config, arm, ...)."""
+    clock = SystemClock()
+    at = list(config.rest.rest_q) if pose is None else list(pose)
+    arm = SimArm(n_joints=6, clock=clock, q0=at)
+    return config, arm, robot_main.sim_checkers(config, clock), clock, "127.0.0.1:47610"
+
+
+def in_the_background(call: Any) -> tuple[threading.Thread, list[Any]]:
+    """Run a call on a thread; what it returned, or the error it raised."""
+    ended: list[Any] = []
+
+    def run() -> None:
+        try:
+            ended.append(call())
+        except BaseException as error:  # shown by the test's comparison
+            ended.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, ended
+
+
+class Refused:
+    """Stands in for LinkCarrier: no dial connects, each fails with another text."""
+
+    def __init__(self) -> None:
+        self.dials = 0
+
+    def connect(self, endpoint: str, timeout_s: float, *, name: str = "robot") -> Any:
+        self.dials += 1
+        raise OSError(f"cannot connect to {endpoint}: try {self.dials}")
+
+
+def test_a_terminal_that_is_gone_does_not_end_the_program_at_its_next_line(
+    monkeypatch,
+):
+    refused, typed, gone = Refused(), TypedLines(), threading.Event()
+    monkeypatch.setattr(robot_main, "LinkCarrier", refused)
+    apps = started_apps(monkeypatch)
+    default = RobotAppConfig.default()
+    often = dataclasses.replace(default.connection, retry_s=0.2)
+    program = sim_program(dataclasses.replace(default, connection=often), RAISED)
+    arm = program[1]
+    said: list[str] = []
+
+    def say(text: str) -> None:
+        if gone.is_set():
+            raise GONE
+        said.append(text)
+
+    thread, ended = in_the_background(
+        lambda: robot_main.run_connected(*program, typed=typed, say=say, driver="sim")
+    )
+    try:
+        until(lambda: any("no robot connection" in line for line in said), "a dial")
+        gone.set()  # the terminal's window closes
+        seen = refused.dials
+        # Each failed dial has a new text: a line the program would say.
+        until(lambda: refused.dials >= seen + 3, "three more dials")
+        time.sleep(3 * robot_main._WATCH_S)
+        assert ended == [] and thread.is_alive()
+        (app,) = apps
+        assert app.running and arm.torque_on()
+        # It still ends the way it would with its terminal: here by a SHUTDOWN.
+        app.close()
+        thread.join(10.0)
+        assert ended == [0]
+    finally:
+        typed.end()
+        for app in apps:
+            app.close()
+    assert arm.torque_on() and arm.released_at == []
+    assert arm.pose() == pytest.approx(RAISED)
+    assert left_threads() == []
+
+
+def test_sigterm_with_the_terminal_gone_closes_the_program_with_exit_code_0(
+    monkeypatch,
+):
+    monkeypatch.setattr(robot_main.RobotDialer, "start", lambda self: None)
+    apps = started_apps(monkeypatch)
+    program = sim_program(RobotAppConfig.default(), RAISED)
+    arm, gone, typed = program[1], threading.Event(), TypedLines()
+
+    def say(text: str) -> None:
+        if gone.is_set():
+            raise GONE
+
+    def terminate() -> None:
+        until(lambda: apps and apps[0].running, "the start")
+        gone.set()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    before = signal.getsignal(signal.SIGTERM)
+    sender, failed = in_the_background(terminate)
+    try:
+        code: Any = robot_main.run_connected(
+            *program, typed=typed, say=say, driver="sim"
+        )
+    except OSError as error:
+        code = error
+    finally:
+        typed.end()
+        sender.join(15.0)
+    assert failed == [None] and code == 0
+    assert arm.torque_on() and arm.released_at == []
+    assert signal.getsignal(signal.SIGTERM) is before
+    assert left_threads() == []
+
+
+def test_a_start_that_fails_with_the_terminal_gone_still_gives_exit_code_1(
+    monkeypatch,
+):
+    class Gone:
+        def write(self, text: str) -> int:
+            raise GONE
+
+        def flush(self) -> None:
+            raise GONE
+
+    config, clock = RobotAppConfig.default(), SystemClock()
+    arm = unconnected_arm(config, clock)
+    checkers = robot_main.sim_checkers(config, clock)
+    monkeypatch.setattr(sys, "stderr", Gone())
+    try:
+        code: Any = robot_main.run_connected(
+            config, arm, checkers, clock, "h:1", typed=iter(()), driver="sim"
+        )
+    except OSError as error:
+        code = error
+    assert code == 1
+    assert left_threads() == []
+
+
+def test_text_a_gone_terminal_did_not_take_does_not_change_the_exit_code(tmp_path):
+    master, slave = os.openpty()
+    stream = os.fdopen(slave, "w")
+    os.close(master)  # the terminal is gone
+    captured, sys.stderr = sys.stderr, stream
+    try:
+        # The program complains of its file on a standard error that is gone.
+        argv = ["--config", str(tmp_path / "none.yaml"), "--arm", "sim", "--selftest"]
+        try:
+            code: Any = robot_main.main(argv)
+        except OSError as error:
+            code = error
+        assert code == 2
+        # The interpreter's last flush makes the exit code 120 when it fails.
+        stream.flush()
+        assert os.path.samestat(os.fstat(stream.fileno()), os.stat(os.devnull))
+    finally:
+        sys.stderr = captured
+        try:
+            stream.close()
+        except OSError:
+            pass  # its text went nowhere
+
+
+def test_the_programs_own_thor_terminal_drops_what_was_typed_before_a_question(
+    monkeypatch,
+):
+    monkeypatch.setattr(robot_main.RobotDialer, "start", lambda self: None)
+    apps = started_apps(monkeypatch)
+    program = sim_program(RobotAppConfig.default(), RAISED)
+    arm = program[1]
+    master, slave = os.openpty()
+    stdin = os.fdopen(slave, closefd=False)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    said: list[str] = []
+    # The arm is raised, so quit asks; its phrase is typed before the question.
+    os.write(master, b"quit\npath is clear\n")
+    thread, ended = in_the_background(
+        lambda: robot_main.run_connected(*program, say=said.append, driver="sim")
+    )
+    try:
+        dropped = "dropped what was typed before the question: 1 line"
+        until(lambda: dropped in said or ended, "the phrase's drop")
+        assert dropped in said and ended == []
+        os.write(master, b"no\n")  # typed at the question
+        refused = "quit: refused: confirm the path is clear"
+        until(lambda: any(line.startswith(refused) for line in said), "the answer")
+        (app,) = apps
+        assert app.running and arm.torque_on()
+        assert arm.sent == [] and arm.released_at == []
+        app.close()
+        thread.join(10.0)
+        assert ended == [0]
+    finally:
+        for app in apps:
+            app.close()
+        thread.join(10.0)
+        stdin.close()
+        os.close(master)
+        os.close(slave)
+    assert left_threads() == []
+
+
+def test_a_terminal_that_closes_while_the_arm_connects_does_not_end_the_start(
+    monkeypatch,
+):
+    monkeypatch.setattr(robot_main.RobotDialer, "start", lambda self: None)
+    apps = started_apps(monkeypatch)
+    program = sim_program(RobotAppConfig.default())
+    arm, typed = program[1], TypedLines()
+    connect, during = arm.connect, []
+
+    def hung_up() -> None:
+        connect()
+        during.append(signal.getsignal(signal.SIGHUP))
+        signal.raise_signal(signal.SIGHUP)  # what a closed terminal sends
+
+    arm.connect = hung_up
+    hangups: list[int] = []
+    before = signal.signal(signal.SIGHUP, lambda number, frame: hangups.append(number))
+    found = signal.getsignal(signal.SIGHUP)
+
+    def close_once_started() -> None:
+        until(lambda: apps and apps[0].running, "the start")
+        apps[0].close()
+
+    closer, failed = in_the_background(close_once_started)
+    try:
+        code = robot_main.run_connected(
+            *program, typed=typed, say=lambda line: None, driver="sim"
+        )
+        after = signal.getsignal(signal.SIGHUP)
+    finally:
+        signal.signal(signal.SIGHUP, before)
+        typed.end()
+        closer.join(15.0)
+    # The hang-up did not reach the handler found at the start, which is back.
+    assert code == 0 and failed == [None] and hangups == []
+    assert during == [signal.SIG_IGN] and after is found
+    assert arm.torque_on() and arm.released_at == []
+    assert left_threads() == []
+
+
+class Shown:
+    """What the program on a pseudo-terminal showed, read by the test."""
+
+    def __init__(self, master: int) -> None:
+        self.master, self.text = master, b""
+
+    def wait_for(self, part: bytes, wait_s: float = 30.0) -> None:
+        by = time.monotonic() + wait_s
+        while part not in self.text:
+            assert time.monotonic() < by, f"no {part!r} in {self.text!r}"
+            if select.select([self.master], [], [], 0.1)[0]:
+                self.text += os.read(self.master, 4096)
+
+
+# The robot app as a process on a terminal of its own, which is its controlling
+# terminal as in an ssh session. It dials nothing; argv: the notes file, the
+# seconds the arm's connect takes, then the program's own arguments.
+ON_A_TERMINAL = """\
+import fcntl
+import sys
+import termios
+import time
+from pathlib import Path
+
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+from isaaccapture_examples.agentic_remote.robot_app import __main__ as robot_main
+from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
+
+notes, connect_s = Path(sys.argv[1]), float(sys.argv[2])
+robot_main.RobotDialer.start = lambda self: None
+robot_main._remote_link_missing = lambda: None
+connect, start = SimArm.connect, robot_main.RobotApp.start
+
+
+def slow_connect(self):
+    print("child: the arm connects", flush=True)
+    time.sleep(connect_s)
+    connect(self)
+
+
+def noted_start(self):
+    start(self)
+    notes.write_text("started")
+
+
+SimArm.connect = slow_connect
+robot_main.RobotApp.start = noted_start
+raise SystemExit(robot_main.main(sys.argv[3:]))
+"""
+
+
+@pytest.mark.parametrize("closes", ["while the arm connects", "after the start"])
+def test_the_process_outlives_its_terminal_and_ends_with_exit_code_0_on_sigterm(
+    tmp_path, closes
+):
+    script, notes = tmp_path / "on_a_terminal.py", tmp_path / "notes"
+    script.write_text(ON_A_TERMINAL, encoding="utf-8")
+    during_the_start = closes == "while the arm connects"
+    package = repo_root() / "examples" / "agentic_remote" / "python"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(package), env.get("PYTHONPATH", "")])
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    argv = ["--config", quick_config(tmp_path), "--arm", "sim"]
+    master, slave = os.openpty()
+    process = subprocess.Popen(
+        [
+            *(sys.executable, str(script), str(notes)),
+            "1.5" if during_the_start else "0",
+            *(*argv, "--connect", "127.0.0.1:47610"),
+        ],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env=env,
+        start_new_session=True,
+    )
+    os.close(slave)
+    try:
+        shown = Shown(master)
+        if during_the_start:
+            shown.wait_for(b"child: the arm connects")
+            assert not notes.exists()
+        else:
+            shown.wait_for(b"dialing the robot link service")
+        os.close(master)  # the window closes: a hang-up for the program
+        master = None
+        # The start runs to its end and the program runs on.
+        until(lambda: notes.exists() or process.poll() is not None, "the start", 30.0)
+        assert process.poll() is None, f"it ended with {process.returncode}"
+        time.sleep(1.0)
+        assert process.poll() is None, f"it ended with {process.returncode}"
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(30.0) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(10.0)
+        if master is not None:
+            os.close(master)
 
 
 # The Thor start script

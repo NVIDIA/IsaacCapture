@@ -499,6 +499,7 @@ class RobotApp:
         self._published: tuple[Any, ...] | None = None
 
         self._connect_called = False
+        self._connect_ended = False  # the arm's connect() has returned
         self._started = False
         self._closing = threading.Event()
         self._closed = threading.Event()
@@ -663,6 +664,7 @@ class RobotApp:
             raise RuntimeError("start() was already called; the arm connects once")
         self._connect_called = True
         self._arm.connect()
+        self._connect_ended = True
         rest = self._config.rest
         at_rest = releasable = False
         try:
@@ -734,6 +736,14 @@ class RobotApp:
             self._closed.set()
         finally:
             self._close_lock.release()
+        if self._connect_called and not self._connect_ended:
+            # A connect that raised may have enabled the motors before it did;
+            # the arm port then still says that its motors are off.
+            _log.info(
+                "robot app closed; torque on: not known, the arm's connect did "
+                "not end: the motors may be on"
+            )
+            return
         _log.info("robot app closed; torque on: %s", self._arm.torque_on())
 
     def wait_closed(self, timeout: float | None = None) -> bool:
@@ -1572,6 +1582,8 @@ class RobotApp:
             if reason is None and not m.confirmed:
                 reason = CONFIRM_OPEN
             reason = reason or self._motors_off() or self._busy()
+            # An open would wait behind a reference and open the jaws as it ends.
+            reason = reason or self._referencing()
             if reason is not None:
                 self._refuse(reply, "open", reason)
                 return
@@ -1830,7 +1842,11 @@ class RobotApp:
         return None
 
     def _referencing(self) -> str | None:
-        """Why no task, move or jaw command is taken: a jaw reference is under way."""
+        """Why no task, move, open or jaw command is taken: a jaw reference goes on.
+
+        It waits or runs. The owner check of a MOVE or a GRIPPER comes first
+        and refuses both: nobody owns the arm meanwhile.
+        """
         return JAWS_BUSY if self._worker.referencing() else None
 
     def _expired(self, expires_mono_s: float) -> str | None:

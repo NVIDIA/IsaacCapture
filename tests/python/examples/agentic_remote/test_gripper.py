@@ -1176,7 +1176,8 @@ def test_a_command_that_does_not_return_in_time_gets_the_light_hold_twice(
     worker.submit(0.0, 0.5, PLAIN, Owner.AGENT, done)
     where = pause.wait()
 
-    worker.stop_now()  # gives up waiting: the jaws are stuck inside the command
+    # It gives up waiting, and says so: the jaws are stuck inside the command.
+    assert worker.stop_now() is True
 
     assert done.outcomes == []
     assert len(arm.light_holds) == 1
@@ -1186,6 +1187,20 @@ def test_a_command_that_does_not_return_in_time_gets_the_light_hold_twice(
     assert len(arm.light_holds) == 2  # sent again once the command had returned
     assert arm.jaw_stiffness == "light"
     assert arm.gripper_read() == where
+    assert worker.wait_idle(WAIT_S)
+    assert worker.stop_now() is False  # nothing runs: nothing is still out
+
+
+def test_a_stop_whose_cancelled_command_returns_in_time_says_nothing_is_out(
+    arm, worker
+):
+    cancels = spy_on_cancel(arm)
+    pause = JawPause(arm, lambda opening: opening <= 0.605, until=lambda: cancels[-1])
+    done = Done()
+    worker.submit(0.0, 0.5, PLAIN, Owner.AGENT, done)
+    pause.wait()
+    assert worker.stop_now() is False
+    assert done.wait().status == "cancelled"
 
 
 def test_stop_now_may_be_called_from_on_done(arm, worker):
@@ -1767,8 +1782,11 @@ def test_referencing_is_true_from_the_request_until_its_outcome(bare):
         seen.append(worker.referencing())
         done(ended)
 
-    assert worker.reference(on_done) is None
-    assert worker.referencing()
+    with worker._cond:  # the worker thread cannot take the request yet
+        assert worker.reference(on_done) is None
+        # It waits in the queue, and that counts.
+        assert worker._running is None and len(worker._queue) == 1
+        assert worker.referencing()
     assert entered.wait(WAIT_S) and worker.referencing()
     release.set()
     assert done.wait().status == "reached"
@@ -1783,6 +1801,51 @@ def test_referencing_is_true_from_the_request_until_its_outcome(bare):
     assert closing.wait().status == "reached"
 
 
+def test_referencing_stays_true_while_a_failed_reference_is_finished(bare):
+    arm, worker = bare
+    seen: list[tuple[str, bool, bool]] = []
+
+    def stuck(cancel=None):
+        raise ArmFault("the jaws stopped short of the closed stop")
+
+    def on_fault(reason: str) -> None:
+        # The arm's call has returned; the fault report runs before the outcome.
+        seen.append(("fault", worker.referencing(), worker.busy()))
+
+    done = Done()
+
+    def on_done(ended: GripperOutcome) -> None:
+        seen.append(("done", worker.referencing(), worker.busy()))
+        done(ended)
+
+    arm.gripper_reference = stuck
+    worker.on_fault = on_fault
+    assert worker.reference(on_done) is None
+    assert done.wait().status == "failed"
+    assert seen == [("fault", True, True), ("done", False, False)]
+
+
+def test_a_stop_that_keeps_the_reference_keeps_one_that_still_waits(bare):
+    arm, worker = bare
+    reference = Done()
+    with worker._cond:  # the worker thread cannot take the request yet
+        assert worker.reference(reference) is None
+        assert worker._running is None and len(worker._queue) == 1
+        assert worker.stop_now(keep_reference=True) is False
+        # Not dropped: it was typed at the robot.
+        assert reference.outcomes == [] and len(worker._queue) == 1
+        assert worker.referencing()
+    assert reference.wait() == outcome("reached", 1.0)
+    assert arm.gripper_referenced() and arm.jaw_commands == []
+    # A stop that keeps no reference drops one that waits.
+    arm._jaw_referenced = False
+    dropped = Done()
+    with worker._cond:
+        assert worker.reference(dropped) is None
+        worker.stop_now()
+        assert dropped.outcomes == [DROPPED] and not worker._queue
+
+
 def test_a_stop_that_keeps_the_reference_drops_only_what_waits_behind_it(bare):
     arm, worker = bare
     entered, release = held_reference(arm)
@@ -1790,7 +1853,7 @@ def test_a_stop_that_keeps_the_reference_drops_only_what_waits_behind_it(bare):
     assert worker.reference(reference) is None
     assert entered.wait(WAIT_S)
     assert worker.open_guarded(queued, Owner.NOBODY) is None
-    worker.stop_now(keep_reference=True)
+    assert worker.stop_now(keep_reference=True) is False  # nothing was cancelled
     assert queued.outcomes == [DROPPED]
     # The reference was not cancelled and no light hold went to the closing jaws.
     assert reference.outcomes == [] and worker.referencing()

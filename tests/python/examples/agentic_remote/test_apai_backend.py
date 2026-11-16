@@ -1249,6 +1249,55 @@ def test_build_arm_refuses_another_arm_type_or_rest_pose(
         apai_backend.build_apai_arm(raised, parked, clock)
     with pytest.raises(ValueError, match=r"the backend has 6 joints"):
         apai_backend.build_apai_arm(make_config(joints=5), profile, clock)
+    # APAI's mock profile names no park pose and is taken; a profile that
+    # drives hardware is not: APAI's driver would measure rest against zeros.
+    assert profile.arm_cfg.get("park_q") is None
+    unparked = apai_backend.load_apai_profile("rebot_rs", {"arm": {"park_q": None}})
+    for rest_q in (REST, moved(REST, 1, 0.4)):
+        fitted = apai_backend.config_for_profile(make_config(rest_q), unparked)
+        with pytest.raises(ValueError, match=r"names no park pose \(park_q\)"):
+            apai_backend.build_apai_arm(fitted, unparked, clock)
+
+
+def test_connect_lets_apai_claim_no_operators_confirmation(
+    arm: apai_backend.ApaiArm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from apai.control import arm_hold
+
+    monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(tmp_path / "holds"))
+    written = arm_hold.confirm("holding the arm")  # fresh, for any arm
+    claim = arm_hold.claim_confirmation
+    connect, claimed = arm.backend.connect, []
+
+    def connecting() -> None:
+        # What APAI's hold gate asks during a connect that cuts torque.
+        claimed.append(arm_hold.claim_confirmation("can4"))
+        claimed.append(arm_hold.take_confirmation(None))
+        connect()
+
+    monkeypatch.setattr(arm.backend, "connect", connecting)
+    arm.connect()
+    assert claimed == [None, None] and arm.torque_on()
+    assert arm_hold.claim_confirmation is claim  # APAI's own again
+    assert [path.name for path in written.parent.iterdir()] == [written.name]
+
+
+def test_a_connect_that_fails_puts_apais_claim_back(
+    arm: apai_backend.ApaiArm, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from apai.control import arm_hold
+
+    claim = arm_hold.claim_confirmation
+
+    def no_bus() -> None:
+        assert arm_hold.claim_confirmation is not claim
+        raise OSError("can4: no such device")
+
+    monkeypatch.setattr(arm.backend, "connect", no_bus)
+    with pytest.raises(OSError, match="no such device"):
+        arm.connect()
+    assert arm_hold.claim_confirmation is claim
+    assert not arm.torque_on()
 
 
 # Jaws on APAI's mock arm; its profile counts the jaw position from 0 open to 1 closed
@@ -2741,11 +2790,18 @@ def test_a_hold_folder_that_cannot_be_listed_counts_as_a_confirmation(
     folder.write_text("a file where the folder would be")
     monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(folder))
     assert apai_backend.confirmation_on_file() is None  # nothing can lie in it
+    assert apai_backend.hold_folder_unlistable() is None
     folder.unlink()
+    assert apai_backend.hold_folder_unlistable() is None  # no folder at all
     folder.mkdir()
     (folder / "_any.confirm.json").write_text("{}")
+    assert apai_backend.hold_folder_unlistable() is None
     folder.chmod(0o300)  # searchable, not listable: APAI could still claim the file
     try:
         assert apai_backend.confirmation_on_file() == str(folder)
+        assert apai_backend.hold_folder_unlistable() == (
+            f"[Errno 13] Permission denied: '{folder}'"
+        )
     finally:
         folder.chmod(0o700)
+    assert sorted(path.name for path in folder.iterdir()) == ["_any.confirm.json"]

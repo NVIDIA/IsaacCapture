@@ -17,7 +17,7 @@ import logging
 import math
 import os
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -217,19 +217,36 @@ def confirmation_on_file() -> str | None:
     Any "*.confirm.json" there counts, whatever arm it names, however old it
     is and whether or not it can be read: APAI's driver claims one by its file
     name and would then connect an arm it does not measure at rest. A folder
-    that cannot be listed counts too, and is the path returned. It only lists.
+    that cannot be listed counts too, and is the path returned: see
+    hold_folder_unlistable(). It only lists.
     """
     folder = arm_hold.hold_dir()
-    try:
-        names = sorted(os.listdir(folder))
-    except (FileNotFoundError, NotADirectoryError):
-        return None  # no folder: nothing is on file
-    except OSError:
+    names, unlistable = _hold_folder_names()
+    if unlistable is not None:
         return str(folder)
     for name in names:
         if name.endswith(_CONFIRM_SUFFIX):
             return str(folder / name)
     return None
+
+
+def hold_folder_unlistable() -> str | None:
+    """Why APAI's hold folder cannot be listed; None when it can, or is not there.
+
+    A confirmation may lie in such a folder, and APAI's driver would still
+    find it by its name. It only lists.
+    """
+    return _hold_folder_names()[1]
+
+
+def _hold_folder_names() -> tuple[list[str], str | None]:
+    """The names in APAI's hold folder, and why it cannot be listed, if so."""
+    try:
+        return sorted(os.listdir(arm_hold.hold_dir())), None
+    except (FileNotFoundError, NotADirectoryError):
+        return [], None  # no folder: nothing is on file
+    except OSError as error:
+        return [], str(error)
 
 
 def speed_cap(profile: ApaiProfile) -> float:
@@ -322,13 +339,20 @@ def build_apai_arm(
     """The arm port on the backend the profile names; nothing is connected yet.
 
     The mock arm is placed at the rest pose. For any other arm the
-    configuration must be the one config_for_profile() gives.
+    configuration must be the one config_for_profile() gives, and the profile
+    must name its park pose.
     """
     kind = profile.arm_cfg.get("type")
     if kind not in ARM_TYPES:
         raise ValueError(f"arm type {kind!r} is not one of {', '.join(ARM_TYPES)}")
     park = profile.arm_cfg.get("park_q")
     rest = config.rest.rest_q
+    if park is None and kind != "mock":
+        # APAI's driver would measure rest against all zeros, whatever rest_q is.
+        raise ValueError(
+            "the APAI profile names no park pose (park_q): a profile that drives "
+            "hardware must name it, and rest.rest_q must be that pose"
+        )
     if park is not None and (
         len(park) != len(rest) or not np.allclose(park, rest, atol=1e-6)
     ):
@@ -901,11 +925,28 @@ class _MockJaws:
         return float(self._backend.get_state().gripper_pos)
 
 
+@contextlib.contextmanager
+def _no_confirmation_claim() -> Iterator[None]:
+    """Inside, APAI finds no operator's confirmation to claim.
+
+    With one, APAI's driver connects an arm it does not measure at rest, and
+    that connect cuts torque. APAI's hold gate looks claim_confirmation up in
+    arm_hold at each call. The swap is the process's: for the one connect,
+    which runs before the robot app's threads start.
+    """
+    claim = arm_hold.claim_confirmation
+    arm_hold.claim_confirmation = lambda key: None
+    try:
+        yield
+    finally:
+        arm_hold.claim_confirmation = claim
+
+
 class ApaiArm:
     """An APAI arm backend as the robot app's arm port.
 
     release_torque is the only path to the backend's disconnect, which cuts
-    motor torque.
+    motor torque. connect() never goes ahead on an operator's confirmation.
     """
 
     def __init__(
@@ -959,7 +1000,8 @@ class ApaiArm:
     def connect(self) -> None:
         if self._connected:
             raise RuntimeError("the arm is connected once and never again")
-        self._backend.connect()
+        with _no_confirmation_claim():
+            self._backend.connect()
         self._connected = True
 
     def torque_on(self) -> bool:

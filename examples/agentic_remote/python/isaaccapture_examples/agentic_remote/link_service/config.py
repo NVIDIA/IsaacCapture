@@ -46,11 +46,18 @@ class LinkServiceConfig:
         for index, peer in enumerate(peers):
             _text(f"allowed_peers[{index}]", peer)
             try:
-                spelled.append(str(ipaddress.ip_address(peer.strip())))
+                address = ipaddress.ip_address(peer.strip())
             except ValueError:
                 raise ConfigError(
                     f"allowed_peers[{index}] must be an IP address, got {peer!r}"
                 ) from None
+            if _needs_interface_name(address):
+                raise ConfigError(
+                    f"allowed_peers[{index}] is a link-local address: write it "
+                    "with the name of this workstation's interface, as in "
+                    f"fe80::1%eth0, got {peer!r}"
+                )
+            spelled.append(str(address))
         # One spelling per address, as the service compares a dialing peer's.
         object.__setattr__(self, "allowed_peers", tuple(spelled))
         if self.socket_path is not None:
@@ -128,6 +135,21 @@ def link_service_config(data: object) -> LinkServiceConfig:
             unknown = ", ".join(f"{where}{key}" for key in sorted(map(str, left)))
             raise ConfigError(f"unknown setting(s): {unknown}")
     return LinkServiceConfig(**values)
+
+
+def _needs_interface_name(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    """Whether an allowed peer is an IPv6 link-local address without its interface.
+
+    The remote link reports such a peer as "fe80::1%eth0", with the name of
+    the interface it dialed in on: an entry without a zone, or with the
+    interface's number, never equals it. An IPv4 address has no zone.
+    """
+    if address.version != 6 or address.ipv4_mapped is not None:
+        return False
+    zone = address.scope_id
+    return address.is_link_local and (zone is None or zone.isdigit())
 
 
 def _section(where: str, value: object) -> dict[Any, Any]:

@@ -21,6 +21,7 @@ import signal
 import sys
 import threading
 import time
+import tty
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -67,6 +68,8 @@ BUILT = (
 )
 # Threads of the program; none may outlive it.
 THREADS = ("robot-app-", "robot-dialer", "gripper-worker", "thor-terminal-")
+# What the stand-in backend is asked at each look into APAI's hold folder.
+LOOKS = ["hold", "folder", "pending"]
 
 
 @pytest.fixture(autouse=True)
@@ -110,12 +113,13 @@ def fake_backend(
     hold: dict[str, Any] | None = None,
     pending: tuple[str, ...] = (),
     unfit: str = "",
+    unlistable: str = "",
 ) -> list[str]:
     """Stand in for the APAI backend module; what was asked of it, in order.
 
     hold is the hold marker of the arm's motor bus, pending the names of the
     confirmation files in APAI's hold folder, unfit why the file does not fit
-    the profile.
+    the profile, unlistable why APAI's hold folder cannot be listed.
     """
     asked: list[str] = []
     module = types.ModuleType(BACKEND)
@@ -147,8 +151,14 @@ def fake_backend(
         asked.append("hold")
         return hold
 
+    def hold_folder_unlistable() -> str | None:
+        asked.append("folder")
+        return unlistable or None
+
     def confirmation_on_file() -> str | None:
         asked.append("pending")
+        if unlistable:
+            return "/holds"  # the folder itself, as the backend gives it
         return f"/holds/{pending[0]}" if pending else None
 
     module.load_apai_profile = load_apai_profile
@@ -157,6 +167,7 @@ def fake_backend(
     module.build_apai_arm = build_apai_arm
     module.unresolved_hold = unresolved_hold
     module.hold_bus = lambda of: "can4"
+    module.hold_folder_unlistable = hold_folder_unlistable
     module.confirmation_on_file = confirmation_on_file
     module.speed_cap = lambda of: 0.1
     monkeypatch.setitem(sys.modules, BACKEND, module)
@@ -291,6 +302,52 @@ def test_the_test_runners_standard_input_and_output_are_no_terminals(monkeypatch
         assert robot_main._stdout_is_terminal() is False
 
 
+@pytest.mark.parametrize(("typed_at", "shown_at"), [(True, False), (False, True)])
+def test_each_terminal_check_looks_at_its_own_stream(monkeypatch, typed_at, shown_at):
+    class Stream:
+        def __init__(self, terminal: bool) -> None:
+            self.terminal = terminal
+
+        def isatty(self) -> bool:
+            return self.terminal
+
+        def write(self, text: str) -> int:
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(sys, "stdin", Stream(typed_at))
+    monkeypatch.setattr(sys, "stdout", Stream(shown_at))
+    assert robot_main._stdin_is_terminal() is typed_at
+    assert robot_main._stdout_is_terminal() is shown_at
+
+
+def test_a_terminal_on_the_standard_input_alone_is_not_enough(
+    capsys, monkeypatch, bench_yaml
+):
+    master, slave = pty.openpty()
+    try:
+        asked = fake_backend(monkeypatch)
+        monkeypatch.setattr(robot_main, "typed_lines", None)  # nothing may be asked
+        monkeypatch.setattr(robot_main, "run_connected", None)  # and nothing run
+        monkeypatch.setattr(robot_main, "_remote_link_missing", lambda: None)
+        monkeypatch.setattr(sys, "stdin", os.fdopen(slave, closefd=False))
+        # The program's own two checks: a terminal to type at, a captured output.
+        assert robot_main._stdin_is_terminal() is True
+        assert robot_main._stdout_is_terminal() is False
+        code, out, err = real_driver(capsys, real_argv(bench_yaml))
+    finally:
+        os.close(master)
+        os.close(slave)
+    assert (code, out) == (2, [])
+    assert err == (
+        "robot app: not confirmed: nothing was connected: the questions are "
+        "shown to a person: standard output is no terminal\n"
+    )
+    assert asked == ["load rebot_rs"]
+
+
 @pytest.mark.parametrize(
     ("in_file", "named", "shown"),
     [
@@ -359,7 +416,7 @@ def test_an_operators_confirmation_on_file_is_refused(
     code, out, err = real_driver(capsys, real_argv(bench_yaml))
     assert (code, out) == (2, [])
     assert err == on_file(f"/holds/{name}")
-    assert asked == ["load rebot_rs", "hold", "pending"] and started == []
+    assert asked == ["load rebot_rs", *LOOKS] and started == []
 
 
 def test_a_confirmation_for_another_bus_refuses_this_arm_too(
@@ -373,6 +430,30 @@ def test_a_confirmation_for_another_bus_refuses_this_arm_too(
     assert started == []
 
 
+def not_listed(problem: str) -> str:
+    """The refusal of a hold folder of APAI's that cannot be listed."""
+    return (
+        f"{NOT_CONNECTED}APAI's hold folder cannot be listed ({problem}): an "
+        "operator's confirmation may lie in it, and APAI's driver would find it "
+        "by its name. Let the user who starts this program read and enter the "
+        "folder (its permissions), then start again\n"
+    )
+
+
+def test_a_hold_folder_that_cannot_be_listed_is_refused_and_named_as_that(
+    capsys, monkeypatch, bench_yaml, started
+):
+    problem = "[Errno 13] Permission denied: '/holds'"
+    asked = fake_backend(monkeypatch, unlistable=problem, unfit="too fast")
+    monkeypatch.setattr(robot_main, "typed_lines", None)
+    code, out, err = real_driver(capsys, real_argv(bench_yaml))
+    assert (code, out) == (2, [])
+    assert err == not_listed(problem)
+    # No file is named and no revoke is advised: APAI's tool cannot list it either.
+    assert "revoke" not in err and "is on file" not in err
+    assert asked == ["load rebot_rs", "hold", "folder"] and started == []
+
+
 def test_a_file_that_does_not_fit_the_profile_is_refused_before_any_question(
     capsys, monkeypatch, bench_yaml, started
 ):
@@ -384,7 +465,7 @@ def test_a_file_that_does_not_fit_the_profile_is_refused_before_any_question(
         f"{NOT_CONNECTED}APAI arm profile 'rebot_rs' cannot be used with "
         f"{bench_yaml}: the limit set is above the speed cap\n"
     )
-    assert asked == ["load rebot_rs", "hold", "pending", "config"]
+    assert asked == ["load rebot_rs", *LOOKS, "config"]
     assert started == []
 
 
@@ -413,7 +494,7 @@ def test_three_yes_hand_the_built_arm_and_the_same_input_to_the_robot_app(
     # Every check came before anything was built, and before the first question;
     # the hold and the confirmations on file are looked at again after the last.
     built = ["config", "checkers", "arm"]
-    assert asked == ["load rebot_rs", "hold", "pending", *built, "hold", "pending"]
+    assert asked == ["load rebot_rs", *LOOKS, *built, *LOOKS]
     (call,) = started
     assert (call["arm"], call["checkers"]) == ("the arm", "the checkers")
     assert (call["endpoint"], call["driver"]) == (ENDPOINT, "real")
@@ -559,7 +640,7 @@ def test_the_checks_refuse_in_turn(monkeypatch, bench_yaml):
     backend = sys.modules[BACKEND]
     assert refusal("bench-7", {}) is None
     assert asked == ["load rebot_rs", "hold"]
-    assert marker_gone == ["hold", "pending"]
+    assert marker_gone == LOOKS
 
 
 # With APAI: its real driver class and its connect(), over a stand-in motor SDK
@@ -728,12 +809,14 @@ def bench(monkeypatch, tmp_path) -> Bench:
 
 def refused_before_the_bus(bench: Bench, capsys, monkeypatch) -> str:
     """Run the program to an exit code 2; what it wrote to the standard error."""
-    monkeypatch.setattr(robot_main, "typed_lines", None)  # nothing may be asked
+    # A program that asked its questions all the same gets three yes, goes on
+    # to APAI's connect and does not end with exit code 2.
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(["yes"] * 3))
     no_dial(monkeypatch)
     closed_once(monkeypatch, lambda app: True)  # a program that ran on ends at once
     assert robot_main.main(bench.argv("--connect", ENDPOINT)) == 2
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out == ""  # nothing was asked
     # Nothing was opened, read or sent, and APAI measured nothing.
     assert bench.calls == [] and bench.sdks == []
     assert bench.rest_rows() == []
@@ -804,19 +887,31 @@ def test_an_operators_confirmation_is_never_used_by_the_robot_app(
     assert sorted(path.name for path in bench.holds.iterdir()) == [confirmation.name]
 
 
+LAPSED = '{"key": "can4", "at": 1.0}'  # written in 1970: APAI takes it for stale
+
+
 @rig
-@pytest.mark.parametrize("content", ["not json", '{"key": "can4", "at": 1.0}'])
+@pytest.mark.parametrize(
+    ("content", "mode"),
+    [("not json", 0), ("not json", 0o600), (LAPSED, 0), (LAPSED, 0o600)],
+    ids=["unreadable", "no-json", "lapsed-unreadable", "lapsed"],
+)
 def test_an_unreadable_or_lapsed_confirmation_file_is_refused_too(
-    bench, capsys, monkeypatch, content
+    bench, capsys, monkeypatch, content, mode
 ):
+    from apai.control import arm_hold
+
     bench.reading = list(RAISED)
     bench.holds.mkdir()
     confirmation = bench.holds / "can4.confirm.json"
     confirmation.write_text(content)
-    confirmation.chmod(0)
+    assert arm_hold.pending_confirmations() == []  # APAI lists none of them
+    confirmation.chmod(mode)
     err = refused_before_the_bus(bench, capsys, monkeypatch)
     assert err == on_file(str(confirmation))
     assert confirmation.is_file()
+    if mode:
+        assert confirmation.read_text() == content  # left as it was
 
 
 @rig
@@ -844,6 +939,134 @@ def test_a_confirmation_written_during_the_questions_never_reaches_the_connect(
     # The raised arm's bus was never opened, and the file was not claimed.
     assert bench.calls == [] and bench.sdks == []
     assert written[0].is_file()
+
+
+def three_yes(
+    bench: Bench, capsys, monkeypatch, before_the_connect: Any = None
+) -> tuple[int, Any]:
+    """Answer the three questions; the program's exit code and its output.
+
+    before_the_connect runs after the program's last look into APAI's hold
+    folder and before APAI's driver is asked to connect.
+    """
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(["yes"] * 3))
+    no_dial(monkeypatch)
+    closed_once(monkeypatch, lambda app: True)  # a program that ran on ends at once
+    if before_the_connect is not None:
+        build = robot_main.RobotApp
+
+        def robot_app(*args: Any, **kwargs: Any) -> Any:
+            before_the_connect()
+            return build(*args, **kwargs)
+
+        monkeypatch.setattr(robot_main, "RobotApp", robot_app)
+    code = robot_main.main(bench.argv("--connect", ENDPOINT))
+    return code, capsys.readouterr()
+
+
+def refused_with_no_torque_cut(bench: Bench, code: int, captured: Any) -> None:
+    """APAI's driver refused the connect: nothing cut torque, nothing ran on."""
+    assert captured.out.splitlines()[-1] == robot_main.CONNECTING
+    assert captured.err.splitlines()[-1] == f"robot app: {robot_main.NOT_AT_REST}"
+    assert code == 1
+    assert bench.cuts() == []
+    assert [sdk.disconnects for sdk in bench.sdks] == [0] * len(bench.sdks)
+    assert left_threads() == []
+
+
+@rig
+@pytest.mark.parametrize("key", [None, "can4"])
+def test_a_confirmation_written_while_the_bus_opens_is_not_claimed(
+    bench, capsys, monkeypatch, key
+):
+    from apai.control import arm_hold
+
+    bench.reading = list(RAISED)
+    written: list[Path] = []
+    # The driver builds its SDK object after the program's last look.
+    bench.prepare = lambda sdk: written.append(arm_hold.confirm("holding the arm", key))
+    code, captured = three_yes(bench, capsys, monkeypatch)
+    refused_with_no_torque_cut(bench, code, captured)
+    assert "The arm on can4 is not folded at rest (" in captured.err
+    reads = [f"read joint{i}" for i in range(1, 7)]
+    assert bench.calls == ["open the bus", *reads, *reads, "close_bus", "close"]
+    # The confirmation is still on file for APAI's own tools: nothing claimed it.
+    (confirmation,) = written
+    assert confirmation.is_file()
+    assert sorted(path.name for path in bench.holds.iterdir()) == [confirmation.name]
+    assert arm_hold.pending_confirmations()[0]["key"] == key
+
+
+@rig
+def test_a_hold_and_a_confirmation_written_after_the_last_look_open_nothing(
+    bench, capsys, monkeypatch
+):
+    from apai.control import arm_hold
+
+    def written_late() -> None:
+        arm_hold.record("can4", arm="rebot_rs", reason="left raised by a run")
+        arm_hold.confirm("holding the arm", "can4")
+
+    bench.reading = list(RAISED)
+    code, captured = three_yes(
+        bench, capsys, monkeypatch, before_the_connect=written_late
+    )
+    refused_with_no_torque_cut(bench, code, captured)
+    # APAI's hold gate refused over the marker before the bus was opened.
+    assert "left raised by a run" in captured.err
+    assert bench.calls == [] and bench.sdks == [] and bench.rest_rows() == []
+    # The marker was not cleared and the confirmation was not claimed.
+    assert sorted(path.name for path in bench.holds.iterdir()) == [
+        "can4.confirm.json",
+        "can4.json",
+    ]
+
+
+@rig
+def test_a_confirmation_another_connect_gives_back_is_not_claimed(
+    bench, capsys, monkeypatch
+):
+    import importlib
+
+    from apai.control import arm_hold
+
+    confirmation = arm_hold.confirm("holding the arm", "can4")
+    held = arm_hold.claim_confirmation("can4")  # as another APAI connect holds it
+    assert held is not None and not confirmation.exists()
+    # Under its claimed name it is no confirmation on file at the two looks.
+    assert importlib.import_module(BACKEND).confirmation_on_file() is None
+    bench.reading = list(RAISED)
+    bench.prepare = lambda sdk: held.release()  # that connect failed meanwhile
+    code, captured = three_yes(bench, capsys, monkeypatch)
+    refused_with_no_torque_cut(bench, code, captured)
+    assert sorted(path.name for path in bench.holds.iterdir()) == [confirmation.name]
+
+
+@rig
+@pytest.mark.parametrize("reading", [[0.0] * 6, RAISED], ids=["connected", "refused"])
+def test_apais_claim_is_switched_off_for_the_connect_only(
+    bench, capsys, monkeypatch, reading
+):
+    from apai.control import arm_hold
+
+    claim = arm_hold.claim_confirmation
+    during: list[Any] = []
+
+    def prepare(sdk: RigSdk) -> None:
+        arm_hold.confirm("holding the arm")  # for any arm, while the connect runs
+        during.append(arm_hold.claim_confirmation)
+        during.append(arm_hold.claim_confirmation("can4"))
+        during.append(arm_hold.take_confirmation(None))
+
+    bench.reading = list(reading)
+    bench.prepare = prepare
+    code, _ = three_yes(bench, capsys, monkeypatch)
+    assert code == (1 if reading == RAISED else 0)
+    switched_off, *claimed = during
+    assert switched_off is not claim and claimed == [None, None]
+    assert arm_hold.claim_confirmation is claim  # APAI's own again
+    assert sorted(path.name for path in bench.holds.iterdir()) == ["_any.confirm.json"]
+    assert left_threads() == []
 
 
 @rig
@@ -878,6 +1101,77 @@ def test_a_rest_pose_that_is_not_the_profiles_park_pose_is_refused(
     monkeypatch.setattr(bench, "argv", lambda *extra: argv)
     err = refused_before_the_bus(bench, capsys, monkeypatch)
     assert "differs from the APAI profile's park_q" in err
+
+
+def without_a_park_pose(bench: Bench, how: str) -> None:
+    """Rewrite the bench's arm profile so that it names no park pose."""
+    from apai.config import CONFIG_DIR
+
+    path = Path(bench.profile + ".yaml")
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if how == "null":
+        profile["park_q"] = None
+    else:
+        base = CONFIG_DIR / "arms" / "rebot_rs.yaml"
+        parent = yaml.safe_load(base.read_text(encoding="utf-8"))
+        del parent["park_q"]
+        unparked = path.with_name("rebot_rs_without_park.yaml")
+        unparked.write_text(yaml.safe_dump(parent), encoding="utf-8")
+        profile["extends"] = str(unparked.with_suffix(""))
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+
+@rig
+@pytest.mark.parametrize("how", ["null", "absent"])
+@pytest.mark.parametrize(
+    "rest_q",
+    [None, [0.0, 0.4, 0.3, 0.0, 0.0, 0.0]],
+    ids=["the-rig-file", "another-rest-pose"],
+)
+def test_a_hardware_profile_that_names_no_park_pose_is_refused(
+    bench, capsys, monkeypatch, tmp_path, how, rest_q
+):
+    without_a_park_pose(bench, how)
+    argv = bench.argv("--connect", ENDPOINT)
+    used = str(RIG_YAML)
+    if rest_q is not None:
+        data = yaml.safe_load(RIG_YAML.read_text(encoding="utf-8"))
+        data["rest"]["rest_q"] = rest_q
+        other = tmp_path / "robot_app_other.yaml"
+        other.write_text(yaml.safe_dump(data), encoding="utf-8")
+        used = argv[argv.index("--config") + 1] = str(other)
+    monkeypatch.setattr(bench, "argv", lambda *extra: argv)
+    # APAI's driver would measure such an arm against all zeros.
+    err = refused_before_the_bus(bench, capsys, monkeypatch)
+    assert err == (
+        f"{NOT_CONNECTED}APAI arm profile {bench.profile!r} cannot be used with "
+        f"{used}: the APAI profile names no park pose (park_q): a profile that "
+        "drives hardware must name it, and rest.rest_q must be that pose\n"
+    )
+    # Without --connect the program describes nothing either.
+    described = ["--config", used, "--arm", "apai", "--apai-profile", bench.profile]
+    assert robot_main.main(described) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and "names no park pose (park_q)" in captured.err
+
+
+@rig
+@pytest.mark.parametrize("mode", [0o300, 0o100])
+def test_a_hold_folder_that_cannot_be_listed_is_refused_before_the_bus(
+    bench, capsys, monkeypatch, mode
+):
+    from apai.control import arm_hold
+
+    bench.reading = list(RAISED)
+    # Fresh and for any arm: APAI's driver could claim it by its name.
+    confirmation = arm_hold.confirm("holding the arm")
+    bench.holds.chmod(mode)  # the folder can be entered, not listed
+    try:
+        err = refused_before_the_bus(bench, capsys, monkeypatch)
+    finally:
+        bench.holds.chmod(0o700)
+    assert err == not_listed(f"[Errno 13] Permission denied: '{bench.holds}'")
+    assert sorted(path.name for path in bench.holds.iterdir()) == [confirmation.name]
 
 
 @rig
@@ -1176,19 +1470,83 @@ def test_three_yes_typed_before_the_questions_confirm_nothing(terminal_pair):
     assert said == QUESTIONS[:1]
 
 
+def typed_at_each_question(lines: Any, type_answer: Any) -> list[list[str]]:
+    """Call type_answer() once a question waits for its answer.
+
+    That is after the question was written and what was typed before it was
+    dropped. Returns what each drop gave back.
+    """
+    drop, dropped = lines.drop_typed_ahead, []
+
+    def drop_then_type() -> list[str]:
+        gone = drop()
+        dropped.append(gone)
+        type_answer()
+        return gone
+
+    lines.drop_typed_ahead = drop_then_type
+    return dropped
+
+
 def test_what_is_typed_once_a_question_shows_answers_it(terminal_pair):
     master, slave = terminal_pair
     os.write(master, b"no\n")  # typed ahead of the first question
     lines = robot_main._FdLines(slave)
     said: list[str] = []
+    # The answer, and a line typed ahead of the question after it.
+    dropped = typed_at_each_question(lines, lambda: os.write(master, b"yes\nno\n"))
+    assert robot_main.confirm_real_driver("bench-7", lines, said.append) is True
+    assert said == QUESTIONS
+    assert dropped == [["no"]] * 3
+
+
+def test_a_yes_typed_while_a_question_is_being_written_answers_nothing(
+    terminal_pair,
+):
+    master, slave = terminal_pair
+    lines = robot_main._FdLines(slave)
+    said: list[str] = []
+
+    def say(text: str) -> None:
+        # The output is held up, as after Ctrl+S: typed before the question shows.
+        os.write(master, b"yes\n")
+        said.append(text)
+
+    # Nobody answers once it shows: the input ends.
+    dropped = typed_at_each_question(lines, lines.close)
+    assert robot_main.confirm_real_driver("bench-7", lines, say) is False
+    assert said == QUESTIONS[:1] and dropped == [["yes"]]
+
+
+def test_a_question_that_cannot_be_written_is_not_confirmed():
+    said: list[str] = []
 
     def say(text: str) -> None:
         said.append(text)
-        # The answer, and a line typed ahead of the question after it.
-        os.write(master, b"yes\nno\n")
+        if len(said) == 2:
+            raise OSError(5, "Input/output error")  # the terminal is gone
 
-    assert robot_main.confirm_real_driver("bench-7", lines, say) is True
-    assert said == QUESTIONS
+    assert robot_main.confirm_real_driver("bench-7", iter(["yes"] * 3), say) is False
+    assert said == QUESTIONS[:2]
+
+
+def test_lines_read_before_the_terminal_went_away_answer_no_question():
+    master, slave = pty.openpty()
+    tty.setraw(slave)  # not in line mode: one read hands over every line typed
+    try:
+        os.write(master, b"x\nyes\nyes\nyes\n")
+        lines = robot_main._FdLines(slave)
+        assert next(lines) == "x"
+        assert lines._buffer == b"yes\nyes\nyes\n"  # read with the line before
+        os.close(master)  # the terminal goes away
+        master = None
+        said: list[str] = []
+        assert robot_main.confirm_real_driver("bench-7", lines, said.append) is False
+        assert said == QUESTIONS[:1]
+    finally:
+        for fd in (master, slave):
+            if fd is not None:
+                os.close(fd)
 
 
 def test_lines_already_read_from_a_terminal_are_dropped_before_a_question(
@@ -1230,13 +1588,13 @@ def test_a_yes_ended_by_the_end_of_a_terminals_input_confirms_nothing(terminal_p
     lines = robot_main._FdLines(slave)
     said: list[str] = []
 
-    def say(text: str) -> None:
-        said.append(text)
+    def answer() -> None:
         # Ctrl+D twice after the third yes: the line is handed over without a
         # newline, then the input ends.
         os.write(master, b"yes\n" if len(said) < 3 else b"yes\x04\x04")
 
-    assert robot_main.confirm_real_driver("bench-7", lines, say) is False
+    typed_at_each_question(lines, answer)
+    assert robot_main.confirm_real_driver("bench-7", lines, said.append) is False
     assert said == QUESTIONS
 
 
@@ -1328,7 +1686,7 @@ def signal_during_the_jaw_reference(bench: Bench, number: int) -> list[str]:
 def signals_kept() -> Iterator[list[int]]:
     """The signals that reached the handlers in place before the program."""
     reached: list[int] = []
-    numbers = (signal.SIGINT, signal.SIGTERM)
+    numbers = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     before = [signal.signal(n, lambda n, _: reached.append(n)) for n in numbers]
     mine = [signal.getsignal(n) for n in numbers]
     yield reached
@@ -1382,7 +1740,7 @@ def test_sigterm_during_the_start_closes_the_program_with_the_motors_left_on(
 
 
 @pytest.mark.parametrize("number", [signal.SIGINT, signal.SIGTERM])
-def test_a_signal_after_the_third_yes_and_before_the_connect_connects_nothing(
+def test_a_signal_while_the_checks_are_made_once_more_connects_nothing(
     capsys, monkeypatch, bench_yaml, started, signals_kept, number
 ):
     asked = fake_backend(monkeypatch)
@@ -1395,6 +1753,126 @@ def test_a_signal_after_the_third_yes_and_before_the_connect_connects_nothing(
     backend.unresolved_hold = unresolved_hold
     answer(monkeypatch, "yes", "yes", "yes")
     code, out, err = real_driver(capsys, real_argv(bench_yaml))
+    assert code == 2
+    assert out == [BUILT, *QUESTIONS]
+    assert err == NOT_CONFIRMED
+    assert started == [] and signals_kept == []
+
+
+@rig
+@pytest.mark.parametrize("number", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_after_the_connecting_line_is_kept_until_the_arm_is_connected(
+    bench, capsys, monkeypatch, signals_kept, number
+):
+    no_dial(monkeypatch)
+    stopped = number == signal.SIGINT
+    apps = closed_once(
+        monkeypatch,
+        (lambda app: app.snapshot().stop_number >= 1)
+        if stopped
+        else (lambda app: not app.running),
+    )
+    build = robot_main.RobotApp
+    seen: list[list[str]] = []
+
+    def robot_app(*args: Any, **kwargs: Any) -> Any:
+        # The line "connecting the arm" is out; the bus is not opened yet.
+        seen.append(list(bench.calls))
+        signal.raise_signal(number)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(robot_main, "RobotApp", robot_app)
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(["yes"] * 3))
+    assert robot_main.main(bench.argv("--connect", ENDPOINT)) == 0
+    assert seen == [[]] and signals_kept == []
+    captured = capsys.readouterr()
+    out = captured.out.splitlines()
+    # The signal does not end the program with "not confirmed": the arm is
+    # connected first, its joints read twice before anything that cuts torque.
+    assert NOT_CONFIRMED not in captured.err
+    assert "robot app: the real driver is connected at measured rest: motors on" in (
+        captured.out
+    )
+    (sdk,) = bench.sdks
+    reads = [f"read joint{i}" for i in range(1, 7)]
+    assert bench.calls[:14] == ["open the bus", *reads, *reads, "mode_mit arm"]
+    assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
+    (app,) = apps
+    if stopped:
+        assert app.snapshot().stop_number == 1
+        assert any("STOP from thor_terminal: Ctrl+C" in line for line in out)
+    else:
+        assert "robot app: SIGTERM; closing with the motors left on" in out
+    assert left_threads() == []
+
+
+@rig
+def test_a_terminal_that_closes_during_the_start_does_not_end_it_half_way(
+    bench, capsys, monkeypatch, signals_kept
+):
+    during: list[tuple[str, Any]] = []
+
+    def hang_up(at: str) -> None:
+        during.append((at, signal.getsignal(signal.SIGHUP)))
+        signal.raise_signal(signal.SIGHUP)  # what a closed terminal sends
+
+    def prepare(sdk: RigSdk) -> None:
+        mode_mit, enable, send = sdk.arm.mode_mit, sdk.arm.enable, sdk.gripper.send_mit
+
+        def first_frame() -> None:
+            hang_up("the mode write")
+            mode_mit()
+
+        def enabled() -> None:
+            enable()
+            hang_up("the enable")
+
+        def send_mit(q: Any, kp: Any = None, kd: Any = None, tau: Any = None) -> None:
+            send(q, kp, kd, tau)
+            if sdk.calls.count("send_mit gripper") == 2:
+                hang_up("the jaw reference")
+
+        sdk.arm.mode_mit, sdk.arm.enable = first_frame, enabled
+        sdk.gripper.send_mit = send_mit
+
+    bench.prepare = prepare
+    no_dial(monkeypatch)
+    apps = closed_once(monkeypatch, lambda app: True)
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(["yes"] * 3))
+    assert robot_main.main(bench.argv("--connect", ENDPOINT)) == 0
+    # None of the three hang-ups reached the handler found at the start.
+    assert signals_kept == []
+    assert during == [
+        ("the mode write", signal.SIG_IGN),
+        ("the enable", signal.SIG_IGN),
+        ("the jaw reference", signal.SIG_IGN),
+    ]
+    (sdk,) = bench.sdks
+    (app,) = apps
+    assert app._arm.gripper_referenced()
+    assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
+    out = capsys.readouterr().out
+    assert "robot app: the real driver is connected at measured rest: motors on" in out
+    assert left_threads() == []
+
+
+def test_a_terminal_that_is_gone_at_the_connecting_line_connects_nothing(
+    capsys, monkeypatch, bench_yaml, started, signals_kept
+):
+    fake_backend(monkeypatch)
+    answer(monkeypatch, "yes", "yes", "yes")
+    write = robot_main._Lines.__call__
+
+    def gone_at_the_line(self: Any, text: str) -> None:
+        if text == robot_main.CONNECTING:
+            raise OSError(5, "Input/output error")  # nobody is there to read it
+        write(self, text)
+
+    monkeypatch.setattr(robot_main._Lines, "__call__", gone_at_the_line)
+    try:
+        code, out, err = real_driver(capsys, real_argv(bench_yaml))
+    except OSError as error:
+        code, out, err = error, [], ""
     assert code == 2
     assert out == [BUILT, *QUESTIONS]
     assert err == NOT_CONFIRMED
@@ -1416,9 +1894,21 @@ def test_ctrl_c_at_a_question_connects_nothing_and_leaves_no_handler(
     assert bench.calls == [] and bench.sdks == [] and signals_kept == []
 
 
+CLOSED_UNKNOWN = (
+    "robot app closed; torque on: not known, the arm's connect did not end: the "
+    "motors may be on"
+)
+
+
+def closing_records(caplog) -> list[str]:
+    """What the robot app logged of its close."""
+    said = [record.getMessage() for record in caplog.records]
+    return [line for line in said if line.startswith("robot app closed")]
+
+
 @rig
 def test_a_connect_that_fails_after_the_enable_says_that_the_motors_may_be_on(
-    bench, capsys, monkeypatch
+    bench, capsys, monkeypatch, caplog
 ):
     def prepare(sdk: RigSdk) -> None:
         motor = sdk.arm._mm["joint3"]
@@ -1436,13 +1926,18 @@ def test_a_connect_that_fails_after_the_enable_says_that_the_motors_may_be_on(
     bench.prepare = prepare
     no_dial(monkeypatch)
     monkeypatch.setattr(robot_main, "typed_lines", lambda: iter(["yes"] * 3))
-    assert robot_main.main(bench.argv("--connect", ENDPOINT)) == 1
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        assert robot_main.main(bench.argv("--connect", ENDPOINT)) == 1
     err = capsys.readouterr().err.splitlines()
     (sdk,) = bench.sdks
     # The motors were enabled and nothing switched them off again.
     assert "enable" in bench.calls and sdk.disconnects == 0
-    assert err[-2].startswith("robot app: the robot app did not start: ")
-    assert err[-1] == f"robot app: {robot_main.MOTORS_MAY_BE_ON}"
+    assert [line.partition(": no answer")[0] for line in err[-2:]] == [
+        "robot app: the robot app did not start",
+        f"robot app: {robot_main.MOTORS_MAY_BE_ON}",
+    ]
+    # The log does not call motors off that the connect left enabled.
+    assert closing_records(caplog) == [CLOSED_UNKNOWN]
     assert robot_main.MOTORS_MAY_BE_ON == (
         "the start failed after the connect began: the motors may be enabled and "
         "holding, and this program ends without releasing them. APAI's driver "

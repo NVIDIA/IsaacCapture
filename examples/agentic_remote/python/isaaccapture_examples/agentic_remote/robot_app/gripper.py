@@ -353,13 +353,14 @@ class GripperWorker:
             0.0, 0.0, REFERENCE, False, Owner.NOBODY, on_done, reason, alone=True
         )
 
-    def stop_now(self, keep_reference: bool = False) -> None:
+    def stop_now(self, keep_reference: bool = False) -> bool:
         """Cancel the running command, drop the queued ones and hold lightly.
 
         A running command gets the light hold at once, so a close does not go on
         at the closing stiffness, and again once it has returned, so the light
         hold is the last thing the jaws are sent. Waits up to stop_wait_s of real
-        time for that return.
+        time for that return; True when the cancelled command has not returned
+        by then, so the jaws stay busy.
 
         keep_reference: a jaw reference, which is typed at the Thor terminal
         only, goes on, and while one runs the jaws are sent no light hold.
@@ -384,7 +385,7 @@ class GripperWorker:
             _log.info(
                 "jaw stop: the reference goes on, %d queued dropped", len(dropped)
             )
-            return
+            return False
         held = True
         if job is not None:
             held = self._light_hold()
@@ -411,6 +412,7 @@ class GripperWorker:
                 "the cancelled jaw command has not returned; "
                 "the light hold is sent again when it does"
             )
+        return late
 
     def busy(self) -> bool:
         """True while a request is queued or its work on the jaws is not over.

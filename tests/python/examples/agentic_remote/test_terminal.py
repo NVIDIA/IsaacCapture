@@ -13,6 +13,8 @@ import os
 import pty
 import signal
 import threading
+import time
+import tty
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -1030,9 +1032,21 @@ def served(fake) -> Iterator[Callable[[int], Lines]]:
     fake.moves_arm = fake.allow_reference = True  # so every command asks
     made: list[tuple] = []
 
-    def serve(fd: int) -> Lines:
+    def serve(fd: int, output: Callable[[str], None] | None = None) -> Lines:
         out, lines = Lines(), robot_main._FdLines(fd)
-        terminal = ThorTerminal(fake, lines, out)
+        drop = lines.drop_typed_ahead
+        out.typed = lines
+        # Counts the questions that wait for their answer: what is typed from
+        # then on was typed at the question.
+        out.at_question = threading.Semaphore(0)
+
+        def dropped() -> list[str]:
+            gone = drop()
+            out.at_question.release()
+            return gone
+
+        lines.drop_typed_ahead = dropped
+        terminal = ThorTerminal(fake, lines, out if output is None else output)
         reader = threading.Thread(target=terminal.run, daemon=True)
         made.append((lines, reader, terminal))
         reader.start()
@@ -1045,6 +1059,12 @@ def served(fake) -> Iterator[Callable[[int], Lines]]:
         terminal.close()
 
 
+def answered_from_here(out: Lines, question: str) -> None:
+    """Wait until the question is written and what was typed before it is dropped."""
+    out.wait_for(question)
+    assert out.at_question.acquire(timeout=WAIT_S), "the question does not wait"
+
+
 @pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
 def test_an_answer_typed_before_its_question_is_dropped(
     fake, terminal_pair, served, command, question, phrase, call
@@ -1052,7 +1072,8 @@ def test_an_answer_typed_before_its_question_is_dropped(
     master, slave = terminal_pair
     os.write(master, command + b"\n" + phrase + b"\n")  # both before the question
     out = served(slave)
-    out.wait_for(question)
+    answered_from_here(out, question)
+    out.wait_for("dropped what was typed before the question: 1 line")
     os.write(master, b"no\n")  # typed at the question
     assert fake.wait_calls(1) == [(call, False)]
     os.write(master, b"help\n")  # the phrase was not left over as a command
@@ -1065,23 +1086,216 @@ def test_an_answer_typed_at_its_question_counts_on_a_terminal(
     fake, terminal_pair, served, command, question, phrase, call
 ):
     master, slave = terminal_pair
-    os.write(master, command + b"\nno\n")
+    os.write(master, command + b"\nno\nno\n")
     out = served(slave)
-    out.wait_for(question)
+    answered_from_here(out, question)
+    out.wait_for("dropped what was typed before the question: 2 lines")
     os.write(master, phrase + b"\n")
     assert fake.wait_calls(1) == [(call, True)]
 
 
-def test_a_stop_typed_before_a_question_is_dropped_and_one_typed_at_it_stops(
+def held_output(
+    out: Lines, held: str
+) -> tuple[Callable[[str], None], threading.Event, threading.Event]:
+    """A writer that does not take the line `held` until it is let go.
+
+    Returns (write, reached, release): as a terminal whose output is stopped
+    (Ctrl+S) when that line is to be written.
+    """
+    reached, release = threading.Event(), threading.Event()
+
+    def write(line: str) -> None:
+        if line == held:
+            reached.set()
+            release.wait(WAIT_S)
+        out(line)
+
+    return write, reached, release
+
+
+@pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
+def test_a_phrase_typed_while_its_question_is_not_written_confirms_nothing(
+    fake, terminal_pair, served, monkeypatch, command, question, phrase, call
+):
+    monkeypatch.setattr(terminal_module, "QUESTION_WRITE_S", 0.2)
+    master, slave = terminal_pair
+    shown = Lines()
+    write, reached, release = held_output(shown, question)
+    served(slave, write)
+    shown.wait_for(BANNER)
+    os.write(master, command + b"\n")
+    assert reached.wait(WAIT_S)  # asked, and the terminal does not show it
+    os.write(master, phrase + b"\n")  # typed blind
+    assert fake.wait_calls(1) == [(call, False)]
+    assert question not in shown.lines
+    release.set()
+    # The phrase answered nothing: it is read as a command once the output runs.
+    shown.wait_for(lambda line: line.startswith("unknown command"))
+    assert fake.calls == [(call, False)]
+
+
+def test_a_stop_typed_while_a_question_is_not_written_is_served_as_a_stop(
+    fake, terminal_pair, served, monkeypatch
+):
+    monkeypatch.setattr(terminal_module, "QUESTION_WRITE_S", 0.2)
+    master, slave = terminal_pair
+    shown = Lines()
+    write, reached, release = held_output(shown, CONFIRM_REST)
+    served(slave, write)
+    shown.wait_for(BANNER)
+    os.write(master, b"rest\n")
+    assert reached.wait(WAIT_S)
+    os.write(master, b"stop\n")
+    assert fake.wait_calls(2) == [("rest", False), ("stop", STOP_TYPED, THOR)]
+    release.set()
+
+
+def test_a_question_that_cannot_be_written_confirms_nothing(fake):
+    fake.moves_arm = True
+
+    def gone(line: str) -> None:
+        raise OSError(5, "Input/output error")
+
+    terminal = ThorTerminal(fake, iter(["rest\n", "path is clear\n"]), gone)
+    terminal.run()
+    terminal.close()
+    # Nobody saw the question: the phrase is no answer to it.
+    assert fake.calls == [("rest", False)]
+
+
+def test_a_stop_typed_before_a_question_is_a_stop_and_the_question_is_withdrawn(
     fake, terminal_pair, served
 ):
     master, slave = terminal_pair
-    os.write(master, b"rest\nstop\n")
+    os.write(master, b"rest\nstop\npath is clear\n")
     out = served(slave)
-    out.wait_for(CONFIRM_REST)
-    assert fake.calls == []
-    os.write(master, b"stop\n")  # at the question it is a STOP
     assert fake.wait_calls(2) == [("stop", STOP_TYPED, THOR), ("rest", False)]
+    out.wait_for(
+        "a stop typed before the question was raised as a STOP; the question is "
+        "withdrawn"
+    )
+    out.wait_for("rest: refused: confirm the path is clear")
+    # The phrase typed after that stop went with it: it is no command either.
+    os.write(master, b"help\n")
+    out.wait_for(HELP[0])
+    assert not any(line.startswith("unknown command") for line in out.lines)
+    assert len(fake.calls) == 2
+
+
+def test_a_stop_typed_at_a_question_is_a_stop_on_a_terminal(
+    fake, terminal_pair, served
+):
+    master, slave = terminal_pair
+    os.write(master, b"rest\n")
+    out = served(slave)
+    answered_from_here(out, CONFIRM_REST)
+    assert fake.calls == []
+    os.write(master, b"stop\n")
+    assert fake.wait_calls(2) == [("stop", STOP_TYPED, THOR), ("rest", False)]
+    assert not any(line.startswith("dropped what was typed") for line in out.lines)
+
+
+@pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
+def test_a_phrase_the_end_of_the_input_cut_short_confirms_nothing(
+    fake, terminal_pair, served, command, question, phrase, call
+):
+    master, slave = terminal_pair
+    os.write(master, command + b"\n")
+    out = served(slave)
+    answered_from_here(out, question)
+    # Typed and not entered: Ctrl+D hands the line over, a second ends the input.
+    os.write(master, phrase + b"\x04\x04")
+    assert fake.wait_calls(1) == [(call, False)]
+    out.wait_for(ENDED_RUNNING)
+
+
+def test_a_stop_the_end_of_the_input_cut_short_is_still_a_stop(
+    fake, terminal_pair, served
+):
+    master, slave = terminal_pair
+    os.write(master, b"rest\n")
+    out = served(slave)
+    answered_from_here(out, CONFIRM_REST)
+    os.write(master, b"stop\x04\x04")
+    assert fake.wait_calls(2) == [("stop", STOP_TYPED, THOR), ("rest", False)]
+
+
+def test_a_phrase_typed_and_not_entered_when_the_terminal_goes_confirms_nothing(
+    fake, served
+):
+    master, slave = pty.openpty()
+    try:
+        os.write(master, b"rest\n")
+        out = served(slave)
+        answered_from_here(out, CONFIRM_REST)
+        os.write(master, b"path is clear\x04")  # handed over without its Enter
+        by = time.monotonic() + WAIT_S
+        while out.typed._buffer != b"path is clear":
+            assert time.monotonic() < by, "the program did not read the phrase"
+            time.sleep(0.01)
+        os.close(master)  # then the window closes
+        master = None
+        assert fake.wait_calls(1) == [("rest", False)]
+        assert out.typed.unterminated
+    finally:
+        for fd in (master, slave):
+            if fd is not None:
+                os.close(fd)
+
+
+def test_a_last_line_of_a_pipe_without_a_line_end_confirms_nothing(fake, served):
+    read_end, write_end = os.pipe()
+    try:
+        os.write(write_end, b"rest\npath is clear")
+        os.close(write_end)
+        served(read_end)
+        assert fake.wait_calls(1) == [("rest", False)]
+    finally:
+        os.close(read_end)
+
+
+def test_lines_read_before_the_terminal_went_away_answer_no_question():
+    master, slave = pty.openpty()
+    tty.setraw(slave)  # not in line mode: one read hands over every line typed
+    try:
+        os.write(master, b"rest\npath is clear\n")
+        lines = robot_main._FdLines(slave)
+        assert next(lines) == "rest"
+        assert lines._buffer == b"path is clear\n"  # read with the line before
+        os.close(master)  # the terminal goes away
+        master = None
+        assert lines.drop_typed_ahead() == ["path is clear"]
+        assert lines._buffer == b"" and next(lines, None) is None
+    finally:
+        for fd in (master, slave):
+            if fd is not None:
+                os.close(fd)
+
+
+def test_the_terminal_going_away_before_a_question_leaves_it_unanswered(fake):
+    fake.moves_arm = True
+    master, slave = pty.openpty()
+    tty.setraw(slave)
+    lines = robot_main._FdLines(slave)
+    drop, out = lines.drop_typed_ahead, Lines()
+
+    def gone_and_dropped() -> list[str]:
+        nonlocal master
+        os.close(master)  # just before the program looks at its input
+        master = None
+        return drop()
+
+    lines.drop_typed_ahead = gone_and_dropped
+    terminal = ThorTerminal(fake, lines, out)
+    try:
+        os.write(master, b"rest\npath is clear\n")
+        terminal.run()
+        assert fake.calls == [("rest", False)]
+    finally:
+        terminal.close()
+        for fd in (master, slave):
+            if fd is not None:
+                os.close(fd)
 
 
 @pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)

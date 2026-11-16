@@ -1120,10 +1120,22 @@ def referencing(unreferenced):
 
 def test_a_new_task_is_refused_while_the_reference_runs(referencing):
     h, release, done = referencing
+    checked: list[list[float]] = []
+    agent_checker = h.app._checkers.agent
+    check_pose = agent_checker.check_pose
+
+    def noted_check(pose):
+        checked.append(list(pose))
+        return check_pose(pose)
+
+    agent_checker.check_pose = noted_check
     refused = final(h, h.client.request_owner("agent"))
     assert (refused.status, refused.reason) == ("refused", JAWS_BUSY)
     assert JAWS_BUSY == "busy: a jaw command is running or waiting"
     assert h.app.snapshot().owner is Owner.NOBODY
+    # Refused at the first look: the task's pose was not read and checked.
+    assert checked == []
+    agent_checker.check_pose = check_pose
     release.set()
     assert done.wait().status == "completed" and h.arm.gripper_referenced()
     # The reference is over: the task is taken.
@@ -1160,8 +1172,12 @@ def test_a_new_task_is_refused_when_the_reference_began_during_its_pose_read(
 
 
 def test_a_move_and_a_jaw_command_are_refused_while_the_reference_runs(referencing):
+    """The second barrier behind the owner check.
+
+    The app makes nobody the owner for the whole of a reference, so the test
+    writes the agent into the authority by hand: no peer can get there.
+    """
     h, release, done = referencing
-    # No task is taken now. Were the agent the owner, it still commands nothing.
     seen = h.app.snapshot()
     with h.app._lock:
         h.app._authority.set_owner_if(
@@ -1171,11 +1187,94 @@ def test_a_move_and_a_jaw_command_are_refused_while_the_reference_runs(referenci
             owner_number=seen.owner_number,
         )
     assert h.app.snapshot().owner is Owner.AGENT
-    moved = final(h, h.client.move(FROM_RAISED, start_q=RAISED, **numbers(h)))
+    move_id = h.client.move(FROM_RAISED, start_q=RAISED, **numbers(h))
+    # With its permit a move that was taken would send its setpoints.
+    h.client.permit(move_id, len(FROM_RAISED) - 1)
+    moved = final(h, move_id)
     assert (moved.status, moved.reason) == ("refused", JAWS_BUSY)
-    jaws = final(h, h.client.gripper(0.5, **numbers(h)))
+    jaw_id = h.client.gripper(0.5, **numbers(h))
+    jaws = final(h, jaw_id)
     assert (jaws.status, jaws.reason) == ("refused", JAWS_BUSY)
+    # Neither was accepted first, and nothing waits behind the reference.
+    assert statuses(h, move_id) == statuses(h, jaw_id) == ["refused"]
+    h.idle()
     assert h.arm.sent == [] and h.arm.jaw_commands == []
+    release.set()
+    done.wait()
+    assert h.app._worker.wait_idle(WAIT_S)
+    h.idle()
+    assert h.arm.sent == [] and h.arm.jaw_commands == []
+
+
+def test_without_a_task_a_move_and_a_jaw_command_meet_the_owner_check(referencing):
+    h, release, done = referencing
+    # What a peer sees: nobody owns the arm during a reference.
+    moved = final(h, h.client.move(FROM_RAISED, start_q=RAISED, **numbers(h)))
+    jaws = final(h, h.client.gripper(0.5, **numbers(h)))
+    nobody = "control owner is nobody, not agent"
+    assert (moved.status, moved.reason) == ("refused", nobody)
+    assert (jaws.status, jaws.reason) == ("refused", nobody)
+    assert h.arm.sent == [] and h.arm.jaw_commands == []
+    release.set()
+    done.wait()
+
+
+def test_an_open_is_refused_while_the_reference_runs_and_taken_after_it(referencing):
+    h, release, done = referencing
+    open_id = h.client.open_jaws()
+    refused = final(h, open_id)
+    assert (refused.status, refused.reason) == ("refused", JAWS_BUSY)
+    assert statuses(h, open_id) == ["refused"]  # it never waited behind it
+    assert h.heard("refused")[-1][1] == f"open refused: {JAWS_BUSY}"
+    release.set()
+    assert done.wait().status == "completed" and h.arm.gripper_referenced()
+    assert h.app._worker.wait_idle(WAIT_S)
+    # The jaws stay where the reference left them until an open that is asked now.
+    assert h.arm.jaw_commands == []
+    opened = final(h, h.client.open_jaws())
+    assert opened.status == "completed"
+    assert opened.detail == {"outcome": "reached", "opening": 1.0}
+
+
+NOT_RETURNED = (
+    "a cancelled jaw command has not returned: until it does the jaws take no "
+    "other command, and rest and release are refused"
+)
+
+
+def test_a_stop_says_that_the_cancelled_jaw_command_has_not_returned(referencing):
+    h, release, done = referencing
+    # The driver's call is held: the STOP gives up waiting for it.
+    assert h.app.stop("typed stop", "thor_terminal") == 1
+    _, text, _ = h.heard("stop")[-1]
+    assert text == (
+        "STOP from thor_terminal: typed stop; the arm holds, stop number 1; "
+        f"{NOT_RETURNED}"
+    )
+    assert h.client.wait_event("stop").text == text  # the console is told too
+    rest = Done()
+    h.app.request_rest(True, rest)
+    assert (rest.wait().status, rest.results[0].reason) == (
+        "refused",
+        "a jaw command is running",
+    )
+    release.set()
+    assert done.wait().status == "cancelled"
+    assert h.app._worker.wait_idle(WAIT_S)
+    # A stop that finds no jaw command out says no such thing.
+    assert h.app.stop("typed stop", "thor_terminal") == 2
+    assert NOT_RETURNED not in h.heard("stop")[-1][1]
+    assert h.arm.torque_on() and h.arm.released_at == [] and h.arm.sent == []
+
+
+def test_a_fault_stop_says_that_the_cancelled_jaw_command_has_not_returned(
+    referencing,
+):
+    h, release, done = referencing
+    h.arm.set_fault("motor 3 overtemperature")
+    h.step()
+    _, text, _ = h.wait_local_event("fault")
+    assert text.startswith("FAULT-STOP: ") and text.endswith(f"; {NOT_RETURNED}")
     release.set()
     done.wait()
 

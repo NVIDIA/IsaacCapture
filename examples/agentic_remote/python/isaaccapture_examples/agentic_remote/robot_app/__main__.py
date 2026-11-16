@@ -15,6 +15,7 @@ APAI's driver itself refuses an arm it does not measure at rest.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import logging
 import os
@@ -121,6 +122,8 @@ LINK_NAME = "robot-app"
 # How often the program looks at the robot app, the dialer and its signals.
 _WATCH_S = 0.2
 _READ_BYTES = 4096
+# The most reads that take typed-ahead lines off a terminal before a question.
+_DROP_READS = 64
 
 # Longest one wait of the self-test takes, in real time.
 STEP_WAIT_S = 10.0
@@ -153,7 +156,53 @@ _say = _Lines()
 
 
 def _complain(text: str) -> None:
-    print(f"robot app: {text}", file=sys.stderr, flush=True)
+    """One line on the standard error; a terminal that is gone loses it."""
+    try:
+        print(f"robot app: {text}", file=sys.stderr, flush=True)
+    except (OSError, ValueError) as error:
+        _log.warning("the standard error cannot be written to (%r): %s", error, text)
+
+
+def _lossy(say: Say) -> Say:
+    """say for the lines the program writes itself once the robot app runs.
+
+    A terminal that is gone loses them and ends nothing: the robot app runs on
+    without its lines, as it does without the Thor terminal's.
+    """
+    lost = [False]
+
+    def tell(text: str) -> None:
+        try:
+            say(text)
+        except Exception as error:
+            if not lost[0]:
+                _log.warning("the terminal cannot be written to: %r", error)
+            lost[0] = True
+        else:
+            lost[0] = False
+
+    return tell
+
+
+def _let_go_of_dead_streams() -> None:
+    """Point a standard stream whose terminal is gone at the null device.
+
+    The text it did not take would fail the interpreter's last flush, and the
+    exit code would be 120 in place of main()'s.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (AttributeError, ValueError):
+            continue  # no such stream, or a closed one
+        except OSError:
+            with contextlib.suppress(AttributeError, OSError, ValueError):
+                null = os.open(os.devnull, os.O_WRONLY)
+                try:
+                    os.dup2(null, stream.fileno())
+                finally:
+                    os.close(null)
+                stream.flush()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -242,6 +291,13 @@ def _remote_link_missing() -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the robot app's command line; returns the exit code."""
+    try:
+        return _main(argv)
+    finally:
+        _let_go_of_dead_streams()
+
+
+def _main(argv: Sequence[str] | None) -> int:
     try:
         args = _parser().parse_args(argv)
     except SystemExit as exit_:  # argparse has printed the usage or the help
@@ -332,25 +388,41 @@ class _FdLines:
         self._buffer = b""
         self._ended = False
         self._closed = threading.Event()
+        # Whether the lines are a person's: decided once, while the terminal is there.
+        self._terminal = termios is not None and os.isatty(fd)
         # The line handed over last ended with the input, not with a newline.
         self.unterminated = False
 
     def close(self) -> None:
         self._closed.set()
 
-    def drop_typed_ahead(self) -> None:
+    def drop_typed_ahead(self) -> list[str]:
         """On a terminal, drop what was typed and not yet handed over.
 
-        Called by the thread that iterates. Input that is no terminal, a pipe,
-        is kept: its lines are a script's, not a person's.
+        Returns the whole lines dropped, so that a stop among them is not lost;
+        a line that was begun and not entered goes too. A terminal that is gone
+        ends the input. Called by the thread that iterates. Input that is no
+        terminal, a pipe, is kept: its lines are a script's, not a person's.
         """
+        if not self._terminal:
+            return []
+        held, self._buffer = self._buffer, b""
         try:
-            if termios is None or not os.isatty(self._fd):
-                return
+            # The terminal cannot say what it flushes: its whole lines are read.
+            for _ in range(_DROP_READS):
+                if not select.select([self._fd], [], [], 0)[0]:
+                    break
+                chunk = os.read(self._fd, _READ_BYTES)
+                if not chunk:
+                    # A typed end of the input, which goes too, or a terminal
+                    # that is gone: its flush then fails.
+                    break
+                held += chunk
             termios.tcflush(self._fd, termios.TCIFLUSH)
-        except (OSError, termios.error):
-            return  # the terminal is gone: the next read says so
-        self._buffer = b""
+        except (OSError, ValueError, termios.error):
+            self._ended = True  # the terminal is gone: nothing more is handed over
+        whole = held.split(b"\n")[:-1]
+        return [line.decode("utf-8", "replace") for line in whole]
 
     def __iter__(self) -> Iterator[str]:
         return self
@@ -399,12 +471,15 @@ def run_connected(
     lines of the Thor terminal; None reads the standard input. Ctrl+C is a STOP
     when this runs on the main thread: one pressed while the app starts is a
     STOP once it has started, and a SIGTERM then closes the app after the
-    start, so no start is left half-way with the motors enabled. signals are
-    the caller's, noted since before this call; None notes them from here on.
-    driver is what WELCOME declares.
+    start, so no start is left half-way with the motors enabled. A terminal
+    that closes ends neither the start nor the program: its SIGHUP is ignored
+    and the lines it does not take are lost. signals are the caller's, noted
+    since before this call; None notes them from here on. driver is what
+    WELCOME declares.
     """
     lines = typed_lines() if typed is None else typed
     signals = _StartSignals() if signals is None else signals
+    tell = _lossy(say)
     app = RobotApp(
         config,
         arm,
@@ -438,13 +513,13 @@ def run_connected(
                 _complain(NOT_AT_REST if held else MOTORS_MAY_BE_ON)
             return EXIT_FAILED
         if driver == DRIVER_REAL:
-            say(_connected_line(app, arm))
+            tell(_connected_line(app, arm))
         if on_main:
             terminal.install_signal_handlers()
             if signals.interrupts:  # Ctrl+C while the app started
                 terminal.interrupt()
         reader.start()
-        say(
+        tell(
             f"robot app: session {app.session_id[:8]}; dialing the robot link "
             f"service at {endpoint}"
         )
@@ -452,11 +527,11 @@ def run_connected(
         shown = ""
         while not app.wait_closed(_WATCH_S):
             if signals.terminated:
-                say("robot app: SIGTERM; closing with the motors left on")
+                tell("robot app: SIGTERM; closing with the motors left on")
                 break
             error = "" if app.link_alive else dialer.last_error
             if error and error != shown:
-                say(
+                tell(
                     f"robot app: no robot connection: {error}; dialing again every "
                     f"{config.connection.retry_s:g} s"
                 )
@@ -476,8 +551,9 @@ def run_connected(
 class _StartSignals:
     """SIGINT and SIGTERM, noted and not acted on, from before the app's start.
 
-    A start that Ctrl+C or SIGTERM ended half-way would leave the motors
-    enabled with no program. install() and restore() are for the main thread.
+    A start that Ctrl+C, SIGTERM or a closed terminal's SIGHUP ended half-way
+    would leave the motors enabled with no program. SIGHUP is ignored.
+    install() and restore() are for the main thread.
     """
 
     def __init__(self) -> None:
@@ -487,7 +563,10 @@ class _StartSignals:
         self._replaced: dict[int, Any] = {}
 
     def install(self) -> None:
-        """Note the two signals from here on; does nothing when installed."""
+        """Note the two signals and ignore SIGHUP from here on.
+
+        Does nothing when installed.
+        """
         if self._replaced:
             return
         noted = {signal.SIGINT: self.interrupts, signal.SIGTERM: self.terminated}
@@ -496,6 +575,11 @@ class _StartSignals:
             handler = signal.getsignal(number)
             self._replaced[number] = signal.SIG_DFL if handler is None else handler
             signal.signal(number, lambda *_, notes=notes: notes.append(1))
+        hangup = getattr(signal, "SIGHUP", None)  # absent on Windows
+        if hangup is not None:
+            handler = signal.getsignal(hangup)
+            self._replaced[hangup] = signal.SIG_DFL if handler is None else handler
+            signal.signal(hangup, signal.SIG_IGN)
 
     def restore(self) -> None:
         """Put back the handlers install() replaced."""
@@ -592,17 +676,18 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
 def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> bool:
     """Ask the three confirmations; True only when each was answered with yes.
 
-    The first other answer, or the end of the input, ends the asking. On a
-    terminal, what was typed before a question is dropped; a last line that the
-    end of the input cut short answers nothing.
+    The first other answer, or the end of the input, ends the asking. A
+    question is written first: on a terminal, what was typed before it was
+    written is dropped. A question that cannot be written and a last line that
+    the end of the input cut short answer nothing.
     """
     named = repr(printable(calibration.strip(), MAX_WORD_CHARS))
     total = len(REAL_DRIVER_QUESTIONS)
     for number, question in enumerate(REAL_DRIVER_QUESTIONS, start=1):
         asked = question.format(calibration=named)
-        drop_typed_ahead(typed)
-        say(f"Real driver, {number} of {total}: {asked} Type {YES} to confirm.")
         try:
+            say(f"Real driver, {number} of {total}: {asked} Type {YES} to confirm.")
+            drop_typed_ahead(typed)
             answer = next(typed, None)
         except (OSError, ValueError):  # the terminal is gone
             answer = None
@@ -637,9 +722,10 @@ def real_driver_refusal(
 
     In turn, with nothing built or sent: an AI agent's environment (environ
     None: the process's); a --calibration that is not the file's
-    camera_calibration_id; APAI's hold marker for the arm's motor bus; any
-    operator's confirmation file in APAI's hold folder, whatever arm it names:
-    with one APAI's driver would connect an arm it does not measure at rest.
+    camera_calibration_id; APAI's hold marker for the arm's motor bus; a hold
+    folder of APAI's that cannot be listed; any operator's confirmation file
+    in that folder, whatever arm it names: with one APAI's driver would
+    connect an arm it does not measure at rest.
     """
     marker = agent_environment(environ)
     if marker is not None:
@@ -663,6 +749,14 @@ def real_driver_refusal(
             f"hold: APAI's hold marker of {when} says {hold.get('reason')!r}. "
             "Connecting would cut the torque of an arm that may be raised. Do "
             "APAI's operator recovery first; a typed yes never releases a hold"
+        )
+    unlistable = apai_backend.hold_folder_unlistable()
+    if unlistable is not None:
+        return (
+            f"{NOT_CONNECTED}: APAI's hold folder cannot be listed ({unlistable}): "
+            "an operator's confirmation may lie in it, and APAI's driver would "
+            "find it by its name. Let the user who starts this program read and "
+            "enter the folder (its permissions), then start again"
         )
     on_file = apai_backend.confirmation_on_file()
     if on_file is not None:
@@ -756,13 +850,17 @@ def _real_driver(
             else NOT_CONFIRMED
         )
         if late is None and (signals.interrupts or signals.terminated):
-            late = NOT_CONFIRMED  # Ctrl+C or SIGTERM before the connect began
+            late = NOT_CONFIRMED  # Ctrl+C or SIGTERM while the checks were made
+        if late is None:
+            try:
+                say(CONNECTING)
+            except (OSError, ValueError):
+                late = NOT_CONFIRMED  # the terminal is gone, and its person
         if late is not None:
             if typed is None:
                 _end_input(lines)
             _complain(late)
             return EXIT_NOT_RUN
-        say(CONNECTING)
         return run_connected(
             config,
             arm,

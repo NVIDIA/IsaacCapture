@@ -1259,6 +1259,27 @@ def test_the_one_release_call_stands_behind_its_guards():
     assert calls("release_torque", tree) == [cut]
 
 
+def test_a_backends_connect_is_reached_only_with_apais_claim_switched_off():
+    # The real driver's connect cuts torque. With an operator's confirmation to
+    # claim, APAI's driver would cut it on an arm it does not measure at rest.
+    def connects(name: str, target: str) -> bool:
+        return name == "connect" and "backend" in words(target)
+
+    path = PACKAGE / "robot_app" / "apai_backend.py"
+    source = path.read_text(encoding="utf-8")
+    assert [(site.where, site.what) for site in package_sites(connects)] == [
+        ("ApaiArm.connect", "self._backend.connect")
+    ]
+    (guarded,) = (
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.With)
+        and "_no_confirmation_claim()" in ast.unparse(node.items[0].context_expr)
+    )
+    inside = sites(ast.unparse(guarded), "apai_backend.py", connects)
+    assert [site.what for site in inside] == ["self._backend.connect"]
+
+
 # The workstation agent side (agent/): the same rule
 
 

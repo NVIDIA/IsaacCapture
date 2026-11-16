@@ -33,6 +33,11 @@ RESET_EVENT = "reset"
 # sender, listed here or not, counts as a person's and cancels it.
 AGENT_SENDER = "agent"
 PERSON_SENDERS = ("console", "thor_terminal", "controller", "unknown")
+# Added to a stop's text when the jaw command it cancelled is still under way.
+JAW_COMMAND_OUT = (
+    "a cancelled jaw command has not returned: until it does the jaws take no "
+    "other command, and rest and release are refused"
+)
 
 _CHECKER_NAMES = ("agent", "human", "recovery")
 
@@ -93,12 +98,16 @@ class StopController:
         for name, checker in self._named_checkers():
             _attempt(problems, f"the {name} checker's halt", checker.halt, reason)
         why = f"STOP from {sender}: {reason}"
-        cancelled = self._stop_move_and_jaws(problems, why, cancel_wait=by_person)
+        cancelled, jaws_out = self._stop_move_and_jaws(
+            problems, why, cancel_wait=by_person
+        )
         text = f"{why}; the arm holds, stop number {number}"
         if state.stop_level is StopLevel.FAULT:
             text += f"; the fault-stop stays latched: {state.fault_reason}"
         if cancelled:
             text += "; the assistance wait is cancelled"
+        if jaws_out:
+            text += f"; {JAW_COMMAND_OUT}"
         data = {
             "reason": reason,
             "sender": sender,
@@ -123,7 +132,7 @@ class StopController:
             for name, checker in self._named_checkers():
                 _attempt(problems, f"the {name} checker's latch", checker.latch, reason)
         why = f"fault-stop: {reason}"
-        cancelled = self._stop_move_and_jaws(problems, why, cancel_wait=True)
+        cancelled, jaws_out = self._stop_move_and_jaws(problems, why, cancel_wait=True)
         text = (
             f"FAULT-STOP: {reason}; the arm holds until a person types reset, "
             f"stop number {number}"
@@ -132,6 +141,8 @@ class StopController:
             text += f"; latched earlier: {state.fault_reason}"
         if cancelled:
             text += "; the assistance wait is cancelled"
+        if jaws_out:
+            text += f"; {JAW_COMMAND_OUT}"
         data = {
             "reason": reason,
             "fault_reason": state.fault_reason,
@@ -167,19 +178,21 @@ class StopController:
 
     def _stop_move_and_jaws(
         self, problems: list[str], why: str, cancel_wait: bool
-    ) -> bool:
-        """Stop the running move and the jaws; True if a running wait was cancelled.
+    ) -> tuple[bool, bool]:
+        """Stop the running move and the jaws.
 
-        The wait is cancelled before the jaw stop, which can block for a moment:
-        the wait must not run out and ask for a return to rest meanwhile.
+        Returns whether a running wait was cancelled, and whether the jaw
+        command the stop cancelled has not returned. The wait is cancelled
+        before the jaw stop, which can block for a moment: the wait must not
+        run out and ask for a return to rest meanwhile.
         """
         _attempt(problems, "the motion stop request", self._request_motion_stop, why)
         cancelled = False
         if cancel_wait:
             cancel = self._wait.cancel
             cancelled = bool(_attempt(problems, "the wait's cancel", cancel, why))
-        _attempt(problems, "the jaw stop", self._gripper.stop_now)
-        return cancelled
+        jaws_out = _attempt(problems, "the jaw stop", self._gripper.stop_now)
+        return cancelled, jaws_out is True
 
     def _reset_refusal(
         self, stop_number_seen: int, owner_number_seen: int | None, arm: ArmPort

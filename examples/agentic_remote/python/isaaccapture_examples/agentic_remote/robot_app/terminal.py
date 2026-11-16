@@ -51,6 +51,10 @@ CONFIRM_REFERENCE = (
 BANNER = "Thor terminal: type stop, rest, release, quit or help"
 CTRL_C_NOTE = "Ctrl+C is STOP"
 INPUT_ENDED = "the Thor terminal's input ended"
+# Said in place of an answer when a stop was typed ahead of a question.
+STOP_AHEAD = (
+    "a stop typed before the question was raised as a STOP; the question is withdrawn"
+)
 HELP = (
     "stop       STOP: the arm holds where it is, motors on",
     f'rest       return the arm to rest; asks first for a typed "{PATH_IS_CLEAR}"',
@@ -64,8 +68,20 @@ HELP = (
 
 # Longest close() waits, in real time, for one of the terminal's threads.
 _JOIN_S = 2.0
+# Longest a question waits, in real time, to be written before it counts as
+# not asked. The thread that serves the typed lines serves none meanwhile.
+QUESTION_WRITE_S = 1.0
 # How much of an unknown command is shown back.
 _SHOWN = 40
+
+
+class _Question:
+    """A question on its way to the output thread, which notes how its write went."""
+
+    def __init__(self, line: str) -> None:
+        self.line = line
+        self.written = False
+        self.done = threading.Event()
 
 
 class TypedLines:
@@ -127,8 +143,10 @@ class ThorTerminal:
         self._input_ended = False
         self._write = _print_line if output is None else output
         self._write_failed = False
-        # A line, a flush() marker, or None to end the output thread.
-        self._out: queue.SimpleQueue[str | threading.Event | None] = queue.SimpleQueue()
+        # A line, a question, a flush() marker, or None to end the output thread.
+        self._out: queue.SimpleQueue[str | _Question | threading.Event | None] = (
+            queue.SimpleQueue()
+        )
         # Filled by the SIGINT handler: SimpleQueue.put() is reentrant, which a
         # threading.Event's set() is not.
         self._interrupts: queue.SimpleQueue[str | None] = queue.SimpleQueue()
@@ -312,14 +330,36 @@ class ThorTerminal:
     def _asked(self, question: str, phrase: str) -> bool:
         """Ask a question; True only when the next typed line is the phrase.
 
-        On a terminal, what was typed before the question is dropped.
+        The question is written first; one not written in time confirms nothing.
+        On a terminal, what was typed before it was written is dropped, and a
+        stop among it is a STOP that withdraws the question. A line that the
+        end of the input cut short confirms nothing.
         """
-        drop_typed_ahead(self._input)
-        self._say(question)
+        if not self._written(question):
+            return False
+        dropped = drop_typed_ahead(self._input)
+        if any(confirms(line, "stop") for line in dropped):
+            self._stop(STOP_TYPED)
+            self._say(STOP_AHEAD)
+            return False
+        if dropped:
+            self._say(_dropped_ahead(len(dropped)))
         answer = self._next_line()
         if confirms(answer, "stop"):
-            self._stop(STOP_TYPED)  # a stop is a STOP wherever it is typed
+            self._stop(STOP_TYPED)  # where a question waits a stop is a STOP
+            return False
+        if getattr(self._input, "unterminated", False):
+            return False  # typed and not entered
         return confirms(answer, phrase)
+
+    def _written(self, question: str) -> bool:
+        """Queue a question; True once the output thread has written it."""
+        asked = _Question(question)
+        with self._life:
+            if not self._started or self._closed:
+                return False
+            self._out.put(asked)
+        return asked.done.wait(QUESTION_WRITE_S) and asked.written
 
     def _request(self, what: str, request: Callable[[DoneFn], object]) -> None:
         """Ask the robot app for something; its final RESULT becomes one line."""
@@ -368,10 +408,14 @@ class ThorTerminal:
         while (item := self._out.get()) is not None:
             if isinstance(item, threading.Event):
                 item.set()
+            elif isinstance(item, _Question):
+                item.written = self._write_line(item.line)
+                item.done.set()
             else:
                 self._write_line(item)
 
-    def _write_line(self, line: str) -> None:
+    def _write_line(self, line: str) -> bool:
+        """Write one line; False when the terminal did not take it."""
         try:
             self._write(line)
         except Exception as error:
@@ -381,17 +425,24 @@ class ThorTerminal:
             self._write_failed = True
         else:
             self._write_failed = False
+        return not self._write_failed
 
 
-def drop_typed_ahead(lines: object) -> None:
-    """Drop the input typed so far, where the input can: before a question.
+def drop_typed_ahead(lines: object) -> list[str]:
+    """Drop the input typed so far, where the input can; the whole lines dropped.
 
-    Input with a drop_typed_ahead() of its own, the lines typed at a terminal,
-    drops it; any other input, a pipe or a script's lines, is left as it is.
+    Called once a question is written. Input with a drop_typed_ahead() of its
+    own, the lines typed at a terminal, drops it; any other input, a pipe or a
+    script's lines, is left as it is.
     """
     drop = getattr(lines, "drop_typed_ahead", None)
-    if drop is not None:
-        drop()
+    return [] if drop is None else list(drop() or ())
+
+
+def _dropped_ahead(count: int) -> str:
+    """The line that tells of typed-ahead lines that were dropped."""
+    lines = "1 line" if count == 1 else f"{count} lines"
+    return f"dropped what was typed before the question: {lines}"
 
 
 def _main_thread_only(what: str) -> None:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import random
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -194,7 +195,8 @@ def test_peer_host_drops_the_port(address, host):
     [
         ("0:0:0:0:0:0:0:1", "::1"),
         ("[0:0:0:0:0:0:0:1]:5000", "::1"),
-        ("[FE80::1]:5000", "fe80::1"),
+        # A link-local peer comes with the zone of the interface it dialed in on.
+        ("[FE80::1%eth0]:5000", "fe80::1%eth0"),
         ("::ffff:192.168.7.20", "192.168.7.20"),
         ("[::FFFF:192.168.7.20]:5000", "192.168.7.20"),
         ("[::ffff:c0a8:714]:5000", "192.168.7.20"),
@@ -753,7 +755,8 @@ def test_allowed_peers_are_the_configured_ones(folder):
     [
         ("0:0:0:0:0:0:0:1", "[::1]:5000"),
         ("::ffff:127.0.0.1", "127.0.0.1:5000"),
-        ("FE80::1", "[fe80::1]:5000"),
+        ("FE80::1%eth0", "[fe80::1%eth0]:5000"),
+        ("169.254.7.20", "[::ffff:169.254.7.20]:9"),
         ("192.168.7.20", "[::ffff:192.168.7.20]:9"),
         (" 192.168.7.20 ", "192.168.7.20:9"),
     ],
@@ -777,12 +780,44 @@ def test_an_allowed_peer_is_taken_in_any_spelling_of_its_address(
 
 def test_allowed_peers_are_kept_in_one_spelling():
     loaded = link_service_config(
-        {"allowed_peers": ["0:0:0:0:0:0:0:1", " 127.0.0.1 ", "FE80::1", "::1"]}
+        {"allowed_peers": ["0:0:0:0:0:0:0:1", " 127.0.0.1 ", "FE80::1%eth0", "::1"]}
     )
-    assert loaded.allowed_peers == ("::1", "127.0.0.1", "fe80::1", "::1")
+    assert loaded.allowed_peers == ("::1", "127.0.0.1", "fe80::1%eth0", "::1")
     assert LinkServiceConfig(allowed_peers=("::FFFF:10.0.0.2",)).allowed_peers == (
         "::ffff:10.0.0.2",
     )
+    # An IPv4 link-local address has no zone and is taken as it is.
+    assert link_service_config(
+        {"allowed_peers": ["169.254.7.20", "::ffff:169.254.7.20"]}
+    ).allowed_peers == ("169.254.7.20", "::ffff:169.254.7.20")
+
+
+def test_a_link_local_peer_is_reported_with_the_zone_of_its_interface():
+    # What the remote link's transport asks of the C library for a peer's text.
+    try:
+        index = socket.if_nametoindex("lo")
+    except (AttributeError, OSError):
+        pytest.skip("no interface named lo to take a zone from")
+    flags = socket.NI_NUMERICHOST | socket.NI_NUMERICSERV
+    host, port = socket.getnameinfo(("fe80::1", 5000, 0, index), flags)
+    assert (host, port) == ("fe80::1%lo", "5000")
+    assert peer_host(f"[{host}]:{port}") == "fe80::1%lo"
+    # The entry that takes this peer names the interface, not its number.
+    named = link_service_config({"allowed_peers": ["FE80::1%lo"]}).allowed_peers
+    assert named == ("fe80::1%lo",)
+
+
+def test_a_link_local_peer_is_taken_only_on_the_interface_its_entry_names(folder):
+    peers = list(link_service_config({"allowed_peers": ["fe80::1%eth0"]}).allowed_peers)
+    bench = Bench(folder, allowed_peers=peers)
+    try:
+        assert bench.dial("[fe80::1%eth1]:5000").refused.wait(WAIT_S)
+        assert bench.dial("[fe80::2%eth0]:5000").refused.wait(WAIT_S)
+        thor = bench.dial("[fe80::1%eth0]:5000")
+        until(lambda: bench.service.robot_connected)
+        assert not thor.refused.is_set()
+    finally:
+        bench.close()
 
 
 def test_a_second_robot_connection_is_refused_while_one_is_alive(bench):
@@ -1010,6 +1045,18 @@ def test_an_empty_file_gives_the_defaults(tmp_path):
         (
             {"allowed_peers": ["127.0.0.1", "192.0.2.10:47610"]},
             r"allowed_peers\[1\] must be an IP address, got '192\.0\.2\.10:47610'",
+        ),
+        # A link-local peer is reported with its interface's name: an entry
+        # without one, or with the interface's number, would never match.
+        (
+            {"allowed_peers": ["fe80::1"]},
+            r"allowed_peers\[0\] is a link-local address: write it with the name "
+            r"of this workstation's interface, as in fe80::1%eth0, got 'fe80::1'",
+        ),
+        (
+            {"allowed_peers": ["127.0.0.1", " FE80::1%2 "]},
+            r"allowed_peers\[1\] is a link-local address: write it with the name "
+            r"of this workstation's interface, as in fe80::1%eth0, got ' FE80::1%2 '",
         ),
         ({"log_level": "loud"}, r"log_level must be one of"),
         ({"local": {"max_clients": 0}}, r"local\.max_clients must be from 1"),

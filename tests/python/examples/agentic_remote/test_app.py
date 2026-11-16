@@ -2659,6 +2659,48 @@ def test_close_before_start_ends_the_gripper_worker(make_robot_app):
     assert h.arm.sent == [] and h.arm.released_at == []
 
 
+APP_LOGGER = "isaaccapture.examples.agentic_remote.app"
+
+
+def closing_records(caplog) -> list[str]:
+    """What the robot app logged of its close."""
+    said = [record.getMessage() for record in caplog.records]
+    return [line for line in said if line.startswith("robot app closed")]
+
+
+def test_close_after_a_connect_that_did_not_end_does_not_log_the_motors_as_off(
+    make_robot_app, caplog
+):
+    h = make_robot_app(start=False)
+
+    def enabled_and_then_failed() -> None:
+        # As a driver that enabled its motors and then met an error: the arm
+        # port does not count as connected, so its torque_on() stays False.
+        raise OSError("no answer")
+
+    h.arm.connect = enabled_and_then_failed
+    with caplog.at_level("INFO", logger=APP_LOGGER):
+        with pytest.raises(OSError, match="no answer"):
+            h.app.start()
+        assert h.arm.torque_on() is False
+        h.app.close()
+    assert closing_records(caplog) == [
+        "robot app closed; torque on: not known, the arm's connect did not end: "
+        "the motors may be on"
+    ]
+    assert h.arm.released_at == []
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_close_logs_what_the_arm_port_says_of_its_motors(
+    make_robot_app, caplog, started
+):
+    h = make_robot_app(start=started)
+    with caplog.at_level("INFO", logger=APP_LOGGER):
+        h.app.close()
+    assert closing_records(caplog) == [f"robot app closed; torque on: {started}"]
+
+
 # RESULTs, EVENTs and link messages the app does not take
 
 
