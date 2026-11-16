@@ -88,6 +88,10 @@ UNANSWERED_REMEDY = (
     "stop, then type the task again"
 )
 NO_TASK = "motion needs a task typed at the agent terminal"
+# A takeover makes a person the control owner; it is open until the person
+# gives the arm back at rest, also while a STOP has made nobody the owner.
+# No task takes the arm then.
+TAKEOVER_OPEN = "takeover not finished: give the arm back with right A at rest"
 CONSENT = "consent"
 OWNERSHIP = "ownership"
 _COUNT_WORDS = {1: "one step", 2: "two steps", 3: "three steps"}
@@ -98,6 +102,11 @@ _REMEDIES = (
     ("the motors are off", "restart the robot app at the Thor terminal"),
     ("stop number", "the robot's state changed meanwhile: type the task again"),
     ("owner number", "the robot's state changed meanwhile: type the task again"),
+    (
+        "takeover not finished",
+        "hold right A for 1 s with the arm at rest; no controller: see the "
+        'README, "A takeover that cannot be ended with right A"',
+    ),
     ("control owner is human", "takeover not finished: give the arm back with right A"),
     ("control owner is", "wait until nobody owns the arm, then type the task again"),
     ("fault-stop", "fault-stop: run the console command reset"),
@@ -726,8 +735,8 @@ def _ending(
 
 def _not_startable(state: RobotState) -> str | None:
     """Why no task can take the arm in this state, without asking anybody."""
-    if state.owner == "human":
-        return "takeover not finished: give the arm back with right A at rest"
+    if state.owner == "human" or _takeover_open(state):
+        return TAKEOVER_OPEN
     if state.owner != "nobody":
         return f"control owner is {state.owner}"
     if state.stop_level == "fault":
@@ -736,6 +745,13 @@ def _not_startable(state: RobotState) -> str | None:
     if not state.torque_on:
         return "the motors are off; restart the robot app"
     return None
+
+
+def _takeover_open(state: RobotState) -> bool:
+    """Whether ROBOT_STATE's health["human"] shows a takeover as open."""
+    health = state.health if isinstance(state.health, dict) else {}
+    human = health.get("human")
+    return isinstance(human, dict) and bool(human.get("takeover_open"))
 
 
 def _stop_count(harness: Any) -> Any:

@@ -40,9 +40,11 @@ from isaaccapture_examples.agentic_remote.console.console import (
     main,
 )
 from isaaccapture_examples.agentic_remote.console.status import (
+    event_bells,
     help_block,
     status_key,
     status_line,
+    takeover_text,
     welcome_line,
 )
 from isaaccapture_examples.agentic_remote.link_service.local import (
@@ -55,6 +57,7 @@ from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair,
 from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR
 from isaaccapture_examples.agentic_remote.protocol.local_messages import LocalStatus
 from isaaccapture_examples.agentic_remote.protocol.messages import (
+    HUMAN_MOVE_ID,
     Event,
     GripperState,
     Open,
@@ -70,8 +73,13 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
 from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app import waits
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
-from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    MotionState,
+    Owner,
+    StopLevel,
+)
 from isaaccapture_examples.agentic_remote.robot_app.terminal import TypedLines
+from isaaccapture_examples.agentic_remote.robot_app.text import LINE_KINDS
 from isaaccapture_examples.agentic_remote.testing import client as client_module
 from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
 from link_bench import Bench, robot_state, until, welcome
@@ -87,6 +95,60 @@ ASK_REST = 'Type "path is clear" to start'
 ASK_YES = 'Type "yes" to '
 TYPED_STOP = Stop(reason=console_cmd.STOP_REASON, sender="console")
 RAISED = [0.2, -0.15, 0.1, 0.0, 0.05, -0.05]
+# A takeover makes a person the control owner; the hand-back ends it at rest;
+# from the one to the other it is open. The human program is the workstation
+# program that reads the person's controller. The typed takeover and
+# hand-back, and the OWNER_REQUEST each sends:
+TYPED = [("takeover", "human"), ("handback", "handback")]
+POSSIBLE = "takeover: possible now: hold right B for 1 s with the grip released"
+NO_PROGRAM = "takeover: not possible: no human program is attached: start run_human.sh"
+NO_DATA = (
+    "takeover open: no controller data. To end it: type rest, then path is "
+    "clear; then start the human program and hold right A, or see the README, "
+    '"A takeover that cannot be ended with right A"'
+)
+SWITCHED_OFF = "human driving is switched off in this robot app's file (human.enabled)"
+LOST = "takeover: not possible: the robot connection is lost"
+TAKE_OVER_NOTE = "hold right B for 1 s with the grip released to take over"
+# LOCAL_STATUS with and without a human program attached.
+WITH_PROGRAM = LocalStatus(True, "", "s1", None, False, {"console": 1, "human": 1})
+WITHOUT_PROGRAM = LocalStatus(True, "", "s1", None, False, {"console": 1})
+
+
+def human_facts(**changes: Any) -> dict[str, Any]:
+    """ROBOT_STATE's health["human"] with nothing in a takeover's way."""
+    facts = {
+        "enabled": True,
+        "takeover_open": False,
+        "driving": False,
+        "needs_release": True,
+        "source": "teleop",
+        "seq": 7,
+        "round_trip_s": 0.02,
+        "note": "",
+        "ended": "",
+        "refusal": "",
+        "takeover": "",
+    }
+    assert set(changes) <= set(facts)
+    return {**facts, **changes}
+
+
+def with_human(
+    state: RobotState | None = None,
+    *,
+    stage: str = "ready",
+    age: float | None = 0.03,
+    contact_hold: bool = False,
+    **facts: Any,
+) -> RobotState:
+    """A ROBOT_STATE of a robot app with the human path: fresh controller data."""
+    return dataclasses.replace(
+        robot_state() if state is None else state,
+        teleop_stage=stage,
+        controller_age_s=age,
+        health={"human": human_facts(**facts), "contact_hold": contact_hold},
+    )
 
 
 class Desk:
@@ -208,6 +270,16 @@ def desk(robot: ScriptedRobot, desks: Callable[..., Desk]) -> Desk:
     return made
 
 
+@pytest.fixture
+def typed_robot(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ScriptedRobot]:
+    """The robot side of a service whose file allows the typed takeover."""
+    allowing = Bench(tmp_path_factory.mktemp("ot"), typed_takeover=True)
+    made = ScriptedRobot(allowing)
+    yield made
+    made.close()
+    allowing.close()
+
+
 # The wording table
 
 
@@ -296,6 +368,64 @@ def test_a_stop_typed_as_the_answer_is_a_stop_and_confirms_nothing(
     desk.wait("stop: taken.")
     desk.wait("not confirmed; nothing sent")
     assert robot.settled() == [TYPED_STOP]
+
+
+@pytest.mark.parametrize(("command", "sends"), TYPED)
+def test_takeover_and_handback_ask_yes_and_send_the_owner_request(
+    typed_robot: ScriptedRobot, desks: Callable[..., Desk], command: str, sends: str
+) -> None:
+    robot = typed_robot
+    desk = desks(robot.bench.path)
+    desk.wait("attached to the robot link service: robot connection up")
+    desk.sees(lambda state: True)
+    desk.type("help", command)
+    named = desk.wait(f"{command}  ")
+    assert named.endswith("(only if the robot link service's file allows it)")
+    desk.wait(ASK_YES)
+    desk.type("path is clear")  # not what was asked
+    desk.wait(f"{command} not confirmed; nothing sent")
+    assert robot.settled() == []
+    desk.type(command)
+    prompt = desk.wait(ASK_YES, 2)
+    asks, phrase = console_cmd.question(command, robot.state)
+    assert (prompt, phrase) == (asks.rstrip(), "yes")
+    desk.type(" YES ")
+    desk.wait(f"{command}: RESULT completed")
+    (message,) = robot.settled()
+    assert message == OwnerRequest(
+        message.command_id,
+        "s1",
+        4,
+        3,
+        request=sends,
+        reason="typed at the operator console",
+    )
+    # The state the answer is given for stands right above the question.
+    asked = desk.said.index(prompt)
+    assert desk.said[asked - 1] == console_cmd.state_text(robot.state)
+    # A refusal of the robot app is printed as it is: it names no buttons.
+    reason = "control owner is agent, not nobody"
+    robot.reply = lambda message: [Result(message.command_id, "refused", reason)]
+    desk.type(command)
+    desk.wait(ASK_YES, 3)
+    desk.type("yes")
+    refusal = desk.wait(f"{command}: RESULT refused: ")
+    assert refusal == f"{command}: RESULT refused: {reason}"
+
+
+@pytest.mark.parametrize(("command", "sends"), TYPED)
+def test_a_refusal_by_the_service_is_shown_with_the_buttons_to_use(
+    robot: ScriptedRobot, desk: Desk, command: str, sends: str
+) -> None:
+    # The service of `robot` is made as its file ships: the setting is off.
+    desk.type(command)
+    desk.wait(ASK_YES)
+    desk.type("yes")
+    assert desk.wait(f"{command}: RESULT refused: ") == (
+        f"{command}: RESULT refused: the console role may not send "
+        f'OWNER_REQUEST "{sends}"; use right B / right A on the controller'
+    )
+    assert robot.settled() == []  # nothing of it reached the robot app
 
 
 def test_quit_and_the_end_of_the_input_leave_the_console_and_send_nothing(
@@ -421,6 +551,28 @@ def test_stop_is_taken_while_a_rest_runs(on_the_app: tuple[Any, Desk, Any]) -> N
     assert h.arm.torque_on() and h.arm.released_at == []
     assert h.app.motion_state is MotionState.HOLD
     assert h.app.snapshot().stop_number == 1
+
+
+@pytest.mark.parametrize(("command", "sends"), TYPED)
+def test_a_typed_takeover_the_robot_app_refuses_rings_three_bells(
+    on_the_app: tuple[Any, Desk, Any], command: str, sends: str
+) -> None:
+    # No service here: the robot app itself answers, and human driving is off.
+    h, desk, _ = on_the_app
+    desk.sees(lambda state: True)
+    # The takeover line says so before it names the human program that is
+    # missing here too: starting one would change nothing.
+    desk.type("state")
+    assert desk.wait("takeover: ") == f"takeover: not possible: {SWITCHED_OFF}"
+    desk.type(command)
+    desk.wait(ASK_YES)
+    desk.type("yes")
+    refusal = desk.wait(f"{command}: RESULT refused: ")
+    assert "use right B" not in refusal
+    event = desk.wait(f"[refused] owner request '{sends}' refused: ")
+    assert event.startswith("\a\a\a[refused] ") and event.count("\a") == 3
+    h.idle()
+    assert h.app.snapshot().owner == "nobody" and h.arm.sent == []
 
 
 # Ctrl+C
@@ -647,7 +799,7 @@ def test_a_help_request_prints_the_reason_the_jaws_and_the_countdown(
     robot.thor.send(Event(2, "countdown", "110 s until the arm moves to rest"))
     desk.wait("[countdown] 110 s until the arm moves to rest")
     first = desk.said.index(f"[help_needed] {text}")
-    assert desk.said[first + 1 : first + 8] == [
+    assert desk.said[first + 1 : first + 9] == [
         "HELP NEEDED: no grasp found",
         "  jaws: loaded; they may be holding something",
         "  time left: 118 s; then the arm moves to rest by itself",
@@ -655,6 +807,7 @@ def test_a_help_request_prints_the_reason_the_jaws_and_the_countdown(
         "    stop   a person's STOP ends the wait; the arm holds until someone acts",
         '    rest   return the arm to rest now; asks for a typed "path is clear"',
         "  or give a new task at the agent program's terminal",
+        f"  {NO_PROGRAM}",
     ]
     # The status line keeps the wait and the jaws.
     line = desk.wait(" | wait 118 s | ")
@@ -677,6 +830,335 @@ def test_the_help_block_without_a_state_or_a_timed_return() -> None:
     ]
 
 
+# A person at the controller
+
+
+def test_takeover_text_repeats_the_thors_reason() -> None:
+    for why in (
+        SWITCHED_OFF,
+        "fault-stop latched: motor fault",
+        "the motors are off; restart the robot app",
+        "no fresh controller data: stage waiting_for_headset",
+        "a synthetic controller may drive only a simulated arm; this robot app "
+        "declares driver real",
+        "the live view is not fresh: no VIEW_STATUS has arrived; open the live "
+        "view page in a visible browser tab",
+    ):
+        refused = with_human(takeover=why)
+        assert takeover_text(refused, WITH_PROGRAM) == f"takeover: not possible: {why}"
+    # A robot app that reports nothing of the human path, and none at all.
+    assert takeover_text(robot_state(), WITH_PROGRAM) == (
+        "takeover: not possible: this robot app does not report it"
+    )
+    odd = dataclasses.replace(robot_state(), health={"human": {"takeover": None}})
+    assert takeover_text(odd, WITH_PROGRAM).endswith("does not report it")
+    assert takeover_text(None, WITH_PROGRAM) == (
+        "takeover: not possible: no ROBOT_STATE"
+    )
+    # What cannot be printed in the Thor's text becomes a space.
+    assert takeover_text(with_human(takeover="a\ab"), WITH_PROGRAM).endswith(": a b")
+
+
+def test_takeover_text_says_possible_when_all_is_there() -> None:
+    assert takeover_text(with_human(), WITH_PROGRAM) == POSSIBLE
+    # Right B is a STOP first: whoever owns the arm, a takeover can follow.
+    owned = with_human(robot_state(owner="agent"))
+    assert takeover_text(owned, WITH_PROGRAM) == POSSIBLE
+    # The console keeps no limit of its own: the Thor's word alone decides.
+    old = dataclasses.replace(with_human(stage="stale", age=9.0), view_age_s=None)
+    assert takeover_text(old, WITH_PROGRAM) == POSSIBLE
+
+
+def test_takeover_text_names_a_missing_human_program_first() -> None:
+    # Before the Thor's reason, before a robot app that reports nothing and
+    # before a missing ROBOT_STATE.
+    for state in (with_human(takeover=SWITCHED_OFF), robot_state(), None):
+        assert takeover_text(state, WITHOUT_PROGRAM) == NO_PROGRAM
+    none = dataclasses.replace(WITH_PROGRAM, roles={"console": 1, "human": 0})
+    assert takeover_text(with_human(), none) == NO_PROGRAM
+    assert takeover_text(with_human(), WITHOUT_PROGRAM) == NO_PROGRAM
+    # Not attached to the service: who is attached is not known.
+    assert takeover_text(with_human(takeover=SWITCHED_OFF), None) == (
+        f"takeover: not possible: {SWITCHED_OFF}"
+    )
+    assert takeover_text(with_human(), None) == POSSIBLE
+    # Human driving is off in the robot app's file: a human program would
+    # change nothing, so the Thor's word stands before the missing program.
+    off = with_human(enabled=False, takeover=SWITCHED_OFF)
+    assert takeover_text(off, WITHOUT_PROGRAM) == (
+        f"takeover: not possible: {SWITCHED_OFF}"
+    )
+    # Never "possible" without a human program, whatever the Thor says.
+    assert takeover_text(with_human(enabled=False), WITHOUT_PROGRAM) == NO_PROGRAM
+
+
+def test_takeover_text_says_a_lost_robot_connection_before_an_old_state() -> None:
+    # The console keeps its last ROBOT_STATE: it says nothing of the arm now.
+    lost = dataclasses.replace(WITH_PROGRAM, robot_connected=False)
+    for state in (with_human(), with_human(takeover=SWITCHED_OFF), robot_state()):
+        assert takeover_text(state, lost) == LOST
+    # Before the missing human program and the missing ROBOT_STATE too.
+    alone = dataclasses.replace(WITHOUT_PROGRAM, robot_connected=False)
+    assert takeover_text(with_human(), alone) == LOST
+    assert takeover_text(None, alone) == LOST
+    # A takeover that was open when the robot connection was lost stays so.
+    held = dataclasses.replace(robot_state(owner="human"), motion="hold")
+    for state in (held, robot_state()):
+        taken = with_human(state, takeover_open=True)
+        assert takeover_text(taken, lost) == (
+            "takeover open: the robot connection is lost"
+        )
+
+
+def test_an_open_takeover_without_a_headset_tells_the_operator_how_to_end_it() -> None:
+    held = dataclasses.replace(robot_state(owner="human"), motion="hold")
+    why = "no fresh controller data: stage no_controller"
+    for stage in ("", "stale", "no_controller", "no_server"):
+        for start in (held, robot_state(owner="human"), robot_state()):
+            lost = with_human(start, stage=stage, takeover_open=True, takeover=why)
+            assert takeover_text(lost, WITH_PROGRAM) == NO_DATA
+    # A human program that left: its last stage is still shown for a while.
+    left = with_human(held, takeover_open=True)
+    assert takeover_text(left, WITHOUT_PROGRAM) == NO_DATA
+    # With the controller there the line says what the takeover needs next.
+    assert takeover_text(left, WITH_PROGRAM) == "takeover open: a person owns the arm"
+    stopped = dataclasses.replace(held, owner="nobody")
+    assert takeover_text(with_human(stopped, takeover_open=True), WITH_PROGRAM) == (
+        "takeover open: nobody owns the arm: hold right B for 1 s to take it again"
+    )
+    for owner in ("human", "nobody"):
+        at_rest = with_human(robot_state(owner=owner), takeover_open=True)
+        assert takeover_text(at_rest, WITH_PROGRAM) == (
+            "takeover open: at rest: hold right A for 1 s to give the arm back"
+        )
+    # A return to rest under way: the recovery owns the arm until it ends.
+    returning = dataclasses.replace(held, owner="recovery", motion="moving")
+    assert takeover_text(with_human(returning, takeover_open=True), None) == (
+        "takeover open: recovery owns the arm"
+    )
+    # Nobody owns the arm and the Thor would refuse right B: its word, no
+    # button. A person who owns the arm needs no new takeover.
+    view = (
+        "the live view is not fresh: the view is not live; open the live view "
+        "page in a visible browser tab"
+    )
+    facts = {"takeover_open": True, "takeover": view}
+    assert takeover_text(with_human(stopped, **facts), WITH_PROGRAM) == (
+        f"takeover open: nobody owns the arm: a new takeover is not possible: {view}"
+    )
+    assert takeover_text(with_human(held, **facts), WITH_PROGRAM) == (
+        "takeover open: a person owns the arm"
+    )
+    # The hand-back at rest does not need the live view.
+    assert takeover_text(with_human(robot_state(), **facts), WITH_PROGRAM) == (
+        "takeover open: at rest: hold right A for 1 s to give the arm back"
+    )
+    # A fault-stop refuses the takeover and the hand-back alike, away from
+    # rest and at rest, with a controller and without: reset comes first.
+    facts["takeover"] = "fault-stop latched: motor 3 over temperature"
+    for start in (stopped, robot_state()):
+        for stage in ("ready", "no_controller"):
+            fault = dataclasses.replace(start, stop_level="fault")
+            latched = with_human(fault, stage=stage, **facts)
+            assert takeover_text(latched, WITH_PROGRAM) == (
+                "takeover open: a fault-stop is latched: type reset first"
+            )
+
+
+def test_the_help_block_says_whether_a_takeover_is_possible(
+    robot: ScriptedRobot, desk: Desk
+) -> None:
+    event = Event(1, "help_needed", "HELP NEEDED: x", {"reason": "no grasp found"})
+    # The block's last line, below what can be typed.
+    block = help_block(event, with_human(), WITH_PROGRAM)
+    assert len(block) == 8 and block[-1] == f"  {POSSIBLE}"
+    why = "the live view is not fresh: the view is not live"
+    block = help_block(event, with_human(takeover=why), WITH_PROGRAM)
+    assert block[-1] == f"  takeover: not possible: {why}"
+    # At the console the line counts who is attached to the service: no human
+    # program here, whatever the robot app says.
+    facts = {"human": human_facts()}
+    robot.show(teleop_stage="ready", controller_age_s=0.03, health=facts)
+    desk.sees(lambda state: "human" in state.health)
+    robot.thor.send(event)
+    desk.wait(f"  {NO_PROGRAM}")
+    first = desk.said.index("[help_needed] HELP NEEDED: x")
+    assert desk.said[first + 8] == f"  {NO_PROGRAM}"
+    # Once one is attached, the robot app's word is repeated.
+    robot.bench.client("human")
+    until(
+        lambda: desk.console._station.carrier.status.roles.get("human") == 1,
+        "the human program at the console",
+    )
+    robot.thor.send(dataclasses.replace(event, seq=2))
+    desk.wait(f"  {POSSIBLE}")
+
+
+def test_state_prints_the_takeover_line(
+    robot: ScriptedRobot, desks: Callable[..., Desk], tmp_path: Path
+) -> None:
+    desk = desks(robot.bench.path, clock=FakeClock(), tick_s=None)
+    desk.wait("attached to the robot link service")
+    desk.sees(lambda state: True)
+    desk.type("state")
+    desk.wait(NO_PROGRAM)
+    # It is the last line, below the state and the status line.
+    assert desk.said[-3] == console_cmd.state_text(robot.state)
+    assert " | owner nobody #4 | " in desk.said[-2] and desk.said[-1] == NO_PROGRAM
+    # An open takeover: how it ends.
+    facts = {"human": human_facts(takeover_open=True)}
+    robot.show(owner="human", motion="hold", health=facts)
+    desk.sees(lambda state: state.owner == "human")
+    desk.type("state")
+    desk.wait(NO_DATA)
+    assert " | owner human #4 | " in desk.said[-2] and desk.said[-1] == NO_DATA
+    # Not attached: nothing is known of the robot.
+    alone = desks(str(tmp_path / "none.sock"), tick_s=None)
+    alone.wait("cannot attach to")
+    alone.type("state")
+    alone.wait("takeover: not possible: no ROBOT_STATE")
+    assert alone.said[-1] == "takeover: not possible: no ROBOT_STATE"
+
+
+def test_the_status_line_shows_the_headset_the_controller_age_and_the_note() -> None:
+    ready = with_human(note=TAKE_OVER_NOTE)
+    assert status_line(None, ready, WITH_PROGRAM, 0.04).endswith(
+        " | permit none | view none | headset ready | controller 0.03 s | "
+        f"note: {TAKE_OVER_NOTE} | state 0.04 s"
+    )
+    # A stage without controller data has no age to show.
+    waiting = with_human(stage="waiting_for_headset", age=None)
+    assert status_line(None, waiting, WITH_PROGRAM, 0.04).endswith(
+        " | view none | headset waiting_for_headset | state 0.04 s"
+    )
+    # A person owns the arm, after a contact, before the first new squeeze.
+    owned = with_human(
+        robot_state(owner="human"),
+        age=0.127,
+        takeover_open=True,
+        contact_hold=True,
+        note="release the grip, then squeeze it to move\a",
+    )
+    assert status_line(None, owned, WITH_PROGRAM, 0.04).endswith(
+        " | view none | headset ready | controller 0.13 s | takeover open | "
+        "needs release | contact hold | note: release the grip, then squeeze "
+        "it to move  | state 0.04 s"
+    )
+    # Under any other owner the needs-release flag asks nothing of anybody.
+    assert "needs release" not in status_line(None, ready, WITH_PROGRAM, 0.04)
+    released = with_human(robot_state(owner="human"), needs_release=False)
+    assert "needs release" not in status_line(None, released, WITH_PROGRAM, 0.04)
+    # A robot app without the human path: the line is as it was.
+    assert status_line(None, robot_state(), WITH_PROGRAM, 0.04).endswith(
+        " | torque on | permit none | view none | state 0.04 s"
+    )
+
+
+def test_a_human_drive_shows_as_moving_and_human_driving() -> None:
+    driven = dataclasses.replace(
+        robot_state(owner="human", owner_number=6),
+        motion="moving",
+        move_id=HUMAN_MOVE_ID,
+        move_index=14,
+        move_total=0,
+    )
+    facts = {"takeover_open": True, "needs_release": False}
+    driving = with_human(driven, driving=True, **facts)
+    line = status_line(None, driving, WITH_PROGRAM, 0.02)
+    assert " | owner human #6 | stop none #0 | moving 14/0 | jaws " in line
+    assert line.endswith(
+        " | headset ready | controller 0.03 s | human driving | takeover open | "
+        "state 0.02 s"
+    )
+    # The grip is released: the arm holds and the person keeps it.
+    held = dataclasses.replace(driven, motion="hold", move_id="", move_index=0)
+    line = status_line(None, with_human(held, **facts), WITH_PROGRAM, 0.02)
+    assert " | hold | jaws " in line and "human driving" not in line
+    assert " | controller 0.03 s | takeover open | state 0.02 s" in line
+
+
+def test_a_new_status_line_is_printed_when_the_note_or_the_takeover_changes(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    # The key: each of these facts alone makes a new line due; an age does not.
+    shown = with_human()
+    for change in (
+        {"stage": "stale"},
+        {"contact_hold": True},
+        {"enabled": False},
+        {"takeover_open": True},
+        {"driving": True},
+        {"needs_release": False},
+        {"note": "squeeze the grip to move"},
+        {"ended": "contact on joint index 2"},
+        {"takeover": "no fresh controller data: stage stale"},
+    ):
+        changed = status_key(with_human(**change), WITH_PROGRAM)
+        assert changed != status_key(shown, WITH_PROGRAM), change
+    assert status_key(with_human(age=0.9), WITH_PROGRAM) == (
+        status_key(shown, WITH_PROGRAM)
+    )
+    # At the console, on its own clock.
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.sees(lambda state: True)
+
+    def lines(age: float = 0.03, **facts: Any) -> int:
+        """Show these facts a second later; the status lines printed so far."""
+        health = {"human": human_facts(**facts)}
+        robot.show(teleop_stage="ready", controller_age_s=age, health=health)
+        desk.sees(lambda state: state.seq == robot.state.seq)
+        clock.advance(1.0)
+        desk.console.tick()
+        assert desk.console._flush()
+        return desk.count(" | owner nobody #4 | ")
+
+    assert lines(note=TAKE_OVER_NOTE) == 1
+    assert f" | controller 0.03 s | note: {TAKE_OVER_NOTE} | state " in desk.said[-1]
+    assert lines(age=0.05, note=TAKE_OVER_NOTE) == 1  # only an age moved
+    squeeze = "squeeze the grip to move"
+    assert lines(note=squeeze) == 2
+    assert f" | note: {squeeze} | state " in desk.said[-1]
+    # Why no takeover is possible is not in the line; `state` prints it.
+    stale = "the live view is not fresh: 0.612 s old, the limit is 0.5 s"
+    assert lines(note=squeeze, takeover=stale) == 3
+    # The seconds in that reason move all the time: no line for them.
+    assert lines(note=squeeze, takeover=stale.replace("0.612", "0.731")) == 3
+    assert lines(note=squeeze) == 4
+
+
+def test_the_status_line_says_no_human_program_when_human_driving_is_on_and_none_is_attached() -> (
+    None
+):
+    on = with_human()
+    line = status_line(None, on, WITHOUT_PROGRAM, 0.04)
+    # In place of the stage, which outlasts a human program that left.
+    assert line.endswith(
+        " | view none | no human program | controller 0.03 s | state 0.04 s"
+    )
+    assert "headset" not in line
+    attached = status_line(None, on, WITH_PROGRAM, 0.04)
+    assert " | headset ready | " in attached and "no human program" not in attached
+    # Also with a takeover open, whatever the setting says.
+    taken = with_human(enabled=False, stage="", age=None, takeover_open=True)
+    assert status_line(None, taken, WITHOUT_PROGRAM, 0.04).endswith(
+        " | view none | no human program | takeover open | state 0.04 s"
+    )
+    # Not with human driving off and no takeover open.
+    off = with_human(enabled=False)
+    line = status_line(None, off, WITHOUT_PROGRAM, 0.04)
+    assert " | headset ready | " in line and "no human program" not in line
+    # Not without a LOCAL_STATUS: who is attached is not known then.
+    line = status_line(None, on, None, 0.04)
+    assert " | headset ready | " in line and "no human program" not in line
+    # Not for a robot app without the human path.
+    assert "no human program" not in status_line(
+        None, robot_state(), WITHOUT_PROGRAM, 0.04
+    )
+    # A human program that attaches or leaves makes a new line due.
+    assert status_key(on, WITHOUT_PROGRAM) != status_key(on, WITH_PROGRAM)
+
+
 def test_the_bell_event_rings_the_bell(robot: ScriptedRobot, desk: Desk) -> None:
     robot.thor.send(Event(1, "bell", "ARM WILL MOVE TO REST in 10 s"))
     robot.thor.send(Event(2, "countdown", "10 s\a left"))
@@ -686,6 +1168,77 @@ def test_the_bell_event_rings_the_bell(robot: ScriptedRobot, desk: Desk) -> None
     # Only the kind rings: a bell character in a text is printed as a space.
     assert "[countdown] 10 s  left" in desk.said
     assert sum("\a" in line for line in desk.said) == 1
+
+
+def test_the_bells_tell_a_drive_end_a_takeover_and_a_refusal_apart(
+    robot: ScriptedRobot, desk: Desk
+) -> None:
+    # The wearer of the headset cannot read: one bell for the end of a human
+    # drive, two for a takeover that began or ended, three for a refused one.
+    heard = [
+        (
+            "human",
+            "human drive ended: controller data stale (0.31 s old); the arm "
+            "holds; release the grip and squeeze again",
+            1,
+        ),
+        (
+            "owner",
+            "TAKEOVER: a person owns the arm, owner number 7; release the grip, "
+            "then squeeze it to move",
+            2,
+        ),
+        ("owner", "takeover ended: the arm is given back; nobody owns it", 2),
+        (
+            "refused",
+            "owner request 'human' refused: no fresh controller data: stage stale",
+            3,
+        ),
+        ("refused", "owner request 'handback' refused: no takeover is open", 3),
+        # No bell: another owner change, another refusal, another kind.
+        ("owner", "the agent owns the arm, owner number 8", 0),
+        ("refused", "owner request 'agent' refused: takeover not finished", 0),
+        ("refused", "MOVE refused: stale stop number", 0),
+        ("note", "TAKEOVER: no owner event", 0),
+    ]
+    for seq, (kind, text, bells) in enumerate(heard, 1):
+        event = Event(seq, kind, text)
+        assert event_bells(event) == bells
+        robot.thor.send(event)
+    desk.wait("[note] TAKEOVER: no owner event")
+    for kind, text, bells in heard:
+        (line,) = (line for line in desk.said if line.endswith(f"[{kind}] {text}"))
+        assert line == "\a" * bells + f"[{kind}] {text}"
+    assert event_bells(Event(1, "bell", "ARM WILL MOVE TO REST in 10 s")) == 1
+
+
+def test_a_refused_takeover_rings_through_a_flood_of_other_refusals(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.wait("attached to the robot link service")
+    # More kinds of refusal in one second than the console tells apart.
+    for seq in range(1, LINE_KINDS + 3):
+        robot.thor.send(Event(seq, "refused", f"MOVE refused: reason number {seq}"))
+    taken = "owner request 'human' refused: no fresh controller data: stage stale"
+    for seq in range(100, 103):  # the same refusal three times in that second
+        robot.thor.send(Event(seq, "refused", taken))
+    back = "owner request 'handback' refused: no takeover is open"
+    robot.thor.send(Event(103, "refused", back))
+    robot.thor.send(Event(104, "note", "the end"))
+    desk.wait("[note] the end")
+    assert desk.count("[refused] MOVE refused: reason number") == LINE_KINDS
+    # Each of the two rings three times, once: its repeats are counted.
+    assert [line for line in desk.said if "owner request" in line] == [
+        f"\a\a\a[refused] {taken}",
+        f"\a\a\a[refused] {back}",
+    ]
+    clock.advance(1.5)  # the second is over
+    desk.console.tick()
+    desk.wait("2 more refusals of other kinds")
+    assert desk.wait("2 more like: ") == f"2 more like: [refused] {taken}"
+    assert sum(line.count("\a") for line in desk.said) == 6
 
 
 def test_a_refusal_of_another_client_is_shown(robot: ScriptedRobot, desk: Desk) -> None:
@@ -735,6 +1288,9 @@ def test_a_lost_robot_connection_is_announced_once(
     desk.type("rest", "stop")
     desk.wait("rest: no ROBOT_STATE to quote (robot connection lost")
     assert desk.wait("stop: STOP was not delivered") == f"\astop: {STOP_UNDELIVERED}"
+    # The last ROBOT_STATE is kept and shown, and says nothing of a takeover.
+    desk.type("state")
+    assert desk.wait("takeover: ") == LOST
     time.sleep(0.3)
     assert desk.count("ROBOT CONNECTION LOST") == 1
 
@@ -1430,6 +1986,18 @@ def test_the_event_kinds_are_the_robot_apps() -> None:
     assert status_module.KIND_BELL == waits.BELL
     assert status_module.KIND_REFUSED == app_module.EVENT_REFUSED
     assert status_module.KIND_HELP_NEEDED == app_module.EVENT_HELP_NEEDED
+    assert status_module.KIND_HUMAN == app_module.EVENT_HUMAN
+    assert status_module.KIND_OWNER == app_module.EVENT_OWNER
+    # So are the texts that ring twice and the words of ROBOT_STATE it reads.
+    taken = Event(1, app_module.EVENT_OWNER, app_module.TAKEN_OVER.format(number=7))
+    assert event_bells(taken) == 2
+    assert event_bells(Event(1, app_module.EVENT_OWNER, app_module.HANDED_BACK)) == 2
+    assert status_module._STAGE_READY == app_module.STAGE_READY
+    assert status_module._REST_HOLD == MotionState.REST_HOLD.value
+    assert status_module._OWNER_HUMAN == Owner.HUMAN.value
+    assert status_module._OWNER_NOBODY == Owner.NOBODY.value
+    assert status_module._STOP_FAULT == StopLevel.FAULT.value
+    assert SWITCHED_OFF == app_module.HUMAN_OFF
 
 
 def test_the_console_holds_no_copy_of_a_send() -> None:

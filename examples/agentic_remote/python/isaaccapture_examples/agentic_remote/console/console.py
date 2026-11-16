@@ -5,9 +5,13 @@
 
 A line printer on the local API in the role "console": it prints the robot
 connection, the ROBOT_STATE, every EVENT and every refusal, and sends what the
-operator types. RESET, OPEN, RELEASE, SHUTDOWN and rest go out through
-agent/console_cmd.py, which stays their only sender. It imports no APAI and
-no Isaac Capture.
+operator types. RESET, OPEN, RELEASE, SHUTDOWN, rest and the typed takeover
+and hand-back go out through agent/console_cmd.py, which stays their only
+sender. It imports no APAI and no Isaac Capture.
+
+A takeover makes a person the control owner; the hand-back ends it at rest.
+The person wears a headset and cannot read: the console rings for what
+happens to a takeover (status.event_bells).
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from ..agent.console_cmd import (
     STOP_REASON,
     UNDELIVERED,
     NotConfirmed,
+    buttons_hint,
     new_session,
     new_session_text,
     question,
@@ -50,12 +55,13 @@ from ..robot_app.clock import SystemClock
 from ..robot_app.text import MAX_OUT_CHARS, MAX_WORD_CHARS, LineLimit, printable
 from ..testing.client import ACCEPTED, WorkstationClient
 from .status import (
-    KIND_BELL,
     KIND_HELP_NEEDED,
     KIND_REFUSED,
+    event_bells,
     help_block,
     status_key,
     status_line,
+    takeover_text,
     welcome_line,
 )
 
@@ -101,6 +107,8 @@ BANNER = (
     "operator console: type stop, reset, rest, open, release, shutdown, state, "
     "attach, help or quit; Ctrl+C is STOP"
 )
+# The typed takeover and hand-back are a fallback for the controller's buttons.
+IF_ALLOWED = "(only if the robot link service's file allows it)"
 HELP = (
     "stop      STOP: the arm holds where it is, motors on; ends a running task",
     "reset     clear a fault-stop; starts nothing",
@@ -108,6 +116,8 @@ HELP = (
     'open      open the jaws; asks first for a typed "yes"',
     "release   switch the motors off; the robot app does it only at measured rest",
     "shutdown  rest, motors off, end the robot app; asks first",
+    f"takeover  a person takes the arm, as with right B; asks first {IF_ALLOWED}",
+    f"handback  ends a takeover at rest, as with right A; asks first {IF_ALLOWED}",
     "state     the robot connection and the newest ROBOT_STATE; sends nothing",
     "attach    try once more to attach to the robot link service",
     "help      this list",
@@ -183,6 +193,9 @@ class Console:
         self._flush_input = flush_input
         self._tick_s = tick_s
         self._refusals = LineLimit(self._clock)
+        # The refusals that ring, counted apart: a flood of other refusals
+        # never uses up the second in which a refused takeover must ring.
+        self._rung = LineLimit(self._clock)
         # A line, a flush marker, or None to end the writer.
         self._out: queue.SimpleQueue[str | threading.Event | None] = queue.SimpleQueue()
         # Filled by interrupt(): SimpleQueue.put() is safe in a signal handler.
@@ -311,14 +324,18 @@ class Console:
     def _on_event(self, event: Event) -> None:
         kind = printable(event.kind, MAX_WORD_CHARS)
         line = f"[{kind}] {printable(event.text, MAX_OUT_CHARS)}"
+        bells = event_bells(event)
         self._say_repeats()
-        if event.kind == KIND_REFUSED and not self._refusals.allow(line):
-            return  # counted; said once its second is over
-        self._say(BELL_CHAR + line if event.kind == KIND_BELL else line)
+        if event.kind == KIND_REFUSED:
+            limit = self._rung if bells else self._refusals
+            if not limit.allow(line):
+                return  # counted; said once its second is over
+        self._say(BELL_CHAR * bells + line)
         if event.kind == KIND_HELP_NEEDED:
             with self._lock:
-                state = self._state
-            for text in help_block(event, state):
+                station, state = self._station, self._state
+            status = None if station is None else station.carrier.status
+            for text in help_block(event, state, status):
                 self._say(text)
 
     def _on_result(self, result: Result) -> None:
@@ -334,7 +351,7 @@ class Console:
             station.client.forget(result.command_id)
         text = printable(result_text(result), MAX_OUT_CHARS)
         if command is not None:
-            self._say(f"{command}: {text}")
+            self._say(f"{command}: {text}{buttons_hint(command, result)}")
         elif result.status == "refused":
             line = f"(another client) {text}"
             self._say_repeats()
@@ -342,11 +359,12 @@ class Console:
                 self._say(line)
 
     def _say_repeats(self) -> None:
-        for line, count in self._refusals.ended():
-            if line is None:
-                self._say(f"{count} more refusals of other kinds")
-            else:
-                self._say(f"{count} more like: {line}")
+        for limit in (self._refusals, self._rung):
+            for line, count in limit.ended():
+                if line is None:
+                    self._say(f"{count} more refusals of other kinds")
+                else:
+                    self._say(f"{count} more like: {line}")
 
     # Time
 
@@ -674,9 +692,11 @@ class Console:
         with self._lock:
             self._status_at = None  # the status line is due now
         self._say_status(now)
+        status = None if station is None else station.carrier.status
+        self._say(takeover_text(state, status))
 
     def _command(self, command: str) -> None:
-        """reset, rest, open, release or shutdown: ask, then console_cmd sends it."""
+        """reset or a command of CONFIRMED: ask, then console_cmd sends it."""
         with self._lock:
             station, state = self._station, self._state
         if station is None or not station.carrier.alive:
@@ -867,7 +887,8 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "The operator console: shows the robot connection, the robot's state "
             "and its events, and sends the typed commands stop, reset, rest, "
-            "open, release and shutdown through the robot link service."
+            "open, release and shutdown through the robot link service; takeover "
+            "and handback too, where that service's file allows it."
         ),
     )
     parser.add_argument(

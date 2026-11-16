@@ -37,8 +37,9 @@ from isaaccapture_examples.agentic_remote.agent.task_gate import (
 )
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair, send
 from isaaccapture_examples.agentic_remote.protocol.messages import Result
+from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import Owner
-from link_bench import WAIT_S, until
+from link_bench import WAIT_S, robot_state, until
 
 apai = pytest.mark.apai
 
@@ -356,6 +357,48 @@ def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     assert rig.kinds() == []
 
 
+# A takeover makes a person the control owner; it is open until the person
+# gives the arm back at rest, also while a STOP has made nobody the owner.
+TAKEOVER_OPEN = "takeover not finished: give the arm back with right A at rest"
+
+
+def test_a_task_is_not_started_while_a_takeover_is_open(rig: Rig) -> None:
+    # The gate's text is the robot app's own for the same refusal.
+    assert task_gate.TAKEOVER_OPEN == app_module.TAKEOVER_OPEN == TAKEOVER_OPEN
+    # What ROBOT_STATE's health["human"] says of a takeover, as the gate reads it.
+    nobody = robot_state()
+    for human, reason in (
+        ({"takeover_open": True}, TAKEOVER_OPEN),
+        ({"takeover_open": False}, None),
+        ({}, None),
+        (None, None),
+    ):
+        state = dataclasses.replace(nobody, health={"human": human})
+        assert task_gate._not_startable(state) == reason
+    assert task_gate._not_startable(nobody) is None  # a robot app without the key
+    # A STOP made nobody the owner while a person's takeover is open.
+    real, taken = rig.link.state, True
+
+    def state_with_the_takeover(*args: Any, **kwargs: Any) -> Any:
+        shown = real(*args, **kwargs)
+        human = {**(shown.health.get("human") or {}), "takeover_open": taken}
+        return dataclasses.replace(shown, health={**shown.health, "human": human})
+
+    rig.link.state = state_with_the_takeover
+    result = rig.task(lambda: rig.execute("grasp_object"))
+    assert result["refused"] == "ownership"
+    assert result["motion_block_reason"] == TAKEOVER_OPEN
+    # Nobody was asked and nothing was sent.
+    assert rig.kinds() == [] and rig.gate.requests == []
+    assert rig.owner() == "nobody" and rig.h.heard("help_needed") == []
+    assert rig.said[-1] == f"motion refused: {TAKEOVER_OPEN}; no command sent"
+    # Once the arm was given back, the same task is asked for and granted.
+    taken = False
+    rig.task(lambda: rig.execute("grasp_object") and report(True))
+    assert rig.kinds()[:3] == ["ask", "request", "result"]
+    assert rig.of("result")[0][1:] == ("agent", "completed")
+
+
 def answer_late(rig: Rig, delay_s: float) -> None:
     """The robot app answers the next OWNER_REQUEST "agent" delay_s late."""
     app = rig.h.app
@@ -607,6 +650,10 @@ def test_a_refusal_by_the_thor_names_the_remedy_and_ends_the_tasks_motion(
         ("the motors are off; restart the robot app", "restart the robot app"),
         ("owner number 3 does not match the current 4", "type the task again"),
         ("control owner is human, not nobody", "give the arm back with right A"),
+        (
+            "takeover not finished: give the arm back with right A at rest",
+            "no controller: see the README",
+        ),
         ("fault-stop latched: motor fault", "run the console command reset"),
         ("busy: a jaw command is running", "wait for the robot app to finish"),
         ("the measured pose could not be read: timeout", "look at the Thor terminal"),
@@ -618,6 +665,39 @@ def test_a_refusal_by_the_thor_names_the_remedy_and_ends_the_tasks_motion(
 def test_each_refusal_of_the_thor_has_its_remedy(reason: str, remedy: str) -> None:
     assert remedy in task_gate._remedy(reason)
     assert bool(task_gate._remedy(reason)) == bool(remedy)
+
+
+def test_the_remedy_for_an_open_takeover_names_right_a(rig: Rig) -> None:
+    remedy = (
+        "hold right A for 1 s with the arm at rest; no controller: see the "
+        'README, "A takeover that cannot be ended with right A"'
+    )
+    assert task_gate._remedy(TAKEOVER_OPEN) == remedy
+    # It follows the Thor's reason in one line: it does not say it again.
+    assert TAKEOVER_OPEN not in remedy
+    # Its row stands before those of "control owner is": it wins where a
+    # reason holds both pieces.
+    both = f"control owner is nobody; {TAKEOVER_OPEN}"
+    assert task_gate._remedy(both) == remedy
+    # The Thor refuses the task: a person took the arm while the operator
+    # answered the question. The refusal carries the remedy.
+    real = rig.link.request_owner
+
+    def taken_meanwhile(request: str, **kwargs: Any) -> Any:
+        if request != "agent":
+            return real(request, **kwargs)
+        rig.log.append(("request", request, kwargs.get("quote")))
+        return Result("agent-1", "refused", TAKEOVER_OPEN)
+
+    rig.link.request_owner = taken_meanwhile
+    result = rig.task(lambda: rig.execute("grasp_object"))
+    assert result["refused"] == "ownership"
+    assert result["motion_block_reason"] == (
+        f"task refused by the robot: {TAKEOVER_OPEN} ({remedy})"
+    )
+    assert rig.kinds() == ["ask", "request"]
+    assert rig.gate.requests == [("agent", "refused", TAKEOVER_OPEN)]
+    assert rig.owner() == "nobody"
 
 
 # During the task

@@ -71,6 +71,10 @@ CONFIRMED = ("rest", "open", "release", "shutdown")
 PHRASE = {"rest": PATH_IS_CLEAR, "open": YES, "release": YES, "shutdown": YES}
 # Shows on the terminal once a question that asks for "yes" is put.
 ASKS_YES = b'Type "yes"'
+# A takeover makes a person the control owner; the hand-back ends it at rest.
+# Their typed fallback, and the OWNER_REQUEST each sends. The robot link
+# service forwards them only where its file sets operator.typed_takeover.
+TYPED = [("takeover", "human"), ("handback", "handback")]
 
 Reply = Callable[[Message], list[Message]]
 
@@ -299,6 +303,16 @@ def console(bench: Bench) -> Iterator[Console]:
     made.close()
 
 
+@pytest.fixture
+def allowed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Console]:
+    """The command on a service whose file allows the typed takeover."""
+    allowing = Bench(tmp_path_factory.mktemp("ct"), typed_takeover=True)
+    made = Console(allowing)
+    yield made
+    made.close()
+    allowing.close()
+
+
 # One command, with the console role
 
 
@@ -419,7 +433,8 @@ def test_send_command_sends_nothing_without_the_phrase_of_its_question() -> None
             return lambda **fields: self.sent.append((name, fields)) or f"{name}-1"
 
     client, state = Client(), robot_state(owner_number=4, stop_number=3)
-    for command in CONFIRMED:
+    assert console_cmd.CONFIRMED == (*CONFIRMED, "takeover", "handback")
+    for command in console_cmd.CONFIRMED:
         for typed in ("", "no", "stop"):
             with pytest.raises(console_cmd.NotConfirmed):
                 console_cmd.send_command(command, client, state, phrase_typed=typed)
@@ -440,6 +455,65 @@ def test_a_confirmation_cannot_come_from_a_pipe(console: Console, command: str) 
         "confirmation at); nothing sent"
     )
     assert console.settled() == []
+
+
+# The typed takeover and hand-back
+
+
+@pytest.mark.parametrize(("command", "sends"), TYPED)
+def test_takeover_and_handback_ask_yes_and_send_the_owner_request(
+    allowed: Console, command: str, sends: str
+) -> None:
+    assert allowed.run(command) == console_cmd.EXIT_OK
+    (prompt,) = allowed.asked
+    assert (prompt, YES) == console_cmd.question(command, allowed.state)
+    assert f'Type "{YES}" to ' in prompt
+    # The state the answer is given for is on the screen before the question.
+    assert allowed.said[0] == console_cmd.state_text(allowed.state)
+    (message,) = allowed.settled()  # exactly one
+    assert message == OwnerRequest(
+        message.command_id,
+        **NUMBERS,
+        request=sends,
+        reason="typed at the operator console",
+    )
+    assert allowed.roles == ["console"]
+    assert allowed.said[-1] == f'{command}: RESULT completed {{"owner": "nobody"}}'
+    # Any answer but yes sends nothing.
+    for answer in ("", "no", PATH_IS_CLEAR):
+        allowed.answer = answer
+        assert allowed.run(command) == console_cmd.EXIT_FAILED
+        assert allowed.said[-1] == f"{command} not confirmed; nothing sent"
+    # A confirmation cannot come from a pipe either.
+    code = allowed.run(command, ask=console_cmd.terminal_ask)
+    assert code == console_cmd.EXIT_FAILED and len(allowed.settled()) == 1
+    # Each has its wait for the robot app's answer.
+    assert set(console_cmd.RESULT_WAIT_S) == {"reset", *console_cmd.CONFIRMED}
+    assert set(console_cmd.COMMANDS) == {"state", "stop", *console_cmd.RESULT_WAIT_S}
+
+
+@pytest.mark.parametrize(("command", "sends"), TYPED)
+def test_a_refusal_by_the_service_is_shown_with_the_buttons_to_use(
+    console: Console, allowed: Console, command: str, sends: str
+) -> None:
+    # The service of `console` is made as its file ships: the setting is off.
+    assert console.run(command) == console_cmd.EXIT_FAILED
+    assert console.said[-1] == (
+        f"{command}: RESULT refused: the console role may not send "
+        f'OWNER_REQUEST "{sends}"; use right B / right A on the controller'
+    )
+    assert len(console.asked) == 1 and console.settled() == []
+    # A refusal of the robot app is printed as it is: it names no buttons.
+    reason = "control owner is agent, not nobody"
+    allowed.reply = lambda message: [Result(message.command_id, "refused", reason)]
+    assert allowed.run(command) == console_cmd.EXIT_FAILED
+    assert allowed.said[-1] == f"{command}: RESULT refused: {reason}"
+    assert len(allowed.settled()) == 1
+    # Nor does the service's refusal of anything else, or a RESULT that is none.
+    not_allowed = f"{console_cmd.NOT_ALLOWED}OWNER_REQUEST"
+    for other, status in (("rest", "refused"), (command, "completed")):
+        result = Result("x", status, not_allowed)
+        assert console_cmd.buttons_hint(other, result) == ""
 
 
 # The number of the read system call, by machine.
@@ -882,23 +956,42 @@ def test_each_command_sends_through_one_call_and_there_is_no_other_send() -> Non
         and node.func.attr
         not in ("close", "results", "state", "status", "notices", "alive")
     )
-    assert sends == ["open_jaws", "release", "reset", "rest", "shutdown", "stop"]
-    # The five that quote numbers go out in _run() and nowhere else.
+    assert sends == [
+        "open_jaws",
+        "release",
+        "request_owner",
+        "reset",
+        "rest",
+        "shutdown",
+        "stop",
+    ]
+    # The six that quote numbers go out in _run() and nowhere else.
     (run,) = (
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_run"
     )
-    in_run = sorted(
-        node.func.attr
+    calls_in_run = [
+        node
         for node in ast.walk(run)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    )
-    assert in_run == ["open_jaws", "release", "reset", "rest", "shutdown"]
+    ]
+    assert sorted(node.func.attr for node in calls_in_run) == [
+        "open_jaws",
+        "release",
+        "request_owner",
+        "reset",
+        "rest",
+        "shutdown",
+    ]
     assert "connect_local(args.socket, ROLE_CONSOLE" in SOURCE.read_text()
+    # The one owner request it writes itself is a typed takeover or hand-back.
+    (request,) = (node for node in calls_in_run if node.func.attr == "request_owner")
+    assert ast.unparse(request.args[0]) == "TYPED_REQUESTS[command]"
+    assert console_cmd.TYPED_REQUESTS == dict(TYPED)
     # Nothing here starts motion of its own or stands in for the agent.
     names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    assert not names & {"move", "run_move", "permit", "request_owner", "send"}
+    assert not names & {"move", "run_move", "permit", "send"}
     calls = {
         node.func.attr
         for node in ast.walk(tree)

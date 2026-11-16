@@ -8,10 +8,16 @@ role "console", reads the ROBOT_STATE, asks for the typed confirmation, sends
 at most one link message and prints what the robot app answered. A stop is
 sent at once after the attach: it waits for no ROBOT_STATE.
 
-This file is also the one place that sends RESET, OPEN, RELEASE, SHUTDOWN and
-the operator's rest: the operator console (console/) calls question() and
-send_command(). Every check of the command itself is the robot app's: it
-releases torque only with the arm measured at rest, whatever is typed here.
+This file is also the one place that sends RESET, OPEN, RELEASE, SHUTDOWN, the
+operator's rest and the typed takeover and hand-back: the operator console
+(console/) calls question() and send_command(). Every check of the command
+itself is the robot app's: it releases torque only with the arm measured at
+rest, whatever is typed here.
+
+A takeover makes a person the control owner; the hand-back ends it at rest.
+Both are asked with the right controller's buttons B and A. takeover and
+handback are their typed fallback, which the robot link service forwards
+only where its file allows it (operator.typed_takeover).
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ from ..protocol.confirm import AGENT_ENV as AGENT_ENV  # re-exported
 from ..protocol.confirm import AGENT_ENV_PREFIXES as AGENT_ENV_PREFIXES
 from ..protocol.confirm import PATH_IS_CLEAR, YES, agent_environment, confirms
 from ..protocol.local_messages import ROLE_CONSOLE
-from ..protocol.messages import Result, RobotState
+from ..protocol.messages import REQUEST_HANDBACK, REQUEST_HUMAN, Result, RobotState
 from ..testing.client import ACCEPTED, WorkstationClient
 
 EXIT_OK = 0
@@ -65,10 +71,28 @@ ASK_SHUTDOWN_AT_REST = (
     "Shut the robot app down: the arm is at rest; torque is released there and "
     f'the robot app ends. Type "{YES}" to shut down: '
 )
+ASK_TAKEOVER = (
+    "Take over: a person becomes the control owner, as with right B held 1 s; "
+    "the robot app does it only while nobody owns the arm (type stop first). "
+    "The arm then follows the right controller while its grip is squeezed. "
+    f'Type "{YES}" to take over: '
+)
+ASK_HANDBACK = (
+    "Hand back: the takeover ends and nobody owns the arm, as with right A "
+    "held 1 s; the robot app does it only with the arm measured at rest and "
+    f'the jaws empty. Type "{YES}" to hand back: '
+)
 # ROBOT_STATE.motion with the arm at rest: a shutdown then moves nothing.
 AT_REST = ("rest_hold", "rest_unpowered")
+# The OWNER_REQUEST each typed fallback sends, and the reason it carries.
+TYPED_REQUESTS = {"takeover": REQUEST_HUMAN, "handback": REQUEST_HANDBACK}
+TYPED_REASON = "typed at the operator console"
+# How the robot link service's refusal of a typed fallback begins where its
+# file does not allow it, and what the operator is told then.
+NOT_ALLOWED = f"the {ROLE_CONSOLE} role may not send "
+USE_BUTTONS = "use right B / right A on the controller"
 # The commands that ask a question before anything is sent.
-CONFIRMED = ("rest", "open", "release", "shutdown")
+CONFIRMED = ("rest", "open", "release", "shutdown", *TYPED_REQUESTS)
 COMMANDS = ("state", "stop", "reset", *CONFIRMED)
 # How long each command waits for its final RESULT, in s.
 RESULT_WAIT_S = {
@@ -77,6 +101,8 @@ RESULT_WAIT_S = {
     "release": 30.0,
     "rest": 180.0,
     "shutdown": 240.0,
+    "takeover": 10.0,
+    "handback": 30.0,
 }
 STATE_WAIT_S = 3.0
 STOP_WAIT_S = 5.0
@@ -117,7 +143,21 @@ def question(command: str, state: RobotState | None) -> tuple[str, str] | None:
         if state is not None and state.motion in AT_REST:
             return ASK_SHUTDOWN_AT_REST, YES
         return ASK_SHUTDOWN_MOVES, PATH_IS_CLEAR
+    if command == "takeover":
+        return ASK_TAKEOVER, YES
+    if command == "handback":
+        return ASK_HANDBACK, YES
     return None
+
+
+def buttons_hint(command: str, result: Result) -> str:
+    """What follows a RESULT's text: the buttons to use, or "".
+
+    The buttons, where the robot link service refused a typed takeover or
+    hand-back because its file does not allow it.
+    """
+    refused = result.status == "refused" and result.reason.startswith(NOT_ALLOWED)
+    return f"; {USE_BUTTONS}" if refused and command in TYPED_REQUESTS else ""
 
 
 def send_command(
@@ -128,10 +168,10 @@ def send_command(
     phrase_typed: str,
     command_id: str | None = None,
 ) -> str:
-    """Send reset, rest, open, release or shutdown; returns the command id.
+    """Send reset, rest, open, release, shutdown, takeover or handback.
 
-    command_id None lets the client make one; a caller that must know the id
-    before the send passes client.new_id().
+    Returns the command id. command_id None lets the client make one; a
+    caller that must know the id before the send passes client.new_id().
 
     The link message quotes the session id, owner number and stop number of
     `state`: pass the ROBOT_STATE that was shown with the question, so the
@@ -167,6 +207,10 @@ def _run(
         return client.release(**numbers)
     if command == "shutdown":
         return client.shutdown(confirmed=path_clear, **numbers)
+    if command in TYPED_REQUESTS:
+        return client.request_owner(
+            TYPED_REQUESTS[command], reason=TYPED_REASON, **numbers
+        )
     raise ValueError(f"{command!r} is not a command that is sent with numbers")
 
 
@@ -204,9 +248,11 @@ def _parser() -> argparse.ArgumentParser:
         prog="python -m isaaccapture_examples.agentic_remote.agent.console_cmd",
         description=(
             "Send one operator command to the robot app through the robot link "
-            "service and print the answer. rest, open, release and shutdown ask "
-            f'for a typed confirmation first: "{PATH_IS_CLEAR}" before the arm '
-            f'moves, "{YES}" otherwise.'
+            "service and print the answer. rest, open, release, shutdown, "
+            "takeover and handback ask for a typed confirmation first: "
+            f'"{PATH_IS_CLEAR}" before the arm moves by itself, "{YES}" '
+            "otherwise. takeover and handback are sent on only where the robot "
+            "link service's file allows it; else use right B and right A."
         ),
     )
     parser.add_argument("command", choices=COMMANDS)
@@ -315,7 +361,7 @@ def _one(
     if result is None:
         say(f"{command}: no final RESULT within {wait_s:g} s ({status_text(carrier)})")
         return EXIT_FAILED
-    say(f"{command}: {result_text(result)}")
+    say(f"{command}: {result_text(result)}{buttons_hint(command, result)}")
     return EXIT_OK if result.status == "completed" else EXIT_FAILED
 
 
