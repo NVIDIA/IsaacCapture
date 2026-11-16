@@ -23,7 +23,6 @@ from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
-UNIX_CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
 
@@ -86,7 +85,6 @@ def test_only_monotonic_streams_with_full_geometry_are_recordable():
         keep,
         frame_ready,
         livekit_stream(17, basis=PROCESSING),
-        livekit_stream(22, basis=UNIX_CAPTURE),
         livekit_stream(19, width=None),
         livekit_stream(20, height=None),
         livekit_stream(21, fps=None),

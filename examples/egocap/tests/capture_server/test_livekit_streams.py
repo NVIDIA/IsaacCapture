@@ -479,7 +479,6 @@ async def test_cli_serves_the_streams_from_the_file(tmp_path, unused_tcp_port):
 def test_timestamp_basis_values_are_wire_stable():
     assert int(p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US) == 1
     assert int(p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US) == 2
-    assert int(p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US) == 3
     assert int(p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US) == 4
 
 
@@ -487,7 +486,6 @@ def test_timestamp_basis_values_are_wire_stable():
     ("value", "expected"),
     [
         (2, p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
-        (3, p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
         (4, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
     ],
 )
@@ -503,7 +501,6 @@ def test_non_default_bases_round_trip_through_json(value, expected):
         ("", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
         ("timestamp_basis: monotonic_us,", p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US),
         ("timestamp_basis: processing_unix_us,", p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US),
-        ("timestamp_basis: capture_unix_us,", p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US),
         ("timestamp_basis: capture_monotonic_us,", p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US),
     ],
 )
@@ -522,6 +519,7 @@ def test_loader_puts_the_room_basis_in_every_stream(tmp_path, basis_line, expect
         "wall_clock",
         "unix_us",
         "UNIX_US",
+        "capture_unix_us",
         "CAPTURE_UNIX_US",
         "CAPTURE_MONOTONIC_US",
         "capture_monotonic",
