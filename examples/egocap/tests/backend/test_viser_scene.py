@@ -708,6 +708,12 @@ class _FakeMonitor:
         to assert about it -- just accept the attachment like the real
         monitor does."""
 
+    def set_station_label(self, label):
+        self.station_label = label
+
+    def offered_camera_names(self):
+        return None
+
 
 async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or_start_is_cancelled(monkeypatch):
     import asyncio

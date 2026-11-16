@@ -238,7 +238,7 @@ def test_camera_roles_start_unassigned_and_change_one_role_at_a_time(tmp_path):
         ({"head": "Ego"}, "unknown camera role"),
         ({"ego": ""}, "camera name or null"),
         ({"ego": 1}, "camera name or null"),
-        ({"ego": "Cam", "wrist_left": "Cam"}, "two roles"),
+        ({"ego": "Cam", "wrist_left": "Cam"}, "cannot fill both ego and wrist_left"),
         ("Ego", "must be an object"),
     ],
 )

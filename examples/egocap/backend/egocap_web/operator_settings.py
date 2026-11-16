@@ -141,7 +141,7 @@ class OperatorSettings:
         return _parse(merged)
 
 
-def _parse_roles(raw: Any) -> dict[str, str | None]:
+def parse_camera_roles(raw: Any) -> dict[str, str | None]:
     """Role assignments: known roles only, each a non-empty camera name or null, no camera in two roles."""
     if raw is None:
         return {role: None for role in CAMERA_ROLES}
@@ -158,9 +158,14 @@ def _parse_roles(raw: Any) -> dict[str, str | None]:
         if value is not None and (not isinstance(value, str) or value.strip() == ""):
             raise OperatorSettingsError(f"camera_roles.{role} must be a camera name or null")
         roles[role] = value
-    assigned = [value for value in roles.values() if value is not None]
-    if len(assigned) != len(set(assigned)):
-        raise OperatorSettingsError("a camera cannot fill two roles")
+    # Name the camera and both roles, so the operator knows which assignment to change.
+    holder: dict[str, str] = {}
+    for role, camera in roles.items():
+        if camera is None:
+            continue
+        if camera in holder:
+            raise OperatorSettingsError(f"camera {camera!r} cannot fill both {holder[camera]} and {role}")
+        holder[camera] = role
     return roles
 
 
@@ -183,7 +188,7 @@ def _parse(raw: Any) -> OperatorSettings:
         raise OperatorSettingsError(f"camera_type must be one of {', '.join(CAMERA_TYPES)} or null")
     return OperatorSettings(
         camera_type=camera_type,
-        camera_roles=_parse_roles(raw.get("camera_roles")),
+        camera_roles=parse_camera_roles(raw.get("camera_roles")),
         task_file=_optional_text(raw, "task_file", check=is_catalog_name, what="a plain *.csv file name"),
         preselected_task=_optional_text(
             raw, "preselected_task", check=lambda v: v.strip() != "", what="a task name"
@@ -270,6 +275,27 @@ def _store(request: Request) -> OperatorSettingsStore | None:
     return getattr(request.app.state, "operator_settings_store", None)
 
 
+#: The fields that belong to a station once one is in use; the rest stay station-independent.
+_STATION_FIELDS = ("camera_type", "camera_roles")
+
+
+def _station_service(request: Request) -> Any:
+    """The station service (station_service.py), or None in an application built without one. Read from the
+    application state rather than imported: that module builds on this one."""
+    return getattr(request.app.state, "station_service", None)
+
+
+def _effective(request: Request, settings: OperatorSettings) -> dict[str, Any]:
+    """The wire form the page acts on: the station in use supplies the camera type and roles, so every
+    reader sees that station's hardware; with no station in use the stored values apply as before."""
+    payload = settings.to_json()
+    service = _station_service(request)
+    selected = service.registry.selected if service is not None else None
+    if selected is not None:
+        payload.update(camera_type=selected.camera_type, camera_roles=dict(selected.camera_roles))
+    return payload
+
+
 @router.get("/api/operator-settings")
 async def read_operator_settings(request: Request) -> JSONResponse:
     """Return saved settings, or defaults with a repair warning if the saved data is invalid."""
@@ -284,10 +310,13 @@ async def read_operator_settings(request: Request) -> JSONResponse:
         # Defaults keep the form usable so an authenticated save can repair invalid storage.
         logger.warning("Invalid operator settings at %s; showing defaults for repair", store.path)
         return JSONResponse(
-            {**OperatorSettings().to_json(), "warning": "Saved settings are invalid. Save to replace them."},
+            {
+                **_effective(request, OperatorSettings()),
+                "warning": "Saved settings are invalid. Save to replace them.",
+            },
             headers=_NO_STORE,
         )
-    return JSONResponse(settings.to_json(), headers=_NO_STORE)
+    return JSONResponse(_effective(request, settings), headers=_NO_STORE)
 
 
 @router.put("/api/operator-settings")
@@ -302,7 +331,13 @@ async def write_operator_settings(request: Request) -> JSONResponse:
     body, refused = await read_authorized_json(request, recording_context.control_token, 16 * 1024)
     if body is None:
         return refused  # type: ignore[return-value]
+    service = _station_service(request)
     try:
+        # With a station in use, its camera fields are that station's to keep: they go to the registry, where
+        # the rule against changing the station in use during a take applies to them too.
+        station_changes = {key: body.pop(key) for key in _STATION_FIELDS if key in body}
+        if station_changes and (service is None or await service.update_selected(station_changes) is None):
+            body.update(station_changes)
         settings = await asyncio.to_thread(
             store.update,
             body,
@@ -314,7 +349,7 @@ async def write_operator_settings(request: Request) -> JSONResponse:
     except OSError:
         logger.exception("Could not save operator settings")
         return JSONResponse({"detail": "could not save operator settings"}, status_code=503, headers=_NO_STORE)
-    return JSONResponse(settings.to_json(), headers=_NO_STORE)
+    return JSONResponse(_effective(request, settings), headers=_NO_STORE)
 
 
 @router.get("/api/tools")

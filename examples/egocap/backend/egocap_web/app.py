@@ -30,7 +30,9 @@ from recording_service import (
     CalibrationAsset,
     ConfigurationError,
     QcConfig,
+    RecordingPhase,
     ServiceConfig,
+    StateError,
     VideoSourceSpec,
 )
 
@@ -57,11 +59,15 @@ from .recording_adapter import (
     validate_tracking_descriptor,
 )
 from .recording_command import RecordingContext
-from .recording_session import RecordingSessionCoordinator, TaskContext
+from .recording_session import CoordinatorBusyError, RecordingSessionCoordinator, TaskContext
 from .recordings import router as recordings_router
 from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
+from .station_activity import ACTIVITY_DIR, StationActivity
 from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
+from .station_routes import router as station_router
+from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
+from .stations import StationError, StationStore, station_store_path
 from .task_file_routes import router as task_file_router
 from .viser_scene import VisualizationScene
 
@@ -171,7 +177,7 @@ def _recorder_livekit_token(room: str) -> str:
 
 def _recording_config_factory(
     monitor: CaptureStatusMonitor,
-    station_label: str | None,
+    station_label: str | None | Callable[[], str | None],
     output_root: Path,
     on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
 ):
@@ -185,7 +191,10 @@ def _recording_config_factory(
     (``recording_adapter.convert_camera_image``'s ``intrinsics`` param is
     always ``None`` today); declaring a schema that doesn't require them is
     the honest choice until that plumbing is added, rather than manufacturing
-    calibration values the backend doesn't actually have."""
+    calibration values the backend doesn't actually have.
+
+    ``station_label`` may be a callable, read at each session open, so a session opened after the operator
+    changes the station in use carries the new station's name."""
 
     def factory() -> ServiceConfig:
         video_sources = tuple(
@@ -216,7 +225,7 @@ def _recording_config_factory(
             video_sources=video_sources,
             qc=QcConfig(required_sources=required),
             calibration_assets=_station_calibration_assets(),
-            station_label=station_label,
+            station_label=station_label() if callable(station_label) else station_label,
         )
         largest_decoded_frame_bytes = max((cam.width * cam.height * 3 for cam in video_sources), default=0)
         if largest_decoded_frame_bytes > 0:
@@ -325,6 +334,27 @@ def _recording_readiness_check(
     return check
 
 
+#: The recording phases in which no take is being written, so the station in use may change.
+_STATION_CHANGE_PHASES = (RecordingPhase.IDLE, RecordingPhase.RECOVERY_REQUIRED, RecordingPhase.CLOSED)
+
+
+def _station_change_blocked(coordinator: RecordingSessionCoordinator) -> str | None:
+    """Why the station in use cannot change now: a take is being recorded or a recording command is still
+    running. An interrupted take waiting for recovery does not block; it stays with the session it was in."""
+    snapshot = coordinator.snapshot()
+    writing = snapshot.service is not None and snapshot.service.phase not in _STATION_CHANGE_PHASES
+    return TAKE_IN_PROGRESS if writing or snapshot.active_operation is not None else None
+
+
+async def _rotate_batch_for_station(coordinator: RecordingSessionCoordinator) -> None:
+    """Ends the current batch so the next take opens a session under the new station label. A session's
+    configuration is frozen when it opens, so the label can only change between sessions."""
+    try:
+        await coordinator.new_batch()
+    except (CoordinatorBusyError, StateError) as exc:
+        raise StationError(f"the recording session cannot change stations now: {exc}") from exc
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Creates and starts the one CaptureStatusMonitor for the station,
@@ -424,10 +454,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if resolved_station is not None and resolved_station.alignment_index is not None
         else None
     )
+    # Today's active/inactive time per station, and the daily activity log it feeds.
+    station_activity = StationActivity(recording_output_root / ACTIVITY_DIR)
+    app.state.station_activity = station_activity
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(
             monitor,
-            config.station_label,
+            # Read at each session open: the station service below owns the label once it exists.
+            lambda: station_service.label(),
             recording_output_root,
             aligner.note_video_sources if aligner is not None else None,
         ),
@@ -439,6 +473,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tracking_latency=resolved_station.latency if resolved_station is not None else None,
     )
     monitor.set_recording(coordinator)
+    # The station registry sits beside the operator settings. Its selected station names what is recorded and
+    # shown; with no station selected the deployment's own label stays in effect.
+    station_service = StationService(
+        StationStore(station_store_path(operator_settings_file)),
+        session_adapter(
+            offered_cameras=monitor.offered_camera_names,
+            change_blocked=lambda: _station_change_blocked(coordinator),
+            show_label=monitor.set_station_label,
+            rotate_batch=lambda: _rotate_batch_for_station(coordinator),
+            leave_station=station_activity.leave,
+        ),
+        default_label=config.station_label,
+    )
+    app.state.station_service = station_service
+    monitor.set_station_label(station_service.label())
     await monitor.start()
     app.state.monitor = monitor
     # Generated once per backend process start (a restart is the only way
@@ -451,7 +500,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     print(f"Recording control token for this run: {control_token}", file=sys.stderr, flush=True)
     auto_fill_operator_name = resolved_station.auto_fill_operator_name if resolved_station is not None else False
     app.state.recording_context = RecordingContext(
-        coordinator=coordinator, control_token=control_token, auto_fill_operator_name=auto_fill_operator_name
+        coordinator=coordinator,
+        control_token=control_token,
+        auto_fill_operator_name=auto_fill_operator_name,
+        setup_gate=station_service.block_reason,
     )
     # The 3D view settings are read once, for the view itself and for the settings report.
     visualization_config: VisualizationConfig | None = None
@@ -517,6 +569,7 @@ app.include_router(livekit_preview_router)
 app.include_router(task_file_router)
 app.include_router(settings_router)
 app.include_router(operator_settings_router)
+app.include_router(station_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
 # recordings.py's own module docstring.

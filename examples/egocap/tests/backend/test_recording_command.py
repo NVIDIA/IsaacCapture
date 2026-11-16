@@ -718,3 +718,47 @@ async def test_auto_fill_operator_name_defaults_off_and_reflects_the_constructor
     await coordinator.open()
     on = RecordingContext(coordinator=coordinator, control_token=TEST_CONTROL_TOKEN, auto_fill_operator_name=True)
     assert on.snapshot()["auto_fill_operator_name"] is True
+
+
+async def test_station_setup_blocks_a_take_at_admission_with_its_reason(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    blocked: list[str | None] = ["select a station before recording"]
+    context.setup_gate = lambda: blocked[0]
+    snapshot = context.snapshot()
+    assert snapshot["ready_to_record"] is False
+    assert snapshot["not_ready_reason"] == "select a station before recording"
+    reply = await handle_recording_command(_command("start_episode", {"batch_id": context.batch_id}), context)
+    assert (reply["outcome"], reply["reason"]) == ("rejected", "select a station before recording")
+    assert reply["snapshot"]["episode_phase"] == "IDLE"
+    # Clearing the cause is announced to every viewer without any command being sent.
+    revision = context.revision
+    blocked[0] = None
+    context.refresh()
+    assert context.revision == revision + 1
+    assert context.snapshot()["ready_to_record"] is True and context.snapshot()["not_ready_reason"] is None
+    started = await handle_recording_command(_command("start_episode", {"batch_id": context.batch_id}), context)
+    assert started["outcome"] == "ok"
+    # Station setup is asked at admission only: a cause appearing mid-take never interrupts the take.
+    blocked[0] = "station 'Bench A': no camera is assigned to the ego (head) role"
+    stopped = await handle_recording_command(
+        _command(
+            "stop_episode", {"batch_id": context.batch_id, "episode_id": started["snapshot"]["current_episode_id"]}
+        ),
+        context,
+    )
+    assert (stopped["outcome"], stopped["snapshot"]["last_result"]["disposition"]) == ("ok", "KEPT")
+
+
+async def test_a_capture_reason_is_published_when_station_setup_allows_a_take(tmp_path: Path):
+    def factory() -> ServiceConfig:
+        return ServiceConfig(output_root=tmp_path / "out", numeric_sources=(NUMERIC,), video_sources=())
+
+    coordinator = RecordingSessionCoordinator(
+        factory, queue_capacity=8, readiness_check=lambda: (False, "capture is not running")
+    )
+    coordinator.set_task("Pour water.")
+    context = RecordingContext(coordinator=coordinator, control_token=TEST_CONTROL_TOKEN, setup_gate=lambda: None)
+    assert context.snapshot()["not_ready_reason"] == "capture is not running"
+    # Station setup outranks the capture reason: it is the earlier step.
+    context.setup_gate = lambda: "select a station before recording"
+    assert context.snapshot()["not_ready_reason"] == "select a station before recording"
