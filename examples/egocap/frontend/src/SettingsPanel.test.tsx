@@ -8,14 +8,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { SettingsPanel, type SettingsBackend, type StationSetup } from "./SettingsPanel";
 import { SettingsHttpError, type OperatorSettings, type TaskFileListing } from "./settingsApi";
-import { KITCHEN_FIXTURE, OPERATOR_SETTINGS_FIXTURE, SETTINGS_FIXTURE, TASK_FILES_FIXTURE, TOOLS_FIXTURE } from "./settingsTestDoubles";
+import { KITCHEN_FIXTURE, OPERATOR_SETTINGS_FIXTURE, SETTINGS_FIXTURE, STATIONS_FIXTURE, TASK_FILES_FIXTURE, TOOLS_FIXTURE, fakeStationRegistry } from "./settingsTestDoubles";
 
 afterEach(cleanup);
 
 const MID_TRAIN = { name: "Mid.csv", format: "mid_train_csv", tasks: [{ name: "fold_towel", instruction: "Fold a towel" }] };
 
 /** A fake backend over in-memory state, so saves show up on the next load like the real one. */
-function fakeBackend(initial: Partial<StationSetup> = {}): SettingsBackend & { operator: OperatorSettings; listing: TaskFileListing } {
+function fakeBackend(
+  initial: Partial<StationSetup> = {},
+): SettingsBackend & { operator: OperatorSettings; listing: TaskFileListing; registry: ReturnType<typeof fakeStationRegistry> } {
+  const registry = fakeStationRegistry(initial.stations);
+  /** As the backend does: the station in use supplies the camera type and roles every reader sees. */
+  const effective = (): OperatorSettings => {
+    const inUse = registry.inUse();
+    return inUse === null ? state.operator : { ...state.operator, camera_type: inUse.camera_type, camera_roles: inUse.camera_roles };
+  };
   const state = {
     operator: initial.operator ?? OPERATOR_SETTINGS_FIXTURE,
     listing: initial.taskFiles ?? TASK_FILES_FIXTURE,
@@ -28,12 +36,26 @@ function fakeBackend(initial: Partial<StationSetup> = {}): SettingsBackend & { o
     get listing() {
       return state.listing;
     },
+    registry,
+    addStation: vi.fn(registry.addStation),
+    updateStation: vi.fn(registry.updateStation),
+    deleteStation: vi.fn(registry.deleteStation),
+    selectStation: vi.fn(registry.selectStation),
+    loadHeadsetAddress: vi.fn(registry.loadHeadsetAddress),
     loadDeployment: vi.fn(async () => SETTINGS_FIXTURE),
-    loadStationSetup: vi.fn(async () => ({ operator: state.operator, tools: state.tools, taskFiles: state.listing })),
+    loadStationSetup: vi.fn(async () => ({ operator: effective(), tools: state.tools, taskFiles: state.listing, stations: registry.listing })),
     loadTaskFile: vi.fn(async (name: string) => (name === "Mid.csv" ? MID_TRAIN : KITCHEN_FIXTURE)),
-    saveOperator: vi.fn(async (_token: string, changes) => {
-      state.operator = { ...state.operator, ...changes };
-      return state.operator;
+    saveOperator: vi.fn(async (token: string, changes) => {
+      const inUse = registry.inUse();
+      const { camera_type, camera_roles, ...rest } = changes;
+      // A station in use keeps its own camera fields; everything else is station-independent.
+      if (inUse !== null) {
+        await registry.updateStation(token, inUse.id, { ...(camera_type !== undefined && { camera_type }), ...(camera_roles !== undefined && { camera_roles }) });
+        state.operator = { ...state.operator, ...rest };
+      } else {
+        state.operator = { ...state.operator, ...changes };
+      }
+      return effective();
     }),
     importTaskFile: vi.fn(async (_token: string, source) => {
       const name = source.name;
@@ -155,6 +177,57 @@ describe("Station tab", () => {
     expect(left.value).toBe("Old wrist");
     expect(within(left).getByRole("option", { name: "Old wrist (not in this session)" })).toBeTruthy();
     expect(screen.getByLabelText("Station readiness").textContent).toContain("1/2 assigned cameras in this session");
+  });
+});
+
+describe("Stations in the Station tab", () => {
+  it("adds the first station, puts it in use, and then edits that station's cameras", async () => {
+    const backend = fakeBackend({ operator: { ...OPERATOR_SETTINGS_FIXTURE, camera_type: "oak_d" } });
+    renderPanel({ cameraSources: ["Ego", "Wrist A"] }, backend);
+    const stations = await screen.findByRole("region", { name: "Stations" });
+    expect(screen.getByLabelText("Station readiness").textContent).not.toContain("Station");
+    fireEvent.change(within(stations).getByLabelText("New station name"), { target: { value: "Bench A" } });
+    fireEvent.click(within(stations).getByRole("button", { name: "Add station" }));
+    await waitFor(() => expect(screen.getByLabelText("Station readiness").textContent).toContain("✓ Station: Bench A"));
+    // The camera type saved before any station existed became the station's own.
+    expect(backend.registry.inUse()).toMatchObject({ name: "Bench A", camera_type: "oak_d" });
+    // The setup is read again with the credential, so the cards below show the station in use.
+    expect(backend.loadStationSetup).toHaveBeenLastCalledWith(expect.any(AbortSignal), "tok");
+    const roles = await screen.findByRole("region", { name: "Camera roles" });
+    fireEvent.change(within(roles).getByLabelText("Ego (head)"), { target: { value: "Ego" } });
+    fireEvent.click(within(roles).getByRole("button", { name: "Save camera roles" }));
+    await waitFor(() => expect(backend.registry.inUse()?.camera_roles.ego).toBe("Ego"));
+    expect(backend.operator.camera_roles.ego).toBeNull(); // the station-independent value is untouched
+  });
+
+  it("says when stations exist but none is in use", async () => {
+    const stations = { ...STATIONS_FIXTURE, stations: [{ id: "st_1", name: "Bench A", camera_type: null, camera_roles: { ego: null, wrist_left: null, wrist_right: null }, problems: [], headset_address: null }] };
+    renderPanel({}, fakeBackend({ stations }));
+    await screen.findByRole("region", { name: "Stations" });
+    expect(screen.getByLabelText("Station readiness").textContent).toContain("○ No station in use");
+  });
+
+  it("remembers the headset address with the station in use", async () => {
+    const station = { id: "st_1", name: "Bench A", camera_type: null, camera_roles: { ego: null, wrist_left: null, wrist_right: null }, problems: [], headset_address: null };
+    const backend = fakeBackend({ stations: { ...STATIONS_FIXTURE, stations: [station], selected: "st_1", label: "Bench A" } });
+    renderPanel({}, backend);
+    const headset = await screen.findByRole("region", { name: "Headset address" });
+    expect((await within(headset).findByLabelText("Address to enter in the headset")).textContent).toBe("10.0.0.42");
+    fireEvent.click(within(headset).getByRole("button", { name: "Mark as entered in the headset" }));
+    expect(await within(headset).findByText("✓ Entered in the headset for Bench A.")).toBeTruthy();
+    expect(backend.registry.inUse()?.headset_address).toBe("10.0.0.42");
+  });
+
+  it("keeps the changed registry on screen when reading the setup again fails", async () => {
+    const backend = fakeBackend();
+    renderPanel({}, backend);
+    const stations = await screen.findByRole("region", { name: "Stations" });
+    backend.loadStationSetup = vi.fn(async () => {
+      throw new SettingsHttpError("stations are not available yet");
+    });
+    fireEvent.change(within(stations).getByLabelText("New station name"), { target: { value: "Bench A" } });
+    fireEvent.click(within(stations).getByRole("button", { name: "Add station" }));
+    expect(await within(stations).findByLabelText("Use Bench A")).toBeTruthy();
   });
 });
 

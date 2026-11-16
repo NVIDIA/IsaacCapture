@@ -35,6 +35,7 @@ import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { StationActivityToggle } from "./StationActivityToggle";
 import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
 import type { RecordingPhase } from "./recordingUiReducer";
@@ -240,16 +241,25 @@ function AppHeader({
   );
 }
 
-/** The compact status row beneath the header: station and the real capture
- * lifecycle headline (a quiet one-liner, not a large hero). The supporting
+/** The compact status row beneath the header: station, its active/inactive
+ * toggle, and the real capture lifecycle headline (a quiet one-liner, not a large hero). The supporting
  * session/provider details are reached by scrolling to their own collapsed
  * disclosure at the bottom of the page, not a link from here. A normal
  * running/current state stays quiet here; an error or stale feed instead
  * gets a visible banner from `StaleOrErrorBanner` below. */
-function StatusLine({ response, presentation }: { response: CaptureStatusResponse | null; presentation: Presentation }) {
+function StatusLine({
+  response,
+  presentation,
+  controlToken,
+}: {
+  response: CaptureStatusResponse | null;
+  presentation: Presentation;
+  controlToken: string | null;
+}) {
   return (
     <div className={`status-strip ${toneClass(presentation.tone)}`}>
       <span className="status-station">{response?.station_label ?? "Station"}</span>
+      <StationActivityToggle stationLabel={response?.station_label ?? null} controlToken={controlToken} />
       <span aria-live="polite" className="status-headline">
         {presentation.freshnessLabel !== null && <span className="freshness-badge">{presentation.freshnessLabel}</span>}
         {presentation.headline}
@@ -491,8 +501,8 @@ export default function App() {
     setSettingsOpen(false);
     setSettingsGeneration((n) => n + 1);
   };
-  // Camera roles use the capture streams currently available on main.
-  const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera").map((s) => s.name);
+  // Every camera the session offers can fill a role, whichever path its video takes to the page.
+  const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
 
   return (
     <div className="app-shell app-shell--operator">
@@ -530,7 +540,7 @@ export default function App() {
                 hasControlToken={controlToken !== null}
                 pendingPhase={panelPhase}
               />
-              <StatusLine response={response} presentation={presentation} />
+              <StatusLine response={response} presentation={presentation} controlToken={controlToken} />
               <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
               {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
               <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>

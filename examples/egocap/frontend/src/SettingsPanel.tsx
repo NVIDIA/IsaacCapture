@@ -5,13 +5,28 @@
 /**
  * The Settings dialog: a tabbed modal over the page.
  *
- * Tabs, in the order an operator sets up a station: Station (camera type and roles), Tasks (the catalogs the task picker
+ * Tabs, in the order an operator sets up a station: Station (the stations and the one in use, its camera type and
+ * roles, and the headset address), Tasks (the catalogs the task picker
  * offers, imports, and the preselected task), Tools (calibration and rectification), Display (this browser's
  * choices and the keyboard shortcuts), Advanced (what the deployment is running with, read-only). Station and Tasks
  * are saved by the backend for every browser and need the run's control token to change, as recording
  * commands do; Tools lists unavailable stubs; Display is this browser's only; Advanced values are set where the backend is launched.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Card, TokenHint, errorMessage, useAction } from "./settingsParts";
+import { HeadsetAddressCard } from "./HeadsetAddressCard";
+import { StationsCard } from "./StationsCard";
+import {
+  addStation,
+  deleteStation,
+  fetchHeadsetAddress,
+  fetchStations,
+  selectStation,
+  updateStation,
+  type HeadsetAddress,
+  type StationChange,
+  type StationListing,
+} from "./stationsApi";
 import {
   CAMERA_TYPE_LABELS,
   ROLE_LABELS,
@@ -33,31 +48,49 @@ import {
 } from "./settingsApi";
 
 export interface StationSetup {
+  /** The camera setup in effect: the station in use supplies it, else the values saved before stations existed. */
   operator: OperatorSettings;
   tools: ToolInfo[];
   taskFiles: TaskFileListing;
+  stations: StationListing;
 }
 
 /** The backend calls the dialog makes; tests inject fakes, the page uses the real ones. */
 export interface SettingsBackend {
   loadDeployment: (signal: AbortSignal, controlToken?: string | null) => Promise<EffectiveSettings>;
-  loadStationSetup: (signal: AbortSignal) => Promise<StationSetup>;
+  /** With the control token the stations carry their headset addresses. */
+  loadStationSetup: (signal: AbortSignal, controlToken?: string | null) => Promise<StationSetup>;
   loadTaskFile: (name: string, signal: AbortSignal) => Promise<TaskFileContents>;
   saveOperator: (controlToken: string, changes: OperatorSettingsChange) => Promise<OperatorSettings>;
   importTaskFile: (controlToken: string, source: TaskFileSource) => Promise<TaskFileListing & { file: TaskFileContents }>;
   removeTaskFile: (controlToken: string, name: string) => Promise<TaskFileListing>;
+  addStation: (controlToken: string, fields: StationChange) => Promise<StationListing>;
+  updateStation: (controlToken: string, id: string, changes: StationChange) => Promise<StationListing>;
+  deleteStation: (controlToken: string, id: string) => Promise<StationListing>;
+  selectStation: (controlToken: string, id: string | null) => Promise<StationListing>;
+  loadHeadsetAddress: (controlToken: string, signal: AbortSignal) => Promise<HeadsetAddress>;
 }
 
 export const REAL_SETTINGS_BACKEND: SettingsBackend = {
   loadDeployment: fetchSettings,
-  loadStationSetup: async (signal) => {
-    const [operator, tools, taskFiles] = await Promise.all([fetchOperatorSettings(signal), fetchTools(signal), fetchTaskFiles(signal)]);
-    return { operator, tools, taskFiles };
+  loadStationSetup: async (signal, controlToken) => {
+    const [operator, tools, taskFiles, stations] = await Promise.all([
+      fetchOperatorSettings(signal),
+      fetchTools(signal),
+      fetchTaskFiles(signal),
+      fetchStations(signal, controlToken),
+    ]);
+    return { operator, tools, taskFiles, stations };
   },
   loadTaskFile: fetchTaskFile,
   saveOperator: saveOperatorSettings,
   importTaskFile,
   removeTaskFile,
+  addStation,
+  updateStation,
+  deleteStation,
+  selectStation,
+  loadHeadsetAddress: fetchHeadsetAddress,
 };
 
 export type SettingsTab = "station" | "tasks" | "tools" | "display" | "advanced";
@@ -86,11 +119,6 @@ export interface SettingsPanelProps {
 }
 
 type Loaded<T> = { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; value: T };
-
-/** Turn unknown request failures into a concise operator-facing explanation. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Loads `load` each time the dialog opens, so a backend restart shows its new values; abandons a load the
  * dialog closed on. */
@@ -138,42 +166,6 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
   );
 }
 
-/** One titled block of a tab. */
-function Card({ title, lead, children }: { title: string; lead?: string; children: ReactNode }) {
-  return (
-    <section className="settings-card" aria-label={title}>
-      <h3>{title}</h3>
-      {lead !== undefined && <p className="settings-lead">{lead}</p>}
-      {children}
-    </section>
-  );
-}
-
-/** Explain why station changes require the recording control token. */
-function TokenHint({ controlToken }: { controlToken: string | null }) {
-  if (controlToken !== null) return null;
-  return <p className="settings-note settings-note--hint">Enter the control token in the recording panel to change these.</p>;
-}
-
-/** The pending/failed state of one save-type action, shown next to its button. */
-function useAction(): [{ busy: boolean; failure: string | null }, (work: () => Promise<void>) => void] {
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  /** Keep request failures visible and prevent duplicate submissions. */
-  const run = (work: () => Promise<void>) => {
-    setBusy(true);
-    setFailure(null);
-    work().then(
-      () => setBusy(false),
-      (error: unknown) => {
-        setBusy(false);
-        setFailure(errorMessage(error));
-      },
-    );
-  };
-  return [{ busy, failure }, run];
-}
-
 // --- Station ---------------------------------------------------------------------------------------------------
 
 /** Offer persistent camera setup and explain which roles are currently available. */
@@ -183,18 +175,29 @@ function StationTab({
   backend,
   cameraSources,
   onOperator,
+  onStations,
 }: {
   setup: Loaded<StationSetup>;
   controlToken: string | null;
   backend: SettingsBackend;
   cameraSources: string[];
   onOperator: (operator: OperatorSettings) => void;
+  onStations: (stations: StationListing) => void;
 }) {
   if (setup.kind !== "loaded") return <LoadState state={setup} what="Station setup" />;
-  const { operator } = setup.value;
+  const { operator, stations } = setup.value;
+  const inUse = stations.stations.find((station) => station.id === stations.selected) ?? null;
   return (
     <>
-      <ReadyLine operator={operator} cameraSources={cameraSources} />
+      <ReadyLine operator={operator} stations={stations} cameraSources={cameraSources} />
+      <StationsCard
+        listing={stations}
+        controlToken={controlToken}
+        backend={backend}
+        // The first station takes over the camera setup saved before any station existed.
+        inherited={{ camera_type: operator.camera_type, camera_roles: operator.camera_roles }}
+        onListing={onStations}
+      />
       <Card title="Camera type" lead="Which cameras this station is built with. A label for operators and tools; CaptureServer and the station file open the cameras.">
         <CameraTypeChoice key={operator.camera_type ?? ""} operator={operator} controlToken={controlToken} save={backend.saveOperator} onSaved={onOperator} />
         <TokenHint controlToken={controlToken} />
@@ -202,15 +205,19 @@ function StationTab({
       <Card title="Camera roles" lead="Which of the session's cameras is the ego view and which is on each wrist. The ego camera gets the main tile; roles are shown on every tile so a swapped wrist is caught before a session, not after.">
         <CameraRoles key={JSON.stringify(operator.camera_roles)} operator={operator} cameraSources={cameraSources} controlToken={controlToken} save={backend.saveOperator} onSaved={onOperator} />
       </Card>
+      <HeadsetAddressCard controlToken={controlToken} station={inUse} backend={backend} onListing={onStations} />
     </>
   );
 }
 
 /** The station's readiness at a glance: what is set, what is still to do. */
-function ReadyLine({ operator, cameraSources }: { operator: OperatorSettings; cameraSources: string[] }) {
+function ReadyLine({ operator, stations, cameraSources }: { operator: OperatorSettings; stations: StationListing; cameraSources: string[] }) {
   const assigned = operator.roles.filter((role) => operator.camera_roles[role] !== null);
   const offered = assigned.filter((role) => cameraSources.includes(operator.camera_roles[role] ?? ""));
+  const inUse = stations.stations.find((station) => station.id === stations.selected);
   const items: Array<[boolean, string]> = [
+    // Without any stations there is nothing to choose, so the line says nothing about them.
+    ...(stations.stations.length === 0 ? [] : [[inUse !== undefined, inUse === undefined ? "No station in use" : `Station: ${inUse.name}`] as [boolean, string]]),
     [operator.camera_type !== null, operator.camera_type === null ? "Camera type not set" : `Camera type: ${CAMERA_TYPE_LABELS[operator.camera_type]?.split(" — ")[0] ?? operator.camera_type}`],
     [assigned.length === operator.roles.length, `${assigned.length}/${operator.roles.length} roles assigned`],
     [assigned.length > 0 && offered.length === assigned.length, cameraSources.length === 0 ? "No cameras offered by the session yet" : `${offered.length}/${assigned.length} assigned cameras in this session`],
@@ -761,7 +768,9 @@ export function SettingsPanel({
   /** Reload restricted details when the active credential changes. */
   const loadDeployment = useCallback((signal: AbortSignal) => backend.loadDeployment(signal, controlToken), [backend, controlToken]);
   const [deployment] = useLoaded(open && controlToken !== null, loadDeployment);
-  const [setup, updateSetup] = useLoaded(open, backend.loadStationSetup);
+  /** Reload the station setup when the credential changes: with it the stations carry their headset addresses. */
+  const loadSetup = useCallback((signal: AbortSignal) => backend.loadStationSetup(signal, controlToken), [backend, controlToken]);
+  const [setup, updateSetup] = useLoaded(open, loadSetup);
 
   // Escape closes, as for any dialog.
   useEffect(() => {
@@ -778,6 +787,15 @@ export function SettingsPanel({
 
   /** Keep all tabs in sync with the persisted station setup. */
   const setOperator = (operator: OperatorSettings) => updateSetup((value) => ({ ...value, operator }));
+  /** Show a changed registry at once, then read the setup again: the station in use supplies the camera type
+   * and roles, so a change of it changes what the cards below edit. */
+  const setStations = (stations: StationListing) => {
+    updateSetup((value) => ({ ...value, stations }));
+    loadSetup(new AbortController().signal).then(
+      (fresh) => updateSetup(() => fresh),
+      () => undefined, // the registry change itself succeeded; the next open reloads everything
+    );
+  };
 
   return (
     <>
@@ -806,7 +824,7 @@ export function SettingsPanel({
           </header>
           <div className="settings-content-body">
             {setup.kind === "loaded" && setup.value.operator.warning && <p className="settings-note tone-warning">{setup.value.operator.warning}</p>}
-            {tab === "station" && <StationTab setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onOperator={setOperator} />}
+            {tab === "station" && <StationTab setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onOperator={setOperator} onStations={setStations} />}
             {tab === "tasks" && <TasksTab setup={setup} controlToken={controlToken} backend={backend} onSetup={updateSetup} />}
             {tab === "tools" && <ToolsTab setup={setup} />}
             {tab === "display" && <DisplayTab sidebarWidth={sidebarWidth} sidebarDefault={sidebarDefault} onResetSidebar={onResetSidebar} />}

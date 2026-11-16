@@ -31,6 +31,9 @@ or restarts it.
 | `GET /api/capture-status` | Thin HTTP inspection endpoint mirroring the latest snapshot; the frontend does not poll this during normal operation. |
 | `GET /api/settings` | The backend's effective configuration (CaptureServer URL, sources, station file, recording root, 3D view, origin policy), read-only and gated by the `X-Control-Token` header; the page's Advanced settings tab shows it. Secrets are reported as present or absent, never by value. |
 | `GET`/`PUT /api/operator-settings` | The operator's station setup: the camera type (`sensing_gmsl` or `oak_d`), camera roles (`ego`, `wrist_left`, `wrist_right`), the task catalog the recording panel's picker offers (`task_file`) and the task it preselects (`preselected_task`). Kept in `.egocap/operator_settings.json` under the recording output (hidden from the recordings browser) (`EGOCAP_OPERATOR_SETTINGS_FILE` overrides the path) so every browser sees the same values. `PUT` names only the fields it changes and uses `X-Control-Token`; legacy JSON `control_token` remains accepted. A wrong token is 403 and bodies above 16 KiB are rejected with 413 before parsing. |
+| `GET`/`POST /api/stations`, `PUT`/`DELETE /api/stations/{id}`, `POST /api/stations/select` | The station registry: the stations an operator chooses between and the one in use. A station is a name, a camera type, the camera filling each role and the capture host address last given to its headset. Kept in `stations.json` beside the operator settings. Every change uses `X-Control-Token` and answers with the new listing; a refusal is a 400 with the specific reason (a duplicate name, a camera in two roles, an unknown field), and an unknown id is 404. The station in use cannot be selected, edited or deleted while a take is being written. A station's headset address is listed only when the `GET` carries the token. See [Stations](#stations). |
+| `GET /api/headset-address` | The addresses to enter in the headset, wireless first, the one saved for the station in use, and whether that one is stale. Needs `X-Control-Token`. |
+| `GET`/`POST /api/station-activity` | Today's active and inactive time for the station in use. `POST` (`X-Control-Token`) sets `state` (`active` or `inactive`), the blocker `notes`, or both, and rewrites that station's daily activity log. |
 | `POST /api/task-files/import`, `DELETE /api/task-files/{name}` | Import a task catalog the operator supplies — by `name` + `content` (text uploaded from the browser) — into the imported-catalog directory beside the operator settings, once it parses; and remove an imported one. `POST` and `DELETE` use the `X-Control-Token` header (legacy JSON tokens remain accepted for `POST`); `DELETE` refuses removal of the selected catalog (409); imports also refuse replacement of that catalog until it is deselected. Imports appear in `GET /api/task-files` (as `imported`) and shadow a shipped catalog of the same name. |
 | `GET /api/tools` | The operator tools the Settings drawer offers (headset calibration, glove calibration, fisheye rectification for the SENSING cameras), each with whether this build can launch it. None can yet. |
 | `GET /api/livekit-token?room=ROOM` | Viewer token (subscribe and data messages, no media publishing) for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. |
@@ -50,6 +53,26 @@ template). Unset, the backend keeps the configuration-free development workflow 
 configured-but-invalid file blocks new recording AND requests no cameras at all (capture preview
 goes empty too, it is not unaffected), with a reason shown in the UI, never a silent fallback.
 Everything else is an environment variable:
+
+### Stations
+
+A site usually has several stations, and an operator picks the one they are at. The registry
+([`stations.py`](egocap_web/stations.py)) holds them; the Settings dialog's Station tab edits it.
+
+- **No stations** is the configuration-free default: the deployment's own station label applies and no station
+  rule blocks recording.
+- **Once stations exist**, a take is refused until one is in use and can record: its ego role is assigned and every
+  camera it names is offered by the capture session. The reason is published as `not_ready_reason` in the recording
+  snapshot and returned by a refused `start_episode`.
+- **Changing the station in use applies in process.** The label shown and recorded changes at once and the
+  recording batch rotates, so the next take opens a session carrying the new station's name. It is refused while a
+  take is being written. Which cameras CaptureServer is asked for stays a deployment setting (the station file);
+  restarting the backend is the only way to change that.
+- **The station in use supplies the camera type and roles** that `GET /api/operator-settings` returns, and a `PUT`
+  of those two fields is saved to it.
+- **Activity.** `station_status/<date>.json` under the recording output holds each station's active and inactive
+  intervals for that day, and `station_status/<station>_<date>_activity.json` is the daily log, rewritten on every
+  change. Both are written atomically and stay on this machine. Leaving a station stops its active time.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

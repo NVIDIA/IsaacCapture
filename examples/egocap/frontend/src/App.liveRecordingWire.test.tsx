@@ -101,6 +101,7 @@ const activeSnapshot: RecordingSnapshot = {
   savedCount: 0,
   lastResult: null,
   readyToRecord: true,
+  notReadyReason: null,
   revision: 0,
 };
 

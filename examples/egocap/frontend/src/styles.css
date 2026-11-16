@@ -369,6 +369,52 @@ body {
   border-color: var(--accent);
 }
 
+/* A station row: the name line on top, what fills its roles and any problem beneath it. */
+.settings-station-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.settings-station-head .settings-input {
+  flex: 1 1 200px;
+}
+
+/* A destructive confirmation: only ever shown after the operator asked to delete. */
+.settings-danger {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--critical);
+  background: transparent;
+  color: var(--critical);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-danger:focus-visible {
+  outline: 2px solid var(--critical);
+  outline-offset: 1px;
+}
+
+/* The address to type into the headset: large and selectable, since it is read across to another device. */
+.headset-address {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: all;
+}
+
 .settings-list-main {
   display: flex;
   align-items: center;
@@ -531,6 +577,67 @@ hero card so the tracking tree below starts near the top of the viewport. */
 
 .status-headline {
   flex: 1 1 auto;
+}
+
+/* The station's active/inactive toggle, beside its name. */
+.station-activity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.station-activity-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.station-activity-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.station-activity-toggle:disabled {
+  cursor: default;
+}
+
+.station-activity-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.station-activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.station-activity-toggle--active {
+  border-color: var(--positive);
+}
+
+.station-activity-toggle--active .station-activity-dot {
+  background: var(--positive);
+}
+
+.station-activity-toggle--blocked {
+  border-color: var(--warning);
+}
+
+.station-activity-toggle--blocked .station-activity-dot {
+  background: var(--warning);
+}
+
+.station-activity-summary {
+  color: var(--text-secondary);
 }
 
 .status-strip.tone-positive .status-headline {

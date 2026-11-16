@@ -16,6 +16,7 @@ import { chipsNeedingAttention, deriveHealthChips, type HealthChip } from "./dev
 import { formatElapsed } from "./RecordingPanel";
 import type { RecordingSnapshot } from "./recordingTypes";
 import type { RecordingPhase } from "./recordingUiReducer";
+import { sentence } from "./sentence";
 
 /** How the recording indicator is drawn. */
 export type RecVariant = "recording" | "busy" | "ready" | "idle" | "warning" | "stale";
@@ -74,7 +75,9 @@ export function deriveRecIndicator(
       return { label: "RECOVERY", variant: "warning", hint: "An interrupted take is blocking Record -- start a new batch" };
     case "IDLE": {
       if (!snapshot.readyToRecord) {
-        return { label: "NOT READY", variant: "idle", hint: snapshot.taskText ? null : "Set a task to enable Record" };
+        // The backend's reason first: station setup and capture come before the task in the operator's order.
+        const reason = snapshot.notReadyReason !== null ? sentence(snapshot.notReadyReason) : null;
+        return { label: "NOT READY", variant: "idle", hint: reason ?? (snapshot.taskText ? null : "Set a task to enable Record") };
       }
       // The backend would admit a take, but this browser may not be allowed to start one yet.
       if (!setup.operatorSet || !setup.controlTokenSet) {

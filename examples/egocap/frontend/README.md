@@ -76,6 +76,9 @@ The page is built for an operator mid-take: the cameras fill it, and everything 
   until then it says `SET UP` and what is missing. A command in flight shows at once (`STOPPING` while a take is written),
   because the backend's own phase only changes when the command finishes. A stale feed shows `NO FEED`, never a retained
   `REC`.
+- **Status strip (under the bar).** The station in use, its active/inactive toggle, and the capture headline. The toggle
+  (`StationActivityToggle.tsx`) marks the station active while it is collecting and blocked while it is not; nothing is
+  counted before the first press of the day, and both totals stay in view. It needs the control token to change.
 - **Camera stage (middle).** It takes every pixel the bar above and the dock below leave. The head camera (the one named
   `head*`, otherwise the first) takes the left two-thirds and the others stack on the right; each tile carries its name and
   measured / advertised Hz and latency on the picture. A live take puts a red frame around the stage.

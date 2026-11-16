@@ -58,6 +58,7 @@ function recording(overrides: Partial<RecordingSnapshot> = {}): RecordingSnapsho
     savedCount: 3,
     lastResult: null,
     readyToRecord: true,
+    notReadyReason: null,
     revision: 1,
     ...overrides,
   };
@@ -146,6 +147,20 @@ describe("operator page layout", () => {
   });
 });
 
+
+describe("station activity in the status strip", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the station's toggle beside its name once today's activity is read", async () => {
+    const activity = { station: "Station", date: "2026-03-09", state: "active", since: 1, active_seconds: 3_720, inactive_seconds: 0, blocker_count: 0, notes: "", as_of: 2 };
+    const fetched = vi.fn(async (url: string) => new Response(JSON.stringify(url === "/api/station-activity" ? activity : {}), { status: url === "/api/station-activity" ? 200 : 503 }));
+    vi.stubGlobal("fetch", fetched);
+    const { container } = mount();
+    const toggle = await screen.findByRole("button", { name: /Station active/ });
+    expect(toggle.textContent).toBe("Active · 1h 02m");
+    expect(container.querySelector(".status-strip .status-station + .station-activity")).not.toBeNull();
+  });
+});
 
 describe("resizing the side panel", () => {
   const widthOf = (container: HTMLElement) =>

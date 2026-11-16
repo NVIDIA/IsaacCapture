@@ -10,6 +10,7 @@
  */
 
 import type { RecordingPhase } from "./recordingUiReducer";
+import { sentence } from "./sentence";
 import type { RecordingActions, RecordingSnapshot } from "./recordingTypes";
 
 export type RecordingActionKind = "startEpisode" | "stopEpisode" | "discardEpisode" | "taskEdit" | "newBatch";
@@ -70,7 +71,8 @@ export function computeEligibility(
       if (episodePhase === "RECOVERY_REQUIRED") return blocked("A take was interrupted -- use New batch to clear it");
       if (episodePhase !== "IDLE") return blocked("An episode is already active");
       if (snapshot.taskText === null || snapshot.taskText.trim() === "") return blocked("Set a task first");
-      if (!snapshot.readyToRecord) return blocked("Required sources not ready");
+      // The backend's own reason (station setup, a stale source) when it gave one.
+      if (!snapshot.readyToRecord) return blocked(snapshot.notReadyReason !== null ? sentence(snapshot.notReadyReason) : "Required sources not ready");
       return eligible();
     }),
     stopEpisode: result("stopEpisode", () => {
