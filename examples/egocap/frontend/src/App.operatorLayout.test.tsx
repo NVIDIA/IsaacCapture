@@ -11,6 +11,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import App from "./App";
 import type { PreviewSnapshot } from "./captureProtocol";
 import type { RecordingSnapshot } from "./recordingTypes";
+import { SETUP_NOT_TESTED, SETUP_PASSED } from "./setupTestDoubles";
 import { useCaptureSession, type CaptureSessionState } from "./useCaptureSession";
 
 vi.mock("./useCaptureSession", async (importOriginal) => {
@@ -159,6 +160,60 @@ describe("station activity in the status strip", () => {
     const toggle = await screen.findByRole("button", { name: /Station active/ });
     expect(toggle.textContent).toBe("Active · 1h 02m");
     expect(container.querySelector(".status-strip .status-station + .station-activity")).not.toBeNull();
+  });
+});
+
+describe("start-of-day rail", () => {
+  /** Answer the flow and leave every other request unanswered, as a backend that is still starting would. */
+  function stubSetup(body: unknown) {
+    const fetched = vi.fn(async (url: string) => new Response(JSON.stringify(url.startsWith("/api/setup") ? body : {}), { status: url.startsWith("/api/setup") ? 200 : 503 }));
+    vi.stubGlobal("fetch", fetched);
+    return fetched;
+  }
+
+  it("shows the steps under the header and opens the checks over a page that takes no input", async () => {
+    const fetched = stubSetup(SETUP_NOT_TESTED);
+    const { container } = mount();
+    const devices = await screen.findByRole("button", { name: /Step 2, Devices: to do/ });
+    expect(container.querySelector(".app-header + .step-rail")).not.toBeNull();
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(false);
+    fireEvent.click(devices);
+    const dialog = screen.getByRole("dialog", { name: "Start-of-day checks" });
+    expect(dialog.textContent).toContain("Recording is held: run the device connection test before recording.");
+    // The page behind a dialog is inert, which is also what suspends the recording shortcuts.
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(true);
+    const reads = fetched.mock.calls.filter(([url]) => url === "/api/setup").length;
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(container.querySelector(".op-body")?.hasAttribute("inert")).toBe(false);
+    // Closing reads the flow again, so a fix made while the dialog was open shows on the rail at once.
+    await waitFor(() => expect(fetched.mock.calls.filter(([url]) => url === "/api/setup").length).toBe(reads + 1));
+  });
+
+  it("opens the calibration step in the same checks dialog and the station step in Settings", async () => {
+    stubSetup(SETUP_NOT_TESTED);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: /Step 3, Calibration/ }));
+    expect(screen.getByRole("dialog", { name: "Start-of-day checks" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: /Step 1, Station/ }));
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    expect(settings.querySelector(".settings-tab--on")?.textContent).toBe("Station");
+  });
+
+  it("puts the operator on the Record control for the record step", async () => {
+    stubSetup(SETUP_PASSED);
+    const { container } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: /Step 4, Record/ }));
+    expect(document.activeElement).toBe(container.querySelector(".recording-button--record"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows no rail while the flow cannot be read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    const { container } = mount();
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(container.querySelector(".step-rail")).toBeNull();
   });
 });
 

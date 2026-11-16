@@ -76,6 +76,16 @@ The page is built for an operator mid-take: the cameras fill it, and everything 
   until then it says `SET UP` and what is missing. A command in flight shows at once (`STOPPING` while a take is written),
   because the backend's own phase only changes when the command finishes. A stale feed shows `NO FEED`, never a retained
   `REC`.
+- **Start-of-day rail (under the header).** Station, Devices, Calibration, Record and Wrap up, each done, needing
+  attention, still to do, or not needed for this station, with a short reason (`StepRail.tsx`). The first step that is
+  neither done nor skipped is highlighted. A step opens where it is dealt with: Station opens Settings on its Station tab,
+  Devices and Calibration open the start-of-day checks, Record puts focus on the Record control. The rail shows what
+  `GET /api/setup` reports and is read again when a dialog closes, when the recording readiness reason changes, and every
+  ten seconds; it is absent when that cannot be read.
+- **Start-of-day checks (dialog).** The device connection test, run on request, lists every tracking device and camera the
+  station needs as passed, failed with the reason, or not needed; below it are the calibration and system checks. It
+  opens over the page, so the cameras stay live while a device is being fixed (`SetupDialog.tsx`). While any dialog is
+  open the page behind it is inert and the recording shortcuts are suspended.
 - **Status strip (under the bar).** The station in use, its active/inactive toggle, and the capture headline. The toggle
   (`StationActivityToggle.tsx`) marks the station active while it is collecting and blocked while it is not; nothing is
   counted before the first press of the day, and both totals stay in view. It needs the control token to change.

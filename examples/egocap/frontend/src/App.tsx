@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useReducer, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";
 import {
@@ -34,7 +34,11 @@ import {
 import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
-import { SettingsPanel } from "./SettingsPanel";
+import { SettingsPanel, type SettingsTab } from "./SettingsPanel";
+import { SetupDialog } from "./SetupDialog";
+import type { StepId } from "./setupApi";
+import { StepRail } from "./StepRail";
+import { useSetup } from "./useSetup";
 import { StationActivityToggle } from "./StationActivityToggle";
 import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
@@ -210,7 +214,7 @@ function providerTone(status: ProviderStatus["status"]): Tone {
 /** The page's top bar: app title, capture mode, feed-health status and the Settings button.
  * There is no page/tab navigation -- the generic capture display and the
  * Ego Capture UI recording panel are always-present siblings on one page, and
- * Settings opens as a drawer over them rather than replacing them. */
+ * Settings and the start-of-day checks open as dialogs over them rather than replacing them. */
 function AppHeader({
   response,
   feedHealthLabel,
@@ -492,22 +496,53 @@ export default function App() {
     return () => window.removeEventListener("resize", refit);
   }, []);
   const unavailable = response === null && feedHealth === "unavailable";
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // At most one dialog is open over the page; while one is, the page behind it takes no input.
+  const [dialog, setDialog] = useState<"settings" | "setup" | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("station");
+  // Counts Settings openings: each one starts the dialog afresh on the tab that was asked for.
+  const [settingsOpenings, countSettingsOpening] = useReducer((n: number) => n + 1, 0);
+  const settingsOpen = dialog === "settings";
+  const modalOpen = dialog !== null;
   // The operator settings the page itself uses (camera roles). Re-read each time Settings closes, so a change
   // saved there reaches the tiles without a reload.
   const [settingsGeneration, setSettingsGeneration] = useState(0);
   const operatorSettings = useOperatorSettings(settingsGeneration);
+  // The start-of-day flow. It is read again when a dialog that can change it closes, and whenever the facts it
+  // is derived from change: the backend's own readiness reason, the station in use and the saved count.
+  const [setupGeneration, refreshSetup] = useReducer((n: number) => n + 1, 0);
+  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`);
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    countSettingsOpening();
+    setDialog("settings");
+  };
   const closeSettings = () => {
-    setSettingsOpen(false);
+    setDialog(null);
     setSettingsGeneration((n) => n + 1);
+    refreshSetup();
+  };
+  const closeSetup = useCallback(() => {
+    setDialog(null);
+    refreshSetup();
+  }, []);
+  /** Open the place a step of the start-of-day flow is dealt with. */
+  const openStep = (step: StepId) => {
+    if (step === "station") openSettings("station");
+    else if (step === "devices" || step === "calibration") setDialog("setup");
+    // Recording is the page itself: put the operator on its main control.
+    else if (step === "record") document.querySelector<HTMLElement>(".recording-button--record")?.focus();
   };
   // Every camera the session offers can fill a role, whichever path its video takes to the page.
   const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
 
   return (
     <div className="app-shell app-shell--operator">
-      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => setSettingsOpen(true)} />
+      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => openSettings("station")} />
+      <StepRail steps={setup?.steps ?? null} onOpen={openStep} />
+      <SetupDialog open={dialog === "setup"} onClose={closeSetup} setup={setup} controlToken={controlToken} onChanged={refreshSetup} />
       <SettingsPanel
+        key={settingsOpenings}
+        initialTab={settingsTab}
         open={settingsOpen}
         onClose={closeSettings}
         sidebarWidth={sidebarWidth}
@@ -517,7 +552,7 @@ export default function App() {
         cameraSources={cameraSources}
       />
       <div
-        inert={settingsOpen}
+        inert={modalOpen}
         className={`op-body${resizing ? " op-body--resizing" : ""}`}
         style={{ "--op-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
@@ -558,7 +593,7 @@ export default function App() {
                   setControlToken={setControlToken}
                   clearControlToken={clearControlToken}
                   onPhaseChange={setPanelPhase}
-                  interactionBlocked={settingsOpen}
+                  interactionBlocked={modalOpen}
                 />
               </div>
             </>

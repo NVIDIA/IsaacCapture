@@ -579,6 +579,224 @@ hero card so the tracking tree below starts near the top of the viewport. */
   flex: 1 1 auto;
 }
 
+/* --- Start-of-day rail ---------------------------------------------------- */
+
+.step-rail {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.step-rail-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.step-rail-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+/* The line joining a step to the next one. */
+.step-rail-item + .step-rail-item::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: var(--space-4);
+  height: 1px;
+  margin-right: var(--space-2);
+  background: var(--border);
+}
+
+.step {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step:hover {
+  border-color: var(--border);
+}
+
+.step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.step-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.step-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.step-detail {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step--done .step-mark {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.step--attention .step-mark {
+  border-color: var(--warning);
+  background: var(--warning);
+  color: var(--canvas);
+}
+
+.step--attention .step-detail {
+  color: var(--warning);
+}
+
+.step--skipped .step-mark {
+  border-style: dashed;
+}
+
+.step--skipped .step-label {
+  color: var(--text-secondary);
+}
+
+/* The step to deal with next. */
+.step--current {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.step--current.step--todo .step-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+}
+
+@media (max-width: 900px) {
+  .step-detail {
+    display: none;
+  }
+}
+
+/* --- Start-of-day checks dialog ------------------------------------------- */
+
+.setup-modal {
+  width: min(720px, 96vw);
+}
+
+.setup-verdict {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.setup-verdict--clear {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.setup-verdict--held {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.check-group {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.check-row:last-child {
+  border-bottom: 0;
+}
+
+.check-mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.check-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.check-detail {
+  grid-column: 2;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.check-row--pass .check-mark {
+  color: var(--positive);
+}
+
+.check-row--fail .check-mark,
+.check-row--fail .check-detail {
+  color: var(--critical);
+}
+
+.check-row--skip {
+  color: var(--text-secondary);
+}
+
+.check-row--skip .check-label {
+  font-weight: 400;
+}
+
 /* The station's active/inactive toggle, beside its name. */
 .station-activity {
   display: inline-flex;

@@ -34,6 +34,7 @@ or restarts it.
 | `GET`/`POST /api/stations`, `PUT`/`DELETE /api/stations/{id}`, `POST /api/stations/select` | The station registry: the stations an operator chooses between and the one in use. A station is a name, a camera type, the camera filling each role and the capture host address last given to its headset. Kept in `stations.json` beside the operator settings. Every change uses `X-Control-Token` and answers with the new listing; a refusal is a 400 with the specific reason (a duplicate name, a camera in two roles, an unknown field), and an unknown id is 404. The station in use cannot be selected, edited or deleted while a take is being written. A station's headset address is listed only when the `GET` carries the token. See [Stations](#stations). |
 | `GET /api/headset-address` | The addresses to enter in the headset, wireless first, the one saved for the station in use, and whether that one is stale. Needs `X-Control-Token`. |
 | `GET`/`POST /api/station-activity` | Today's active and inactive time for the station in use. `POST` (`X-Control-Token`) sets `state` (`active` or `inactive`), the blocker `notes`, or both, and rewrites that station's daily activity log. |
+| `GET /api/setup`, `POST /api/setup/connection-test` | The start-of-day flow: each step's state, the last device connection test, the system checks, and `blocked_reason`, why station setup holds a take. `POST` (`X-Control-Token`) tests every device the station in use needs now and answers with the new flow. See [Start-of-day flow](#start-of-day-flow). |
 | `POST /api/task-files/import`, `DELETE /api/task-files/{name}` | Import a task catalog the operator supplies — by `name` + `content` (text uploaded from the browser) — into the imported-catalog directory beside the operator settings, once it parses; and remove an imported one. `POST` and `DELETE` use the `X-Control-Token` header (legacy JSON tokens remain accepted for `POST`); `DELETE` refuses removal of the selected catalog (409); imports also refuse replacement of that catalog until it is deselected. Imports appear in `GET /api/task-files` (as `imported`) and shadow a shipped catalog of the same name. |
 | `GET /api/tools` | The operator tools the Settings drawer offers (headset calibration, glove calibration, fisheye rectification for the SENSING cameras), each with whether this build can launch it. None can yet. |
 | `GET /api/livekit-token?room=ROOM` | Viewer token (subscribe and data messages, no media publishing) for a LiveKit room the session offers (404 otherwise, 503 without signing credentials). Which streams exist comes from CaptureServer's session message. |
@@ -70,6 +71,23 @@ A site usually has several stations, and an operator picks the one they are at. 
   restarting the backend is the only way to change that.
 - **The station in use supplies the camera type and roles** that `GET /api/operator-settings` returns, and a `PUT`
   of those two fields is saved to it.
+### Start-of-day flow
+
+The flow is station, devices, calibration, record, wrap-up ([`setup_service.py`](egocap_web/setup_service.py),
+[`setup_checks.py`](egocap_web/setup_checks.py)). With a station in use it gates recording; with none it only advises.
+
+- **Device connection test.** Run on request. Every tracking device the capture session reports must be connected and
+  tracking data must be arriving; each camera the station assigns must be connected and delivering frames, or, for a
+  LiveKit camera, offered and recordable. A role the station leaves unassigned is skipped. A passed test holds for that
+  station and that capture session only; changing the station or restarting CaptureServer needs a new run.
+- **System checks.** Read continuously and cached for two seconds: the calibration files of the roles in use under
+  `EGOCAP_CALIBRATION_DIR` (head intrinsics and extrinsics, each wrist's intrinsics, and the wrist offsets once a wrist
+  is assigned), the glove plugin's state (where a missing SDK or licence shows), at least 10 GB free under the recording
+  output, and the camera producer for cameras that arrive over LiveKit. Calibration and glove software are skipped for a
+  mock session.
+- **The gate** is asked when a take is admitted and when readiness is published, never while a take records: a setup
+  fact changing mid-take does not interrupt it, unlike a capture source going stale.
+
 - **Activity.** `station_status/<date>.json` under the recording output holds each station's active and inactive
   intervals for that day, and `station_status/<station>_<date>_activity.json` is the daily log, rewritten on every
   change. Both are written atomically and stay on this machine. Leaving a station stops its active time.

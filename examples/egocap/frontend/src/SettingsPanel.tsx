@@ -13,7 +13,7 @@
  * commands do; Tools lists unavailable stubs; Display is this browser's only; Advanced values are set where the backend is launched.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, TokenHint, errorMessage, useAction } from "./settingsParts";
+import { Card, TokenHint, errorMessage, useAction, useEscapeToClose, useModalFocus } from "./settingsParts";
 import { HeadsetAddressCard } from "./HeadsetAddressCard";
 import { StationsCard } from "./StationsCard";
 import {
@@ -712,45 +712,6 @@ function LoadState<T>({ state, what }: { state: Loaded<T>; what: string }) {
   return null;
 }
 
-/** Own keyboard focus for the dialog lifetime and return it to the invoking control. */
-function useModalFocus(open: boolean) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open || !dialogRef.current) return;
-    const dialog = dialogRef.current;
-    const previous = document.activeElement;
-    /** Recompute controls because loading, tab changes and saves can change their availability. */
-    const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]',
-    )).filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[hidden], [inert]"));
-    /** Programmatic focus and pointer interaction must also respect the modal boundary. */
-    const containFocus = (event: FocusEvent) => {
-      if (!dialog.contains(event.target as Node)) dialog.focus();
-    };
-    /** Cycle only the current dialog controls, including wraparound in either direction. */
-    const onTab = (event: KeyboardEvent) => {
-      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
-      const available = controls();
-      const current = available.indexOf(document.activeElement as HTMLElement);
-      const next = event.shiftKey
-        ? (current <= 0 ? available.length - 1 : current - 1)
-        : (current + 1) % available.length;
-      event.preventDefault();
-      (available[next] ?? dialog).focus();
-    };
-    document.addEventListener("focusin", containFocus);
-    document.addEventListener("keydown", onTab);
-    dialog.focus();
-    return () => {
-      // Release containment before restoring focus; rerenders must not recapture the invoking control.
-      document.removeEventListener("focusin", containFocus);
-      document.removeEventListener("keydown", onTab);
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, [open]);
-  return dialogRef;
-}
-
 /** Present station settings in a modal that owns focus until it closes. */
 export function SettingsPanel({
   open,
@@ -772,16 +733,7 @@ export function SettingsPanel({
   const loadSetup = useCallback((signal: AbortSignal) => backend.loadStationSetup(signal, controlToken), [backend, controlToken]);
   const [setup, updateSetup] = useLoaded(open, loadSetup);
 
-  // Escape closes, as for any dialog.
-  useEffect(() => {
-    if (!open) return;
-    /** Let Escape release the dialog from any focused control. */
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useEscapeToClose(open, onClose);
 
   if (!open) return null;
 
