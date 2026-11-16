@@ -274,7 +274,7 @@ if(SKBUILD)
         PATTERN "__pycache__" EXCLUDE
         # Reused staging can retain a formerly enabled camera helper. The option,
         # not old files in the build tree, owns its inclusion in a scikit wheel.
-        PATTERN "native" EXCLUDE
+        REGEX "/isaaccapture/ovxr_session_manager/native$" EXCLUDE
     )
     if(BUILD_OVXR_CAMERA_QUADS)
         install(TARGETS ovxr_pip_layer
