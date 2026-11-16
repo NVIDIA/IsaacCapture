@@ -24,7 +24,7 @@ from ..protocol.messages import (
     DRIVER_APAI_MOCK,
     DRIVER_REAL,
     DRIVER_SIM,
-    HUMAN_SOURCE_SYNTHETIC,
+    HUMAN_SOURCE_TELEOP,
     MESSAGE_TYPES,
     REQUEST_HANDBACK,
     REQUEST_HUMAN,
@@ -61,7 +61,7 @@ from .gripper import (
     GripperWorker,
     JawState,
 )
-from .human import HumanDrive, HumanInput, HumanTarget
+from .human import DriveEnd, HumanDrive, HumanInput, HumanTarget
 from .inbox import Inbox
 from .interfaces import (
     ArmFault,
@@ -91,7 +91,6 @@ if TYPE_CHECKING:
     from ..protocol.messages import GraspRegion, Message
     from .clock import Clock
     from .config import RobotAppConfig
-    from .human import DriveEnd
     from .interfaces import (
         ArmPort,
         CheckerSet,
@@ -174,24 +173,36 @@ TAKEN_OVER = (
 )
 HANDED_BACK = "takeover ended: the arm is given back; nobody owns it"
 # Why an engaged human target moves nothing: the grip was squeezed before the
-# person could move the arm, since a drive that the grip did not end, or while
-# the controller data were away.
+# person could move the arm, since a drive that the grip did not end, while
+# the controller data were away, or while other work ran.
 NEEDS_RELEASE = "release the grip, then squeeze it to move"
 DRIVE_ENDED = (
     "human drive ended: {why}; the arm holds; release the grip and squeeze again"
 )
+# Why the robot app itself ends a human drive that is queued or runs: the
+# controller data were away between two human targets, or the admission
+# refused an engaged target. TARGET_REFUSED is followed by that refusal.
+DATA_AWAY = "controller data were away"
+TARGET_REFUSED = "an engaged human target was refused: "
+# How the reason of a human drive that ended "stopped" begins when no STOP, no
+# owner change and no lost robot connection told the operator of it: the two
+# above, and the drive's own (human.py) for a human target that quotes other
+# numbers than the drive was admitted with.
+_UNTOLD_STOPS = (DATA_AWAY, TARGET_REFUSED, "the human target quotes ")
 # How the note of a human target begins after its sender ended a drive; the
 # sender's copy is NOTE_SQUEEZE_AGAIN of human/logic.py. DRIVE_ENDED says it.
 NOTE_SQUEEZE_AGAIN = "release the grip and squeeze again: "
 PERSON_KEEPS_ARM = (
     "; the person keeps the arm: squeeze again when the connection is back"
 )
-# The stage of HUMAN_STAGES at which the controller data count as fresh.
+# A human target's stage says how far the human program is with its controller
+# data (HUMAN_STAGES). Only at this one do the data count as fresh.
 STAGE_READY = "ready"
-# The statuses of a human drive that a released grip, or a STOP, ended.
+# The statuses of a human drive (DriveEnd.status) the app treats on their own.
 _DRIVE_RELEASED = "released"
 _DRIVE_STOPPED = "stopped"
 _DRIVE_CONTACT = "contact"
+_DRIVE_FAILED = "failed"
 
 CLEAR_CONTACT_SPOTS = "clear_contact_spots"
 CLOSE_GRASP = "close_grasp"
@@ -617,7 +628,8 @@ class RobotApp:
         # The owner number at which a released grip was noted. While it is not
         # the current one, the next human drive needs a released grip first:
         # the needs-release flag, which every change of the control owner sets.
-        # Controller data that were away set it too.
+        # Controller data that were away set it too, and so does an engaged
+        # target that arrives while other work runs.
         self._release_seen: int | None = None
         self._drive_ended = ""  # why the last human drive ended; "" while one runs
         self._human_refusal = ""  # why the newest engaged human target moves nothing
@@ -1085,14 +1097,18 @@ class RobotApp:
         It is kept as the newest one. A released grip it shows is noted, and
         an engaged one that passes the admission starts one human drive. Why
         an engaged target moves nothing shows in ROBOT_STATE, in
-        health["human"]["refusal"].
+        health["human"]["refusal"]. A human drive that is queued or runs ends
+        in a hold when the controller data were away before this target, or
+        when the admission refuses it engaged.
         """
         with self._lock:
             now = self._clock.monotonic()
             # Controller data that come back after a gap are a new start: a
-            # grip squeezed meanwhile moves nothing until it was released.
+            # grip squeezed meanwhile moves nothing until it was released, and
+            # no human drive runs on over the gap.
             if self._controller_problem(now) is not None:
                 self._release_seen = None
+                self._end_human_drive(DATA_AWAY)
             self._human_input.put(target)
             state = self._authority.snapshot()
             # Why the target is not a person's who owns the arm now.
@@ -1105,17 +1121,25 @@ class RobotApp:
                 if target.grip_released and fresh and not_owner is None:
                     self._release_seen = state.owner_number
                 return
+            # A squeeze that began while other work ran moves nothing once that
+            # work has ended: a released grip comes first.
+            other_work = self._busy(_no_human_drive) or self._referencing()
+            if other_work is not None:
+                self._release_seen = None
             reason = (
                 self._human_off()
                 or self._source_problem()
                 or not_owner
                 or self._motors_off()
-                or self._busy(_no_human_drive)
-                or self._referencing()
+                or other_work
             )
-            if reason is None and self._busy(_a_human_drive) is not None:
-                self._human_refusal = ""  # the drive under way follows it
-                return
+            if self._busy(_a_human_drive) is not None:
+                if reason is None:
+                    self._human_refusal = ""  # the drive under way follows it
+                    return
+                # No drive follows a target the admission refuses.
+                self._release_seen = None
+                self._end_human_drive(f"{TARGET_REFUSED}{reason}")
             # A drive starts on the controller data a takeover needs.
             reason = reason or self._controller_problem(now)
             if reason is None and self._release_seen != state.owner_number:
@@ -2233,9 +2257,12 @@ class RobotApp:
         return None
 
     def _source_problem(self) -> str | None:
-        """Why the newest human target's source may not drive this arm, else None."""
+        """Why the newest human target's source may not drive this arm, else None.
+
+        Only the headset's word may drive an arm that is not simulated.
+        """
         target = self._human_input.newest()
-        if target is None or target.source != HUMAN_SOURCE_SYNTHETIC:
+        if target is None or target.source == HUMAN_SOURCE_TELEOP:
             return None
         if self._driver in SIMULATED_DRIVERS:
             return None
@@ -2425,6 +2452,21 @@ class RobotApp:
         for job in dropped:
             self._finish(job, _Ending(CANCELLED, reason))
 
+    def _end_human_drive(self, reason: str) -> None:
+        """End the human drive that is queued or runs; under the app's lock.
+
+        The running one sees the reason before its next setpoint and ends in
+        a hold. A queued one is dropped and told as a drive that ended with
+        nothing sent: no STOP tells of it.
+        """
+        # The motion worker takes a job only under the app's lock, so the
+        # drive that is queued here is the one the stop drops.
+        with self._motion_cond:
+            queued = any(job.is_human_drive for job in self._jobs)
+        self._stop_motion(reason, _a_human_drive)
+        if queued:
+            self._after_drive(DriveEnd(_DRIVE_STOPPED, reason, 0, None))
+
     def _finish(self, job: _Job, ending: _Ending) -> None:
         _log.info("%s ended %s: %s", job.what, ending.status, ending.reason or "-")
         if job.reply is not None:
@@ -2566,7 +2608,7 @@ class RobotApp:
             if end is None:  # an error left the drive: a fault-stop follows
                 with self._lock:
                     self._release_seen = None
-                    self._drive_ended = "failed"
+                    self._drive_ended = _DRIVE_FAILED
         self._after_drive(end)
         detail = {"outcome": end.status, "sent": end.sent}
         return _Ending(end.status, end.reason, end.end_q, detail)
@@ -2586,11 +2628,16 @@ class RobotApp:
             if end.status != _DRIVE_RELEASED:
                 self._release_seen = None  # a released grip comes first
             self._drive_ended = why
-        if end.reason.startswith("fault: "):
-            # A driver fault or joint feedback lost during the drive.
+        if end.status == _DRIVE_FAILED and end.reason.startswith("fault: "):
+            # A driver fault or joint feedback lost during the drive. The
+            # reason of another status may be a human program's note.
             self._fault(end.reason.removeprefix("fault: "))
-        if end.status in (_DRIVE_RELEASED, _DRIVE_STOPPED):
-            return  # a drive that a STOP ended has the STOP's own event
+        if end.status == _DRIVE_RELEASED:
+            return
+        # A STOP, an owner change and a lost robot connection have an EVENT of
+        # their own; a drive that ended "stopped" without one has only this.
+        if end.status == _DRIVE_STOPPED and not end.reason.startswith(_UNTOLD_STOPS):
+            return
         if end.status == _DRIVE_CONTACT and not why.startswith(_DRIVE_CONTACT):
             why = f"{_DRIVE_CONTACT}: {why}"
         data = {"status": end.status, "reason": reason, "sent": end.sent}
@@ -2643,6 +2690,10 @@ class RobotApp:
 
         confirmed is what the operator's command said of the path.
         """
+        # Only the agent can clear its contact spots, and it is refused while a
+        # takeover is open: "path is clear" is the person's word for them.
+        if confirmed and self.takeover_open:
+            self._checkers.recovery.clear_contact_spots()
         outcome = self._rest.request(
             source,
             confirmed,

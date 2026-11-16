@@ -29,12 +29,15 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
 )
 from isaaccapture_examples.agentic_remote.robot_app import rest as rest_module
 from isaaccapture_examples.agentic_remote.robot_app.app import (
+    DATA_AWAY,
     HANDED_BACK,
     HUMAN_OFF,
+    MOTORS_OFF,
     NEEDS_RELEASE,
     NO_TAKEOVER,
     NOTE_SQUEEZE_AGAIN,
     TAKEOVER_OPEN,
+    TARGET_REFUSED,
     human_target,
 )
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
@@ -61,9 +64,14 @@ RETURN_SETPOINTS = 209
 RACED = "a STOP or an owner change arrived while the request was checked"
 OPEN_THE_VIEW = "; open the live view page in a visible browser tab"
 BUSY_DRIVING = "busy: human driving is running"
+BUSY_HANDBACK = "busy: a hand-back is running"
 AT_A_CONTACT = "the arm is holding at a contact"
 RIGHT_B = "right B held 1.0 s"
 RIGHT_A = "right A held 1.0 s"
+# The name of the robot app's motion worker thread.
+MOTION_WORKER = "robot-app-motion"
+# What an ended human drive's EVENT says after its reason.
+SQUEEZE_AGAIN = "; the arm holds; release the grip and squeeze again"
 
 _SEQ = itertools.count(1)
 
@@ -304,6 +312,47 @@ def moved(start: Sequence[float], by: float = 0.05) -> list[float]:
     return [start[0] + by, *start[1:]]
 
 
+def fed_while_the_worker_reads(
+    h, message: Callable[[], HumanSetpoint | None]
+) -> list[bool]:
+    """Keep the controller data fresh while the motion worker reads the joints.
+
+    A human program sends 50 HUMAN_SETPOINTs per second whatever the robot app
+    does. On the fake clock two full joint reads and the wait between them
+    take 0.3 s in no real time, longer than human.sample_age_limit_s. So
+    message() is fed after every joint read of the motion worker and every
+    0.02 s of its longer waits. Returns the switch: append to it to start,
+    clear it to stop.
+    """
+    on: list[bool] = []
+    read, sleep = h.arm.read_joint, h.clock.sleep
+    period_s = h.config.executor.period_s
+
+    def worker() -> bool:
+        # The dispatcher cannot wait for its own pass.
+        return bool(on) and threading.current_thread().name == MOTION_WORKER
+
+    def read_joint(joint: int):
+        reading = read(joint)
+        if worker():
+            feed(h, message())
+        return reading
+
+    def sleep_fed(s: float) -> None:
+        if s <= period_s or not worker():
+            sleep(s)
+            return
+        left = s
+        while left > 1e-9:
+            sleep(min(period_s, left))
+            left -= period_s
+            feed(h, message())
+
+    h.arm.read_joint = read_joint
+    h.clock.sleep = sleep_fed
+    return on
+
+
 def ask_for_help(h, reason: str = "the agent is stuck") -> Result:
     """OWNER_REQUEST "help_needed", answered, with its ROBOT_STATE received."""
     result = final(h, h.client.request_owner("help_needed", reason=reason))
@@ -529,24 +578,27 @@ def test_no_view_is_asked_for_a_takeover_when_the_setting_says_so(
     assert ask_takeover(h).status == "completed"
 
 
+@pytest.mark.parametrize("source", [HUMAN_SOURCE_SYNTHETIC, "", "script", "Teleop"])
 @pytest.mark.parametrize(
     ("driver", "declared"), [("", "no driver"), ("real", "driver real")]
 )
 def test_a_takeover_is_refused_with_a_synthetic_controller_on_a_driver_that_is_not_simulated(
-    make_robot_app, driver, declared
+    make_robot_app, driver, declared, source
 ):
     h = make_robot_app(driver=driver)
     before = h.app.snapshot()
-    feed(h, setpoint(h, source=HUMAN_SOURCE_SYNTHETIC))
+    # Every source word but the headset's "teleop" counts as a synthetic one.
+    feed(h, setpoint(h, source=source))
     synthetic = (
         "a synthetic controller may drive only a simulated arm; this robot app "
         f"declares {declared}"
     )
-    assert human_facts(h)["takeover"] == synthetic
+    facts = human_facts(h)
+    assert (facts["takeover"], facts["source"]) == (synthetic, source)
     assert_refused(h, ask_takeover(h), synthetic)
     assert_no_takeover(h, before)
     # An engaged target of that source starts no drive either.
-    feed(h, setpoint(h, moved(REST), source=HUMAN_SOURCE_SYNTHETIC))
+    feed(h, setpoint(h, moved(REST), source=source))
     h.idle()
     assert human_facts(h)["refusal"] == synthetic
     assert h.arm.sent == []
@@ -554,12 +606,23 @@ def test_a_takeover_is_refused_with_a_synthetic_controller_on_a_driver_that_is_n
     assert take_over(h).status == "completed"
 
 
+@pytest.mark.parametrize("source", [HUMAN_SOURCE_SYNTHETIC, "script"])
 @pytest.mark.parametrize("driver", ["sim", "apai-mock"])
-def test_a_synthetic_controller_may_take_a_simulated_arm(make_robot_app, driver):
+def test_a_synthetic_controller_may_take_a_simulated_arm(
+    make_robot_app, driver, source
+):
     h = make_robot_app(driver=driver)
-    feed(h, setpoint(h, source=HUMAN_SOURCE_SYNTHETIC))
+    feed(h, setpoint(h, source=source))
     assert human_facts(h)["takeover"] == ""
     assert ask_takeover(h).status == "completed"
+    # And drive it.
+    hand = Hand(h, source=source)
+    keep_human_fed(h, hand)
+    ended = drives(h)
+    feed(h, hand())
+    drive(h, hand, moved(REST))
+    assert [(end.status, end.sent) for end in ended] == [("released", 6)]
+    assert human_facts(h)["refusal"] == ""
 
 
 def test_a_takeover_is_refused_with_the_arm_outside_the_human_limits(make_robot_app):
@@ -767,6 +830,36 @@ def test_a_stop_between_the_joint_read_and_the_grant_wins(human_app):
     assert take_over(h).status == "completed"
 
 
+def test_a_jaw_reference_typed_during_the_takeovers_joint_read_refuses_it(
+    make_robot_app,
+):
+    # Started raised: the jaws have no reference, and one may be typed.
+    h = make_robot_app(pose=RAISED, allow_reference=True)
+    feed(h)
+    before = h.app.snapshot()
+    reached, release = h.hold_call("read_all")
+    command_id = h.client.request_owner("human", reason=RIGHT_B)
+    assert reached.wait(WAIT_S)  # admitted; the joints are about to be read
+    # Only the Thor terminal can begin jaw work now: the dispatcher is reading.
+    closing, let_go = h.hold_call("gripper_reference")
+    done = Done()
+    try:
+        assert h.app.request_reference(True, done) is None
+        assert closing.wait(WAIT_S)  # the jaws are closing to their stop
+        release.set()
+        # What began while the pose was read refuses the takeover.
+        assert_refused(h, final(h, command_id), JAWS_BUSY)
+        assert h.app.snapshot() == before and not h.app.takeover_open
+        assert h.heard("owner") == [] and h.arm.sent == []
+    finally:
+        release.set()
+        let_go.set()
+    assert done.wait().status == "completed"
+    assert h.app._worker.wait_idle(WAIT_S)
+    # The reference is over: the takeover is taken.
+    assert take_over(h).status == "completed"
+
+
 # Takeover open: no agent task until the hand-back
 
 
@@ -930,6 +1023,41 @@ def test_a_handback_is_refused_while_a_return_to_rest_runs(raised_app):
     assert final(h, rest_id).status == "completed"
 
 
+def test_a_handback_is_refused_while_a_guarded_opening_runs(human_app):
+    h = human_app
+    take_over(h)
+    # What a refused hand-back names: stop, then the guarded opening.
+    h.client.stop("typed stop")
+    h.client.wait_state(lambda s: s.stop_number == 1)
+    # The jaws are part closed, so that the opening has steps to make.
+    h.arm.gripper_command(0.2, 0.3, "plain", threading.Event())
+    reached, release = threading.Event(), threading.Event()
+
+    def on_jaw_step(at: float) -> None:
+        if not reached.is_set():
+            reached.set()
+            release.wait(WAIT_S)
+
+    h.arm.on_jaw_step = on_jaw_step
+    open_id = h.client.open_jaws()
+    try:
+        assert reached.wait(WAIT_S)  # the jaws are opening, step by step
+        assert not h.app._worker.referencing()
+        before = h.app.snapshot()
+        # Refused before it is accepted: no proof of rest is begun.
+        assert_refused(h, hand_back(h), JAWS_BUSY, "handback")
+        assert h.app.snapshot() == before and h.app.takeover_open
+        assert h.arm.sent == []
+    finally:
+        release.set()
+    # The opening was not cut short; after it the hand-back is taken.
+    assert final(h, open_id).status == "completed"
+    assert h.app._worker.wait_idle(WAIT_S)
+    assert h.arm.gripper_read() == pytest.approx(1.0)
+    assert hand_back(h).status == "completed"
+    assert not h.app.takeover_open
+
+
 def test_a_stop_during_the_handbacks_reads_keeps_the_takeover_open(human_app):
     h = human_app
     take_over(h)
@@ -980,7 +1108,9 @@ def test_a_return_to_rest_sets_the_needs_release_flag(raised_app):
     assert sent == RETURN_SETPOINTS
     assert h.app.snapshot().owner is Owner.HUMAN
     assert human_facts(h)["needs_release"] is True
-    # A grip that was squeezed during the return moves nothing afterwards.
+    # A grip that was squeezed during the return moves nothing afterwards. No
+    # HUMAN_SETPOINT came while the return read the joints, so a gap in the
+    # controller data refuses it as well; the next test keeps them fresh.
     hand.squeeze(moved(REST))
     h.idle()
     assert ended == [] and len(h.arm.sent) == sent
@@ -992,6 +1122,36 @@ def test_a_return_to_rest_sets_the_needs_release_flag(raised_app):
     drive(h, hand, moved(REST))
     assert [end.status for end in ended] == ["released"]
     assert len(h.arm.sent) == sent + 6
+
+
+def test_a_squeeze_held_through_a_return_to_rest_moves_nothing_without_a_data_gap(
+    raised_app,
+):
+    h = raised_app
+    hand = person(h)
+    ended = drives(h)
+    noted = h.app.snapshot().owner_number
+    assert h.app._release_seen == noted
+    # The grip is squeezed through the whole return, the clutch not engaged,
+    # and the human program goes on sending.
+    hand.fields = {"grip_released": False}
+    fed = fed_while_the_worker_reads(h, hand)
+    fed.append(True)
+    assert final(h, h.client.rest()).status == "completed"
+    fed.clear()
+    state = h.app.snapshot()
+    assert (state.owner, state.owner_number) == (Owner.HUMAN, noted + 2)
+    # The release noted before the return stands and the controller data were
+    # never away: only the owner number speaks against a drive.
+    assert h.app._release_seen == noted
+    assert h.app._controller_problem(h.clock.monotonic()) is None
+    assert human_facts(h)["needs_release"] is True
+    sent = len(h.arm.sent)
+    hand.fields = {}
+    hand.squeeze(moved(REST), 3)
+    h.idle()
+    assert ended == [] and len(h.arm.sent) == sent
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
 
 
 # A human target on the Thor
@@ -1123,6 +1283,63 @@ def test_an_engaged_target_without_fresh_controller_data_starts_nothing(human_ap
     assert [end.status for end in ended] == ["released"]
 
 
+def test_an_engaged_target_starts_nothing_while_a_handback_runs(human_app):
+    h = human_app
+    person(h)
+    ended = drives(h)
+    reached, release = h.hold_call("read_all")
+    command_id = h.client.request_owner("handback", reason=RIGHT_A)
+    assert reached.wait(WAIT_S)  # accepted; the joints are about to be read
+    feed(h, setpoint(h, moved(REST)))
+    assert human_facts(h)["refusal"] == BUSY_HANDBACK
+    release.set()
+    assert final(h, command_id).status == "completed"
+    h.idle()
+    # No drive waited behind the hand-back.
+    assert ended == [] and h.arm.sent == []
+    assert h.app.snapshot().owner is Owner.NOBODY and not h.app.takeover_open
+
+
+def test_an_engaged_target_starts_nothing_with_the_motors_off(human_app):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    # A release typed at the Thor terminal: at measured rest the motors go off.
+    done = Done()
+    assert h.app.request_release(done) is None
+    assert done.wait().status == "completed"
+    assert h.app.motion_state is MotionState.REST_UNPOWERED
+    assert h.app.snapshot().owner is Owner.HUMAN and h.app.takeover_open
+    # A released grip on fresh data: only the motors speak against a drive.
+    feed(h, hand())
+    assert human_facts(h)["needs_release"] is False
+    feed(h, setpoint(h, moved(REST)))
+    h.idle()
+    assert human_facts(h)["refusal"] == MOTORS_OFF
+    assert ended == [] and h.arm.sent == []
+    assert h.heard("human") == []
+    assert h.app.motion_state is MotionState.REST_UNPOWERED
+    assert not h.arm.torque_on()
+
+
+def test_an_engaged_target_starts_nothing_while_a_jaw_reference_runs(human_app):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    # No request starts a jaw reference while a person owns the arm, so the
+    # gripper worker's answer is made up here.
+    h.app._worker.referencing = lambda: True
+    hand.squeeze(moved(REST), 3)
+    h.idle()
+    assert human_facts(h)["refusal"] == JAWS_BUSY
+    assert ended == [] and h.arm.sent == []
+    del h.app._worker.referencing
+    # With the worker's own answer the same squeeze needs a released grip first.
+    hand.squeeze(moved(REST), 3)
+    h.idle()
+    assert ended == [] and human_facts(h)["refusal"] == NEEDS_RELEASE
+
+
 def test_a_typed_rest_is_refused_while_a_drive_runs(human_app):
     h = human_app
     hand = person(h)
@@ -1226,6 +1443,32 @@ def test_a_grip_squeezed_before_the_takeover_moves_nothing_until_released(
     drive(h, hand, moved(REST))
     assert [end.status for end in ended] == ["released"]
     assert h.sent()[-1] == moved(REST)
+
+
+def test_a_squeeze_held_through_a_stop_and_a_second_takeover_moves_nothing(
+    human_app,
+):
+    h = human_app
+    person(h)
+    ended = drives(h)
+    noted = h.app.snapshot().owner_number
+    assert h.app._release_seen == noted
+    h.client.stop("right B", sender="controller")
+    h.client.wait_state(lambda s: s.stop_number == 1)
+    # The grip is squeezed while the person takes the arm again.
+    feed(h, setpoint(h, grip_released=False))
+    assert ask_takeover(h).status == "completed"
+    h.client.wait_state(lambda s: s.owner == "human")
+    assert h.app.snapshot().owner_number > noted
+    # The release noted under the first takeover stands and the controller
+    # data were never away: only the owner number speaks against a drive.
+    assert h.app._release_seen == noted
+    assert h.app._controller_problem(h.clock.monotonic()) is None
+    assert human_facts(h)["needs_release"] is True
+    feed(h, setpoint(h, moved(REST)))
+    h.idle()
+    assert ended == [] and h.arm.sent == []
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
 
 
 def test_a_drive_that_did_not_end_by_a_released_grip_needs_one_first(human_app):
@@ -1409,6 +1652,66 @@ def test_a_squeeze_held_while_the_controller_data_were_away_moves_nothing(human_
     assert [end.status for end in ended] == ["released"]
 
 
+def a_handback_away_from_rest(h) -> str:
+    """A hand-back, which the arm away from rest refuses; its command id."""
+    return h.client.request_owner("handback", reason=RIGHT_A)
+
+
+def a_typed_rest_with_the_tip_blocked(h) -> str:
+    """A typed rest its tip check refuses, before recovery takes the arm."""
+    low = "the gripper tip is below the table clearance"
+    h.checkers.recovery.set_tip_hook(lambda q, region: low)
+    return h.client.rest()
+
+
+@pytest.mark.parametrize(
+    ("work", "busy"),
+    [
+        (a_handback_away_from_rest, BUSY_HANDBACK),
+        (a_typed_rest_with_the_tip_blocked, "busy: a return to rest is running"),
+    ],
+    ids=["a hand-back", "a typed rest"],
+)
+def test_a_squeeze_begun_while_other_work_runs_moves_nothing_once_it_is_refused(
+    raised_app, work, busy
+):
+    h = raised_app
+    hand = person(h)
+    ended = drives(h)
+    goal = moved(RAISED)
+    before = h.app.snapshot()
+    fed = fed_while_the_worker_reads(h, lambda: setpoint(h, goal))
+    reached, release = h.hold_call("read_all")
+    command_id = work(h)
+    assert reached.wait(WAIT_S)  # accepted; the joints are about to be read
+    # The grip is squeezed while that work runs, and it stays down.
+    feed(h, setpoint(h, goal))
+    facts = human_facts(h)
+    assert facts["refusal"] == busy
+    # The Thor forgets the released grip it had noted. The controller data are
+    # fresh: it is not a gap in them that sets the flag.
+    assert h.app._controller_problem(h.clock.monotonic()) is None
+    assert facts["needs_release"] is True
+    fed.append(True)
+    release.set()
+    assert final(h, command_id).status == "refused"
+    h.idle()
+    fed.clear()
+    # The work changed no owner, and the data were fresh to its end.
+    assert h.app.snapshot() == before
+    assert h.app._controller_problem(h.clock.monotonic()) is None
+    # The squeeze that is still down moves nothing.
+    hand.squeeze(goal, 3)
+    h.idle()
+    assert ended == [] and h.arm.sent == []
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
+    # Released, then squeezed again: the arm follows.
+    hand.release()
+    feed(h, hand())
+    drive(h, hand, goal, sends=3)
+    assert [(end.status, end.sent) for end in ended] == [("released", 3)]
+
+
 def test_lost_joint_feedback_during_a_drive_is_a_fault_stop_with_the_motors_on(
     human_app,
 ):
@@ -1442,6 +1745,303 @@ def test_lost_joint_feedback_during_a_drive_is_a_fault_stop_with_the_motors_on(
     hand.squeeze(moved(REST))
     h.idle()
     assert len(ended) == 1 and len(h.arm.sent) == sent
+
+
+def test_a_note_that_begins_with_fault_latches_no_fault_stop(human_app):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    hand.squeeze(moved(REST))
+    # The human program ends the engagement; its note is the drive's reason.
+    note = "fault: made up on the workstation"
+    hand.fields = {"engaged": False, "grip_released": False, "note": note}
+    h.idle()
+    assert [(end.status, end.reason) for end in ended] == [("disengaged", note)]
+    # Only a drive that ended "failed" is a fault: this is the workstation's text.
+    state = h.app.snapshot()
+    assert (state.stop_level, state.owner) == (StopLevel.NONE, Owner.HUMAN)
+    assert state.fault_reason == "" and h.heard("fault") == []
+    assert h.heard("human")[-1][1] == f"human drive ended: {note}{SQUEEZE_AGAIN}"
+    # Nothing is latched for a reset to clear.
+    refused = final(h, h.client.reset())
+    assert (refused.status, refused.reason) == ("refused", "no fault-stop is latched")
+
+
+# A drive the robot app ends by itself: no STOP tells it, so its own EVENT does
+
+
+def ended_by_the_app(h, ended: list[DriveEnd], reason: str, sent: int) -> None:
+    """The one drive so far ended "stopped" with this reason, in a hold.
+
+    Its EVENT "human" went out, no STOP was raised, the person keeps the arm
+    and a released grip comes first.
+    """
+    assert [(end.status, end.reason, end.sent) for end in ended] == [
+        ("stopped", reason, sent)
+    ]
+    text = f"human drive ended: {reason}{SQUEEZE_AGAIN}"
+    data = {"status": "stopped", "reason": reason, "sent": sent}
+    assert h.heard("human") == [("human", text, data)]
+    assert h.client.wait_event("human").text == text
+    assert h.heard("stop") == []
+    state = h.app.snapshot()
+    assert (state.owner, state.stop_number) == (Owner.HUMAN, 0)
+    assert h.app.takeover_open and h.app.motion_state is MotionState.HOLD
+    assert len(h.arm.sent) == sent and h.arm.last_target()[0] == h.sent()[-1]
+    assert h.arm.torque_on() and h.arm.released_at == []
+    facts = human_facts(h)
+    assert (facts["ended"], facts["needs_release"]) == (reason, True)
+
+
+def squeeze_again(h, hand: Hand, ended: list[DriveEnd], goal: Sequence[float]) -> None:
+    """The squeeze still down moves nothing; released and squeezed, the arm follows."""
+    drives_before, sent = len(ended), len(h.arm.sent)
+    hand.squeeze(goal)
+    h.idle()
+    assert len(ended) == drives_before and len(h.arm.sent) == sent
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
+    hand.release()
+    feed(h, hand())
+    assert human_facts(h)["needs_release"] is False
+    drive(h, hand, goal)
+    assert len(ended) == drives_before + 1 and ended[-1].status == "released"
+
+
+# A human target that is no fresh controller data, by its stage or its age.
+_GAPS = {
+    "stage stale": {"stage": "stale"},
+    "stage no_controller": {"stage": "no_controller"},
+    "age unknown": {"sample_age_s": None},
+    "age over the limit": {"sample_age_s": 0.3},
+}
+
+
+@pytest.mark.parametrize("gap", list(_GAPS))
+def test_a_gap_in_the_controller_data_ends_the_running_drive_stopped(human_app, gap):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    reached, release = h.hold_move_after(2)
+    goal = moved(REST)
+    hand.squeeze(goal, 6)
+    assert reached.wait(WAIT_S)
+    # The controller data go away and come back between two passes of the
+    # drive, whose own checks so see fresh data only.
+    feed(h, setpoint(h, goal, **_GAPS[gap]))
+    feed(h, setpoint(h, goal))
+    release.set()
+    h.idle()
+    assert DATA_AWAY == "controller data were away"
+    ended_by_the_app(h, ended, DATA_AWAY, 2)
+    squeeze_again(h, hand, ended, goal)
+
+
+def test_a_human_target_that_comes_late_ends_the_running_drive_stopped(human_app):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    reached, release = h.hold_move_after(2)
+    goal = moved(REST)
+    hand.squeeze(goal, 6)
+    assert reached.wait(WAIT_S)
+    # Every target is ready and engaged; the robot link stalls. The one the
+    # drive would follow next is over the age limit when the next one arrives.
+    limit = h.config.human.sample_age_limit_s
+    feed(h, setpoint(h, goal, sample_age_s=limit - 0.01))
+    h.advance(0.015, 0.015)  # less than one period of the drive
+    feed(h, setpoint(h, goal))
+    release.set()
+    h.idle()
+    ended_by_the_app(h, ended, DATA_AWAY, 2)
+    squeeze_again(h, hand, ended, goal)
+
+
+# What arrives between two engaged targets of the headset's controller, and
+# why the robot app then ends the human drive that is queued or under way. The
+# app of these tests declares no driver: it refuses a synthetic source.
+_BETWEEN = {
+    "a gap in the controller data": ({"stage": "stale"}, DATA_AWAY),
+    "a refused engaged target": (
+        {"source": HUMAN_SOURCE_SYNTHETIC},
+        f"{TARGET_REFUSED}a synthetic controller may drive only a simulated "
+        "arm; this robot app declares no driver",
+    ),
+}
+
+
+def ended_with_nothing_sent(h, reason: str) -> None:
+    """The EVENT "human" of the one drive so far: "stopped", no setpoint sent.
+
+    No STOP was raised, the arm holds at rest with its motors on, the person
+    keeps it and a released grip comes first.
+    """
+    text = f"human drive ended: {reason}{SQUEEZE_AGAIN}"
+    data = {"status": "stopped", "reason": reason, "sent": 0}
+    assert h.heard("human") == [("human", text, data)]
+    assert h.client.wait_event("human").text == text
+    assert h.heard("stop") == [] and h.arm.sent == []
+    state = h.app.snapshot()
+    assert (state.owner, state.stop_number) == (Owner.HUMAN, 0)
+    assert h.app.takeover_open and h.app.motion_state is MotionState.REST_HOLD
+    assert h.arm.torque_on() and h.arm.released_at == []
+    facts = human_facts(h)
+    assert (facts["ended"], facts["needs_release"]) == (reason, True)
+
+
+@pytest.mark.parametrize("between", list(_BETWEEN))
+def test_a_queued_drive_is_dropped_where_a_running_one_is_stopped(human_app, between):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    goal = moved(REST)
+    before = h.app.snapshot()
+    other, reason = _BETWEEN[between]
+
+    def offer(**fields: Any) -> None:
+        message = setpoint(h, goal, **fields)
+        h.app.offer_human_target(human_target(message, h.clock.monotonic()))
+
+    # Under the app's lock the motion worker cannot begin the drive it is given.
+    with h.app._lock:
+        offer()
+        assert h.app._busy() == "busy: human driving is queued"
+        # Before the drive begins: a target that is no fresh controller data,
+        # or one the admission refuses; then one like the first.
+        offer(**other)
+        offer()
+        assert h.app._busy() is None
+    h.idle()
+    # The drive never began: HumanDrive.run was not called, and the person
+    # keeps the arm. It is told as a drive that ended with nothing sent.
+    assert ended == [] and h.app.snapshot() == before
+    ended_with_nothing_sent(h, reason)
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
+    squeeze_again(h, hand, ended, goal)
+
+
+@pytest.mark.parametrize("between", list(_BETWEEN))
+def test_a_drive_that_has_not_begun_ends_stopped_with_nothing_sent(human_app, between):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    other, reason = _BETWEEN[between]
+    # The motion worker has taken the drive and waits before its start checks.
+    reached, release = threading.Event(), threading.Event()
+    run = h.app._human_drive.run
+
+    def held(admitted, should_stop) -> DriveEnd:
+        reached.set()
+        release.wait(WAIT_S)
+        return run(admitted, should_stop)
+
+    h.app._human_drive.run = held
+    goal = moved(REST)
+    try:
+        hand.squeeze(goal, 6)
+        assert reached.wait(WAIT_S)
+        assert h.app._busy() == BUSY_DRIVING
+        feed(h, setpoint(h, goal, **other))
+        feed(h, setpoint(h, goal))
+    finally:
+        release.set()  # no thread stays held when the test fails
+    h.idle()
+    assert [(end.status, end.reason, end.sent) for end in ended] == [
+        ("stopped", reason, 0)
+    ]
+    ended_with_nothing_sent(h, reason)
+    squeeze_again(h, hand, ended, goal)
+
+
+@pytest.mark.parametrize(
+    ("driver", "declared"), [("", "no driver"), ("real", "driver real")]
+)
+def test_a_running_drive_ends_stopped_when_its_next_engaged_target_is_refused(
+    make_robot_app, driver, declared
+):
+    h = make_robot_app(driver=driver)
+    hand = person(h)
+    ended = drives(h)
+    reached, release = h.hold_move_after(3)
+    goal = moved(REST)
+    hand.squeeze(goal, 12)
+    assert reached.wait(WAIT_S)
+    # From here on the targets name a source that may not drive this arm.
+    hand.fields = {"source": HUMAN_SOURCE_SYNTHETIC}
+    feed(h, hand())
+    release.set()
+    h.idle()
+    refusal = (
+        "a synthetic controller may drive only a simulated arm; this robot app "
+        f"declares {declared}"
+    )
+    assert TARGET_REFUSED == "an engaged human target was refused: "
+    # The drive followed no target the admission refused.
+    ended_by_the_app(h, ended, f"{TARGET_REFUSED}{refusal}", 3)
+    assert human_facts(h)["refusal"] == refusal
+    # The headset's controller again: the squeeze that is still down moves nothing.
+    hand.fields = {}
+    squeeze_again(h, hand, ended, goal)
+
+
+@pytest.mark.parametrize(
+    ("engaged", "reason"),
+    [
+        (True, f"{TARGET_REFUSED}owner number 0 does not match the current 1"),
+        (
+            False,
+            "the human target quotes owner number 0 and stop number 0, the drive "
+            "was admitted at 1 and 0",
+        ),
+    ],
+    ids=["engaged: the admission refuses it", "not engaged: the drive ends on it"],
+)
+def test_a_target_that_quotes_other_numbers_ends_the_running_drive_with_its_event(
+    human_app, engaged, reason
+):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    reached, release = h.hold_move_after(2)
+    goal = moved(REST)
+    hand.squeeze(goal, 6)
+    assert reached.wait(WAIT_S)
+    # The app's own numbers stand: no STOP and no owner change tells this end.
+    now = h.app.snapshot()
+    assert (now.owner_number, now.stop_number) == (1, 0)
+    q = goal if engaged else None
+    feed(h, setpoint(h, q, grip_released=False, owner_number=0))
+    release.set()
+    h.idle()
+    ended_by_the_app(h, ended, reason, 2)
+    assert h.app.snapshot() == now
+    squeeze_again(h, hand, ended, goal)
+
+
+def test_a_drive_that_a_stop_ended_has_the_stops_event_only(human_app):
+    h = human_app
+    hand = person(h)
+    ended = drives(h)
+    reached, release = h.hold_move_after(2)
+    goal = moved(REST)
+    hand.squeeze(goal)
+    assert reached.wait(WAIT_S)
+    old = h.app.snapshot()
+    h.client.stop("right B", sender="controller")
+    h.client.wait_state(lambda s: s.stop_number == 1)
+    # The human program has not seen the STOP yet: its next engaged target
+    # quotes the old numbers and is refused while the drive is still under way.
+    quoted = {"owner_number": old.owner_number, "stop_number": old.stop_number}
+    feed(h, setpoint(h, goal, **quoted))
+    assert human_facts(h)["refusal"] == "stop number 0 does not match the current 1"
+    release.set()
+    h.idle()
+    # The STOP's reason stands, and the STOP's own EVENT told the operator.
+    assert [(end.status, end.reason, end.sent) for end in ended] == [
+        ("stopped", "STOP from controller: right B", 2)
+    ]
+    assert len(h.heard("stop")) == 1 and h.heard("human") == []
+    assert h.app.snapshot().owner is Owner.NOBODY and h.app.takeover_open
+    assert h.app.motion_state is MotionState.HOLD and h.arm.torque_on()
 
 
 # Placement: the Thor's side takes a human target, whoever made it
@@ -1788,3 +2388,47 @@ def test_without_a_takeover_a_contact_hold_still_refuses_the_rest(human_app):
     take_over(h)
     assert final(h, h.client.rest()).status == "completed"
     assert state_now(h).health["contact_hold"] is False
+
+
+def test_a_typed_rest_during_a_takeover_clears_the_recovery_checkers_contact_spots(
+    human_app,
+):
+    h = human_app
+
+    def spots() -> list[list[list[float]]]:
+        """The contact spots of the agent's, the human and the recovery checker."""
+        return [checker.contact_spots for checker in h.checkers.all()]
+
+    # An agent move ends at a contact: its checker and recovery's note the spot.
+    h.new_task()
+    h.arm.block_joint(0, 0.05)
+    path = [[0.008 * (index + 1)] * 6 for index in range(60)]
+    met = h.client.run_move(path, start_q=REST)
+    h.arm.block_joint(0, None)
+    assert (met.status, met.reason) == ("failed", "contact")
+    noted = [[met.end_q], [], [met.end_q]]
+    assert spots() == noted
+    # The agent backs off, which ends the contact hold, and rest is typed.
+    away = h.client.plan_straight(met.end_q, [q - 0.02 for q in met.end_q], 0.2)
+    assert h.client.run_move(away, start_q=met.end_q).status == "completed"
+    assert final(h, h.client.rest()).status == "completed"
+    # Without a takeover a confirmed return clears nothing.
+    assert spots() == noted
+    # A person takes the arm over at rest. The arm is then found away from
+    # rest, where a shutdown without the confirmation is refused by the return.
+    take_over(h)
+    h.arm.set_pose(RAISED)
+    unconfirmed = final(h, h.client.shutdown(confirmed=False))
+    assert (unconfirmed.status, unconfirmed.reason) == (
+        "refused",
+        "the return to rest ended refused: confirm the path is clear",
+    )
+    # Without the confirmation the return clears nothing either.
+    assert spots() == noted
+    # "path is clear" is the person's word for the agent's spot: the recovery
+    # checker forgets it. The agent's checker keeps it for the agent to clear.
+    assert final(h, h.client.rest()).status == "completed"
+    assert spots() == [[met.end_q], [], []]
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    assert h.app.snapshot().owner is Owner.HUMAN and h.app.takeover_open
+    assert h.arm.torque_on() and h.arm.released_at == []
