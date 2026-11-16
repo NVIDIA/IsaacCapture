@@ -42,7 +42,7 @@ from isaaccapture_examples.agentic_remote.view import __main__ as view_main
 from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE
 from link_stack import HOST, Program, ServiceProcess, Stack, program_env
 from test_agent_end_to_end import RUN_BUDGET_S, ObstacleGrid, Scene, raise_arm
-from test_console import ASK_REST, QUIT_NOTE, Desk
+from test_console import ASK_REST, QUIT_NOTE_LOST, Desk
 from test_console_cmd import await_read
 from test_launcher import PICK, QUICK, scene_robot_config
 from test_link_programs import ROBOT_MODULE, ROBOT_YAML
@@ -810,7 +810,7 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         assert view.wait_exit() == 0
         desk.type("quit")
         assert desk.wait_exit() == 0
-        assert desk.said[-1] == QUIT_NOTE
+        assert desk.said[-1] == QUIT_NOTE_LOST
         service.signal(signal.SIGTERM)
         assert service.wait_exit() == 0
     finally:

@@ -127,6 +127,9 @@ HELP = (
 QUIT_NOTE = (
     "the operator console ends; nothing was sent for that: the robot app runs on"
 )
+# In its place when the newest LOCAL_STATUS shows no robot connection, lost or
+# never made: the console knows nothing of the robot app then.
+QUIT_NOTE_LOST = "the operator console ends; nothing was sent for that"
 USE_THOR = "use the STOP key at the Thor terminal"
 NOT_ATTACHED_HELP = (
     "not attached: stop (written raw, not confirmed), attach, help and quit work"
@@ -240,7 +243,9 @@ class Console:
     def run(self) -> int:
         """Serve the typed lines until quit or the end of the input; returns 0.
 
-        Leaving sends nothing: the robot app runs on in the state it is in.
+        Leaving sends nothing: the robot app runs on in the state it is in. The
+        last line says so, unless the newest LOCAL_STATUS shows no robot
+        connection.
         """
         self._start()
         self._say(BANNER)
@@ -250,8 +255,18 @@ class Console:
                 if not self._serve(line):
                     break
         finally:
-            self.close(QUIT_NOTE)
+            self.close(QUIT_NOTE_LOST if self._robot_lost() else QUIT_NOTE)
         return EXIT_OK
+
+    def _robot_lost(self) -> bool:
+        """Whether the newest LOCAL_STATUS shows no robot connection."""
+        with self._lock:
+            station, up = self._station, self._robot_up
+        # The carrier can hold a newer one than the console last looked at.
+        status = None if station is None else station.carrier.status
+        if status is not None:
+            up = status.robot_connected
+        return up is False
 
     def close(self, last: str | None = None) -> None:
         """Detach and end the console's threads; the queued lines are written.

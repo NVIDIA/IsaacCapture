@@ -5,7 +5,7 @@
 
 Most tests run the console against a real robot link service whose robot side
 the test scripts (test_console_cmd.Console), so every link message the service
-forwarded is seen. Two put it in front of the real robot app on the simulated
+forwarded is seen. A few put it in front of the real robot app on the simulated
 arm, and the terminal tests run it in a child process on a pseudo-terminal.
 """
 
@@ -35,6 +35,7 @@ from isaaccapture_examples.agentic_remote.console.console import (
     EXIT_OK,
     EXIT_UNUSABLE,
     QUIT_NOTE,
+    QUIT_NOTE_LOST,
     STOP_CTRL_C,
     Console,
     main,
@@ -73,7 +74,9 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
 from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app import waits
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    JawLoad,
     MotionState,
     Owner,
     StopLevel,
@@ -85,6 +88,7 @@ from isaaccapture_examples.agentic_remote.testing.client import WorkstationClien
 from link_bench import Bench, robot_state, until, welcome
 from test_console_cmd import Console as ScriptedRobot
 from test_console_cmd import OddService, completed, odd_services, on_a_terminal
+from test_takeover import feed, human_config, state_now, take_over
 
 PACKAGE = Path(console_module.__file__).resolve().parent
 EXAMPLE = PACKAGE.parents[3]
@@ -109,6 +113,13 @@ NO_DATA = (
 )
 SWITCHED_OFF = "human driving is switched off in this robot app's file (human.enabled)"
 LOST = "takeover: not possible: the robot connection is lost"
+RIGHT_A = "takeover open: at rest: hold right A for 1 s to give the arm back"
+# The jaw load is what the robot app last knew of an object in the jaws:
+# empty, loaded or unknown. Loaded jaws are opened before the hand-back.
+JAWS_FIRST = (
+    "takeover open: at rest: the jaws are not proven empty: type stop, then "
+    "open, then yes, then hold right A for 1 s"
+)
 TAKE_OVER_NOTE = "hold right B for 1 s with the grip released to take over"
 # LOCAL_STATUS with and without a human program attached.
 WITH_PROGRAM = LocalStatus(True, "", "s1", None, False, {"console": 1, "human": 1})
@@ -442,6 +453,81 @@ def test_quit_and_the_end_of_the_input_leave_the_console_and_send_nothing(
     until(lambda: not robot.bench.service._clients, "the consoles to detach")
 
 
+def test_after_a_lost_robot_connection_the_last_line_does_not_say_the_robot_app_runs_on(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    assert QUIT_NOTE_LOST == "the operator console ends; nothing was sent for that"
+    quits, ends, stays = (desks(robot.bench.path) for _ in range(3))
+    for desk in (quits, ends, stays):
+        desk.wait("robot connection up | clients ")
+    robot.thor.carrier.close()
+    for desk in (quits, ends, stays):
+        desk.wait("ROBOT CONNECTION LOST: ")
+    quits.type("quit")
+    for desk in (quits, ends):  # the second one's input ends
+        assert desk.end() == EXIT_OK
+        assert desk.said[-1] == QUIT_NOTE_LOST
+    # The robot connection is up again: the robot app runs on, as far as the
+    # console knows.
+    robot.bench.robot("s2")
+    stays.wait("robot connection up again")
+    stays.type("quit")
+    assert stays.end() == EXIT_OK
+    assert stays.said[-1] == QUIT_NOTE
+
+
+def test_the_last_line_claims_no_robot_app_where_none_ever_connected(
+    bench: Bench, desks: Callable[..., Desk]
+) -> None:
+    desk = desks(bench.path)
+    desk.wait("robot connection lost (not connected) | clients 1 console | ")
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    # Nothing was lost here, and nothing is known of a robot app.
+    assert desk.count("ROBOT CONNECTION LOST") == 0
+    assert desk.said[-1] == QUIT_NOTE_LOST
+
+
+def test_the_last_line_goes_by_the_newest_local_status_not_by_the_consoles_last_look(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    def shows(desk: Desk, up: bool) -> None:
+        """Wait for a LOCAL_STATUS with this robot connection at the carrier."""
+
+        def has() -> bool:
+            status = desk.console._station.carrier.status
+            return status is not None and status.robot_connected is up
+
+        until(has, f"a LOCAL_STATUS with the robot connection {up}")
+
+    # Each console looks at its carrier only when the test says so.
+    early, late = (
+        desks(robot.bench.path, clock=FakeClock(), tick_s=None) for _ in range(2)
+    )
+    for desk in (early, late):
+        desk.wait("attached to the robot link service")
+        shows(desk, True)
+        desk.console.tick()
+    robot.thor.carrier.close()
+    for desk in (early, late):
+        shows(desk, False)
+    # quit is read before the console looked at the loss.
+    early.type("quit")
+    assert early.end() == EXIT_OK
+    assert early.count("ROBOT CONNECTION LOST") == 0
+    assert early.said[-1] == QUIT_NOTE_LOST
+    # The other way round: the robot connection is up again and the console
+    # has looked only at the loss.
+    late.console.tick()
+    late.wait("ROBOT CONNECTION LOST: ")
+    robot.bench.robot("s2")
+    shows(late, True)
+    late.type("quit")
+    assert late.end() == EXIT_OK
+    assert late.count("robot connection up again") == 0
+    assert late.said[-1] == QUIT_NOTE
+
+
 def test_help_state_and_an_unknown_command_send_nothing(
     robot: ScriptedRobot, desk: Desk
 ) -> None:
@@ -573,6 +659,62 @@ def test_a_typed_takeover_the_robot_app_refuses_rings_three_bells(
     assert event.startswith("\a\a\a[refused] ") and event.count("\a") == 3
     h.idle()
     assert h.app.snapshot().owner == "nobody" and h.arm.sent == []
+
+
+def test_the_hand_written_health_names_only_keys_the_robot_app_publishes(
+    on_the_app: tuple[Any, Desk, Any],
+) -> None:
+    # with_human() stands in for the robot app in the tests of the display: a
+    # key it names that the robot app does not publish would test nothing.
+    _, desk, _ = on_the_app
+    desk.sees(lambda state: True)
+    real, written = desk.console._state.health, with_human().health
+    assert set(written) <= set(real)
+    assert set(written["human"]) <= set(real["human"])
+
+
+@pytest.mark.parametrize(
+    ("config", "loaded"),
+    [(human_config(RobotAppConfig.default()), load) for load in (False, True)],
+    ids=["empty jaws", "loaded jaws"],
+)
+def test_at_rest_the_takeover_line_names_right_a_alone_when_the_hand_back_is_taken(
+    make_robot_app: Callable[..., Any], loaded: bool
+) -> None:
+    h = make_robot_app()
+    final = h.client.wait_result  # the RESULT a command ends with
+    if loaded:
+        # The agent closed the jaws on something at rest; right B is a STOP first.
+        h.new_task()
+        h.arm.jaw_object(0.4)
+        closed = final(h.client.gripper(0.0, mode="close_until_contact"))
+        assert closed.status == "completed"
+        h.client.stop("right B", sender="controller")
+        h.client.wait_state(lambda s: s.stop_number == 1 and s.owner == "nobody")
+    take_over(h)
+
+    def line() -> str:
+        """The takeover line for the ROBOT_STATE the robot app would send now."""
+        feed(h)  # fresh controller data: the stage is "ready"
+        return takeover_text(state_now(h), WITH_PROGRAM)
+
+    def hand_back() -> Result:
+        """Right A: OWNER_REQUEST "handback" with the robot app's numbers."""
+        return final(h.client.request_owner("handback", reason="right A"))
+
+    said, back = line(), hand_back()
+    if not loaded:
+        assert said == RIGHT_A and back.status == "completed"
+        return
+    assert said == JAWS_FIRST and back.status == "refused"
+    assert back.reason.startswith("the jaws are not proven empty (loaded)")
+    # What the line says ends the takeover. After the STOP nobody owns the arm.
+    h.client.stop("typed stop")
+    h.client.wait_state(lambda s: s.stop_number == 2)
+    assert line() == JAWS_FIRST
+    assert final(h.client.open_jaws()).status == "completed"
+    assert line() == RIGHT_A
+    assert hand_back().status == "completed" and not h.app.takeover_open
 
 
 # Ctrl+C
@@ -965,6 +1107,24 @@ def test_an_open_takeover_without_a_headset_tells_the_operator_how_to_end_it() -
             )
 
 
+def test_an_open_takeover_at_rest_with_loaded_jaws_names_the_opening_first() -> None:
+    def jaws(state: RobotState, load: str) -> RobotState:
+        gripper = dataclasses.replace(state.gripper, load=load)
+        return dataclasses.replace(state, gripper=gripper)
+
+    for owner in ("human", "nobody"):
+        at_rest = with_human(robot_state(owner=owner), takeover_open=True)
+        assert takeover_text(jaws(at_rest, "empty"), WITH_PROGRAM) == RIGHT_A
+        assert takeover_text(jaws(at_rest, "loaded"), WITH_PROGRAM) == JAWS_FIRST
+        # ROBOT_STATE carries the last jaw reading and the hand-back reads the
+        # jaws anew: after a read that failed once, right A alone ends it.
+        assert takeover_text(jaws(at_rest, "unknown"), WITH_PROGRAM) == RIGHT_A
+    # Away from rest the jaws do not change the line.
+    held = dataclasses.replace(robot_state(owner="human"), motion="hold")
+    away = with_human(jaws(held, "loaded"), takeover_open=True)
+    assert takeover_text(away, WITH_PROGRAM) == "takeover open: a person owns the arm"
+
+
 def test_the_help_block_says_whether_a_takeover_is_possible(
     robot: ScriptedRobot, desk: Desk
 ) -> None:
@@ -1157,6 +1317,21 @@ def test_the_status_line_says_no_human_program_when_human_driving_is_on_and_none
     )
     # A human program that attaches or leaves makes a new line due.
     assert status_key(on, WITHOUT_PROGRAM) != status_key(on, WITH_PROGRAM)
+
+
+def test_the_status_line_drops_the_note_once_the_thor_reports_no_stage() -> None:
+    # The Thor keeps the newest note until the robot connection is lost; its
+    # stage is "" once no HUMAN_SETPOINT arrived for human.stage_keep_s.
+    gone = with_human(stage="", age=61.0, takeover_open=True, note=TAKE_OVER_NOTE)
+    for status in (WITHOUT_PROGRAM, WITH_PROGRAM, None):
+        line = status_line(None, gone, status, 0.04)
+        assert "note:" not in line
+        assert line.endswith(" | controller 61.00 s | takeover open | state 0.04 s")
+    # A human program whose controller feed is not ready still sends its note.
+    dialing = with_human(stage="no_server", age=None, note="no controller data yet")
+    assert status_line(None, dialing, WITH_PROGRAM, 0.04).endswith(
+        " | headset no_server | note: no controller data yet | state 0.04 s"
+    )
 
 
 def test_the_bell_event_rings_the_bell(robot: ScriptedRobot, desk: Desk) -> None:
@@ -1994,6 +2169,7 @@ def test_the_event_kinds_are_the_robot_apps() -> None:
     assert event_bells(Event(1, app_module.EVENT_OWNER, app_module.HANDED_BACK)) == 2
     assert status_module._STAGE_READY == app_module.STAGE_READY
     assert status_module._REST_HOLD == MotionState.REST_HOLD.value
+    assert status_module._JAWS_LOADED == JawLoad.LOADED.value
     assert status_module._OWNER_HUMAN == Owner.HUMAN.value
     assert status_module._OWNER_NOBODY == Owner.NOBODY.value
     assert status_module._STOP_FAULT == StopLevel.FAULT.value

@@ -45,6 +45,12 @@ NOT_REPORTED = "this robot app does not report it"
 ROBOT_LOST = "the robot connection is lost"
 OPEN_FAULT = "a fault-stop is latched: type reset first"
 OPEN_AT_REST = "at rest: hold right A for 1 s to give the arm back"
+# In its place while the jaw load, what the robot app last knew of an object
+# in the jaws, is "loaded": the hand-back needs the jaws proven empty.
+OPEN_AT_REST_JAWS = (
+    "at rest: the jaws are not proven empty: type stop, then open, then yes, "
+    "then hold right A for 1 s"
+)
 OPEN_NO_CONTROLLER = (
     f"no controller data. To end it: type rest, then {PATH_IS_CLEAR}; then "
     "start the human program and hold right A, or see the README, "
@@ -62,10 +68,11 @@ _THREE_BELLS = (
     f"owner request {REQUEST_HANDBACK!r} refused",
 )
 # Words of ROBOT_STATE: the stage with fresh controller data, the motion at
-# rest with the motors on, two control owners, and the stop level of a
-# fault-stop.
+# rest with the motors on, the jaw load of jaws that may hold something, two
+# control owners, and the stop level of a fault-stop.
 _STAGE_READY = "ready"
 _REST_HOLD = "rest_hold"
+_JAWS_LOADED = "loaded"
 _OWNER_HUMAN = "human"
 _OWNER_NOBODY = "nobody"
 _STOP_FAULT = "fault"
@@ -175,7 +182,8 @@ def _human_parts(
     if health.get("contact_hold"):
         parts.append("contact hold")
     note = _text(human.get("note") or "")
-    if note:
+    # A note without a stage is one that nobody is sending any more.
+    if note and stage:
         parts.append(f"note: {note}")
     return parts
 
@@ -299,7 +307,7 @@ def takeover_text(state: RobotState | None, status: LocalStatus | None) -> str:
 
 
 def _open_takeover(state: RobotState, status: LocalStatus | None) -> str:
-    """What an open takeover needs next: by the stop, stage, motion and owner."""
+    """What an open takeover needs next: by the stop, stage, motion, jaws, owner."""
     # A fault-stop refuses the hand-back and a new takeover alike.
     if state.stop_level == _STOP_FAULT:
         return OPEN_FAULT
@@ -307,7 +315,9 @@ def _open_takeover(state: RobotState, status: LocalStatus | None) -> str:
     if state.teleop_stage != _STAGE_READY or _no_human_program(status):
         return OPEN_NO_CONTROLLER
     if state.motion == _REST_HOLD:
-        return OPEN_AT_REST
+        # Unknown jaws keep the plain line: the hand-back reads them anew.
+        loaded = state.gripper.load == _JAWS_LOADED
+        return OPEN_AT_REST_JAWS if loaded else OPEN_AT_REST
     if state.owner == _OWNER_HUMAN:
         return OPEN_PERSON
     if state.owner == _OWNER_NOBODY:

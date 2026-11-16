@@ -399,6 +399,25 @@ def test_a_task_is_not_started_while_a_takeover_is_open(rig: Rig) -> None:
     assert rig.of("result")[0][1:] == ("agent", "completed")
 
 
+def test_the_gate_reads_an_open_takeover_from_the_robot_apps_own_robot_state(
+    rig: Rig,
+) -> None:
+    # No hand-written health["human"] here: the robot app's own flag, as its
+    # ROBOT_STATE carries it.
+    assert rig.link.state().health["human"]["takeover_open"] is False
+    rig.h.app._takeover_open = True
+    until(
+        lambda: task_gate._takeover_open(rig.link.state()),
+        "the open takeover in the robot app's ROBOT_STATE",
+    )
+    result = rig.task(lambda: rig.execute("grasp_object"))
+    assert result["refused"] == "ownership"
+    assert result["motion_block_reason"] == TAKEOVER_OPEN
+    # The gate refused by itself: nobody was asked and nothing was sent. The
+    # robot app would refuse the request with the same text.
+    assert rig.kinds() == [] and rig.gate.requests == []
+
+
 def answer_late(rig: Rig, delay_s: float) -> None:
     """The robot app answers the next OWNER_REQUEST "agent" delay_s late."""
     app = rig.h.app
