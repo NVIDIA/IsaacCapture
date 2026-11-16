@@ -530,12 +530,11 @@ along each taxel’s outward normal; see
 <ul class="simple">
 <li><p><strong>Linux</strong> — x86_64 or aarch64.</p></li>
 <li><p><strong>Source-build prerequisites</strong> — the toolchain and system packages in
-<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>, for <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> and the manual
-CMake build alike.</p></li>
+<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p></li>
 <li><p><strong>RevoHuman C SDK 0.1.3</strong> — the <code class="docutils literal notranslate"><span class="pre">c-sdk-v0.1.3</span></code> release of
 <a class="reference external" href="https://github.com/BrainCoTech/brainco-revohuman-sdk" rel="noopener noreferrer" target="_blank">brainco-revohuman-sdk</a>,
 which extracts to <code class="docutils literal notranslate"><span class="pre">include/revohuman.h</span></code>, <code class="docutils literal notranslate"><span class="pre">lib/librevohuman.so</span></code> with its
-versioned names, and <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>. The install script downloads it
+versioned names, and <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>. The CMake configure downloads it
 automatically. A Python SDK wheel cannot replace it.</p></li>
 <li><p><strong>RevoHuman gloves</strong> connected over USB, with access to their serial ports.</p></li>
 <li><p><strong>CloudXR runtime</strong> running on the plugin host.</p></li>
@@ -543,24 +542,17 @@ automatically. A Python SDK wheel cannot replace it.</p></li>
 </section>
 <section id="installation">
 <h2><a class="toc-backref" href="#id4" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">install.sh</span></code> downloads the pinned C SDK release, verifies it against a
-per-architecture SHA-256, extracts it next to the script (re-runs reuse the
-extracted copy), and configures, builds, and installs the plugin with the SDK
-library and its licence next to it:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/revohuman/install.sh
-</pre></div>
-</div>
-<p>Pass <code class="docutils literal notranslate"><span class="pre">--build-dir</span> <span class="pre">&lt;path&gt;</span></code> to reuse a non-default top-level CMake build
-directory and <code class="docutils literal notranslate"><span class="pre">--install-prefix</span> <span class="pre">&lt;dir&gt;</span></code> to choose where the plugin goes.
-<code class="docutils literal notranslate"><span class="pre">--sdk-root</span> <span class="pre">&lt;dir&gt;</span></code> (or <code class="docutils literal notranslate"><span class="pre">REVOHUMAN_SDK_ROOT</span></code>) uses an SDK package you already
-extracted.</p>
-<p>To drive CMake directly:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGINS<span class="o">=</span>ON<span class="w"> </span>-DBUILD_PLUGIN_REVOHUMAN<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>-DREVOHUMAN_SDK_ROOT<span class="o">=</span>/path/to/revohuman-c-sdk
+<p>With <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGIN_REVOHUMAN=ON</span></code>, the CMake configure downloads the pinned C
+SDK release into the build directory and verifies it against a
+per-architecture SHA-256. Build and install the plugin with the SDK library and
+its licence next to it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGIN_REVOHUMAN<span class="o">=</span>ON
 cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>revohuman_plugin
 cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>revohuman
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">-DREVOHUMAN_SDK_ROOT=&lt;dir&gt;</span></code> uses an SDK package you already extracted
+instead of the download.</p>
 <p>The installed plugin finds the SDK library next to itself, so it needs neither
 the download nor the build directory afterwards. Keep the library’s symlinks.</p>
 </section>
@@ -596,16 +588,16 @@ own, the other follows on its own, and the two stay unpaired until the plugin
 restarts. Gloves streaming without hardware sync to each other (paired in host
 time, unpaired after a lost pair, or opened separately) report their <code class="docutils literal notranslate"><span class="pre">/glove</span></code>
 status as degraded with the reason.</p>
-<p>From start-up until a hand’s first glove sample, for at most <code class="docutils literal notranslate"><span class="pre">startup_hold_ns</span></code>
-of the plugin’s <code class="docutils literal notranslate"><span class="pre">PipelineConfig</span></code>, the plugin injects that hand with no valid
-joints. A client reading OpenXR hand tracking then gets no joints while the
+<p>From start-up until a hand’s first glove sample, for at most 5 s
+(<code class="docutils literal notranslate"><span class="pre">kStartupHoldNs</span></code> in the plugin’s pipeline), the plugin injects that hand with
+no valid joints. A client reading OpenXR hand tracking then gets no joints while the
 gloves open, not the headset’s optical hand followed by the glove’s.</p>
 <p>Each glove’s mechanical model follows the product the SDK identifies: a PTV1
 glove uses the DV1 model and a P1 glove the P model. A P1 glove has no tactile
 sensors, so it streams the hand and joint states without tactile outputs. A
 glove of the wrong product, with incompatible firmware or with a hand model the
 plugin is not fitted to is reported as failed; the plugin keeps running. The
-plugin is fitted to the models of the C SDK release that <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> pins.</p>
+plugin is fitted to the models of the C SDK release that its CMake pins.</p>
 </section>
 <section id="wrist-pose">
 <h2><a class="toc-backref" href="#id6" role="doc-backlink">Wrist pose</a><a class="headerlink" href="#wrist-pose" title="Link to this heading">#</a></h2>
@@ -648,8 +640,9 @@ is no layout file or option. Each taxel is bound rigidly to the OpenXR joint its
 SDK link moves with, with its +Z along the outward normal. That joint is rigid
 on the link, so the skinned taxels stay on the SDK’s taxels as the fingers bend.
 The log names the taxel count and whether the metadata was built; the debug log
-names the SDK’s layout source. When the SDK has no layout, the plugin logs why
-and pushes no tactile data; the other outputs are unaffected.</p>
+names the SDK’s layout source. When the SDK has no layout for the glove’s taxel
+count, the plugin warns why, pushes no tactile data and reports the hand’s
+tactile as failed; the other outputs are unaffected.</p>
 <p>A force sample is pushed only while it is calibrated, recent and newer than the
 last one, and its status names the reason when it is not. Consumers must check
 that status as well as the presence of data.</p>
@@ -667,15 +660,15 @@ that status as well as the presence of data.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">install.sh</span></code> fails with a SHA-256 mismatch</p></td>
-<td><p>The downloaded package does not match the pinned release. Re-run to
+<tr class="row-even"><td><p>CMake configuration fails with a hash mismatch for <code class="docutils literal notranslate"><span class="pre">revohuman_sdk</span></code></p></td>
+<td><p>The downloaded package does not match the pinned release. Reconfigure to
 rule out a corrupted download; if it persists, do not bypass the check
 — verify the release assets upstream.</p></td>
 </tr>
 <tr class="row-odd"><td><p>CMake configuration fails naming the RevoHuman SDK</p></td>
 <td><p>The SDK at <code class="docutils literal notranslate"><span class="pre">REVOHUMAN_SDK_ROOT</span></code> is incomplete: its library, headers or
-licence are missing. Point it at a complete C SDK release and
-reconfigure.</p></td>
+licence are missing. Point it at a complete C SDK release, or clear it
+to download the pinned one, and reconfigure.</p></td>
 </tr>
 <tr class="row-even"><td><p>A glove is never opened and its status names a busy port</p></td>
 <td><p>Another process, such as the SDK viewer, holds the glove’s serial port.
@@ -684,13 +677,14 @@ Close it; the plugin opens the glove on its next attempt.</p></td>
 <tr class="row-odd"><td><p>A glove is reported as failed</p></td>
 <td><p>The status carries the reason: a product or variant the plugin does not
 support, incompatible firmware, or a hand model the plugin is not fitted
-to, as from a C SDK release other than the one <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> pins. These
-are not retried.</p></td>
+to, as from a C SDK release other than the one the plugin’s CMake
+pins. These are not retried.</p></td>
 </tr>
 <tr class="row-even"><td><p>Hands appear but a downstream client sees no tactile data</p></td>
-<td><p>A P1 glove has no tactile sensors. Otherwise check the start-up log for
-why there is no <code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code> (an SDK without the taxel layout),
-and the tactile status for the reason a sample was not pushed.</p></td>
+<td><p>A P1 glove has no tactile sensors. Otherwise check the tactile status:
+failed means there is no <code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code> (the start-up log warns
+why, such as an SDK without the glove’s taxel layout); otherwise it names
+the reason a sample was not pushed.</p></td>
 </tr>
 </tbody>
 </table>
@@ -837,7 +831,7 @@ and the tactile status for the reason a sample was not pushed.</p></td>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 13, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 16, 2026.
       <br/>
     
   </p>

@@ -61,12 +61,11 @@ Prerequisites
 
 - **Linux** — x86_64 or aarch64.
 - **Source-build prerequisites** — the toolchain and system packages in
-  :doc:`/development/build_from_source/index`, for ``install.sh`` and the manual
-  CMake build alike.
+  :doc:`/development/build_from_source/index`.
 - **RevoHuman C SDK 0.1.3** — the ``c-sdk-v0.1.3`` release of
   `brainco-revohuman-sdk <https://github.com/BrainCoTech/brainco-revohuman-sdk>`_,
   which extracts to ``include/revohuman.h``, ``lib/librevohuman.so`` with its
-  versioned names, and ``LICENSE``. The install script downloads it
+  versioned names, and ``LICENSE``. The CMake configure downloads it
   automatically. A Python SDK wheel cannot replace it.
 - **RevoHuman gloves** connected over USB, with access to their serial ports.
 - **CloudXR runtime** running on the plugin host.
@@ -74,28 +73,19 @@ Prerequisites
 Installation
 ------------
 
-``install.sh`` downloads the pinned C SDK release, verifies it against a
-per-architecture SHA-256, extracts it next to the script (re-runs reuse the
-extracted copy), and configures, builds, and installs the plugin with the SDK
-library and its licence next to it:
+With ``BUILD_PLUGIN_REVOHUMAN=ON``, the CMake configure downloads the pinned C
+SDK release into the build directory and verifies it against a
+per-architecture SHA-256. Build and install the plugin with the SDK library and
+its licence next to it:
 
 .. code-block:: bash
 
-   ./src/plugins/revohuman/install.sh
-
-Pass ``--build-dir <path>`` to reuse a non-default top-level CMake build
-directory and ``--install-prefix <dir>`` to choose where the plugin goes.
-``--sdk-root <dir>`` (or ``REVOHUMAN_SDK_ROOT``) uses an SDK package you already
-extracted.
-
-To drive CMake directly:
-
-.. code-block:: bash
-
-   cmake -B build -DBUILD_PLUGINS=ON -DBUILD_PLUGIN_REVOHUMAN=ON \
-       -DREVOHUMAN_SDK_ROOT=/path/to/revohuman-c-sdk
+   cmake -B build -DBUILD_PLUGIN_REVOHUMAN=ON
    cmake --build build --target revohuman_plugin
    cmake --install build --component revohuman
+
+``-DREVOHUMAN_SDK_ROOT=<dir>`` uses an SDK package you already extracted
+instead of the download.
 
 The installed plugin finds the SDK library next to itself, so it needs neither
 the download nor the build directory afterwards. Keep the library's symlinks.
@@ -138,9 +128,9 @@ restarts. Gloves streaming without hardware sync to each other (paired in host
 time, unpaired after a lost pair, or opened separately) report their ``/glove``
 status as degraded with the reason.
 
-From start-up until a hand's first glove sample, for at most ``startup_hold_ns``
-of the plugin's ``PipelineConfig``, the plugin injects that hand with no valid
-joints. A client reading OpenXR hand tracking then gets no joints while the
+From start-up until a hand's first glove sample, for at most 5 s
+(``kStartupHoldNs`` in the plugin's pipeline), the plugin injects that hand with
+no valid joints. A client reading OpenXR hand tracking then gets no joints while the
 gloves open, not the headset's optical hand followed by the glove's.
 
 Each glove's mechanical model follows the product the SDK identifies: a PTV1
@@ -148,7 +138,7 @@ glove uses the DV1 model and a P1 glove the P model. A P1 glove has no tactile
 sensors, so it streams the hand and joint states without tactile outputs. A
 glove of the wrong product, with incompatible firmware or with a hand model the
 plugin is not fitted to is reported as failed; the plugin keeps running. The
-plugin is fitted to the models of the C SDK release that ``install.sh`` pins.
+plugin is fitted to the models of the C SDK release that its CMake pins.
 
 Wrist pose
 ----------
@@ -199,8 +189,9 @@ is no layout file or option. Each taxel is bound rigidly to the OpenXR joint its
 SDK link moves with, with its +Z along the outward normal. That joint is rigid
 on the link, so the skinned taxels stay on the SDK's taxels as the fingers bend.
 The log names the taxel count and whether the metadata was built; the debug log
-names the SDK's layout source. When the SDK has no layout, the plugin logs why
-and pushes no tactile data; the other outputs are unaffected.
+names the SDK's layout source. When the SDK has no layout for the glove's taxel
+count, the plugin warns why, pushes no tactile data and reports the hand's
+tactile as failed; the other outputs are unaffected.
 
 A force sample is pushed only while it is calibrated, recent and newer than the
 last one, and its status names the reason when it is not. Consumers must check
@@ -215,23 +206,24 @@ Troubleshooting
 
    * - Symptom
      - Fix
-   * - ``install.sh`` fails with a SHA-256 mismatch
-     - The downloaded package does not match the pinned release. Re-run to
+   * - CMake configuration fails with a hash mismatch for ``revohuman_sdk``
+     - The downloaded package does not match the pinned release. Reconfigure to
        rule out a corrupted download; if it persists, do not bypass the check
        — verify the release assets upstream.
    * - CMake configuration fails naming the RevoHuman SDK
      - The SDK at ``REVOHUMAN_SDK_ROOT`` is incomplete: its library, headers or
-       licence are missing. Point it at a complete C SDK release and
-       reconfigure.
+       licence are missing. Point it at a complete C SDK release, or clear it
+       to download the pinned one, and reconfigure.
    * - A glove is never opened and its status names a busy port
      - Another process, such as the SDK viewer, holds the glove's serial port.
        Close it; the plugin opens the glove on its next attempt.
    * - A glove is reported as failed
      - The status carries the reason: a product or variant the plugin does not
        support, incompatible firmware, or a hand model the plugin is not fitted
-       to, as from a C SDK release other than the one ``install.sh`` pins. These
-       are not retried.
+       to, as from a C SDK release other than the one the plugin's CMake
+       pins. These are not retried.
    * - Hands appear but a downstream client sees no tactile data
-     - A P1 glove has no tactile sensors. Otherwise check the start-up log for
-       why there is no ``TactileMetadata`` (an SDK without the taxel layout),
-       and the tactile status for the reason a sample was not pushed.
+     - A P1 glove has no tactile sensors. Otherwise check the tactile status:
+       failed means there is no ``TactileMetadata`` (the start-up log warns
+       why, such as an SDK without the glove's taxel layout); otherwise it names
+       the reason a sample was not pushed.
