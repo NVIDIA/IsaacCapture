@@ -22,7 +22,10 @@ ROLE_AGENT = "agent"
 ROLE_CONSOLE = "console"
 ROLE_VIEWER = "viewer"
 ROLE_TOOL = "tool"
-ROLES = (ROLE_AGENT, ROLE_CONSOLE, ROLE_VIEWER, ROLE_TOOL)
+# The human program: the workstation program that turns a person's controller
+# data into joint targets for the arm.
+ROLE_HUMAN = "human"
+ROLES = (ROLE_AGENT, ROLE_CONSOLE, ROLE_VIEWER, ROLE_TOOL, ROLE_HUMAN)
 
 
 @dataclass(frozen=True)

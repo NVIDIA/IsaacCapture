@@ -31,3 +31,12 @@ local:
   send_timeout_s: 2.0
   queue_messages: 256
   queue_bytes: 8388608
+
+operator:
+  # The typed fallback. A takeover makes a person the control owner of the arm;
+  # the hand-back ends the takeover with the arm at rest. The human program, the
+  # workstation program that reads the headset's right controller, asks for them
+  # when right B or right A is held. With true the operator console may ask for
+  # them too: "takeover" or "handback", then "yes". The service reads this file
+  # when it starts, and says at its start when the setting is on.
+  typed_takeover: false

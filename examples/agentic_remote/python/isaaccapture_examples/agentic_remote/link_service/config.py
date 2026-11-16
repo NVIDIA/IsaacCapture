@@ -35,6 +35,9 @@ class LinkServiceConfig:
     send_timeout_s: float = 2.0
     queue_messages: int = 256
     queue_bytes: int = 8 * 1024 * 1024
+    # The typed fallback: the operator console may ask for a takeover (a person
+    # becomes the control owner) and for the hand-back that ends it.
+    typed_takeover: bool = False
 
     def __post_init__(self) -> None:
         _text("listen.address", self.listen_address)
@@ -72,6 +75,7 @@ class LinkServiceConfig:
         _positive("local.send_timeout_s", self.send_timeout_s)
         _whole("local.queue_messages", self.queue_messages, 8, 1 << 20)
         _whole("local.queue_bytes", self.queue_bytes, 1 << 16, 1 << 32)
+        _flag("operator.typed_takeover", self.typed_takeover)
 
     @property
     def listen_endpoint(self) -> str:
@@ -88,6 +92,7 @@ class LinkServiceConfig:
             "send_timeout_s": self.send_timeout_s,
             "queue_messages": self.queue_messages,
             "queue_bytes": self.queue_bytes,
+            "typed_takeover": self.typed_takeover,
         }
 
 
@@ -110,6 +115,7 @@ def link_service_config(data: object) -> LinkServiceConfig:
     top = _section("the file", {} if data is None else data)
     listen = _section("listen", top.pop("listen", {}))
     local = _section("local", top.pop("local", {}))
+    operator = _section("operator", top.pop("operator", {}))
     values: dict[str, Any] = {}
     _move(listen, "address", values, "listen_address")
     _move(listen, "port", values, "listen_port")
@@ -130,7 +136,14 @@ def link_service_config(data: object) -> LinkServiceConfig:
         "queue_bytes",
     ):
         _move(local, name, values, name)
-    for where, left in (("", top), ("listen.", listen), ("local.", local)):
+    _move(operator, "typed_takeover", values, "typed_takeover")
+    sections = (
+        ("", top),
+        ("listen.", listen),
+        ("local.", local),
+        ("operator.", operator),
+    )
+    for where, left in sections:
         if left:
             unknown = ", ".join(f"{where}{key}" for key in sorted(map(str, left)))
             raise ConfigError(f"unknown setting(s): {unknown}")
@@ -166,6 +179,11 @@ def _move(source: dict[Any, Any], key: str, values: dict[str, Any], name: str) -
 def _text(where: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{where} must be a non-empty string, got {value!r}")
+
+
+def _flag(where: str, value: object) -> None:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where} must be true or false, got {value!r}")
 
 
 def _whole(where: str, value: object, low: int, high: int) -> None:

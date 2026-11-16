@@ -29,6 +29,7 @@ from ..protocol.local_messages import (
     MAX_LOCAL_PAYLOAD_BYTES,
     ROLE_AGENT,
     ROLE_CONSOLE,
+    ROLE_HUMAN,
     ROLE_TOOL,
     ROLE_VIEWER,
     ROLES,
@@ -43,9 +44,12 @@ from ..protocol.messages import (
     MAX_PAYLOAD_BYTES,
     MESSAGE_TYPES,
     PROTOCOL_VERSION,
+    REQUEST_HANDBACK,
+    REQUEST_HUMAN,
     CheckerState,
     Event,
     Gripper,
+    HumanSetpoint,
     Move,
     Open,
     OwnerRequest,
@@ -105,11 +109,24 @@ ROLE_TABLE: dict[str, frozenset[int]] = {
     ),
     ROLE_VIEWER: frozenset(cls.TYPE for cls in (ViewStatus, Stop)),
     ROLE_TOOL: frozenset({Stop.TYPE}),
+    # The human program: the workstation program that turns a person's
+    # controller data into joint targets, each sent as a HUMAN_SETPOINT.
+    ROLE_HUMAN: frozenset(cls.TYPE for cls in (HumanSetpoint, OwnerRequest, Stop)),
 }
-# Which OWNER_REQUESTs a role may send.
+# Which OWNER_REQUESTs a role may send. "human" asks for a takeover: a person
+# becomes the control owner. "handback" ends the takeover at rest.
 OWNER_REQUESTS: dict[str, frozenset[str]] = {
     ROLE_AGENT: frozenset({"agent", "help_needed", "nobody"}),
     ROLE_CONSOLE: frozenset({"rest", "nobody"}),
+    ROLE_HUMAN: frozenset({REQUEST_HUMAN, REQUEST_HANDBACK}),
+}
+# The typed fallback: the OWNER_REQUESTs the console role may send as well
+# through a service made with typed_takeover.
+_TYPED_TAKEOVER = frozenset({REQUEST_HUMAN, REQUEST_HANDBACK})
+# The roles one client at a time may have, and what a second one is told.
+_ONE_AT_A_TIME = {
+    ROLE_AGENT: "an agent client is attached already; one at a time",
+    ROLE_HUMAN: "a human program is attached already; one at a time",
 }
 # What the Thor sends; anything else from it is dropped.
 _FROM_THOR = frozenset(cls.TYPE for cls in (Welcome, RobotState, Result, Event))
@@ -282,6 +299,9 @@ class RobotLinkService:
     The Carriers it opens must be safe to use from several threads. start()
     binds the local socket; close() ends everything and does not stop the
     robot: the Thor holds when the robot connection is lost.
+
+    typed_takeover=True is the typed fallback: the console role may then send
+    OWNER_REQUEST "human" and "handback" too. Any other value leaves it off.
     """
 
     def __init__(
@@ -297,10 +317,16 @@ class RobotLinkService:
         queue_bytes: int = 8 * 1024 * 1024,
         status_period_s: float = 1.0,
         poll_s: float = 0.05,
+        typed_takeover: bool = False,
     ) -> None:
         self._accept = accept
         self._socket_path = socket_path
         self._allowed = frozenset(peer_host(peer) for peer in allowed_peers)
+        # This service's own copy: the module's table stays as it is.
+        self._owner_requests = dict(OWNER_REQUESTS)
+        if typed_takeover is True:
+            typed = OWNER_REQUESTS[ROLE_CONSOLE] | _TYPED_TAKEOVER
+            self._owner_requests[ROLE_CONSOLE] = typed
         self._max_clients = int(max_clients)
         self._hello_timeout_s = float(hello_timeout_s)
         self._send_timeout_s = float(send_timeout_s)
@@ -335,6 +361,7 @@ class RobotLinkService:
         self._guests: dict[int, _Client] = {}  # before their LOCAL_HELLO
         self._clients: dict[int, _Client] = {}
         self._agent: _Client | None = None
+        self._human: _Client | None = None  # the human program's client
         self._commands: OrderedDict[str, _Sent] = OrderedDict()
         # (session id, owner number) the last help request was sent for.
         self._helped: tuple[str, int] | None = None
@@ -766,9 +793,25 @@ class RobotLinkService:
                     self._bad(client, f"sent a {name} before its LOCAL_HELLO")
                     return
                 if not self._hello(client, payload):
+                    self._stop_behind_refusal(client)
                     return
             elif not self._from_client(client, msg_type, payload):
                 return
+
+    def _stop_behind_refusal(self, client: _Client) -> None:
+        """Forward the STOP that follows a refused LOCAL_HELLO, if one does.
+
+        The record right behind the LOCAL_HELLO has TURN_AWAY_S to come, as for
+        a client there is no room for; one that is no STOP stays here.
+        """
+        by = time.monotonic() + TURN_AWAY_S
+        try:
+            header = read_exact(client.sock, HEADER.size, by)
+            msg_type, length = HEADER.unpack(header)
+            if msg_type == Stop.TYPE:
+                self._stop_from(client, self._stop_payload(client.sock, length, by))
+        except (Stalled, EOFError):
+            pass
 
     def _hello(self, client: _Client, payload: bytes) -> bool:
         """Take a client's LOCAL_HELLO; False when the client is refused."""
@@ -791,7 +834,8 @@ class RobotLinkService:
             )
             return False
         with self._lock:
-            taken = hello.role == ROLE_AGENT and self._agent is not None
+            holders = {ROLE_AGENT: self._agent, ROLE_HUMAN: self._human}
+            taken = holders.get(hello.role) is not None
             if not taken and not client.closed:
                 client.role = hello.role
                 client.name = printable(hello.name, MAX_WORD_CHARS)
@@ -799,6 +843,8 @@ class RobotLinkService:
                 self._clients[client.number] = client
                 if client.role == ROLE_AGENT:
                     self._agent = client
+                elif client.role == ROLE_HUMAN:
+                    self._human = client
                 self._status_changed()
                 if self._carrier is not None:
                     if self._welcome_payload is not None:
@@ -806,7 +852,7 @@ class RobotLinkService:
                     if self._state_payload is not None:
                         client.offer(RobotState.TYPE, self._state_payload)
         if taken:
-            self._bad(client, "an agent client is attached already; one at a time")
+            self._bad(client, _ONE_AT_A_TIME[hello.role])
             return False
         _log.info("attached: %s", client.label)
         return True
@@ -821,6 +867,10 @@ class RobotLinkService:
                     self._agent = None
                     self._agent_left = True
                     help_request = self._agent_gone(once=False)
+                if self._human is client:
+                    # No link message: the Thor ends a human drive in a hold
+                    # by itself once the HUMAN_SETPOINTs are too old.
+                    self._human = None
                 self._status_changed()
             carrier = self._carrier
         if attached:
@@ -844,10 +894,11 @@ class RobotLinkService:
         True when the STOP was handed to the robot connection. When not, the
         client is told STOP_UNDELIVERED.
 
-        The gate is set before the STOP goes out, so a PERMIT, MOVE or GRIPPER
-        checked from then on stays here. One that is past its check when the
-        STOP arrives can follow it to the Thor: the Thor's stop-number check is
-        the guarantee for that one. A STOP whose send fails leaves the gate set.
+        The gate is set before the STOP goes out, so a PERMIT, HUMAN_SETPOINT,
+        MOVE or GRIPPER checked from then on stays here. One that is past its
+        check when the STOP arrives can follow it to the Thor: the Thor's
+        stop-number check is the guarantee for that one. A STOP whose send
+        fails leaves the gate set.
         """
         out = payload
         if out is not None:
@@ -916,7 +967,7 @@ class RobotLinkService:
             )
             return True
         if isinstance(message, OwnerRequest):
-            if message.request not in OWNER_REQUESTS[role]:
+            if message.request not in self._owner_requests[role]:
                 request = printable(message.request, MAX_WORD_CHARS)
                 self._refuse(
                     client,
@@ -936,13 +987,14 @@ class RobotLinkService:
         with self._lock:
             carrier = self._carrier
             if carrier is None or not carrier.alive:
-                # PERMIT and VIEW_STATUS have no answer; they are dropped.
+                # PERMIT, VIEW_STATUS and HUMAN_SETPOINT have no answer; they
+                # are dropped.
                 if command_id is not None:
                     client.tell(Result(command_id, "refused", LOST))
                 return True
             # The last check before the send; see _stop_from.
             gate = self._gate
-            if gate is not None and msg_type == Permit.TYPE:
+            if gate is not None and msg_type in (Permit.TYPE, HumanSetpoint.TYPE):
                 return True
             if gate is not None and msg_type in (Move.TYPE, Gripper.TYPE):
                 if message.stop_number <= gate[1]:

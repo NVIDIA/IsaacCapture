@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import socket
 import threading
@@ -13,6 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 from link_bench import (
     CLIENT_MESSAGES,
     QUIET_S,
@@ -32,6 +34,7 @@ from link_bench import (
     write,
 )
 
+import isaaccapture_examples.agentic_remote.link_service.__main__ as service_main
 import isaaccapture_examples.agentic_remote.link_service.service as service_module
 from isaaccapture_examples.agentic_remote.link_service.config import (
     ConfigError,
@@ -39,7 +42,13 @@ from isaaccapture_examples.agentic_remote.link_service.config import (
     link_service_config,
     load_link_service_config,
 )
-from isaaccapture_examples.agentic_remote.link_service.local import HEADER, pack_record
+from isaaccapture_examples.agentic_remote.link_service.local import (
+    HEADER,
+    LocalCarrier,
+    LocalRefused,
+    connect_local,
+    pack_record,
+)
 from isaaccapture_examples.agentic_remote.link_service.service import (
     AGENT_GONE,
     BAD_STOP,
@@ -62,8 +71,12 @@ from isaaccapture_examples.agentic_remote.protocol.local_messages import (
 )
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     COMMAND_TYPES,
+    MESSAGE_TYPES,
+    PROTOCOL_VERSION,
     CheckerState,
     Event,
+    HumanSetpoint,
+    Message,
     Move,
     OwnerRequest,
     Permit,
@@ -104,7 +117,28 @@ ALLOWED = {
     },
     "viewer": {"VIEW_STATUS", "STOP"},
     "tool": {"STOP"},
+    # The human program: it turns a person's controller data into joint targets.
+    "human": {
+        "HUMAN_SETPOINT",
+        "OWNER_REQUEST human",
+        "OWNER_REQUEST handback",
+        "STOP",
+    },
 }
+
+
+def human_setpoint(seq: int = 1, **fields) -> HumanSetpoint:
+    """The HUMAN_SETPOINT of CLIENT_MESSAGES with these field values instead."""
+    return dataclasses.replace(CLIENT_MESSAGES["HUMAN_SETPOINT"], seq=seq, **fields)
+
+
+def refusal_text(client: LocalCarrier, message: Message) -> str:
+    """What the service tells the sender of a link message it does not forward."""
+    if message.TYPE in COMMAND_TYPES:
+        refusal = received(client, Result, command_id=message.command_id)
+        assert refusal.status == "refused"
+        return refusal.reason
+    return client.wait_notice(lambda notice: notice.about_type == message.TYPE).text
 
 
 @pytest.fixture
@@ -171,6 +205,7 @@ def test_link_message_names_are_those_of_the_design():
     assert link_message_name(69) == "OWNER_REQUEST"
     assert link_message_name(96) == "ROBOT_STATE"
     assert link_message_name(98) == "VIEW_STATUS"
+    assert link_message_name(99) == "HUMAN_SETPOINT"
     assert link_message_name(192) == "LOCAL_HELLO"
     assert link_message_name(7) == "type 7"
 
@@ -345,6 +380,148 @@ def test_a_role_sends_what_it_may_and_nothing_else(bench, role, name):
     assert client.alive
 
 
+def test_the_human_role_may_send_its_three_link_messages_and_nothing_else(bench):
+    mine = {99, 69, 68}  # HUMAN_SETPOINT, OWNER_REQUEST and STOP
+    assert ROLE_TABLE["human"] == mine
+    assert {message.TYPE for message in CLIENT_MESSAGES.values()} == set(MESSAGE_TYPES)
+    thor = bench.robot()
+    human = bench.client("human")
+    for name, message in sorted(CLIENT_MESSAGES.items()):
+        if message.TYPE not in mine:
+            send(human, message)
+            assert refusal_text(human, message) == f"the human role may not send {name}"
+    # The three go out as they are, and nothing went out ahead of them.
+    for name in ("HUMAN_SETPOINT", "OWNER_REQUEST human", "STOP"):
+        message = CLIENT_MESSAGES[name]
+        send(human, message)
+        assert thor.next() == (message.TYPE, message.to_payload())
+    assert human.alive
+
+
+def test_the_human_role_may_ask_for_a_takeover_and_a_handback_only(bench):
+    # A takeover makes a person the control owner of the arm; the hand-back
+    # ends the takeover with the arm at rest.
+    assert OWNER_REQUESTS["human"] == {"human", "handback"}
+    thor = bench.robot()
+    human = bench.client("human")
+    for word in ("agent", "help_needed", "nobody", "rest", "recovery"):
+        send(human, owner_request(word, command_id=f"own-{word}"))
+        refusal = received(human, Result, command_id=f"own-{word}")
+        assert refusal.status == "refused"
+        assert refusal.reason == f'the human role may not send OWNER_REQUEST "{word}"'
+    # The takeover and the hand-back go out as they are, ahead of anything else.
+    takeover = owner_request("human", "own-b", reason="right B held 1.0 s")
+    handback = owner_request("handback", "own-a", reason="right A held 1.0 s")
+    for request in (takeover, handback):
+        send(human, request)
+        assert thor.next() == (OwnerRequest.TYPE, request.to_payload())
+    # The RESULT of its request comes back to the human program.
+    thor.send(Result("own-b", "refused", "no fresh controller data: stage stale"))
+    answer = received(human, Result, command_id="own-b")
+    assert answer.reason == "no fresh controller data: stage stale"
+
+
+def test_a_second_human_program_is_refused(bench):
+    thor = bench.robot()
+    first = bench.client("human", "one")
+    with pytest.raises(
+        LocalRefused, match=r"a human program is attached already; one at a time"
+    ):
+        connect_local(bench.path, "human", "two", WAIT_S)
+    assert first.alive
+    assert bench.service.roles() == {"human": 1}
+    # The first one is still served, and the other roles attach beside it.
+    send(first, human_setpoint(seq=7))
+    assert thor.next_message() == human_setpoint(seq=7)
+    bench.client("agent")
+    bench.client("console")
+    assert bench.service.roles() == {"human": 1, "agent": 1, "console": 1}
+    first.close()
+    until(lambda: "human" not in bench.service.roles())
+    third = bench.client("human", "three")
+    send(third, human_setpoint(seq=8))
+    assert thor.next_message() == human_setpoint(seq=8)
+
+
+def test_the_console_may_not_ask_for_a_takeover_unless_the_setting_allows_it(folder):
+    # The typed fallback: with typed_takeover the console role may ask for a
+    # takeover and a hand-back too.
+    # Off unless the setting is True itself: a word such as "false" is not.
+    for options in ({}, {"typed_takeover": "false"}, {"typed_takeover": True}):
+        bench = Bench(folder, **options)
+        try:
+            thor = bench.robot()
+            console = bench.client("console")
+            agent = bench.client("agent")
+            for word in ("human", "handback"):
+                request = owner_request(
+                    word, f"typed-{word}", reason="typed at the operator console"
+                )
+                send(console, request)
+                if options.get("typed_takeover") is True:
+                    assert thor.next() == (OwnerRequest.TYPE, request.to_payload())
+                    continue
+                refusal = received(console, Result, command_id=request.command_id)
+                assert refusal.status == "refused"
+                assert refusal.reason == (
+                    f'the console role may not send OWNER_REQUEST "{word}"'
+                )
+            # The setting is the console's alone, and it adds these two only.
+            for client, role, word in (
+                (agent, "agent", "human"),
+                (agent, "agent", "handback"),
+                (console, "console", "agent"),
+            ):
+                send(client, owner_request(word, f"{role}-{word}"))
+                refusal = received(client, Result, command_id=f"{role}-{word}")
+                assert refusal.reason == (
+                    f'the {role} role may not send OWNER_REQUEST "{word}"'
+                )
+            send(console, MARKER)
+            assert thor.next_message() == MARKER  # nothing else went out
+        finally:
+            bench.close()
+
+
+def test_the_setting_of_one_service_does_not_change_the_module_tables(
+    tmp_path_factory,
+):
+    tables = (dict(ROLE_TABLE), dict(OWNER_REQUESTS))
+    with_setting = Bench(tmp_path_factory.mktemp("ls"), typed_takeover=True)
+    without = Bench(tmp_path_factory.mktemp("ls"))  # made second, runs beside it
+    try:
+        takeover = owner_request("human", "typed-1")
+        allowed = with_setting.robot()
+        send(with_setting.client("console"), takeover)
+        assert allowed.next_message() == takeover
+        refused = without.robot()
+        console = without.client("console")
+        send(console, takeover)
+        refusal = received(console, Result, command_id="typed-1")
+        assert refusal.reason == 'the console role may not send OWNER_REQUEST "human"'
+        send(console, MARKER)
+        assert refused.next_message() == MARKER
+    finally:
+        with_setting.close()
+        without.close()
+    assert (ROLE_TABLE, OWNER_REQUESTS) == tables
+    assert OWNER_REQUESTS["console"] == {"rest", "nobody"}
+
+
+def test_the_typed_fallback_is_switched_on_in_the_services_file(folder):
+    loaded = link_service_config({"operator": {"typed_takeover": True}})
+    options = loaded.service_options()
+    del options["socket_path"]  # the bench names its own
+    bench = Bench(folder, **options)
+    try:
+        thor = bench.robot()
+        handback = owner_request("handback", "typed-2")
+        send(bench.client("console"), handback)
+        assert thor.next_message() == handback
+    finally:
+        bench.close()
+
+
 def test_operator_commands_keep_their_owner_number(bench):
     thor = bench.robot()
     console = bench.client("console")
@@ -457,6 +634,88 @@ def test_a_stop_ahead_of_the_hello_is_forwarded(bench):
     assert thor.next_message() == Stop(BAD_STOP, "unknown")
 
 
+# A LOCAL_HELLO the service refuses, by why: (the role of the client that is
+# attached already, the hello, what its sender is told).
+REFUSED_HELLOS = {
+    "a second human program": (
+        "human",
+        LocalHello(role="human", name="two"),
+        "a human program is attached already; one at a time",
+    ),
+    "a second agent client": (
+        "agent",
+        LocalHello(role="agent", name="two"),
+        "an agent client is attached already; one at a time",
+    ),
+    "an unknown role": (
+        "tool",
+        LocalHello(role="pilot", name="two"),
+        "unknown role 'pilot'",
+    ),
+    "another protocol version": (
+        "tool",
+        LocalHello(role="tool", name="two", protocol_version=PROTOCOL_VERSION + 1),
+        f"protocol version {PROTOCOL_VERSION + 1}",
+    ),
+}
+
+
+def _in_one_write(sock: socket.socket, *messages: Message) -> None:
+    """Write the records of these messages together, as a raw STOP is written."""
+    sock.sendall(b"".join(pack_record(m.TYPE, m.to_payload()) for m in messages))
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED_HELLOS))
+def test_a_stop_behind_a_refused_hello_is_forwarded(bench, case):
+    attached, hello, why = REFUSED_HELLOS[case]
+    thor = bench.robot()
+    first = bench.client(attached, "one")
+    sock = bench.raw()
+    # The STOP of the human program for right B, a button of the controller.
+    stop = Stop(reason="right B", sender="controller")
+    _in_one_write(sock, hello, stop)
+    assert thor.next_message() == stop
+    told = closed_by_service(sock)
+    assert [type(message) for message in told] == [LocalNotice]
+    assert why in told[0].text
+    # The refused client was not attached, and the first one is still served.
+    assert bench.service.roles() == {attached: 1}
+    send(first, MARKER)
+    assert thor.next_message() == MARKER
+
+
+def test_a_stop_behind_a_refused_hello_that_is_not_delivered_is_answered(bench):
+    bench.client("human", "one")  # there is no robot connection
+    sock = bench.raw()
+    stop = Stop(reason="right B", sender="controller")
+    _in_one_write(sock, LocalHello(role="human", name="two"), stop)
+    told = closed_by_service(sock)
+    # The STOP's notice is the last one: the one a raw STOP reports.
+    assert [notice.text for notice in told] == [
+        "a human program is attached already; one at a time",
+        STOP_UNDELIVERED,
+    ]
+    assert told[-1].about_type == Stop.TYPE
+
+
+@pytest.mark.parametrize(
+    ("role", "message"),
+    [
+        ("agent", move()),
+        ("human", human_setpoint(engaged=True, q=[0.1])),
+        ("human", owner_request("human")),
+    ],
+    ids=["MOVE", "HUMAN_SETPOINT", "OWNER_REQUEST"],
+)
+def test_what_is_not_a_stop_behind_a_refused_hello_stays_here(bench, role, message):
+    thor = bench.robot()
+    bench.client(role, "one")
+    sock = bench.raw()
+    _in_one_write(sock, LocalHello(role=role, name="two"), message)
+    assert "one at a time" in closed_by_service(sock)[-1].text
+    thor.nothing()
+
+
 def test_after_a_stop_permits_are_dropped_and_old_moves_refused(bench):
     thor = bench.robot(stop_number=4)
     agent = bench.client("agent")
@@ -485,6 +744,35 @@ def test_after_a_stop_permits_are_dropped_and_old_moves_refused(bench):
     send(agent, move("move-new", stop_number=5))
     assert thor.next_message() == permit(stop_number=5)
     assert thor.next_message() == move("move-new", stop_number=5)
+
+
+def test_a_human_setpoint_stays_here_while_the_stop_gate_is_set(bench):
+    thor = bench.robot(owner="human", owner_number=6, stop_number=4)
+    human = bench.client("human")
+    quoted = {"owner_number": 6, "stop_number": 4}
+    driving = human_setpoint(seq=1, **quoted, engaged=True, q=[0.1])
+    send(human, driving)
+    assert thor.next_message() == driving
+    # Right B of the controller: the human program's own STOP sets the gate, and
+    # it goes out with the sender the human program wrote.
+    pressed = Stop(reason="right B", sender="controller")
+    send(human, pressed)
+    assert thor.next_message() == pressed
+    human.wait_status(lambda s: s.stop_unconfirmed)
+
+    send(human, human_setpoint(seq=2, **quoted, engaged=True, q=[0.2]))
+    send(human, human_setpoint(seq=3, owner_number=6, stop_number=5))
+    send(human, MARKER)
+    assert thor.next_message() == MARKER  # neither went out ahead of it
+    time.sleep(QUIET_S)
+    assert human.notices == []  # dropped without an answer, as a PERMIT is
+
+    # The ROBOT_STATE that shows the STOP ends the gate.
+    thor.state(owner="nobody", owner_number=7, stop_number=5)
+    human.wait_status(lambda s: not s.stop_unconfirmed)
+    after = human_setpoint(seq=4, owner_number=7, stop_number=5)
+    send(human, after)
+    assert thor.next_message() == after
 
 
 def test_a_state_with_the_old_stop_number_does_not_end_the_gate(bench):
@@ -589,6 +877,45 @@ def test_a_console_gone_sends_nothing(bench):
     until(lambda: bench.service.roles() == {"agent": 1})
     send(agent, MARKER)
     assert thor.next_message() == MARKER
+
+
+@pytest.mark.parametrize("owner", ["human", "agent", "nobody"])
+@pytest.mark.parametrize("how", ["closed", "dropped"])
+def test_a_human_program_that_leaves_sends_nothing_to_the_thor(bench, owner, how):
+    thor = bench.robot(owner=owner, owner_number=6, stop_number=2)
+    console = bench.client("console")
+    sock = bench.raw("human")
+    driving = human_setpoint(owner_number=6, stop_number=2, engaged=True, q=[0.1])
+    write(sock, driving)
+    assert thor.next_message() == driving
+    if how == "closed":
+        sock.close()
+    else:
+        sock.sendall(pack_record(201, b""))  # the service drops it for this
+    until(lambda: bench.service.roles() == {"console": 1})
+    # Not on the next ROBOT_STATE either: the Thor ends the drive by itself.
+    last = thor.state(owner=owner, owner_number=6, stop_number=2)
+    until(lambda: bench.service.robot_state == last)
+    send(console, MARKER)
+    assert thor.next_message() == MARKER  # no STOP and no help request before it
+    thor.nothing()
+
+
+def test_an_agent_program_that_leaves_while_a_person_owns_the_arm_sends_nothing_to_the_thor(
+    bench,
+):
+    thor = bench.robot(owner="human", owner_number=6)
+    human = bench.client("human")
+    agent = bench.client("agent")
+    agent.close()
+    until(lambda: bench.service.roles() == {"human": 1})
+    last = thor.state(owner="human", owner_number=6)
+    until(lambda: bench.service.robot_state == last)
+    # The person's next target is the first thing the Thor gets.
+    target = human_setpoint(owner_number=6, engaged=True, q=[0.1])
+    send(human, target)
+    assert thor.next_message() == target
+    thor.nothing()
 
 
 def test_the_agent_client_gone_without_a_robot_connection_sends_nothing(bench):
@@ -917,11 +1244,13 @@ def test_the_service_makes_no_link_message_of_its_own(folder, seed):
             kind = rng.random()
             if kind < 0.6:
                 message = CLIENT_MESSAGES[rng.choice(names)]
+                if isinstance(message, HumanSetpoint):
+                    message = human_setpoint(seq=step)  # one payload per sender
                 msg_type, payload = message.TYPE, message.to_payload()
                 if hasattr(message, "command_id"):
                     payload = payload.replace(b'-1"', f'-{step}"'.encode(), 1)
             elif kind < 0.75:
-                msg_type = rng.choice([65, 66, 67, 69, 70, 97, 98])
+                msg_type = rng.choice([65, 66, 67, 69, 70, 97, 98, 99])
                 payload = rng.randbytes(rng.randrange(0, 40))
             elif kind < 0.9:
                 msg_type, payload = Stop.TYPE, rng.randbytes(rng.randrange(0, 40))
@@ -981,6 +1310,9 @@ def test_the_service_makes_no_link_message_of_its_own(folder, seed):
                 assert ("agent", msg_type, payload) in sent
             if msg_type == ViewStatus.TYPE:
                 assert ("viewer", msg_type, payload) in sent
+            # Never a joint target that no human program sent.
+            if msg_type == HumanSetpoint.TYPE:
+                assert ("human", msg_type, payload) in sent
     finally:
         bench.close()
 
@@ -1014,14 +1346,45 @@ def test_settings_become_the_services_options(folder):
             "socket_path": str(folder / "s.sock"),
             "log_level": "debug",
             "local": {"max_clients": 4, "send_timeout_s": 0.5},
+            "operator": {"typed_takeover": True},
         }
     )
     assert loaded.listen_endpoint == "0.0.0.0:5000"
     options = loaded.service_options()
     assert options["allowed_peers"] == ("192.168.7.20", "192.168.7.21")
     assert options["max_clients"] == 4
+    assert options["typed_takeover"] is True
+    assert LinkServiceConfig().service_options()["typed_takeover"] is False
     service = RobotLinkService(lambda timeout_s: time.sleep(timeout_s), **options)
     assert service.socket_path == str(folder / "s.sock")
+
+
+@pytest.mark.link
+@pytest.mark.parametrize("setting", [True, False])
+def test_the_program_says_at_its_start_that_the_typed_fallback_is_on(
+    folder, monkeypatch, setting
+):
+    """The service's program on 127.0.0.1 with port 0; nothing dials it."""
+    monkeypatch.setattr(service_main, "set_console_level", lambda level: None)
+    file = folder / "link_service.yaml"
+    settings = {
+        "listen": {"address": "127.0.0.1", "port": 0},
+        "socket_path": str(folder / "s.sock"),
+        "operator": {"typed_takeover": setting},
+    }
+    file.write_text(yaml.safe_dump(settings), encoding="utf-8")
+    said: list[str] = []
+    code = service_main.main(
+        ["--config", str(file)], wait=lambda program: "ended", say=said.append
+    )
+    assert code == 0
+    assert said[0].startswith("robot link service: waits for the robot app on ")
+    assert said[-1].startswith("robot link service: ended; closing.")
+    on = (
+        "robot link service: operator.typed_takeover is on: the operator console "
+        "may ask for a takeover and for the hand-back"
+    )
+    assert said[1:-1] == ([on] if setting else [])
 
 
 def test_an_empty_file_gives_the_defaults(tmp_path):
@@ -1062,6 +1425,20 @@ def test_an_empty_file_gives_the_defaults(tmp_path):
         ({"local": {"max_clients": 0}}, r"local\.max_clients must be from 1"),
         ({"local": {"hello_timeout_s": 0}}, r"local\.hello_timeout_s must be above 0"),
         ({"local": {"queue_bytes": True}}, r"local\.queue_bytes must be a whole"),
+        (
+            {"operator": {"typed_takeover": "true"}},
+            r"operator\.typed_takeover must be true or false, got 'true'",
+        ),
+        (
+            {"operator": {"typed_takeover": 1}},
+            r"operator\.typed_takeover must be true or false, got 1",
+        ),
+        (
+            {"operator": {"typed_takover": True}},
+            r"unknown setting\(s\): operator\.typed_takover",
+        ),
+        ({"operator": None}, r"operator must be a mapping"),
+        ({"typed_takeover": True}, r"unknown setting\(s\): typed_takeover"),
         ({"thor": "x", "local": {}}, r"unknown setting\(s\): thor"),
         ([1], r"the file must be a mapping"),
     ],
@@ -1198,6 +1575,34 @@ def test_a_stop_before_the_first_state_is_confirmed_by_a_later_one(bench):
     assert bench.service.status().stop_unconfirmed
     thor.state(stop_number=1)
     agent.wait_status(lambda s: s.session_id == "s1" and not s.stop_unconfirmed)
+
+
+def test_a_stop_before_the_first_state_holds_human_setpoints_back_too(bench):
+    thor = bench.robot(session_id=None)  # connected, no ROBOT_STATE yet
+    human = bench.client("human")
+    pressed = Stop(reason="right B", sender="controller")
+    send(human, pressed)
+    assert thor.next_message() == pressed
+    human.wait_status(lambda s: s.stop_unconfirmed)
+    # The Thor may have counted that STOP before it built its first ROBOT_STATE:
+    # the stop number then does not rise again by itself.
+    thor.send(welcome())
+    first = thor.state(stop_number=3)
+    until(lambda: bench.service.robot_state == first)
+    assert bench.service.status().stop_unconfirmed
+    send(human, human_setpoint(seq=1, stop_number=3))
+    # The request for a takeover is no motion: it goes out, and first.
+    takeover = owner_request("human", "own-b", stop_number=3)
+    send(human, takeover)
+    assert thor.next_message() == takeover
+    # Right B again: the stop number that follows this STOP ends the gate.
+    send(human, pressed)
+    assert thor.next_message() == pressed
+    thor.state(stop_number=4)
+    human.wait_status(lambda s: not s.stop_unconfirmed)
+    after = human_setpoint(seq=2, stop_number=4)
+    send(human, after)
+    assert thor.next_message() == after
 
 
 def test_a_stop_shuts_the_gate_before_it_goes_out(bench):

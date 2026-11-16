@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 from link_bench import (
     QUIET_S,
     WAIT_S,
@@ -29,8 +30,12 @@ from link_bench import (
     welcome,
     write,
 )
+from repo_paths import repo_root
 
 import isaaccapture_examples.agentic_remote.link_service.local as local
+from isaaccapture_examples.agentic_remote.link_service.config import (
+    load_link_service_config,
+)
 from isaaccapture_examples.agentic_remote.link_service.local import (
     HEADER,
     LocalCarrier,
@@ -71,6 +76,8 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Welcome,
 )
 
+CONFIGS = repo_root() / "examples" / "agentic_remote" / "configs"
+
 STATUS = LocalStatus(
     robot_connected=True,
     close_reason="",
@@ -110,7 +117,7 @@ def test_the_local_messages_have_the_numbers_of_the_contract():
     assert not set(LOCAL_TYPES) & (set(RELIABLE_TYPES) | set(NEWEST_WINS_TYPES))
     assert is_local(192) and is_local(199)
     assert not is_local(191) and not is_local(200) and not is_local(68)
-    assert ROLES == ("agent", "console", "viewer", "tool")
+    assert ROLES == ("agent", "console", "viewer", "tool", "human")
 
 
 @pytest.mark.parametrize(
@@ -709,3 +716,27 @@ def test_the_package_imports_without_isaac_capture():
         text=True,
     )
     assert done.returncode == 0, done.stderr
+
+
+# The shipped service files
+
+
+def test_the_shipped_service_files_keep_typed_takeover_off(tmp_path):
+    """The typed fallback, a takeover asked for at the operator console, ships off."""
+    demo = CONFIGS / "link_service.yaml"
+    rig = CONFIGS / "link_service_rebot.yaml"
+    for path in (demo, rig):
+        shipped = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert shipped["operator"]["typed_takeover"] is False, path.name
+    assert load_link_service_config(demo).typed_takeover is False
+    # The rig file loads only with the Thor's address written in.
+    text = rig.read_text(encoding="utf-8")
+    assert text.count("\nallowed_peers: []\n") == 1
+    written = tmp_path / rig.name
+    written.write_text(
+        text.replace("\nallowed_peers: []\n", "\nallowed_peers: [192.0.2.10]\n"),
+        encoding="utf-8",
+    )
+    loaded = load_link_service_config(written)
+    assert loaded.typed_takeover is False
+    assert loaded.service_options()["typed_takeover"] is False

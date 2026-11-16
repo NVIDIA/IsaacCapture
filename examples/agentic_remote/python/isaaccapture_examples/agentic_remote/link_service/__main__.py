@@ -35,6 +35,12 @@ NO_LINK = (
     "Isaac Capture's remote link cannot be imported (isaaccapture.remote_link on "
     "the Python path)"
 )
+# Said at the start when the typed fallback is on. A takeover makes a person
+# the control owner of the arm; the hand-back ends it with the arm at rest.
+TYPED_TAKEOVER_ON = (
+    "operator.typed_takeover is on: the operator console may ask for a takeover "
+    "and for the hand-back"
+)
 
 Say = Callable[[str], None]
 
@@ -173,6 +179,8 @@ def main(
             f"{PROGRAM}: waits for the robot app on {program.endpoint} (taken from "
             f"{peers}); local API at {program.service.socket_path}"
         )
+        if config.typed_takeover:
+            say(f"{PROGRAM}: {TYPED_TAKEOVER_ON}")
         why = _wait_for_signal() if wait is None else wait(program)
         say(f"{PROGRAM}: {why}; closing. The robot holds on its own.")
     finally:
