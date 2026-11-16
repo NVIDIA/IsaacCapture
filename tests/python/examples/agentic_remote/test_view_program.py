@@ -13,6 +13,7 @@ requests per test on one connection.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import http.client
 import json
 import os
@@ -51,7 +52,7 @@ from isaaccapture_examples.agentic_remote.view.model import (
     RECORDED,
     ViewModel,
 )
-from link_bench import Bench, until
+from link_bench import Bench, decode, robot_state, until, welcome
 
 # The view packs its pictures with OpenCV; without it this file is skipped.
 cv2 = pytest.importorskip("cv2")
@@ -61,6 +62,9 @@ WAIT_S = 10.0  # real seconds a test gives another thread before it fails
 EXAMPLE = Path(view_main.__file__).resolve().parents[4]
 VIEW = Path(view_main.__file__).resolve().parent
 NOT_LIVE = ViewStatus(live=False, age_s=AGE_WHEN_NOT_LIVE_S)
+# view/model.py's quiet time: how long after the view's first ROBOT_STATE, and
+# after a step of the Thor's wall clock, a picture must arrive to count.
+CLOCK_STEP_QUIET_S = 3.0
 SIZE = (128, 96)  # width and height of the stand-in camera frames
 RED, GREEN, BLUE = (0, 0, 255), (0, 255, 0), (255, 0, 0)  # as BGR
 
@@ -291,12 +295,18 @@ def test_view_status_reaches_the_robot_app_and_shows_in_robot_state(
         assert browser.status()["view_status"] == {"live": False, "age_s": 3600.0}
         assert watcher.ws.state.view_age_s is None
 
-        # The page acknowledges what it drew: the Thor reports the view's age.
-        for _ in range(3):
+        # The page acknowledges what it drew. No picture counts that arrived
+        # in the quiet time after the view's first ROBOT_STATE; after it the
+        # Thor reports the view's age.
+        marked = view.program.model._clock_mark_at
+        for _ in range(15):
             seq, _ = browser.frame()
             browser.shown(seq)
-            time.sleep(0.15)
+            if watcher.ws.state.view_age_s is not None:
+                break
+            time.sleep(0.4)
         state = watcher.ws.wait_state(lambda s: s.view_age_s is not None, WAIT_S)
+        assert time.monotonic() - marked >= CLOCK_STEP_QUIET_S
         assert 0.0 <= state.view_age_s < 1.0
         told = browser.status()
         assert told["view_status"]["live"] is True
@@ -330,6 +340,167 @@ def test_view_status_reaches_the_robot_app_and_shows_in_robot_state(
         assert watcher.ws.state.stop_number == state.stop_number
     finally:
         stack.close()
+
+
+class ThorClock:
+    """The Thor's wall clock, as the stand-ins of a test read it.
+
+    This machine's wall clock, and from step() on that many seconds off it.
+    """
+
+    def __init__(self) -> None:
+        self._stepped_at: float | None = None
+        self._step_s = 0.0
+
+    def step(self, by_s: float) -> None:
+        self._stepped_at, self._step_s = time.time(), by_s
+
+    def wall(self, at: float | None = None) -> float:
+        """What the Thor's wall clock said at this machine's wall time `at`."""
+        at = time.time() if at is None else at
+        stepped = self._stepped_at is not None and at >= self._stepped_at
+        return at + (self._step_s if stepped else 0.0)
+
+
+class ThorCamera(StandInSource):
+    """StandInSource whose pairs were exposed transit_s before they arrive.
+
+    The exposures are stamped on the ThorClock. While `stalled` no pair comes.
+    exposed_mono[n - 1] is when the view's picture n was exposed, on this
+    machine's monotonic clock.
+    """
+
+    def __init__(self, clock: ThorClock, transit_s: float = 0.2) -> None:
+        super().__init__()
+        self.clock, self.transit_s = clock, transit_s
+        self.stalled = False
+        self.exposed_mono: list[float] = []
+
+    def next_pair(self, timeout_s: float) -> StereoPair | None:
+        if self.stalled:
+            time.sleep(min(timeout_s, 0.05))
+            return None
+        pair = super().next_pair(timeout_s)
+        exposed_ns = int(self.clock.wall(time.time() - self.transit_s) * 1e9)
+        self.exposed_mono.append(time.monotonic() - self.transit_s)
+        return dataclasses.replace(
+            pair,
+            sof_wall_ns=(exposed_ns, exposed_ns + 1000),
+            receiver_rx_mono_s=time.monotonic(),
+        )
+
+
+class SteppedThor:
+    """A robot side on the ThorClock, and a page that acknowledges every picture.
+
+    The robot side sends a ROBOT_STATE every 50 ms and keeps each VIEW_STATUS
+    the service forwards: (when, the status, the true age then of the picture
+    the page acknowledged last). The page does its work on the view's model.
+    """
+
+    def __init__(self, bench: Bench, clock: ThorClock, camera: ThorCamera) -> None:
+        self.clock, self.camera = clock, camera
+        self.thor = bench.robot(None)
+        self.thor.send(welcome())
+        self.statuses: list[tuple[float, ViewStatus, float | None]] = []
+        self.model: ViewModel | None = None
+        self._acknowledged: int | None = None
+        self._lock = threading.Lock()
+        self._off = threading.Event()
+        self._threads = [
+            threading.Thread(target=self._robot, daemon=True),
+            threading.Thread(target=self._page, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _robot(self) -> None:
+        seq = 0
+        while not self._off.wait(0.05):
+            seq += 1
+            state = dataclasses.replace(
+                robot_state(seq=seq),
+                clock_wall_s=self.clock.wall(),
+                clock_mono_s=time.monotonic(),
+            )
+            self.thor.send(state)
+            while (got := self.thor.carrier.receive(0)) is not None:
+                message = decode(*got)
+                if isinstance(message, ViewStatus):
+                    self._note(message)
+
+    def _note(self, status: ViewStatus) -> None:
+        now = time.monotonic()
+        with self._lock:
+            seq = self._acknowledged
+            age = None if seq is None else now - self.camera.exposed_mono[seq - 1]
+            self.statuses.append((now, status, age))
+
+    def _page(self) -> None:
+        while not self._off.wait(0.25):
+            picture = None if self.model is None else self.model.picture()
+            if picture is not None:
+                self.model.acknowledge(picture[0], True, time.monotonic())
+                with self._lock:
+                    self._acknowledged = picture[0]
+
+    def since(self, when: float) -> list[tuple[float, ViewStatus, float | None]]:
+        with self._lock:
+            return [row for row in self.statuses if row[0] >= when]
+
+    def wait_live(self, since: float) -> tuple[float, ViewStatus, float | None]:
+        """The first live VIEW_STATUS that arrived after `since`."""
+        found: list[Any] = []
+        until(
+            lambda: found.extend(r for r in self.since(since) if r[1].live) or found,
+            "a live VIEW_STATUS",
+        )
+        return found[0]
+
+    def close(self) -> None:
+        self._off.set()
+        for thread in self._threads:
+            thread.join(WAIT_S)
+
+
+def test_on_real_clocks_no_picture_from_before_a_clock_step_is_reported_live(
+    bench, folder, running
+):
+    clock = ThorClock()
+    camera = ThorCamera(clock, transit_s=0.4)
+    thor = SteppedThor(bench, clock, camera)
+    # The shipped values of view.yaml's status block and picture rate.
+    shipped = {"period_s": 0.2, "ack_timeout_s": 1.0, "state_max_age_s": 1.0}
+    config = write_config(folder, bench.path, status=shipped, picture={"fps": 5.0})
+    try:
+        began = time.monotonic()
+        view = start(running, config, source=camera)
+        thor.model = view.program.model
+        # Live only once a picture came the quiet time after the first state.
+        at, first, age = thor.wait_live(began)
+        assert at - began >= CLOCK_STEP_QUIET_S
+        # The age of the picture the page acknowledged, within the page's and
+        # the status's periods.
+        assert age - 0.3 < first.age_s < age + 0.5
+        # The Thor's wall clock steps back 0.5 s, and the camera stalls: the
+        # page goes on acknowledging a picture that is dated on the old clock.
+        clock.step(-0.5)
+        camera.stalled = True
+        stepped = time.monotonic()
+        time.sleep(1.8)  # past status.ack_timeout_s from the step
+        after = thor.since(stepped + 0.3)
+        assert len(after) >= 5 and not [row for row in after if row[1].live]
+        # With the camera running again the view is live once a picture came
+        # the quiet time after the step, with that picture's own age.
+        camera.stalled = False
+        at, again, age = thor.wait_live(stepped + 0.3)
+        assert at - stepped >= CLOCK_STEP_QUIET_S
+        assert age - 0.3 < again.age_s < age + 0.5
+        # No VIEW_STATUS of the whole run called a picture younger than it was.
+        for _, status, age in thor.since(began):
+            assert not status.live or status.age_s > age - 0.3
+    finally:
+        thor.close()
 
 
 def test_the_view_sends_view_status_and_nothing_else(bench, folder, running):
@@ -757,6 +928,87 @@ def test_a_path_takes_the_agent_programs_three_variables_and_no_other_dollar(
     }
     settings = load_view_settings(write_config(folder, "", camera=camera))
     assert (settings.camera_pr, settings.bridge_python) == ("/exp/pr", "/env/python")
+
+
+@pytest.mark.parametrize("key", ["socket_path", "camera.receiver_socket"])
+def test_both_socket_files_are_paths_as_in_the_agent_programs_file(
+    folder, monkeypatch, capsys, key
+):
+    def file_with(text: str) -> Path:
+        if key == "socket_path":
+            return write_config(folder, text)
+        return write_config(folder, "", camera={"receiver_socket": text})
+
+    def value(settings: ViewSettings) -> str | None:
+        if key == "socket_path":
+            return settings.socket_path
+        return settings.receiver_socket
+
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/env")
+    for text, path in (
+        ("${AGENTIC_REMOTE_ENV_DIR}/x.sock", "/env/x.sock"),
+        ("run/x.sock", str((folder / "run" / "x.sock").resolve())),
+        ("/run/x.sock", "/run/x.sock"),
+    ):
+        assert value(load_view_settings(file_with(text))) == path
+    # A "$" that is no ${NAME} is refused, not taken for a file's name.
+    file = file_with("$AGENTIC_REMOTE_ENV_DIR/x.sock")
+    argv = ["--config", str(file), "--source", "none"]
+    assert view_main.main(argv, attach=no_attach, wait=never) == 2
+    error = capsys.readouterr().err
+    assert error.startswith(f"live view: the settings cannot be used: {key}: the path ")
+    assert "holds a '$' that is not part of ${NAME}" in error
+    # Where the file names none: the service's default, the camera receiver's own.
+    plain = load_view_settings(write_config(folder, ""))
+    assert plain.socket_path is None
+    assert plain.receiver_socket == "/tmp/camera_receiver_avs1_cuda_ipc.sock"
+
+
+def test_a_path_variable_whose_value_is_not_absolute_is_refused(folder, monkeypatch):
+    monkeypatch.setenv("AGENTIC_REMOTE_CAMERA_PR", "pr")
+    camera = {"camera_pr": "${AGENTIC_REMOTE_CAMERA_PR}/x"}
+    with pytest.raises(view_main.ViewConfigError) as raised:
+        load_view_settings(write_config(folder, "", camera=camera))
+    assert str(raised.value) == (
+        "camera.camera_pr: the path '${AGENTIC_REMOTE_CAMERA_PR}/x' names the "
+        "variable AGENTIC_REMOTE_CAMERA_PR, whose value 'pr' is not an absolute path"
+    )
+    assert not (folder / "pr").exists()
+
+
+def test_a_tilde_with_a_name_that_is_no_user_ends_with_exit_code_2(folder, capsys):
+    no_user = "~no-such-user-of-this-machine"
+    good = str(write_config(folder, ""))
+    state = write_config(folder, "")
+    data = yaml.safe_load(state.read_text())
+    data["state_dir"] = f"{no_user}/state"
+    state.write_text(yaml.safe_dump(data))
+    none = ["--source", "none"]
+    for argv, where in (
+        (["--config", str(state), *none], "state_dir"),
+        (
+            ["--config", str(write_config(folder, f"{no_user}/s.sock")), *none],
+            "socket_path",
+        ),
+        (
+            [
+                "--config",
+                str(write_config(folder, "", camera={"camera_pr": f"{no_user}/pr"})),
+                *none,
+            ],
+            "camera.camera_pr",
+        ),
+        (["--config", f"{no_user}/view.yaml", *none], "--config"),
+        (["--config", good, "--source", f"recorded:{no_user}/pairs"], "--source"),
+    ):
+        assert view_main.main(argv, attach=no_attach, wait=never) == 2, argv
+        (line,) = capsys.readouterr().err.splitlines()  # one line, no traceback
+        assert line.startswith(
+            f"live view: the settings cannot be used: {where}: the path "
+        )
+        assert line.endswith(
+            "begins with '~' and a name that is no user of this machine"
+        )
 
 
 @pytest.mark.parametrize(

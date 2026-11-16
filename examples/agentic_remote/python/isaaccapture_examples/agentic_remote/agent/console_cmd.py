@@ -5,7 +5,8 @@
 
 One operator command, then exit. It attaches to the robot link service in the
 role "console", reads the ROBOT_STATE, asks for the typed confirmation, sends
-at most one link message and prints what the robot app answered.
+at most one link message and prints what the robot app answered. A stop is
+sent at once after the attach: it waits for no ROBOT_STATE.
 
 This file is also the one place that sends RESET, OPEN, RELEASE, SHUTDOWN and
 the operator's rest: the operator console (console/) calls question() and
@@ -79,6 +80,10 @@ RESULT_WAIT_S = {
 }
 STATE_WAIT_S = 3.0
 STOP_WAIT_S = 5.0
+# How long the attach may take; a stop that is not attached by then is
+# written raw.
+ATTACH_S = 5.0
+STOP_ATTACH_S = 0.5
 _LOOK_S = 0.1
 
 Say = Callable[[str], None]
@@ -230,8 +235,9 @@ def main(
         say(f"{PROGRAM}: --timeout must be above 0")
         return EXIT_FAILED
     command = args.command
+    attach_s = STOP_ATTACH_S if command == "stop" else ATTACH_S
     try:
-        carrier = connect_local(args.socket, ROLE_CONSOLE, "console_cmd", 5.0)
+        carrier = connect_local(args.socket, ROLE_CONSOLE, "console_cmd", attach_s)
     except OSError as problem:  # also LocalRefused and TimeoutError
         why = f"cannot attach to the robot link service: {problem}"
         if command != "stop":
@@ -243,10 +249,21 @@ def main(
         )
         say(f"stop: {why}. {raw_stop_text(raw.written, raw.notice)}")
         return EXIT_FAILED
+    first: list[RobotState] = []  # the first ROBOT_STATE received, once it is
+
+    def note(message: object) -> None:
+        if isinstance(message, RobotState) and not first:
+            first.append(message)
+
     client = WorkstationClient(
-        carrier, types.SimpleNamespace(monotonic=time.monotonic), name=SENDER
+        carrier,
+        types.SimpleNamespace(monotonic=time.monotonic),
+        name=SENDER,
+        listeners=[note],
     )
     try:
+        if command == "stop":
+            return _stop(carrier, client, first, args.timeout or STOP_WAIT_S, say)
         return _one(command, carrier, client, args.timeout, ask, say)
     except KeyboardInterrupt:
         say(
@@ -267,14 +284,12 @@ def _one(
     ask: Ask,
     say: Say,
 ) -> int:
-    """Read the state, ask, send, wait for the end; in that order."""
+    """Any command but stop: read the state, ask, send, wait for the end."""
     state = _newest_state(carrier, client)
     if command == "state":
         say(f"robot link service: {status_text(carrier)}")
         say(state_text(state) if state else "ROBOT_STATE: none has arrived")
         return EXIT_OK if state is not None else EXIT_FAILED
-    if command == "stop":
-        return _stop(carrier, client, state, timeout_s or STOP_WAIT_S, say)
     if state is None:
         say(
             f"{command} not sent: no ROBOT_STATE to quote ({status_text(carrier)}); "
@@ -320,11 +335,17 @@ def _newest_state(
 def _stop(
     carrier: LocalCarrier,
     client: WorkstationClient,
-    before: RobotState | None,
+    first: Sequence[RobotState],
     wait_s: float,
     say: Say,
 ) -> int:
-    """STOP has no RESULT: a higher stop number in ROBOT_STATE answers it."""
+    """STOP has no RESULT: a higher stop number in ROBOT_STATE answers it.
+
+    It is sent before any ROBOT_STATE is waited for. Later states are measured
+    on the first one this client received, which `first` holds once it came:
+    the service hands a new client its newest state before it reads that
+    client's STOP.
+    """
     heard = len(carrier.notices)
     client.stop(STOP_REASON, SENDER)
     end = time.monotonic() + wait_s
@@ -334,10 +355,9 @@ def _stop(
                 say(f"stop: {notice.text}")
                 return EXIT_FAILED
         state = client.state
-        if state is not None:
-            if before is None:
-                before = state  # the first one: later states are measured on it
-            elif new_session(before, state):
+        if state is not None and first:
+            before = first[0]
+            if new_session(before, state):
                 say(
                     f"stop: NOT CONFIRMED: {new_session_text(state)}; look at "
                     "the Thor terminal"

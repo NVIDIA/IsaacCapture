@@ -43,6 +43,7 @@ from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE
 from link_stack import HOST, Program, ServiceProcess, Stack, program_env
 from test_agent_end_to_end import RUN_BUDGET_S, ObstacleGrid, Scene, raise_arm
 from test_console import ASK_REST, QUIT_NOTE, Desk
+from test_console_cmd import await_read
 from test_launcher import PICK, QUICK, scene_robot_config
 from test_link_programs import ROBOT_MODULE, ROBOT_YAML
 from test_view_program import Browser, Running, StandInSource, write_config
@@ -159,7 +160,7 @@ class ConsoleProcess:
         The console drops what was typed before it reads the answer.
         """
         self.wait(question)
-        time.sleep(0.5)
+        await_read(self.process.pid, WAIT_S, unknown_s=0.5)
         self.type(line)
 
     def wait(self, text: str, wait_s: float = WAIT_S) -> str:
@@ -353,7 +354,8 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     # A view with pictures, and a tab that acknowledges them.
     view = desks.view(source=StandInSource(), status={"ack_timeout_s": 4.0})
     assert watcher.ws.state.view_age_s is None
-    tab = desks.tab(view)
+    # The tab acknowledges until the test ends it: RUN_BUDGET_S at most.
+    tab = desks.tab(view, turns=40)
     # The view's age reaches ROBOT_STATE and the console's status line.
     live = watcher.ws.wait_state(lambda s: s.view_age_s is not None, WAIT_S)
     assert 0.0 <= live.view_age_s < 4.0
@@ -365,6 +367,7 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     code = scene.run("--interactive")
     took = time.monotonic() - began
     assert took < RUN_BUDGET_S
+    tab_ended = time.monotonic()
     page = tab.close()
 
     # The tasks: the first succeeded; the pick and place moved the arm and
@@ -391,7 +394,14 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
         line for line in desk.holding(" | owner agent #") if " sending | " in line
     ]
     assert moving and all(" | permit " in line for line in moving)
-    ages = [float(found.group(1)) for found in map(VIEW_AGE.search, desk.said) if found]
+    # While the tab acknowledged a picture every 1.5 s, the view age on the
+    # console stayed under the 4 s after which the view is no longer live. A
+    # line printed after the tab ended can show an older acknowledgement.
+    ages = [
+        float(found.group(1))
+        for at, line in zip(desk.at, desk.said)
+        if at <= tab_ended and (found := VIEW_AGE.search(line))
+    ]
     assert ages and all(0.0 <= age < 4.0 for age in ages)
     assert desk.count("ROBOT CONNECTION LOST") == 0
 

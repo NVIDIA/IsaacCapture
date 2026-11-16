@@ -176,7 +176,10 @@ each says so and exits with code 2. Either can be started first.
 **The robot link service** listens on `listen.address` and `listen.port` of its file (the
 shipped file: 127.0.0.1 and port 47610, for both programs on one machine) and takes the robot
 connection only from an address in `allowed_peers`. Each entry of that list is an IP address;
-a host name is refused when the file is loaded. One robot connection at a time: while one
+a host name is refused when the file is loaded. A link-local IPv6 address is written with the
+name of the workstation's interface, as in `fe80::1%eth0`: that is how such a peer is reported,
+and an entry without the name, or with the interface's number, is refused when the file is
+loaded. One robot connection at a time: while one
 is alive a second is closed at once. It prints where it listens and where its local API is,
 and runs until Ctrl+C or SIGTERM. Closing it does not stop the robot; the Thor holds on its
 own. A second service on the same socket prints `a robot link service already runs on ...`
@@ -187,8 +190,9 @@ input and dials the service. While nothing answers it dials again every `connect
 (1 s, never below 0.2 s) and says once why: `robot app: no robot connection: ...`. The arm
 port is connected once, when the app starts, whether or not the workstation answers. Ctrl+C is
 a STOP and never ends the program; `quit` ends it (return to rest, motors off there); SIGTERM
-closes it with the motors left on. Its exit code is 0 after a `quit`, a SHUTDOWN or SIGTERM,
-1 when the app could not start, and 2 when nothing ran.
+closes it with the motors left on. A terminal that closes ends neither the start nor the
+program: the robot app runs on without its lines and ends as before. Its exit code is 0 after
+a `quit`, a SHUTDOWN or SIGTERM, 1 when the app could not start, and 2 when nothing ran.
 
 ### The local API and its roles
 
@@ -307,28 +311,44 @@ check ends the program with exit code 2 and one line.
 6. No operator confirmation for APAI's connect is on file: APAI's hold folder
    (`~/.apai/arm_holds`) holds no `*.confirm.json` file, whatever arm it names, however old
    it is and whether or not it can be read. With one, APAI's driver would connect an arm it
-   does not measure at rest. The refusal names the file. The robot app never writes or uses
-   such a confirmation.
+   does not measure at rest. The refusal names the file. A hold folder that cannot be
+   listed is refused too, with a line of its own (`APAI's hold folder cannot be listed
+   (...)`): a confirmation may lie in it, and APAI's revoke cannot list it either, so the
+   folder's permissions have to be put right. The robot app never writes or uses such a
+   confirmation, and during its connect of step 9 its process cannot claim one.
 7. The file fits the profile: no limit set is faster than the profile's speed cap, and the
-   file's rest pose is the profile's park pose. Isaac Capture's remote link can be imported.
+   file's rest pose is the profile's park pose. A profile that drives hardware must name
+   its park pose (`park_q`): APAI's driver would measure rest against all zeros without
+   one. Isaac Capture's remote link can be imported.
    The driver object is built here and not connected. The program then prints the motor bus,
    the calibration, the speed cap and the tolerance for "at rest at start".
 8. Three questions, each answered with a typed `yes`: is the arm powered; is it at rest and
    supported; is the calibration in use the one named. What was typed before a question was
    written is dropped. Any other answer, Ctrl+C, the end of the input or a last line without
    a line end ends the program with `not confirmed: nothing was connected`. Checks 3 to 6
-   are made once more after the third answer. A Ctrl+C or a SIGTERM that comes after the
-   third answer and before the connect also ends the program with that line.
+   are made once more after the third answer; a Ctrl+C or a SIGTERM that comes while they
+   are made also ends the program with that line. That
+   is a moment no person can aim at: to abort without connecting, press Ctrl+C at a
+   question. A terminal that is gone when the line `robot app: confirmed three times;
+   connecting the arm` is to be written ends the program the same way. From that line on, a
+   Ctrl+C or a SIGTERM is one that comes while the robot app starts (below): the arm is
+   connected first.
 9. The connect. APAI's driver reads every joint twice before anything that cuts torque and
    refuses an arm it does not measure at rest. Then the program prints `the robot app did not
-   start: ...`, says that nothing was cut, and ends with exit code 1. A connect that fails
+   start: ...`, says that nothing was cut, and ends with exit code 1. An operator
+   confirmation that appears after check 6 was made once more is not used: APAI's claim of
+   a confirmation is switched off in this process for the connect, so a raised arm, or one
+   with a hold marker written meanwhile, is refused all the same and the file stays where
+   it is. A connect that fails
    later, after APAI's driver enabled the motors, also ends with exit code 1; the program
    then prints that the motors may be enabled and holding and that it ends without releasing
    them. The arm lies at rest then: switch the 48 V off there.
 
-Ctrl+C and SIGTERM do not end the connect half-way. A Ctrl+C pressed while the robot app
+Ctrl+C and SIGTERM do not end the connect half-way, and a terminal that closes does not
+either. A Ctrl+C pressed while the robot app
 starts is a STOP once it has started. A SIGTERM that comes then closes the robot app after
-the start, with the motors left on.
+the start, with the motors left on. After a terminal that closed the robot app runs on
+without its lines.
 
 After the connect the program prints `robot app: the real driver is connected at measured
 rest: motors on, motion hold, jaws referenced` (or `motion rest_hold`) and dials the service.
@@ -402,8 +422,14 @@ python -m isaaccapture_examples.agentic_remote.agent --config PATH
   `invented_times: True` in its capture record. With `true` the program runs only against a
   robot app whose WELCOME declares a simulated driver (`sim` or `apai-mock`): against `real`,
   or a robot app that declares no driver, it ends with exit code 1 once the robot connection
-  is up, before any task. The minimal stack (`experiment.stack: minimal`) is refused the same
-  way, whatever the camera: its check ahead computes APAI's mock arm model.
+  is up, before any task. The check is made again before every task's question, on the
+  WELCOME of the session the task would quote. A robot app that was restarted with a driver
+  that is not simulated gets no question and no owner request: the program says why, takes
+  no new task and ends with exit code 1. A task whose session has no WELCOME within
+  `task.owner_wait_s` is refused the same way, whatever the camera and the stack. The line
+  `robot connection up: ... driver ...` is printed again whenever a WELCOME says something
+  else. The minimal stack (`experiment.stack: minimal`) is refused the same way, whatever
+  the camera: its check ahead computes APAI's mock arm model.
 - `--check` loads and checks `agent.yaml` and APAI's configuration, attaches to nothing,
   prints the resolved values and the camera calibration id as JSON, and writes nothing into
   `state_dir`.
@@ -421,7 +447,7 @@ the line names it.
 | Exit code | Meaning |
 |---|---|
 | 0 | `--task`: the task succeeded and the arm was given back. `--interactive`: every task of the session succeeded and the arm was given back. `--check`: the files can be used. One Ctrl+C: the task was cancelled and a STOP sent |
-| 1 | No robot link service, the robot app not ready in time, another camera calibration than the robot app's, a `rig` list that is not of the arm's joint count, APAI's runtime not built (for example no usable obstacle grid within `task.grid_wait_s`), a task that ended without success (`--interactive`: any task of the session), an owner request at a task's end that was not answered, the agent still control owner when the program ended, invented exposure times or the minimal stack against a robot app that declares no simulated driver, a skill stop that was not cleared (the program said `restart the agent program`), or SIGTERM: a STOP was sent first |
+| 1 | No robot link service, the robot app not ready in time, another camera calibration or arm profile than the robot app's (at the start, or before a later task after the robot app was restarted), a `rig` list that is not of the arm's joint count, APAI's runtime not built (for example no usable obstacle grid within `task.grid_wait_s`), a task that ended without success (`--interactive`: any task of the session), an owner request at a task's end that was not answered, the agent still control owner when the program ended, invented exposure times or the minimal stack against a robot app that declares no simulated driver (at the start, or before a later task after the robot app was restarted), a task whose session has no WELCOME within `task.owner_wait_s`, a skill stop that was not cleared (the program said `restart the agent program`), or SIGTERM: a STOP was sent first |
 | 2 | The arguments, `agent.yaml` or the environment cannot be used, or APAI cannot be imported. Nothing was attached |
 | 130 | A second Ctrl+C. A STOP was sent again first |
 
@@ -465,7 +491,9 @@ ready within `link.connect_timeout_s`, and an obstacle grid that is not usable i
    `task.end_wait_s`, the program says `was not answered`, sends nothing else and ends with
    exit code 1. It then waits up to 3 s for a ROBOT_STATE without the agent as owner. If the
    agent is still the owner after that, the socket closes anyway and the program says so; the
-   service then asks for help in the agent's name (`agent program gone`).
+   service then asks for help in the agent's name (`agent program gone`). With
+   `--interactive` a task typed while the agent still owns the arm that way is refused before
+   its question, and the refusal names the remedy: the console command `stop`.
 7. **Ctrl+C is a STOP.** The first one cancels the task: a running move is ended through its
    permit, then a STOP goes out with the sender `agent_terminal`. Nobody owns the arm, no help
    request is sent and no assistance wait starts. A second Ctrl+C sends STOP again and ends
@@ -478,11 +506,24 @@ ready within `link.connect_timeout_s`, and an obstacle grid that is not usable i
    itself ended as in step 5, and the program says `the task ended in a skill stop: the next
    task clears it after its typed yes`. The next task's question begins `Note: the last task
    ended in a skill stop; it is cleared when you confirm`. After the typed `yes` and the
-   Thor's grant, with a ROBOT_STATE that shows the agent as owner and stop level `none`, the
-   gate resets the latch and the task goes on. Nothing on the Thor is cleared by it: under a
+   Thor's grant, with a ROBOT_STATE at most 1 s old that shows the agent as owner and stop
+   level `none`, and with no STOP at the robot link service that the robot app has not shown
+   yet, the gate resets the latch and the task goes on. A STOP typed at the Thor terminal that
+   no ROBOT_STATE shows yet cannot be seen from the workstation; the Thor refuses the task's
+   commands then. Nothing on the Thor is cleared by it: under a
    fault-stop the task is refused before the question, and the latch stays. The program says
-   `restart the agent program`, takes no new task and ends with exit code 1 in two cases: the
-   latch did not clear (the arm is given back first), or `task.clear_skill_stop` is `false`.
+   `restart the agent program`, takes no new task and ends with exit code 1 in three cases:
+   the latch did not clear (the arm is given back first), the checker cannot say whether it
+   was stopped again since the question (the arm is given back first), or
+   `task.clear_skill_stop` is `false`. With `false` a latch seen at any point of a task's
+   start refuses the task and clears nothing; one seen before the question refuses the task
+   without a question. A stop of the workstation checker that comes after the question is not
+   erased: the latch stays, or is set again when the stop came while the gate cleared it; the
+   arm is given back and the next task's question names it. That also holds for a stop right
+   after the gate's last look at the checker: the gate looks once more when the task is
+   opened, and while the checker is latched the arm adapter sends no jaw command and no move.
+   A give-back that gets no completed RESULT is tried once more: before the next task takes
+   the arm, at the task prompt and when the program ends.
 
 The agent program sends OWNER_REQUEST and STOP; its arm adapter sends MOVE, PERMIT, GRIPPER
 and CHECKER_STATE. It sends no RELEASE, SHUTDOWN, RESET or OPEN and no request for a return
@@ -522,6 +563,11 @@ to rest, and it cuts no torque.
   made from the SHA-256 of `camera.calibration_dir/manifest.json` and of
   `camera.hand_eye_json`. With another name the program ends with exit code 1 before any
   task; a robot app that names none is taken only with `link.allow_unnamed_calibration: true`.
+  The comparison is made again before each task's question, with the rest of what the
+  program compared in the WELCOME at its start (protocol version, joint count, setpoint
+  period, `link.expected_profile_id`): a robot app that was restarted with another
+  calibration or profile gets no owner request, and the program takes no new task and ends
+  with exit code 1.
 - **A camera frame is dated at its exposure.** The stereo camera refuses a stereo pair when
   the newest ROBOT_STATE is older than 1 s, its exposure lies more than 0.05 s in the future
   of the Thor's wall clock, more than 0.05 s plus the link's clock margin (0.02 s) after its
@@ -533,10 +579,14 @@ to rest, and it cuts no torque.
 ### `configs/agent.yaml`
 
 Every number in the shipped file is a first value; none was measured on a robot. A relative
-path is taken from the file's folder. A path (`state_dir`, `link.socket_path`, the four paths
-of `camera`, `experiment.codex_bin`) may name `${AGENTIC_REMOTE_EXPERIMENT_DIR}`,
-`${AGENTIC_REMOTE_CAMERA_PR}` or `${AGENTIC_REMOTE_ENV_DIR}`; another `${NAME}`, or one that
-is not set, is refused. The program refuses the file (exit code 2) when it
+path is taken from the file's folder. A path (`state_dir`, `link.socket_path`, five keys of
+`camera`: `bridge_python`, `camera_pr`, `receiver_socket`, `calibration_dir` and
+`hand_eye_json`, and `experiment.codex_bin`) may name `${AGENTIC_REMOTE_EXPERIMENT_DIR}`,
+`${AGENTIC_REMOTE_CAMERA_PR}` or `${AGENTIC_REMOTE_ENV_DIR}`; another `${NAME}`, one that is
+not set, one whose value is not an absolute path, and any other `$` in a path (`$NAME`
+without braces, a `${NAME` that is not closed) are refused, and the message names the key. So
+is a path that begins with `~name` where `name` is no user of the machine. The program
+refuses the file (exit code 2) when it
 holds a key the program does not know, a key given twice, a block that is not a mapping, a
 number that is not above 0 (`camera.max_skew_ms` may be 0) or above its upper bound,
 `permits.renew_s` not below `permits.life_s`, `task.max_joint_speed` above
@@ -572,7 +622,19 @@ bound in a comment; for example a wait for a RESULT is at most 60 s and a joint 
 Without one of the first two it prints one line that names the variable and exits with
 code 2. It also sets `APAI_REQUIRE_CUDA=1` unless that is already set (a dry run on the mock
 scene sets it to 0), `PYTHONDONTWRITEBYTECODE=1`, so that nothing is written into APAI's
-checkout or the experiment folder, and unsets `LD_LIBRARY_PATH`.
+checkout or the experiment folder, and unsets `LD_LIBRARY_PATH`. It sets
+`GIT_OPTIONAL_LOCKS=0`, so that a `git status` the experiment runs on its tools does not
+rewrite their index. With `AGENTIC_REMOTE_ENV_DIR` set it points `TRITON_CACHE_DIR`,
+`TORCHINDUCTOR_CACHE_DIR` and `YOLO_CONFIG_DIR` into `<folder>/caches`, each one unless it
+is set and not empty; the script exits with code 2 and one line when that folder is not an
+absolute path or holds a `.` or `..` component. Without `AGENTIC_REMOTE_ENV_DIR` the script
+sets none of the three, and the agent program puts each one that is not set into
+`<state_dir>/caches` for its run. With or without it, the script exits with code 2 and one
+line when one of the three, as the program will get it, is not an absolute path, holds a `.`
+or `..` component, or names a place inside `AGENTIC_REMOTE_EXPERIMENT_DIR`; symbolic links
+are followed for that comparison. The agent program makes the same comparison itself (exit
+code 2), also when it is started without the script and for `--check`, and refuses a
+`state_dir` whose caches would lie inside the experiment folder.
 
 `run_camera_receiver.sh --host THOR_ADDRESS` runs the camera streamer's
 `camera_receiver/run.sh` with `configs/camera_receiver_rebot.yaml`. It needs
@@ -629,6 +691,17 @@ What was typed before a question was written is dropped, for every question in t
 when the input is a terminal. Lines that the Thor terminal reads from a pipe are all taken,
 in their order.
 
+At the Thor terminal's `rest`, `quit` and `reference`:
+
+- The question is written first. One that is not written within 1 s (the terminal's output
+  is stopped with Ctrl+S, or the terminal is gone) confirms nothing; what is typed meanwhile
+  is read as commands.
+- The terminal says how many lines it dropped. A `stop` among them is not lost: it is a
+  STOP, and the question is withdrawn. A `stop` that was begun and not yet entered when the
+  question was written goes with the rest; Ctrl+C is the STOP that is never dropped.
+- A last line without a line end confirms nothing, from a terminal and from a pipe, as at
+  the real driver's questions. `stop` without a line end is still a STOP.
+
 ### The operator console
 
 ```text
@@ -669,17 +742,29 @@ What it prints, one line each:
 | `attach` | One more attempt to attach to the robot link service |
 | `help` | The list of commands |
 | `quit`, or the end of the input | Leaves the console. Nothing is sent and the robot app runs on |
-| Ctrl+C | Takes back an open question, then sends a STOP. It never ends the console |
+| Ctrl+C | Takes back an open question, then sends a STOP. It never ends the console. After `quit` or the end of the input a Ctrl+C is still a STOP, written raw, while the console detaches and ends its threads; that takes up to about 2 s when an attempt to attach waits for a service that does not answer |
 
 - **A command that asks**: the console prints the newest ROBOT_STATE, then the question. The
-  answer is the next typed line; what was typed ahead is dropped. The command quotes the
-  numbers of the ROBOT_STATE that was printed, so an answer typed for another state of the
-  arm is refused by the robot app.
+  answer is the next typed line; what was typed ahead is dropped. A `stop` among the whole
+  lines typed ahead is not lost: it is a STOP, and the question is taken back. The command
+  quotes the numbers of the ROBOT_STATE that was printed, so an answer typed for another
+  state of the arm is refused by the robot app.
 - **A command does not block the prompt.** While a return to rest runs, `stop` is taken.
+  While the robot connection is up and no ROBOT_STATE has arrived yet, `reset`, `rest`,
+  `open`, `release` and `shutdown` answer at once `no ROBOT_STATE has arrived` and send
+  nothing; type the command again. The attempts to attach, the first one and the one a typed
+  `attach` asks for, run beside the prompt: a `stop` typed meanwhile is read at once.
 - **`stop` while attached** sends one STOP. It is answered by `stop: taken` once a
-  ROBOT_STATE shows a higher stop number. Without one within 5 s the console prints `STOP
-  NOT CONFIRMED` with the bell and names the Thor terminal: type `stop` or press Ctrl+C
-  there.
+  ROBOT_STATE of the same session shows a higher stop number. A ROBOT_STATE of a new session
+  confirms nothing: the console prints `STOP NOT CONFIRMED` at once, with the bell. Without
+  a higher stop number within 5 s of the first STOP that waits, it prints `STOP NOT
+  CONFIRMED` with the bell and names the Thor terminal: type `stop` or press Ctrl+C there.
+  A `stop` typed again meanwhile sends another STOP and does not move that time. A STOP
+  sent before any ROBOT_STATE arrived is measured against the first one that arrives. A
+  STOP waits at most 0.2 s for a robot link service that does not read the console's socket,
+  or for another command's send that is stuck there; it is then written raw, on a connection
+  of its own. A STOP that goes out as the console ends is said so: `stop: sent; not
+  confirmed: the console ends, look at the Thor terminal`.
 - **`stop` while not attached** writes a raw STOP and prints `STOP written; not confirmed:
   look at the Thor terminal`, or `STOP NOT written` with the reason.
 - **Turned away at its start** (no service, or too many clients), the console stays up with
@@ -702,12 +787,15 @@ It sends one command of the operator console and ends. The order is: attach in t
 the answer. The commands, their confirmations and their checks on the Thor are those of the
 console.
 
-`stop` that cannot attach writes a raw STOP, says whether it was written, and ends with exit
-code 1: nothing confirmed it.
+`stop` is sent at once after the attach: it waits for no ROBOT_STATE, and the higher stop
+number is measured against the first ROBOT_STATE the command receives. `stop` that cannot
+attach within 0.5 s (the other commands wait 5 s) writes a raw STOP, says whether it was
+written, and ends with exit code 1: nothing confirmed it.
 
 Exit code 0: the command's final RESULT was `completed` (`state`: a ROBOT_STATE was there;
-`stop`: the higher stop number was seen). 1: refused, failed, not answered in time, not
-confirmed, or no robot link service. 2: a command that does not exist.
+`stop`: the higher stop number was seen in the same session). 1: refused, failed, not
+answered in time, not confirmed (for `stop` also: the robot app showed a new session), or no
+robot link service. 2: a command that does not exist.
 
 ### The live view
 
@@ -732,12 +820,17 @@ the tests ask the page's addresses over HTTP.
   that the page shows the status only. This source was never run.
 - **`--source recorded:<dir>`** shows stereo pairs from a folder and is never live.
   **`--source none`** shows the status only.
-- **The view is live** only while two things hold: a visible browser tab acknowledged a
-  picture of the camera connection less than `status.ack_timeout_s` ago, and a ROBOT_STATE
-  younger than `status.state_max_age_s` gives the Thor's clock. The view age is the larger
-  of two ages: since the picture's exposure, on the Thor's clock, and since its arrival on
-  the workstation. The view sends VIEW_STATUS every `status.period_s`, also while it is not
-  live.
+- **The view is live** only while four things hold: a visible browser tab acknowledged a
+  picture of the camera connection less than `status.ack_timeout_s` ago, a ROBOT_STATE
+  younger than `status.state_max_age_s` gives the Thor's clock, that picture arrived 3 s or
+  more after the view's first ROBOT_STATE and after the newest step of the Thor's wall clock
+  (more than 0.02 s against its monotonic clock between two ROBOT_STATEs), and that
+  picture's exposure lies at most 0.05 s in the future of the Thor's clock. A picture that
+  arrived earlier can be dated on the wall clock from before the step and is never live,
+  however long the page acknowledges it: after its start and after a step the view is not
+  live for at least 3 s. The view age is the larger of two ages: since the picture's
+  exposure, on the Thor's clock, and since its arrival on the workstation. The view sends
+  VIEW_STATUS every `status.period_s`, also while it is not live.
 - **What the page writes over the picture**: `STALE`, `NO PICTURE`, `RECORDED, NOT LIVE`,
   and `VIEW PROGRAM NOT ANSWERING` when the page gets no answer from the program.
 - **The picture is not rotated.**
@@ -748,6 +841,11 @@ the tests ask the page's addresses over HTTP.
 (the `view` extra of this folder's `pyproject.toml`); without it
 `AGENTIC_REMOTE_AGENT_PYTHON` is taken. `--source link` also needs
 `AGENTIC_REMOTE_CAMERA_PR`.
+
+In `configs/view.yaml` five keys are paths under the rules of `configs/agent.yaml`:
+`socket_path`, `state_dir` and, in `camera`, `bridge_python`, `camera_pr` and
+`receiver_socket`. The same text in `socket_path` or `camera.receiver_socket` names the same
+file for the view and for the agent program.
 
 | Exit code | Meaning |
 |---|---|
@@ -778,7 +876,7 @@ measure.
   with `--check`.
 - **`agent_rebot.yaml` needs three variables**: `AGENTIC_REMOTE_EXPERIMENT_DIR`,
   `AGENTIC_REMOTE_CAMERA_PR` and `AGENTIC_REMOTE_ENV_DIR`. Its paths name them, and the
-  program refuses a path whose variable is not set.
+  program refuses a path whose variable is not set or whose value is not an absolute path.
 - **`link_service_rebot.yaml` is refused as shipped** (exit code 2): `allowed_peers` is
   empty. Write the Thor's address into it. An entry that is not an IP address is refused
   too.
@@ -799,8 +897,11 @@ AGENTIC_REMOTE_ENV_DIR=/absolute/folder ./setup_workstation_env.sh
 
 The folder lies outside every git repository and not under `/tmp`. The script makes `venv/`
 (Python 3.12), `caches/` and `freeze.txt` in it, and downloads several GB. `--dry-run`
-prints the commands and runs none. It refuses (exit code 2) a folder inside a repository, an
-existing `venv/` and a missing `uv`. `run_agent.sh` then takes
+prints the commands and runs none. It refuses (exit code 2) a path that is not absolute or
+holds a `.` or `..` component, a folder inside a repository (symbolic links are followed,
+and a line end at the end of a folder's name counts as part of the name), a symbolic link
+in the folder where the script makes something (`venv`, `caches`, `codex`, `freeze.txt`,
+`exclude-gui-opencv.txt`), an existing `venv/` and a missing `uv`. `run_agent.sh` then takes
 `AGENTIC_REMOTE_AGENT_PYTHON=<folder>/venv/bin/python` and `AGENTIC_REMOTE_ENV_DIR=<folder>`.
 
 The environment was built on the workstation on 2026-11-15 with this script, without the
@@ -808,8 +909,8 @@ model client: its `freeze.txt` lists torch 2.10.0 for CUDA 13.0 and Warp 1.18.0.
 `test_workstation_env.py` runs the script with stand-ins for `uv` and `npm`, so it installs
 nothing. `test_gpu_stack.py` is the check to run inside the environment: torch and Warp on
 GPU 0, the obstacle grid bridge, the stereo depth, the segmenter and the full stack's start
-on recorded stereo pairs. Its tests are marked `gpu` and are skipped everywhere else; the
-runs this document reports did not include them.
+on recorded stereo pairs. Its tests are marked `gpu` and are skipped everywhere else;
+[What was run](#what-was-run) reports their run in the environment.
 
 **The model client** (the Codex command-line program the full stack asks its cloud model
 through) is not installed. `--with-model-client` installs it with npm into `<folder>/codex`,
@@ -907,9 +1008,16 @@ from the console as link messages or are typed at the Thor terminal.
   neither return to rest nor be released. The command closes the jaws slowly to their stop,
   after a typed `jaws are empty`. It is taken only while nobody owns the arm, the motors are
   on, no fault-stop is latched, nothing else runs and the jaws are not referenced; a STOP
-  ends it `cancelled`. While it waits or runs, a new task (OWNER_REQUEST "agent"), a MOVE and
-  a GRIPPER command are refused with `busy: a jaw command is running or waiting`. A lost
-  robot connection does not cancel it: it was typed at the robot. It proves nothing about
+  ends it `cancelled`. While it waits or runs, a new task (OWNER_REQUEST "agent") and an
+  OPEN are refused with `busy: a jaw command is running or waiting`, so nobody owns the arm
+  and no opening waits behind the reference. A MOVE or a GRIPPER command is therefore
+  refused by the owner check (`control owner is nobody, not agent`), or by the stop-number
+  check if it was built before a STOP; both look for a running reference behind the owner
+  check, as a second barrier. A lost
+  robot connection does not cancel the reference: it was typed at the robot. If a STOP
+  could not end a jaw command within 0.25 s, the STOP's line at both terminals ends `a
+  cancelled jaw command has not returned: until it does the jaws take no other command, and
+  rest and release are refused`. The reference proves nothing about
   what the jaws hold: an `open` follows before a `rest`. This is a jaw rule the design does not have, because it moves the jaws on a
   person's word. It waits for the owner's decision and is switched off: the robot app
   setting `jaws.allow_reference` is `false` in every shipped file, the rig file included,
@@ -1105,12 +1213,15 @@ shows `view none`.
 `quit` at the Thor terminal; the robot app ends with exit code 0. Then `quit` at the console
 and Ctrl+C in the terminals of the view and the service.
 
-The tests run these four programs this way, as processes, with one difference: a port the
-system picks and a socket in a temporary folder
-(`test_the_programs_of_demo_1_start_as_processes_and_end_cleanly`). With the shipped port
-47610 and the default socket path they were not run, and the page was not opened in a
-browser. For two machines, put the workstation's own address in `listen.address`, the Thor's
-in `allowed_peers`, and give the robot app the workstation's address.
+The tests run these four programs as processes, the operator console on a pseudo-terminal
+(`test_the_programs_of_demo_1_start_as_processes_and_end_cleanly`). What differs from the
+steps above: a port the system picks, a socket in a temporary folder, files of the test for
+the service and the view, and the console and the view started with `python -m` and not
+through their start scripts. The test types `rest` and `path is clear` at the console; its
+`state` and `stop` go through the console command. With the shipped port 47610 and the
+default socket path they were not run, and the page was not opened in a browser. For two
+machines, put the workstation's own address in `listen.address`, the Thor's in
+`allowed_peers`, and give the robot app the workstation's address.
 
 **With a task of the agent.** The agent program needs more than the four programs above,
 and this was never run by hand:
@@ -1224,7 +1335,7 @@ pictures or with `--source none`). Its tests:
 | `test_an_obstacle_costs_no_restart` | An obstacle ends the first task with a help request; the same program runs the second task |
 | `test_the_agent_program_gone_shows_the_help_request_and_the_countdown_on_the_console` | The assistance wait on the console; a typed `stop` ends it; nothing moves |
 | `test_the_console_and_the_view_survive_a_restarted_robot_app` | A new session id is shown; a command with the old numbers is refused |
-| `test_the_programs_of_demo_1_start_as_processes_and_end_cleanly` | The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the view and the console command as processes of their own |
+| `test_the_programs_of_demo_1_start_as_processes_and_end_cleanly` | The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the view, the operator console (on a pseudo-terminal) and the console command as processes of their own |
 
 The file takes about 65 s. The view's page is asked over HTTP, a few times per second at
 most; no test starts a browser.
@@ -1247,7 +1358,8 @@ arm has to lie at rest and be supported at that moment. A typed confirmation is 
 for that: before anything that cuts torque, APAI's driver reads every joint twice and
 refuses an arm it does not measure at rest, and the robot app refuses to start while a hold
 marker or an operator confirmation for APAI's connect is on file (see
-[The real driver](#the-real-driver)). This connect was run only against a stand-in for the
+[The real driver](#the-real-driver)). During the connect the robot app's process cannot
+claim such a confirmation at all, whenever it was written. This connect was run only against a stand-in for the
 motor library, never on the arm.
 
 Everything else leaves the motors on: STOP, a fault-stop, a refused or interrupted return to
@@ -1293,10 +1405,14 @@ from what is written here, stop and find out why.
   18 (the connect of the real driver), 17 (`release`) and 28 (the shutdown). In each the arm
   lies at rest, and the program measures that before it cuts.
 - **To abort, at any step**: type `stop` at the Thor terminal or press Ctrl+C there. It
-  needs no network. The arm holds with its motors on. Then decide in peace. Two moments of
+  needs no network. The arm holds with its motors on. Then decide in peace. Ctrl+C is the
+  one that is never dropped: a `stop` that was begun before a question of the Thor terminal
+  was written and entered after it is lost (see "What the operator types to confirm").
+  Two moments of
   step 15 differ. At one of the three questions Ctrl+C ends the program and nothing was
   connected. While the robot app starts (the connect and the jaw reference, with the arm at
   rest) Ctrl+C does not end the start half-way: it is a STOP as soon as the start is over.
+  A terminal that closes does not end the start or the robot app either.
 - **The 48 V switch drops the arm.** Use it only while the arm lies at rest or a person
   holds it. It is not the way to abort.
 - **Never restart the robot app with the arm raised**, and never end it with a kill signal
@@ -1304,7 +1420,9 @@ from what is written here, stop and find out why.
   it, and its next start is refused as long as the arm is not at rest. Bring the arm to rest
   first (`rest`, then `path is clear`).
 - **Never use APAI's own `holding the arm` confirmation** unless a person holds the arm. The
-  robot app refuses to start while any `*.confirm.json` file lies in `~/.apai/arm_holds`.
+  robot app refuses to start while any `*.confirm.json` file lies in `~/.apai/arm_holds`,
+  and its process cannot claim one that appears later: its connect of a raised arm is
+  refused with such a file on hand as without one.
 - Write every value the table asks for into the session record, with the commit id of the
   code on the Thor.
 
@@ -1340,8 +1458,8 @@ In the tables, `EX` is `examples/agentic_remote`, `PROFILE` is the rig's APAI ar
 | 3 | Thor | `timedatectl` | - | Whether the clock is synchronized, and by what | The clock is being set by hand |
 | 4 | Thor, by eye | 48 V off. The arm lies folded on its stops. The jaws are empty. Nothing is in the arm's reach | - | A photo | The arm is not at rest |
 | 5 | Thor | Bring the motor bus up with the experiment's script (it needs sudo and sends no motor command) | The bus is `can4` at 1 Mbit/s | - | The script stops |
-| 6 | Thor | `ls -la ~/.apai/arm_holds` | No hold marker for `can4` (`can4.json`) and no `*.confirm.json` file at all | - | A marker exists: do APAI's operator recovery first. A `*.confirm.json` file exists: revoke it with APAI's `scripts/robots/arm_hold.py revoke` |
-| 7 | Workstation | `PYTHONPATH=EX/python:BUILD/python_package/Release python -m isaaccapture_examples.agentic_remote.link_service --config EX/configs/link_service_rebot.yaml`. `BUILD` is the Isaac Capture build folder on the workstation; `python` is the Python that build was made for, with PyYAML | `robot link service: waits for the robot app on ...:47610` | - | Exit code 1 or 2 |
+| 6 | Thor | `ls -la ~/.apai/arm_holds` | No hold marker for `can4` (`can4.json`) and no `*.confirm.json` file at all | - | A marker exists: do APAI's operator recovery first. A `*.confirm.json` file exists: revoke it with APAI's `scripts/robots/arm_hold.py revoke`. The folder cannot be listed (`Permission denied`): let its owner read and enter it; a revoke cannot list it either |
+| 7 | Workstation | `PYTHONPATH=EX/python:BUILD/python_package/Release python -m isaaccapture_examples.agentic_remote.link_service --config EX/configs/link_service_rebot.yaml`. `BUILD` is the Isaac Capture build folder on the workstation; `python` is a Python of the version that build was made for, with numpy and PyYAML: Isaac Capture's package imports numpy, and the service reads its file with PyYAML. The Python of the workstation environment is one | `robot link service: waits for the robot app on ...:47610` | - | Exit code 1 or 2. Exit code 2 with `cannot be imported ...: No module named 'numpy'`: that Python lacks numpy |
 | 8 | Workstation | `EX/run_console.sh` | A status line with `robot connection lost (not connected)` | - | It cannot attach |
 | 9 | Thor | Describe only: `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --apai-profile PROFILE` | `robot app with --arm apai would run:`, the driver `built, not connected`, exit code 2 | The profile's speed cap, the two rest tolerances, the jaw tolerance | A refusal (speed cap, rest pose, joint count) |
 | 10 | Thor, then console | The link without the arm: `EX/run_robot_app.sh --config EX/configs/robot_app.yaml --arm sim --connect WS:47610`. Type `stop` at the console. Leave this robot app running until step 14 | The console's `WELCOME` line says `driver sim`; `stop: taken` | The time from Enter to `taken`, five times | No connection. This is the first run of port 47610 between two machines |
@@ -1354,7 +1472,7 @@ In the tables, `EX` is `examples/agentic_remote`, `PROFILE` is the rig's APAI ar
 
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
-| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: motors on, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`; the console's `WELCOME` says `driver real` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading | `the robot app did not start`, then a line that begins `APAI's driver refused the connect before anything that cuts torque`: the motors were never switched on and the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again. `the robot app did not start`, then `the start failed after the connect began: the motors may be enabled and holding`: the program has ended without releasing them. The arm lies at rest: with the second person's hand on it, switch the 48 V off, read the reason, start again |
+| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: motors on, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`; the console's `WELCOME` says `driver real` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading | A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: APAI's driver refused the connect before anything that cuts torque`: the motors were never switched on and the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again. A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: the start failed after the connect began: the motors may be enabled and holding`: the program has ended without releasing them. The arm lies at rest: with the second person's hand on it, switch the 48 V off, read the reason, start again |
 | 16 | Thor | If the motion is `hold`: type `rest`, then `path is clear`. The arm moves a few hundredths of a rad | `rest: completed`; motion `rest_hold` | The planned and the real time | The arm moves away from rest: `stop` |
 | 17 | Console, Thor | The release at rest: `release`, then `yes` | `torque release sent at rest: the driver does not confirm that the motors are off`; the motors are off | Whether the motors are off, by hand feel | `refused`: the motors stay on; read why |
 | 18 | Thor | After a release the robot app has to be started again (`the motors are off; restart the robot app`): `quit`, then steps 15 and 16 again | As steps 15 and 16 | - | As step 15 |
@@ -1449,13 +1567,21 @@ workstation, 2026-11-15, in the same environment:
 | `link_service --config configs/link_service_rebot.yaml` | As written | Exit code 2: `allowed_peers must be a non-empty list` |
 | `robot_app --config configs/robot_app.yaml --arm apai` | As written, with `AGENTIC_REMOTE_APAI_SRC` set | Exit code 2: the human limit set's 1.5 rad/s is above the mock profile's speed cap of 1.2 rad/s |
 | `robot_app --arm apai --apai-profile rebot_rs` without `--connect` | By a test, in the test process, with the shipped file's human limit set at 0.8 rad/s (`test_main.py`) | Exit code 2; `the profile's speed cap: 0.8 rad/s` is printed; nothing was connected. With `configs/robot_app_rebot.yaml` and the rig's own profile this was not run: a test only loads that file and fits it to APAI's `rebot_rs` profile |
-| The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the live view with `--source none` and the console command as four processes, with a console attached | By a test, on a port the system picked | The console named the driver; `console_cmd state` and `stop` ended with exit code 0; `rest` with `path is clear` completed; `quit` ended the robot app with exit code 0, SIGTERM the view and the service |
-| Demo 1: the agent program with two tasks, a console and a live view attached at once | By a test, in the test process, behind the service on 127.0.0.1, on APAI's software arm, with stand-in camera pictures for the view | 905 joint targets in 8 moves, each under a permit; the console printed both grants and the help request; the view age on the console was 0.0 to 2.4 s with a tab that acknowledged a picture every 1.5 s; the page showed the move. 22.4 to 22.7 s per run |
+| The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the live view with `--source none`, the operator console on a pseudo-terminal and the console command as processes | By a test, on a port the system picked | The console named the driver; `console_cmd state` and `stop` ended with exit code 0; `rest` with `path is clear`, typed at the console, completed; `quit` ended the robot app and the console with exit code 0, SIGTERM the view and the service |
+| Demo 1: the agent program with two tasks, a console and a live view attached at once | By a test, in the test process, behind the service on 127.0.0.1, on APAI's software arm, with stand-in camera pictures for the view | 905 joint targets in 8 moves, each under a permit; the console printed both grants and the help request; the view age on the console was 0.1 to 1.6 s while a tab acknowledged a picture every 1.5 s (two runs); the page showed the move. 22.4 to 22.7 s per run |
 | `stop` typed at the console during the agent's move, then a second task | By a test, the same way, the view with `--source none` | The move ended `cancelled` at the setpoint it was typed at (40 of 95); `stop: taken` came 5 to 11 ms after the line was typed, on one machine; the second task ran without a restart |
 | `rest` typed at the console after a task | By a test, the same way | `yes` sent nothing; `path is clear` returned the arm to rest in 2.6 s (105 joint targets); motors on |
 | An obstacle during the first task, then a second task | By a test, the same way | The first move was refused after 33 to 35 setpoints; the console showed the help request and then the next grant, no STOP; the second task moved the arm; one run of the program, 24.0 s |
 | The agent client's socket closed while the agent owned the arm | By a test, on the simulated arm | The console showed `HELP NEEDED: agent program gone` and the wait counting down; `stop` ended it; nothing moved |
 | The robot app ended and a new one started | By a test, on the simulated arm | The console said `ROBOT CONNECTION LOST` and showed the new session; the view's page showed it too; a command with the old session's numbers was refused |
+
+The workstation environment, on the workstation, 2026-11-15, in the folder
+`AGENTIC_REMOTE_ENV_DIR` names, without the model client:
+
+| What | Run as | Result |
+|---|---|---|
+| The whole test folder | With the environment's Python, on GPU 0, at commit 4126b9a13 | 4143 passed, 3 skipped |
+| The six tests of `test_gpu_stack.py` | In that run and in a run of the file alone, on GPU 0. No test asks a model: the full stack's two model clients are stand-ins | 6 passed in each. FFS loaded and warmed up in 8.3 s and then took about 50 ms per stereo pair, on one recorded pair. The obstacle grid bridge answered its first query in 0.02 s. The segmenter loaded and segmented its first box in 1.53 s, the next in 0.031 s. The full stack started on recorded stereo pairs and its obstacle grid went live; no task ran |
 
 Never run:
 
@@ -1463,14 +1589,15 @@ Never run:
   script it. No task was run by hand on one machine.
 - The operator console and the live view by a person: no line was typed at a real terminal
   and no page was opened in a browser.
-- `experiment.stack: full` with a task: the experiment's hooks, its obstacle grid bridge on
-  the GPU and its cloud model. The model client is not installed. The tests of this
-  document's runs cover only the merge of its configuration files; `test_gpu_stack.py`,
-  which starts the full stack's GPU parts, was not among them.
+- `experiment.stack: full` with a task, and its cloud model. The model client is not
+  installed. `test_gpu_stack.py` starts the full stack on recorded stereo pairs with
+  stand-ins for both model clients and runs no task; the other tests cover only the merge
+  of its configuration files.
 - `--camera link` through the agent program, `--source link` of the live view, and the
   camera receiver's start script with a receiver. The camera frame bridge is tested against
   a stand-in for the receiver.
-- `depth_backend: ffs`, and anything else on a GPU from these tests.
+- `depth_backend: ffs` on stereo pairs from the camera receiver: it ran on a recorded stereo
+  pair only.
 - `--driver real` on the arm, `run_robot_app.sh` on a Thor, and an Isaac Capture build on a
   Thor.
 - The rig files with their programs: only loaded and checked by tests.

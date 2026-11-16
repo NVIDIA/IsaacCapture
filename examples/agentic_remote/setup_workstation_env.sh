@@ -28,9 +28,10 @@
 #
 # Exit codes: 0 done; 1 a step failed (the step is named); 2 refused, nothing
 # was run. The script refuses when the path is not absolute or holds a "." or
-# ".." component, when the folder lies inside a git repository, when
-# <folder>/venv exists, and when uv (or, with --with-model-client, npm) is
-# missing.
+# ".." component, when the folder lies inside a git repository, when a name
+# the script makes in the folder (venv, caches, codex, freeze.txt,
+# exclude-gui-opencv.txt) is a symbolic link there, when <folder>/venv exists,
+# and when uv (or, with --with-model-client, npm) is missing.
 set -euo pipefail
 
 me="setup_workstation_env.sh"
@@ -85,7 +86,9 @@ while [[ ! -d "${above}" ]]; do
   above="${above%/*}"
   above="${above:-/}"
 done
-above="$(cd "${above}" && pwd -P)"
+# The x keeps a newline at the end of the folder's name.
+above="$(cd "${above}" && pwd -P && printf x)"
+above="${above%$'\n'x}"
 while true; do
   if [[ -e "${above}/.git" ]]; then
     refuse "${env_dir} lies inside the git repository ${above}; name a folder outside every repository"
@@ -95,6 +98,13 @@ while true; do
   above="${above:-/}"
 done
 
+# What the script makes must land in the folder itself: mkdir and a
+# redirection would follow a symbolic link to another place.
+for made in caches venv codex freeze.txt exclude-gui-opencv.txt; do
+  if [[ -L "${env_dir}/${made}" ]]; then
+    refuse "${env_dir}/${made} is a symbolic link; this script makes it in the folder itself"
+  fi
+done
 if [[ -e "${env_dir}/venv" ]]; then
   refuse "${env_dir}/venv exists; this script only builds a new environment"
 fi

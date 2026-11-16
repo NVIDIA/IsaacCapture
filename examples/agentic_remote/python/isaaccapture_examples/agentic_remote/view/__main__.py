@@ -39,7 +39,7 @@ from ..agent.camera.frame_source import (
     PairSource,
     RecordedPairSource,
 )
-from ..agent.config import ConfigError, expanded_path
+from ..agent.config import ConfigError, expanded_path, user_path
 from ..console_log import set_console_level
 from ..link_service.local import LocalCarrier, connect_local
 from ..protocol.carrier import receive_message, send
@@ -138,7 +138,7 @@ def load_view_settings(path: str | os.PathLike[str]) -> ViewSettings:
     A setting the file leaves out keeps its first value; one it does not know
     is an error. A relative path is taken from the file's folder.
     """
-    file = Path(path).expanduser()
+    file = _user_path("--config", os.fspath(path))
     try:
         with open(file, encoding="utf-8") as stream:
             data = yaml.safe_load(stream)
@@ -163,7 +163,9 @@ def view_settings(data: object, folder: Path) -> ViewSettings:
             )
         for key, value in block.items():
             values[_FIELDS.get((name, key), key)] = _checked(where + key, key, value)
-    if not values.get("socket_path"):
+    if values.get("socket_path"):
+        values["socket_path"] = _path("socket_path", values["socket_path"], folder)
+    else:
         values.pop("socket_path", None)
     if values.get("http_address", LOOPBACK) != LOOPBACK:
         raise ViewConfigError(
@@ -230,8 +232,16 @@ def _path(where: str, text: str, folder: Path) -> str:
         expanded = expanded_path(where, text)
     except ConfigError as problem:
         raise ViewConfigError(str(problem)) from None
-    path = Path(expanded).expanduser()
+    path = _user_path(where, expanded)
     return str(path if path.is_absolute() else (folder / path).resolve())
+
+
+def _user_path(where: str, text: str) -> Path:
+    """The agent program's user_path(), with this program's error."""
+    try:
+        return user_path(where, text)
+    except ConfigError as problem:
+        raise ViewConfigError(str(problem)) from None
 
 
 def encode_picture(nv12: np.ndarray, width_px: int, quality: int) -> bytes:
@@ -466,7 +476,7 @@ def make_source(
     if kind == SOURCE_NONE:
         return None, False
     if kind.startswith(SOURCE_RECORDED):
-        folder = Path(kind.removeprefix(SOURCE_RECORDED)).expanduser()
+        folder = _user_path("--source", kind.removeprefix(SOURCE_RECORDED))
         if not folder.is_dir():
             raise ViewConfigError(f"--source: {folder} is not a folder")
 

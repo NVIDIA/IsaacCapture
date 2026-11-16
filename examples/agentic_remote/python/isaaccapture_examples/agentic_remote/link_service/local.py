@@ -346,6 +346,7 @@ class LocalCarrier:
         self._sock = sock
         sock.settimeout(send_timeout_s)
         self._send_lock = threading.Lock()
+        self._stop_limit_s: float | None = None  # see bound_stop()
         self._cond = threading.Condition()
         self._inbox = RecordQueue(inbox_messages, inbox_bytes)
         self._status: LocalStatus | None = None
@@ -453,16 +454,43 @@ class LocalCarrier:
             self._reader.join(SEND_TIMEOUT_S)
         self._sock.close()
 
+    def bound_stop(self, limit_s: float) -> None:
+        """Let a STOP wait at most limit_s for this socket, from now on.
+
+        A STOP that another send or a socket nobody reads holds up for longer
+        ends the carrier with nothing of it written. For a client that then
+        writes the STOP another way (send_raw_stop); without this call a STOP
+        waits as any other send does.
+        """
+        self._stop_limit_s = float(limit_s)
+
     def _send(self, msg_type: int, payload: bytes) -> None:
         record = pack_record(msg_type, payload)
-        with self._send_lock:
+        limit = self._stop_limit_s if msg_type == Stop.TYPE else None
+        end = time.monotonic() + (limit or 0.0)
+        if not self._send_lock.acquire(timeout=-1 if limit is None else limit):
+            self._die(f"a STOP waited {limit:g} s behind another send")
+            return
+        try:
             if not self.alive:
+                return
+            if limit is not None and not self._writable(end - time.monotonic()):
+                self._die(f"the socket did not take a STOP within {limit:g} s")
                 return
             try:
                 self._sock.sendall(record)
             except OSError as error:
                 # Part of a record may be out: the stream cannot be used again.
                 self._die(f"send failed: {error}")
+        finally:
+            self._send_lock.release()
+
+    def _writable(self, wait_s: float) -> bool:
+        """Whether the socket takes a record within wait_s; a send would wait."""
+        try:
+            return bool(select.select([], [self._sock], [], max(0.0, wait_s))[1])
+        except (OSError, ValueError):
+            return False
 
     def _die(self, reason: str) -> None:
         with self._cond:

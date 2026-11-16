@@ -9,6 +9,7 @@ makes a handful of requests on it. No browser is started.
 
 from __future__ import annotations
 
+import dataclasses
 import http.client
 import json
 import re
@@ -36,7 +37,16 @@ class Served:
 
     def __init__(self) -> None:
         self.model = ViewModel()
-        self.model.on_message(robot_state(), NOW)
+        # The model's first ROBOT_STATE came a minute before the pictures of
+        # these tests, on the same clocks.
+        state = robot_state()
+        first = dataclasses.replace(
+            state,
+            clock_wall_s=state.clock_wall_s - 60.0,
+            clock_mono_s=state.clock_mono_s - 60.0,
+        )
+        self.model.on_message(first, NOW - 60.0)
+        self.model.on_message(state, NOW)
         self.server = make_server(
             self.model, "127.0.0.1", 0, monotonic=lambda: NOW, picture_period_s=0.125
         )

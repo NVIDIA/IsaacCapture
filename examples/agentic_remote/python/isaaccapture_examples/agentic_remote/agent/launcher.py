@@ -497,7 +497,7 @@ def _apai_on_path() -> None:
 
 def _run_folder(settings: AgentSettings, given: str | None) -> Path:
     if given:
-        folder = Path(given).expanduser()
+        folder = agent_config.user_path("--run-dir", given)
     else:
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         folder = settings.state_dir / "runs" / f"{stamp}-{os.getpid()}"
@@ -598,9 +598,31 @@ def main(
         settings = agent_config.load_settings(args.config)
         invented = agent_config.invented_times(settings, args.camera)
         agent_config.refused_environment()
+        caches = agent_config.experiment_caches(settings)
     except ConfigError as problem:
         _complain(str(problem))
         return EXIT_NOT_RUN
+    # Before any module of the experiment is imported, which would name its
+    # own folder. Taken back at the end: a test runs main() again.
+    os.environ.update(caches)
+    try:
+        return _program(args, settings, invented, attach, ask, say, source, task_input)
+    finally:
+        for name in caches:
+            os.environ.pop(name, None)
+
+
+def _program(
+    args: argparse.Namespace,
+    settings: AgentSettings,
+    invented: bool,
+    attach: Callable[..., AgentLink] | None,
+    ask: Callable[[str], str],
+    say: Say,
+    source: Any,
+    task_input: Callable[[str], str],
+) -> int:
+    """main() from where the settings and the environment are taken."""
     set_console_level(args.log_level or settings.log_level)
     _apai_on_path()
     try:
@@ -695,7 +717,7 @@ def main(
             task_input=task_input,
         ):
             status = demo.main(arguments)
-        if status == 0 and not gate.restart_told and not gate.wrong_driver:
+        if status == 0 and not gate.restart_told and not gate.wrong_robot_app:
             code = EXIT_OK
         if code == EXIT_OK and args.interactive and gate.failed_tasks:
             say(f"{gate.failed_tasks} task(s) of this session ended without success")

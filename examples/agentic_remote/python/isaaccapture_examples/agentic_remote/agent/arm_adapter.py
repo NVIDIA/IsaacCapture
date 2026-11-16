@@ -151,8 +151,9 @@ class _FreshReader:
 class RobotLinkArm:
     """APAI's arm on the robot link. RobotLinkArm(...) builds an ArmBase subclass.
 
-    Entry points for the launcher, which APAI never calls: bind_checker(),
-    open_task(), close_task() and skill_scope().
+    Entry points for the launcher and the task gate, which APAI never calls:
+    bind_checker(), open_task(), close_task(), skill_scope() and
+    check_welcome().
     """
 
     n_joints = 6
@@ -254,7 +255,7 @@ class RobotLinkArm:
             state = link.state()
         except (LinkLost, StaleState, TimeoutError) as error:
             raise RobotLinkError(f"the robot app is not ready: {error}") from error
-        problem = self._mismatch(welcome)
+        problem = self.check_welcome(welcome)
         if problem is None and not state.torque_on:
             problem = "the robot app reports the motors off; restart the robot app"
         if problem is not None:
@@ -839,6 +840,9 @@ class RobotLinkArm:
         violation = _types().SafetyViolation
         if self._stopped:
             raise violation(f"arm stop latched; no {what} sent")
+        # APAI's jaw close does not pass its SafeArm, which looks at this latch.
+        if self._check is not None and getattr(self._check.harness, "estopped", False):
+            raise violation(f"e-stop latched; no {what} sent")
         if not self._task:
             raise violation(
                 f"the agent does not own the arm; motion needs a confirmed task; "
@@ -1009,9 +1013,9 @@ class RobotLinkArm:
         with self._ids_lock:
             self._checker_ids = still[-16:] + self._checker_ids
 
-    # connect()'s comparisons
+    # The comparisons of connect(), made again by the task gate for each task
 
-    def _mismatch(self, welcome: Any) -> str | None:
+    def check_welcome(self, welcome: Any) -> str | None:
         """The first thing of the WELCOME that does not fit this arm, or None."""
         settings = self._settings
         if welcome.protocol_version != PROTOCOL_VERSION:

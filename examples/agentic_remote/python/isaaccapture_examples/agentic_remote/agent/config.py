@@ -67,6 +67,13 @@ PATH_VARIABLES = (
     "AGENTIC_REMOTE_ENV_DIR",
 )
 _VARIABLE = re.compile(r"\$\{([^}]*)\}")
+# The caches the experiment's code keeps inside its own folder unless these
+# variables name another place: the variable and the cache's folder name.
+EXPERIMENT_CACHES = (
+    ("TRITON_CACHE_DIR", "triton"),
+    ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+    ("YOLO_CONFIG_DIR", "ultralytics"),
+)
 # The keys of rig.motion_bounds; all four are needed when the block is given.
 MOTION_BOUNDS_KEYS = (
     "joint_center_rad",
@@ -259,7 +266,13 @@ _SECTIONS: dict[str, type] = {
 _TOP = ("state_dir", "log_level", *_SECTIONS)
 # Keys whose value is a path; a relative one is taken from the file's folder.
 _PATHS = {
-    "camera": ("bridge_python", "camera_pr", "calibration_dir", "hand_eye_json"),
+    "camera": (
+        "bridge_python",
+        "camera_pr",
+        "receiver_socket",
+        "calibration_dir",
+        "hand_eye_json",
+    ),
     "link": ("socket_path",),
     "experiment": ("codex_bin",),
 }
@@ -269,7 +282,7 @@ _MAY_BE_ZERO = {"max_skew_ms"}
 
 def load_settings(path: str | os.PathLike[str]) -> AgentSettings:
     """Read and check agent.yaml; ConfigError says what is wrong."""
-    file = Path(path).expanduser()
+    file = user_path("--config", os.fspath(path))
     try:
         text = file.read_text(encoding="utf-8")
         data = yaml.load(text, Loader=_OnceLoader)  # a SafeLoader
@@ -517,6 +530,44 @@ def redirect_apai_stores(
     return folder
 
 
+def experiment_caches(
+    settings: AgentSettings, environ: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """{variable: folder} for each cache of the experiment whose variable is not set.
+
+    The experiment's code puts a cache without its variable into the
+    experiment folder, which this program only reads: the folders returned lie
+    under the state folder, for the caller to put into the environment. A
+    variable that is set and empty counts as not set. ConfigError for a value
+    that is not an absolute path, and for a place inside the experiment folder
+    (symbolic links and ".." are followed).
+    """
+    env = os.environ if environ is None else environ
+    named = str(env.get(EXPERIMENT_DIR_ENV, "")).strip()
+    experiment = Path(named).resolve() if named else None
+    missing: dict[str, str] = {}
+    for name, leaf in EXPERIMENT_CACHES:
+        value = str(env.get(name, ""))
+        given = bool(value.strip())
+        if not given:
+            value = missing[name] = str(settings.state_dir / "caches" / leaf)
+        elif not os.path.isabs(value):
+            raise ConfigError(f"{name} must be an absolute path (it is {value!r})")
+        place = Path(value).resolve()
+        if experiment is None or experiment not in (place, *place.parents):
+            continue
+        if given:
+            raise ConfigError(
+                f"{name} names a place inside the experiment folder ({value}); "
+                f"unset it, or name a folder outside {named}"
+            )
+        raise ConfigError(
+            f"state_dir lies inside the experiment folder: the cache of {name} "
+            f"would go to {value}; name a state folder outside {named}"
+        )
+    return missing
+
+
 def invented_times(settings: AgentSettings, camera: str) -> bool:
     """Whether this camera's capture times are made up; ConfigError if not allowed.
 
@@ -704,7 +755,7 @@ def _camera_profile(
         # APAI's default detector asks a model server; the mock one asks nothing.
         profile["detector"] = {"type": "mock"}
     if recorded:
-        profile["recorded_dir"] = str(Path(recorded).expanduser().resolve())
+        profile["recorded_dir"] = str(user_path("--camera", recorded).resolve())
         return profile
     if not block.bridge_python:
         raise ConfigError(
@@ -843,16 +894,31 @@ def write_json(path: Path, data: Any) -> None:
 
 
 def _path(where: str, text: str, folder: Path) -> str:
-    path = Path(expanded_path(where, text)).expanduser()
+    path = user_path(where, expanded_path(where, text))
     return str(path if path.is_absolute() else (folder / path).resolve())
+
+
+def user_path(where: str, text: str) -> Path:
+    """Path(text) with a "~" or "~name" at its start replaced by that home folder.
+
+    ConfigError, which names `where`, for a name that is no user here.
+    """
+    try:
+        return Path(text).expanduser()
+    except RuntimeError:
+        raise ConfigError(
+            f"{where}: the path {text!r} begins with '~' and a name that is no "
+            "user of this machine"
+        ) from None
 
 
 def expanded_path(where: str, text: str) -> str:
     """The path of the key `where` with each ${NAME} replaced by its value.
 
     ConfigError, which names the key, for a name outside PATH_VARIABLES, for
-    one that is not set, and for any other "$" in the text: "$NAME" and a
-    "${NAME" that is not closed are not expanded.
+    one that is not set or whose value is not an absolute path, and for any
+    other "$" in the text: "$NAME" and a "${NAME" that is not closed are not
+    expanded.
     """
     names = ", ".join(PATH_VARIABLES)
     if "$" in _VARIABLE.sub("", text):
@@ -873,6 +939,12 @@ def expanded_path(where: str, text: str) -> str:
             raise ConfigError(
                 f"{where}: the path {text!r} names the variable {name}, which is "
                 "not set"
+            )
+        # A relative value would be taken from the settings file's folder.
+        if not os.path.isabs(os.environ[name]):
+            raise ConfigError(
+                f"{where}: the path {text!r} names the variable {name}, whose "
+                f"value {os.environ[name]!r} is not an absolute path"
             )
         return os.environ[name]
 

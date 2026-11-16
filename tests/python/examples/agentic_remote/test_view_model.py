@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from isaaccapture_examples.agentic_remote.agent import link_client
+from isaaccapture_examples.agentic_remote.agent.camera import stereo_camera
 from isaaccapture_examples.agentic_remote.protocol.local_messages import LocalStatus
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     Event,
@@ -34,6 +35,9 @@ from isaaccapture_examples.agentic_remote.view.model import (
 from link_bench import robot_state, welcome
 
 NOT_LIVE = ViewStatus(live=False, age_s=AGE_WHEN_NOT_LIVE_S)
+# How long after a step of the Thor's wall clock, and after the model's first
+# ROBOT_STATE, a picture must arrive to count: CLOCK_STEP_QUIET_S.
+QUIET = 3.0
 # This machine's monotonic clock and the Thor's wall clock at the test's start.
 T0 = 500.0
 WALL0 = 1.7e9
@@ -54,8 +58,13 @@ def state_at(wall: float, **fields: Any) -> RobotState:
 
 
 def model_with_state(**settings: float) -> ViewModel:
-    """A model that took a ROBOT_STATE at T0 whose wall clock said WALL0."""
+    """A model that took a ROBOT_STATE at T0 whose wall clock said WALL0.
+
+    Its first ROBOT_STATE came a minute before: the pictures of these tests
+    arrive long after it.
+    """
     model = ViewModel(**settings)
+    model.on_message(state_at(WALL0 - 60.0), T0 - 60.0)
     model.on_message(state_at(WALL0), T0)
     return model
 
@@ -146,7 +155,8 @@ def test_not_live_without_a_fresh_robot_state():
     assert model.view_status(T0, None) == NOT_LIVE
     assert model.view_status(T0, WALL0) == NOT_LIVE
     # A ROBOT_STATE that is too old.
-    model.on_message(state_at(WALL0), T0)
+    model = model_with_state(state_max_age_s=1.0)
+    shown(model)
     assert status(model, T0 + 0.5).live
     model.acknowledge(1, True, T0 + 0.9)
     assert status(model, T0 + 0.99).live
@@ -370,28 +380,89 @@ def test_the_model_is_used_from_many_threads():
 # A step of the Thor's wall clock
 
 
-def test_a_step_of_the_thors_wall_clock_is_not_live_for_one_ack_timeout():
+def stepped_state(seconds: float, step: float) -> RobotState:
+    """A ROBOT_STATE that long after T0, its wall clock `step` off the old one."""
+    old = state_at(WALL0 + seconds)
+    return dataclasses.replace(old, clock_wall_s=old.clock_wall_s + step)
+
+
+def test_a_picture_from_before_a_step_of_the_thors_wall_clock_is_never_live():
+    # The same quiet time as the agent's camera keeps after a step.
+    assert view_model.CLOCK_STEP_QUIET_S == QUIET == stereo_camera.CLOCK_STEP_QUIET_S
     model = model_with_state(ack_timeout_s=1.0)
     shown(model, now=T0 + 0.1)  # exposed at WALL0, 0.1 s ago
     model.on_message(state_at(WALL0 + 0.15), T0 + 0.15)
     assert status(model, T0 + 0.15) == ViewStatus(live=True, age_s=near(0.15))
     # The Thor's wall clock steps back 0.15 s against its monotonic clock:
     # the picture would count as 0.05 s old when it is 0.2 s old.
-    back = dataclasses.replace(state_at(WALL0 + 0.2), clock_wall_s=WALL0 + 0.05)
-    model.on_message(back, T0 + 0.2)
+    model.on_message(stepped_state(0.2, -0.15), T0 + 0.2)
     assert status(model, T0 + 0.2) == NOT_LIVE
-    # Not live for ack_timeout_s from the step, whatever is acknowledged.
-    later = dataclasses.replace(state_at(WALL0 + 1.0), clock_wall_s=WALL0 + 0.85)
-    model.on_message(later, T0 + 1.0)
-    model.put_picture(2, JPEG, WALL0 + 0.8, T0 + 1.0, False)
-    model.acknowledge(2, True, T0 + 1.1)
-    assert status(model, T0 + 1.19) == NOT_LIVE
-    assert status(model, T0 + 1.21) == ViewStatus(live=True, age_s=near(0.26))
+    # It stays out for as long as the page goes on acknowledging it.
+    for seconds in (0.9, 1.3, QUIET - 0.1):
+        model.on_message(stepped_state(seconds, -0.15), T0 + seconds)
+        model.acknowledge(1, True, T0 + seconds)
+        assert status(model, T0 + seconds) == NOT_LIVE
+    # So does a picture that arrives within the quiet time after the step:
+    # its exposure can still be one of the old clock.
+    at = 0.2 + QUIET - 0.01
+    model.put_picture(2, JPEG, WALL0 + at - 0.15 - 0.1, T0 + at, False)
+    for seconds in (at, at + 0.5, 30.0):
+        model.on_message(stepped_state(seconds, -0.15), T0 + seconds)
+        model.acknowledge(2, True, T0 + seconds)
+        assert status(model, T0 + seconds) == NOT_LIVE
+    # A picture that arrives after it is live, with its age on the new clock.
+    at = 31.0
+    model.on_message(stepped_state(at, -0.15), T0 + at)
+    model.put_picture(3, JPEG, WALL0 + at - 0.15 - 0.1, T0 + at - 0.02, False)
+    model.acknowledge(3, True, T0 + at)
+    assert status(model, T0 + at) == ViewStatus(live=True, age_s=near(0.1))
     # A step forward counts the same.
-    ahead = dataclasses.replace(state_at(WALL0 + 1.3), clock_wall_s=WALL0 + 1.4)
-    model.on_message(ahead, T0 + 1.3)
-    model.acknowledge(2, True, T0 + 1.3)
-    assert status(model, T0 + 1.3) == NOT_LIVE
+    model.on_message(stepped_state(at + 0.1, 0.1), T0 + at + 0.1)
+    model.acknowledge(3, True, T0 + at + 0.1)
+    assert status(model, T0 + at + 0.1) == NOT_LIVE
+
+
+@pytest.mark.parametrize("ack_timeout_s", [0.3, 1.0])
+def test_a_shorter_ack_timeout_does_not_let_a_picture_from_before_the_step_in(
+    ack_timeout_s: float,
+) -> None:
+    model = model_with_state(ack_timeout_s=ack_timeout_s)
+    # Exposed 0.05 s before the Thor's wall clock steps back 0.4 s; it takes
+    # 0.25 s to arrive, after the ROBOT_STATE that shows the step.
+    model.on_message(stepped_state(0.06, -0.4), T0 + 0.06)
+    model.put_picture(1, JPEG, WALL0, T0 + 0.25, False)
+    # The camera stalls, and the page acknowledges that picture every 0.2 s.
+    for tenth in range(3, 80, 2):
+        now = T0 + tenth / 10.0
+        model.on_message(stepped_state(tenth / 10.0, -0.4), now)
+        model.acknowledge(1, True, now)
+        assert status(model, now) == NOT_LIVE, f"{now - T0:.1f} s after the exposure"
+
+
+def test_a_step_before_the_models_first_robot_state_is_not_missed():
+    model = ViewModel(ack_timeout_s=1.0)
+    # The camera connection is up before the robot connection: a picture
+    # exposed at WALL0 arrives and is acknowledged.
+    model.put_picture(1, JPEG, WALL0, T0 + 0.05, False)
+    model.acknowledge(1, True, T0 + 0.1)
+    # The first ROBOT_STATE comes 0.2 s after that exposure, from a wall clock
+    # that stepped back 0.1 s meanwhile: nothing in the model shows the step.
+    model.on_message(stepped_state(0.2, -0.1), T0 + 0.2)
+    assert status(model, T0 + 0.2) == NOT_LIVE
+    for seconds in (0.25, 0.9, 1.1, QUIET, 20.0):
+        model.on_message(stepped_state(seconds, -0.1), T0 + seconds)
+        model.acknowledge(1, True, T0 + seconds)
+        assert status(model, T0 + seconds) == NOT_LIVE
+    # The view is live once a picture arrives the quiet time after that state.
+    at = 0.2 + QUIET
+    model.on_message(stepped_state(at, -0.1), T0 + at)
+    model.put_picture(2, JPEG, WALL0 + at - 0.1 - 0.05, T0 + at, False)
+    model.acknowledge(2, True, T0 + at)
+    assert status(model, T0 + at) == ViewStatus(live=True, age_s=near(0.05))
+    # A robot connection that comes back on the same clocks marks nothing.
+    again = dataclasses.replace(stepped_state(at + 0.1, -0.1), session_id="s2")
+    model.on_message(again, T0 + at + 0.1)
+    assert status(model, T0 + at + 0.1).live
 
 
 def test_a_change_within_the_links_threshold_is_no_step():

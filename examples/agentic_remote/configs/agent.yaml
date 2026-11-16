@@ -6,7 +6,8 @@
 # measured on a robot. Angles are in rad, speeds in rad/s, times in s. A relative
 # path is taken from this file's folder. A path may name ${AGENTIC_REMOTE_EXPERIMENT_DIR},
 # ${AGENTIC_REMOTE_CAMERA_PR} or ${AGENTIC_REMOTE_ENV_DIR}; the program refuses
-# another ${NAME} and one that is not set.
+# another ${NAME}, one that is not set, one whose value is not an absolute path
+# and any other $.
 #
 # The program refuses a key it does not know, a key given twice, a block that is
 # not a mapping, and a number above the bound its comment names ("at most").

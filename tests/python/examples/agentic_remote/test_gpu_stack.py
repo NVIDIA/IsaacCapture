@@ -197,9 +197,11 @@ def test_the_grid_bridge_starts_on_cuda_0_and_answers(tmp_path: Path) -> None:
     pytest.importorskip("warp")
     pytest.importorskip("zmq")
     pytest.importorskip("msgpack_numpy")
+    import test_agent_end_to_end as end_to_end
     from apai.perception.occupancy import OccupancyClient
 
     rig = import_experiment("thor_calibration_rig")
+    before = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
     low, high = (-0.2, -0.5, -0.1), (0.8, 0.5, 0.7)
     # As the launcher starts it (launcher.py, agent_hooks, build).
     bridge = rig.OwnedOccupancyBridge(
@@ -268,6 +270,9 @@ def test_the_grid_bridge_starts_on_cuda_0_and_answers(tmp_path: Path) -> None:
     assert process.returncode in (-signal.SIGTERM, -signal.SIGKILL)
     log = (tmp_path / "occupancy-bridge.log").read_text()
     assert "APAI_SERVER_READY " in log
+    # The experiment's bridge wrote nothing into APAI's checkout or its own folder.
+    after = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
+    assert after == before
 
 
 @apai

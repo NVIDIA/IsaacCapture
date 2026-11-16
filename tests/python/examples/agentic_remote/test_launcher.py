@@ -1131,6 +1131,55 @@ def test_a_welcome_that_declares_real_before_a_later_task_ends_the_program(
     assert "driver apai-mock, session" in up[0] and "driver real, session" in up[1]
 
 
+@apai
+def test_a_task_refused_over_the_welcome_ends_the_program_with_1_whatever_it_reports(
+    make_stage: Callable[..., Stage],
+) -> None:
+    stage = make_stage(driver="apai-mock")
+    demo = importlib.import_module("apai.apps.demo")
+    ends: dict[str, Any] = {}
+
+    def attach(socket_path: str | None = None, *, timeout_s: float) -> AgentLink:
+        robot_end, agent_end = loopback_pair()
+        made = AgentLink(agent_end)
+        assert stage.h.app.attach_carrier(robot_end)
+        stage.watch(made)
+        ends["robot"] = robot_end
+        return made
+
+    real = demo.AgentOrchestrator
+
+    def optimist(*args: Any, **kwargs: Any) -> Any:
+        """An agent that reports every task as a success."""
+        agent = real(*args, **kwargs)
+        run = agent.run_task
+        agent.run_task = lambda task, *a, **k: dataclasses.replace(
+            run(task, *a, **k), success=True
+        )
+        return agent
+
+    typed = [QUICK, QUICK]
+
+    def next_line(prompt: str = "") -> str:
+        if not typed:
+            raise EOFError
+        if len(typed) == 1:  # before the second task: another WELCOME arrives
+            was = stage.link.welcome
+            send(ends["robot"], dataclasses.replace(was, driver="real"))
+            until(lambda: stage.link.welcome.driver == "real", "the new WELCOME")
+        return typed.pop(0)
+
+    stage.next_line = next_line
+    stage.answers = ["yes", "yes"]
+    with mock.patch.object(demo, "AgentOrchestrator", optimist):
+        code = stage.run("--interactive", attach=attach)
+    # Both tasks were reported as a success, the refused one too.
+    assert [row["success"] for row in stage.reports()] == [True, True]
+    assert len(stage.said("motion refused: ")) == 1 and len(stage.asked) == 1
+    assert not stage.said("ended without success")
+    assert code == launcher.EXIT_FAILED
+
+
 def test_what_the_declared_driver_allows(tmp_path: Path) -> None:
     minimal = agent_config.load_settings(settings_file(tmp_path))
     full = agent_config.load_settings(
@@ -1252,6 +1301,257 @@ def test_a_dollar_sign_that_is_no_variable_is_refused_with_its_key(
         agent_config.expanded_path("x", text)
     monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/a$b")
     assert agent_config.expanded_path("x", "${AGENTIC_REMOTE_ENV_DIR}/c") == "/a$b/c"
+
+
+SOCKET_KEYS = (("camera", "receiver_socket"), ("link", "socket_path"))
+
+
+def test_both_socket_files_are_paths_of_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/env")
+    given = {
+        "${AGENTIC_REMOTE_ENV_DIR}/x.sock": "/env/x.sock",
+        "run/x.sock": str((tmp_path / "run" / "x.sock").resolve()),
+        "/run/x.sock": "/run/x.sock",
+    }
+    for block, key in SOCKET_KEYS:
+        for text, path in given.items():
+            file = settings_file(tmp_path, **{block: {key: text}})
+            settings = agent_config.load_settings(file)
+            assert getattr(getattr(settings, block), key) == path
+        # A "$" that is no ${NAME} is refused, not taken for a file's name.
+        file = settings_file(tmp_path, **{block: {key: "$HOME/x.sock"}})
+        with pytest.raises(ConfigError, match=rf"^{block}\.{key}: .* holds a '\$'"):
+            agent_config.load_settings(file)
+    # The camera receiver's own default is kept where the file names none.
+    plain = agent_config.load_settings(settings_file(tmp_path))
+    assert plain.camera.receiver_socket == "/tmp/camera_receiver_avs1_cuda_ipc.sock"
+    assert plain.link.socket_path == ""
+
+
+@pytest.mark.parametrize("value", ["env", "./env", "../env", " /env", "~/env"])
+def test_a_path_variable_whose_value_is_not_absolute_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: str,
+) -> None:
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, "/absolute")
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, value)
+        text = f"${{{name}}}/x"
+        says = (
+            f"the path {text!r} names the variable {name}, whose value {value!r} "
+            "is not an absolute path"
+        )
+        for block, key in (("camera", "calibration_dir"), ("experiment", "codex_bin")):
+            file = settings_file(tmp_path, **{block: {key: text}})
+            with pytest.raises(ConfigError) as raised:
+                agent_config.load_settings(file)
+            assert str(raised.value) == f"{block}.{key}: {says}"
+        data = yaml.safe_load(settings_file(tmp_path).read_text())
+        data["state_dir"] = text
+        file = tmp_path / "state.yaml"
+        file.write_text(yaml.safe_dump(data))
+        with pytest.raises(ConfigError) as raised:
+            agent_config.load_settings(file)
+        assert str(raised.value) == f"state_dir: {says}"
+        # The program does not start, and makes no folder under the file's.
+        code = launcher.main(["--config", str(file), "--camera", "mock", "--check"])
+        assert code == launcher.EXIT_NOT_RUN
+        assert capsys.readouterr().err == f"agent program: state_dir: {says}\n"
+        monkeypatch.setenv(name, "/absolute")
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "agent.yaml",
+        "state.yaml",
+    ]
+
+
+NO_USER = "~no-such-user-of-this-machine"
+NO_USER_SAYS = "begins with '~' and a name that is no user of this machine"
+
+
+def test_a_tilde_with_a_name_that_is_no_user_is_refused_with_its_key(
+    tmp_path: Path,
+) -> None:
+    text = f"{NO_USER}/x"
+    for block, key in (
+        ("camera", "calibration_dir"),
+        ("experiment", "codex_bin"),
+        ("link", "socket_path"),
+    ):
+        file = settings_file(tmp_path, **{block: {key: text}})
+        with pytest.raises(ConfigError) as raised:
+            agent_config.load_settings(file)
+        assert str(raised.value) == f"{block}.{key}: the path {text!r} {NO_USER_SAYS}"
+    with pytest.raises(ConfigError, match=f"^--config: the path .* {NO_USER_SAYS}$"):
+        agent_config.load_settings(f"{NO_USER}/agent.yaml")
+    # A "~" alone and a user that exists are expanded as ever.
+    assert agent_config.user_path("x", "~/a") == Path.home() / "a"
+    assert agent_config.user_path("x", "~root/a") == Path("~root").expanduser() / "a"
+    assert agent_config.user_path("x", "a/~b") == Path("a/~b")
+
+
+@apai
+def test_the_program_refuses_a_tilde_that_names_no_user_with_exit_code_2(
+    tmp_path: Path, apai_scratch: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def never(*args: Any, **kwargs: Any) -> AgentLink:
+        raise AssertionError("the program attached")
+
+    good = settings_file(
+        tmp_path, camera={"calibration_dir": "/c", "hand_eye_json": "/h"}
+    )
+    data = yaml.safe_load(good.read_text())
+    data["state_dir"] = f"{NO_USER}/state"
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(yaml.safe_dump(data))
+    mock_camera = ["--camera", "mock"]
+    for argv, where in (
+        (["--config", str(bad), *mock_camera, "--check"], "state_dir"),
+        (["--config", str(bad), *mock_camera, "--task", QUICK], "state_dir"),
+        (["--config", f"{NO_USER}/agent.yaml", *mock_camera, "--check"], "--config"),
+        (
+            ["--config", str(good), *mock_camera, "--run-dir", f"{NO_USER}/r"]
+            + ["--task", QUICK],
+            "--run-dir",
+        ),
+        (
+            ["--config", str(good), "--camera", f"recorded:{NO_USER}/p", "--check"],
+            "--camera",
+        ),
+    ):
+        assert launcher.main(argv, attach=never) == launcher.EXIT_NOT_RUN, argv
+        (line,) = capsys.readouterr().err.splitlines()  # one line, no traceback
+        assert line.startswith(f"agent program: {where}: the path ")
+        assert line.endswith(NO_USER_SAYS)
+
+
+# The caches of the experiment's code: the variable and the folder's name.
+CACHES = {
+    "TRITON_CACHE_DIR": "triton",
+    "TORCHINDUCTOR_CACHE_DIR": "torchinductor",
+    "YOLO_CONFIG_DIR": "ultralytics",
+}
+
+
+@pytest.fixture
+def no_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The three cache variables are not set when the test begins."""
+    for name in CACHES:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_the_experiments_caches_go_under_the_state_folder_unless_they_are_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_caches: None
+) -> None:
+    assert dict(agent_config.EXPERIMENT_CACHES) == CACHES
+    experiment = tmp_path / "experiment"
+    experiment.mkdir()
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, str(experiment))
+    settings = agent_config.load_settings(settings_file(tmp_path))
+    state = tmp_path / "state"
+    everything = {name: str(state / "caches" / leaf) for name, leaf in CACHES.items()}
+    assert agent_config.experiment_caches(settings) == everything
+    assert not state.exists() and dict(os.environ).keys().isdisjoint(CACHES)
+    # One that is set is kept; one that is set and empty counts as not set.
+    monkeypatch.setenv("TRITON_CACHE_DIR", "/elsewhere/triton")
+    monkeypatch.setenv("YOLO_CONFIG_DIR", " ")
+    del everything["TRITON_CACHE_DIR"]
+    assert agent_config.experiment_caches(settings) == everything
+    # Without an experiment folder there is nothing to keep out of.
+    monkeypatch.delenv(EXPERIMENT_DIR_ENV)
+    assert agent_config.experiment_caches(settings) == everything
+
+
+@pytest.mark.parametrize("name", list(CACHES))
+def test_a_cache_variable_into_the_experiment_folder_is_refused_however_it_is_spelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    no_caches: None,
+    name: str,
+) -> None:
+    experiment = tmp_path / "checkout" / "experiment"
+    (experiment / ".state" / "cache").mkdir(parents=True)
+    (tmp_path / "beside").mkdir()
+    (tmp_path / "link-to-experiment").symlink_to(experiment)
+    (tmp_path / "fast-disk").symlink_to(experiment / ".state")
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, str(experiment))
+    file = settings_file(tmp_path)
+    settings = agent_config.load_settings(file)
+    before = sorted(str(path) for path in experiment.rglob("*"))
+    for value in (
+        str(experiment),
+        f"{experiment}/.state/cache",
+        f"{experiment}/not/there/yet",
+        f"{tmp_path}/fast-disk/cache",  # through a symbolic link
+        f"{tmp_path}/link-to-experiment/x",
+        f"{tmp_path}/beside/../checkout/experiment/.state",
+        f"{tmp_path}/checkout//experiment/./.state",
+    ):
+        monkeypatch.setenv(name, value)
+        says = (
+            f"{name} names a place inside the experiment folder ({value}); unset "
+            f"it, or name a folder outside {experiment}"
+        )
+        with pytest.raises(ConfigError) as raised:
+            agent_config.experiment_caches(settings)
+        assert str(raised.value) == says
+        # The program does not start, whatever it is asked to do.
+        code = launcher.main(["--config", str(file), "--camera", "mock", "--check"])
+        assert code == launcher.EXIT_NOT_RUN
+        assert capsys.readouterr().err == f"agent program: {says}\n"
+    # The experiment folder named through a link is the same folder.
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, f"{tmp_path}/link-to-experiment")
+    monkeypatch.setenv(name, f"{experiment}/.state/cache")
+    with pytest.raises(ConfigError, match="inside the experiment folder"):
+        agent_config.experiment_caches(settings)
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, str(experiment))
+    # A relative value depends on the folder the program is started in.
+    monkeypatch.setenv(name, ".state/cache")
+    with pytest.raises(ConfigError) as raised:
+        agent_config.experiment_caches(settings)
+    assert (
+        str(raised.value) == f"{name} must be an absolute path (it is '.state/cache')"
+    )
+    # A folder beside the experiment folder is kept, also named through it.
+    for value in (f"{experiment}-caches/x", f"{experiment}/../beside"):
+        monkeypatch.setenv(name, value)
+        assert name not in agent_config.experiment_caches(settings)
+    # A state folder inside the experiment folder: its default is refused too.
+    monkeypatch.delenv(name)
+    data = yaml.safe_load(file.read_text())
+    data["state_dir"] = str(experiment / ".state" / "agent")
+    file.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match=r"^state_dir lies inside the experiment"):
+        agent_config.experiment_caches(agent_config.load_settings(file))
+    assert sorted(str(path) for path in experiment.rglob("*")) == before
+
+
+@apai
+def test_a_run_has_the_experiments_caches_in_its_state_folder_and_takes_them_back(
+    stage: Stage, monkeypatch: pytest.MonkeyPatch, no_caches: None
+) -> None:
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", "/elsewhere/torchinductor")
+    seen: dict[str, str | None] = {}
+
+    def attach(socket_path: str | None = None, *, timeout_s: float) -> AgentLink:
+        seen.update({name: os.environ.get(name) for name in CACHES})
+        return stage.attach(socket_path, timeout_s=timeout_s)
+
+    stage.run("--task", LOOK, attach=attach)
+    caches = stage.folder / "state" / "caches"
+    assert seen == {
+        "TRITON_CACHE_DIR": str(caches / "triton"),
+        "TORCHINDUCTOR_CACHE_DIR": "/elsewhere/torchinductor",
+        "YOLO_CONFIG_DIR": str(caches / "ultralytics"),
+    }
+    # What the program set is gone with it; the caller's value stays.
+    assert "TRITON_CACHE_DIR" not in os.environ and "YOLO_CONFIG_DIR" not in os.environ
+    assert os.environ["TORCHINDUCTOR_CACHE_DIR"] == "/elsewhere/torchinductor"
 
 
 def test_the_model_clients_program_is_a_setting(tmp_path: Path) -> None:

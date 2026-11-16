@@ -16,6 +16,7 @@ on a grid fed by the link's stereo camera from a FakePairSource.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import json
 import math
@@ -336,10 +337,20 @@ def raise_arm(harness: Any) -> None:
 
 
 def tree_state(folder: Path) -> dict[str, tuple[int, int]]:
-    """(size, time of change) of every file under a folder; .venv and .git left out."""
+    """(size, time of change) of every file under a folder, and each folder's name.
+
+    A folder counts as (-1, 0): a new one is seen also while it is empty. A
+    .venv is left out. Of a .git folder only the index is looked at, which a
+    git status without GIT_OPTIONAL_LOCKS=0 rewrites.
+    """
     state = {}
     for root, folders, files in os.walk(folder):
-        folders[:] = [name for name in folders if name not in (".venv", ".git")]
+        folders[:] = [name for name in folders if name != ".venv"]
+        if os.path.basename(root) == ".git":
+            folders[:] = []
+            files = [name for name in files if name == "index"]
+        for name in folders:
+            state[os.path.join(root, name)] = (-1, 0)
         for name in files:
             path = os.path.join(root, name)
             try:
@@ -348,6 +359,39 @@ def tree_state(folder: Path) -> dict[str, tuple[int, int]]:
                 continue
             state[path] = (found.st_size, found.st_mtime_ns)
     return state
+
+
+def test_the_tree_state_sees_a_new_empty_folder_and_a_rewritten_git_index(
+    tmp_path: Path,
+) -> None:
+    tree = tmp_path / "tree"
+    (tree / "tools" / ".git" / "objects").mkdir(parents=True)
+    (tree / "tools" / ".git" / "index").write_bytes(b"index 1")
+    (tree / ".venv" / "lib").mkdir(parents=True)
+    (tree / "code.py").write_text("x = 1\n")
+    before = tree_state(tree)
+    assert set(before) == {
+        str(tree / "tools"),
+        str(tree / "tools" / ".git"),
+        str(tree / "tools" / ".git" / "index"),
+        str(tree / "code.py"),
+    }
+    # Another program's environment and git's own objects are not looked at.
+    (tree / ".venv" / "lib" / "module.pyc").write_bytes(b"")
+    (tree / "tools" / ".git" / "objects" / "ab").mkdir()
+    assert tree_state(tree) == before
+    # A new folder without a file in it, a new file, and the index rewritten.
+    (tree / ".state" / "cache").mkdir(parents=True)
+    assert set(tree_state(tree)) - set(before) == {
+        str(tree / ".state"),
+        str(tree / ".state" / "cache"),
+    }
+    (tree / "tools" / ".git" / "index").write_bytes(b"index 22")
+    index = str(tree / "tools" / ".git" / "index")
+    assert tree_state(tree)[index] != before[index]
+    (tree / "__pycache__").mkdir()
+    (tree / "__pycache__" / "code.pyc").write_bytes(b"")
+    assert len(tree_state(tree)) == len(before) + 4
 
 
 def read_only_trees() -> list[Path]:
@@ -808,6 +852,110 @@ def test_a_robot_app_restarted_as_real_gets_no_task_of_a_program_on_invented_tim
     assert typed == [QUICK] and scene.said(task_gate.NO_NEW_TASK)
     assert code == launcher.EXIT_FAILED
     assert second.spy.released_at == [] and second.arm.torque_on()
+
+
+def restart_before_the_second_task(
+    scene: Scene, make_realtime_apai: Callable[..., Any], typed: list[str], **changed
+) -> dict[str, Any]:
+    """Type `typed`; before its second task another robot app takes the link.
+
+    The second robot app's file differs from the first one's in `changed`.
+    Returns a dict that holds it as "second" once it runs.
+    """
+    stack, first = scene.stack, scene.h
+    seen: dict[str, Any] = {}
+    second_at = len(typed) - 1
+
+    def on_the_new_session() -> bool:
+        session = seen["second"].app.session_id
+        try:
+            return (
+                scene.link.welcome.session_id == session
+                and scene.link.state().session_id == session
+            )
+        except RuntimeError:  # the link is lost while the robot app is away
+            return False
+
+    def next_line(prompt: str = "") -> str:
+        if not typed:
+            raise EOFError
+        if len(typed) == second_at:
+            stack.dialer.close()
+            first.app.close()
+            config = dataclasses.replace(scene_robot_config(), **changed)
+            second = make_realtime_apai(config=config, connected=False)
+            raise_arm(second)
+            seen["second"], seen["jaws"] = second, len(second.spy.jaw_commands)
+            stack.dial(second)
+            until(on_the_new_session, "the new session at the agent program")
+        return typed.pop(0)
+
+    scene.next_line = next_line
+    return seen
+
+
+@apai
+@link
+@pytest.mark.parametrize(
+    ("changed", "reason"),
+    [
+        (
+            {"camera_calibration_id": "another-calibration"},
+            "the robot app's camera calibration is 'another-calibration', this "
+            "program's 'apai-mock-calibration'",
+        ),
+        (
+            {"profile_id": "another-profile"},
+            "the robot app's profile is 'another-profile', expected 'apai-rs-model'",
+        ),
+    ],
+    ids=["calibration", "profile"],
+)
+def test_a_robot_app_restarted_with_another_welcome_gets_no_task(
+    service_scene: Scene,
+    make_realtime_apai: Callable[..., Any],
+    changed: dict[str, str],
+    reason: str,
+) -> None:
+    scene = service_scene
+    typed = [QUICK, QUICK, QUICK]
+    seen = restart_before_the_second_task(scene, make_realtime_apai, typed, **changed)
+    scene.answers = ["yes", "yes", "yes"]
+    code = scene.run("--interactive")
+    second = seen["second"]
+    # The driver it declares is allowed; what else it declares is not this
+    # program's: no question, no owner request, no command.
+    assert scene.link.welcome.driver == "apai-mock"
+    assert scene.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    assert len(scene.asked) == 1
+    assert second.heard("owner") == [] and second.spy.targets == []
+    assert len(second.spy.jaw_commands) == seen["jaws"]
+    assert scene.said("motion refused: ") == [
+        f"motion refused: {reason}; no command sent"
+    ]
+    # No third task was read, and the program ended with exit code 1.
+    assert typed == [QUICK]
+    assert scene.said(f"{reason}: {task_gate.NO_NEW_TASK}")
+    assert code == launcher.EXIT_FAILED
+    assert second.spy.released_at == [] and second.arm.torque_on()
+
+
+@apai
+@link
+def test_a_robot_app_restarted_on_the_same_file_gets_the_next_task(
+    service_scene: Scene, make_realtime_apai: Callable[..., Any]
+) -> None:
+    scene = service_scene
+    typed = [QUICK, QUICK]
+    seen = restart_before_the_second_task(scene, make_realtime_apai, typed)
+    scene.answers = ["yes", "yes"]
+    code = scene.run("--interactive")
+    second = seen["second"]
+    assert scene.order == ["agent:completed", "nobody:completed"] * 2 + ["close:nobody"]
+    assert len(scene.asked) == 2 and not scene.said("motion refused")
+    assert second.heard("owner")[0][2].get("owner") == "agent"
+    assert len(second.spy.jaw_commands) > seen["jaws"]
+    assert code == launcher.EXIT_OK
 
 
 @apai
@@ -1353,6 +1501,34 @@ def test_a_stale_robot_state_mid_move_cancels_and_latches_the_adapter(
     ((status, _, sent),) = fake.thor.results
     assert status == "refused" and sent <= max(throughs) + 1 < 100
     assert fake.thor.stops == []  # a cancel by permit or by its end, never a STOP
+
+
+@apai
+def test_a_latched_checker_refuses_the_jaws_as_it_refuses_a_move(
+    fake: FakeLink,
+) -> None:
+    check = FakeCheckAhead(fake.link)
+    adapter = fake.adapter(check)
+    apai_types = importlib.import_module("apai.types")
+    # The checker alone is latched: no stop of the adapter, the task is open.
+    check.harness.estopped = True
+    assert adapter._stopped is False and fake.link.lost_reason() is None
+    for command in (
+        adapter.close_gripper_two_stage,  # APAI calls it past its SafeArm
+        lambda: adapter.set_gripper(PROFILE["gripper"]["open_pos"]),
+    ):
+        with pytest.raises(
+            apai_types.SafetyViolation, match="e-stop latched; no jaw command sent"
+        ):
+            command()
+    with pytest.raises(apai_types.SafetyViolation, match="e-stop latched"):
+        moved(fake, adapter, 0.05, 0.5)
+    time.sleep(0.1)
+    assert fake.thor.grippers == [] and fake.thor.moves == []
+    # Without the latch the same close leaves.
+    check.harness.estopped = False
+    adapter.close_gripper_two_stage()
+    until(lambda: fake.thor.grippers, "the GRIPPER on the robot side")
 
 
 class PoseHistory:

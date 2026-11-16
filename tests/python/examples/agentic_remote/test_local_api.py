@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import os
 import re
+import select
 import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -574,6 +576,118 @@ def test_local_messages_do_not_pass_through_receive(bench):
     client.wait_status(lambda s: s.roles.get("console") == 1)
     assert client.receive(QUIET_S) is None
     assert client.notices == []
+
+
+# A STOP and a socket nobody reads
+
+FILLER = pack_record(Event.TYPE, Event(seq=1, kind="note", text="x" * 60).to_payload())
+STOP_PAYLOAD = Stop("x", "console").to_payload()
+
+
+def unread_carrier(**options) -> tuple[LocalCarrier, socket.socket]:
+    """(a carrier whose socket takes no further send at once, the other end).
+
+    Nobody reads the other end. The filler is written straight to the socket,
+    until a send with a timeout, as the carrier's, would wait.
+    """
+    near, far = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    carrier = LocalCarrier(near, **options)
+    while select.select([], [near], [], 0)[1]:
+        near.send(FILLER, socket.MSG_DONTWAIT)
+    return carrier, far
+
+
+def records_at(far: socket.socket) -> list[int]:
+    """The type number of every whole record that waits at the other end."""
+    far.setblocking(False)
+    data = b""
+    while True:
+        try:
+            part = far.recv(65536)
+        except BlockingIOError:
+            break
+        if not part:
+            break
+        data += part
+    types = []
+    while len(data) >= HEADER.size:
+        msg_type, length = HEADER.unpack(data[: HEADER.size])
+        assert len(data) >= HEADER.size + length, "half a record was written"
+        data = data[HEADER.size + length :]
+        types.append(msg_type)
+    assert data == b""
+    return types
+
+
+def test_a_bounded_stop_gives_up_on_a_socket_nobody_reads():
+    carrier, far = unread_carrier()
+    try:
+        carrier.bound_stop(0.2)
+        began = time.monotonic()
+        carrier.send_reliable(Stop.TYPE, STOP_PAYLOAD)
+        took = time.monotonic() - began
+        # It waited its limit, not the 2 s of any other send, and wrote nothing.
+        assert 0.2 <= took < 1.0, f"the STOP's send took {took:.2f} s"
+        assert not carrier.alive
+        assert carrier.close_reason == "the socket did not take a STOP within 0.2 s"
+        assert Stop.TYPE not in records_at(far)
+    finally:
+        carrier.close()
+        far.close()
+
+
+def test_a_bounded_stop_does_not_wait_out_another_send_that_is_stuck():
+    carrier, far = unread_carrier()
+    done: list[float] = []
+
+    def stuck_send() -> None:
+        carrier.send_reliable(
+            Event.TYPE, Event(seq=2, kind="note", text="y").to_payload()
+        )
+        done.append(time.monotonic())
+
+    try:
+        carrier.bound_stop(0.2)
+        other = threading.Thread(target=stuck_send, daemon=True)
+        other.start()
+        until(carrier._send_lock.locked, "the other send to hold the socket")
+        began = time.monotonic()
+        carrier.send_reliable(Stop.TYPE, STOP_PAYLOAD)
+        took = time.monotonic() - began
+        assert 0.2 <= took < 1.0, f"the STOP's send took {took:.2f} s"
+        assert not carrier.alive
+        assert carrier.close_reason == "a STOP waited 0.2 s behind another send"
+        # The carrier's end released the stuck send too.
+        other.join(WAIT_S)
+        assert done and done[0] - began < 1.0
+        assert Stop.TYPE not in records_at(far)
+    finally:
+        carrier.close()
+        far.close()
+
+
+def test_a_stop_without_the_bound_waits_as_any_other_send():
+    # The agent program's carrier: it has no other way to write a STOP.
+    carrier, far = unread_carrier(send_timeout_s=0.6)
+    try:
+        began = time.monotonic()
+        carrier.send_reliable(Stop.TYPE, STOP_PAYLOAD)
+        took = time.monotonic() - began
+        assert 0.6 <= took < 2.0
+        assert carrier.close_reason == "send failed: timed out"
+    finally:
+        carrier.close()
+        far.close()
+
+
+def test_a_bounded_stop_is_written_at_once_while_the_socket_takes_it(bench):
+    thor = bench.robot()
+    client = bench.client("console")
+    client.bound_stop(0.2)
+    began = time.monotonic()
+    client.send_reliable(Stop.TYPE, STOP_PAYLOAD)
+    assert time.monotonic() - began < 0.1 and client.alive
+    assert thor.next_message() == Stop("x", "console")
 
 
 def test_the_package_imports_without_isaac_capture():

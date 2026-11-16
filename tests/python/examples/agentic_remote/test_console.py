@@ -14,6 +14,8 @@ from __future__ import annotations
 import ast
 import dataclasses
 import os
+import select
+import socket
 import subprocess
 import sys
 import threading
@@ -46,6 +48,7 @@ from isaaccapture_examples.agentic_remote.console.status import (
 from isaaccapture_examples.agentic_remote.link_service.local import (
     LocalRefused,
     RawStop,
+    pack_record,
 )
 from isaaccapture_examples.agentic_remote.link_service.service import STOP_UNDELIVERED
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair, send
@@ -73,7 +76,7 @@ from isaaccapture_examples.agentic_remote.testing import client as client_module
 from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
 from link_bench import Bench, robot_state, until, welcome
 from test_console_cmd import Console as ScriptedRobot
-from test_console_cmd import completed, on_a_terminal
+from test_console_cmd import OddService, completed, odd_services, on_a_terminal
 
 PACKAGE = Path(console_module.__file__).resolve().parent
 EXAMPLE = PACKAGE.parents[3]
@@ -471,13 +474,20 @@ def test_ctrl_c_at_the_terminal_is_a_stop_and_the_console_runs_on(
     # No service: the STOP is tried raw, and said not to be written.
     answer, shown = on_a_terminal(
         lambda: console_at_a_terminal(str(tmp_path / "none.sock")),
-        typed_after=b"\x03state\nquit\n",
+        typed_after=b"\x03",
         marker=b"operator console: type stop",
+        then=(b"STOP NOT written", b"state\nquit\n"),
     )
     assert shown and "exit 0: " in answer
-    assert "stop: STOP NOT written: no robot link service at " in answer
-    assert "ROBOT_STATE: none has arrived" in answer  # served after the Ctrl+C
-    assert QUIT_NOTE in answer
+    said = [
+        answer.index(text)
+        for text in (
+            "stop: STOP NOT written: no robot link service at ",
+            "ROBOT_STATE: none has arrived",  # served after the Ctrl+C
+            QUIT_NOTE,
+        )
+    ]
+    assert said == sorted(said)
 
 
 # A terminal, and a person at it
@@ -537,6 +547,20 @@ def test_what_is_typed_before_a_question_does_not_answer_it(
     )
     assert shown and "release: sent" in answer
     assert [type(message) for message in robot.settled()] == [Release]
+
+
+def test_a_stop_typed_before_a_question_is_still_a_stop(robot: ScriptedRobot) -> None:
+    # Both lines are in the terminal before the console reads the first one.
+    answer, shown = on_a_terminal(
+        lambda: console_at_a_terminal(robot.bench.path),
+        typed_after=b"release\nstop\n",
+        marker=b" | owner nobody #4 | ",
+        then=(b"stop: taken.", b"quit\n"),
+    )
+    assert shown and "exit 0: " in answer
+    assert "stop was typed before the question: the question is taken back" in answer
+    assert "not confirmed; nothing sent" in answer
+    assert robot.settled() == [TYPED_STOP]  # one STOP, and no RELEASE
 
 
 def test_unusable_arguments_end_with_exit_code_2() -> None:
@@ -1031,6 +1055,135 @@ def test_a_ctrl_c_stop_does_not_wait_behind_a_command_whose_send_is_stuck(
     desk.wait("reset: RESULT completed")
 
 
+class Dying(Direct):
+    """A carrier that dies under the send of a STOP; the STOP is not out."""
+
+    def __init__(self, end: Any) -> None:
+        super().__init__(end)
+        self.dead = False
+        self.send_reliable = self._send
+
+    def _send(self, msg_type: int, payload: bytes) -> None:
+        if msg_type == Stop.TYPE:
+            self.dead = True
+            return
+        self._end.send_reliable(msg_type, payload)
+
+    @property
+    def alive(self) -> bool:
+        return not self.dead and self._end.alive
+
+
+def test_a_stop_whose_carrier_dies_under_the_send_is_written_raw(
+    desks: Callable[..., Desk],
+) -> None:
+    raw: list[dict[str, Any]] = []
+
+    def raw_stop(path: str | None, **fields: Any) -> RawStop:
+        raw.append(fields)
+        return RawStop(True, "")
+
+    robot_end, console_end = loopback_pair()
+    desk = desks(None, attach=lambda *args: Dying(console_end), raw_stop=raw_stop)
+    desk.wait("attached to the robot link service")
+    desk.type("stop")
+    line = desk.wait("stop: ")
+    assert line == "\astop: STOP written; not confirmed: look at the Thor terminal"
+    assert raw == [
+        {"reason": console_cmd.STOP_REASON, "sender": "console", "name": "console"}
+    ]
+    assert desk.count("stop: sent") == 0 and robot_end.receive(0.2) is None
+
+
+@pytest.fixture
+def odd_service(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Callable[[bool], OddService]]:
+    yield from odd_services(tmp_path_factory)
+
+
+def test_a_typed_stop_does_not_wait_behind_an_attempt_to_attach(
+    odd_service: Callable[[bool], OddService], desks: Callable[..., Desk]
+) -> None:
+    service = odd_service(False)  # takes the connection and answers nothing
+    desk = desks(service.path)
+    typed = time.monotonic()
+    desk.type("stop")  # while the first attempt to attach waits its 2 s
+    at, _ = service.wait_stop(1)
+    assert at - typed < 0.5, f"the STOP was written {at - typed:.2f} s after the stop"
+    desk.wait("STOP written; not confirmed: look at the Thor terminal")
+    # A typed attach only asks for an attempt: the stop after it is read at once.
+    desk.wait("cannot attach to the robot link service: ")
+    typed = time.monotonic()
+    desk.type("attach", "stop")
+    at, _ = service.wait_stop(2)
+    assert at - typed < 0.5, f"the STOP was written {at - typed:.2f} s after the stop"
+    desk.wait("STOP written; not confirmed", 2)
+
+
+FILLER = Event(seq=1, kind="note", text="x" * 60)
+
+
+def unread(carrier: Any) -> None:
+    """Fill the carrier's socket until a send of its own would wait."""
+    record = pack_record(FILLER.TYPE, FILLER.to_payload())
+    while select.select([], [carrier._sock], [], 0)[1]:
+        carrier._sock.send(record, socket.MSG_DONTWAIT)
+
+
+@pytest.mark.parametrize("behind", ["its own send", "a reset that is stuck"])
+def test_a_ctrl_c_stop_does_not_wait_for_a_service_that_stopped_reading(
+    odd_service: Callable[[bool], OddService], desks: Callable[..., Desk], behind: str
+) -> None:
+    service = odd_service(True)  # answers the attach, then reads nothing of it
+    desk = desks(service.path)
+    desk.wait("attached to the robot link service: robot connection up")
+    desk.sees(lambda state: True)
+    carrier = desk.console._station.carrier
+    unread(carrier)
+    if behind == "a reset that is stuck":
+        desk.type("reset")
+        until(carrier._send_lock.locked, "the RESET in its send")
+    pressed = time.monotonic()
+    desk.console.interrupt()
+    at, connection = service.wait_stop(1)
+    took = at - pressed
+    assert took < 0.8, f"the STOP reached the service {took:.2f} s after the Ctrl+C"
+    assert connection == 2  # written raw: nothing of it went into the stuck socket
+    desk.wait("\astop: STOP written; not confirmed: look at the Thor terminal")
+    assert desk.count("stop: sent") == 0
+    desk.wait("ROBOT LINK SERVICE GONE: ")
+    time.sleep(0.3)
+    assert len(service.stops()) == 1  # one STOP, never both ways
+
+
+def test_a_command_left_open_is_dropped_when_the_robot_connection_is_lost(
+    desks: Callable[..., Desk],
+) -> None:
+    robot_end, console_end = loopback_pair()
+    carrier = Direct(console_end)
+    desk = desks(None, attach=lambda *args: carrier)
+    desk.wait("attached to the robot link service")
+    send(robot_end, welcome())
+    send(robot_end, robot_state(seq=1))
+    desk.sees(lambda state: True)
+    desk.wait("robot connection up | ")  # the console has seen the robot up
+    desk.type("reset")
+    command = decode(*robot_end.receive(WAIT_S))
+    send(robot_end, Result(command.command_id, "accepted"))
+    desk.wait("reset: RESULT accepted")
+    client = desk.console._station.client
+    assert [r.status for r in client.results(command.command_id)] == ["accepted"]
+    # The robot connection is lost, and no RESULT ends the command.
+    carrier.status = LocalStatus(False, "link lost", "s1", None, False, {"console": 1})
+    desk.wait("ROBOT CONNECTION LOST: link lost")
+    assert desk.wait("reset: no RESULT will come") == (
+        "reset: no RESULT will come: the robot connection was lost"
+    )
+    # Neither the console nor its client keeps anything of that command.
+    assert desk.console._mine == {} and client._results == {}
+
+
 # Ctrl+C while the console closes
 
 
@@ -1083,6 +1236,141 @@ def test_ctrl_c_while_the_console_closes_reaches_the_robot(
     assert desk.end() == EXIT_OK
     assert robot.settled() == [Stop(reason=STOP_CTRL_C, sender="console")]
     assert "STOP written; not confirmed" in desk.said[-1]
+
+
+def test_ctrl_c_served_while_the_console_closes_goes_raw_and_once(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    raw: list[dict[str, Any]] = []
+
+    def raw_stop(path: str | None, **fields: Any) -> RawStop:
+        raw.append(fields)
+        return RawStop(True, "")
+
+    desk = desks(robot.bench.path, raw_stop=raw_stop)
+    desk.wait("attached to the robot link service: robot connection up")
+    desk.sees(lambda state: True)
+    console = desk.console
+    detach = console._detach
+
+    def detach_once_the_ctrl_c_was_served() -> None:
+        # The console closes and is still attached while the stop thread runs.
+        console.interrupt()
+        until(lambda: raw or robot.forwarded, "the STOP")
+        detach()
+
+    console._detach = detach_once_the_ctrl_c_was_served
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    # Nothing goes through a client that is being closed.
+    assert robot.settled() == []
+    assert raw == [{"reason": STOP_CTRL_C, "sender": "console", "name": "console"}]
+    assert desk.said[-2:] == [
+        QUIT_NOTE,
+        "\astop: STOP written; not confirmed: look at the Thor terminal",
+    ]
+
+
+class Held(Direct):
+    """A carrier whose STOP goes out and whose send then waits for `go`."""
+
+    def __init__(self, end: Any) -> None:
+        super().__init__(end)
+        self.go = threading.Event()
+        self.out = threading.Event()
+        self.send_reliable = self._send
+
+    def _send(self, msg_type: int, payload: bytes) -> None:
+        self._end.send_reliable(msg_type, payload)
+        if msg_type == Stop.TYPE:
+            self.out.set()
+            assert self.go.wait(WAIT_S)
+
+
+def test_a_stop_that_went_out_just_before_quit_is_still_said(
+    desks: Callable[..., Desk],
+) -> None:
+    raw: list[Any] = []
+    robot_end, console_end = loopback_pair()
+    carrier = Held(console_end)
+    desk = desks(
+        None, attach=lambda *args: carrier, raw_stop=lambda *a, **k: raw.append(k)
+    )
+    desk.wait("attached to the robot link service")
+    console = desk.console
+    detach = console._detach
+
+    def detach_after_the_stop_thread_went_on() -> None:
+        carrier.go.set()  # the send of the STOP returns: the console closes now
+        end = time.monotonic() + 0.5
+        while desk.count("stop: sent") == 0 and time.monotonic() < end:
+            time.sleep(0.01)
+        detach()
+
+    console._detach = detach_after_the_stop_thread_went_on
+    console.interrupt()
+    assert carrier.out.wait(WAIT_S)  # the STOP is out, its line is not said yet
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    assert decode(*robot_end.receive(WAIT_S)) == Stop(STOP_CTRL_C, "console")
+    assert robot_end.receive(0.2) is None and raw == []
+    assert desk.said[-2:] == [
+        QUIT_NOTE,
+        "\astop: sent; not confirmed: the console ends, look at the Thor terminal",
+    ]
+
+
+def test_ctrl_c_after_quit_while_the_ticker_still_attaches_is_a_stop(
+    odd_service: Callable[[bool], OddService], desks: Callable[..., Desk]
+) -> None:
+    service = odd_service(False)  # every attempt to attach waits its 2 s
+    desk = desks(service.path)
+    desk.wait("trying again every 2 s")
+    # The ticker has just begun its next attempt.
+    service.wait_connections(service.connections + 1)
+    desk.type("quit")
+    desk.wait(QUIT_NOTE)
+    time.sleep(0.2)
+    assert desk.running  # the console waits for its ticker
+    desk.console.interrupt()
+    assert desk.end() == EXIT_OK
+    (stop,) = service.stops()
+    assert stop[1] > 2  # written raw, on a connection of its own
+    assert desk.said[-2:] == [
+        QUIT_NOTE,
+        "\astop: STOP written; not confirmed: look at the Thor terminal",
+    ]
+
+
+def test_ctrl_c_right_after_the_stop_thread_ended_is_a_stop(
+    tmp_path: Path, desks: Callable[..., Desk]
+) -> None:
+    raw: list[dict[str, Any]] = []
+
+    def raw_stop(path: str | None, **fields: Any) -> RawStop:
+        raw.append(fields)
+        return RawStop(True, "")
+
+    desk = desks(str(tmp_path / "none.sock"), raw_stop=raw_stop)
+    desk.wait("cannot attach to")
+    console = desk.console
+    stop_thread = console._threads[1]
+    join = stop_thread.join
+
+    def join_then_ctrl_c(timeout: float | None = None) -> None:
+        join(timeout)
+        if not stop_thread.is_alive() and not raw:
+            console.interrupt()  # nobody reads the interrupts any more
+
+    stop_thread.join = join_then_ctrl_c
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    assert raw == [{"reason": STOP_CTRL_C, "sender": "console", "name": "console"}]
+    assert desk.said[-2:] == [
+        QUIT_NOTE,
+        "\astop: STOP written; not confirmed: look at the Thor terminal",
+    ]
+    assert console._interrupts.empty()
 
 
 # RESULTs are not kept

@@ -4,7 +4,11 @@
 # The live view's settings: a camera picture and the robot's status for a browser
 # on the workstation, and VIEW_STATUS for the Thor. Every number here is a first
 # value; none was measured on a robot. Times are in s. A relative path is taken
-# from this file's folder; a path may name an environment variable as ${NAME}.
+# from this file's folder; a path may name ${AGENTIC_REMOTE_EXPERIMENT_DIR},
+# ${AGENTIC_REMOTE_CAMERA_PR} or ${AGENTIC_REMOTE_ENV_DIR}; the program refuses
+# another ${NAME}, one that is not set, one whose value is not an absolute path
+# and any other $. This holds for socket_path, state_dir and the paths of the
+# camera block.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names.

@@ -14,10 +14,50 @@
 #                                  request (--camera link)
 #   AGENTIC_REMOTE_ENV_DIR         the workstation's APAI Python environment
 #                                  (setup_workstation_env.sh), as an absolute
-#                                  path; optional
+#                                  path without a "." or ".." component;
+#                                  optional. Without it the agent program keeps
+#                                  the three caches below in its state folder.
+#
+# Exit code 2, and nothing is started, when one of these cannot be used, and
+# when TRITON_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR or YOLO_CONFIG_DIR is not an
+# absolute path, holds a "." or ".." component, or names a place inside the
+# experiment folder (symbolic links are followed).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+refuse() {
+  echo "run_agent.sh: $1" >&2
+  exit 2
+}
+
+# resolved <path>: prints the path with the symbolic links of its part that
+# exists followed, and an "x" after it, which keeps a newline at the end of a
+# name. What does not exist yet is kept as it is written.
+resolved() {
+  local path="$1" tail=""
+  while [[ "${path}" == *//* ]]; do
+    path="${path//\/\///}"
+  done
+  while [[ "${path}" == */ && "${path}" != "/" ]]; do
+    path="${path%/}"
+  done
+  while [[ ! -d "${path}" ]]; do
+    tail="/${path##*/}${tail}"
+    if [[ "${path}" != */* ]]; then
+      path="."
+      break
+    fi
+    path="${path%/*}"
+    path="${path:-/}"
+  done
+  path="$(cd "${path}" && pwd -P && printf x)"
+  path="${path%$'\n'x}"
+  if [[ "${path}" == "/" ]]; then
+    path=""
+  fi
+  printf '%sx' "${path}${tail}"
+}
 
 python="${AGENTIC_REMOTE_AGENT_PYTHON:-}"
 if [[ -z "${python}" || ! -x "${python}" ]]; then
@@ -36,25 +76,13 @@ if [[ -n "${AGENTIC_REMOTE_CAMERA_PR:-}" ]]; then
   export AGENTIC_REMOTE_CAMERA_PR
 fi
 # The experiment's code keeps these caches inside the experiment folder unless
-# the variables name another place. One that is set and not empty is kept,
-# unless it names a place inside the experiment folder.
+# the variables name another place. One that is set and not empty is kept.
 if [[ -n "${AGENTIC_REMOTE_ENV_DIR:-}" ]]; then
   if [[ "${AGENTIC_REMOTE_ENV_DIR}" != /* ]]; then
-    echo "run_agent.sh: AGENTIC_REMOTE_ENV_DIR must be an absolute path (it is '${AGENTIC_REMOTE_ENV_DIR}')" >&2
-    exit 2
+    refuse "AGENTIC_REMOTE_ENV_DIR must be an absolute path (it is '${AGENTIC_REMOTE_ENV_DIR}')"
   fi
-  experiment="${AGENTIC_REMOTE_EXPERIMENT_DIR:-}"
-  while [[ "${experiment}" == */ && "${experiment}" != "/" ]]; do
-    experiment="${experiment%/}"
-  done
-  if [[ -n "${experiment}" ]]; then
-    for name in TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR YOLO_CONFIG_DIR; do
-      value="${!name:-}"
-      if [[ "${value}" == "${experiment}" || "${value}" == "${experiment}/"* ]]; then
-        echo "run_agent.sh: ${name} names a place inside the experiment folder (${value}); unset it, or name a folder outside ${experiment}" >&2
-        exit 2
-      fi
-    done
+  if [[ "${AGENTIC_REMOTE_ENV_DIR}/" == */./* || "${AGENTIC_REMOTE_ENV_DIR}/" == */../* ]]; then
+    refuse "AGENTIC_REMOTE_ENV_DIR must not hold a '.' or '..' component (it is '${AGENTIC_REMOTE_ENV_DIR}')"
   fi
   export AGENTIC_REMOTE_ENV_DIR
   caches="${AGENTIC_REMOTE_ENV_DIR}/caches"
@@ -62,6 +90,34 @@ if [[ -n "${AGENTIC_REMOTE_ENV_DIR:-}" ]]; then
   export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${caches}/torchinductor}"
   export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-${caches}/ultralytics}"
 fi
+# None of the three may name a place inside the experiment folder, however it
+# is spelled: what the program will get is compared, with the links followed.
+experiment="${AGENTIC_REMOTE_EXPERIMENT_DIR:-}"
+inside=""
+if [[ -n "${experiment}" ]]; then
+  inside="$(resolved "${experiment}")"
+  inside="${inside%x}"
+fi
+for name in TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR YOLO_CONFIG_DIR; do
+  value="${!name:-}"
+  if [[ -z "${value}" ]]; then
+    continue
+  fi
+  if [[ "${value}" != /* ]]; then
+    refuse "${name} must be an absolute path (it is '${value}')"
+  fi
+  if [[ "${value}/" == */./* || "${value}/" == */../* ]]; then
+    refuse "${name} must not hold a '.' or '..' component (it is '${value}')"
+  fi
+  if [[ -z "${experiment}" ]]; then
+    continue
+  fi
+  place="$(resolved "${value}")"
+  place="${place%x}"
+  if [[ "${place}" == "${inside}" || "${place}" == "${inside}/"* ]]; then
+    refuse "${name} names a place inside the experiment folder (${value}); unset it, or name a folder outside ${experiment}"
+  fi
+done
 
 # One card for this program and its children: index 0 in PCI order. The camera
 # receiver and the camera frame bridge must sit on the same card.

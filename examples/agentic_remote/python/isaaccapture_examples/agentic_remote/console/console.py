@@ -16,6 +16,7 @@ import argparse
 import contextlib
 import logging
 import queue
+import select
 import signal
 import sys
 import termios
@@ -80,6 +81,9 @@ STATUS_CHANGE_S = 1.0
 STATUS_EVERY_S = 10.0
 # How long a STOP waits for a ROBOT_STATE with a higher stop number.
 STOP_WAIT_S = 5.0
+# How long a STOP waits for a robot link service that does not read its
+# socket, before it is written raw on a connection of its own.
+STOP_SEND_S = 0.2
 # Not attached: one attempt every ATTACH_EVERY_S, ATTACH_TRIES times, then
 # only on the typed attach.
 ATTACH_EVERY_S = 2.0
@@ -143,7 +147,9 @@ class Console:
 
     run() serves the typed lines on the caller's thread. A writer thread prints,
     so a terminal that blocks holds up neither a STOP nor the receive thread;
-    a stop thread turns each interrupt() into a STOP; a ticker calls tick().
+    a stop thread turns each interrupt() into a STOP; a ticker calls tick(),
+    which also makes every attempt to attach, so a typed stop never waits
+    behind one.
     """
 
     def __init__(
@@ -156,14 +162,16 @@ class Console:
         attach: Attach = connect_local,
         raw_stop: Callable[..., RawStop] = send_raw_stop,
         clock: Clock | None = None,
-        flush_input: Callable[[], None] | None = None,
+        flush_input: Callable[[], bool | None] | None = None,
         tick_s: float | None = TICK_S,
     ) -> None:
         """lines yields the typed lines; say writes one line (None: print).
 
-        flush_input drops what was typed and not yet read; it runs before a
-        question is answered. tick_s None starts no ticker: the caller calls
-        tick(), which is how a test moves a fake clock.
+        flush_input drops what was typed and not yet read, and returns
+        whether a stop was among it; it runs before a question is answered.
+        tick_s None starts no ticker: the caller calls tick(), which is how a
+        test moves a fake clock, and the attempts to attach run where they
+        are asked for.
         """
         self._lines = iter(lines)
         self._write = _print_line if say is None else say
@@ -192,6 +200,7 @@ class Console:
         self._notices: list[LocalNotice] = []  # of the carrier, as last seen
         self._tries_left = ATTACH_TRIES
         self._next_try = 0.0
+        self._attach_asked = False  # the next tick makes an attempt of its own
         self._why = ""  # why the last attempt to attach failed
         self._status_key: object = None
         self._status_at: float | None = None
@@ -223,7 +232,7 @@ class Console:
         self._start()
         self._say(BANNER)
         try:
-            self._attach(self._clock.monotonic())
+            self._ask_attach()
             while (line := self._next_line()) is not None:
                 if not self._serve(line):
                     break
@@ -234,9 +243,9 @@ class Console:
     def close(self, last: str | None = None) -> None:
         """Detach and end the console's threads; the queued lines are written.
 
-        `last` is said after every other line but a late STOP's. The stop
-        thread ends last of the sending: a Ctrl+C while the console detaches
-        is still a STOP, written raw.
+        `last` is said after every other line but a late STOP's. A Ctrl+C
+        while the console detaches and ends its ticker and its stop thread is
+        still a STOP, written raw; the writer ends after that.
         """
         with self._lock:
             closing, self._closing = self._closing, True
@@ -247,15 +256,26 @@ class Console:
                 self._out.put(last)
             self._ended.set()  # from here only a STOP's lines are written
         self._detach()
-        # Every Ctrl+C up to here becomes its STOP before the stop thread ends.
+        # The ticker first: it can sit in an attempt to attach, and the stop
+        # thread serves every Ctrl+C until then.
+        for thread in self._threads[2:]:
+            self._join(thread)
         self._interrupts.put(None)
-        if self._started:
-            self._threads[1].join(_JOIN_S)
+        self._join(self._threads[1])
+        # A Ctrl+C the stop thread no longer took.
+        while True:
+            try:
+                reason = self._interrupts.get_nowait()
+            except queue.Empty:
+                break
+            if reason is not None:
+                self._interrupted(reason)
         self._out.put(None)
-        if self._started:
-            for thread in self._threads:
-                if thread is not threading.current_thread():
-                    thread.join(_JOIN_S)
+        self._join(self._threads[0])
+
+    def _join(self, thread: threading.Thread) -> None:
+        if self._started and thread is not threading.current_thread():
+            thread.join(_JOIN_S)
 
     def interrupt(self) -> None:
         """What Ctrl+C does: take back an open question, then STOP.
@@ -334,17 +354,20 @@ class Console:
         """Look at the clock, the carrier and what waits; the ticker calls it."""
         with self._ticking:
             now = self._clock.monotonic()
-            self._watch_carrier(now)
             with self._lock:
+                idle = self._station is None
+                asked, self._attach_asked = idle and self._attach_asked, False
                 due = (
-                    self._station is None
+                    idle
+                    and not asked
                     and self._tries_left > 0
                     and now >= self._next_try
                 )
                 if due:
                     self._tries_left -= 1
-            if due:
-                self._attach(now, again=True)
+            if asked or due:
+                self._attach(now, again=due)
+            self._watch_carrier(now)
             self._check_stop()
             self._say_repeats()
             self._say_status(now)
@@ -438,6 +461,18 @@ class Console:
 
     # Attaching
 
+    def _ask_attach(self) -> None:
+        """One attempt to attach, made by the next tick: this thread goes on.
+
+        An attempt can take ATTACH_TIMEOUT_S, and the typing thread must be
+        free to read a stop. Without a ticker the attempt is made here.
+        """
+        if self._tick_s is None:
+            self._attach(self._clock.monotonic())
+            return
+        with self._lock:
+            self._attach_asked = True
+
     def _attach(self, now: float, again: bool = False) -> bool:
         """One attempt to attach; whether the console is attached after it.
 
@@ -472,6 +507,10 @@ class Console:
                         f"trying again every {ATTACH_EVERY_S:g} s, {left} times at most"
                     )
                 return False
+            # A STOP this carrier cannot take at once is written raw (_stop).
+            bound_stop = getattr(carrier, "bound_stop", None)
+            if bound_stop is not None:
+                bound_stop(STOP_SEND_S)
             # The lock: on_message() waits until the station is written down.
             with self._lock:
                 if self._closing:
@@ -500,15 +539,19 @@ class Console:
 
     def _stop_loop(self) -> None:
         while (reason := self._interrupts.get()) is not None:
-            try:
-                with self._lock:
-                    withdrawn, self._question = self._question, 0
-                if withdrawn:
-                    self._say("question taken back (Ctrl+C); nothing sent for it")
-                self._stop(reason)
-            except Exception:
-                _log.exception("a Ctrl+C at the operator console failed")
-                self._say(f"{BELL_CHAR}STOP FAILED HERE: {USE_THOR}", late=True)
+            self._interrupted(reason)
+
+    def _interrupted(self, reason: str) -> None:
+        """One Ctrl+C: take back an open question, then STOP."""
+        try:
+            with self._lock:
+                withdrawn, self._question = self._question, 0
+            if withdrawn:
+                self._say("question taken back (Ctrl+C); nothing sent for it")
+            self._stop(reason)
+        except Exception:
+            _log.exception("a Ctrl+C at the operator console failed")
+            self._say(f"{BELL_CHAR}STOP FAILED HERE: {USE_THOR}", late=True)
 
     def _stop(self, reason: str) -> None:
         """One STOP: through the client when attached, else written raw."""
@@ -522,7 +565,17 @@ class Console:
         if attached:
             station.client.stop(reason, SENDER)
             if station.carrier.alive:
-                self._say("stop: sent; waiting for the robot app to show it")
+                if self._ended.is_set():
+                    # The console closes: nobody waits for the robot app here.
+                    self._say(
+                        f"{BELL_CHAR}stop: sent; not confirmed: the console "
+                        "ends, look at the Thor terminal",
+                        late=True,
+                    )
+                else:
+                    self._say(
+                        "stop: sent; waiting for the robot app to show it", late=True
+                    )
                 return
             # The carrier ended under the send: the STOP may not be out.
         raw = self._raw_stop(self._path, reason=reason, sender=SENDER, name=self._name)
@@ -601,7 +654,7 @@ class Console:
             if attached:
                 self._say("attach: attached already")
             else:
-                self._attach(self._clock.monotonic())
+                self._ask_attach()
         elif word == "reset" or word in CONFIRMED:
             self._command(word)
         else:
@@ -656,8 +709,9 @@ class Console:
                 return
             typed = answer
         # The id is written down before the send, so its RESULT is known as the
-        # console's own; the send runs outside the lock, so a STOP never waits
-        # behind it.
+        # console's own; the send runs outside the console's lock. A STOP waits
+        # at most STOP_SEND_S for a send that is stuck in the carrier, and is
+        # then written raw.
         command_id = station.client.new_id()
         with self._lock:
             same = self._station is station
@@ -699,7 +753,7 @@ class Console:
 
         None after a Ctrl+C, at the end of the input and for a typed stop,
         which is a STOP wherever it is typed. What was typed before the
-        question was written is dropped.
+        question was written is dropped; a stop among it is a STOP.
         """
         with self._lock:
             self._asked += 1
@@ -707,8 +761,13 @@ class Console:
         self._say(state_text(state))
         self._say(prompt.rstrip())
         self._flush()
-        if self._flush_input is not None:
-            self._flush_input()
+        if self._flush_input is not None and self._flush_input():
+            with self._lock:
+                self._question = 0
+            self._say("stop was typed before the question: the question is taken back")
+            self._stop(STOP_REASON)
+            self._say(NOT_CONFIRMED)
+            return None
         line = self._next_line()
         with self._lock:
             withdrawn = self._question != number
@@ -767,9 +826,22 @@ def _typed_lines() -> Iterator[str]:
         yield line
 
 
-def _drop_typed_ahead() -> None:
+def _drop_typed_ahead() -> bool:
+    """Drop what was typed and not yet read; whether a stop was among it.
+
+    The whole lines that wait are read and only looked at for a stop; the
+    rest of the terminal's input is flushed.
+    """
+    stop = False
     with contextlib.suppress(OSError, ValueError, termios.error):
-        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        terminal = sys.stdin.fileno()
+        while select.select([terminal], [], [], 0)[0]:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            stop = stop or confirms(line, "stop")
+        termios.tcflush(terminal, termios.TCIFLUSH)
+    return stop
 
 
 def _unusable() -> str | None:

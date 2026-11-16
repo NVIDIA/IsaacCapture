@@ -25,6 +25,12 @@ from ..protocol.messages import Event, Message, RobotState, ViewStatus, Welcome
 AGE_WHEN_NOT_LIVE_S = 3600.0
 # How far ahead of the Thor's wall clock an exposure may lie and still count.
 FUTURE_TOLERANCE_S = 0.05
+# A picture that arrives less than this long after a step of the Thor's wall
+# clock, or after the model's first ROBOT_STATE, can be dated on another wall
+# clock than the one its age is measured on: it is never live. Longer than the
+# camera pictures take to arrive; the agent's camera refuses camera frames for
+# as long after a step (CLOCK_STEP_QUIET_S of agent/camera/stereo_camera.py).
+CLOCK_STEP_QUIET_S = 3.0
 EVENTS_KEPT = 10
 # Pictures whose times are kept for an acknowledgement that comes late.
 PICTURES_REMEMBERED = 64
@@ -54,8 +60,10 @@ class ViewModel:
         self._welcome: Welcome | None = None
         self._state: RobotState | None = None
         self._state_at = 0.0
-        # When the Thor's wall clock last stepped against its monotonic clock.
-        self._clock_step_at: float | None = None
+        self._clock_quiet_s = float(CLOCK_STEP_QUIET_S)
+        # When the first ROBOT_STATE arrived, or the newest one that showed a
+        # step of the Thor's wall clock against its monotonic clock.
+        self._clock_mark_at: float | None = None
         self._events: deque[Event] = deque(maxlen=EVENTS_KEPT)
         self._local: LocalStatus | None = None
         self._service_alive = True
@@ -74,13 +82,17 @@ class ViewModel:
         with self._lock:
             if isinstance(message, RobotState):
                 earlier = self._state
+                # Before the first one nothing says on which wall clock the
+                # pictures taken in so far are dated.
+                stepped = earlier is None
                 if earlier is not None:
                     # As AgentLink._take_state: the exposures taken in so far
                     # are dated on the wall clock from before the step.
                     was = earlier.clock_wall_s - earlier.clock_mono_s
                     now = message.clock_wall_s - message.clock_mono_s
-                    if abs(now - was) > CLOCK_STEP_S:
-                        self._clock_step_at = now_mono
+                    stepped = abs(now - was) > CLOCK_STEP_S
+                if stepped:
+                    self._clock_mark_at = now_mono
                 self._state = message
                 self._state_at = now_mono
             elif isinstance(message, Event):
@@ -155,10 +167,12 @@ class ViewModel:
 
         Live only when the page acknowledged, as visible and less than
         ack_timeout_s ago, a picture of the camera connection whose exposure
-        does not lie in the Thor's future, a fresh ROBOT_STATE gives the
-        Thor's wall clock, and that clock did not step against the Thor's
-        monotonic clock within the last ack_timeout_s. The age is then the larger of that picture's age
-        since its exposure and since its arrival on this machine.
+        does not lie in the Thor's future, and a fresh ROBOT_STATE gives the
+        Thor's wall clock. The picture must have arrived CLOCK_STEP_QUIET_S or
+        more after the model's first ROBOT_STATE and after the newest step of
+        that clock against the Thor's monotonic clock: an earlier one is never
+        live. The age is then the larger of that picture's age since its
+        exposure and since its arrival on this machine.
         """
         with self._lock:
             age = self._live_age(now_mono, thor_wall_now)
@@ -224,8 +238,8 @@ class ViewModel:
         exposure_wall_s, arrival_mono_s, invented = times
         if invented:
             return None
-        stepped = self._clock_step_at
-        if stepped is not None and now_mono - stepped < self._ack_timeout_s:
+        mark = self._clock_mark_at
+        if mark is None or arrival_mono_s - mark < self._clock_quiet_s:
             return None
         # The model's own ROBOT_STATE must be fresh, whatever clock was handed in.
         if thor_wall_now is None or self._thor_wall_now(now_mono) is None:

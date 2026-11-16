@@ -11,11 +11,13 @@ it in front of the real robot app on a link of 127.0.0.1.
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import os
 import pty
 import select
 import signal
+import socket
 import sys
 import tempfile
 import threading
@@ -26,9 +28,17 @@ from typing import Any
 
 import pytest
 from isaaccapture_examples.agentic_remote.agent import console_cmd
-from isaaccapture_examples.agentic_remote.link_service.local import LocalRefused
+from isaaccapture_examples.agentic_remote.link_service.local import (
+    HEADER,
+    LocalRefused,
+    pack_record,
+)
 from isaaccapture_examples.agentic_remote.protocol import confirm
 from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR, YES
+from isaaccapture_examples.agentic_remote.protocol.local_messages import (
+    LocalHello,
+    LocalStatus,
+)
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     Message,
     Open,
@@ -143,6 +153,136 @@ class Console:
     def close(self) -> None:
         self._off.set()
         self._thread.join(5.0)
+
+
+class OddService:
+    """A Unix socket that takes connections as the robot link service does.
+
+    answers=False: every connection is read and nothing is answered, as by a
+    service that hangs. answers=True: the first connection gets a LOCAL_STATUS,
+    a WELCOME and a ROBOT_STATE for its LOCAL_HELLO and is not read after that,
+    as by a service that stopped reading one client; later connections are
+    read, and closed once a STOP was read on them.
+    """
+
+    WAIT_S = 10.0
+
+    def __init__(self, path: str, answers: bool) -> None:
+        self.path, self.answers = path, answers
+        # (time.monotonic(), connection number, type number) of each record read.
+        self.records: list[tuple[float, int, int]] = []
+        self.connections = 0
+        self._cond = threading.Condition()
+        self._closed = threading.Event()
+        self._socks: list[socket.socket] = []
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._listener.bind(path)
+        self._listener.listen(32)
+        self._threads = [threading.Thread(target=self._accept, daemon=True)]
+        self._threads[0].start()
+
+    def _accept(self) -> None:
+        while not self._closed.is_set():
+            try:
+                if not select.select([self._listener], [], [], 0.05)[0]:
+                    continue
+                sock, _ = self._listener.accept()
+            except (OSError, ValueError):
+                return
+            with self._cond:
+                self.connections += 1
+                number = self.connections
+                self._socks.append(sock)
+                self._cond.notify_all()
+            thread = threading.Thread(
+                target=self._serve, args=(sock, number), daemon=True
+            )
+            self._threads.append(thread)
+            thread.start()
+
+    def _serve(self, sock: socket.socket, number: int) -> None:
+        pending = b""
+        while not self._closed.is_set():
+            try:
+                if not select.select([sock], [], [], 0.05)[0]:
+                    continue
+                data = sock.recv(65536)
+            except (OSError, ValueError):
+                return
+            if not data:
+                return
+            pending += data
+            while len(pending) >= HEADER.size:
+                msg_type, length = HEADER.unpack(pending[: HEADER.size])
+                if len(pending) < HEADER.size + length:
+                    break
+                pending = pending[HEADER.size + length :]
+                with self._cond:
+                    self.records.append((time.monotonic(), number, msg_type))
+                    self._cond.notify_all()
+                if not self.answers:
+                    continue
+                if number == 1 and msg_type == LocalHello.TYPE:
+                    status = LocalStatus(True, "", "s1", None, False, {"console": 1})
+                    for message in (status, welcome(), robot_state(seq=1)):
+                        sock.sendall(pack_record(message.TYPE, message.to_payload()))
+                    return  # and this socket is never read again
+                if msg_type == Stop.TYPE:
+                    sock.close()  # a raw STOP's sender sees the end at once
+                    return
+
+    def stops(self) -> list[tuple[float, int]]:
+        """(arrival time, connection number) of every STOP read so far."""
+        with self._cond:
+            return [(at, n) for at, n, kind in self.records if kind == Stop.TYPE]
+
+    def wait_stop(self, count: int) -> tuple[float, int]:
+        """(arrival time, connection number) of the count-th STOP."""
+        with self._cond:
+            found = self._cond.wait_for(
+                lambda: sum(kind == Stop.TYPE for _, _, kind in self.records) >= count,
+                self.WAIT_S,
+            )
+        assert found, f"{len(self.stops())} of {count} STOPs came"
+        return self.stops()[count - 1]
+
+    def wait_connections(self, count: int) -> None:
+        with self._cond:
+            assert self._cond.wait_for(lambda: self.connections >= count, self.WAIT_S)
+
+    def close(self) -> None:
+        self._closed.set()
+        self._listener.close()
+        with self._cond:
+            socks = list(self._socks)
+        for sock in socks:
+            with contextlib.suppress(OSError):
+                sock.close()
+        for thread in self._threads:
+            thread.join(2.0)
+
+
+def odd_services(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Callable[[bool], OddService]]:
+    """make(answers): an OddService on a socket of its own; closed at the end."""
+    made: list[OddService] = []
+
+    def make(answers: bool) -> OddService:
+        path = str(tmp_path_factory.mktemp("os") / "s.sock")
+        made.append(OddService(path, answers))
+        return made[-1]
+
+    yield make
+    for service in made:
+        service.close()
+
+
+@pytest.fixture
+def odd_service(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[Callable[[bool], OddService]]:
+    yield from odd_services(tmp_path_factory)
 
 
 @pytest.fixture
@@ -302,6 +442,49 @@ def test_a_confirmation_cannot_come_from_a_pipe(console: Console, command: str) 
     assert console.settled() == []
 
 
+# The number of the read system call, by machine.
+_READ_CALL = {"x86_64": 0, "aarch64": 63}
+
+
+def reads_a_terminal(pid: int) -> bool | None:
+    """Whether the process's main thread waits in read() on a terminal.
+
+    None where that cannot be told: no /proc/<pid>/syscall that may be read,
+    or a machine whose call numbers are not listed.
+    """
+    number = _READ_CALL.get(os.uname().machine)
+    try:
+        fields = Path(f"/proc/{pid}/syscall").read_text().split()
+    except OSError:
+        return None
+    if number is None or not fields:
+        return None
+    if fields[0] != str(number) or len(fields) < 2:
+        return False  # running, or in another call
+    try:
+        target = os.readlink(f"/proc/{pid}/fd/{int(fields[1], 16)}")
+    except (OSError, ValueError):
+        return False
+    return target.startswith("/dev/pts/") or target == "/dev/tty"
+
+
+def await_read(pid: int, wait_s: float = 2.0, unknown_s: float = 0.1) -> None:
+    """Wait until the process reads its terminal; where unknown, unknown_s.
+
+    It must be seen reading twice, 5 ms apart: a read of a line that was
+    typed ahead ends at once and is followed by a flush.
+    """
+    end = time.monotonic() + wait_s
+    seen = 0
+    while time.monotonic() < end and seen < 2:
+        reading = reads_a_terminal(pid)
+        if reading is None:
+            time.sleep(unknown_s)
+            return
+        seen = seen + 1 if reading else 0
+        time.sleep(0.005)
+
+
 def on_a_terminal(
     child: Callable[[], Any],
     typed_before: bytes = b"",
@@ -313,10 +496,11 @@ def on_a_terminal(
     """Run child() in a new process whose terminal this test owns.
 
     typed_before is typed at once and child() starts delay_s later;
-    typed_after is typed once `marker` showed on the terminal. `then` is a
-    second (marker, what is typed once it showed after the first). Returns
-    (the repr of what child() returned or raised, whether the last marker
-    showed).
+    typed_after is typed once `marker` showed on the terminal and the child
+    reads the terminal again (what it flushes before that would be lost).
+    `then` is a second (marker, what is typed once it showed after the
+    first). Returns (the repr of what child() returned or raised, whether the
+    last marker showed).
     """
     steps = [(marker, typed_after), *([then] if then else [])]
     result = tempfile.NamedTemporaryFile(prefix="on-a-terminal-", delete=False)
@@ -347,7 +531,7 @@ def on_a_terminal(
                 except OSError:  # the child closed the terminal
                     pass
             if answered < len(steps) and steps[answered][0] in seen:
-                time.sleep(0.1)  # the child reads by now
+                await_read(pid)
                 os.write(master, steps[answered][1])
                 answered += 1
             ended = os.waitpid(pid, os.WNOHANG)[0] != 0
@@ -535,6 +719,70 @@ def test_a_stop_sent_before_any_state_waits_for_a_higher_stop_number(
     assert console_cmd.new_session(old, other)
     assert not console_cmd.new_session(old, later)
     assert not console_cmd.new_session(None, other)
+
+
+def test_a_stop_is_sent_at_once_while_no_robot_state_has_arrived(
+    bench: Bench,
+) -> None:
+    console = Console(bench, robot=False)
+    console.thor = bench.robot(None)  # connected; no ROBOT_STATE comes
+    arrived: list[float] = []
+    console.reply = lambda message: arrived.append(time.monotonic()) or []
+    try:
+        began = time.monotonic()
+        assert console.run("stop", "--timeout", "0.5") == console_cmd.EXIT_FAILED
+        (message,) = console.settled()
+        assert message == Stop(reason=console_cmd.STOP_REASON, sender="console")
+        took = arrived[0] - began
+        assert took < 1.0, f"the STOP reached the robot side after {took:.2f} s"
+        assert "no ROBOT_STATE showed a higher stop number" in console.said[-1]
+    finally:
+        console.close()
+
+
+def test_a_stop_sent_before_any_state_is_answered_by_a_later_higher_stop_number(
+    bench: Bench,
+) -> None:
+    console = Console(bench, robot=False)
+    console.thor = thor = bench.robot(None)  # connected; no ROBOT_STATE yet
+    old = dataclasses.replace(
+        robot_state(seq=1, stop_number=7), stop_level="stop", motion="hold"
+    )
+    later = dataclasses.replace(old, seq=2, stop_number=8)
+
+    def reply(message: Message) -> list[Message]:
+        # The first state is of an earlier STOP; this one shows 0.3 s later.
+        threading.Timer(0.3, thor.send, (later,)).start()
+        return [welcome(), old]
+
+    console.reply = reply
+    try:
+        assert console.run("stop", "--timeout", "3") == console_cmd.EXIT_OK
+        assert console.said[-1].startswith("stop: taken. ROBOT_STATE: ")
+        assert "stop number 8, stop level stop" in console.said[-1]
+    finally:
+        console.close()
+
+
+def test_a_stop_does_not_wait_out_a_service_that_takes_the_connection_and_is_silent(
+    odd_service: Callable[[bool], OddService],
+) -> None:
+    service = odd_service(False)
+    said: list[str] = []
+    began = time.monotonic()
+    code = console_cmd.main(["--socket", service.path, "stop"], say=said.append)
+    at, connection = service.wait_stop(1)
+    took = at - began
+    assert took < 1.0, f"the STOP was written {took:.2f} s after the command began"
+    assert connection == 2  # raw, after the attach was given up
+    assert code == console_cmd.EXIT_FAILED
+    assert said == [
+        "stop: cannot attach to the robot link service: the robot link service "
+        f"at {service.path} did not answer in 0.5 s. STOP written; not confirmed: "
+        "look at the Thor terminal"
+    ]
+    # Every other command gives the service its 5 s.
+    assert (console_cmd.STOP_ATTACH_S, console_cmd.ATTACH_S) == (0.5, 5.0)
 
 
 def test_a_stop_without_a_robot_connection_prints_the_services_notice(

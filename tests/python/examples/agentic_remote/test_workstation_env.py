@@ -107,6 +107,7 @@ def test_the_launcher_keeps_a_cache_variable_that_is_set(tmp_path: Path) -> None
 def test_without_the_environment_folder_the_launcher_sets_no_cache(
     tmp_path: Path, given: dict[str, str]
 ) -> None:
+    # The agent program then keeps the caches under its state folder.
     seen = run_agent(tmp_path, **given)
     for name in CACHES:
         assert seen[name] == "unset"
@@ -114,6 +115,15 @@ def test_without_the_environment_folder_the_launcher_sets_no_cache(
     seen = run_agent(tmp_path, **given, TORCHINDUCTOR_CACHE_DIR="/mine")
     assert seen["TORCHINDUCTOR_CACHE_DIR"] == "/mine"
     assert seen["TRITON_CACHE_DIR"] == "unset"
+    # Unless it names a place inside the experiment folder.
+    experiment = tmp_path / "experiment"
+    given["AGENTIC_REMOTE_EXPERIMENT_DIR"] = str(experiment)
+    for name in CACHES:
+        value = f"{experiment}/.state/thor/ffs/{CACHES[name]}"
+        done = start_agent(tmp_path, **given, **{name: value})
+        agent_refused(done, f"{name} names a place inside the experiment folder")
+    seen = run_agent(tmp_path, **given, TORCHINDUCTOR_CACHE_DIR="/mine")
+    assert seen["TORCHINDUCTOR_CACHE_DIR"] == "/mine"
 
 
 @pytest.mark.parametrize("folder", ["env", "./env", "../env"])
@@ -142,6 +152,100 @@ def test_the_launcher_refuses_a_cache_variable_into_the_experiment_folder(
     # A folder whose name only begins like the experiment folder's is kept.
     beside = f"{experiment}-caches/x"
     assert run_agent(tmp_path, **given, **{name: beside})[name] == beside
+
+
+def tree(folder: Path) -> list[str]:
+    """Every file and folder under a folder, links not followed."""
+    return sorted(str(path.relative_to(folder)) for path in folder.rglob("*"))
+
+
+@pytest.mark.parametrize("with_env_dir", [True, False])
+def test_the_launcher_refuses_a_cache_into_the_experiment_folder_however_spelled(
+    tmp_path: Path, with_env_dir: bool
+) -> None:
+    experiment = tmp_path / "checkout" / "experiment"
+    (experiment / ".state" / "cache").mkdir(parents=True)
+    (tmp_path / "beside").mkdir()
+    (tmp_path / "link-to-experiment").symlink_to(experiment)
+    (tmp_path / "fast-disk").symlink_to(experiment / ".state")
+    given = {"AGENTIC_REMOTE_EXPERIMENT_DIR": str(experiment)}
+    if with_env_dir:
+        given["AGENTIC_REMOTE_ENV_DIR"] = str(tmp_path / "env")
+    inside = "names a place inside the experiment folder"
+    dots = "must not hold a '.' or '..' component"
+    cases = {
+        f"{tmp_path}/fast-disk/cache": inside,  # through a symbolic link
+        f"{tmp_path}/link-to-experiment/x": inside,
+        f"{tmp_path}/checkout//experiment/.state": inside,
+        f"{experiment}/not/there/yet": inside,
+        f"{experiment}/": inside,
+        f"{tmp_path}/beside/../checkout/experiment/.state": dots,
+        f"{tmp_path}/checkout/./experiment": dots,
+        # Outside, and not called inside for the way it is written.
+        f"{experiment}/../beside": dots,
+        ".state/cache": "must be an absolute path",
+    }
+    before = tree(tmp_path / "checkout")
+    for name in CACHES:
+        for value, piece in cases.items():
+            done = start_agent(tmp_path, **given, **{name: value})
+            agent_refused(done, f"{name} {piece}")
+            assert value in done.stderr
+    # The experiment folder named through a link, or with two slashes, is the same.
+    for named in (
+        f"{tmp_path}/link-to-experiment",
+        f"{tmp_path}/checkout//experiment/",
+    ):
+        given["AGENTIC_REMOTE_EXPERIMENT_DIR"] = named
+        done = start_agent(tmp_path, **given, YOLO_CONFIG_DIR=f"{experiment}/.state/x")
+        agent_refused(done, f"YOLO_CONFIG_DIR {inside}")
+    # A folder beside it, and one whose name begins like it, are kept.
+    for value in (f"{tmp_path}/beside/x", f"{experiment}-caches"):
+        seen = run_agent(tmp_path, **given, TRITON_CACHE_DIR=value)
+        assert seen["TRITON_CACHE_DIR"] == value
+    assert tree(tmp_path / "checkout") == before  # the launcher made nothing
+
+
+def test_the_launcher_refuses_an_environment_folder_inside_the_experiment_folder(
+    tmp_path: Path,
+) -> None:
+    experiment = tmp_path / "experiment"
+    experiment.mkdir()
+    (tmp_path / "envs").symlink_to(experiment)
+    given = {"AGENTIC_REMOTE_EXPERIMENT_DIR": str(experiment)}
+    # The caches the launcher itself would name are compared too.
+    for folder in (f"{experiment}/.state/env", f"{tmp_path}/envs/env"):
+        done = start_agent(tmp_path, **given, AGENTIC_REMOTE_ENV_DIR=folder)
+        agent_refused(done, "TRITON_CACHE_DIR names a place inside the experiment")
+        assert f"({folder}/caches/triton)" in done.stderr
+    # A cache the caller names elsewhere does not make that folder usable.
+    done = start_agent(
+        tmp_path,
+        **given,
+        AGENTIC_REMOTE_ENV_DIR=f"{experiment}/env",
+        TRITON_CACHE_DIR="/elsewhere/triton",
+    )
+    agent_refused(done, "TORCHINDUCTOR_CACHE_DIR names a place inside the experiment")
+    # Beside the experiment folder it runs.
+    seen = run_agent(tmp_path, **given, AGENTIC_REMOTE_ENV_DIR=f"{tmp_path}/env")
+    assert seen["YOLO_CONFIG_DIR"] == f"{tmp_path}/env/caches/ultralytics"
+    assert list(experiment.iterdir()) == []
+
+
+@pytest.mark.parametrize("folder", ["env/../elsewhere", "./env", "env/.", "env/.."])
+def test_the_launcher_refuses_an_environment_folder_with_a_dot_component(
+    tmp_path: Path, folder: str
+) -> None:
+    named = f"{tmp_path}/{folder}"
+    done = start_agent(tmp_path, AGENTIC_REMOTE_ENV_DIR=named)
+    agent_refused(
+        done,
+        f"AGENTIC_REMOTE_ENV_DIR must not hold a '.' or '..' component (it is "
+        f"'{named}')",
+    )
+    # A name that only holds dots is a name.
+    seen = run_agent(tmp_path, AGENTIC_REMOTE_ENV_DIR=f"{tmp_path}/..env")
+    assert seen["TRITON_CACHE_DIR"] == f"{tmp_path}/..env/caches/triton"
 
 
 def test_the_launcher_names_the_environment_folder_in_its_text() -> None:
@@ -409,6 +513,72 @@ def test_the_script_refuses_a_folder_named_through_a_dot_component(
     for name in ("..env", "env..", ".env", "a.b"):
         done = tools.run("--dry-run", env_dir=tmp_path / name)
         assert done.returncode == 0, done.stderr
+
+
+def a_repository(folder: Path) -> Path:
+    """A folder that holds .git and one file of its owner's."""
+    (folder / ".git").mkdir(parents=True)
+    (folder / "notes.md").write_text("the owner's notes\n")
+    return folder
+
+
+@pytest.mark.parametrize("more", [(), ("--dry-run",)])
+def test_the_script_refuses_a_folder_that_is_a_link_into_a_repository(
+    tmp_path: Path, tools: Tools, more: tuple[str, ...]
+) -> None:
+    repository = a_repository(tmp_path / "repository")
+    (repository / "deep").mkdir()
+    before = tree(repository)
+    # The folder itself, and a folder above one that does not exist yet.
+    (tmp_path / "env").symlink_to(repository / "deep")
+    (tmp_path / "disk").symlink_to(repository)
+    for named in (tmp_path / "env", tmp_path / "disk" / "new" / "env"):
+        done = tools.run(*more, env_dir=named)
+        refused(done, f"{named} lies inside the git repository {repository}")
+    assert tools.calls() == [] and tree(repository) == before
+
+
+@pytest.mark.parametrize(
+    "made", ["caches", "venv", "codex", "freeze.txt", "exclude-gui-opencv.txt"]
+)
+@pytest.mark.parametrize("more", [(), ("--dry-run",), ("--with-model-client",)])
+def test_the_script_refuses_a_link_where_it_makes_something(
+    tmp_path: Path, tools: Tools, more: tuple[str, ...], made: str
+) -> None:
+    repository = a_repository(tmp_path / "repository")
+    (repository / "store").mkdir()
+    before = tree(repository)
+    folder = tmp_path / "env"
+    folder.mkdir()
+    # A link to a folder, to a file, and to nothing that is there yet.
+    for target in (repository / "store", repository / "notes.md", repository / "new"):
+        link = folder / made
+        link.symlink_to(target)
+        done = tools.run(*more, env_dir=folder)
+        refused(done, f"{link} is a symbolic link; this script makes it in the folder")
+        link.unlink()
+    assert tools.calls() == [] and tree(repository) == before
+    assert (repository / "notes.md").read_text() == "the owner's notes\n"
+    assert list(folder.iterdir()) == []
+
+
+@pytest.mark.parametrize("more", [(), ("--dry-run",)])
+def test_a_newline_at_the_end_of_a_folders_name_is_part_of_the_name(
+    tmp_path: Path, tools: Tools, more: tuple[str, ...]
+) -> None:
+    # A repository whose name ends with a newline: inside it, and the root itself.
+    repository = a_repository(tmp_path / "repo\n")
+    before = tree(repository)
+    for named in (repository / "env", repository):
+        done = tools.run(*more, env_dir=named)
+        assert done.returncode == 2, done.stdout + done.stderr
+        assert done.stdout == "" and "lies inside the git repository" in done.stderr
+    assert tools.calls() == [] and tree(repository) == before
+    # A folder of that name beside a repository of the name without it is none.
+    a_repository(tmp_path / "plain")
+    (tmp_path / "plain\n").mkdir()
+    done = tools.run("--dry-run", env_dir=tmp_path / "plain\n" / "env")
+    assert done.returncode == 0, done.stderr
 
 
 @pytest.mark.parametrize("more", [(), ("--dry-run",)])
