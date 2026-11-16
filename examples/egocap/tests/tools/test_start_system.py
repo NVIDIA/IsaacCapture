@@ -499,11 +499,15 @@ def recorded_main(monkeypatch, tmp_path: Path):
     children: list[SimpleNamespace] = []
     deploys: list[list[str]] = []
 
-    def fake_start(self, name, command, env=None, cwd=None, grace_s=ss.DEFAULT_GRACE_S, leader_only=False):
+    def fake_start(
+        self, name, command, env=None, cwd=None, grace_s=ss.DEFAULT_GRACE_S, leader_only=False, optional=False
+    ):
         log = self.workdir / f"{name}.log"
         log.write_text("")
-        children.append(SimpleNamespace(name=name, command=list(command), env=env, leader_only=leader_only))
-        managed = ss.Managed(name, SimpleNamespace(poll=lambda: None, pid=0), log, grace_s, leader_only)
+        children.append(
+            SimpleNamespace(name=name, command=list(command), env=env, leader_only=leader_only, optional=optional)
+        )
+        managed = ss.Managed(name, SimpleNamespace(poll=lambda: None, pid=0), log, grace_s, leader_only, optional)
         self.children.append(managed)
         return managed
 
@@ -563,6 +567,72 @@ def test_main_wires_chrony_into_the_bridge_and_starts_the_follower_after_it(reco
     assert names.index("timesync-follower") > names.index("bridge")
     bridge = _command(recorded_main, "bridge")
     assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in bridge
+
+
+def test_the_timing_follower_is_optional_unless_chrony_is_required(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    follower = next(c for c in recorded_main.children if c.name == "timesync-follower")
+    assert follower.optional
+    others = [c for c in recorded_main.children if c.name != "timesync-follower"]
+    assert not any(c.optional for c in others)
+
+
+def test_the_timing_follower_is_required_with_require_chrony(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--require-chrony"]) == 0
+    follower = next(c for c in recorded_main.children if c.name == "timesync-follower")
+    assert not follower.optional
+
+
+def _exited(name: str, optional: bool, tmp_path: Path, code: int = 1) -> ss.Managed:
+    return ss.Managed(
+        name,
+        SimpleNamespace(poll=lambda: code, returncode=code, pid=0),
+        tmp_path / f"{name}.log",
+        optional=optional,
+    )
+
+
+def _running(name: str, tmp_path: Path) -> ss.Managed:
+    return ss.Managed(name, SimpleNamespace(poll=lambda: None, returncode=None, pid=0), tmp_path / f"{name}.log")
+
+
+def test_watch_keeps_the_stack_up_when_an_optional_child_exits(monkeypatch, capsys, tmp_path: Path):
+    stack = SimpleNamespace(children=[_running("backend", tmp_path), _exited("timesync-follower", True, tmp_path)])
+    ticks: list[int] = []
+
+    def sleep(_seconds):
+        ticks.append(1)
+        if len(ticks) == 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(ss.time, "sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        ss.watch(stack)
+    out = capsys.readouterr().out
+    assert out.count("timesync-follower exited with 1") == 1
+    assert "preview stays up" in out
+
+
+def test_watch_returns_a_required_child_that_exits(tmp_path: Path):
+    backend = _exited("backend", False, tmp_path, code=3)
+    stack = SimpleNamespace(children=[_exited("timesync-follower", True, tmp_path), backend])
+    assert ss.watch(stack) is backend
+
+
+def test_the_required_follower_exit_stops_the_stack(tmp_path: Path):
+    follower = _exited("timesync-follower", False, tmp_path)
+    assert ss.watch(SimpleNamespace(children=[_running("backend", tmp_path), follower])) is follower
+
+
+def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Path):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+    recorded_main.deploys.clear()
+    argus = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    config = tmp_path / "argus.yaml"
+    config.write_text(yaml.safe_dump(argus))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(config)]) == 0
+    assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
 
 
 def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):

@@ -322,6 +322,29 @@ class Managed:
     log: Path
     grace_s: float = DEFAULT_GRACE_S
     leader_only: bool = False
+    # An optional child may exit without stopping the stack; see watch().
+    optional: bool = False
+
+
+def watch(stack: "Stack") -> Managed:
+    """Block until a required child exits and return it.
+
+    An optional child that exits is reported once and the stack keeps running.
+    """
+    reported: set[str] = set()
+    while True:
+        for child in stack.children:
+            if child.process.poll() is None:
+                continue
+            if not child.optional:
+                return child
+            if child.name not in reported:
+                reported.add(child.name)
+                print(
+                    f"WARNING: {child.name} exited with {child.process.returncode}; the preview stays up and "
+                    f"capture times are unavailable; see {child.log}"
+                )
+        time.sleep(1)
 
 
 class Stack:
@@ -340,11 +363,13 @@ class Stack:
         cwd: Path | None = None,
         grace_s: float = DEFAULT_GRACE_S,
         leader_only: bool = False,
+        optional: bool = False,
     ) -> Managed:
         """Launch a child in its own process group so stopping it also stops anything it spawned.
 
         ``leader_only`` sends the polite SIGINT to the child itself and not to its whole group, for a child that
-        closes its own helper processes in an order of its own (the backend's video writers).
+        closes its own helper processes in an order of its own (the backend's video writers). ``optional`` marks a
+        child whose exit is reported but does not stop the stack.
         """
         # Each child writes to its own file so a failed step can point the operator at the output to read.
         log = self.workdir / f"{name}.log"
@@ -364,7 +389,7 @@ class Stack:
                 # A wrong tool path is an operator mistake, so say which tool instead of printing a traceback.
                 raise StartupError(f"cannot start {name} ({command[0]}): {error}") from error
         # Registering the child here is what makes stop_all() cover it even if a later step fails.
-        child = Managed(name, process, log, grace_s, leader_only)
+        child = Managed(name, process, log, grace_s, leader_only, optional)
         self.children.append(child)
         print(f"started {name} (pid {process.pid}); log {log}")
         return child
@@ -687,7 +712,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             # nvargus-daemon returns at boot and holds the cameras, which SIPL capture needs free; a sender left
             # by an earlier run outlives its ssh session.
             subprocess.run([*deploy, "stop"], check=False)
-            subprocess.run([*deploy, "stop-daemon"], check=True)
+            if sender.sipl:
+                subprocess.run([*deploy, "stop-daemon"], check=True)
             if not args.skip_deploy:
                 print("deploying the sender to", args.orin)
                 subprocess.run(
@@ -821,6 +847,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "--workdir",
                         str(workdir / "chrony"),
                     ],
+                    # Without --require-chrony a failed follower leaves the preview up and the bridge refusing
+                    # capture times, which is what an unavailable clock measurement means.
+                    optional=not args.require_chrony,
                 )
                 print("configuring the Orin's chrony to serve its clock to", lan_ip, flush=True)
                 try:
@@ -874,9 +903,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.open:
             webbrowser.open(url)
         # Stay up until a child dies or the operator interrupts.
-        while all(child.process.poll() is None for child in stack.children):
-            time.sleep(1)
-        dead = next(child for child in stack.children if child.process.poll() is not None)
+        dead = watch(stack)
         if dead.name == "sender" and dead.process.returncode == 0:
             # The sender runs for --seconds and then exits cleanly: that is the requested end, not a failure.
             print(f"the Orin sender finished its {args.seconds} s run; stopping the stack")
