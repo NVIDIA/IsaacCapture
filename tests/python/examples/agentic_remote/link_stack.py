@@ -297,6 +297,31 @@ class ServiceProcess(Program):
         return self.port
 
 
+class StartScript(Program):
+    """A start script of the example in its own process: bash <script> <args>.
+
+    It runs in the example's folder, as the README's recipes start it, with
+    program_env() and the variables of `env` on top. A script that execs its
+    program is that program from then on: a signal reaches the program.
+    """
+
+    def __init__(self, name: str, *args: str, env: dict[str, str]) -> None:
+        self.lines: list[str] = []  # what the process wrote, both streams
+        self._new: queue.SimpleQueue[str | None] = queue.SimpleQueue()
+        example = repo_root() / "examples" / "agentic_remote"
+        self.process = subprocess.Popen(
+            ["bash", name, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env={**program_env(), **env},
+            cwd=example,
+        )
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+
 def program_env() -> dict[str, str]:
     """The environment of a program of the example: this process's import path."""
     import isaaccapture
