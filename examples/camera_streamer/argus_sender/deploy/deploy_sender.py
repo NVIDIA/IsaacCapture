@@ -188,23 +188,26 @@ def cmd_stop_daemon(target: str, dry_run: bool) -> None:
     """Stop nvargus-daemon so a SIPL sender can open the cameras; it is not disabled and starts again at boot.
 
     Needs passwordless sudo on the target (`sudo -n`). Succeeds when the daemon is already stopped and fails if it is
-    still active afterwards. Refuses while a sender started by `run` is alive, because it may be using the daemon.
+    still active afterwards or its state cannot be read. Refuses while a sender started by `run` is alive, because it
+    may be using the daemon.
     """
     remote(
         target,
         r"""
+state() { systemctl is-active nvargus-daemon.service 2>/dev/null || true; }
+stopped() { case "$(state)" in inactive|failed) return 0;; *) return 1;; esac; }
 if pgrep -f "^\./build/argus_sender --config src/configs/run-config.yaml" >/dev/null; then
     echo "a sender from ~/camera-streamer/releases is running; run 'stop' first" >&2
     exit 1
 fi
-if ! systemctl is-active --quiet nvargus-daemon.service; then echo "nvargus-daemon is not running"; exit 0; fi
+if stopped; then echo "nvargus-daemon is not running"; exit 0; fi
 sudo -n true || { echo "passwordless sudo is required on the target" >&2; exit 1; }
 sudo -n systemctl stop nvargus-daemon.service || { echo "could not stop nvargus-daemon" >&2; exit 1; }
 for _ in $(seq 1 20); do
-    systemctl is-active --quiet nvargus-daemon.service || { echo "nvargus-daemon stopped"; exit 0; }
+    stopped && { echo "nvargus-daemon stopped"; exit 0; }
     sleep 1
 done
-echo "nvargus-daemon is still active after 20 s" >&2
+echo "nvargus-daemon is still $(state) after 20 s" >&2
 exit 1
 """,
         dry_run,

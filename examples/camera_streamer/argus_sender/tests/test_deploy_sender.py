@@ -65,7 +65,10 @@ def test_stop_daemon_only_stops_the_daemon_and_checks_the_result(capsys):
     assert f'pgrep -f "{started}"' in script
     assert "sudo -n systemctl stop nvargus-daemon.service" in script
     assert "is not running" in script
-    assert "still active" in script
+    assert (
+        "inactive|failed" in script
+    )  # only a definite stopped state counts; a query error is not "stopped"
+    assert "after 20 s" in script
     for broader in ("disable", "restart", "reboot", "rm "):
         assert broader not in script
 
