@@ -32,6 +32,12 @@ NEWEST_WINS_TYPES = range(96, 128)
 # permit covered its first setpoint, or it needs none, and it went on.
 MOVE_ARMED = "armed"
 MOVE_SENDING = "sending"
+# WELCOME.driver: what the robot app drives. "" means not declared, and every
+# reader treats that as the real arm.
+DRIVER_SIM = "sim"
+DRIVER_APAI_MOCK = "apai-mock"
+DRIVER_REAL = "real"
+SIMULATED_DRIVERS = frozenset({DRIVER_SIM, DRIVER_APAI_MOCK})
 
 
 class ProtocolError(ValueError):
@@ -122,6 +128,7 @@ class Welcome(Message):
     max_move_setpoints: int
     limit_set_versions: dict[str, str]
     camera_calibration_id: str = ""
+    driver: str = ""  # DRIVER_SIM, DRIVER_APAI_MOCK, DRIVER_REAL or "" (not declared)
 
 
 @dataclass(frozen=True)

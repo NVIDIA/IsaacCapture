@@ -37,6 +37,11 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.gripper")
 PLAIN = "plain"
 CLOSE_UNTIL_CONTACT = "close_until_contact"
 JAW_MODES = (PLAIN, CLOSE_UNTIL_CONTACT)
+# What a queued jaw reference carries in place of a jaw mode; no link message
+# can ask for it.
+REFERENCE = "reference"
+ALREADY_REFERENCED = "the jaws are referenced already"
+JAWS_BUSY = "busy: a jaw command is running or waiting"
 
 # GripperOutcome statuses. FAILED is the worker's own: the driver raised.
 REACHED = "reached"
@@ -333,6 +338,20 @@ class GripperWorker:
         reason = _fraction_refusal("max_effort", max_effort)
         return self._enqueue(1.0, max_effort, PLAIN, True, owner, on_done, reason)
 
+    def reference(self, on_done: DoneFn | None = None) -> str | None:
+        """Queue a jaw reference: the jaws close slowly to their stop; None if queued.
+
+        Refused when a fault-stop is latched, when the control owner is not
+        nobody, when the jaws are referenced, or when any jaw request runs or
+        waits. A stop ends it "cancelled" with the jaws unreferenced. It ends
+        "reached" with the opening measured after it, and leaves the "may be
+        holding" flag as it was.
+        """
+        reason = ALREADY_REFERENCED if self._arm.gripper_referenced() else None
+        return self._enqueue(
+            0.0, 0.0, REFERENCE, False, Owner.NOBODY, on_done, reason, alone=True
+        )
+
     def stop_now(self) -> None:
         """Cancel the running command, drop the queued ones and hold lightly.
 
@@ -416,7 +435,12 @@ class GripperWorker:
         owner: Owner | None,
         on_done: DoneFn | None,
         reason: str | None,
+        alone: bool = False,
     ) -> str | None:
+        """Queue a request unless `reason` or the authority refuses it.
+
+        alone: it is taken only while no other jaw request runs or waits.
+        """
         state = self._authority.snapshot()
         reason = _authority_refusal(state, owner) or reason
         if reason is None:
@@ -432,6 +456,8 @@ class GripperWorker:
             with self._cond:
                 if self._closed:
                     reason = "the gripper worker is closed"
+                elif alone and self._busy():
+                    reason = JAWS_BUSY
                 elif len(self._queue) >= MAX_WAITING:
                     reason = f"busy: {len(self._queue)} jaw commands are waiting"
                 else:
@@ -480,6 +506,8 @@ class GripperWorker:
 
     def _execute(self, job: _Job) -> tuple[GripperOutcome, str | None]:
         """Run a request; returns its outcome and the fault reason, if any."""
+        if job.mode == REFERENCE:
+            return self._reference(job)
         if not job.guarded:
             return self._command(job, job.opening, job.mode)
         if not self._arm.gripper_referenced():
@@ -499,6 +527,33 @@ class GripperWorker:
             outcome, fault = self._command(job, target, PLAIN)
             if index == steps or fault is not None or outcome.status != REACHED:
                 return outcome, fault
+
+    def _reference(self, job: _Job) -> tuple[GripperOutcome, str | None]:
+        """Reference the jaws, unless the request was stopped first.
+
+        A reference the driver fails is a fault; one a stop ended is not.
+        """
+        detail = self._ended_early(job)
+        if detail is not None:
+            return GripperOutcome(CANCELLED, None, detail), None
+        if self._arm.gripper_referenced():
+            return GripperOutcome(REFUSED, None, ALREADY_REFERENCED), None
+        try:
+            self._arm.gripper_reference(job.cancel)
+        except ArmFault as exc:
+            fault = f"the jaw reference failed: {exc}"
+            return GripperOutcome(FAILED, None, fault), fault
+        if not self._arm.gripper_referenced():
+            if job.cancel.is_set():
+                detail = "stopped before the jaws were referenced"
+                return GripperOutcome(CANCELLED, None, detail), None
+            detail = "the jaws are not referenced after the reference"
+            return GripperOutcome(FAILED, None, detail), None
+        # One classification, so ROBOT_STATE has a jaw reading again.
+        self._jaw_state.classify(self._arm)
+        job.measured = self._jaw_state.gripper_state(self._arm).opening
+        _log.info("jaws referenced; opening %s", job.measured)
+        return GripperOutcome(REACHED, job.measured), None
 
     def _command(
         self, job: _Job, opening: float, mode: str

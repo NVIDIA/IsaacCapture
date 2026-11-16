@@ -70,6 +70,8 @@ _JAW_SEND_TRIES = 3
 _JAW_RETRY_S = 0.05
 # How APAI's gripper guard ends the fault it raises before any jaw command.
 _NOTHING_SENT = "no gripper command sent"
+# Part of the fault the guard raises when its stop probe ends a reference.
+_REFERENCE_STOPPED = "referencing interrupted by a stop"
 # "Jaws proven empty": a reading lies within this of the last jaw target, rad.
 JAW_TARGET_TOL_RAD = 0.1
 # The reBot RS driver's jaw positions when the profile names none, rad.
@@ -186,6 +188,17 @@ def jaw_travel_rad(profile: ApaiProfile) -> float | None:
     open_pos = float(gripper.get("open_pos", _RS_OPEN_POS))
     closed_pos = float(gripper.get("closed_pos", _RS_CLOSED_POS))
     return abs(open_pos - closed_pos) or None
+
+
+def unresolved_hold(profile: ApaiProfile) -> dict[str, Any] | None:
+    """APAI's hold marker for the motor bus this profile's arm drives, or None.
+
+    A hold marker is the file APAI writes when a run leaves the arm powered
+    and holding. None also for a profile whose arm is never held, such as the
+    mock arm. It reads one file and sends nothing.
+    """
+    key = arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
+    return None if key is None else arm_hold.read(key)
 
 
 def _contact_config(profile: ApaiProfile) -> ContactMonitorConfig:
@@ -744,8 +757,30 @@ class _GuardJaws:
     def referenced(self) -> bool:
         return bool(self._guard.referenced)
 
-    def reference(self) -> None:
-        self._guard.reference()
+    def reference(self, cancel: threading.Event | None = None) -> None:
+        """The guard's slow close to the stop; it ends at its next pass on cancel.
+
+        Ended by cancel, the jaws stay unreferenced and are held where they
+        are, at the hold stiffness.
+        """
+        guard = self._guard
+        if cancel is None:
+            guard.reference()
+            return
+        if cancel.is_set():
+            return  # nothing was sent: there is nothing to hold
+        driver_stopped = guard._stopped
+        # As in send(): the guard asks this before each command of its ramp.
+        guard._stopped = lambda: cancel.is_set() or driver_stopped()
+        try:
+            guard.reference()
+        except GripperFault as exc:
+            if not (cancel.is_set() and _REFERENCE_STOPPED in str(exc)):
+                raise
+            # The ramp's last command still presses toward closed.
+            guard.hold_raw(float(guard._read_raw()), self._hold_kp)
+        finally:
+            guard._stopped = driver_stopped
 
     def read(self) -> float | None:
         return self._guard.position()
@@ -799,7 +834,9 @@ class _MockJaws:
     def referenced(self) -> bool:
         return self._referenced
 
-    def reference(self) -> None:
+    def reference(self, cancel: threading.Event | None = None) -> None:
+        if cancel is not None and cancel.is_set():
+            return
         # Like the guard's reference: close, and accept only the closed stop.
         self._backend.set_gripper(self.closed, 1.0)
         short = abs(self._measure() - self.closed)
@@ -967,10 +1004,10 @@ class ApaiArm:
     def gripper_referenced(self) -> bool:
         return self._jaws.referenced()
 
-    def gripper_reference(self) -> None:
+    def gripper_reference(self, cancel: threading.Event | None = None) -> None:
         self._require_torque()
         try:
-            self._jaws.reference()
+            self._jaws.reference(cancel)
         except Exception as exc:
             raise ArmFault(f"the jaws could not be referenced: {exc}") from exc
 

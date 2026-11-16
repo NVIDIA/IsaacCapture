@@ -2021,7 +2021,9 @@ def test_the_thor_terminal_rings_before_the_arm_moves_by_itself(robot_app):
     assert h.arm.torque_on() and h.arm.released_at == []
 
 
-def test_a_rest_typed_at_the_thor_terminal_moves_only_after_a_typed_yes(robot_app):
+def test_a_rest_typed_at_the_thor_terminal_moves_only_after_the_typed_phrase(
+    robot_app,
+):
     h = robot_app
     h.arm.set_pose(RAISED)
     # The question is asked with the robot connection up, and with it down.
@@ -2030,14 +2032,14 @@ def test_a_rest_typed_at_the_thor_terminal_moves_only_after_a_typed_yes(robot_ap
             h.robot_end.break_link()
             h.wait_local_event("connection")
         thor = h.thor_terminal()
-        for answer in ("no", "", "y", "yes please"):
+        for answer in ("no", "", "yes", "path clear"):
             told = thor.ask("rest", answer, answer="rest: ")
             assert told == "rest: refused: confirm the path is clear"
         asked = thor.written("Return to rest: is the path to the rest pose clear?")
         assert len(asked) == 4
         h.idle()
         assert_holding_at(h, RAISED)
-    assert thor.ask("rest", " Yes ", answer="rest: ") == "rest: completed"
+    assert thor.ask("rest", " Path is clear ", answer="rest: ") == "rest: completed"
     assert len(h.arm.sent) == RETURN_SETPOINTS
     assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     assert h.app.running
@@ -2083,7 +2085,7 @@ def test_quit_typed_at_the_thor_terminal_returns_releases_at_rest_and_ends_the_a
     )
     h.idle()
     assert_holding_at(h, RAISED)
-    told = thor.ask("quit", "yes", answer="quit: ")
+    told = thor.ask("quit", "path is clear", answer="quit: ")
     assert told == "quit: completed; the robot app closes"
     assert len(thor.written("Return to rest: is the path to the rest pose clear?")) == 2
     assert h.app.wait_closed(WAIT_S) and not h.app.running
@@ -2099,7 +2101,7 @@ def test_a_quit_that_is_refused_leaves_the_app_running_and_the_arm_holding(robot
     h.new_task()
     close_on_an_object(h)
     thor = h.thor_terminal()
-    told = thor.ask("quit", "yes", answer="quit: ")
+    told = thor.ask("quit", "path is clear", answer="quit: ")
     assert told.startswith("quit: refused: the return to rest ended refused")
     assert "the jaws are not proven empty (loaded)" in told
     assert told.endswith("; the robot app keeps running")

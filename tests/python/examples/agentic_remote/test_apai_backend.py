@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -2441,3 +2442,240 @@ def test_a_light_jaw_hold_that_reaches_no_motor_raises_nothing(
     assert [kp for _, kp in sdk.gripper.lost] == [[RS_HOLD_KP], [RS_HOLD_KP]]
     assert sdk.gripper.sent[-1][1] != [RS_HOLD_KP]
     assert arm.faults() == []
+
+
+# The jaw reference on the reBot RS driver: a cancel, and the typed command
+
+RS_REF_KP = 2.0  # the stiffness of the guard's referencing close
+
+
+def test_rs_a_cancel_ends_a_reference_within_one_pass_of_the_guard(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    jaw, cancel, marks = sdk.gripper, threading.Event(), []
+    guard = arm.backend._grip_guard
+    assert guard.ref_kp == RS_REF_KP
+    probe = guard._stopped
+    jaw._mm["jaw"].value = 3.0  # the jaws are half open
+    jaw.per_command = 0.06  # and trail the guard's closing ramp
+
+    def cancel_part_closed() -> None:
+        if jaw.at() <= 2.5 and not cancel.is_set():
+            marks.append(len(jaw.sent))
+            cancel.set()
+
+    sdk.guard_time.on_sleep = cancel_part_closed
+    arm.gripper_reference(cancel)  # ended by the cancel: it raises nothing
+
+    assert not arm.gripper_referenced() and arm.gripper_read() is None
+    at = jaw.at()
+    assert 2.4 < at <= 2.5
+    assert min(targets_at(jaw, 0, RS_REF_KP)) < at - 0.2  # the ramp was ahead
+    # Not one more command of the closing ramp went out; the one command since
+    # holds the jaws where they are, at the hold stiffness.
+    assert targets_at(jaw, marks[0], RS_REF_KP) == []
+    assert jaw.sent[marks[0] :] == [([pytest.approx(at)], [RS_HOLD_KP])]
+    # The driver's own stop flag was not touched and the guard asks it again.
+    assert arm.backend._stopped is False and guard._stopped is probe
+    # A stop's light hold sends nothing to jaws without a reference.
+    sends = len(jaw.sent)
+    arm.gripper_light_hold()
+    assert len(jaw.sent) == sends
+
+    # The jaws can be referenced afterwards.
+    sdk.guard_time.on_sleep = None
+    arm.gripper_reference(threading.Event())
+    assert arm.gripper_referenced()
+    assert arm.gripper_read() == pytest.approx(0.0)
+    assert guard._stopped is probe
+
+
+def test_rs_a_cancel_set_before_a_reference_sends_nothing(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    cancel = threading.Event()
+    cancel.set()
+    arm.gripper_reference(cancel)
+    assert not arm.gripper_referenced()
+    assert sdk.gripper.sent == [] and sdk.gripper._mm["jaw"].reads == []
+    assert sdk.gripper.at() == pytest.approx(0.5)
+
+
+def test_rs_a_reference_that_fails_is_an_arm_fault_with_a_cancel_too(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    sdk.gripper._mm["jaw"].value = 1.5
+    sdk.gripper.stop = 1.0  # something between the jaws
+    with pytest.raises(ArmFault, match=r"could not be referenced: gripper reference"):
+        arm.gripper_reference(threading.Event())
+    assert not arm.gripper_referenced()
+    assert arm.backend._grip_guard._stopped() is False
+
+
+@pytest.fixture
+def rs_reference_app(
+    rs_profile: apai_backend.ApaiProfile,
+    config: RobotAppConfig,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[AppHarness, MotorSdk]]:
+    """As rs_app, with the setting jaws.allow_reference on."""
+    rig = apai_backend.config_for_profile(config, rs_profile)
+    arm, sdk = rs_arm(rig, rs_profile, clock, monkeypatch)
+    checkers = apai_backend.build_apai_checkers(rig, rs_profile, clock)
+    h = AppHarness(rig, arm, checkers, clock, app_options={"allow_reference": True})
+    try:
+        h.start()
+        assert h.client.state.gripper.referenced
+        yield h, sdk
+    finally:
+        h.close()
+
+
+def lose_the_jaw_reference(h: AppHarness, sdk: MotorSdk) -> None:
+    """Three jaw reads in a row get no answer: APAI's guard drops its reference."""
+    sdk.gripper._mm["jaw"].missed = 3
+    for _ in range(3):
+        assert h.arm.gripper_read() is None
+    assert not h.arm.gripper_referenced()
+
+
+def test_a_typed_reference_references_the_jaws_and_rest_is_accepted_after_an_open(
+    rs_reference_app: tuple[AppHarness, MotorSdk],
+) -> None:
+    h, sdk = rs_reference_app
+    jaw = sdk.gripper
+    # The agent closes the jaws on an object, raises the arm and gives it back.
+    hold_an_object(h, sdk, 2.0)
+    assert rs_move(h, straight(REST, RS_RAISED, 25), REST).status == "completed"
+    given = final(h, h.client.request_owner("nobody", reason="task done"))
+    assert given.status == "completed"
+    lose_the_jaw_reference(h, sdk)
+
+    # The defect: the raised arm can neither rest nor release, nor open its jaws.
+    thor = h.thor_terminal()
+    told = thor.ask("rest", "path is clear", answer="rest: ")
+    assert told.startswith("rest: refused: the jaws are not proven empty (unknown)")
+    assert "refused" in thor.ask("release", answer="release: ")
+    assert final(h, h.client.open_jaws()).reason == "the jaws are not referenced"
+    targets = len(sdk.arm.sent)
+
+    # The way out. The person takes the object away and types the phrase.
+    jaw.stop = 0.0
+    sends = len(jaw.sent)
+    told = thor.ask("reference", "jaws are empty", answer="reference: ")
+    assert told == "reference: completed"
+    closing = targets_at(jaw, sends, RS_REF_KP)
+    # A slow close in small steps, from where the jaws were.
+    assert len(closing) > 10 and max(closing) == pytest.approx(2.0)
+    assert jaw.at() == pytest.approx(0.0)
+    state = h.client.wait_state(
+        lambda s: "reference" in (s.last_result or {}).get("command_id", ""), WAIT_S
+    )
+    assert state.gripper.referenced
+    assert state.gripper.opening == pytest.approx(0.0)
+    assert (state.owner, state.stop_level, state.torque_on) == ("nobody", "none", True)
+    # The reference does not clear "may be holding": rest is still refused.
+    assert state.gripper.may_be_holding and state.gripper.load == "loaded"
+    told = thor.ask("rest", "path is clear", answer="rest: ")
+    assert told.startswith("rest: refused: the jaws are not proven empty (loaded)")
+
+    # The guarded opening from the console clears it at a measured full open.
+    opened = final(h, h.client.open_jaws())
+    assert opened.status == "completed"
+    assert opened.detail["opening"] == pytest.approx(1.0)
+    assert len(sdk.arm.sent) == targets  # no joint moved so far
+    assert thor.ask("rest", "path is clear", answer="rest: ") == "rest: completed"
+    assert h.app.motion_state is MotionState.REST_HOLD
+    assert sdk.arm.sent[-1][0] == list(REST)
+    assert h.arm.torque_on() and sdk.disconnects == 0
+    assert h.arm.backend._stopped is False
+
+
+def test_a_stop_ends_a_reference_without_a_fault_stop(
+    rs_reference_app: tuple[AppHarness, MotorSdk],
+) -> None:
+    h, sdk = rs_reference_app
+    jaw, marks = sdk.gripper, []
+    assert final(h, h.client.open_jaws()).status == "completed"
+    lose_the_jaw_reference(h, sdk)
+    jaw._mm["jaw"].value = 3.0
+    jaw.per_command = 0.06  # the jaws trail the guard's closing ramp
+
+    def stop_part_closed() -> None:
+        # Inside the guard's 50 ms sleep, the jaws 0.5 rad into the close.
+        if marks or jaw.at() > 2.5:
+            return
+        marks.append(len(jaw.sent))
+        h.client.stop("operator pressed stop")
+        deadline = time.monotonic() + WAIT_S
+        while h.app.snapshot().stop_number == 0 and time.monotonic() < deadline:
+            time.sleep(0.001)
+
+    sdk.guard_time.on_sleep = stop_part_closed
+    done: list[Result] = []
+    ended = threading.Event()
+
+    def on_done(result: Result) -> None:
+        done.append(result)
+        ended.set()
+
+    assert h.app.request_reference(True, on_done) is None
+    assert ended.wait(WAIT_S)
+    assert h.app._worker.wait_idle(WAIT_S)
+    (result,) = done
+    assert (result.status, result.reason) == (
+        "cancelled",
+        "stopped before the jaws were referenced",
+    )
+    # A STOP, not a fault-stop: nothing is latched.
+    state = h.app.snapshot()
+    assert (state.stop_level.value, state.fault_reason) == ("stop", "")
+    assert h.heard("fault") == []
+    # The close ended within one pass; the jaws are held where they are.
+    at = jaw.at()
+    assert 2.4 < at <= 2.5
+    assert targets_at(jaw, marks[0], RS_REF_KP) == []
+    assert jaw.sent[marks[0] :] == [([pytest.approx(at)], [RS_HOLD_KP])]
+    assert not h.arm.gripper_referenced()
+    assert h.arm.backend._stopped is False  # the driver was not stopped
+    assert h.arm.torque_on() and sdk.disconnects == 0
+    # The reference can be typed again and then runs to the closed stop.
+    sdk.guard_time.on_sleep = None
+    ended.clear()
+    assert h.app.request_reference(True, on_done) is None
+    assert ended.wait(WAIT_S)
+    assert done[-1].status == "completed" and h.arm.gripper_referenced()
+
+
+def test_unresolved_hold_reads_the_marker_of_the_profiles_bus(
+    rs_profile: apai_backend.ApaiProfile,
+    profile: apai_backend.ApaiProfile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apai.control import arm_hold
+
+    monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(tmp_path))
+    assert apai_backend.unresolved_hold(rs_profile) is None
+    key = arm_hold.hold_key("rebot_rs", rs_profile.arm_cfg)
+    assert key
+    arm_hold.record("another-bus", arm="rebot_rs", reason="held elsewhere")
+    assert apai_backend.unresolved_hold(rs_profile) is None
+    written = arm_hold.record(key, arm="rebot_rs", reason="left raised by a run")
+    marker = apai_backend.unresolved_hold(rs_profile)
+    assert marker == written
+    assert (marker["key"], marker["reason"]) == (key, "left raised by a run")
+    # A marker that cannot be read counts as a hold.
+    arm_hold.marker_path(key).write_text("not json")
+    assert apai_backend.unresolved_hold(rs_profile)["unreadable"] is True
+    # The mock arm drives no bus: it is never held, whatever the folder has.
+    assert arm_hold.hold_key("mock", profile.arm_cfg) is None
+    assert apai_backend.unresolved_hold(profile) is None
+    # Only read: the folder holds the two markers written here.
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
+        [arm_hold.marker_path(key).name, arm_hold.marker_path("another-bus").name]
+    )

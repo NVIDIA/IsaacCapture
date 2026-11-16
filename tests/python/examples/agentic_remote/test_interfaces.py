@@ -48,7 +48,7 @@ SIGNATURES = {
         "faults": [],
         "temperatures": [],
         "gripper_referenced": [],
-        "gripper_reference": [],
+        "gripper_reference": ["cancel"],
         "gripper_read": [],
         "gripper_last_target": [],
         "gripper_command": ["opening", "max_effort", "mode", "cancel"],
@@ -238,7 +238,12 @@ def test_protocol_methods_take_the_listed_parameters(protocol):
     assert declared == SIGNATURES[protocol]
 
 
-def test_only_the_watchdog_time_is_optional():
+def test_only_the_watchdog_time_and_the_reference_cancel_are_optional():
+    # The start of the app references the jaws without a cancel.
+    optional = {
+        "feed_watchdog": {"t_mono": None},
+        "gripper_reference": {"cancel": None},
+    }
     for protocol in SIGNATURES:
         for name, method in vars(protocol).items():
             if not inspect.isfunction(method) or name.startswith("_"):
@@ -248,8 +253,7 @@ def test_only_the_watchdog_time_is_optional():
                 for parameter in inspect.signature(method).parameters.values()
                 if parameter.default is not inspect.Parameter.empty
             }
-            expected = {"t_mono": None} if name == "feed_watchdog" else {}
-            assert defaults == expected, f"{protocol.__name__}.{name}"
+            assert defaults == optional.get(name, {}), f"{protocol.__name__}.{name}"
 
 
 @pytest.mark.parametrize(

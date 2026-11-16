@@ -9,18 +9,26 @@ robot app itself on the simulated arm.
 
 from __future__ import annotations
 
+import os
 import signal
 import threading
 from collections.abc import Callable, Iterator
 
 import pytest
+from isaaccapture_examples.agentic_remote.protocol import confirm
 from isaaccapture_examples.agentic_remote.protocol.messages import Result
 from isaaccapture_examples.agentic_remote.robot_app import terminal as terminal_module
-from isaaccapture_examples.agentic_remote.robot_app.app import CONFIRM_PATH, NOT_RUNNING
+from isaaccapture_examples.agentic_remote.robot_app.app import (
+    CONFIRM_JAWS_EMPTY,
+    CONFIRM_PATH,
+    NOT_RUNNING,
+    REFERENCE_OFF,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState, Owner
 from isaaccapture_examples.agentic_remote.robot_app.terminal import (
     BANNER,
     BELL_CHAR,
+    CONFIRM_REFERENCE,
     CONFIRM_REST,
     CTRL_C_NOTE,
     HELP,
@@ -74,6 +82,7 @@ class FakeApp:
     def __init__(self) -> None:
         self.running = True
         self.moves_arm = False  # whether a shutdown would have to move the arm
+        self.allow_reference = False  # the setting jaws.allow_reference
         self.listeners: list[Callable[[str, str, dict], None]] = []
         self.calls: list[tuple] = []
         self.threads: list[str] = []  # the thread each call was made on
@@ -102,6 +111,16 @@ class FakeApp:
         on_done(self.release_result)
         refused = self.release_result.status == "refused"
         return self.release_result.reason if refused else None
+
+    def request_reference(self, confirmed, on_done=None) -> str | None:
+        self._record(("reference", confirmed))
+        reason = None if self.allow_reference else REFERENCE_OFF
+        reason = reason or (None if confirmed else CONFIRM_JAWS_EMPTY)
+        if reason is None:
+            on_done(Result("thor-terminal-reference-1", "completed"))
+        else:
+            on_done(Result("thor-terminal-reference-1", "refused", reason))
+        return reason
 
     def shutdown_moves_arm(self) -> bool:
         return self.moves_arm
@@ -243,8 +262,11 @@ def test_help_lists_every_command(fake):
     lines = typed(fake, "help\n")
     assert lines[: len(HELP)] == list(HELP)
     words = [line.split()[0] for line in HELP]
-    assert words == ["stop", "rest", "release", "quit", "help"]
-    assert all(word in BANNER for word in words)
+    assert words == ["stop", "rest", "release", "quit", "reference", "help"]
+    # The banner leaves out the command that a setting switches on.
+    assert all(word in BANNER for word in words if word != "reference")
+    assert '"path is clear"' in HELP[1]
+    assert '"jaws are empty"' in HELP[4] and "jaws.allow_reference" in HELP[4]
     assert lines[len(HELP) :] == ["an empty line does nothing", ENDED_RUNNING]
     assert fake.calls == []
 
@@ -261,15 +283,30 @@ def test_an_unknown_line_is_shown_without_its_control_characters(fake):
     assert len(shown) < 80
 
 
-def test_rest_asks_that_the_path_is_clear_and_passes_yes_on(fake):
-    lines = typed(fake, "rest\n", " YES \n")
+def test_rest_needs_the_typed_path_is_clear(fake):
+    lines = typed(fake, "rest\n", "  Path  is CLEAR \n")
     assert lines == [CONFIRM_REST, "rest: completed", ENDED_RUNNING]
-    assert CONFIRM_REST.startswith("Return to rest: is the path to the rest pose")
+    assert CONFIRM_REST == (
+        "Return to rest: is the path to the rest pose clear? "
+        'Type "path is clear" to confirm.'
+    )
     assert fake.calls == [("rest", True)]
 
 
-@pytest.mark.parametrize("answer", ["no", "", "y", "yes please", "rest", "quit"])
-def test_rest_without_a_typed_yes_is_passed_on_as_not_confirmed(fake, answer):
+@pytest.mark.parametrize("answer", ["yes", " YES ", "y"])
+def test_yes_no_longer_confirms_a_rest(fake, answer):
+    lines = typed(fake, "rest\n", answer + "\n")
+    assert lines[1] == "rest: refused: confirm the path is clear"
+    assert fake.calls == [("rest", False)]
+    # The entry point's own questions still take it.
+    assert terminal_module.YES == confirm.YES == "yes"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["no", "", "path clear", "path is clear now", "pathisclear", "rest", "quit"],
+)
+def test_rest_without_the_typed_phrase_is_passed_on_as_not_confirmed(fake, answer):
     lines = typed(fake, "rest\n", answer + "\n")
     assert lines == [
         CONFIRM_REST,
@@ -280,9 +317,93 @@ def test_rest_without_a_typed_yes_is_passed_on_as_not_confirmed(fake, answer):
     assert fake.calls == [("rest", False)]
 
 
-def test_stop_typed_at_the_confirmation_is_a_stop_and_confirms_nothing(fake):
-    typed(fake, "rest\n", "stop\n")
+def test_stop_typed_as_the_answer_is_a_stop(fake):
+    typed(fake, "rest\n", " STOP\n")
     assert fake.calls == [("stop", STOP_TYPED, THOR), ("rest", False)]
+
+
+@pytest.mark.parametrize(
+    ("answer", "phrase", "confirmed"),
+    [
+        ("path is clear", confirm.PATH_IS_CLEAR, True),
+        ("  Path   IS\tclear \r\n", confirm.PATH_IS_CLEAR, True),
+        ("JAWS ARE EMPTY", confirm.JAWS_ARE_EMPTY, True),
+        (" Yes\n", confirm.YES, True),
+        ("yes", confirm.PATH_IS_CLEAR, False),
+        ("pathisclear", confirm.PATH_IS_CLEAR, False),
+        ("path is clear.", confirm.PATH_IS_CLEAR, False),
+        ("", confirm.YES, False),
+        (None, confirm.YES, False),
+    ],
+)
+def test_confirms_ignores_case_and_spacing(answer, phrase, confirmed):
+    assert confirm.confirms(answer, phrase) is confirmed
+    assert (confirm.YES, confirm.PATH_IS_CLEAR, confirm.JAWS_ARE_EMPTY) == (
+        "yes",
+        "path is clear",
+        "jaws are empty",
+    )
+
+
+def test_agent_environment_names_the_variable(monkeypatch):
+    assert confirm.agent_environment({}) is None
+    assert confirm.agent_environment({"PATH": "/bin", "CLAUDECODE": " "}) is None
+    assert confirm.agent_environment({"CLAUDECODE": "1"}) == "CLAUDECODE"
+    # The fixed names are looked at first, in their order, then the prefixes.
+    both = {"OPENCLAW_HOME": "x", "CODEX_THREAD_ID": "7", "AI_AGENT": "a"}
+    assert confirm.agent_environment(both) == "AI_AGENT"
+    assert confirm.agent_environment({"OPENCLAW_HOME": "x"}) == "OPENCLAW_HOME"
+    assert confirm.agent_environment({"OPENCLAW_HOME": ""}) is None
+    # Without a mapping it reads the process environment.
+    for name in confirm.AGENT_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        if name.startswith(confirm.AGENT_ENV_PREFIXES):
+            monkeypatch.delenv(name)
+    assert confirm.agent_environment() is None
+    monkeypatch.setenv("HERMES_AGENT", "1")
+    assert confirm.agent_environment() == "HERMES_AGENT"
+    assert "CLAUDECODE" in confirm.AGENT_ENV
+    assert confirm.AGENT_ENV_PREFIXES == ("OPENCLAW_",)
+
+
+def test_reference_is_refused_unasked_while_the_setting_is_off(fake):
+    lines = typed(fake, "reference\n", "jaws are empty\n")
+    assert lines[0] == f"reference: refused: {REFERENCE_OFF}"
+    assert "jaws.allow_reference" in REFERENCE_OFF
+    assert CONFIRM_REFERENCE not in lines
+    # The second line was not used up as an answer: it is an unknown command.
+    assert lines[1] == "unknown command 'jaws are empty'; type help"
+    assert fake.calls == [("reference", False)]
+
+
+def test_reference_asks_that_the_jaws_are_empty(fake):
+    fake.allow_reference = True
+    lines = typed(fake, "Reference\n", " Jaws are  EMPTY\n")
+    assert lines == [CONFIRM_REFERENCE, "reference: completed", ENDED_RUNNING]
+    assert CONFIRM_REFERENCE == (
+        "Reference the jaws: they close slowly to their stop. Are the jaws empty? "
+        'Type "jaws are empty" to confirm.'
+    )
+    assert fake.calls == [("reference", True)]
+
+
+@pytest.mark.parametrize("answer", ["yes", "path is clear", "", "empty"])
+def test_reference_is_refused_without_the_typed_phrase(fake, answer):
+    fake.allow_reference = True
+    lines = typed(fake, "reference\n", answer + "\n")
+    assert lines == [
+        CONFIRM_REFERENCE,
+        "reference: refused: confirm that the jaws are empty",
+        ENDED_RUNNING,
+    ]
+    assert fake.calls == [("reference", False)]
+
+
+def test_stop_typed_where_reference_asks_is_a_stop_and_confirms_nothing(fake):
+    fake.allow_reference = True
+    typed(fake, "reference\n", "stop\n")
+    assert fake.calls == [("stop", STOP_TYPED, THOR), ("reference", False)]
 
 
 def test_the_input_ending_at_the_confirmation_confirms_nothing(fake):
@@ -342,7 +463,7 @@ def test_quit_is_the_shutdown_path_and_asks_nothing_when_the_arm_need_not_move(f
 
 def test_quit_asks_that_the_path_is_clear_when_the_arm_has_to_move(fake):
     fake.moves_arm = True
-    lines = typed(fake, "quit\n", " YES \n")
+    lines = typed(fake, "quit\n", " PATH is clear \n")
     assert lines == [
         CONFIRM_REST,
         "quit: completed; the robot app closes",
@@ -351,8 +472,8 @@ def test_quit_asks_that_the_path_is_clear_when_the_arm_has_to_move(fake):
     assert fake.calls == [("shutdown", True)]
 
 
-@pytest.mark.parametrize("answer", ["no", "", "y", "yes please", "rest", "quit"])
-def test_quit_without_a_typed_yes_is_passed_on_as_not_confirmed(fake, answer):
+@pytest.mark.parametrize("answer", ["no", "", "yes", "path clear", "rest", "quit"])
+def test_quit_without_the_typed_phrase_is_passed_on_as_not_confirmed(fake, answer):
     fake.moves_arm = True
     lines = typed(fake, "quit\n", answer + "\n")
     assert lines == [
@@ -892,7 +1013,7 @@ def test_typed_stop_ends_a_running_move_of_the_robot_app(robot_app, session):
     assert h.app.running and nothing_switched_off(h)
 
 
-def test_typed_rest_with_yes_returns_the_arm_to_rest(robot_app, session):
+def test_typed_rest_with_the_phrase_returns_the_arm_to_rest(robot_app, session):
     h = robot_app
     h.arm.set_pose(RAISED)
     terminal = session(h.app)
@@ -900,7 +1021,7 @@ def test_typed_rest_with_yes_returns_the_arm_to_rest(robot_app, session):
     terminal.out.wait_for(CONFIRM_REST)
     h.idle()
     assert h.arm.sent == []  # nothing moves before the answer
-    terminal.type("yes\n")
+    terminal.type("path is clear\n")
     terminal.out.wait_for("rest: completed")
     assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     assert h.app.motion_state is MotionState.REST_HOLD
@@ -908,11 +1029,12 @@ def test_typed_rest_with_yes_returns_the_arm_to_rest(robot_app, session):
     assert "[rest] return to rest: the arm is at rest, motors on" in terminal.out.lines
 
 
-def test_typed_rest_without_yes_moves_nothing(robot_app, session):
+@pytest.mark.parametrize("answer", ["no", "yes"])
+def test_typed_rest_without_the_phrase_moves_nothing(robot_app, session, answer):
     h = robot_app
     h.arm.set_pose(RAISED)
     terminal = session(h.app)
-    terminal.type("rest\n", "no\n")
+    terminal.type("rest\n", answer + "\n")
     terminal.out.wait_for("rest: refused: confirm the path is clear")
     h.idle()
     assert h.arm.sent == []
@@ -952,7 +1074,7 @@ def test_typed_release_away_from_rest_is_refused_and_moves_nothing(robot_app, se
     assert h.arm.pose() == pytest.approx(RAISED)
 
 
-def test_quit_with_yes_returns_to_rest_releases_there_and_ends_the_app(
+def test_quit_with_the_phrase_returns_to_rest_releases_there_and_ends_the_app(
     robot_app, session
 ):
     h = robot_app
@@ -962,7 +1084,7 @@ def test_quit_with_yes_returns_to_rest_releases_there_and_ends_the_app(
     terminal.out.wait_for(CONFIRM_REST)
     h.idle()
     assert h.arm.sent == []  # nothing moves before the answer
-    terminal.type("yes\n")
+    terminal.type("path is clear\n")
     terminal.out.wait_for("quit: completed; the robot app closes")
     assert h.app.wait_closed(WAIT_S)
     assert not h.app.running
@@ -973,11 +1095,14 @@ def test_quit_with_yes_returns_to_rest_releases_there_and_ends_the_app(
     ) < terminal.out.lines.index("quit: completed; the robot app closes")
 
 
-def test_quit_without_yes_moves_nothing_and_the_app_runs_on(robot_app, session):
+@pytest.mark.parametrize("answer", ["no", "yes"])
+def test_quit_without_the_phrase_moves_nothing_and_the_app_runs_on(
+    robot_app, session, answer
+):
     h = robot_app
     h.hold_at(RAISED)
     terminal = session(h.app)
-    terminal.type("quit\n", "no\n")
+    terminal.type("quit\n", answer + "\n")
     terminal.out.wait_for(
         "quit: refused: confirm the path is clear; the robot app keeps running"
     )
@@ -1005,7 +1130,7 @@ def test_a_refused_quit_says_why_and_the_app_keeps_running_and_holding(
     # Started away from rest the jaws are not referenced: no return to rest.
     h = make_robot_app(pose=RAISED)
     terminal = session(h.app)
-    terminal.type("quit\n", "yes\n")
+    terminal.type("quit\n", "path is clear\n")
     answer = terminal.out.wait_for(lambda line: line.startswith("quit: "))
     assert answer.startswith(
         "quit: refused: the return to rest ended refused: the jaws are not proven "
@@ -1027,7 +1152,7 @@ def test_quit_while_a_move_runs_is_refused_as_busy(robot_app, session):
     terminal = session(h.app)
     h.new_task()
     move_id, release = held_move(h)
-    terminal.type("quit\n", "yes\n")
+    terminal.type("quit\n", "path is clear\n")
     terminal.out.wait_for(
         "quit: refused: busy: a move is running; the robot app keeps running"
     )
@@ -1042,7 +1167,7 @@ def test_a_stop_during_a_quit_ends_it_and_nothing_is_released(robot_app, session
     h.hold_at(RAISED)
     reached, release = h.hold_move_after(5)
     terminal = session(h.app)
-    terminal.type("quit\n", "yes\n")
+    terminal.type("quit\n", "path is clear\n")
     assert reached.wait(WAIT_S)  # the return to rest is under way
     if how == "Ctrl+C":
         terminal.terminal.interrupt()
@@ -1096,7 +1221,7 @@ def test_ctrl_c_and_typed_lines_work_with_the_robot_connection_down(robot_app, s
     terminal.out.wait_for(
         "[stop] STOP from thor_terminal: Ctrl+C; the arm holds, stop number 1"
     )
-    terminal.type("rest\n", "yes\n")
+    terminal.type("rest\n", "path is clear\n")
     terminal.out.wait_for("rest: completed")
     assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     assert h.app.running and nothing_switched_off(h)

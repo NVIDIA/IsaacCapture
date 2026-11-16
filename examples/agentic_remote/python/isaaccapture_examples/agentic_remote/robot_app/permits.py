@@ -9,7 +9,7 @@ import logging
 import math
 import threading
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .interfaces import Owner
 
@@ -175,6 +175,24 @@ class PermitGate:
         with self._lock:
             refused = self._refused
         return refused[1] if refused is not None and refused[0] == move_id else None
+
+    def held_facts(self, now_mono: float) -> dict[str, Any] | None:
+        """The held permit as ROBOT_STATE shows it; None without a permit.
+
+        move_id, through_index, evidence_age_s (as covers() counts it) and
+        expires_in_s, which is negative once the permit has expired. The
+        permit of a move that has ended stays held until the next one.
+        """
+        with self._lock:
+            held = self._held
+        if held is None:
+            return None
+        return {
+            "move_id": held.permit.move_id,
+            "through_index": held.permit.through_index,
+            "evidence_age_s": now_mono - held.evidence_mono,
+            "expires_in_s": held.permit.expires_mono_s - now_mono,
+        }
 
     def clear(self) -> None:
         """Forget the held permit and the last refusal."""

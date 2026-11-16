@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, Any
 from ..protocol.carrier import send
 from ..protocol.messages import (
     COMMAND_TYPES,
+    DRIVER_APAI_MOCK,
+    DRIVER_REAL,
+    DRIVER_SIM,
     MESSAGE_TYPES,
     CheckerState,
     Event,
@@ -45,7 +48,10 @@ from . import rest as rest_module
 from .authority import Authority
 from .executor import HOLD_FAILED, MoveExecutor
 from .gripper import (
+    ALREADY_REFERENCED,
     CLOSE_UNTIL_CONTACT,
+    JAWS_BUSY,
+    PLAIN,
     GripperWorker,
     JawState,
 )
@@ -119,6 +125,15 @@ PATH_CLEAR_PROMPT = "Return to rest: is the path to the rest pose clear?"
 MOTORS_OFF = "the motors are off; restart the robot app"
 CONFIRM_PATH = rest_module.CONFIRM_PATH
 CONFIRM_OPEN = "confirm the jaw opening"
+CONFIRM_JAWS_EMPTY = "confirm that the jaws are empty"
+# The robot app setting that switches the typed jaw reference on.
+REFERENCE_SETTING = "jaws.allow_reference"
+REFERENCE_OFF = (
+    f"the typed jaw reference is switched off: the robot app setting "
+    f"{REFERENCE_SETTING} is false"
+)
+# What WELCOME.driver may say; "" declares nothing.
+DRIVERS = ("", DRIVER_SIM, DRIVER_APAI_MOCK, DRIVER_REAL)
 LINK_LOST = "robot connection lost"
 # The text of the "connection" event of a new robot connection.
 LINK_CONNECTED = (
@@ -411,14 +426,24 @@ class RobotApp:
         *,
         confirm: Callable[[str], bool] | None = None,
         step_period_s: float = 0.01,
+        driver: str = "",
+        allow_reference: bool = False,
     ) -> None:
         """confirm(prompt) is the Thor terminal's typed confirmation.
 
         None means "never confirmed". step_period_s is the longest the
         dispatcher waits for a link message between two supervisor steps.
         carrier None starts the app with no robot connection: it holds and
-        serves the Thor terminal until attach_carrier() gives it one.
+        serves the Thor terminal until attach_carrier() gives it one. driver
+        is what WELCOME declares the arm to be: one of DRIVERS (ValueError
+        otherwise). allow_reference is the setting jaws.allow_reference: False
+        refuses request_reference().
         """
+        if driver not in DRIVERS:
+            names = ", ".join(repr(name) for name in DRIVERS)
+            raise ValueError(f"driver must be one of {names}, got {driver!r}")
+        self._driver = driver
+        self._allow_reference = bool(allow_reference)
         if arm.n_joints != config.n_joints:
             raise ValueError(
                 f"the arm has {arm.n_joints} joints but the configuration "
@@ -458,7 +483,9 @@ class RobotApp:
         # one was handled. Written under the app's lock.
         self._link_lost = carrier is None
         self._state_forced = False  # a ROBOT_STATE is owed to a new carrier
-        self._view: ViewStatus | None = None
+        # The newest VIEW_STATUS of this robot connection and the app-clock
+        # time it arrived; one value, so a reader never sees half of a change.
+        self._view: tuple[ViewStatus, float] | None = None
         self._permit_refusal: str | None = None
         self._dropped: set[str] = set()  # kinds of link messages not taken
         self._inbox = Inbox()  # taken off the link, not yet handled
@@ -537,6 +564,9 @@ class RobotApp:
             clock,
             read_failures=self._idle.failures,
             move_stage=self._executor.stage,
+            view_age=self.view_age_s,
+            permit_facts=self._gate.held_facts,
+            permit_refusal=self._gate.last_refusal,
         )
         self._handlers: dict[type, Callable[[Any], None]] = {
             Move: self._on_move,
@@ -810,6 +840,64 @@ class RobotApp:
         if reason is not None:
             self._refuse(reply, "release typed at the Thor terminal", reason)
         return reason
+
+    @property
+    def allow_reference(self) -> bool:
+        """The setting jaws.allow_reference: whether a jaw reference may be typed."""
+        return self._allow_reference
+
+    def request_reference(
+        self, confirmed: bool, on_done: DoneFn | None = None
+    ) -> str | None:
+        """Queue a jaw reference typed at the Thor terminal; why not, or None.
+
+        confirmed says that the operator typed that the jaws are empty. Taken
+        only with the setting jaws.allow_reference on, nobody owning the arm,
+        no fault-stop, the motors on, no motion work or jaw command running or
+        waiting, and the jaws not referenced. A STOP ends it "cancelled". It
+        leaves "may be holding" as it was. on_done is as for request_rest().
+        """
+        reply = self._local_reply("reference", on_done)
+        with self._lock:
+            state = self._authority.snapshot()
+            reason = (
+                self._not_running()
+                or (None if self._allow_reference else REFERENCE_OFF)
+                or (None if confirmed else CONFIRM_JAWS_EMPTY)
+                or self._motors_off()
+                or self._busy()
+                or (JAWS_BUSY if self._worker.busy() else None)
+                # The app's own numbers: only the fault-stop and the owner count.
+                or self._authority.admit(
+                    state.session_id,
+                    state.owner_number,
+                    state.stop_number,
+                    Owner.NOBODY,
+                )
+                or (ALREADY_REFERENCED if self._arm.gripper_referenced() else None)
+            )
+            if reason is None:
+                done = _JawReply(reply, PLAIN)
+                reason = self._worker.reference(done)
+                done.queued(reason)
+                return reason
+        self._refuse(reply, "reference typed at the Thor terminal", reason)
+        return reason
+
+    def view_age_s(self, now: float) -> float | None:
+        """The age of the operator's live view at the app-clock time `now`.
+
+        The age the newest VIEW_STATUS reported plus the time since it
+        arrived. None when none has arrived on this robot connection, when it
+        said the view is not live, or when its age is not 0 or more.
+        """
+        view = self._view
+        if view is None:
+            return None
+        status, arrived = view
+        if not status.live or not status.age_s >= 0.0:
+            return None
+        return status.age_s + max(0.0, now - arrived)
 
     def shutdown_moves_arm(self) -> bool:
         """Whether a shutdown asked for now would first move the arm to rest.
@@ -1404,7 +1492,8 @@ class RobotApp:
         self.stop(m.reason, m.sender)
 
     def _on_view_status(self, m: ViewStatus) -> None:
-        self._view = m  # human driving, which needs the live view, comes later
+        # Only shown in ROBOT_STATE: nothing acts on the live view's age yet.
+        self._view = (m, self._clock.monotonic())
 
     def _on_permit(self, m: Permit) -> None:
         reason = self._gate.update(m)
@@ -1803,6 +1892,7 @@ class RobotApp:
                 "recovery": limits.recovery.version,
             },
             camera_calibration_id=config.camera_calibration_id,
+            driver=self._driver,
         )
 
     # The motion worker

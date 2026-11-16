@@ -226,12 +226,14 @@ class SimArm:
         with self._lock:
             return self._jaw_referenced
 
-    def gripper_reference(self) -> None:
+    def gripper_reference(self, cancel: threading.Event | None = None) -> None:
         with self._lock:
             if not self._torque:
                 raise ArmFault("the jaws cannot be referenced with torque off")
             if self._faults:
                 raise ArmFault(self._faults[0])
+            if cancel is not None and cancel.is_set():
+                return  # ended early: the jaws stay as they were
             self._jaw_referenced = True
             if self._jaw_target is None:
                 # A driver's reference leaves a jaw target; here, where the jaws are.

@@ -365,6 +365,7 @@ MESSAGE_FIELDS = {
         "max_move_setpoints": ...,
         "limit_set_versions": ...,
         "camera_calibration_id": "",
+        "driver": "",
     },
     Move: {
         "command_id": ...,
@@ -634,6 +635,26 @@ def test_fields_with_defaults_may_be_absent():
 
     # A ROBOT_STATE from a peer that knows no move stage.
     assert decode(RobotState.TYPE, _without(STATE, "move_stage")).move_stage == ""
+
+
+def test_welcome_carries_the_driver_and_an_old_welcome_reads_as_not_declared():
+    assert (messages.DRIVER_SIM, messages.DRIVER_APAI_MOCK, messages.DRIVER_REAL) == (
+        "sim",
+        "apai-mock",
+        "real",
+    )
+    assert messages.SIMULATED_DRIVERS == {"sim", "apai-mock"}
+    for driver in ("sim", "apai-mock", "real", ""):
+        sent = dataclasses.replace(WELCOME, driver=driver)
+        assert json.loads(sent.to_payload())["driver"] == driver
+        assert decode(Welcome.TYPE, sent.to_payload()) == sent
+    # A WELCOME from a robot app that knows no driver declares nothing, and
+    # the protocol version did not change for the field.
+    old = decode(Welcome.TYPE, _without(WELCOME, "driver"))
+    assert old.driver == "" and old.driver not in messages.SIMULATED_DRIVERS
+    assert old == WELCOME and messages.PROTOCOL_VERSION == 1
+    with pytest.raises(ProtocolError, match=r"driver: expected a string, got int"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("driver",), 1))
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import threading
+import time
 from collections.abc import Callable
 
 import pytest
@@ -22,8 +23,10 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     OwnerRequest,
     Release,
     Result,
+    RobotState,
     Shutdown,
     ViewStatus,
+    decode,
 )
 from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app import gripper as gripper_module
@@ -31,6 +34,7 @@ from isaaccapture_examples.agentic_remote.robot_app.app import (
     CLOSING,
     CONFIRM_OPEN,
     CONFIRM_PATH,
+    DRIVERS,
     LINK_LOST,
     MOTORS_OFF,
     NOT_RUNNING,
@@ -2891,3 +2895,178 @@ def test_link_messages_the_app_does_not_take_are_dropped(robot_app, caplog):
     assert (state.stop_level, state.stop_number, state.owner_number) == ("none", 0, 0)
     assert h.client.unexpected == []
     assert h.new_task().status == "completed"
+
+
+# The driver declaration in WELCOME
+
+
+def test_welcome_declares_no_driver_unless_the_app_is_given_one(robot_app):
+    assert robot_app.client.welcome.driver == ""
+
+
+@pytest.mark.parametrize("driver", ["sim", "apai-mock", "real"])
+def test_welcome_declares_the_driver_on_every_robot_connection(make_robot_app, driver):
+    h = make_robot_app(driver=driver)
+    assert h.client.welcome.driver == driver
+    h.lose_link()
+    assert h.connect().welcome.driver == driver
+
+
+def test_the_app_refuses_a_driver_name_it_does_not_know(
+    config, sim_arm, checkers, clock
+):
+    assert DRIVERS == ("", "sim", "apai-mock", "real")
+    for driver in ("mock", "REAL", "simulated", " sim", None):
+        with pytest.raises(
+            ValueError,
+            match=r"driver must be one of '', 'sim', 'apai-mock', 'real', got ",
+        ):
+            RobotApp(config, sim_arm, checkers, None, clock, driver=driver)
+    # Refused before anything was built or started.
+    assert not sim_arm.torque_on()
+
+
+# The live view's age in ROBOT_STATE: the reported age plus the time since
+
+
+def send_view(h, live: bool, age_s: float) -> float:
+    """Send a VIEW_STATUS; the app-clock time at which the app took it."""
+    before = h.app._view
+    h.client.send(ViewStatus(live=live, age_s=age_s))
+    deadline = time.monotonic() + WAIT_S
+    while h.app._view is before and time.monotonic() < deadline:
+        time.sleep(0.001)
+    status, arrived = h.app._view
+    assert (status.live, status.age_s) == (live, age_s)
+    return arrived
+
+
+def state_after(h, t_mono: float):
+    """A ROBOT_STATE built after this app-clock time; the clock is moved on for it."""
+    h.advance(0.125, 0.0625)  # two publish periods, a dispatcher pass after each
+    return h.client.wait_state(lambda s: s.clock_mono_s > t_mono, WAIT_S)
+
+
+def state_now(h):
+    """The ROBOT_STATE the app would send now; what was sent to it is taken first.
+
+    For a held move: moving the clock on for a ROBOT_STATE would make it late.
+    """
+    h.step()
+    h.step()
+    return h.app._publisher.build(h.clock.monotonic())
+
+
+def test_view_age_is_none_until_a_live_view_status_arrives(robot_app):
+    h = robot_app
+    now = h.clock.monotonic()
+    assert h.app.view_age_s(now) is None
+    assert state_after(h, now).view_age_s is None
+    arrived = send_view(h, True, 0.25)
+    assert h.app.view_age_s(arrived) == 0.25
+    h.clock.advance(0.5)
+    state = state_after(h, arrived + 0.5)
+    assert state.view_age_s == pytest.approx(0.25 + state.clock_mono_s - arrived)
+
+
+def test_view_age_grows_with_the_time_since_arrival(robot_app):
+    h = robot_app
+    arrived = send_view(h, True, 0.25)
+    assert h.app.view_age_s(arrived + 1.5) == pytest.approx(1.75)
+    assert h.app.view_age_s(arrived + 60.0) == pytest.approx(60.25)
+    # A time before the arrival never makes the view younger than it said.
+    assert h.app.view_age_s(arrived - 1.0) == 0.25
+    h.advance(3.0)
+    state = state_after(h, arrived + 3.0)
+    assert state.view_age_s == pytest.approx(0.25 + state.clock_mono_s - arrived)
+    assert state.view_age_s >= 3.25
+    # The newest VIEW_STATUS replaces the one before it.
+    later = send_view(h, True, 0.125)
+    assert later >= arrived + 3.0
+    assert h.app.view_age_s(later) == 0.125
+    # Nothing acts on the age: the arm is as it was.
+    assert h.app.snapshot().stop_level is StopLevel.NONE and h.arm.sent == []
+
+
+@pytest.mark.parametrize(("live", "age_s"), [(False, 0.1), (True, -1.0), (False, -1.0)])
+def test_a_view_status_that_is_not_live_gives_none(robot_app, live, age_s):
+    h = robot_app
+    arrived = send_view(h, True, 0.25)
+    assert h.app.view_age_s(arrived) == 0.25
+    arrived = send_view(h, live, age_s)
+    assert h.app.view_age_s(arrived) is None
+    assert h.app.view_age_s(arrived + 5.0) is None
+    assert state_after(h, arrived).view_age_s is None
+
+
+def test_a_lost_connection_forgets_the_view(robot_app):
+    h = robot_app
+    arrived = send_view(h, True, 0.25)
+    assert h.app.view_age_s(arrived) == 0.25
+    h.lose_link()
+    assert h.app._view is None
+    assert h.app.view_age_s(h.clock.monotonic()) is None
+    client = h.connect()
+    assert client.state.view_age_s is None
+    assert state_after(h, h.clock.monotonic()).view_age_s is None
+    # Only a VIEW_STATUS of the new connection counts.
+    arrived = send_view(h, True, 0.5)
+    assert h.app.view_age_s(arrived) == 0.5
+
+
+# Permit facts in ROBOT_STATE
+
+
+def test_robot_state_shows_the_held_permit_and_its_evidence_age(robot_app):
+    h = robot_app
+    assert h.client.state.health["permit"] is None
+    assert h.client.state.health["permit_refusal"] == ""
+    h.new_task()
+    reached, release = h.hold_move_after(6)
+    move_id = h.client.move(PATH, start_q=REST)
+    permit = h.client.permit(move_id, 12)
+    assert reached.wait(WAIT_S)
+    # The move's stage, "sending" once the permit covers it, sends a ROBOT_STATE.
+    state = h.client.wait_state(
+        lambda s: (
+            s.move_id == move_id
+            and (s.health["permit"] or {}).get("move_id") == move_id
+        ),
+        WAIT_S,
+    )
+    facts = state.health["permit"]
+    assert set(facts) == {"move_id", "through_index", "evidence_age_s", "expires_in_s"}
+    assert facts["through_index"] == 12 and state.move_id == move_id
+    limit = h.config.permits.evidence_age_limit_s
+    assert 0.0 <= facts["evidence_age_s"] < limit
+    assert facts["expires_in_s"] == pytest.approx(
+        permit.expires_mono_s - state.clock_mono_s
+    )
+    # A permit that reaches further is shown once the app has taken it.
+    h.client.permit(move_id, len(PATH) - 1)
+    assert state_now(h).health["permit"]["through_index"] == 24
+    release.set()
+    assert h.client.wait_result(move_id, timeout_s=WAIT_S).status == "completed"
+
+
+def test_robot_state_names_the_last_permit_refusal(robot_app):
+    h = robot_app
+    h.new_task()
+    reached, release = h.hold_move_after(6)
+    move_id = h.client.move(PATH, start_q=REST)
+    h.client.permit(move_id, 12)
+    assert reached.wait(WAIT_S)
+    # Further reach on a permit that has expired: refused, the held one stays.
+    h.client.permit(move_id, 20, expires_in_s=-1.0)
+    state = state_now(h)
+    assert state.move_id == move_id
+    assert state.health["permit_refusal"] == "permit expired"
+    assert state.health["permit"]["through_index"] == 12
+    assert decode(RobotState.TYPE, state.to_payload()).health == state.health
+    # The move's next good permit ends the refusal.
+    h.client.permit(move_id, len(PATH) - 1)
+    state = state_now(h)
+    assert state.health["permit"]["through_index"] == 24
+    assert state.health["permit_refusal"] == ""
+    release.set()
+    assert h.client.wait_result(move_id, timeout_s=WAIT_S).status == "completed"

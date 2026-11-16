@@ -22,15 +22,23 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Shutdown,
 )
 from isaaccapture_examples.agentic_remote.robot_app.app import (
+    CONFIRM_JAWS_EMPTY,
     CONFIRM_PATH,
     PATH_CLEAR_PROMPT,
+    REFERENCE_OFF,
 )
+from isaaccapture_examples.agentic_remote.robot_app.gripper import JAWS_BUSY
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    ArmFault,
+    GripperOutcome,
     MotionState,
     Owner,
     ReadFailed,
 )
-from isaaccapture_examples.agentic_remote.robot_app.terminal import CONFIRM_REST
+from isaaccapture_examples.agentic_remote.robot_app.terminal import (
+    CONFIRM_REFERENCE,
+    CONFIRM_REST,
+)
 
 WAIT_S = 5.0  # real seconds a test gives another thread before it fails
 REST = [0.0] * 6
@@ -353,15 +361,17 @@ def test_a_shutdown_at_the_thor_terminal_at_rest_asks_nothing(
     assert asked == [] and h.arm.sent == [] and len(h.arm.released_at) == 1
 
 
-def test_quit_typed_away_from_rest_moves_the_arm_only_after_a_typed_yes(robot_app):
+def test_quit_typed_away_from_rest_moves_the_arm_only_after_the_typed_phrase(
+    robot_app,
+):
     h = robot_app
     sent = raised_by_the_agent(h)
     thor = h.thor_terminal()
-    for answer in ("no", "", "y", "yes please"):
+    for answer in ("no", "", "yes", "path clear"):
         assert thor.ask("quit", answer, answer="quit: ") == QUIT_UNCONFIRMED
     assert len(thor.written(CONFIRM_REST)) == 4
     assert_holding_away_from_rest(h, sent)
-    assert thor.ask("quit", " Yes ", answer="quit: ") == QUIT_DONE
+    assert thor.ask("quit", " Path is  clear ", answer="quit: ") == QUIT_DONE
     assert h.app.wait_closed(WAIT_S)
     assert len(h.arm.sent) > sent
     (released_at,) = h.arm.released_at
@@ -396,7 +406,7 @@ def test_quit_asks_and_works_with_the_robot_connection_down(robot_app):
     h.robot_end.break_link()
     h.wait_local_event("connection")
     thor = h.thor_terminal()
-    assert thor.ask("quit", "yes", answer="quit: ") == QUIT_DONE
+    assert thor.ask("quit", "path is clear", answer="quit: ") == QUIT_DONE
     assert thor.written(CONFIRM_REST) == [CONFIRM_REST]
     assert h.app.wait_closed(WAIT_S)
     assert len(h.arm.sent) > sent and len(h.arm.released_at) == 1
@@ -903,3 +913,214 @@ def test_a_move_that_ends_at_a_contact_again_keeps_the_contact_hold(robot_app):
     again = final(h, h.client.rest())
     assert (again.status, again.reason) == ("refused", AT_A_CONTACT)
     assert len(h.checkers.recovery.contact_spots) == 2
+
+
+# The typed jaw reference: the way out for a raised arm whose jaws lost their
+# reference (their position is no longer known), so that it can neither rest
+# nor release. Thor terminal only, behind the setting jaws.allow_reference.
+
+FROM_RAISED = [[q + 0.004 * (index + 1) for q in RAISED] for index in range(25)]
+REFERENCE_REFUSED = "reference typed at the Thor terminal refused: "
+
+
+@pytest.fixture
+def unreferenced(make_robot_app):
+    """An app with the setting on that started raised: the jaws have no reference."""
+    h = make_robot_app(pose=RAISED, allow_reference=True)
+    assert h.app.allow_reference and not h.arm.gripper_referenced()
+    assert h.app.motion_state is MotionState.HOLD
+    return h
+
+
+def reference_refused(h, confirmed: bool = True) -> str:
+    """A typed reference that is refused at once; nothing went to the jaws."""
+    done = Done()
+    refused = len(h.heard("refused"))
+    reason = h.app.request_reference(confirmed, done)
+    assert reason is not None
+    result = done.wait()
+    assert (result.status, result.reason) == ("refused", reason)
+    assert h.heard("refused")[refused][1] == REFERENCE_REFUSED + reason
+    assert h.arm.jaw_commands == [] and h.arm.light_holds == []
+    return reason
+
+
+def test_reference_is_refused_while_its_setting_is_off(make_robot_app):
+    h = make_robot_app(pose=RAISED)  # as every shipped configuration has it
+    assert not h.app.allow_reference
+    assert reference_refused(h) == REFERENCE_OFF
+    assert REFERENCE_OFF == (
+        "the typed jaw reference is switched off: the robot app setting "
+        "jaws.allow_reference is false"
+    )
+    # The Thor terminal asks nothing where the command is off.
+    thor = h.thor_terminal()
+    told = thor.ask("reference", answer="reference: ")
+    assert told == f"reference: refused: {REFERENCE_OFF}"
+    assert thor.written(CONFIRM_REFERENCE) == []
+    assert not h.arm.gripper_referenced()
+
+
+def test_reference_is_refused_without_the_typed_phrase(unreferenced):
+    h = unreferenced
+    assert reference_refused(h, confirmed=False) == CONFIRM_JAWS_EMPTY
+    thor = h.thor_terminal()
+    for answer in ("yes", "path is clear", ""):
+        told = thor.ask("reference", answer, answer="reference: ")
+        assert told == "reference: refused: confirm that the jaws are empty"
+    assert len(thor.written(CONFIRM_REFERENCE)) == 3
+    assert not h.arm.gripper_referenced() and h.arm.jaw_commands == []
+
+
+def test_reference_is_refused_while_the_agent_owns_the_arm(unreferenced):
+    h = unreferenced
+    h.new_task()
+    assert reference_refused(h) == "control owner is agent, not nobody"
+    assert not h.arm.gripper_referenced()
+    assert h.app.snapshot().owner is Owner.AGENT
+
+
+def test_reference_is_refused_while_a_move_runs(unreferenced):
+    h = unreferenced
+    h.new_task()
+    reached, release = h.hold_move_after(6)
+    move_id = h.client.move(FROM_RAISED, start_q=RAISED)
+    h.client.permit(move_id, len(FROM_RAISED) - 1)
+    assert reached.wait(WAIT_S)
+    assert reference_refused(h) == "busy: a move is running"
+    release.set()
+    assert final(h, move_id).status == "completed"
+    assert not h.arm.gripper_referenced()
+
+
+def test_reference_is_refused_while_a_jaw_command_runs(make_robot_app):
+    h = make_robot_app(allow_reference=True)
+    held = h.hold_jaws_at(0.8)
+    h.new_task()
+    jaw_id = h.client.gripper(0.5)
+    assert held.wait(WAIT_S)
+    done = Done()
+    assert h.app.request_reference(True, done) == JAWS_BUSY
+    assert done.wait().status == "refused"
+    h.app.stop("typed stop")
+    assert final(h, jaw_id).status == "cancelled"
+
+
+def test_reference_is_refused_when_the_jaws_are_referenced(make_robot_app):
+    h = make_robot_app(allow_reference=True)  # started at rest: referenced
+    assert h.arm.gripper_referenced()
+    assert reference_refused(h) == "the jaws are referenced already"
+
+
+@pytest.mark.parametrize("state", ["a fault-stop", "the motors off", "closed"])
+def test_reference_is_refused_in_a_state_that_takes_no_jaw_command(
+    make_robot_app, state
+):
+    h = make_robot_app(allow_reference=True)
+    if state == "a fault-stop":
+        h.arm.set_fault("motor 3 over temperature")
+        h.wait_local_event("fault")
+        h.arm.clear_faults()
+        expected = "fault-stop latched: motor 3 over temperature"
+    elif state == "the motors off":
+        assert final(h, h.client.release()).status == "completed"
+        expected = "the motors are off; restart the robot app"
+    else:
+        h.app.close()
+        expected = "the robot app is not running"
+    h.arm._jaw_referenced = False  # the reference was lost
+    done = Done()
+    assert h.app.request_reference(True, done) == expected
+    assert done.wait().status == "refused"
+    assert not h.arm.gripper_referenced() and h.arm.jaw_commands == []
+
+
+def test_a_typed_reference_references_the_jaws_and_rest_is_accepted_after_an_open(
+    unreferenced,
+):
+    h = unreferenced
+    # The jaws had closed on something before their reference was lost.
+    h.app._jaw_state.note_command_result(0.0, "plain", GripperOutcome("stalled", 0.4))
+    thor = h.thor_terminal()
+    # The defect: without the reference the arm can neither rest nor release.
+    told = thor.ask("rest", "path is clear", answer="rest: ")
+    assert told.startswith("rest: refused: the jaws are not proven empty (unknown)")
+    assert "refused" in thor.ask("release", answer="release: ")
+    refused = final(h, h.client.open_jaws())
+    assert (refused.status, refused.reason) == (
+        "refused",
+        "the jaws are not referenced",
+    )
+    assert h.arm.sent == [] and h.arm.torque_on()
+
+    told = thor.ask("reference", " Jaws are empty ", answer="reference: ")
+    assert told == "reference: completed"
+    assert thor.written(CONFIRM_REFERENCE) == [CONFIRM_REFERENCE]
+    assert h.arm.gripper_referenced()
+    state = h.client.wait_state(
+        lambda s: "reference" in (s.last_result or {}).get("command_id", ""), WAIT_S
+    )
+    assert state.gripper.referenced
+    # The reference proves nothing about what the jaws hold.
+    assert state.gripper.may_be_holding and state.gripper.load == "loaded"
+    assert (state.owner, state.stop_level, state.torque_on) == ("nobody", "none", True)
+    told = thor.ask("rest", "path is clear", answer="rest: ")
+    assert told.startswith("rest: refused: the jaws are not proven empty (loaded)")
+    assert h.arm.sent == []
+
+    # The guarded opening from the console clears the flag; then rest is taken.
+    opened = final(h, h.client.open_jaws())
+    assert opened.status == "completed" and opened.detail["opening"] == 1.0
+    assert thor.ask("rest", "path is clear", answer="rest: ") == "rest: completed"
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    assert h.app.motion_state is MotionState.REST_HOLD
+    assert h.arm.torque_on() and h.arm.released_at == []
+    # A referenced gripper is never referenced again.
+    told = thor.ask("reference", "jaws are empty", answer="reference: ")
+    assert told == "reference: refused: the jaws are referenced already"
+
+
+def test_a_stop_ends_a_reference_without_a_fault_stop(unreferenced):
+    h = unreferenced
+    reached, release = h.hold_call("gripper_reference")
+    done = Done()
+    assert h.app.request_reference(True, done) is None
+    assert reached.wait(WAIT_S)  # the gripper worker is about to close the jaws
+    busy = Done()
+    assert h.app.request_reference(True, busy) == JAWS_BUSY
+    assert h.app.stop("typed stop") == 1
+    release.set()
+    result = done.wait()
+    assert result.status == "cancelled"
+    assert result.detail == {"outcome": "cancelled", "opening": None}
+    state = h.app.snapshot()
+    assert (state.stop_level.value, state.fault_reason) == ("stop", "")
+    assert h.heard("fault") == []
+    assert not h.arm.gripper_referenced() and h.arm.jaw_commands == []
+    assert h.arm.torque_on() and h.arm.released_at == [] and h.arm.sent == []
+    assert h.app.motion_state is MotionState.HOLD
+    # After the STOP the reference can be typed again.
+    assert h.app._worker.wait_idle(WAIT_S)
+    again = Done()
+    assert h.app.request_reference(True, again) is None
+    assert again.wait().status == "completed"
+    assert h.arm.gripper_referenced()
+
+
+def test_a_reference_that_the_driver_fails_is_a_fault_stop_with_the_motors_on(
+    unreferenced,
+):
+    h = unreferenced
+
+    def stuck(cancel=None):
+        raise ArmFault("the jaws stopped short of the closed stop")
+
+    h.arm.gripper_reference = stuck
+    done = Done()
+    assert h.app.request_reference(True, done) is None
+    result = done.wait()
+    reason = "the jaw reference failed: the jaws stopped short of the closed stop"
+    assert (result.status, result.reason) == ("failed", reason)
+    state = h.app.snapshot()
+    assert (state.stop_level.value, state.fault_reason) == ("fault", reason)
+    assert h.arm.torque_on() and h.arm.released_at == []

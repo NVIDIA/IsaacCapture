@@ -395,6 +395,22 @@ def test_reference_fails_with_torque_off_or_a_fault(sim_arm):
     assert sim_arm.gripper_referenced()
 
 
+def test_a_reference_ends_early_once_its_cancel_is_set(sim_arm):
+    sim_arm.connect()
+    cancel = threading.Event()
+    cancel.set()
+    sim_arm.gripper_reference(cancel)  # raises nothing
+    assert not sim_arm.gripper_referenced()
+    assert sim_arm.gripper_last_target() is None and sim_arm.jaw_commands == []
+    # A fault still counts for more than the cancel.
+    sim_arm.set_fault("gripper motor fault")
+    with pytest.raises(ArmFault, match=r"gripper motor fault"):
+        sim_arm.gripper_reference(cancel)
+    sim_arm.clear_faults()
+    sim_arm.gripper_reference(threading.Event())
+    assert sim_arm.gripper_referenced()
+
+
 def test_jaws_travel_at_jaw_speed(jaws, clock):
     t0 = clock.monotonic()
     outcome = jaws.gripper_command(0.3, 0.5, "plain", threading.Event())

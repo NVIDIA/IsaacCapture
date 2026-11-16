@@ -338,8 +338,20 @@ class StatePublisher:
         clock: Clock,
         read_failures: Callable[[], Sequence[int]] | None = None,
         move_stage: Callable[[], str] | None = None,
+        view_age: Callable[[float], float | None] | None = None,
+        permit_facts: Callable[[float], dict[str, Any] | None] | None = None,
+        permit_refusal: Callable[[str], str | None] | None = None,
     ) -> None:
+        """view_age(now) is the age of the operator's live view, None if unknown.
+
+        permit_facts(now) is the held permit (PermitGate.held_facts) and
+        permit_refusal(move_id) why that move's newest permit was refused
+        (PermitGate.last_refusal). Each of the three may be left out.
+        """
         self._move_stage = move_stage
+        self._view_age = view_age
+        self._permit_facts = permit_facts
+        self._permit_refusal = permit_refusal
         self._arm = arm
         self._history = history
         self._authority_state = authority_state
@@ -408,6 +420,15 @@ class StatePublisher:
         if wait_s is not None and not math.isfinite(wait_s):
             not_finite.append("assistance_wait_s")
             wait_s = None
+        view_age_s = None if self._view_age is None else self._view_age(now)
+        if view_age_s is not None and not math.isfinite(view_age_s):
+            not_finite.append("view_age_s")
+            view_age_s = None
+        permit = None if self._permit_facts is None else self._permit_facts(now)
+        permit = _clean(permit, "permit", not_finite)
+        refusal = None
+        if self._permit_refusal is not None:
+            refusal = self._permit_refusal(move_id)
         last_result = _clean(newest_result, "last_result", not_finite)
         temperatures = _clean(self._arm.temperatures(), "temperatures", not_finite)
         failures = None if self._read_failures is None else self._read_failures()
@@ -442,7 +463,7 @@ class StatePublisher:
             last_result=last_result,
             assistance_wait_s=wait_s,
             torque_on=bool(self._arm.torque_on()),
-            view_age_s=None,
+            view_age_s=view_age_s,
             teleop_stage="",
             controller_age_s=None,
             health={
@@ -453,6 +474,9 @@ class StatePublisher:
                 "missed_deadlines": missed_deadlines,
                 "clamped": clamped,
                 "not_finite": not_finite,
+                # The held permit and why the move's newest permit was refused.
+                "permit": permit,
+                "permit_refusal": refusal or "",
             },
             move_stage=move_stage,
         )

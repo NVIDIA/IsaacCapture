@@ -20,11 +20,14 @@ from isaaccapture_examples.agentic_remote.robot_app import sim as sim_module
 from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
 from isaaccapture_examples.agentic_remote.robot_app.config import GripperConfig
 from isaaccapture_examples.agentic_remote.robot_app.gripper import (
+    ALREADY_REFERENCED,
     CLOSE_UNTIL_CONTACT,
     JAW_MODES,
+    JAWS_BUSY,
     MAX_WAITING,
     OPEN_EFFORT,
     PLAIN,
+    REFERENCE,
     GripperWorker,
     JawState,
 )
@@ -1589,3 +1592,151 @@ def test_close_may_be_called_from_on_done(arm, make_worker):
 
 def test_the_worker_thread_does_not_keep_the_interpreter_alive(arm, worker):
     assert worker._thread.daemon
+
+
+# The jaw reference: asked for at the Thor terminal only
+
+
+@pytest.fixture
+def bare(sim_arm, make_worker, authority) -> tuple[SimArm, GripperWorker]:
+    """The arm connected with its jaws not referenced, and nobody owning it."""
+    authority.set_owner(Owner.NOBODY, "the task is over")
+    sim_arm.connect()
+    return sim_arm, make_worker(sim_arm)
+
+
+def reference_refused_at_once(worker) -> str:
+    done = Done()
+    reason = worker.reference(done)
+    assert reason is not None
+    assert done.outcomes == [outcome("refused", None, reason)]
+    assert done.threads == [threading.current_thread()]
+    return reason
+
+
+def nothing_sent_to_the_jaws(arm: SimArm) -> bool:
+    return arm.jaw_commands == [] and arm.light_holds == []
+
+
+def test_a_reference_references_the_jaws_and_keeps_may_be_holding(bare, jaw_state):
+    arm, worker = bare
+    # A close that ended short, before the reference was lost.
+    jaw_state.note_command_result(0.0, PLAIN, outcome("stalled", 0.4))
+    assert jaw_state.gripper_state(arm).opening is None  # not referenced: unknown
+    done = Done()
+    assert worker.reference(done) is None
+    assert done.wait() == outcome("reached", 1.0)
+    assert done.threads == [worker._thread]
+    assert worker.wait_idle(WAIT_S)
+    assert arm.gripper_referenced() and nothing_sent_to_the_jaws(arm)
+    state = jaw_state.gripper_state(arm)
+    assert (state.referenced, state.valid, state.opening) == (True, True, 1.0)
+    # Only a measured full open after a command clears the flag.
+    assert state.may_be_holding and state.load == "loaded"
+    assert open_fully(worker) == outcome("reached", 1.0)
+    assert not jaw_state.may_be_holding
+    assert jaw_state.classify(arm) is JawLoad.EMPTY
+
+
+def test_reference_is_refused_while_the_agent_owns_the_arm(bare, authority):
+    arm, worker = bare
+    authority.set_owner(Owner.AGENT, "new task")
+    reason = reference_refused_at_once(worker)
+    assert reason == "control owner is agent, not nobody"
+    assert not arm.gripper_referenced() and nothing_sent_to_the_jaws(arm)
+
+
+def test_reference_is_refused_while_a_fault_stop_is_latched(bare, authority):
+    arm, worker = bare
+    authority.raise_fault("motor 3 over temperature")
+    reason = reference_refused_at_once(worker)
+    assert reason == "fault-stop latched: motor 3 over temperature"
+    assert not arm.gripper_referenced()
+
+
+def test_reference_is_refused_when_the_jaws_are_referenced(bare):
+    arm, worker = bare
+    arm.gripper_reference()
+    calls: list[object] = []
+    arm.gripper_reference = lambda cancel=None: calls.append(cancel)
+    assert reference_refused_at_once(worker) == ALREADY_REFERENCED
+    assert ALREADY_REFERENCED == "the jaws are referenced already"
+    assert calls == [] and nothing_sent_to_the_jaws(arm)
+
+
+def test_reference_is_refused_while_a_jaw_command_runs(bare):
+    arm, worker = bare
+    arm.gripper_reference()
+    pause = JawPause(arm, lambda opening: opening <= 0.8)
+    opening = Done()
+    assert worker.submit(0.5, 0.5, PLAIN, Owner.NOBODY, opening) is None
+    pause.wait()
+    # The jaws are referenced here; without that the refusal is the busy one.
+    arm._jaw_referenced = False
+    assert reference_refused_at_once(worker) == JAWS_BUSY
+    arm._jaw_referenced = True
+    pause.release.set()
+    assert opening.wait().status == "reached"
+
+
+def test_reference_is_not_a_jaw_mode_that_a_command_can_ask_for(bare):
+    # "reference" is not a jaw mode: a GRIPPER link message cannot ask for one.
+    arm, worker = bare
+    assert REFERENCE not in JAW_MODES
+    reason = refused_at_once(worker, 0.0, 0.0, REFERENCE, Owner.NOBODY)
+    assert reason == "unknown mode 'reference'"
+    assert not arm.gripper_referenced()
+
+
+def test_a_stop_ends_a_reference_without_a_fault_stop(bare, authority):
+    arm, worker = bare
+    faults: list[str] = []
+    worker.on_fault = faults.append
+    entered, cancels = threading.Event(), []
+    inner = arm.gripper_reference
+
+    def slow_reference(cancel=None):
+        # The driver's slow close: it ends at its next pass once cancel is set.
+        cancels.append(cancel)
+        entered.set()
+        assert cancel.wait(WAIT_S)
+        inner(cancel)
+
+    arm.gripper_reference = slow_reference
+    done = Done()
+    assert worker.reference(done) is None
+    assert entered.wait(WAIT_S)
+    assert worker.busy()
+    authority.raise_stop("operator pressed stop", "thor_terminal")
+    worker.stop_now()
+    ended = done.wait()
+    assert (ended.status, ended.opening) == ("cancelled", None)
+    assert ended.detail == "stopped before the jaws were referenced"
+    assert faults == [] and authority.stop_level.value == "stop"
+    assert not arm.gripper_referenced() and arm.jaw_commands == []
+    assert arm.torque_on()
+    # The stop's light hold went out; a reference can be asked for again.
+    assert len(arm.light_holds) >= 1
+    assert worker.wait_idle(WAIT_S)
+    arm.gripper_reference = inner
+    again = Done()
+    assert worker.reference(again) is None
+    assert again.wait().status == "reached"
+
+
+def test_a_reference_the_driver_fails_is_a_fault(bare):
+    arm, worker = bare
+    faults: list[str] = []
+    worker.on_fault = faults.append
+
+    def stuck(cancel=None):
+        raise ArmFault("the jaws stopped short of the closed stop")
+
+    arm.gripper_reference = stuck
+    done = Done()
+    assert worker.reference(done) is None
+    ended = done.wait()
+    reason = "the jaw reference failed: the jaws stopped short of the closed stop"
+    assert ended == outcome("failed", None, reason)
+    assert faults == [reason]
+    assert not arm.gripper_referenced() and arm.jaw_commands == []

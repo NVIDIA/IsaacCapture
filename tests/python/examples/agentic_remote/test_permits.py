@@ -768,6 +768,57 @@ def test_clear_forgets_the_refusal(gate, authority, clock):
     assert gate.last_refusal(MOVE) is None
 
 
+# What ROBOT_STATE shows of the held permit
+
+
+def test_robot_state_shows_the_held_permit_and_its_evidence_age(gate, authority, clock):
+    assert gate.held_facts(clock.monotonic()) is None
+    permit = make_permit(
+        authority, clock, through_index=40, evidence_age_s=0.5, expires_in_s=1.0
+    )
+    assert update(gate, clock, permit) is None
+    assert gate.held_facts(clock.monotonic()) == {
+        "move_id": MOVE,
+        "through_index": 40,
+        "evidence_age_s": 0.5,
+        "expires_in_s": 1.0,
+    }
+    # Both run on: the age up, the life down and below 0 once it has expired,
+    # the same clock on which covers() refuses the setpoint.
+    clock.advance(0.25)
+    facts = gate.held_facts(clock.monotonic())
+    assert (facts["evidence_age_s"], facts["expires_in_s"]) == (0.75, 0.75)
+    clock.advance(1.0)
+    facts = gate.held_facts(clock.monotonic())
+    assert (facts["evidence_age_s"], facts["expires_in_s"]) == (1.75, -0.25)
+    assert covers(gate, clock, 0) == EXPIRED
+
+
+def test_the_held_facts_follow_a_cancel_and_a_clear(gate, authority, clock):
+    first = make_permit(authority, clock, through_index=40, evidence_age_s=0.5)
+    assert update(gate, clock, first) is None
+    # A cancel lowers the reach and leaves the evidence and the expiry.
+    cancel = dataclasses.replace(first, through_index=-1)
+    assert update(gate, clock, cancel) is None
+    facts = gate.held_facts(clock.monotonic())
+    assert (facts["through_index"], facts["evidence_age_s"]) == (-1, 0.5)
+    # Evidence a little ahead of the clock is shown as 0 old, never as negative.
+    ahead = make_permit(authority, clock, move_id="move-2", evidence_age_s=-0.03125)
+    assert update(gate, clock, ahead) is None
+    facts = gate.held_facts(clock.monotonic())
+    assert (facts["move_id"], facts["evidence_age_s"]) == ("move-2", 0.0)
+    gate.clear()
+    assert gate.held_facts(clock.monotonic()) is None
+
+
+def test_a_refused_permit_leaves_the_held_facts(gate, authority, clock):
+    assert update(gate, clock, make_permit(authority, clock, through_index=10)) is None
+    before = gate.held_facts(clock.monotonic())
+    assert update(gate, clock, refused(authority, clock)) == EXPIRED
+    assert gate.held_facts(clock.monotonic()) == before
+    assert gate.last_refusal(MOVE) == EXPIRED
+
+
 def test_updates_and_checks_from_two_threads(gate, authority, checker, clock):
     last = 400
     ready = threading.Barrier(2)

@@ -277,14 +277,18 @@ def test_the_selftest_passes_on_the_shipped_configuration(capsys, releases):
     shown = [line.split(" | ", 1)[1] for line in lines if " thor terminal | " in line]
     for line in (
         "> stop",
-        "Return to rest: is the path to the rest pose clear? Type yes to confirm.",
-        "> yes",
+        'Return to rest: is the path to the rest pose clear? Type "path is clear" '
+        "to confirm.",
+        "> path is clear",
         "rest: completed",
         "quit: completed; the robot app closes",
     ):
         assert line in shown
-    asked = "Return to rest: is the path to the rest pose clear? Type yes to confirm."
-    assert shown.index("> rest") < shown.index(asked) < shown.index("> yes")
+    asked = (
+        'Return to rest: is the path to the rest pose clear? Type "path is clear" '
+        "to confirm."
+    )
+    assert shown.index("> rest") < shown.index(asked) < shown.index("> path is clear")
     # The quit comes with the motors off at rest: it moves nothing and asks nothing.
     assert shown.count(asked) == 1
     assert "nothing was asked: the arm did not move" in steps[10]

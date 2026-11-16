@@ -12,7 +12,7 @@ import socket
 import sys
 import threading
 import types
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -464,10 +464,12 @@ class AppHarness:
         confirm: Callable[[str], bool] | None = None,
         connected: bool = True,
         step_period_s: float | None = APP_STEP_S,
+        app_options: Mapping[str, Any] | None = None,
     ) -> None:
         """connected=False builds the app with no robot connection; see connect().
 
-        step_period_s None leaves the app its own dispatcher period.
+        step_period_s None leaves the app its own dispatcher period. app_options
+        are further keywords of RobotApp, such as driver or allow_reference.
         """
         from isaaccapture_examples.agentic_remote.robot_app.app import RobotApp
         from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
@@ -492,6 +494,7 @@ class AppHarness:
             clock,
             confirm=confirm,
             **step,
+            **dict(app_options or {}),
         )
         # What a listener at the Thor terminal heard: (kind, text, data).
         self.local_events: list[tuple[str, str, dict[str, Any]]] = []
@@ -756,7 +759,8 @@ def make_robot_app(
 
     make_robot_app(config=None, pose=None, confirm=None, start=True, connected=True):
     pose puts the arm there before the app connects; start=False leaves the app
-    unstarted; connected=False builds it with no robot connection.
+    unstarted; connected=False builds it with no robot connection. Further
+    keywords, such as driver or allow_reference, go to RobotApp.
     """
     made: list[AppHarness] = []
 
@@ -766,10 +770,19 @@ def make_robot_app(
         confirm: Callable[[str], bool] | None = None,
         start: bool = True,
         connected: bool = True,
+        **app_options: Any,
     ) -> AppHarness:
         if pose is not None:
             sim_arm.set_pose(pose)
-        harness = AppHarness(config, sim_arm, checkers, clock, confirm, connected)
+        harness = AppHarness(
+            config,
+            sim_arm,
+            checkers,
+            clock,
+            confirm,
+            connected,
+            app_options=app_options,
+        )
         made.append(harness)
         return harness.start() if start else harness
 

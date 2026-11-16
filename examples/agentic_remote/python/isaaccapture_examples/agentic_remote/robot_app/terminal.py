@@ -15,6 +15,8 @@ import threading
 from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING, Any
 
+from ..protocol.confirm import JAWS_ARE_EMPTY, PATH_IS_CLEAR, confirms
+from ..protocol.confirm import YES as YES  # re-exported: the entry point imports it
 from .app import (
     COMPLETED,
     EVENT_REFUSED,
@@ -37,22 +39,27 @@ if TYPE_CHECKING:
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.terminal")
 
 BELL_CHAR = "\a"
-# The one answer that confirms that the path to rest is clear.
-YES = "yes"
 # Reasons of the STOPs raised here.
 STOP_TYPED = "typed stop"
 STOP_CTRL_C = "Ctrl+C"
 
-CONFIRM_REST = f"{PATH_CLEAR_PROMPT} Type yes to confirm."
+CONFIRM_REST = f'{PATH_CLEAR_PROMPT} Type "{PATH_IS_CLEAR}" to confirm.'
+CONFIRM_REFERENCE = (
+    "Reference the jaws: they close slowly to their stop. Are the jaws empty? "
+    f'Type "{JAWS_ARE_EMPTY}" to confirm.'
+)
 BANNER = "Thor terminal: type stop, rest, release, quit or help"
 CTRL_C_NOTE = "Ctrl+C is STOP"
 INPUT_ENDED = "the Thor terminal's input ended"
 HELP = (
-    "stop     STOP: the arm holds where it is, motors on",
-    "rest     return the arm to rest; asks first that the path is clear",
-    "release  switch the motors off; only at rest with the jaws proven empty",
-    "quit     return to rest (asks like rest if the arm must move), motors off, exit",
-    "help     this list",
+    "stop       STOP: the arm holds where it is, motors on",
+    f'rest       return the arm to rest; asks first for a typed "{PATH_IS_CLEAR}"',
+    "release    switch the motors off; only at rest with the jaws proven empty",
+    "quit       return to rest (asks like rest if the arm moves), motors off, exit",
+    "reference  make the jaw position known again: the jaws close slowly to "
+    f'their stop; asks first for a typed "{JAWS_ARE_EMPTY}"; only with the '
+    "robot app setting jaws.allow_reference",
+    "help       this list",
 )
 
 # Longest close() waits, in real time, for one of the terminal's threads.
@@ -270,6 +277,8 @@ class ThorTerminal:
             self._request("release", self._app.request_release)
         elif word == "quit":
             self._quit()
+        elif word == "reference":
+            self._reference()
         elif word == "help":
             for text in HELP:
                 self._say(text)
@@ -287,14 +296,26 @@ class ThorTerminal:
         confirmed = self._app.shutdown_moves_arm() and self._path_is_clear()
         self._request("quit", lambda done: self._app.request_shutdown(confirmed, done))
 
+    def _reference(self) -> None:
+        """A typed reference: asked only where the setting allows the command."""
+        confirmed = self._app.allow_reference and self._asked(
+            CONFIRM_REFERENCE, JAWS_ARE_EMPTY
+        )
+        self._request(
+            "reference", lambda done: self._app.request_reference(confirmed, done)
+        )
+
     def _path_is_clear(self) -> bool:
-        """Ask that the path to rest is clear; only a typed yes confirms it."""
-        self._say(CONFIRM_REST)
+        """Ask that the path to rest is clear; only the typed phrase confirms it."""
+        return self._asked(CONFIRM_REST, PATH_IS_CLEAR)
+
+    def _asked(self, question: str, phrase: str) -> bool:
+        """Ask a question; True only when the next typed line is the phrase."""
+        self._say(question)
         answer = self._next_line()
-        word = "" if answer is None else answer.strip().lower()
-        if word == "stop":
+        if confirms(answer, "stop"):
             self._stop(STOP_TYPED)  # a stop is a STOP wherever it is typed
-        return word == YES
+        return confirms(answer, phrase)
 
     def _request(self, what: str, request: Callable[[DoneFn], object]) -> None:
         """Ask the robot app for something; its final RESULT becomes one line."""

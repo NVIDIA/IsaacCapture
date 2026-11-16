@@ -166,8 +166,12 @@ class ArmPort(Protocol):
     def gripper_referenced(self) -> bool:
         """Whether the jaw reference taken at start is still valid."""
 
-    def gripper_reference(self) -> None:
-        """Reference the jaws; at start and at rest only; raises ArmFault."""
+    def gripper_reference(self, cancel: threading.Event | None = None) -> None:
+        """Reference the jaws: they close slowly to their stop; raises ArmFault.
+
+        Once cancel is set it ends early without raising: the jaws stay
+        unreferenced and are held where they are.
+        """
 
     def gripper_read(self) -> float | None:
         """Jaw opening, 0 closed to 1 open; None if unknown or the read failed."""

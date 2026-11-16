@@ -846,7 +846,72 @@ def test_build_takes_every_field_from_its_source(world, clock, config):
         "missed_deadlines": 0,
         "clamped": 0,
         "not_finite": [],
+        "permit": None,
+        "permit_refusal": "",
     }
+
+
+def test_view_age_is_none_until_a_live_view_status_arrives(world, clock):
+    assert world.build().view_age_s is None  # no source of the view's age
+    asked: list[float] = []
+    world.publisher._view_age = lambda now: asked.append(now)
+    assert world.build().view_age_s is None  # no live VIEW_STATUS yet
+    world.publisher._view_age = lambda now: 0.25
+    assert world.build().view_age_s == 0.25
+    # The source is asked for the age at the state's own time.
+    assert asked == [clock.monotonic()]
+
+
+def test_view_age_grows_with_the_time_since_arrival(world, clock):
+    arrived = clock.monotonic()
+    world.publisher._view_age = lambda now: 0.2 + (now - arrived)
+    assert world.build().view_age_s == pytest.approx(0.2)
+    clock.advance(1.5)
+    assert world.build().view_age_s == pytest.approx(1.7)
+    assert world.publisher.build(arrived + 4.0).view_age_s == pytest.approx(4.2)
+
+
+def test_a_view_age_that_is_not_finite_is_sent_as_unknown(world):
+    world.publisher._view_age = lambda now: math.inf
+    state = world.build()
+    assert state.view_age_s is None
+    assert state.health["not_finite"] == ["view_age_s"]
+    state.to_payload()
+
+
+def test_robot_state_shows_the_held_permit_and_its_evidence_age(world, clock):
+    facts = {
+        "move_id": "move-9",
+        "through_index": 49,
+        "evidence_age_s": 0.75,
+        "expires_in_s": 0.5,
+    }
+    asked: list[float] = []
+    world.publisher._permit_facts = lambda now: asked.append(now) or dict(facts)
+    state = world.build()
+    assert state.health["permit"] == facts
+    assert asked == [clock.monotonic()]
+    assert decode(RobotState.TYPE, state.to_payload()).health["permit"] == facts
+    # Without a permit the key is there and says so.
+    world.publisher._permit_facts = lambda now: None
+    assert world.build().health["permit"] is None
+
+
+def test_robot_state_names_the_last_permit_refusal(world):
+    asked: list[str] = []
+
+    def refusal(move_id: str) -> str | None:
+        asked.append(move_id)
+        return "permit evidence is too old" if move_id == "move-9" else None
+
+    world.publisher._permit_refusal = refusal
+    assert world.build().health["permit_refusal"] == ""  # no move runs
+    world.progress = ("move-9", 12, 250)
+    assert world.build().health["permit_refusal"] == "permit evidence is too old"
+    world.progress = ("move-10", 0, 25)
+    assert world.build().health["permit_refusal"] == ""
+    # Asked for the move the state itself names.
+    assert asked == ["", "move-9", "move-10"]
 
 
 def test_enum_sources_are_sent_as_plain_strings(world):
@@ -1062,6 +1127,8 @@ def test_health_reports_the_arm_and_the_counters(world, clock):
         "missed_deadlines": 2,
         "clamped": 1,
         "not_finite": [],
+        "permit": None,
+        "permit_refusal": "",
     }
 
 

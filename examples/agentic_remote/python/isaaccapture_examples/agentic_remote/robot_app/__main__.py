@@ -30,6 +30,7 @@ from ..link_service.listen import RobotListener
 from ..link_service.local import connect_local
 from ..link_service.service import LOST, RobotLinkService
 from ..protocol.carrier import loopback_pair
+from ..protocol.confirm import PATH_IS_CLEAR
 from ..protocol.link_carrier import LinkCarrier
 from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
 from .app import RobotApp
@@ -835,7 +836,7 @@ class _SelfTest:
             self._written.wait_for(CONFIRM_REST, STEP_WAIT_S),
             "the Thor terminal did not ask whether the path is clear",
         )
-        self._type("yes")
+        self._type(PATH_IS_CLEAR)
         rest = self._config.rest
         longest = planned_duration_s(
             FIRST_MOVE_RAD + SECOND_MOVE_RAD, rest.recovery_speed, rest.min_duration_s
