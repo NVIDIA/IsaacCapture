@@ -953,6 +953,11 @@ def test_an_empty_file_gives_the_defaults(tmp_path):
         ({"allowed_peers": []}, r"allowed_peers must be a non-empty list"),
         ({"allowed_peers": "127.0.0.1"}, r"allowed_peers must be a list"),
         ({"allowed_peers": [7]}, r"allowed_peers\[0\] must be a non-empty string"),
+        ({"allowed_peers": ["thor"]}, r"allowed_peers\[0\] must be an IP address"),
+        (
+            {"allowed_peers": ["127.0.0.1", "192.0.2.10:47610"]},
+            r"allowed_peers\[1\] must be an IP address, got '192\.0\.2\.10:47610'",
+        ),
         ({"log_level": "loud"}, r"log_level must be one of"),
         ({"local": {"max_clients": 0}}, r"local\.max_clients must be from 1"),
         ({"local": {"hello_timeout_s": 0}}, r"local\.hello_timeout_s must be above 0"),

@@ -308,6 +308,8 @@ def test_quit_and_the_end_of_the_input_leave_the_console_and_send_nothing(
 def test_help_state_and_an_unknown_command_send_nothing(
     robot: ScriptedRobot, desk: Desk
 ) -> None:
+    # `state` typed before the first ROBOT_STATE answers "none has arrived".
+    desk.sees(lambda state: True)
     desk.type("help", "state", "move 1 2 3", "")
     assert "nothing is sent and the robot app runs on" in desk.wait("quit  ")
     desk.wait("robot link service: robot connection up, session s1; clients: 1 console")

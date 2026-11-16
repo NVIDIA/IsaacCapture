@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 from dataclasses import dataclass
@@ -43,6 +44,12 @@ class LinkServiceConfig:
             raise ConfigError(f"allowed_peers must be a non-empty list, got {peers!r}")
         for index, peer in enumerate(peers):
             _text(f"allowed_peers[{index}]", peer)
+            try:
+                ipaddress.ip_address(peer.strip())
+            except ValueError:
+                raise ConfigError(
+                    f"allowed_peers[{index}] must be an IP address, got {peer!r}"
+                ) from None
         if self.socket_path is not None:
             _text("socket_path", self.socket_path)
         if self.log_level not in LOG_LEVELS:

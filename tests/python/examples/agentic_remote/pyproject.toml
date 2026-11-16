@@ -11,6 +11,8 @@ dev = [
     "pytest",
     "numpy",
     "pyyaml",
+    # The live view encodes its pictures with cv2; test_view_program.py skips without it.
+    "opencv-python-headless",
 ]
 # Only for the tests marked "apai": what an APAI checkout imports. APAI itself is not on PyPI;
 # point AGENTIC_REMOTE_APAI_SRC at its src folder.

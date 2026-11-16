@@ -544,17 +544,6 @@ def _stdin_is_terminal() -> bool:
         return False
 
 
-def _bus(apai_backend: Any, profile: Any) -> str | None:
-    """The motor bus APAI names the profile's arm by in its hold markers."""
-    return apai_backend.arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
-
-
-def _speed_cap(apai_backend: Any, profile: Any) -> float:
-    """The APAI profile's joint speed cap, rad/s."""
-    limits = apai_backend.SafetyLimits.from_config(profile.apai_cfg.safety)
-    return float(limits.max_joint_vel)
-
-
 def real_driver_refusal(
     config: RobotAppConfig,
     profile: Any,
@@ -593,9 +582,8 @@ def real_driver_refusal(
             "Connecting would cut the torque of an arm that may be raised. Do "
             "APAI's operator recovery first; a typed yes never releases a hold"
         )
-    bus = _bus(apai_backend, profile)
-    pending = apai_backend.arm_hold.pending_confirmations()
-    if any(found.get("key") in (None, bus) for found in pending):
+    if apai_backend.pending_confirmation(profile):
+        bus = apai_backend.hold_bus(profile)
         return (
             f"{NOT_CONNECTED}: an operator's confirmation for APAI's connect is "
             f"on file for the arm on {bus}: with it APAI's driver would connect "
@@ -645,7 +633,7 @@ def _real_driver(
         config = apai_backend.config_for_profile(config, profile)
         checkers = apai_backend.build_apai_checkers(config, profile, clock)
         arm = apai_backend.build_apai_arm(config, profile, clock)
-        cap = _speed_cap(apai_backend, profile)
+        cap = apai_backend.speed_cap(profile)
     except Exception as error:
         _log.debug("building the APAI backend failed", exc_info=True)
         _complain(
@@ -659,7 +647,7 @@ def _real_driver(
         return EXIT_NOT_RUN
     say(
         f"robot app: APAI arm profile {name}, the real driver on "
-        f"{_bus(apai_backend, profile)}: built, not connected. No hold marker; "
+        f"{apai_backend.hold_bus(profile)}: built, not connected. No hold marker; "
         f"calibration {config.camera_calibration_id}; speed cap {cap:g} rad/s; "
         f"at rest at start within {config.rest.start_rest_tol_rad:g} rad"
     )
@@ -702,7 +690,7 @@ def _describe_apai(
         config = apai_backend.config_for_profile(config, profile)
         checkers = apai_backend.build_apai_checkers(config, profile, clock)
         arm = apai_backend.build_apai_arm(config, profile, clock)
-        cap = _speed_cap(apai_backend, profile)
+        cap = apai_backend.speed_cap(profile)
     except Exception as error:
         _log.debug("building the APAI backend failed", exc_info=True)
         _complain(

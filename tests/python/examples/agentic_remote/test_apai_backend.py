@@ -2679,3 +2679,40 @@ def test_unresolved_hold_reads_the_marker_of_the_profiles_bus(
     assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
         [arm_hold.marker_path(key).name, arm_hold.marker_path("another-bus").name]
     )
+
+
+def test_hold_bus_and_speed_cap_come_from_the_profile(
+    rs_profile: apai_backend.ApaiProfile, profile: apai_backend.ApaiProfile
+) -> None:
+    from apai.control import arm_hold
+
+    bus = apai_backend.hold_bus(rs_profile)
+    assert bus and bus == arm_hold.hold_key("rebot_rs", rs_profile.arm_cfg)
+    assert apai_backend.hold_bus(profile) is None  # the mock arm drives no bus
+    assert apai_backend.speed_cap(rs_profile) == 0.8
+    assert apai_backend.speed_cap(rs_profile) == float(
+        rs_profile.apai_cfg.safety.max_joint_vel
+    )
+
+
+def test_pending_confirmation_counts_this_bus_and_any_arm_only(
+    rs_profile: apai_backend.ApaiProfile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apai.control import arm_hold
+
+    monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(tmp_path))
+    assert apai_backend.pending_confirmation(rs_profile) is False
+    other = arm_hold.confirm("holding the arm", "another-bus")
+    assert apai_backend.pending_confirmation(rs_profile) is False
+    mine = arm_hold.confirm("holding the arm", apai_backend.hold_bus(rs_profile))
+    assert apai_backend.pending_confirmation(rs_profile) is True
+    mine.unlink()
+    assert apai_backend.pending_confirmation(rs_profile) is False
+    any_arm = arm_hold.confirm("holding the arm", None)
+    assert apai_backend.pending_confirmation(rs_profile) is True
+    # Only read: nothing was claimed or removed.
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
+        [other.name, any_arm.name]
+    )

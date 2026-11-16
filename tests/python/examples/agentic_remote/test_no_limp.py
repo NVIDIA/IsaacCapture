@@ -212,7 +212,16 @@ def link_made_again(h) -> Callable[[], None]:
     return nothing_held
 
 
+def started_raised(h) -> Callable[[], None]:
+    """The app found the arm away from rest at its start: no jaw reference."""
+    assert not h.arm.gripper_referenced()
+    return nothing_held
+
+
+# The one state the robot app is started in, with the arm at RAISED.
+STARTED_RAISED = "started raised, the jaws not referenced"
 STATES = {
+    STARTED_RAISED: started_raised,
     "pushed off rest": pushed_off_rest,
     "idle": idle,
     "moving": moving,
@@ -400,16 +409,44 @@ def lines_typed_at_the_thor_terminal(h, finish: Callable[[], None]) -> None:
     thor.terminal.interrupt()  # a second Ctrl+C is a STOP too, nothing more
     thor.wait_line("[stop] STOP from thor_terminal: Ctrl+C", stops + 2)
     assert "refused" in thor.ask("release", answer="release: ")
-    thor.ask("rest", "yes", answer="rest: ")
+    assert "refused" in thor.ask("rest", "yes", answer="rest: ")
+    thor.ask("rest", "path is clear", answer="rest: ")
     thor.close()  # the terminal is closed: the app runs on
 
 
 def quit_typed_at_the_thor_terminal(h, finish: Callable[[], None]) -> None:
-    """quit answered no, then yes; where nothing is asked the answer is no command."""
+    """quit answered no, then confirmed; where nothing is asked it is no command."""
     thor = h.thor_terminal()
-    for answer in ("no", "yes"):
+    for answer in ("no", "path is clear"):
         if thor.ask("quit", answer, answer="quit: ").startswith("quit: completed"):
             assert h.app.wait_closed(WAIT_S)
+
+
+def reference_typed_at_the_thor_terminal(h, finish: Callable[[], None]) -> None:
+    """reference answered no, then confirmed, with the setting on."""
+    assert h.app.allow_reference
+    thor = h.thor_terminal()
+    assert "refused" in thor.ask("reference", "no", answer="reference: ")
+    told = thor.ask("reference", "jaws are empty", answer="reference: ")
+    if told == "reference: completed":
+        # With the jaws referenced and opened, a confirmed rest and quit are
+        # taken again.
+        assert h.arm.gripper_referenced()
+        sync(h)
+        answered(h, h.client.open_jaws())
+        thor.ask("rest", "path is clear", answer="rest: ")
+        if thor.ask("quit", "path is clear", answer="quit: ").startswith(
+            "quit: completed"
+        ):
+            assert h.app.wait_closed(WAIT_S)
+    thor.close()
+
+
+def view_reports_and_goes_away(h, finish: Callable[[], None]) -> None:
+    """A live view reports its age, says it is not live, then says nothing."""
+    for status in (ViewStatus(live=True, age_s=0.2), ViewStatus(live=False, age_s=0.0)):
+        h.client.send(status)
+        answered(h, h.client.checker_state("probe"))
 
 
 def shutdown_by_link(h, finish: Callable[[], None]) -> None:
@@ -530,6 +567,7 @@ def error_in(thread: str) -> Callable:
     return run
 
 
+REFERENCE = "reference typed at the Thor terminal"
 ACTIONS = {
     "refused and malformed link messages": refused_and_malformed,
     "MOVE": commands(a_move),
@@ -557,6 +595,8 @@ ACTIONS = {
     "shutdown at the Thor terminal": shutdown_at_the_thor_terminal,
     "lines typed at the Thor terminal": lines_typed_at_the_thor_terminal,
     "quit typed at the Thor terminal": quit_typed_at_the_thor_terminal,
+    REFERENCE: reference_typed_at_the_thor_terminal,
+    "the live view reports and goes away": view_reports_and_goes_away,
     "close()": close,
     "the robot connection lost": connection_lost,
     "new robot connections": new_connections,
@@ -574,17 +614,26 @@ SHUTDOWNS = {
 
 @pytest.mark.parametrize("action", ACTIONS)
 @pytest.mark.parametrize("state", STATES)
-def test_no_command_in_any_state_cuts_torque_away_from_rest(robot_app, state, action):
-    h = robot_app
+def test_no_command_in_any_state_cuts_torque_away_from_rest(
+    make_robot_app, state, action
+):
+    # The typed reference is switched on, so that its request is not refused
+    # for the setting alone.
+    pose = RAISED if state == STARTED_RAISED else None
+    h = make_robot_app(pose=pose, allow_reference=True)
     finish = STATES[state](h)
     assert off_rest(h) > 2 * h.config.rest.rest_tol_rad
     assert_torque_kept(h)
     ACTIONS[action](h, finish)
     finish()
     quiet(h)
-    if action in SHUTDOWNS and state in MAY_RETURN:
+    referenced = action == REFERENCE and state == STARTED_RAISED
+    if (action in SHUTDOWNS and state in MAY_RETURN) or referenced:
         # The one way to a release: the arm was first returned to measured rest.
         assert_released_only_at_rest(h)
+        if referenced:
+            # The reference ran, and the quit after it did return and release.
+            assert len(h.arm.released_at) == 1
     else:
         assert_torque_kept(h)
 
@@ -1282,6 +1331,62 @@ def test_only_the_console_command_asks_the_robot_app_for_a_release_or_a_shutdown
         dir(AgentLink)
     )
     assert not {Release.TYPE, Shutdown.TYPE} & ROLE_TABLE[ROLE_AGENT]
+
+
+# The operator console (console/) and the live view (view/): the same rule
+
+
+# The files of the console and the view the scan must have read.
+CONSOLE_AND_VIEW_FILES = (
+    "console_log.py",
+    "console/__init__.py",
+    "console/__main__.py",
+    "console/console.py",
+    "console/status.py",
+    "view/__init__.py",
+    "view/__main__.py",
+    "view/model.py",
+    "view/server.py",
+)
+
+
+def test_the_scan_reads_every_file_of_the_console_and_the_view():
+    scanned = {path.relative_to(PACKAGE).as_posix() for path in PACKAGE.rglob("*.py")}
+    assert set(CONSOLE_AND_VIEW_FILES) <= scanned
+    # No file of the two folders is missing from the list.
+    assert {file for file in scanned if file.startswith(("console/", "view/"))} <= set(
+        CONSOLE_AND_VIEW_FILES
+    )
+    under = [site for site in package_sites() if site.file in CONSOLE_AND_VIEW_FILES]
+    assert under == []
+    # A cut written into one of these files would be found.
+    source = "def leave(self):\n    self._arm.release_torque()\n"
+    found = sites(source, "console/console.py", cuts_torque)
+    assert [site.what for site in found] == ["self._arm.release_torque"]
+
+
+def test_the_console_and_the_view_name_no_release_and_no_shutdown():
+    # The console sends RELEASE and SHUTDOWN through the console command's
+    # send_command only; the view sends VIEW_STATUS and nothing else.
+    for file in CONSOLE_AND_VIEW_FILES:
+        tree = ast.parse((PACKAGE / file).read_text(encoding="utf-8"))
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        names |= {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert not names & {"Release", "Shutdown"}, file
+
+    def asks(name: str, target: str) -> bool:
+        from_a_client = bool(words(target) & {"client", "link", "ws", "made"})
+        return name in ("release", "shutdown") and from_a_client
+
+    asked = [site for site in package_sites(asks) if site.file.startswith("view/")]
+    assert asked == []
+    asked = [site for site in package_sites(asks) if site.file.startswith("console/")]
+    assert asked == []
 
 
 def test_the_arm_adapters_driver_methods_cut_no_torque():

@@ -57,6 +57,17 @@ def test_a_raw_stop_goes_out_when_every_client_slot_is_taken(full: Bench) -> Non
     thor.nothing()  # one STOP, and nothing else of this client
 
 
+def test_a_raw_stop_turned_away_without_a_robot_connection_says_undelivered(
+    full: Bench,
+) -> None:
+    full.client("viewer")  # every slot taken, and no robot connection
+    raw = send_raw_stop(full.path, reason="typed stop", sender="console")
+    assert raw == RawStop(written=True, notice=STOP_UNDELIVERED)
+    # Without a STOP the turned-away client reads only why it was turned away.
+    with pytest.raises(LocalRefused, match=FULL):
+        connect_local(full.path, "console", "console", 2.0)
+
+
 def test_a_raw_stop_reports_the_undelivered_notice_without_a_robot_connection(
     folder: Path,
 ) -> None:

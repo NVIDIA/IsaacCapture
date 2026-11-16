@@ -144,21 +144,18 @@ def fake_backend(
         asked.append("hold")
         return hold
 
-    def pending_confirmations() -> list[dict[str, Any]]:
+    def pending_confirmation(of: Any) -> bool:
         asked.append("pending")
-        return list(pending)
+        return any(found.get("key") in (None, "can4") for found in pending)
 
     module.load_apai_profile = load_apai_profile
     module.config_for_profile = config_for_profile
     module.build_apai_checkers = build_apai_checkers
     module.build_apai_arm = build_apai_arm
     module.unresolved_hold = unresolved_hold
-    module.arm_hold = types.SimpleNamespace(
-        hold_key=lambda kind, cfg: "can4", pending_confirmations=pending_confirmations
-    )
-    module.SafetyLimits = types.SimpleNamespace(
-        from_config=lambda safety: types.SimpleNamespace(max_joint_vel=0.1)
-    )
+    module.hold_bus = lambda of: "can4"
+    module.pending_confirmation = pending_confirmation
+    module.speed_cap = lambda of: 0.1
     monkeypatch.setitem(sys.modules, BACKEND, module)
     return asked
 
@@ -408,9 +405,7 @@ def test_a_hold_or_a_confirmation_written_during_the_questions_is_refused(
     if late == "hold":
         backend.unresolved_hold = lambda of: after_the_questions(marker)
     else:
-        backend.arm_hold.pending_confirmations = lambda: (
-            after_the_questions(waiting) or []
-        )
+        backend.pending_confirmation = lambda of: bool(after_the_questions(waiting))
     code, out, err = real_driver(capsys, real_argv(bench_yaml))
     assert code == 2
     assert out == [BUILT, *QUESTIONS]

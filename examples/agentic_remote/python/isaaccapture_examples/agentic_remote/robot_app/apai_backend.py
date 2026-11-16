@@ -197,8 +197,33 @@ def unresolved_hold(profile: ApaiProfile) -> dict[str, Any] | None:
     and holding. None also for a profile whose arm is never held, such as the
     mock arm. It reads one file and sends nothing.
     """
-    key = arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
+    key = hold_bus(profile)
     return None if key is None else arm_hold.read(key)
+
+
+def hold_bus(profile: ApaiProfile) -> str | None:
+    """The motor bus APAI names this profile's arm by in its hold markers.
+
+    None for an arm that is never held, such as the mock arm.
+    """
+    return arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
+
+
+def pending_confirmation(profile: ApaiProfile) -> bool:
+    """Whether an operator's confirmation for APAI's connect is on file.
+
+    One for this profile's motor bus or for any arm counts. With it APAI's
+    driver would connect an arm it does not measure at rest. It only reads.
+    """
+    bus = hold_bus(profile)
+    return any(
+        found.get("key") in (None, bus) for found in arm_hold.pending_confirmations()
+    )
+
+
+def speed_cap(profile: ApaiProfile) -> float:
+    """The APAI profile's joint speed cap (safety.max_joint_vel), rad/s."""
+    return float(SafetyLimits.from_config(profile.apai_cfg.safety).max_joint_vel)
 
 
 def _contact_config(profile: ApaiProfile) -> ContactMonitorConfig:

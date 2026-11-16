@@ -663,6 +663,8 @@ class RobotLinkService:
         out. helper is the slot to give back when a helper thread runs this.
         """
         sock = client.sock
+        # Whether a STOP of this client was read and did not reach the Thor.
+        undelivered = False
         try:
             by = time.monotonic() + TURN_AWAY_S
             msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
@@ -670,16 +672,23 @@ class RobotLinkService:
                 read_exact(sock, length, by)
                 msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
             if msg_type == Stop.TYPE:
-                self._stop_from(client, self._stop_payload(sock, length, by))
+                payload = self._stop_payload(sock, length, by)
+                undelivered = True  # also when forwarding it raises
+                undelivered = not self._stop_from(client, payload)
         except (Stalled, EOFError):
             pass
         except Exception:
             _log.exception("turning a local client away failed")
         finally:
-            notice = LocalNotice(text="too many local clients are attached")
+            # This client's writer thread never runs: its notices are written
+            # here. The last one is the one a raw STOP reports.
+            notices = [LocalNotice(text="too many local clients are attached")]
+            if undelivered:
+                notices.append(LocalNotice(text=STOP_UNDELIVERED, about_type=Stop.TYPE))
             with contextlib.suppress(OSError):
                 sock.settimeout(TURN_AWAY_S)
-                sock.sendall(pack_record(notice.TYPE, notice.to_payload()))
+                for notice in notices:
+                    sock.sendall(pack_record(notice.TYPE, notice.to_payload()))
             sock.close()
             if helper is not None:
                 helper.release()
@@ -820,8 +829,11 @@ class RobotLinkService:
             logging.WARNING, f"dropped a local client ({client.label}): {problem}"
         )
 
-    def _stop_from(self, client: _Client, payload: bytes | None) -> None:
+    def _stop_from(self, client: _Client, payload: bytes | None) -> bool:
         """Forward a client's STOP at once; it waits behind no send to the Thor.
+
+        True when the STOP was handed to the robot connection. When not, the
+        client is told STOP_UNDELIVERED.
 
         The gate is set before the STOP goes out, so a PERMIT, MOVE or GRIPPER
         checked from then on stays here. One that is past its check when the
@@ -857,6 +869,7 @@ class RobotLinkService:
         else:
             client.tell(LocalNotice(text=STOP_UNDELIVERED, about_type=Stop.TYPE))
             _log.warning("STOP from the %s not delivered: %s", client.label, LOST)
+        return sent
 
     def _lift_gate(self) -> None:
         """End the gate once a ROBOT_STATE shows that the STOP took effect.
