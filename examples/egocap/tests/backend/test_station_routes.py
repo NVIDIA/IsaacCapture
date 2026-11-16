@@ -2,13 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Station routes: the token-gated registry, the activity toggle, the headset address, and the real application."""
+"""Station routes: the token-gated registry, the station's observed time and notes, and the real application."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -16,11 +15,10 @@ from fastapi.testclient import TestClient
 
 from egocap_web import station_routes
 from egocap_web.app import app as real_app
-from egocap_web.host_addresses import HostAddress
 from egocap_web.operator_settings import OperatorSettingsStore
 from egocap_web.operator_settings import router as operator_settings_router
-from egocap_web.station_activity import StationActivity
 from egocap_web.station_service import TAKE_IN_PROGRESS, StationService, session_adapter
+from egocap_web.station_uptime import READY, RECORDING, UptimeLog
 from egocap_web.stations import StationStore
 
 TOKEN = "t" * 43
@@ -46,7 +44,7 @@ def _client(tmp_path: Path, live: _Live | None = None, ready: bool = True) -> Te
     small.include_router(operator_settings_router)
     if not ready:
         return TestClient(small)
-    activity = StationActivity(tmp_path / "station_status")
+    uptime = UptimeLog(tmp_path / "station_status")
 
     async def rotate() -> None:
         """Nothing to rotate in these tests."""
@@ -58,14 +56,13 @@ def _client(tmp_path: Path, live: _Live | None = None, ready: bool = True) -> Te
             change_blocked=lambda: live.blocked,
             show_label=lambda label: None,
             rotate_batch=rotate,
-            leave_station=activity.leave,
+            renamed=uptime.rename,
         ),
         "Deployment",
     )
-    small.state.station_activity = activity
+    small.state.station_uptime = uptime
     small.state.recording_context = _Context(control_token=TOKEN)
     small.state.operator_settings_store = OperatorSettingsStore(tmp_path / "operator_settings.json")
-    small.state.settings = SimpleNamespace(capture=SimpleNamespace(capture_server_url="ws://127.0.0.1:8082"))
     return TestClient(small)
 
 
@@ -83,9 +80,8 @@ def _add(client: TestClient, fields: dict = BENCH) -> str:
         ("post", "/api/stations/select"),
         ("put", "/api/stations/st_1"),
         ("delete", "/api/stations/st_1"),
-        ("get", "/api/headset-address"),
-        ("get", "/api/station-activity"),
-        ("post", "/api/station-activity"),
+        ("get", "/api/station-uptime"),
+        ("post", "/api/station-uptime"),
     ],
 )
 def test_every_route_answers_503_until_the_application_has_started(tmp_path, method, path):
@@ -117,10 +113,8 @@ def test_the_headset_address_is_shown_only_to_a_caller_with_the_token(tmp_path):
     client = _client(tmp_path)
     _add(client, {**BENCH, "headset_address": "192.168.4.20"})
     assert "headset_address" not in client.get("/api/stations").json()["stations"][0]
-    assert (
-        "headset_address"
-        not in client.get("/api/stations", headers={"X-Control-Token": "wrong"}).json()["stations"][0]
-    )
+    wrong = client.get("/api/stations", headers={"X-Control-Token": "wrong"}).json()
+    assert "headset_address" not in wrong["stations"][0]
     assert client.get("/api/stations", headers=AUTH).json()["stations"][0]["headset_address"] == "192.168.4.20"
 
 
@@ -130,7 +124,7 @@ def test_the_headset_address_is_shown_only_to_a_caller_with_the_token(tmp_path):
         ("post", "/api/stations", BENCH),
         ("post", "/api/stations/select", {"id": None}),
         ("put", "/api/stations/st_1", {"name": "X"}),
-        ("post", "/api/station-activity", {"state": "active"}),
+        ("post", "/api/station-uptime", {"notes": "x"}),
     ],
 )
 def test_a_change_without_the_token_is_refused_and_changes_nothing(tmp_path, method, path, body):
@@ -198,7 +192,7 @@ def test_a_registry_that_cannot_be_written_is_a_503(tmp_path, monkeypatch):
     assert client.delete(f"/api/stations/{bench}", headers=AUTH).status_code == 503
 
 
-def test_the_camera_setup_the_page_reads_is_the_station_in_use(tmp_path):
+def test_the_camera_setup_the_page_reads_is_the_station_in_use_and_is_changed_on_the_station(tmp_path):
     client = _client(tmp_path)
     saved = client.put("/api/operator-settings", json={"camera_type": "sensing_gmsl"}, headers=AUTH)
     assert saved.json()["camera_type"] == "sensing_gmsl"  # no station in use: the stored value applies
@@ -206,16 +200,16 @@ def test_the_camera_setup_the_page_reads_is_the_station_in_use(tmp_path):
     client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
     read = client.get("/api/operator-settings").json()
     assert (read["camera_type"], read["camera_roles"]["wrist_left"]) == ("oak_d", "cam_left")
-    # An edit of "this station" from the existing settings controls is saved to the station in use.
-    changed = client.put("/api/operator-settings", json={"camera_roles": {"wrist_left": None}}, headers=AUTH)
-    assert changed.json()["camera_roles"] == {"ego": "cam_head", "wrist_left": None, "wrist_right": None}
-    assert client.get("/api/stations").json()["stations"][0]["camera_roles"]["wrist_left"] is None
-    refused = client.put("/api/operator-settings", json={"camera_roles": {"wrist_left": "cam_head"}}, headers=AUTH)
-    assert (refused.status_code, refused.json()["detail"]) == (
-        400,
-        "camera 'cam_head' cannot fill both ego and wrist_left",
-    )
-    # With nothing in use again, the station-independent value is back, untouched by the station's edits.
+    # With a station in use its own record holds the camera setup; saving it here would store values nothing reads.
+    for body in ({"camera_roles": {"wrist_left": None}}, {"camera_type": None}):
+        refused = client.put("/api/operator-settings", json=body, headers=AUTH)
+        assert (refused.status_code, refused.json()["detail"]) == (
+            400,
+            "the station in use holds the camera setup; change it on the station",
+        )
+    assert client.get("/api/stations").json()["stations"][0]["camera_roles"]["wrist_left"] == "cam_left"
+    # Everything else is station-independent and still saved here.
+    assert client.put("/api/operator-settings", json={"task_file": None}, headers=AUTH).status_code == 200
     client.post("/api/stations/select", json={"id": None}, headers=AUTH)
     assert client.get("/api/operator-settings").json()["camera_type"] == "sensing_gmsl"
 
@@ -229,60 +223,55 @@ def test_invalid_saved_settings_still_show_the_station_in_use(tmp_path):
     assert read["camera_type"] == "oak_d" and "invalid" in read["warning"]
 
 
-def test_the_headset_address_reports_candidates_and_a_stale_saved_address(tmp_path, monkeypatch):
+def test_the_stations_time_is_read_openly_and_only_its_notes_can_be_set(tmp_path):
     client = _client(tmp_path)
-    seen: list[str] = []
-
-    def candidates(url: str) -> list[HostAddress]:
-        seen.append(url)
-        return [HostAddress("10.0.0.42", "wlp2s0", "wireless")]
-
-    monkeypatch.setattr(station_routes, "headset_addresses", candidates)
-    assert client.get("/api/headset-address").status_code == 403
-    nothing_in_use = client.get("/api/headset-address", headers=AUTH).json()
-    assert nothing_in_use == {
-        "candidates": [{"address": "10.0.0.42", "interface": "wlp2s0", "kind": "wireless"}],
-        "saved": None,
-        "changed": False,
-    }
-    bench = _add(client, {**BENCH, "headset_address": "10.0.0.7"})
-    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
-    stale = client.get("/api/headset-address", headers=AUTH).json()
-    assert (stale["saved"], stale["changed"]) == ("10.0.0.7", True)
-    client.put(f"/api/stations/{bench}", json={"headset_address": "10.0.0.42"}, headers=AUTH)
-    assert client.get("/api/headset-address", headers=AUTH).json()["changed"] is False
-    assert seen[0] == "ws://127.0.0.1:8082"
-
-
-def test_activity_is_toggled_for_the_station_in_use(tmp_path):
-    client = _client(tmp_path)
-    assert client.get("/api/station-activity").json()["station"] == "Deployment"
+    uptime = client.app.state.station_uptime
     bench = _add(client)
     client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
-    started = client.post("/api/station-activity", json={"state": "active"}, headers=AUTH).json()
-    assert (started["station"], started["state"]) == ("Bench A", "active")
-    noted = client.post("/api/station-activity", json={"notes": "left glove battery"}, headers=AUTH).json()
-    assert (noted["state"], noted["notes"]) == ("active", "left glove battery")
-    assert client.get("/api/station-activity").json()["notes"] == "left glove battery"
-    # Leaving the station stops its active time, so it does not keep counting for a station nobody is at.
-    client.post("/api/stations/select", json={"id": None}, headers=AUTH)
-    assert client.get("/api/station-activity").json()["station"] == "Deployment"
-    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
-    assert client.get("/api/station-activity").json()["state"] == "inactive"
+    uptime.observe("Bench A", RECORDING, None)
+    uptime.observe("Bench A", READY, None)
+    report = client.get("/api/station-uptime").json()
+    assert (report["station"], report["state"], report["reason"], report["blockers"]) == (
+        "Bench A",
+        READY,
+        None,
+        [],
+    )
+    noted = client.post("/api/station-uptime", json={"notes": "left glove battery"}, headers=AUTH).json()
+    assert (noted["state"], noted["notes"]) == (READY, "left glove battery")
+    assert client.get("/api/station-uptime").json()["notes"] == "left glove battery"
+    # The state is observed, never set: a request cannot mark the station down.
+    still = client.post("/api/station-uptime", json={"state": "down", "notes": "x"}, headers=AUTH).json()
+    assert still["state"] == READY
+    refused = client.post("/api/station-uptime", json={"notes": 7}, headers=AUTH)
+    assert (refused.status_code, refused.json()["detail"]) == (
+        400,
+        "notes must be text of at most 4000 characters",
+    )
+    assert client.post("/api/station-uptime", json={}, headers=AUTH).status_code == 400
 
 
-def test_an_activity_change_must_name_something_valid(tmp_path, monkeypatch):
+def test_renaming_the_station_in_use_carries_its_time_and_notes(tmp_path):
     client = _client(tmp_path)
-    empty = client.post("/api/station-activity", json={}, headers=AUTH)
-    assert (empty.status_code, empty.json()["detail"]) == (400, "name a state, notes, or both")
-    invalid = client.post("/api/station-activity", json={"state": "paused"}, headers=AUTH)
-    assert (invalid.status_code, invalid.json()["detail"]) == (400, "state must be one of active, inactive")
+    uptime = client.app.state.station_uptime
+    bench = _add(client, {**BENCH, "name": "Bnech A"})
+    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    uptime.observe("Bnech A", RECORDING, None)
+    client.post("/api/station-uptime", json={"notes": "typo in the name"}, headers=AUTH)
+    client.put(f"/api/stations/{bench}", json={"name": "Bench A"}, headers=AUTH)
+    report = client.get("/api/station-uptime").json()
+    assert (report["station"], report["state"], report["notes"]) == ("Bench A", RECORDING, "typo in the name")
+    assert uptime.names("Bench A") == frozenset({"Bench A", "Bnech A"})
 
-    def refuse(self, station, **_changes):
+
+def test_notes_that_cannot_be_written_are_a_503(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+
+    def refuse(self, station, notes):
         raise OSError("disk full")
 
-    monkeypatch.setattr(StationActivity, "change", refuse)
-    assert client.post("/api/station-activity", json={"state": "active"}, headers=AUTH).status_code == 503
+    monkeypatch.setattr(UptimeLog, "set_notes", refuse)
+    assert client.post("/api/station-uptime", json={"notes": "x"}, headers=AUTH).status_code == 503
 
 
 def test_the_real_application_gates_recording_on_the_station_in_use(monkeypatch, unused_tcp_port, tmp_path):
@@ -306,16 +295,14 @@ def test_the_real_application_gates_recording_on_the_station_in_use(monkeypatch,
         # The label every viewer sees, and the one the next recording session will carry, changed in process.
         assert client.get("/api/capture-status").json()["station_label"] == "Bench A"
         assert client.app.state.station_service.label() == "Bench A"
-        # Capture never connected here, so what the session offers is unknown and the station itself is fine;
-        # what remains is the next step of the flow.
+        # Capture never connected here, so the station itself is fine and the checklist is what holds a take.
         assert client.app.state.station_service.block_reason() is None
-        assert context.setup_block() == "run the device connection test before recording"
+        assert context.setup_block().startswith("Capture session: ")
         client.put(f"/api/stations/{bench}", json={"camera_roles": {"ego": None}}, headers=auth)
         assert context.snapshot()["not_ready_reason"] == (
             "station 'Bench A': no camera is assigned to the ego (head) role"
         )
-        active = client.post("/api/station-activity", json={"state": "active"}, headers=auth).json()
-        assert (active["station"], active["state"]) == ("Bench A", "active")
-        assert sorted(path.name for path in (tmp_path / "station_status").iterdir())[1].startswith("bench_a_")
-        assert client.get("/api/headset-address").status_code == 403
-        assert client.get("/api/headset-address", headers=auth).status_code == 200
+        report = client.get("/api/station-uptime").json()
+        assert (report["station"], report["active_seconds"]) == ("Bench A", 0.0)
+        # A backend that has recorded nothing leaves no timeline behind.
+        assert not (tmp_path / "station_status").exists()

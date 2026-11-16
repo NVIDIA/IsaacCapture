@@ -28,27 +28,26 @@ CALIBRATION = (
 def _healthy(**overrides) -> CaptureFacts:
     base = dict(
         running=True,
-        session_id="s1",
-        requested=frozenset({"headset"}),
         tracking_fresh=True,
-        devices=(DeviceFact("headset", "Headset", True),),
+        devices=(DeviceFact("Headset", True, headset=True),),
         cameras={"cam_head": CameraFact(True, True), "cam_left": CameraFact(True, True)},
     )
     return CaptureFacts(**{**base, **overrides})
 
 
 class _World:
-    """The capture facts, clocks and disk a test can change between calls."""
+    """The capture facts, clock and disk a test can change between calls."""
 
-    def __init__(self, tmp_path):
-        self.facts = _healthy()
+    def __init__(self):
+        self.facts: CaptureFacts | Exception = _healthy()
         self.now = 1_000.0
         self.free = 50 * 1024**3
         self.fact_reads = 0
-        self.tmp_path = tmp_path
 
     def read_facts(self) -> CaptureFacts:
         self.fact_reads += 1
+        if isinstance(self.facts, Exception):
+            raise self.facts
         return self.facts
 
 
@@ -57,7 +56,7 @@ async def _rotate() -> None:
 
 
 def _service(tmp_path) -> tuple[SetupService, StationService, _World]:
-    world = _World(tmp_path)
+    world = _World()
     stations = StationService(
         StationStore(tmp_path / "stations.json"),
         session_adapter(
@@ -65,18 +64,16 @@ def _service(tmp_path) -> tuple[SetupService, StationService, _World]:
             change_blocked=lambda: None,
             show_label=lambda label: None,
             rotate_batch=_rotate,
-            leave_station=lambda label: None,
+            renamed=lambda previous, name: None,
         ),
         "Deployment",
     )
     setup = SetupService(
         facts=world.read_facts,
-        session_id=lambda: world.facts.session_id,
         stations=stations,
         calibration_dir=lambda: tmp_path / "calibration",
         output_root=tmp_path / "recordings",
         free_bytes=lambda path: world.free,
-        clock=lambda: world.now,
         monotonic=lambda: world.now,
     )
     return setup, stations, world
@@ -92,109 +89,103 @@ async def _with_station_in_use(tmp_path, calibrated: bool = True):
     return setup, stations, world
 
 
-def _steps(
-    setup: SetupService, saved_count: int = 0, headset_address_changed: bool = False
-) -> dict[str, tuple[str, str | None]]:
-    status = setup.status(saved_count=saved_count, headset_address_changed=headset_address_changed)
-    return {step["id"]: (step["status"], step["detail"]) for step in status["steps"]}
+def _steps(setup: SetupService, **overrides) -> dict[str, tuple[str, str | None]]:
+    arguments = {
+        "took_today": False,
+        "saved_count": 0,
+        "report_saved": False,
+        "headset_address_changed": False,
+        **overrides,
+    }
+    return {step["id"]: (step["status"], step["detail"]) for step in setup.status(**arguments)["steps"]}
 
 
-async def test_with_no_stations_the_flow_advises_and_never_blocks(tmp_path):
+async def test_with_no_stations_the_checklist_advises_and_never_blocks(tmp_path):
     setup, _, world = _service(tmp_path)
+    world.facts = _healthy(cameras={"cam_head": CameraFact(False, False, "unplugged")})
     assert setup.block_reason() is None
-    status = setup.status(saved_count=0, headset_address_changed=False)
-    assert status["enforced"] is False and status["blocked_reason"] is None and status["connection_test"] is None
+    status = setup.status(took_today=False, saved_count=0, report_saved=False, headset_address_changed=False)
+    assert status["enforced"] is False and status["blocked_reason"] is None
     assert [(step["id"], step["label"], step["status"]) for step in status["steps"]] == [
         ("station", "Station", "skipped"),
-        ("devices", "Devices", "todo"),
-        ("calibration", "Calibration", "skipped"),
+        ("devices", "Devices", "attention"),
         ("record", "Record", "todo"),
         ("wrap_up", "Wrap up", "todo"),
     ]
-    # The test can still be run: it then tests every camera the session offers.
-    test = setup.run_connection_test()
-    assert test.passed and (test.station, test.ran_at) == ("Deployment", 1_000.0)
-    assert _steps(setup)["devices"] == ("done", "connection test passed")
-    assert setup.block_reason() is None
+    assert _steps(setup)["devices"] == ("attention", "cam_head: unplugged")
+    assert [(item["id"], item["status"]) for item in status["checks"]] == [
+        ("device:0", "pass"),
+        ("camera:cam_head", "fail"),
+        ("calibration", "skip"),
+        ("disk", "pass"),
+    ]
 
 
-async def test_a_station_in_use_cannot_record_until_the_connection_test_has_passed(tmp_path):
+async def test_a_station_in_use_is_held_while_any_item_fails_and_released_when_it_recovers(tmp_path):
     setup, _, world = await _with_station_in_use(tmp_path)
-    assert setup.block_reason() == "run the device connection test before recording"
+    assert setup.block_reason() is None  # everything is connected: nothing to run, nothing to wait for
     assert _steps(setup) == {
         "station": ("done", "Bench A"),
-        "devices": ("todo", "run the connection test"),
-        "calibration": ("done", None),
+        "devices": ("done", "all checks pass"),
         "record": ("todo", None),
         "wrap_up": ("todo", None),
     }
     world.facts = _healthy(
         cameras={"cam_head": CameraFact(True, True), "cam_left": CameraFact(False, False, "unplugged")}
     )
-    failed = setup.run_connection_test()
-    assert not failed.passed
-    assert setup.block_reason() == "the device connection test failed: Left wrist: cam_left: unplugged"
+    world.now += 2  # past the cache
+    assert setup.block_reason() == "Left wrist: cam_left: unplugged"
+    status = setup.status(took_today=False, saved_count=0, report_saved=False, headset_address_changed=False)
+    assert status["enforced"] is True and status["blocked_reason"] == "Left wrist: cam_left: unplugged"
     assert _steps(setup)["devices"] == ("attention", "Left wrist: cam_left: unplugged")
     world.facts = _healthy()
-    assert setup.run_connection_test().passed
+    world.now += 2
     assert setup.block_reason() is None
-    status = setup.status(saved_count=3, headset_address_changed=False)
-    assert status["enforced"] is True and status["blocked_reason"] is None
-    assert status["connection_test"]["passed"] is True and status["connection_test"]["station"] == "Bench A"
-    assert [item["status"] for item in status["connection_test"]["items"]] == ["pass", "pass", "pass", "skip"]
-    assert _steps(setup, saved_count=3)["record"] == ("done", "3 saved")
 
 
-async def test_a_passed_test_does_not_carry_to_another_station_or_capture_session(tmp_path):
-    setup, stations, world = await _with_station_in_use(tmp_path)
-    setup.run_connection_test()
-    assert setup.block_reason() is None
-    world.facts = _healthy(session_id="s2")  # CaptureServer restarted: these devices were never looked at
-    assert setup.current_test() is None
-    assert setup.block_reason() == "run the device connection test before recording"
-    setup.run_connection_test()
-    cart = await stations.add({"name": "Cart B", "camera_roles": {"ego": "cam_head"}})
-    await stations.select(cart.station_id)
-    assert setup.block_reason() == "run the device connection test before recording"
-    assert _steps(setup)["devices"] == ("todo", "run the connection test")
-
-
-async def test_missing_calibration_blocks_a_take_and_shows_on_its_step(tmp_path):
+async def test_missing_calibration_and_low_disk_space_hold_a_take(tmp_path):
     setup, _, world = await _with_station_in_use(tmp_path, calibrated=False)
-    setup.run_connection_test()
     missing = "Camera calibration: missing: " + ", ".join(CALIBRATION)
-    assert setup.block_reason() == missing
-    assert _steps(setup)["calibration"] == ("attention", missing)
-    status = setup.status(saved_count=0, headset_address_changed=False)
-    assert status["blocked_reason"] == missing
-    assert {item["id"]: item["status"] for item in status["system"]} == {
-        "calibration": "fail",
-        "gloves": "skip",
-        "disk": "pass",
-        "producer": "skip",
-    }
-
-
-async def test_low_disk_space_blocks_a_take_and_shows_on_the_devices_step(tmp_path):
-    setup, _, world = await _with_station_in_use(tmp_path)
-    setup.run_connection_test()
+    assert setup.block_reason() == missing and _steps(setup)["devices"] == ("attention", missing)
+    (tmp_path / "calibration").mkdir()
+    for name in CALIBRATION:
+        (tmp_path / "calibration" / name).write_text("{}")
     world.free = 1024**3
-    world.now += 5  # past the cache
+    world.now += 2
     assert setup.block_reason() == "Free disk space: 1.0 GB free; 10 GB needed"
-    assert _steps(setup)["devices"] == ("attention", "Free disk space: 1.0 GB free; 10 GB needed")
 
 
-async def test_the_system_checks_are_cached_briefly_because_the_gate_is_asked_constantly(tmp_path):
-    setup, _, world = await _with_station_in_use(tmp_path)
-    setup.run_connection_test()
+async def test_the_checklist_is_cached_briefly_and_follows_an_edit_of_the_station_at_once(tmp_path):
+    setup, stations, world = await _with_station_in_use(tmp_path)
     reads = world.fact_reads
     for _ in range(50):
         assert setup.block_reason() is None
-    assert world.fact_reads == reads + 1  # one read filled the cache; the other forty-nine reused it
+    assert world.fact_reads == reads + 1  # one evaluation served all fifty
     world.free = 1024**3
     assert setup.block_reason() is None  # still the cached answer
-    world.now += 2.5
-    assert setup.block_reason() is not None
+    # The station was given a camera the session does not offer: what is judged changed, so it is judged again.
+    await stations.update(stations.registry.selected_id, {"camera_roles": {"wrist_right": "cam_gone"}})
+    assert (
+        setup.block_reason()
+        == "station 'Bench A': camera 'cam_gone' (right wrist) is not offered by the capture session"
+    )
+    await stations.update(
+        stations.registry.selected_id, {"camera_roles": {"wrist_right": None, "wrist_left": None}}
+    )
+    assert setup.block_reason() == "Free disk space: 1.0 GB free; 10 GB needed"
+
+
+async def test_a_checklist_that_cannot_be_evaluated_holds_the_take_and_never_raises(tmp_path, caplog):
+    setup, _, world = await _with_station_in_use(tmp_path)
+    world.facts = RuntimeError("status snapshot is malformed")
+    for _ in range(3):
+        world.now += 2
+        assert setup.block_reason() == "Station checks: could not be evaluated; see backend logs"
+    assert caplog.text.count("could not be evaluated") == 1  # logged once, not on every evaluation
+    assert setup.headset_connected() is False
+    world.facts = _healthy()
+    world.now += 2
+    assert setup.block_reason() is None
 
 
 async def test_the_station_step_follows_the_station_in_use(tmp_path):
@@ -213,21 +204,28 @@ async def test_the_station_step_follows_the_station_in_use(tmp_path):
         "attention",
         "this host's address changed; update the headset",
     )
-    world.facts = _healthy()
-    (tmp_path / "calibration").mkdir()
-    for name in CALIBRATION[:2]:
-        (tmp_path / "calibration" / name).write_text("{}")
-    setup.run_connection_test()
-    world.now += 5
-    assert setup.block_reason() is None
 
 
-async def test_calibration_is_skipped_for_a_mock_session(tmp_path):
-    setup, _, world = await _with_station_in_use(tmp_path, calibrated=False)
-    world.facts = _healthy(mock=True)
-    setup.run_connection_test()
-    assert setup.block_reason() is None
-    assert _steps(setup)["calibration"] == ("skipped", "mock capture has nothing to calibrate")
+async def test_the_record_and_wrap_up_steps_follow_the_day(tmp_path):
+    setup, _, _ = await _with_station_in_use(tmp_path)
+    assert _steps(setup)["record"] == ("todo", None)
+    assert _steps(setup, took_today=True, saved_count=3)["record"] == (
+        "done",
+        "recorded today · 3 saved in this batch",
+    )
+    # A new batch restarts its count; the day still has its takes.
+    assert _steps(setup, took_today=True)["record"] == ("done", "recorded today")
+    # A batch left open overnight has a count, but the new day has no take yet.
+    assert _steps(setup, saved_count=3)["record"] == ("todo", None)
+    assert _steps(setup, report_saved=True)["wrap_up"] == ("done", "report saved")
+
+
+async def test_whether_a_headset_is_connected_comes_from_the_same_evaluation(tmp_path):
+    setup, _, world = await _with_station_in_use(tmp_path)
+    assert setup.headset_connected() is True
+    world.facts = _healthy(devices=(DeviceFact("Headset", False, "disconnected", headset=True),))
+    world.now += 2
+    assert setup.headset_connected() is False
 
 
 # --- reading the capture session ---------------------------------------------------------------------------------
@@ -240,19 +238,6 @@ def _device(kind: str, description: str, state: p.DeviceState, error: str = "") 
         type=kind,
         description=description,
         provider_id="provider",
-        status=state,
-        reason=p.StatusReason.NONE,
-        error=error,
-    )
-
-
-def _provider(plugin, state: p.ProviderState, error: str = "") -> p.ProviderStatus:
-    kind = p.ProviderType.PLUGIN if plugin is not None else p.ProviderType.OPENXR_RUNTIME
-    return p.ProviderStatus(
-        id="provider",
-        type=kind,
-        plugin=plugin,
-        name="provider",
         status=state,
         reason=p.StatusReason.NONE,
         error=error,
@@ -299,12 +284,12 @@ def _monitor(
 def test_capture_facts_read_devices_cameras_and_freshness_from_the_session():
     status = p.StatusSnapshot(
         updated_at_ns=1,
-        providers=(_provider(None, p.ProviderState.AVAILABLE),),
         devices=(
             _device("headset", "Headset", p.DeviceState.CONNECTED),
             _device("controller", "Left controller", p.DeviceState.DISCONNECTED, "battery empty"),
-            _device("controller", "", p.DeviceState.DEGRADED),
-            _device("hand", "Left hand", p.DeviceState.DISABLED),
+            # A glove is whatever the capture session calls it; the checklist never depends on that label.
+            _device("hand_tracker", "", p.DeviceState.DEGRADED),
+            _device("hand_tracker", "Right glove", p.DeviceState.DISABLED),
         ),
         cameras=(
             p.CameraStatus("cam_head", 1, p.DeviceState.CONNECTED, p.StatusReason.NONE, ""),
@@ -313,55 +298,32 @@ def test_capture_facts_read_devices_cameras_and_freshness_from_the_session():
         ),
     )
     facts = capture_facts(_monitor(status=status, fresh=("tracking", "cam_head")), CaptureStatusConfig())
-    assert (facts.running, facts.error, facts.mock, facts.session_id) == (True, None, False, "s1")
-    assert facts.requested == frozenset({"headset", "controller"}) and facts.tracking_fresh
+    assert (facts.running, facts.error, facts.mock, facts.tracking_fresh) == (True, None, False, True)
     assert facts.devices == (
-        DeviceFact("headset", "Headset", True, "connected"),
-        DeviceFact("controller", "Left controller", False, "battery empty"),
-        DeviceFact("controller", "device-", False, "degraded"),
+        DeviceFact("Headset", True, "connected", headset=True),
+        DeviceFact("Left controller", False, "battery empty"),
+        DeviceFact("device-", False, "degraded"),
     )
+    assert facts.headset_connected is True
     assert facts.cameras == {
         "cam_head": CameraFact(True, True, "connected"),
         "stale_cam": CameraFact(True, False, "connected"),
         "cam_left": CameraFact(False, False, "unplugged"),
     }
-    assert (facts.livekit_cameras, facts.livekit_blocked, facts.glove_plugin_requested) == (
-        frozenset(),
-        None,
-        False,
-    )
+    assert (facts.livekit_cameras, facts.livekit_blocked) == (frozenset(), None)
 
 
 def test_capture_facts_before_a_session_and_after_it_stopped():
     never = capture_facts(_monitor(started=False), CaptureStatusConfig())
-    assert (never.running, never.error, never.session_id, never.devices, never.cameras) == (
-        False,
-        "connection refused",
-        None,
-        (),
-        {},
-    )
+    assert (never.running, never.error, never.devices, never.cameras) == (False, "connection refused", (), {})
     stopped = capture_facts(_monitor(stopped=object()), CaptureStatusConfig())
     assert (stopped.running, stopped.error) == (False, "capture is not running")
     assert capture_facts(_monitor(mode=p.CaptureMode.MOCK), CaptureStatusConfig()).mock is True
 
 
-def test_capture_facts_report_the_glove_plugin_and_livekit_cameras():
-    config = CaptureStatusConfig(plugins=(p.PluginType.MANUS,), capture_server_url="ws://127.0.0.1:8082")
-
-    def glove_error(*providers) -> str | None:
-        status = p.StatusSnapshot(updated_at_ns=1, providers=providers)
-        return capture_facts(_monitor(status=status), config).glove_plugin_error
-
-    assert glove_error(_provider(p.PluginType.MANUS, p.ProviderState.AVAILABLE)) is None
-    assert glove_error(_provider(p.PluginType.MANUS, p.ProviderState.FAILED, "licence dongle not found")) == (
-        "licence dongle not found"
-    )
-    assert glove_error(_provider(p.PluginType.MANUS, p.ProviderState.INITIALIZING)) == "plugin is initializing"
-    assert glove_error(_provider(None, p.ProviderState.AVAILABLE)) == "not reported by the capture session"
-    assert capture_facts(_monitor(), config).glove_plugin_error == "not reported by the capture session"
-    facts = capture_facts(_monitor(streams=(_livekit("lk_head"),)), config)
-    assert "hand" in facts.requested and facts.glove_plugin_requested
+def test_capture_facts_report_livekit_cameras_and_why_they_cannot_be_recorded():
+    local = CaptureStatusConfig(capture_server_url="ws://127.0.0.1:8082")
+    facts = capture_facts(_monitor(streams=(_livekit("lk_head"),)), local)
     assert (facts.livekit_cameras, facts.livekit_blocked) == (frozenset({"lk_head"}), None)
     remote = CaptureStatusConfig(capture_server_url="ws://192.168.1.50:8082")
     assert capture_facts(_monitor(streams=(_livekit("lk_head"),)), remote).livekit_blocked is not None

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** Building blocks shared by the Settings dialog's tabs and the cards that live in them. */
+/** Building blocks shared by the dialogs: cards, load and save state, and modal focus. */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** Turn unknown request failures into a concise operator-facing explanation. */
@@ -19,6 +19,16 @@ export function Card({ title, lead, children }: { title: string; lead?: string; 
       {children}
     </section>
   );
+}
+
+/** A request's progress, so a reader shows neither stale controls nor a blank. */
+export type Loaded<T> = { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; value: T };
+
+/** Explain an incomplete request without presenting stale controls. */
+export function LoadState<T>({ state, what }: { state: Loaded<T>; what: string }) {
+  if (state.kind === "loading") return <p className="settings-note">Loading…</p>;
+  if (state.kind === "error") return <p className="settings-note tone-warning">{what} unavailable: {state.message}</p>;
+  return null;
 }
 
 /** Explain why station changes require the recording control token. */
@@ -46,6 +56,16 @@ export function useAction(): [{ busy: boolean; failure: string | null }, (work: 
   return [{ busy, failure }, run];
 }
 
+/** Whether a collapsed `<details>` hides the control. The browser renders nothing inside one except its own
+ * summary, so focus sent to anything else there goes nowhere and Tab would stop moving. */
+function hiddenByClosedDetails(element: HTMLElement): boolean {
+  for (let details = element.closest("details"); details !== null; details = details.parentElement?.closest("details") ?? null) {
+    const ownSummary = Array.from(details.children).find((child) => child.tagName === "SUMMARY") === element;
+    if (!details.open && !ownSummary) return true;
+  }
+  return false;
+}
+
 /** Own keyboard focus for the dialog lifetime and return it to the invoking control. */
 export function useModalFocus(open: boolean) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -53,10 +73,10 @@ export function useModalFocus(open: boolean) {
     if (!open || !dialogRef.current) return;
     const dialog = dialogRef.current;
     const previous = document.activeElement;
-    /** Recompute controls because loading, tab changes and saves can change their availability. */
+    /** Recompute controls because loading, tab changes, saves and disclosures can change their availability. */
     const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]',
-    )).filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[hidden], [inert]"));
+      'button, input, select, textarea, summary, a[href], [tabindex]',
+    )).filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[hidden], [inert]") && !hiddenByClosedDetails(element));
     /** Programmatic focus and pointer interaction must also respect the modal boundary. */
     const containFocus = (event: FocusEvent) => {
       if (!dialog.contains(event.target as Node)) dialog.focus();

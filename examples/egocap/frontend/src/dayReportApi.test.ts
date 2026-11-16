@@ -19,25 +19,22 @@ function stubFetch(status: number, body: unknown) {
 const JSON_AUTH = { "content-type": "application/json", "X-Control-Token": "tok" };
 
 describe("the day report", () => {
-  it("is read with the control token, for today and the station in use unless asked otherwise", async () => {
+  it("is read with the control token and no choice of day or station", async () => {
     const fn = stubFetch(200, DAY_REPORT_FIXTURE);
-    await expect(fetchDayReport("tok")).resolves.toEqual(DAY_REPORT_FIXTURE);
-    expect(fn).toHaveBeenLastCalledWith("/api/day-report", { signal: undefined, headers: { "X-Control-Token": "tok" } });
-    await fetchDayReport("tok", { date: "2026-03-08", station: "*" });
-    expect(fn).toHaveBeenLastCalledWith("/api/day-report?date=2026-03-08&station=*", { signal: undefined, headers: { "X-Control-Token": "tok" } });
-    await fetchDayReport("tok", { date: "", station: undefined });
-    expect(fn).toHaveBeenLastCalledWith("/api/day-report", { signal: undefined, headers: { "X-Control-Token": "tok" } });
+    const signal = new AbortController().signal;
+    await expect(fetchDayReport("tok", signal)).resolves.toEqual(DAY_REPORT_FIXTURE);
+    expect(fn).toHaveBeenLastCalledWith("/api/day-report", { signal, headers: { "X-Control-Token": "tok" } });
   });
 
-  it("is saved with the same choice of day and station", async () => {
+  it("is saved with an empty body and answers with the files written", async () => {
     const saved = { ...DAY_REPORT_FIXTURE, saved: { report: "bench_a_2026-03-09_report.json", activity_log: "bench_a_2026-03-09_activity.json" } };
     const fn = stubFetch(200, saved);
-    await expect(saveDayReport("tok", { station: "*" })).resolves.toEqual(saved);
-    expect(fn).toHaveBeenCalledWith("/api/day-report/save", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ station: "*" }) });
+    await expect(saveDayReport("tok")).resolves.toEqual(saved);
+    expect(fn).toHaveBeenCalledWith("/api/day-report/save", { method: "POST", headers: JSON_AUTH, body: "{}" });
   });
 
-  it("sends a correction and returns what it changed", async () => {
-    const reply = { session: "session_a", updated: ["episode_0"], missing: ["episode_1"], studio: null, config_updated: true };
+  it("sends a correction of only the session, the takes and the task, and returns what it changed", async () => {
+    const reply = { session: "session_a", updated: ["episode_0"], missing: ["episode_1"], config_updated: true };
     const fn = stubFetch(200, reply);
     const correction = { session: "session_a", episodes: "0-1", task: "Place the cup on the shelf." };
     await expect(correctSession("tok", correction)).resolves.toEqual(reply);
@@ -54,7 +51,8 @@ describe("the day report", () => {
   });
 
   it("rejects bodies of the wrong shape", async () => {
-    for (const body of [null, {}, { report: { sessions: {}, totals: {} } }, { report: { sessions: [], totals: null } }]) {
+    const { uptime: _dropped, ...withoutUptime } = DAY_REPORT_FIXTURE;
+    for (const body of [null, {}, { report: { sessions: {}, totals: {} } }, { report: { sessions: [], totals: null } }, withoutUptime, { ...DAY_REPORT_FIXTURE, uptime: { state: "down" } }]) {
       stubFetch(200, body);
       await expect(fetchDayReport("tok")).rejects.toThrow(SettingsParseError);
     }

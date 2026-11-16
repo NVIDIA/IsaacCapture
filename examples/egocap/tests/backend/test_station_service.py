@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from egocap_web.station_service import TAKE_IN_PROGRESS, StationService, session_adapter
+from egocap_web.station_service import STATION_CHANGING, TAKE_IN_PROGRESS, StationService, session_adapter
 from egocap_web.stations import StationError, StationNotFoundError, StationStore
 
 BENCH = {"name": "Bench A", "camera_roles": {"ego": "cam_head", "wrist_left": "cam_left"}}
@@ -22,6 +22,7 @@ class _Session:
         self.offered: frozenset[str] | None = frozenset({"cam_head", "cam_left", "cam_top"})
         self.blocked: str | None = None
         self.rotation_refusal: str | None = None
+        self.rename_failure: OSError | None = None
         self.events: list[tuple[str, str]] = []
 
     def adapter(self):
@@ -30,8 +31,13 @@ class _Session:
             change_blocked=lambda: self.blocked,
             show_label=lambda label: self.events.append(("show", label)),
             rotate_batch=self._rotate,
-            leave_station=lambda label: self.events.append(("leave", label)),
+            renamed=self._renamed,
         )
+
+    def _renamed(self, previous: str, name: str) -> None:
+        if self.rename_failure is not None:
+            raise self.rename_failure
+        self.events.append(("renamed", f"{previous} -> {name}"))
 
     async def _rotate(self) -> None:
         if self.rotation_refusal is not None:
@@ -78,10 +84,10 @@ async def test_selecting_a_station_relabels_the_session_and_rotates_the_batch(tm
     await service.select(bench_id)
     assert service.label() == "Bench A"
     # Rotated first: a session still open under the old label must never receive a take for the new one.
-    assert session.events == [("rotate", ""), ("leave", "Deployment"), ("show", "Bench A")]
+    assert session.events == [("rotate", ""), ("show", "Bench A")]
     session.events.clear()
     await service.select(cart_id)
-    assert session.events == [("rotate", ""), ("leave", "Bench A"), ("show", "Cart B")]
+    assert session.events == [("rotate", ""), ("show", "Cart B")]  # another station: nothing is carried over
     session.events.clear()
     await service.select(cart_id)  # no change of label, so nothing to apply
     assert session.events == []
@@ -98,7 +104,7 @@ async def test_switching_is_blocked_during_a_take_and_allowed_afterwards(tmp_pat
         lambda: service.select(cart_id),
         lambda: service.select(None),
         lambda: service.update(bench_id, {"name": "Bench Z"}),
-        lambda: service.update_selected({"camera_type": "oak_d"}),
+        lambda: service.update(bench_id, {"camera_type": "oak_d"}),
         lambda: service.remove(bench_id),
     ):
         with pytest.raises(StationError) as refused:
@@ -115,22 +121,67 @@ async def test_switching_is_blocked_during_a_take_and_allowed_afterwards(tmp_pat
     assert service.label() == "Cart B"
 
 
-async def test_editing_the_station_in_use_applies_at_once(tmp_path):
+async def test_a_take_is_held_for_the_moment_the_station_in_use_is_being_changed(tmp_path, monkeypatch):
+    service, session, bench_id, cart_id = await _with_two_stations(tmp_path)
+    during: list[tuple[str | None, str]] = []
+    change = StationStore.change
+
+    def writing(self, apply):
+        # What a take admitted while the registry file is being written would be told, and labelled with.
+        during.append((service.block_reason(), service.label()))
+        return change(self, apply)
+
+    monkeypatch.setattr(StationStore, "change", writing)
+    await service.select(bench_id)
+    assert during == [(STATION_CHANGING, "Deployment")]
+    assert service.block_reason() is None and service.label() == "Bench A"
+    # A change that leaves the label alone holds nothing.
+    await service.remember_headset_address("10.0.0.42")
+    assert during[-1] == (None, "Bench A")
+    # A refused change releases the hold as well.
+    session.rotation_refusal = "an episode is active"
+    with pytest.raises(StationError):
+        await service.select(cart_id)
+    assert service.block_reason() is None
+
+
+async def test_renaming_the_station_in_use_carries_its_day_to_the_new_name(tmp_path):
     service, session, bench_id, _ = await _with_two_stations(tmp_path)
     await service.select(bench_id)
     session.events.clear()
     await service.update(bench_id, {"name": "Bench Z"})
     assert service.label() == "Bench Z"
-    assert session.events == [("rotate", ""), ("leave", "Bench A"), ("show", "Bench Z")]
+    # The same station under a new name: the batch rotates, the label changes, and its day follows it.
+    assert session.events == [("rotate", ""), ("show", "Bench Z"), ("renamed", "Bench A -> Bench Z")]
     session.events.clear()
-    updated = await service.update_selected({"camera_roles": {"wrist_left": None}})
-    assert updated.camera_roles == {"ego": "cam_head", "wrist_left": None, "wrist_right": None}
+    await service.update(bench_id, {"camera_roles": {"wrist_left": None}})
+    assert service.registry.selected.camera_roles == {"ego": "cam_head", "wrist_left": None, "wrist_right": None}
     assert session.events == []  # the label did not change
 
 
-async def test_editing_this_station_with_nothing_selected_is_left_to_the_caller(tmp_path):
-    service, _, _, _ = await _with_two_stations(tmp_path)
-    assert await service.update_selected({"camera_type": "oak_d"}) is None
+async def test_a_rename_is_kept_even_when_its_day_cannot_be_carried_over(tmp_path, caplog):
+    service, session, bench_id, _ = await _with_two_stations(tmp_path)
+    await service.select(bench_id)
+    session.rename_failure = OSError("disk full")
+    await service.update(bench_id, {"name": "Bench Z"})
+    # The rename is saved and live; failing it now would leave the page and the registry disagreeing.
+    assert (
+        service.label() == "Bench Z" and StationStore(tmp_path / "stations.json").load().selected.name == "Bench Z"
+    )
+    assert "Could not carry the day's timeline" in caplog.text
+
+
+async def test_the_headset_address_is_remembered_even_during_a_take(tmp_path):
+    service, session, bench_id, _ = await _with_two_stations(tmp_path)
+    await service.remember_headset_address("10.0.0.42")  # nothing in use: nothing to remember it for
+    assert all(station.headset_address is None for station in service.registry.stations)
+    await service.select(bench_id)
+    session.events.clear()
+    session.blocked = TAKE_IN_PROGRESS
+    await service.remember_headset_address("10.0.0.42")
+    assert service.registry.selected.headset_address == "10.0.0.42"
+    assert StationStore(tmp_path / "stations.json").load().selected.headset_address == "10.0.0.42"
+    assert session.events == []  # nothing about what is recorded changed
 
 
 async def test_deleting_the_station_in_use_returns_to_the_deployment_label(tmp_path):
@@ -138,7 +189,7 @@ async def test_deleting_the_station_in_use_returns_to_the_deployment_label(tmp_p
     await service.select(bench_id)
     await service.remove(bench_id)
     assert service.registry.selected is None and service.label() == "Deployment"
-    assert session.events[-2:] == [("leave", "Bench A"), ("show", "Deployment")]
+    assert session.events[-2:] == [("rotate", ""), ("show", "Deployment")]
     assert service.block_reason() == "select a station before recording"
 
 
@@ -170,10 +221,10 @@ async def test_the_station_in_use_blocks_recording_until_it_can_record(tmp_path)
     assert service.block_reason() == (
         "station 'Bench A': camera 'cam_left' (left wrist) is not offered by the capture session"
     )
-    await service.update_selected({"camera_roles": {"ego": None, "wrist_left": None}})
+    await service.update(bench_id, {"camera_roles": {"ego": None, "wrist_left": None}})
     assert service.block_reason() == "station 'Bench A': no camera is assigned to the ego (head) role"
     session.offered = None  # before a capture session is accepted only the assignment itself is judged
-    await service.update_selected({"camera_roles": {"ego": "cam_elsewhere"}})
+    await service.update(bench_id, {"camera_roles": {"ego": "cam_elsewhere"}})
     assert service.block_reason() is None
 
 
@@ -208,3 +259,21 @@ async def test_an_unreadable_registry_starts_empty_with_a_warning_until_it_is_re
     await service.add(BENCH)
     assert "warning" not in service.listing(private=False)
     assert (tmp_path / "stations.json.invalid").read_text() == "not json"
+
+
+async def test_a_registry_that_cannot_be_read_starts_empty_with_a_warning_and_is_not_set_aside(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "stations.json"
+    path.write_text('{"stations": [{"id": "st_1", "name": "Bench A"}]}')
+
+    def denied(self):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(StationStore, "load", denied)
+    service, _ = _service(tmp_path)
+    assert service.registry.stations == () and service.block_reason() is None
+    assert service.listing(private=False)["warning"] == (
+        "Saved stations cannot be read. Check the registry file's permissions."
+    )
+    assert path.exists() and not (tmp_path / "stations.json.invalid").exists()

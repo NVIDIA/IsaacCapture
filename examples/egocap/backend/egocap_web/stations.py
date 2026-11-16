@@ -28,6 +28,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from egocap.analytics.station_status_log import StationStatusTracker
+
 from .operator_settings import (
     CAMERA_ROLES,
     CAMERA_TYPES,
@@ -50,6 +52,12 @@ _ROLE_NAMES = {"ego": "ego (head)", "wrist_left": "left wrist", "wrist_right": "
 #: The fields a create or update may carry. ``control_token`` is the legacy body credential, already checked.
 _EDITABLE_FIELDS = ("name", "camera_type", "camera_roles", "headset_address")
 _IGNORED_FIELDS = ("control_token",)
+
+
+def _log_stem(name: str) -> str:
+    """The file-name stem a station's daily log gets, as the library that writes that file derives it."""
+    # Any fixed day will do: only the part derived from the name differs between two stations.
+    return StationStatusTracker(Path(".")).daily_log_path(name, "day").name
 
 
 class StationError(OperatorSettingsError):
@@ -198,9 +206,10 @@ class StationRegistry:
         return {"selected": self.selected_id, "stations": [station.stored() for station in self.stations]}
 
     def _refuse_duplicate_name(self, name: str, except_id: str | None) -> None:
-        """Refuse a name another station already has, ignoring case, so two stations never share a log."""
+        """Refuse a name that would share another station's daily log. The log's file name drops case and
+        punctuation, so "Bay 1" and "bay_1" are one station as far as the day's records go."""
         for other in self.stations:
-            if other.station_id != except_id and other.name.casefold() == name.casefold():
+            if other.station_id != except_id and _log_stem(other.name) == _log_stem(name):
                 raise StationError(f"a station named {other.name!r} already exists")
 
     def added(

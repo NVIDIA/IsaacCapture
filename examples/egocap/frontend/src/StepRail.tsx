@@ -3,15 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The start-of-day progress rail under the header: station, devices, calibration, record, wrap-up.
+ * The start-of-day progress rail under the header: station, devices, record, wrap-up.
  *
  * Each step shows whether it is done, needs attention, is still to do or does not apply to this station, with a
- * short reason. The first step that is neither done nor skipped is the current one. A step opens the place where
- * it is dealt with; the page decides what that is. The rail only reports what the backend said: it never marks a
- * step done itself.
+ * short reason. The first step that is neither done nor skipped is the current one. Station, Devices and Wrap up
+ * open the place where they are dealt with; the page decides what that is. Record opens nothing, because
+ * recording is the page itself. The rail only reports what the backend said: it never marks a step done itself.
  */
 import { sentence } from "./sentence";
 import type { SetupStep, StepId, StepStatus } from "./setupApi";
+
+/** The steps that open something. */
+export type OpenableStep = Exclude<StepId, "record">;
 
 /** The mark inside a step's circle: its number until something more specific can be said. */
 function mark(status: StepStatus, position: number): string {
@@ -38,10 +41,10 @@ export interface StepRailProps {
   /** The flow's steps in order, or null while they could not be read (the rail then renders nothing). */
   steps: readonly SetupStep[] | null;
   /** Open the place a step is dealt with. */
-  onOpen: (step: StepId) => void;
+  onOpen: (step: OpenableStep) => void;
 }
 
-/** Show the flow's steps in order and let each open the place it is dealt with. */
+/** Show the flow's steps in order and let each one that is dealt with elsewhere open that place. */
 export function StepRail({ steps, onOpen }: StepRailProps) {
   if (steps === null || steps.length === 0) return null;
   const current = currentStep(steps);
@@ -51,24 +54,43 @@ export function StepRail({ steps, onOpen }: StepRailProps) {
         {steps.map((step, index) => {
           const isCurrent = step.id === current;
           const detail = step.detail === null ? null : sentence(step.detail);
+          const look = `step step--${step.status}${isCurrent ? " step--current" : ""}`;
+          const stepMark = (
+            <span className="step-mark" aria-hidden="true">
+              {mark(step.status, index + 1)}
+            </span>
+          );
+          const { id } = step;
           return (
-            <li key={step.id} className="step-rail-item">
-              <button
-                type="button"
-                className={`step step--${step.status}${isCurrent ? " step--current" : ""}`}
-                aria-current={isCurrent ? "step" : undefined}
-                aria-label={`Step ${index + 1}, ${step.label}: ${STATUS_WORDS[step.status]}${detail === null ? "" : `. ${detail}`}`}
-                title={detail ?? undefined}
-                onClick={() => onOpen(step.id)}
-              >
-                <span className="step-mark" aria-hidden="true">
-                  {mark(step.status, index + 1)}
+            <li key={id} className="step-rail-item">
+              {id === "record" ? (
+                // Not a control: recording is the page itself, so this step has nothing to open.
+                <span className={`${look} step--static`} aria-current={isCurrent ? "step" : undefined} title={detail ?? undefined}>
+                  {stepMark}
+                  <span className="step-text">
+                    <span className="step-label">
+                      {step.label}
+                      <span className="visually-hidden">: {STATUS_WORDS[step.status]}</span>
+                    </span>
+                    {detail !== null && <span className="step-detail">{detail}</span>}
+                  </span>
                 </span>
-                <span className="step-text">
-                  <span className="step-label">{step.label}</span>
-                  {detail !== null && <span className="step-detail">{detail}</span>}
-                </span>
-              </button>
+              ) : (
+                <button
+                  type="button"
+                  className={look}
+                  aria-current={isCurrent ? "step" : undefined}
+                  aria-label={`Step ${index + 1}, ${step.label}: ${STATUS_WORDS[step.status]}${detail === null ? "" : `. ${detail}`}`}
+                  title={detail ?? undefined}
+                  onClick={() => onOpen(id)}
+                >
+                  {stepMark}
+                  <span className="step-text">
+                    <span className="step-label">{step.label}</span>
+                    {detail !== null && <span className="step-detail">{detail}</span>}
+                  </span>
+                </button>
+              )}
             </li>
           );
         })}

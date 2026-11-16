@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from recording_service import ConfigurationError, Disposition, EpisodeResult, StateError
+from recording_service import ConfigurationError, Disposition, EpisodeResult, RecordingPhase, StateError
 
 from .recording_session import (
     CoordinatorBusyError,
@@ -195,6 +195,14 @@ def control_token_valid(candidate: object, expected: str) -> bool:
     if not isinstance(candidate, str) or len(candidate) != len(expected) or not candidate.isascii():
         return False
     return secrets.compare_digest(candidate, expected)
+
+
+def interrupted_take(service: Any) -> bool:
+    """Whether the recording service (a snapshot of it, or None) holds a take that was interrupted and waits
+    to be recovered or discarded. The service keeps such a take as its episode, but nothing is writing it."""
+    return (
+        service is not None and service.episode is not None and service.phase is RecordingPhase.RECOVERY_REQUIRED
+    )
 
 
 @dataclass

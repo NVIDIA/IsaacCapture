@@ -275,10 +275,6 @@ def _store(request: Request) -> OperatorSettingsStore | None:
     return getattr(request.app.state, "operator_settings_store", None)
 
 
-#: The fields that belong to a station once one is in use; the rest stay station-independent.
-_STATION_FIELDS = ("camera_type", "camera_roles")
-
-
 def _station_service(request: Request) -> Any:
     """The station service (station_service.py), or None in an application built without one. Read from the
     application state rather than imported: that module builds on this one."""
@@ -331,13 +327,17 @@ async def write_operator_settings(request: Request) -> JSONResponse:
     body, refused = await read_authorized_json(request, recording_context.control_token, 16 * 1024)
     if body is None:
         return refused  # type: ignore[return-value]
+    # With a station in use its own record holds the camera setup. Saving these fields here would store
+    # values nothing reads, so the caller is pointed at the station instead.
     service = _station_service(request)
+    in_use = service.registry.selected if service is not None else None
+    if in_use is not None and any(key in body for key in ("camera_type", "camera_roles")):
+        return JSONResponse(
+            {"detail": "the station in use holds the camera setup; change it on the station"},
+            status_code=400,
+            headers=_NO_STORE,
+        )
     try:
-        # With a station in use, its camera fields are that station's to keep: they go to the registry, where
-        # the rule against changing the station in use during a take applies to them too.
-        station_changes = {key: body.pop(key) for key in _STATION_FIELDS if key in body}
-        if station_changes and (service is None or await service.update_selected(station_changes) is None):
-            body.update(station_changes)
         settings = await asyncio.to_thread(
             store.update,
             body,

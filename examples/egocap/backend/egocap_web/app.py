@@ -41,6 +41,7 @@ from .capture_preview import MAX_CAMERA_JPEG_BYTES
 from .capture_status import CaptureStatusMonitor
 from .config import VisualizationConfig, config_from_env, visualization_from_env
 from .day_report_routes import router as day_report_router
+from .host_addresses import headset_addresses
 from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
 from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
@@ -59,17 +60,17 @@ from .recording_adapter import (
     RecordingAdapterError,
     validate_tracking_descriptor,
 )
-from .recording_command import RecordingContext
+from .recording_command import RecordingContext, interrupted_take
 from .recording_session import CoordinatorBusyError, RecordingSessionCoordinator, TaskContext
 from .recordings import router as recordings_router
 from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
 from .setup_routes import router as setup_router
 from .setup_service import SetupService, capture_facts
-from .station_activity import ACTIVITY_DIR, StationActivity
 from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
 from .station_routes import router as station_router
 from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
+from .station_uptime import DOWN, READY, RECORDING, UPTIME_DIR, UptimeLog, UptimeSampler
 from .stations import StationError, StationStore, station_store_path
 from .task_file_routes import router as task_file_router
 from .viser_scene import VisualizationScene
@@ -349,6 +350,64 @@ def _station_change_blocked(coordinator: RecordingSessionCoordinator) -> str | N
     return TAKE_IN_PROGRESS if writing or snapshot.active_operation is not None else None
 
 
+#: The reason the station is logged down while an interrupted take waits to be recovered or discarded.
+INTERRUPTED_TAKE = "an interrupted take needs recovery"
+
+#: How often the station's state is asked for the uptime log; a take's start and end are logged this late at most.
+_UPTIME_SAMPLE_SECONDS = 2.0
+#: How often a connected headset's host address is compared with the one remembered for the station.
+_HEADSET_MEMORY_SECONDS = 30.0
+
+
+def _station_state(
+    coordinator: RecordingSessionCoordinator, context: RecordingContext, stations: StationService
+) -> tuple[str, str, str | None]:
+    """The station in use and whether it is recording, ready to record, or down and why. Down means a take
+    would be refused for a station, device or capture reason; a missing task or operator name is not downtime."""
+    station = stations.label()
+    service = coordinator.snapshot().service
+    # An interrupted take is still the service's episode, but nothing records until it is resolved.
+    if interrupted_take(service):
+        return station, DOWN, INTERRUPTED_TAKE
+    if service is not None and service.episode is not None:
+        return station, RECORDING, None
+    blocked = context.setup_block()
+    if blocked is not None:
+        return station, DOWN, blocked
+    ready, reason = coordinator.readiness()
+    if not ready:
+        return station, DOWN, reason or "capture is not ready"
+    return station, READY, None
+
+
+async def _remember_headset_address(
+    stations: StationService, setup: SetupService, capture_server_url: str
+) -> None:
+    """Keep, for the station in use, the capture host address its headset is evidently using.
+
+    A connected headset proves it was given an address that works. The remembered one is replaced only when it
+    is no longer one of the host's, so an operator's choice among several valid addresses is never overwritten.
+    """
+    selected = stations.registry.selected
+    if selected is None or not setup.headset_connected():
+        return
+    candidates = await asyncio.to_thread(headset_addresses, capture_server_url)
+    addresses = [candidate.address for candidate in candidates]
+    if addresses and selected.headset_address not in addresses:
+        await stations.remember_headset_address(addresses[0])
+
+
+async def _every(seconds: float, duty: Callable[[], Any], what: str) -> None:
+    """Run a background duty at an interval for as long as the application runs. One failed pass is logged
+    and the next still runs: these duties keep records, and must never take the application down."""
+    while True:
+        try:
+            await duty()
+        except Exception:  # noqa: BLE001 -- see the docstring
+            logger.exception("%s failed", what)
+        await asyncio.sleep(seconds)
+
+
 async def _rotate_batch_for_station(coordinator: RecordingSessionCoordinator) -> None:
     """Ends the current batch so the next take opens a session under the new station label. A session's
     configuration is frozen when it opens, so the label can only change between sessions."""
@@ -457,9 +516,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if resolved_station is not None and resolved_station.alignment_index is not None
         else None
     )
-    # Today's active/inactive time per station, and the daily activity log it feeds.
-    station_activity = StationActivity(recording_output_root / ACTIVITY_DIR)
-    app.state.station_activity = station_activity
+    # The end-of-day correction asks it whether a take's labels are being copied right now.
+    app.state.aligner = aligner
+    # The station's time today, observed rather than entered: see the sampler started below.
+    station_uptime = UptimeLog(recording_output_root / UPTIME_DIR)
+    app.state.station_uptime = station_uptime
     coordinator = RecordingSessionCoordinator(
         _recording_config_factory(
             monitor,
@@ -485,16 +546,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             change_blocked=lambda: _station_change_blocked(coordinator),
             show_label=monitor.set_station_label,
             rotate_batch=lambda: _rotate_batch_for_station(coordinator),
-            leave_station=station_activity.leave,
+            renamed=station_uptime.rename,
         ),
         default_label=config.station_label,
     )
     app.state.station_service = station_service
     monitor.set_station_label(station_service.label())
-    # The start-of-day flow: the device connection test and system checks that gate a take for a station in use.
+    # The start-of-day flow: the live station checklist, which gates a take for a station in use.
     setup_service = SetupService(
         facts=lambda: capture_facts(monitor, config),
-        session_id=lambda: monitor.native.started.session_id if monitor.native.started is not None else None,
         stations=station_service,
         calibration_dir=calibration_dir,
         output_root=recording_output_root,
@@ -534,7 +594,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         visualization_error=visualization_error,
         task_file_root=task_file_root,
     )
-    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    # The station's state is sampled every few seconds for the uptime log.
+    sampler = UptimeSampler()
+
+    async def sample_uptime() -> None:
+        """Ask what the station is doing and log it; the file write stays off the event loop."""
+        observed = sampler.settle(*_station_state(coordinator, app.state.recording_context, station_service))
+        await asyncio.to_thread(station_uptime.observe, *observed)
+
+    # Owned by the lifespan: both stop with the application.
+    duties = [
+        asyncio.create_task(_every(_UPTIME_SAMPLE_SECONDS, sample_uptime, "the uptime sample")),
+        asyncio.create_task(
+            _every(
+                _HEADSET_MEMORY_SECONDS,
+                lambda: _remember_headset_address(station_service, setup_service, config.capture_server_url),
+                "remembering the headset address",
+            )
+        ),
+    ]
     aligner_task: asyncio.Task[None] | None = None
     if aligner is not None:
         coordinator.on_episode_kept = aligner.submit
@@ -546,6 +624,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await visualization.start()  # never raises: a failed start only reports the view unavailable
         yield
     finally:
+        for duty in duties:
+            duty.cancel()
+        await asyncio.gather(*duties, return_exceptions=True)
         try:
             if visualization is not None:
                 await visualization.stop()

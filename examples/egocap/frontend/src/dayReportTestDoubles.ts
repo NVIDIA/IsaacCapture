@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** A day's report for tests: one session whose takes ended every way a take can. */
+/** A day's report for tests: one session whose takes ended every way a take can, and the station's uptime. */
 import type { DayReportReply, ReportEpisode, Tally, TakeDisposition } from "./dayReportApi";
+import type { StationUptime } from "./stationsApi";
 
 const SESSION = "session_20260309-081500_abc123";
 
@@ -33,7 +34,29 @@ const TALLY: Tally = {
   recording: { count: 0, seconds: 0 },
 };
 
-/** Bench A's day: two kept takes, one flagged, one rejected and one interrupted, and its activity. */
+/** Epoch seconds of a local clock time on the fixture's day, so the times a test reads do not depend on its time zone. */
+function localTime(hour: number, minute: number): number {
+  return new Date(2026, 2, 9, hour, minute).getTime() / 1000;
+}
+
+/** Bench A's uptime: down since 14:05 for the reason that already blocked it once in the morning. */
+export const UPTIME_FIXTURE: StationUptime = {
+  station: "Bench A",
+  date: "2026-03-09",
+  state: "down",
+  reason: "Left wrist: cam_left: no recent frame",
+  since: localTime(14, 5),
+  active_seconds: 7_500,
+  down_seconds: 1_020,
+  blockers: [
+    { reason: "Left wrist: cam_left: no recent frame", start: localTime(11, 2), end: localTime(11, 14), seconds: 720 },
+    { reason: "Left wrist: cam_left: no recent frame", start: localTime(14, 5), end: null, seconds: 300 },
+  ],
+  notes: "left glove battery",
+  as_of: localTime(14, 10),
+};
+
+/** Bench A's day: two kept takes, one flagged, one rejected and one interrupted, and its uptime. */
 export const DAY_REPORT_FIXTURE: DayReportReply = {
   report: {
     date: "2026-03-09",
@@ -56,17 +79,7 @@ export const DAY_REPORT_FIXTURE: DayReportReply = {
       },
     ],
   },
-  activity: {
-    station: "Bench A",
-    date: "2026-03-09",
-    state: "inactive",
-    since: 1_000,
-    active_seconds: 18_720,
-    inactive_seconds: 2_400,
-    blocker_count: 2,
-    notes: "left glove battery",
-    as_of: 2_000,
-  },
+  uptime: UPTIME_FIXTURE,
   today: "2026-03-09",
   station_in_use: "Bench A",
 };

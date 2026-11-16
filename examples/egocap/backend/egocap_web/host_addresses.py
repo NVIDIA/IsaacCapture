@@ -42,10 +42,6 @@ class HostAddress:
     interface: str | None
     kind: str
 
-    def to_json(self) -> dict[str, str | None]:
-        """The wire form."""
-        return {"address": self.address, "interface": self.interface, "kind": self.kind}
-
 
 def interface_kind(name: str) -> str:
     """Whether an interface name is a wireless link, a wired one, or neither."""
@@ -126,15 +122,33 @@ def _is_this_machine(host: str) -> bool:
         return False
 
 
+def _resolved(host: str) -> str | None:
+    """A host as an IP literal: itself when it already is one, else what its name resolves to, else None."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    try:
+        return socket.gethostbyname(host)
+    except OSError:
+        return None
+
+
 def headset_addresses(
-    capture_server_url: str, local: Callable[[], list[HostAddress]] = local_addresses
+    capture_server_url: str,
+    local: Callable[[], list[HostAddress]] = local_addresses,
+    resolve: Callable[[str], str | None] = _resolved,
 ) -> list[HostAddress]:
-    """The addresses to offer for the headset, best first; empty when none can be determined."""
+    """The addresses to offer for the headset, best first; empty when none can be determined.
+
+    Always IP literals: a headset is given an address, not a name, and a station remembers one.
+    """
     host = urlsplit(capture_server_url).hostname or ""
     if host == "" or _is_this_machine(host):
         return local()
     # A capture host on another machine is where the headset must connect, whatever this machine's addresses are.
-    return [HostAddress(host, None, CAPTURE_SERVER)]
+    address = resolve(host)
+    return [HostAddress(address, None, CAPTURE_SERVER)] if address is not None else []
 
 
 def address_changed(saved: str | None, candidates: list[HostAddress]) -> bool:

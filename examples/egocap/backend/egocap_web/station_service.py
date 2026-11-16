@@ -25,6 +25,8 @@ logger = logging.getLogger("isaaccapture.egocap.station_service")
 
 #: Shown when a change would alter the station a take in progress is being recorded against.
 TAKE_IN_PROGRESS = "finish or discard the current take before changing the station in use"
+#: Why a take is held for the moment a change of the station in use is being applied.
+STATION_CHANGING = "the station is being changed"
 
 
 class StationSession(Protocol):
@@ -43,8 +45,8 @@ class StationSession(Protocol):
         """End the current recording batch so the next take opens a session with the new label; raises
         :class:`StationError` when the session cannot rotate now."""
 
-    def leave_station(self, label: str) -> None:
-        """Close the activity segment of the station being left."""
+    def renamed(self, previous: str, name: str) -> None:
+        """The station in use was renamed: carry its day (time and notes) over to the new name."""
 
 
 class StationService:
@@ -57,18 +59,25 @@ class StationService:
         self._default_label = default_label
         # One change at a time: a rotation awaits, and a second change must not interleave with it.
         self._changing = asyncio.Lock()
+        # True from the moment a change of the label is decided until the new label is live.
+        self._relabelling = False
         self._warning: str | None = None
         self._registry = self._load()
         self._label = self._label_of(self._registry)
 
     def _load(self) -> StationRegistry:
-        """The stored registry; an unreadable one starts empty with a warning the page shows."""
+        """The stored registry; one that is invalid or cannot be read starts empty with a warning the page
+        shows. Capture preview does not depend on stations, so neither stops the backend from starting."""
         try:
             return self._store.load()
         except StationError as exc:
             logger.warning("Station registry is unreadable (%s); starting with no stations", exc.public_message)
             self._warning = "Saved stations are unreadable. Adding a station replaces them."
-            return StationRegistry()
+        except OSError as exc:
+            # Not set aside on the next change, unlike an invalid file: it may be valid and merely unreadable.
+            logger.warning("Station registry cannot be read (%s); starting with no stations", exc.strerror)
+            self._warning = "Saved stations cannot be read. Check the registry file's permissions."
+        return StationRegistry()
 
     def _label_of(self, registry: StationRegistry) -> str:
         """The label recordings and viewers carry for a registry: the selected station's name, else the default."""
@@ -88,8 +97,11 @@ class StationService:
         """Why recording is not allowed for station reasons, or None.
 
         An empty registry blocks nothing: that is the configuration-free default. Once stations exist, one must
-        be selected and able to record.
+        be selected and able to record. While the station in use is being changed nothing may start: the
+        take would open a session under the label that is on its way out.
         """
+        if self._relabelling:
+            return STATION_CHANGING
         if not self._registry.stations:
             return None
         selected = self._registry.selected
@@ -151,17 +163,20 @@ class StationService:
         async with self._changing:
             await self._persist(lambda registry: registry.selecting(station_id), touches_station_in_use=True)
 
-    async def update_selected(self, changes: Any) -> Station | None:
-        """Change the station in use, for callers that edit "this station" without naming it; None when
-        nothing is selected."""
+    async def remember_headset_address(self, address: str) -> None:
+        """Keep the capture host address a connected headset is evidently using, for the station in use.
+
+        It changes nothing about what is recorded, so unlike an edit of the station in use it is allowed while
+        a take is being written.
+        """
         async with self._changing:
             selected_id = self._registry.selected_id
             if selected_id is None:
-                return None
-            after = await self._persist(
-                lambda registry: registry.updated(selected_id, changes), touches_station_in_use=True
+                return
+            await self._persist(
+                lambda registry: registry.updated(selected_id, {"headset_address": address}),
+                touches_station_in_use=False,
             )
-            return after.selected
 
     async def _persist(
         self, apply: Callable[[StationRegistry], StationRegistry], *, touches_station_in_use: bool
@@ -173,21 +188,42 @@ class StationService:
             if blocked is not None:
                 raise StationError(blocked)
         # Validated in memory first: a refused change must not have rotated the batch.
-        label = self._label_of(apply(self._registry))
+        candidate = apply(self._registry)
+        label = self._label_of(candidate)
         relabelled = label != self._label
-        # Rotated before the file is written: a session still open under the old label must never
-        # receive a take attributed to the new one, so a refused rotation refuses the whole change.
-        if relabelled:
-            await self._session.rotate_batch()
-        _, after = await asyncio.to_thread(self._store.change, apply)
-        self._registry = after
-        self._warning = None
-        if relabelled:
-            previous, self._label = self._label, self._label_of(after)
-            # The activity log is a file write; it stays off the event loop.
-            await asyncio.to_thread(self._session.leave_station, previous)
-            self._session.show_label(self._label)
+        # A rename keeps the same station in use; anything else that changes the label is a different station.
+        renamed = (
+            relabelled
+            and candidate.selected_id is not None
+            and candidate.selected_id == self._registry.selected_id
+        )
+        # Held across the awaits below: a take admitted between them would open a session under the old label.
+        self._relabelling = relabelled
+        try:
+            # Rotated before the file is written: a session still open under the old label must never
+            # receive a take attributed to the new one, so a refused rotation refuses the whole change.
+            if relabelled:
+                await self._session.rotate_batch()
+            _, after = await asyncio.to_thread(self._store.change, apply)
+            self._registry = after
+            self._warning = None
+            if relabelled:
+                previous, self._label = self._label, self._label_of(after)
+                # The label is live from here; what follows only keeps the day's records in step with it.
+                self._session.show_label(self._label)
+        finally:
+            self._relabelling = False
+        if renamed:
+            await self._carry_day(previous, self._label)
         return after
+
+    async def _carry_day(self, previous: str, name: str) -> None:
+        """Move the renamed station's day to its new name. A failure is logged, not raised: the rename itself
+        is saved and live, and refusing it now would leave the page and the registry disagreeing."""
+        try:
+            await asyncio.to_thread(self._session.renamed, previous, name)
+        except OSError:
+            logger.exception("Could not carry the day's timeline from %r to %r", previous, name)
 
 
 def session_adapter(
@@ -196,10 +232,10 @@ def session_adapter(
     change_blocked: Callable[[], str | None],
     show_label: Callable[[str], None],
     rotate_batch: Callable[[], Awaitable[None]],
-    leave_station: Callable[[str], None],
+    renamed: Callable[[str, str], None],
 ) -> StationSession:
     """A :class:`StationSession` built from plain callables, so the application can bind the real monitor,
-    recording context and activity log without this module importing any of them."""
+    recording context and uptime log without this module importing any of them."""
 
     class _Adapter:
         """The callables above, under the protocol's method names."""
@@ -220,8 +256,8 @@ def session_adapter(
             """See :class:`StationSession`."""
             await rotate_batch()
 
-        def leave_station(self, label: str) -> None:
+        def renamed(self, previous: str, name: str) -> None:
             """See :class:`StationSession`."""
-            leave_station(label)
+            renamed(previous, name)
 
     return _Adapter()

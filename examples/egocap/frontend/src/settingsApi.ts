@@ -87,10 +87,12 @@ export function parseSettings(value: unknown): EffectiveSettings {
 export interface OperatorSettings {
   /** Invalid saved settings can be replaced by an authenticated save. */
   warning?: string;
+  /** The camera type in effect: the station in use supplies it, else the value saved before stations existed. */
   camera_type: string | null;
   /** The accepted values, from the backend, so the page keeps no second copy of the list. */
   camera_types: string[];
-  /** Which offered camera (by its session name) fills each role; null where unassigned. Every role is present. */
+  /** Which offered camera (by its session name) fills each role, supplied the same way; null where unassigned.
+   * Every role is present. */
   camera_roles: Record<string, string | null>;
   /** The roles, in display order, from the backend. */
   roles: string[];
@@ -157,11 +159,9 @@ export const ROLE_LABELS: Record<string, string> = {
   wrist_right: "Right wrist",
 };
 
-/** The fields a `PUT` may change; the backend keeps the stored value of every field left out. A `camera_roles`
- * change may name only some roles. */
-export type OperatorSettingsChange = Partial<Pick<OperatorSettings, "camera_type" | "task_file" | "preselected_task">> & {
-  camera_roles?: Record<string, string | null>;
-};
+/** The fields the page may `PUT`; the backend keeps the stored value of every field left out. The camera type
+ * and roles are read here but changed only through the station routes. */
+export type OperatorSettingsChange = Partial<Pick<OperatorSettings, "task_file" | "preselected_task">>;
 
 /** Persist a partial setup change using header authentication. */
 export async function saveOperatorSettings(controlToken: string, changes: OperatorSettingsChange): Promise<OperatorSettings> {

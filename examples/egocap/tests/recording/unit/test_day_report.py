@@ -102,7 +102,7 @@ def test_totals_come_from_the_manifests_with_each_takes_real_disposition(tmp_pat
     assert _dispositions(report) == {"kept": 1, "flagged": 1, "rejected": 1, "discarded": 1, "pending": 1}
     assert report["totals"]["episodes"] == 5 and report["totals"]["seconds"] == 29.0
     assert report["totals"]["by_disposition"]["flagged"] == {"count": 1, "seconds": 8.0}
-    assert (report["date"], report["station"]) == (DAY, None)
+    assert (report["date"], report["stations"]) == (DAY, None)
     (only,) = report["sessions"]
     assert (only["session_id"], only["station"], only["started_at"]) == (SESSION, "Bench A", "2026-03-09T08:15:00")
     assert only["problems"] == [] and only["by_disposition"] == report["totals"]["by_disposition"]
@@ -166,9 +166,12 @@ def test_a_station_report_holds_only_that_stations_sessions(tmp_path):
     unlabelled = "session_20260309-100000_0a0a0a"
     _take(_session(tmp_path, unlabelled, station=None), _manifest(0, "FINALIZED", session=unlabelled))
     assert [s["station"] for s in build_day_report(tmp_path, DAY)["sessions"]] == ["Bench A", "Cart B", None]
-    cart = build_day_report(tmp_path, DAY, station="Cart B")
+    cart = build_day_report(tmp_path, DAY, stations={"Cart B"})
     assert [s["session_id"] for s in cart["sessions"]] == [other]
-    assert (cart["station"], cart["totals"]["episodes"], cart["totals"]["seconds"]) == ("Cart B", 1, 7.0)
+    assert (cart["stations"], cart["totals"]["episodes"], cart["totals"]["seconds"]) == (["Cart B"], 1, 7.0)
+    # A station renamed during the day has two names; its takes under either are its own.
+    renamed = build_day_report(tmp_path, DAY, stations={"Cart B", "Bench A"})
+    assert (renamed["stations"], len(renamed["sessions"])) == (["Bench A", "Cart B"], 2)
 
 
 def test_a_routed_take_is_located_at_its_assigned_slot_and_dated_from_it(tmp_path):
@@ -219,6 +222,26 @@ def test_readable_takes_of_another_day_do_not_carry_a_sessions_problems(tmp_path
     assert [e["index"] for e in next_day["episodes"]] == [0] and next_day["problems"] == []
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"studio": "Kitchen", "assignment": {}},
+        {"studio": "Kitchen", "assignment": ["Kitchen/2026-03-09-08-15-00", 0]},
+        {"duration": None},
+        {"duration": "ten"},
+        {"issues": None},
+    ],
+)
+def test_a_take_record_of_the_wrong_shape_is_reported_and_the_rest_of_the_day_survives(tmp_path, fields):
+    session = _session(tmp_path)
+    _take(session, _manifest(0, "FINALIZED", duration=12.5))
+    _take(session, _manifest(1, "FINALIZED", **fields))
+    report = build_day_report(tmp_path, DAY)
+    (only,) = report["sessions"]
+    assert [e["index"] for e in only["episodes"]] == [0] and report["totals"]["seconds"] == 12.5
+    assert only["problems"] == ["episode_1.json: malformed take record"]
+
+
 def test_a_manifest_that_vanishes_during_the_read_is_skipped(tmp_path, monkeypatch):
     session = _session(tmp_path)
     _take(session, _manifest(0, "FINALIZED"))
@@ -242,7 +265,7 @@ def test_only_recording_service_sessions_are_read(tmp_path):
     assert build_day_report(tmp_path, DAY)["sessions"] == []
     assert build_day_report(tmp_path / "missing", DAY) == {
         "date": DAY,
-        "station": None,
+        "stations": None,
         "totals": {
             "episodes": 0,
             "seconds": 0,

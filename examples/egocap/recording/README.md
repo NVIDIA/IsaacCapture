@@ -100,7 +100,7 @@ store.
   (`<station>_<date>_activity.json`).
 - `day_report.py`'s `build_day_report()` lists a day's takes by session from the recording service's episode
   manifests, each with its disposition (kept, flagged, rejected, discarded, pending, recording) and duration, and totals
-  them. It is what the backend's end-of-day report serves. Read-only.
+  them, optionally for a set of station names. It is what the backend's end-of-day report serves. Read-only.
 - `count_daily_trajectories.py`'s `count_trajectories()`/`compute_station_data_breakdown()` walk
   `<data_dir>/<Studio>/<timestamp>/episode_*`, grouping by session and attributing each episode
   to the day it was actually recorded (not the session folder's own date, which can predate a
@@ -109,8 +109,9 @@ store.
 
 ## EOD session tooling — `egocap/eod/`, `egocap/data_processing/`
 
-Standalone library functions for offline session/episode metadata maintenance — the backend and
-recording service do not call them:
+Library functions for session/episode metadata maintenance after the fact. The recording service calls
+none of them; the backend's end-of-day correction (`POST /api/day-report/correct`) calls
+`update_episode_task_description()` with a task only, and the rest is for offline callers:
 
 - `eod_studio_session_move.py`'s `relocate_session_to_canonical_studio()` moves a session folder
   from `_unmatched/` (or a mis-filed studio) to its canonical `<eod>/<Studio>/<timestamp>/`
@@ -118,8 +119,11 @@ recording service do not call them:
   `refresh_session_egocap_zarr_aggregates()` recomputes `num_episodes`/`episode_lengths`/
   `total_data_time_hours` from the session's finalized episodes.
 - `update_episode_task_description.py`'s `update_episode_task_description()` updates
-  `task_description`/`task_name`/`studio` on a range of episodes (dataset- and episode-level
-  Zarr attrs, plus `config.yaml`'s `meta`), optionally relocating the session first.
+  `task_description`/`task_name`/`studio` on a range of episodes, optionally relocating the session
+  first. An episode's `instruction_language` follows its `task_description`. The dataset-level task
+  (Zarr attrs and `config.yaml`'s `meta`) changes only when the range covers every finalized episode,
+  so correcting some takes does not relabel the rest; `config.yaml` is replaced atomically. A range covers
+  at most 10,000 episodes; a longer one is refused before anything is read.
 
 ## Data layout and format
 

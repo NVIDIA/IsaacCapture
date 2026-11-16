@@ -2,15 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""What a station must show before it records: the device connection test and the system checks.
+"""The station checklist: what a station must show before it records.
 
-Both are lists of items, each passed, failed or skipped with the reason. The connection test asks whether
-every device the station needs is connected and producing data right now; an operator runs it at the start of the
-day. The system checks cover what readiness does not: calibration files, the glove plugin, free disk space and
-the camera producer. A device or check the station does not use is skipped, never failed.
+A list of items, each passed, failed with the reason, or skipped. It covers every tracking device the capture
+session reports, every camera the station uses, the calibration files of those cameras, and room on the recording
+disk. A device or check the station does not use is skipped, never failed.
 
 This module is pure: it judges a :class:`CaptureFacts` value and never reads the capture session itself.
-setup_service.py gathers the facts and keeps the last test result.
+setup_service.py gathers the facts, keeps the checklist fresh and turns it into the recording gate.
 """
 
 from __future__ import annotations
@@ -67,11 +66,12 @@ class CheckItem:
 class DeviceFact:
     """One tracking device as the capture status reports it."""
 
-    kind: str  # "headset", "controller" or "hand"
     label: str
     connected: bool
     #: The device's own error or state, shown when it is not connected.
     detail: str | None = None
+    #: Whether this is the headset, whose connection is what proves the host address it was given.
+    headset: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,53 +85,39 @@ class CameraFact:
 
 @dataclass(frozen=True)
 class CaptureFacts:
-    """Everything the checks read from the capture session, taken at one moment."""
+    """Everything the checklist reads from the capture session, taken at one moment."""
 
     running: bool = False
     #: Why capture is not running, when it said.
     error: str | None = None
-    #: A mock session has no real devices to calibrate or license.
+    #: A mock session has no real cameras to calibrate.
     mock: bool = False
-    session_id: str | None = None
-    #: The tracking kinds the deployment asked for: "headset", "controller", "hand".
-    requested: frozenset[str] = frozenset()
     tracking_fresh: bool = False
     devices: tuple[DeviceFact, ...] = ()
     cameras: Mapping[str, CameraFact] | None = None
-    #: Names of the camera streams the producer offers over LiveKit.
+    #: Names of the camera streams offered over LiveKit.
     livekit_cameras: frozenset[str] = frozenset()
     #: Why an offered LiveKit stream cannot be recorded, or None.
     livekit_blocked: str | None = None
-    glove_plugin_requested: bool = False
-    #: The glove plugin's own state: None when available, else why not. Unused unless it was requested.
-    glove_plugin_error: str | None = None
 
-
-_KIND_LABELS = {"headset": "Headset", "controller": "Controllers", "hand": "Gloves"}
+    @property
+    def headset_connected(self) -> bool:
+        """Whether a headset is connected right now."""
+        return any(device.headset and device.connected for device in self.devices)
 
 
 def _tracking_items(facts: CaptureFacts) -> list[CheckItem]:
-    """One item per tracking device the session reports, and a failure for a requested kind it does not."""
-    items: list[CheckItem] = []
-    for index, device in enumerate(facts.devices):
-        items.append(
-            CheckItem(
-                f"device:{device.kind}:{index}",
-                TRACKING,
-                device.label,
-                PASS if device.connected else FAIL,
-                None if device.connected else (device.detail or "not connected"),
-            )
+    """One item per tracking device the session reports, and one for whether their data is arriving."""
+    items = [
+        CheckItem(
+            f"device:{index}",
+            TRACKING,
+            device.label,
+            PASS if device.connected else FAIL,
+            None if device.connected else (device.detail or "not connected"),
         )
-    reported = {device.kind for device in facts.devices}
-    # A requested kind with no device at all would otherwise pass by having nothing to fail.
-    for kind in ("headset", "controller", "hand"):
-        if kind in facts.requested and kind not in reported:
-            items.append(
-                CheckItem(
-                    f"device:{kind}", TRACKING, _KIND_LABELS[kind], FAIL, "not reported by the capture session"
-                )
-            )
+        for index, device in enumerate(facts.devices)
+    ]
     # Connected devices that deliver nothing would record an empty take.
     if items and not facts.tracking_fresh:
         items.append(CheckItem("tracking:samples", TRACKING, "Tracking data", FAIL, "no recent sample"))
@@ -163,51 +149,33 @@ def _camera_items(facts: CaptureFacts, roles: Mapping[str, str | None] | None) -
     for role, camera in roles.items():
         label = ROLE_NAMES.get(role, role)
         if camera is None:
-            # A station without this camera has nothing to test here.
+            # A station without this camera has nothing to check here.
             items.append(CheckItem(f"camera:{role}", CAMERAS, label, SKIP, "not used by this station"))
         else:
             items.append(_camera_item(f"camera:{role}", f"{label}: {camera}", camera, facts))
     return items
 
 
-def connection_items(facts: CaptureFacts, roles: Mapping[str, str | None] | None) -> list[CheckItem]:
-    """The device connection test: every tracking device and camera the station needs, each passed or failed.
-
-    ``roles`` is the station in use's camera per role, or None when no station is in use.
-    """
-    if not facts.running:
-        # Nothing can be judged device by device without a running session; say that once.
-        return [CheckItem("capture", TRACKING, "Capture session", FAIL, facts.error or "capture is not running")]
-    return [*_tracking_items(facts), *_camera_items(facts, roles)]
-
-
-def _calibration_items(
+def _calibration_item(
     facts: CaptureFacts, roles: Mapping[str, str | None] | None, calibration_dir: Path
-) -> list[CheckItem]:
+) -> CheckItem:
     """The calibration file each camera role in use needs; skipped for a mock session or with no station."""
     if facts.mock or roles is None:
         why = "mock capture has nothing to calibrate" if facts.mock else "no station in use"
-        return [CheckItem("calibration", SYSTEM, "Camera calibration", SKIP, why)]
+        return CheckItem("calibration", SYSTEM, "Camera calibration", SKIP, why)
     needed = [name for role, names in ROLE_CALIBRATION.items() if roles.get(role) is not None for name in names]
     if roles.get("wrist_left") is not None or roles.get("wrist_right") is not None:
         needed.append(WRIST_OFFSETS)
     if not needed:
-        return [
-            CheckItem("calibration", SYSTEM, "Camera calibration", SKIP, "the station has no cameras assigned")
-        ]
-    missing = [name for name in needed if not (calibration_dir / name).is_file()]
+        return CheckItem("calibration", SYSTEM, "Camera calibration", SKIP, "the station has no cameras assigned")
+    try:
+        missing = [name for name in needed if not (calibration_dir / name).is_file()]
+    except OSError as exc:
+        # A directory that cannot be searched is a failed check with its cause, never an exception for the caller.
+        detail = f"cannot read the calibration directory: {exc.strerror}"
+        return CheckItem("calibration", SYSTEM, "Camera calibration", FAIL, detail)
     detail = f"missing: {', '.join(missing)}" if missing else None
-    return [CheckItem("calibration", SYSTEM, "Camera calibration", FAIL if missing else PASS, detail)]
-
-
-def _glove_item(facts: CaptureFacts) -> CheckItem:
-    """Whether the glove plugin loaded, which is where a missing SDK or licence shows."""
-    if not facts.glove_plugin_requested:
-        return CheckItem("gloves", SYSTEM, "Glove plugin", SKIP, "gloves are not part of this deployment")
-    if facts.mock:
-        return CheckItem("gloves", SYSTEM, "Glove plugin", SKIP, "mock capture needs no glove software")
-    error = facts.glove_plugin_error
-    return CheckItem("gloves", SYSTEM, "Glove plugin", FAIL if error else PASS, error)
+    return CheckItem("calibration", SYSTEM, "Camera calibration", FAIL if missing else PASS, detail)
 
 
 def _disk_item(output_root: Path, free_bytes: Callable[[Path], int], min_free_bytes: int) -> CheckItem:
@@ -227,37 +195,28 @@ def _disk_item(output_root: Path, free_bytes: Callable[[Path], int], min_free_by
     return CheckItem("disk", SYSTEM, "Free disk space", PASS, detail)
 
 
-def _producer_item(facts: CaptureFacts, camera_type: str | None) -> CheckItem:
-    """Whether the camera producer is reachable, for a station whose cameras arrive over LiveKit."""
-    expected = camera_type == "sensing_gmsl" or bool(facts.livekit_cameras)
-    if not expected:
-        return CheckItem("producer", SYSTEM, "Camera producer", SKIP, "cameras are read by CaptureServer")
-    if not facts.livekit_cameras:
-        return CheckItem(
-            "producer", SYSTEM, "Camera producer", FAIL, "no camera stream is offered by the producer"
-        )
-    return CheckItem(
-        "producer", SYSTEM, "Camera producer", FAIL if facts.livekit_blocked else PASS, facts.livekit_blocked
-    )
-
-
-def system_items(
+def checklist(
     facts: CaptureFacts,
     roles: Mapping[str, str | None] | None,
-    camera_type: str | None,
     *,
     calibration_dir: Path,
     output_root: Path,
     free_bytes: Callable[[Path], int],
     min_free_bytes: int = MIN_FREE_BYTES,
 ) -> list[CheckItem]:
-    """The checks beyond device connection: calibration files, the glove plugin, disk space and the producer."""
-    return [
-        *_calibration_items(facts, roles, calibration_dir),
-        _glove_item(facts),
+    """Every item of the station checklist, in display order.
+
+    ``roles`` is the station in use's camera per role, or None when no station is in use.
+    """
+    system = [
+        _calibration_item(facts, roles, calibration_dir),
         _disk_item(output_root, free_bytes, min_free_bytes),
-        _producer_item(facts, camera_type),
     ]
+    if not facts.running:
+        # Nothing can be judged device by device without a running session; say that once.
+        capture = CheckItem("capture", TRACKING, "Capture session", FAIL, facts.error or "capture is not running")
+        return [capture, *system]
+    return [*_tracking_items(facts), *_camera_items(facts, roles), *system]
 
 
 def first_failure(items: list[CheckItem]) -> str | None:
@@ -266,3 +225,15 @@ def first_failure(items: list[CheckItem]) -> str | None:
         if item.status == FAIL:
             return f"{item.label}: {item.detail}" if item.detail else item.label
     return None
+
+
+def free_bytes_under(path: Path, disk_usage: Callable[[Path], Any]) -> int:
+    """Free space on the filesystem that holds ``path``, which may not exist yet.
+
+    The recording output is created by the first take, so before that the nearest existing ancestor is measured:
+    it is on the same filesystem, and a missing directory is not a full disk.
+    """
+    current = path.resolve()
+    while not current.exists() and current != current.parent:
+        current = current.parent
+    return disk_usage(current).free

@@ -9,6 +9,7 @@ import yaml
 import zarr
 
 from egocap.data_processing.update_episode_task_description import (
+    MAX_EPISODE_SPAN,
     EpisodeRangeError,
     _parse_episode_arg,
     _update_session_config_yaml,
@@ -17,19 +18,19 @@ from egocap.data_processing.update_episode_task_description import (
 
 
 def test_parse_episode_arg_single():
-    assert _parse_episode_arg("5") == [5]
+    assert list(_parse_episode_arg("5")) == [5]
 
 
 def test_parse_episode_arg_range():
-    assert _parse_episode_arg("2-7") == [2, 3, 4, 5, 6, 7]
+    assert list(_parse_episode_arg("2-7")) == [2, 3, 4, 5, 6, 7]
 
 
 def test_parse_episode_arg_reversed_range_normalizes():
-    assert _parse_episode_arg("7-2") == [2, 3, 4, 5, 6, 7]
+    assert list(_parse_episode_arg("7-2")) == [2, 3, 4, 5, 6, 7]
 
 
 def test_parse_episode_arg_strips_whitespace():
-    assert _parse_episode_arg(" 2 - 4 ") == [2, 3, 4]
+    assert list(_parse_episode_arg(" 2 - 4 ")) == [2, 3, 4]
 
 
 def test_parse_episode_arg_invalid_raises():
@@ -37,6 +38,16 @@ def test_parse_episode_arg_invalid_raises():
         _parse_episode_arg("not-a-range")
     with pytest.raises(EpisodeRangeError):
         _parse_episode_arg("")
+
+
+def test_parse_episode_arg_refuses_a_range_no_session_could_hold_without_walking_it():
+    assert _parse_episode_arg(f"5-{5 + MAX_EPISODE_SPAN - 1}") == range(5, 5 + MAX_EPISODE_SPAN)
+    for spec in (f"5-{5 + MAX_EPISODE_SPAN}", "0-3000000000", "3000000000-0"):
+        with pytest.raises(EpisodeRangeError, match=f"at most {MAX_EPISODE_SPAN} episodes"):
+            _parse_episode_arg(spec)
+    # More digits than Python converts at all is refused the same way, not as a different error.
+    with pytest.raises(EpisodeRangeError, match="too long"):
+        _parse_episode_arg("9" * 5000)
 
 
 def test_update_session_config_yaml_missing_file_is_noop(tmp_path):
@@ -118,9 +129,44 @@ def test_update_episode_task_description_updates_requested_episodes(tmp_path):
     assert store["episode_0"].attrs["task_description"] == "pour cereal"
     assert store["episode_0"].attrs["task_name"] == "pour"
     assert store["episode_0"].attrs["studio"] == "Kitchen"
-    assert store.attrs["task_description"] == "pour cereal"
-    assert store.attrs["task_name"] == "pour"
+    assert "task_description" not in store["episode_2"].attrs
+    # Two of three takes were corrected, so the session's own task is left alone; the studio is the session's.
+    assert "task_description" not in store.attrs and "task_name" not in store.attrs
     assert store.attrs["studio"] == "Kitchen"
+
+
+def test_correcting_every_take_also_relabels_the_session(tmp_path):
+    _make_session(tmp_path, 3)
+    (tmp_path / "config.yaml").write_text("meta: {}\n", encoding="utf-8")
+    result = update_episode_task_description(tmp_path, "0-5", task_description="pour cereal", task_name="pour")
+    assert result.updated_episodes == ["episode_0", "episode_1", "episode_2"] and result.config_yaml_updated
+    store = zarr.open(str(tmp_path), mode="r")
+    assert (store.attrs["task_description"], store.attrs["task_name"]) == ("pour cereal", "pour")
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text())["meta"] == {
+        "task_description": "pour cereal",
+        "task_name": "pour",
+    }
+
+
+def test_correcting_some_takes_leaves_the_sessions_config_task_alone(tmp_path):
+    _make_session(tmp_path, 2)
+    (tmp_path / "config.yaml").write_text("meta:\n  task_description: before\n", encoding="utf-8")
+    update_episode_task_description(tmp_path, "1", task_description="after", task_name="t", studio="Kitchen")
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text())["meta"] == {
+        "task_description": "before",
+        "studio": "Kitchen",
+    }
+
+
+def test_a_corrected_take_carries_the_new_task_under_both_of_its_names(tmp_path):
+    _make_session(tmp_path, 2)
+    store = zarr.open(str(tmp_path), mode="a")
+    store["episode_0"].attrs["instruction_language"] = "pour water"
+    update_episode_task_description(tmp_path, "0-1", task_description="wipe the table")
+    store = zarr.open(str(tmp_path), mode="r")
+    assert store["episode_0"].attrs["instruction_language"] == "wipe the table"
+    # An episode that never carried the second name does not gain it.
+    assert "instruction_language" not in store["episode_1"].attrs
 
 
 def test_update_episode_task_description_missing_episode_recorded(tmp_path):
@@ -168,6 +214,17 @@ def test_update_episode_task_description_updates_config_yaml_sidecar(tmp_path):
     assert result.config_yaml_updated is True
     data = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
     assert data["meta"]["task_description"] == "pour cereal"
+
+
+def test_a_partial_correction_relabels_only_the_named_take_of_the_aligned_copy(tmp_path):
+    session = tmp_path / "session"
+    _make_session(session, 2)
+    aligned = _make_aligned_copy(session)
+    update_episode_task_description(session, "0", task_description="pour cereal")
+    store = zarr.open(str(aligned), mode="r")
+    assert store["episode_0"].attrs["task_description"] == "pour cereal"
+    assert "task_description" not in store.attrs and "studio" not in store.attrs
+    assert yaml.safe_load((aligned / "config.yaml").read_text(encoding="utf-8"))["meta"] == {}
 
 
 def _make_aligned_copy(session: Path) -> Path:

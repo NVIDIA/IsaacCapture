@@ -397,6 +397,24 @@ async def test_close_kills_an_alignment_still_running_at_the_deadline_and_return
     assert not (tmp_path / "hang_aligned").exists()
 
 
+async def test_the_worker_is_busy_with_the_group_of_the_episode_it_is_aligning_and_no_other(tmp_path, stub_tool):
+    aligner = AutoAligner(tmp_path, "head")
+    assert aligner.busy_with(tmp_path / "hang") is False  # nothing is being aligned yet
+    aligner.submit(_result(index=1, final_path=tmp_path / "hang" / "episode_1"))
+    aligner.submit(_result(index=2, final_path=tmp_path / "waiting" / "episode_2"))
+    task = asyncio.create_task(aligner.run())
+    pid_file = Path(str(stub_tool) + ".pid")
+    for _ in range(300):
+        if pid_file.exists() and pid_file.read_text():
+            break
+        await asyncio.sleep(0.05)
+    assert aligner.busy_with(tmp_path / "hang") is True
+    # An episode still waiting reads its labels when its turn comes, so its group is not held.
+    assert aligner.busy_with(tmp_path / "waiting") is False
+    await asyncio.wait_for(aligner.close(task, 0.2), 10)
+    assert aligner.busy_with(tmp_path / "hang") is False
+
+
 async def test_a_kept_episode_is_aligned_for_real_through_the_command_line_tool(tmp_path):
     session = tmp_path / "out" / "s1"
     build_raw(session)

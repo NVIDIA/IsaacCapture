@@ -4,7 +4,7 @@
 
 /** A complete `/api/settings` body for tests: a development default with one camera. */
 import type { EffectiveSettings, OperatorSettings, TaskFileContents, TaskFileListing, ToolInfo } from "./settingsApi";
-import type { HeadsetAddress, StationChange, StationListing, StationRecord } from "./stationsApi";
+import type { StationChange, StationListing, StationRecord } from "./stationsApi";
 
 export const OPERATOR_SETTINGS_FIXTURE: OperatorSettings = {
   camera_type: null,
@@ -23,13 +23,6 @@ export const STATIONS_FIXTURE: StationListing = {
   camera_types: ["sensing_gmsl", "oak_d"],
   label: "Station 01",
   locked_reason: null,
-};
-
-/** One wireless address, nothing saved yet. */
-export const HEADSET_ADDRESS_FIXTURE: HeadsetAddress = {
-  candidates: [{ address: "10.0.0.42", interface: "wlp2s0", kind: "wireless" }],
-  saved: null,
-  changed: false,
 };
 
 export const TASK_FILES_FIXTURE: TaskFileListing = { files: ["Kitchen.csv"], imported: [] };
@@ -136,7 +129,6 @@ export function fakeStationRegistry(initial: StationListing = STATIONS_FIXTURE) 
         camera_type: fields.camera_type ?? null,
         camera_roles: { ego: null, wrist_left: null, wrist_right: null, ...fields.camera_roles },
         problems: [],
-        headset_address: fields.headset_address ?? null,
       };
       listing = { ...listing, stations: [...listing.stations, station] };
       return listing;
@@ -152,11 +144,6 @@ export function fakeStationRegistry(initial: StationListing = STATIONS_FIXTURE) 
     selectStation: async (_token: string, id: string | null): Promise<StationListing> => {
       listing = { ...listing, selected: id };
       return relabel();
-    },
-    loadHeadsetAddress: async (): Promise<HeadsetAddress> => {
-      const saved = listing.stations.find((station) => station.id === listing.selected)?.headset_address ?? null;
-      const changed = saved !== null && !HEADSET_ADDRESS_FIXTURE.candidates.some((candidate) => candidate.address === saved);
-      return { ...HEADSET_ADDRESS_FIXTURE, saved, changed };
     },
   };
 }

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Start-of-day routes: reading the flow, running the connection test, and the real application end to end."""
+"""Start-of-day route: reading the flow and the headset address, and the real application end to end."""
 
 from __future__ import annotations
 
@@ -19,11 +19,13 @@ from egocap_web.setup_checks import CameraFact, CaptureFacts, DeviceFact
 from egocap_web.setup_service import SetupService
 from egocap_web.station_routes import router as station_router
 from egocap_web.station_service import StationService, session_adapter
+from egocap_web.station_uptime import READY, RECORDING, UptimeLog
 from egocap_web.stations import StationStore
 from tests.backend.test_preview_routes import _poll_until_sync, _ServerThread
 
 TOKEN = "t" * 43
 AUTH = {"X-Control-Token": TOKEN}
+BENCH = {"name": "Bench A", "camera_roles": {"ego": "cam_head"}}
 
 
 @dataclass
@@ -32,25 +34,34 @@ class _Context:
     saved_count: int = 0
 
 
+class _World:
+    """What a test can change between requests: whether the headset is connected."""
+
+    headset_connected = True
+
+
 async def _rotate() -> None:
     """Nothing to rotate in these tests."""
 
 
-def _client(tmp_path, ready: bool = True) -> TestClient:
+def _client(tmp_path, world: _World | None = None, ready: bool = True) -> TestClient:
+    world = world or _World()
     small = FastAPI()
     small.include_router(setup_routes.router)
     small.include_router(station_router)
     if not ready:
         return TestClient(small)
-    facts = CaptureFacts(
-        running=True,
-        mock=True,
-        session_id="s1",
-        requested=frozenset({"headset"}),
-        tracking_fresh=True,
-        devices=(DeviceFact("headset", "Headset", True),),
-        cameras={"cam_head": CameraFact(True, True)},
-    )
+
+    def facts() -> CaptureFacts:
+        return CaptureFacts(
+            running=True,
+            mock=True,
+            tracking_fresh=True,
+            devices=(DeviceFact("Headset", world.headset_connected, "disconnected", headset=True),),
+            cameras={"cam_head": CameraFact(True, True)},
+        )
+
+    uptime = UptimeLog(tmp_path / "station_status")
     stations = StationService(
         StationStore(tmp_path / "stations.json"),
         session_adapter(
@@ -58,89 +69,139 @@ def _client(tmp_path, ready: bool = True) -> TestClient:
             change_blocked=lambda: None,
             show_label=lambda label: None,
             rotate_batch=_rotate,
-            leave_station=lambda label: None,
+            renamed=uptime.rename,
         ),
         "Deployment",
     )
     small.state.station_service = stations
-    small.state.station_activity = object()
+    small.state.station_uptime = uptime
     small.state.setup_service = SetupService(
-        facts=lambda: facts,
-        session_id=lambda: "s1",
+        facts=facts,
         stations=stations,
         calibration_dir=lambda: tmp_path / "calibration",
         output_root=tmp_path,
         free_bytes=lambda path: 50 * 1024**3,
+        # Every request judges afresh, so a test can change the world between two of them.
+        monotonic=iter(range(0, 10_000, 5)).__next__,
     )
     small.state.recording_context = _Context(control_token=TOKEN)
     small.state.settings = SimpleNamespace(capture=SimpleNamespace(capture_server_url="ws://127.0.0.1:8082"))
     return TestClient(small)
 
 
+def _use_bench(client: TestClient, **fields) -> str:
+    listing = client.post("/api/stations", json={**BENCH, **fields}, headers=AUTH).json()
+    bench = listing["stations"][0]["id"]
+    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    return bench
+
+
 def _steps(body: dict) -> dict[str, tuple[str, str | None]]:
     return {step["id"]: (step["status"], step["detail"]) for step in body["steps"]}
 
 
-def test_the_routes_answer_503_until_the_application_has_started(tmp_path):
-    client = _client(tmp_path, ready=False)
-    for response in (client.get("/api/setup"), client.post("/api/setup/connection-test")):
-        assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
+def _host(monkeypatch, *addresses: str) -> list[str]:
+    """Make the capture host have these addresses; returns the URLs the route asked about."""
+    asked: list[str] = []
+
+    def candidates(url: str) -> list[HostAddress]:
+        asked.append(url)
+        return [HostAddress(address, "wlp2s0", "wireless") for address in addresses]
+
+    monkeypatch.setattr(setup_routes, "headset_addresses", candidates)
+    return asked
 
 
-def test_the_flow_is_read_openly_and_the_test_is_run_with_the_token(tmp_path):
-    client = _client(tmp_path)
-    bench = client.post(
-        "/api/stations", json={"name": "Bench A", "camera_roles": {"ego": "cam_head"}}, headers=AUTH
-    )
-    client.post("/api/stations/select", json={"id": bench.json()["stations"][0]["id"]}, headers=AUTH)
-    before = client.get("/api/setup").json()
-    assert before["enforced"] is True and before["connection_test"] is None
-    assert before["blocked_reason"] == "run the device connection test before recording"
-    assert _steps(before)["devices"] == ("todo", "run the connection test")
-    assert client.post("/api/setup/connection-test").status_code == 403
-    assert client.post("/api/setup/connection-test", headers={"X-Control-Token": "wrong"}).status_code == 403
-    assert client.get("/api/setup").json()["connection_test"] is None
-    after = client.post("/api/setup/connection-test", headers=AUTH).json()
-    assert after["blocked_reason"] is None and after["connection_test"]["passed"] is True
-    assert [(item["label"], item["status"]) for item in after["connection_test"]["items"]] == [
+def test_the_route_answers_503_until_the_application_has_started(tmp_path):
+    response = _client(tmp_path, ready=False).get("/api/setup")
+    assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
+
+
+def test_the_flow_and_the_live_checklist_are_read_openly(tmp_path, monkeypatch):
+    _host(monkeypatch, "10.0.0.42")
+    world = _World()
+    client = _client(tmp_path, world)
+    _use_bench(client)
+    body = client.get("/api/setup").json()
+    assert body["enforced"] is True and body["blocked_reason"] is None
+    assert _steps(body) == {
+        "station": ("done", "Bench A"),
+        "devices": ("done", "all checks pass"),
+        "record": ("todo", None),
+        "wrap_up": ("todo", None),
+    }
+    assert [(item["label"], item["status"]) for item in body["checks"]] == [
         ("Headset", "pass"),
         ("Ego (head): cam_head", "pass"),
         ("Left wrist", "skip"),
         ("Right wrist", "skip"),
+        ("Camera calibration", "skip"),
+        ("Free disk space", "pass"),
     ]
-    assert _steps(after) == {
-        "station": ("done", "Bench A"),
-        "devices": ("done", "connection test passed"),
-        "calibration": ("skipped", "mock capture has nothing to calibrate"),
-        "record": ("todo", None),
-        "wrap_up": ("todo", None),
-    }
+    # Nothing is run: the next read simply shows what changed.
+    world.headset_connected = False
+    held = client.get("/api/setup").json()
+    assert held["blocked_reason"] == "Headset: disconnected"
+    assert _steps(held)["devices"] == ("attention", "Headset: disconnected")
+    # A batch's count alone is not a take today: it may be left from yesterday.
     client.app.state.recording_context.saved_count = 2
-    assert _steps(client.get("/api/setup").json())["record"] == ("done", "2 saved")
-
-
-def test_a_changed_host_address_shows_on_the_station_step(tmp_path, monkeypatch):
-    client = _client(tmp_path)
-    calls: list[str] = []
-
-    def candidates(url: str) -> list[HostAddress]:
-        calls.append(url)
-        return [HostAddress("10.0.0.42", "wlp2s0", "wireless")]
-
-    monkeypatch.setattr(setup_routes, "headset_addresses", candidates)
-    fields = {"name": "Bench A", "camera_roles": {"ego": "cam_head"}}
-    bench = client.post("/api/stations", json=fields, headers=AUTH).json()["stations"][0]["id"]
-    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
-    assert _steps(client.get("/api/setup").json())["station"] == ("done", "Bench A")
-    assert calls == []  # nothing saved, so the interfaces are not even listed
-    client.put(f"/api/stations/{bench}", json={"headset_address": "10.0.0.7"}, headers=AUTH)
-    assert _steps(client.get("/api/setup").json())["station"] == (
-        "attention",
-        "this host's address changed; update the headset",
+    assert _steps(client.get("/api/setup").json())["record"] == ("todo", None)
+    uptime = client.app.state.station_uptime
+    uptime.observe("Bench A", RECORDING, None)
+    uptime.observe("Bench A", READY, None)
+    uptime.save_report("Bench A", {})
+    done = _steps(client.get("/api/setup").json())
+    assert (done["record"], done["wrap_up"]) == (
+        ("done", "recorded today · 2 saved in this batch"),
+        ("done", "report saved"),
     )
+    # A new batch restarts the count; the step stays done for the day.
+    client.app.state.recording_context.saved_count = 0
+    assert _steps(client.get("/api/setup").json())["record"] == ("done", "recorded today")
+    assert not hasattr(client.app.state.setup_service, "run_connection_test")
+
+
+def test_the_headset_address_is_returned_only_with_the_token(tmp_path, monkeypatch):
+    asked = _host(monkeypatch, "10.0.0.42", "192.168.1.10")
+    client = _client(tmp_path)
+    _use_bench(client)
+    assert client.get("/api/setup").json()["headset"] is None
+    assert client.get("/api/setup", headers={"X-Control-Token": "wrong"}).json()["headset"] is None
+    assert client.get("/api/setup", headers=AUTH).json()["headset"] == {
+        "address": "10.0.0.42",
+        "saved": None,
+        "changed": False,
+    }
+    assert set(asked) == {"ws://127.0.0.1:8082"}
+
+
+def test_a_remembered_address_the_host_no_longer_has_needs_attention_unless_the_headset_is_connected(
+    tmp_path, monkeypatch
+):
+    _host(monkeypatch, "10.0.0.42")
+    world = _World()
+    client = _client(tmp_path, world)
+    bench = _use_bench(client, headset_address="10.0.0.7")
+    # A connected headset proves the address it was given works, whatever is remembered.
+    connected = client.get("/api/setup", headers=AUTH).json()
+    assert connected["headset"] == {"address": "10.0.0.42", "saved": "10.0.0.7", "changed": False}
+    assert _steps(connected)["station"] == ("done", "Bench A")
+    world.headset_connected = False
+    stale = client.get("/api/setup", headers=AUTH).json()
+    assert stale["headset"]["changed"] is True
+    assert _steps(stale)["station"] == ("attention", "this host's address changed; update the headset")
     client.put(f"/api/stations/{bench}", json={"headset_address": "10.0.0.42"}, headers=AUTH)
-    assert _steps(client.get("/api/setup").json())["station"] == ("done", "Bench A")
-    assert calls == ["ws://127.0.0.1:8082"] * 2
+    assert client.get("/api/setup", headers=AUTH).json()["headset"]["changed"] is False
+
+
+def test_a_host_with_no_address_reports_none(tmp_path, monkeypatch):
+    _host(monkeypatch)
+    client = _client(tmp_path)
+    assert client.get("/api/setup", headers=AUTH).json()["headset"] == {
+        "address": None,
+        "saved": None,
+        "changed": False,
+    }
 
 
 def test_a_station_with_a_missing_device_cannot_record_and_says_why(monkeypatch, unused_tcp_port, tmp_path):
@@ -177,23 +238,20 @@ def test_a_station_with_a_missing_device_cannot_record_and_says_why(monkeypatch,
                 "station 'Cart B': camera 'cart_top_camera' (ego (head)) is not offered by the capture session"
             )
             assert context.snapshot()["not_ready_reason"] == missing
-            failed = client.post("/api/setup/connection-test", headers=auth).json()
-            assert failed["connection_test"]["passed"] is False and failed["blocked_reason"] == missing
-            ego = next(item for item in failed["connection_test"]["items"] if item["id"] == "camera:ego")
+            held = client.get("/api/setup").json()
+            assert held["blocked_reason"] == missing and _steps(held)["station"] == ("attention", missing)
+            ego = next(item for item in held["checks"] if item["id"] == "camera:ego")
             assert (ego["status"], ego["detail"]) == (
                 "fail",
                 "camera 'cart_top_camera' is not offered by the capture session",
             )
-            assert _steps(failed)["station"] == ("attention", missing)
 
-            # The station whose devices are all present passes the test and may record.
+            # The station whose devices are all present may record, with nothing to run first.
             client.post("/api/stations/select", json={"id": bench}, headers=auth)
-            assert context.snapshot()["not_ready_reason"] == "run the device connection test before recording"
-            passed = client.post("/api/setup/connection-test", headers=auth).json()
-            assert passed["connection_test"]["passed"] is True, passed["connection_test"]["items"]
-            assert passed["blocked_reason"] is None
-            assert _steps(passed)["devices"] == ("done", "connection test passed")
-            assert _steps(passed)["calibration"][0] == "skipped"  # mock capture has nothing to calibrate
+            _poll_until_sync(lambda: client.get("/api/setup").json()["blocked_reason"] is None)
+            ready = client.get("/api/setup").json()
+            assert _steps(ready)["devices"] == ("done", "all checks pass")
+            assert {item["status"] for item in ready["checks"] if item["group"] != "system"} <= {"pass", "skip"}
             _poll_until_sync(lambda: context.snapshot()["ready_to_record"] is True)
     finally:
         server.stop()

@@ -260,21 +260,6 @@ body {
   gap: var(--space-2);
 }
 
-.settings-choice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.settings-choice--on {
-  border-color: var(--accent);
-}
-
 .settings-actions {
   display: flex;
   align-items: center;
@@ -378,8 +363,21 @@ body {
   cursor: pointer;
 }
 
-.settings-station-head .settings-input {
-  flex: 1 1 200px;
+/* The row wraps so that its editor opens beneath it, across the full width. The text column starts from no
+width, so a long line wraps inside it instead of pushing the row's buttons onto a line of their own. */
+.settings-list--stations > li {
+  flex-wrap: wrap;
+}
+
+.settings-list--stations .settings-list-main {
+  flex-basis: 0;
+}
+
+.station-editor {
+  flex: 1 0 100%;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
 /* A destructive confirmation: only ever shown after the operator asked to delete. */
@@ -404,15 +402,6 @@ body {
 .settings-danger:focus-visible {
   outline: 2px solid var(--critical);
   outline-offset: 1px;
-}
-
-/* The address to type into the headset: large and selectable, since it is read across to another device. */
-.headset-address {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  user-select: all;
 }
 
 .settings-list-main {
@@ -455,35 +444,16 @@ body {
   color: var(--accent);
 }
 
-.settings-roles {
+/* A compact form: each label beside its control. */
+.settings-fields {
   display: grid;
   grid-template-columns: minmax(120px, max-content) 1fr;
   gap: var(--space-2) var(--space-3);
   align-items: center;
 }
 
-.settings-roles label {
+.settings-fields label {
   font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.settings-ready {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--canvas);
-  font-size: 13px;
-}
-
-.settings-ready-item--ok {
-  color: var(--text-main);
-}
-
-.settings-ready-item--todo {
   color: var(--text-secondary);
 }
 
@@ -629,8 +599,13 @@ hero card so the tracking tree below starts near the top of the viewport. */
   cursor: pointer;
 }
 
-.step:hover {
+button.step:hover {
   border-color: var(--border);
+}
+
+/* The step that opens nothing looks like the others and offers no pointer. */
+.step--static {
+  cursor: default;
 }
 
 .step:focus-visible {
@@ -711,11 +686,7 @@ hero card so the tracking tree below starts near the top of the viewport. */
   }
 }
 
-/* --- Start-of-day checks dialog ------------------------------------------- */
-
-.setup-modal {
-  width: min(720px, 96vw);
-}
+/* --- Devices checklist ---------------------------------------------------- */
 
 .setup-verdict {
   margin: 0;
@@ -804,12 +775,12 @@ hero card so the tracking tree below starts near the top of the viewport. */
   height: min(760px, 94vh);
 }
 
-.wrap-up-filter {
-  display: inline-flex;
+/* The question that stands in for Close while something typed is unsaved. */
+.wrap-up-discard {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   font-size: 13px;
-  color: var(--text-secondary);
 }
 
 .wrap-up-tiles {
@@ -891,6 +862,26 @@ hero card so the tracking tree below starts near the top of the viewport. */
   color: var(--accent);
 }
 
+.wrap-up-time {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* What blocked the station, one stretch per line. */
+.wrap-up-blockers {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-blockers li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
 .wrap-up-notes {
   display: flex;
   flex-direction: column;
@@ -938,8 +929,7 @@ hero card so the tracking tree below starts near the top of the viewport. */
   overflow-wrap: anywhere;
 }
 
-.wrap-up-table th:first-child,
-.wrap-up-table th:nth-child(3),
+.wrap-up-table th.num-cell,
 .wrap-up-table td.num-cell {
   text-align: right;
 }
@@ -961,14 +951,14 @@ hero card so the tracking tree below starts near the top of the viewport. */
   flex: 1 1 260px;
 }
 
-/* The station's active/inactive toggle, beside its name. */
-.station-activity {
+/* The station's uptime chip, beside its name. Read-only, so it has none of a button's affordances. */
+.station-uptime {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-2);
 }
 
-.station-activity-toggle {
+.uptime-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -977,48 +967,41 @@ hero card so the tracking tree below starts near the top of the viewport. */
   border: 1px solid var(--border);
   background: var(--surface-raised);
   color: var(--text-main);
-  font: inherit;
   font-weight: 600;
-  cursor: pointer;
 }
 
-.station-activity-toggle:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.station-activity-toggle:disabled {
-  cursor: default;
-}
-
-.station-activity-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.station-activity-dot {
+.uptime-chip-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--text-secondary);
 }
 
-.station-activity-toggle--active {
+.uptime-chip--ready {
   border-color: var(--positive);
 }
 
-.station-activity-toggle--active .station-activity-dot {
+.uptime-chip--ready .uptime-chip-dot {
   background: var(--positive);
 }
 
-.station-activity-toggle--blocked {
+.uptime-chip--recording {
+  border-color: var(--accent);
+}
+
+.uptime-chip--recording .uptime-chip-dot {
+  background: var(--accent);
+}
+
+.uptime-chip--down {
   border-color: var(--warning);
 }
 
-.station-activity-toggle--blocked .station-activity-dot {
+.uptime-chip--down .uptime-chip-dot {
   background: var(--warning);
 }
 
-.station-activity-summary {
+.station-uptime-summary {
   color: var(--text-secondary);
 }
 

@@ -61,14 +61,29 @@ def test_a_capture_server_on_this_machine_offers_this_machines_addresses(url):
     assert headset_addresses(url, lambda: here) == here
 
 
-@pytest.mark.parametrize(
-    ("url", "host"),
-    [("ws://192.168.1.50:8082", "192.168.1.50"), ("wss://capture.example:8082", "capture.example")],
-)
-def test_a_capture_server_elsewhere_is_the_only_address_offered(url, host):
-    assert headset_addresses(url, lambda: [HostAddress("10.0.0.42", "wlp2s0", "wireless")]) == [
-        HostAddress(host, None, "capture_server")
+def test_a_capture_server_elsewhere_is_the_only_address_offered_and_always_as_an_address():
+    here = [HostAddress("10.0.0.42", "wlp2s0", "wireless")]
+    assert headset_addresses("ws://192.168.1.50:8082", lambda: here) == [
+        HostAddress("192.168.1.50", None, "capture_server")
     ]
+    # A capture host given by name is resolved: a headset is given an address, and a station remembers one.
+    names = {"capture.example": "192.168.1.60"}
+    assert headset_addresses("wss://capture.example:8082", lambda: here, names.get) == [
+        HostAddress("192.168.1.60", None, "capture_server")
+    ]
+    assert headset_addresses("wss://unknown.example:8082", lambda: here, names.get) == []
+
+
+def test_a_host_name_is_resolved_and_an_unknown_one_is_not_guessed(monkeypatch):
+    assert host_addresses._resolved("192.168.1.50") == "192.168.1.50"
+    monkeypatch.setattr(host_addresses.socket, "gethostbyname", lambda host: "192.168.1.60")
+    assert host_addresses._resolved("capture.example") == "192.168.1.60"
+
+    def unknown(host):
+        raise OSError("name or service not known")
+
+    monkeypatch.setattr(host_addresses.socket, "gethostbyname", unknown)
+    assert host_addresses._resolved("capture.example") is None
 
 
 def test_a_saved_address_is_stale_only_when_the_host_no_longer_has_it():
@@ -77,14 +92,6 @@ def test_a_saved_address_is_stale_only_when_the_host_no_longer_has_it():
     assert address_changed("10.0.0.7", candidates)
     assert not address_changed(None, candidates)
     assert not address_changed("10.0.0.7", [])  # nothing to compare against is not evidence of a change
-
-
-def test_the_wire_form_names_the_interface():
-    assert HostAddress("10.0.0.42", "wlp2s0", "wireless").to_json() == {
-        "address": "10.0.0.42",
-        "interface": "wlp2s0",
-        "kind": "wireless",
-    }
 
 
 def test_interfaces_are_read_through_the_linux_ioctl_only_on_linux(monkeypatch):

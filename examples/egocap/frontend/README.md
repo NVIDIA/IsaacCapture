@@ -76,23 +76,38 @@ The page is built for an operator mid-take: the cameras fill it, and everything 
   until then it says `SET UP` and what is missing. A command in flight shows at once (`STOPPING` while a take is written),
   because the backend's own phase only changes when the command finishes. A stale feed shows `NO FEED`, never a retained
   `REC`.
-- **Start-of-day rail (under the header).** Station, Devices, Calibration, Record and Wrap up, each done, needing
-  attention, still to do, or not needed for this station, with a short reason (`StepRail.tsx`). The first step that is
-  neither done nor skipped is highlighted. A step opens where it is dealt with: Station opens Settings on its Station tab,
-  Devices and Calibration open the start-of-day checks, Record puts focus on the Record control. The rail shows what
-  `GET /api/setup` reports and is read again when a dialog closes, when the recording readiness reason changes, and every
-  ten seconds; it is absent when that cannot be read.
-- **Start-of-day checks (dialog).** The device connection test, run on request, lists every tracking device and camera the
-  station needs as passed, failed with the reason, or not needed; below it are the calibration and system checks. It
-  opens over the page, so the cameras stay live while a device is being fixed (`SetupDialog.tsx`). While any dialog is
-  open the page behind it is inert and the recording shortcuts are suspended.
-- **End of day (dialog).** Opened from the rail's last step (`WrapUpDialog.tsx`). It shows the day's takes by outcome,
-  the station's active and blocked time with a notes field, and each session with its takes: outcome, duration, task,
-  operator and issues. A task can be corrected for one take or a range. *Save report* writes the report on the station
-  and names the files. The day and "Every station" can be changed at the top. It needs the control token.
-- **Status strip (under the bar).** The station in use, its active/inactive toggle, and the capture headline. The toggle
-  (`StationActivityToggle.tsx`) marks the station active while it is collecting and blocked while it is not; nothing is
-  counted before the first press of the day, and both totals stay in view. It needs the control token to change.
+- **Start-of-day rail (under the header).** Station, Devices, Record and Wrap up, each done, needing attention, still
+  to do, or not needed for this station, with a short reason (`StepRail.tsx`). The first step that is neither done nor
+  skipped is highlighted. Station opens Settings on its Station tab, Devices opens Settings on its Devices tab, and
+  Wrap up opens the end-of-day report. Record is not a control: recording is the page itself, so the step only shows
+  where it stands. The rail shows what `GET /api/setup` reports and is read again when a dialog closes, when the
+  recording readiness reason changes, and ten seconds after each read answers (a slow read is waited for, never
+  cut short by the timer); it is absent when that cannot be read.
+- **Dialogs.** Settings and End of day open over the page, so the cameras stay live behind them. While either is
+  open the page behind it is inert and the recording shortcuts and voice commands are suspended.
+- **Settings (dialog).** Tabs: Station, Devices, Tasks, Display, Advanced (`SettingsPanel.tsx`).
+  - *Station* is one card (`StationsCard.tsx`): each station with a radio that puts it in use, the camera filling each
+    role, and why it cannot record yet. *Edit* opens the row's inline editor for its name, camera type and the camera
+    per role, saved together; only one editor is open at a time. The editor of the station in use ends with the address
+    its headset connects to, and the row warns when this host's address has changed since the headset was given it.
+    While a take is being recorded the station in use cannot be replaced, edited or deleted.
+  - *Devices* is a live checklist (`DevicesTab.tsx`): the tracking devices and cameras the station needs, its
+    calibration files and the free disk space, each passed, failed with the reason, or not needed, under one line that
+    says whether station setup holds recording. The backend judges them continuously and the tab reads them again two
+    seconds after each answer while it is shown, so there is nothing to run. The calibration tools are listed beneath it.
+- **End of day (dialog).** Opened from the rail's last step (`WrapUpDialog.tsx`); it always shows today for the station
+  in use and needs the control token. Top to bottom: the day's takes by outcome; the station's active and down time,
+  the stretches that blocked it, and a notes field; each session with its takes (outcome, duration, task, operator,
+  issues) and a form that corrects the task of one take or a range; *Save report*, which writes the report on the
+  station and names the files. A session whose takes were routed into more than one group shows the group of each
+  take, since each group numbers its takes from zero, and the correction names the group it changed. Each opening
+  starts from a fresh report, so while notes are unsaved or a correction is half typed, Escape, the backdrop and
+  *Close* ask "Discard unsaved changes?" instead of closing.
+- **Status strip (under the bar).** The station in use, its uptime chip, and the capture headline. The chip
+  (`UptimeChip.tsx`) is read-only: the backend logs by itself when the station could record. It reads `Ready`,
+  `Recording`, or `Down` with how long and why, and once the day has a take the active and down time and the number of
+  blockers follow it. It is read every fifteen seconds, and at once when the recording phase, the readiness reason or
+  the saved count changes, so it does not lag the bar above.
 - **Camera stage (middle).** It takes every pixel the bar above and the dock below leave. The head camera (the one named
   `head*`, otherwise the first) takes the left two-thirds and the others stack on the right; each tile carries its name and
   measured / advertised Hz and latency on the picture. A live take puts a red frame around the stage.

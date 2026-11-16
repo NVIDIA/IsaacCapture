@@ -78,6 +78,9 @@ def test_a_camera_in_two_roles_is_refused_naming_the_camera_and_both_roles():
     [
         ({"name": "bench a"}, "a station named 'Bench A' already exists"),
         ({"name": "  Bench   A "}, "a station named 'Bench A' already exists"),
+        # Punctuation is dropped from the daily log's file name, so this would share Bench A's log.
+        ({"name": "Bench_A"}, "a station named 'Bench A' already exists"),
+        ({"name": "bench.a!"}, "a station named 'Bench A' already exists"),
         ({"name": "   "}, "station name cannot be empty"),
         ({}, "station name must be text"),
         ({"name": 7}, "station name must be text"),

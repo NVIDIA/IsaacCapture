@@ -69,6 +69,8 @@ class AutoAligner:
         # Unbounded: a job is three small fields, and the number waiting is the number of kept episodes.
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._process: asyncio.subprocess.Process | None = None
+        #: The episode being aligned right now, or None between episodes.
+        self._aligning: _Job | None = None
         # False while the open session cannot be aligned; set once per session open.
         self._session_alignable = True
 
@@ -93,6 +95,16 @@ class AutoAligner:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
         if result.disposition is Disposition.KEPT and result.final_path is not None and self._session_alignable:
             self._queue.put_nowait(_Job(result.session_id, result.episode_index, result.final_path))
+
+    def busy_with(self, group: Path) -> bool:
+        """Whether the episode being aligned right now is in ``group``, a session or a routed group directory.
+
+        Its labels were copied when the alignment began, so a change to them now would miss the aligned copy.
+        Episodes still waiting are not counted: they read their labels when their turn comes. Safe to call
+        from another thread; it resolves paths, so not from the event loop.
+        """
+        job = self._aligning
+        return job is not None and job.final.parent.resolve() == group.resolve()
 
     def scan(self) -> list[_Job]:
         """Every kept episode, in any session, that has no aligned copy and whose evidence allows one.
@@ -145,11 +157,13 @@ class AutoAligner:
             logger.warning("time-alignment recovery failed: %s", exc)
         while True:
             job = await self._queue.get()
+            self._aligning = job
             try:
                 await self._align(job)
             except Exception as exc:  # noqa: BLE001 - one episode's failure must not end the worker
                 logger.warning("%s episode %d was not time-aligned: %s", job.session_id, job.episode_index, exc)
             finally:
+                self._aligning = None
                 self._queue.task_done()
 
     async def close(self, task: asyncio.Task[None], timeout: float) -> None:

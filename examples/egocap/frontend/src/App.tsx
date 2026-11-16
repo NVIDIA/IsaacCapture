@@ -35,12 +35,10 @@ import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
 import { SettingsPanel, type SettingsTab } from "./SettingsPanel";
-import { SetupDialog } from "./SetupDialog";
-import type { StepId } from "./setupApi";
-import { StepRail } from "./StepRail";
+import { StepRail, type OpenableStep } from "./StepRail";
+import { UptimeChip } from "./UptimeChip";
 import { useSetup } from "./useSetup";
 import { WrapUpDialog } from "./WrapUpDialog";
-import { StationActivityToggle } from "./StationActivityToggle";
 import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
 import type { RecordingPhase } from "./recordingUiReducer";
@@ -215,7 +213,7 @@ function providerTone(status: ProviderStatus["status"]): Tone {
 /** The page's top bar: app title, capture mode, feed-health status and the Settings button.
  * There is no page/tab navigation -- the generic capture display and the
  * Ego Capture UI recording panel are always-present siblings on one page, and
- * Settings and the start-of-day checks open as dialogs over them rather than replacing them. */
+ * Settings and the end-of-day report open as dialogs over them rather than replacing them. */
 function AppHeader({
   response,
   feedHealthLabel,
@@ -246,25 +244,17 @@ function AppHeader({
   );
 }
 
-/** The compact status row beneath the header: station, its active/inactive
- * toggle, and the real capture lifecycle headline (a quiet one-liner, not a large hero). The supporting
+/** The compact status row beneath the header: station, its read-only uptime
+ * chip (read again whenever `uptimeKey` changes), and the real capture lifecycle headline (a quiet one-liner, not a large hero). The supporting
  * session/provider details are reached by scrolling to their own collapsed
  * disclosure at the bottom of the page, not a link from here. A normal
  * running/current state stays quiet here; an error or stale feed instead
  * gets a visible banner from `StaleOrErrorBanner` below. */
-function StatusLine({
-  response,
-  presentation,
-  controlToken,
-}: {
-  response: CaptureStatusResponse | null;
-  presentation: Presentation;
-  controlToken: string | null;
-}) {
+function StatusLine({ response, presentation, uptimeKey }: { response: CaptureStatusResponse | null; presentation: Presentation; uptimeKey: string }) {
   return (
     <div className={`status-strip ${toneClass(presentation.tone)}`}>
       <span className="status-station">{response?.station_label ?? "Station"}</span>
-      <StationActivityToggle stationLabel={response?.station_label ?? null} controlToken={controlToken} />
+      <UptimeChip stationLabel={response?.station_label ?? null} refreshKey={uptimeKey} />
       <span aria-live="polite" className="status-headline">
         {presentation.freshnessLabel !== null && <span className="freshness-badge">{presentation.freshnessLabel}</span>}
         {presentation.headline}
@@ -498,7 +488,7 @@ export default function App() {
   }, []);
   const unavailable = response === null && feedHealth === "unavailable";
   // At most one dialog is open over the page; while one is, the page behind it takes no input.
-  const [dialog, setDialog] = useState<"settings" | "setup" | "wrap_up" | null>(null);
+  const [dialog, setDialog] = useState<"settings" | "wrap_up" | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("station");
   // Counts Settings openings: each one starts the dialog afresh on the tab that was asked for.
   const [settingsOpenings, countSettingsOpening] = useReducer((n: number) => n + 1, 0);
@@ -509,30 +499,31 @@ export default function App() {
   const [settingsGeneration, setSettingsGeneration] = useState(0);
   const operatorSettings = useOperatorSettings(settingsGeneration);
   // The start-of-day flow. It is read again when a dialog that can change it closes, and whenever the facts it
-  // is derived from change: the backend's own readiness reason, the station in use and the saved count.
+  // is derived from change: the backend's own readiness reason, the station in use and the saved count. The
+  // control token goes with it, so the reply says which address the headset connects to.
   const [setupGeneration, refreshSetup] = useReducer((n: number) => n + 1, 0);
-  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`);
+  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`, { controlToken });
+  /** Open Settings on the given tab, as a fresh dialog. */
   const openSettings = (tab: SettingsTab) => {
     setSettingsTab(tab);
     countSettingsOpening();
     setDialog("settings");
   };
+  /** Close Settings and read what it can change again: the camera setup the tiles go by, and the flow. */
   const closeSettings = () => {
     setDialog(null);
     setSettingsGeneration((n) => n + 1);
     refreshSetup();
   };
-  const closeSetup = useCallback(() => {
+  /** Close End of day and read the flow again: a correction or a saved report can change the Wrap up step. */
+  const closeWrapUp = useCallback(() => {
     setDialog(null);
     refreshSetup();
   }, []);
   /** Open the place a step of the start-of-day flow is dealt with. */
-  const openStep = (step: StepId) => {
-    if (step === "station") openSettings("station");
-    else if (step === "devices" || step === "calibration") setDialog("setup");
-    // Recording is the page itself: put the operator on its main control.
-    else if (step === "record") document.querySelector<HTMLElement>(".recording-button--record")?.focus();
-    else setDialog("wrap_up");
+  const openStep = (step: OpenableStep) => {
+    if (step === "wrap_up") setDialog("wrap_up");
+    else openSettings(step);
   };
   // Every camera the session offers can fill a role, whichever path its video takes to the page.
   const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
@@ -541,8 +532,8 @@ export default function App() {
     <div className="app-shell app-shell--operator">
       <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => openSettings("station")} />
       <StepRail steps={setup?.steps ?? null} onOpen={openStep} />
-      <SetupDialog open={dialog === "setup"} onClose={closeSetup} setup={setup} controlToken={controlToken} onChanged={refreshSetup} />
-      <WrapUpDialog open={dialog === "wrap_up"} onClose={closeSetup} controlToken={controlToken} />
+      {/* Mounted only while open, so every opening starts from a fresh report and an empty notes draft. */}
+      {dialog === "wrap_up" && <WrapUpDialog open onClose={closeWrapUp} controlToken={controlToken} />}
       <SettingsPanel
         key={settingsOpenings}
         initialTab={settingsTab}
@@ -553,6 +544,7 @@ export default function App() {
         onResetSidebar={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
         controlToken={controlToken}
         cameraSources={cameraSources}
+        setup={setup}
       />
       <div
         inert={modalOpen}
@@ -578,7 +570,12 @@ export default function App() {
                 hasControlToken={controlToken !== null}
                 pendingPhase={panelPhase}
               />
-              <StatusLine response={response} presentation={presentation} controlToken={controlToken} />
+              {/* The chip is keyed on what the bar above shows, so the two do not disagree until the chip's own timer. */}
+              <StatusLine
+                response={response}
+                presentation={presentation}
+                uptimeKey={`${recordingSnapshot?.episodePhase ?? ""}|${recordingSnapshot?.notReadyReason ?? ""}|${recordingSnapshot?.savedCount ?? 0}`}
+              />
               <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
               {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
               <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>

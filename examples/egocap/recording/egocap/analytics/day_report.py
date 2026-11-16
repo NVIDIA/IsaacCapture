@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -127,17 +128,23 @@ def _session_record(
     tally = _empty_tally()
     episodes = []
     for manifest in sorted(manifests, key=lambda m: m.episode_index):
-        attributes = _final_attributes(session_path, manifest)
         try:
+            attributes = _final_attributes(session_path, manifest)
             recorded = _recorded_date(attributes, session_path, manifest)
+            disposition = episode_disposition(manifest, active_episode_id)
+            record = _episode_record(manifest, disposition, attributes)
         except OSError:
             # The manifest vanished between the scan and here (a discard finishing); the next read is correct.
             continue
+        except (KeyError, TypeError, ValueError, AttributeError):
+            # A manifest that parses but holds values of the wrong shape is one unaccounted take, not a reason
+            # to lose the whole day's report.
+            problems.append(f"episode_{manifest.episode_index}.json: malformed take record")
+            continue
         if recorded != date:
             continue
-        disposition = episode_disposition(manifest, active_episode_id)
-        _add(tally, disposition, float(manifest.duration_seconds))
-        episodes.append(_episode_record(manifest, disposition, attributes))
+        _add(tally, disposition, record["duration_seconds"])
+        episodes.append(record)
     # An unreadable manifest is a take the day cannot account for; it is reported, never dropped.
     started = _session_started(session_path.name)
     unreadable_today = bool(problems) and (started is None or started[:10] == date)
@@ -164,17 +171,18 @@ def _session_dirs(root: Path) -> list[Path]:
 
 
 def build_day_report(
-    root: Path, date: str, *, station: str | None = None, active_episode_id: str | None = None
+    root: Path, date: str, *, stations: Collection[str] | None = None, active_episode_id: str | None = None
 ) -> dict[str, Any]:
     """Every take recorded on ``date`` (``YYYY-MM-DD``), by session, with totals per disposition.
 
-    ``station`` limits the report to sessions recorded at that station; None reports every station.
-    ``active_episode_id`` names the take being recorded now, if any, so it is not mistaken for an interrupted one.
+    ``stations`` limits the report to sessions recorded under one of those station names (a station renamed
+    during the day has more than one); None reports every station. ``active_episode_id`` names the take being
+    recorded now, if any, so it is not mistaken for an interrupted one.
     """
     totals = _empty_tally()
     sessions = []
     for session_path in _session_dirs(root):
-        if station is not None and _read_session_station_name(session_path) != station:
+        if stations is not None and _read_session_station_name(session_path) not in stations:
             continue
         found = _session_record(session_path, date, active_episode_id)
         if found is None:
@@ -186,7 +194,7 @@ def build_day_report(
             totals[name]["seconds"] += tally[name]["seconds"]
     return {
         "date": date,
-        "station": station,
+        "stations": sorted(stations) if stations is not None else None,
         "totals": {
             "episodes": int(sum(entry["count"] for entry in totals.values())),
             "seconds": sum(entry["seconds"] for entry in totals.values()),

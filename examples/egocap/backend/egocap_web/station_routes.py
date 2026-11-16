@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""HTTP surface for stations: the registry, the station in use, its activity and the headset address.
+"""HTTP surface for stations: the registry, the station in use, and its time today.
 
-Reading the registry and today's activity is open to any page that can reach the backend, as the operator
-settings are; a station's headset address and this machine's network addresses are LAN details and need the
-run's control token. Every change needs that token, the same credential that admits recording commands.
+Reading the registry and the station's time is open to any page that can reach the backend, as the operator
+settings are; a station's headset address is a LAN detail and is listed only with the run's control token.
+Every change needs that token, the same credential that admits recording commands.
 """
 
 from __future__ import annotations
@@ -18,10 +18,9 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .host_addresses import address_changed, headset_addresses
 from .recording_command import control_token_valid
 from .request_body import read_authorized_json
-from .station_activity import StationActivityError
+from .station_uptime import UptimeError
 from .stations import StationError, StationNotFoundError
 
 logger = logging.getLogger("isaaccapture.egocap.station_routes")
@@ -29,7 +28,7 @@ logger = logging.getLogger("isaaccapture.egocap.station_routes")
 router = APIRouter()
 
 _NO_STORE = {"Cache-Control": "no-store"}
-#: A station record is a few short fields; activity notes are the largest body accepted here.
+#: A station record is a few short fields; the day's notes are the largest body accepted here.
 _MAX_BODY_BYTES = 32 * 1024
 
 
@@ -44,11 +43,10 @@ def _unavailable() -> JSONResponse:
 
 
 def _state(request: Request) -> tuple[Any, Any, Any] | None:
-    """The station service, activity log and recording context, or None until the lifespan has set them."""
+    """The station service, uptime log and recording context, or None until the lifespan has set them."""
     state = request.app.state
-    found = tuple(
-        getattr(state, name, None) for name in ("station_service", "station_activity", "recording_context")
-    )
+    names = ("station_service", "station_uptime", "recording_context")
+    found = tuple(getattr(state, name, None) for name in names)
     return None if any(item is None for item in found) else found  # type: ignore[return-value]
 
 
@@ -68,7 +66,7 @@ async def list_stations(request: Request) -> JSONResponse:
     state = _state(request)
     if state is None:
         return _unavailable()
-    service, _activity, context = state
+    service, _uptime, context = state
     return _reply(service.listing(private=_holds_token(request, context)))
 
 
@@ -77,7 +75,7 @@ async def _change(request: Request, change: Any) -> JSONResponse:
     state = _state(request)
     if state is None:
         return _unavailable()
-    service, _activity, context = state
+    service, _uptime, context = state
     body, refused = await read_authorized_json(request, context.control_token, _MAX_BODY_BYTES)
     if body is None:
         return refused  # type: ignore[return-value]
@@ -123,7 +121,7 @@ async def delete_station(request: Request, station_id: str) -> JSONResponse:
     state = _state(request)
     if state is None:
         return _unavailable()
-    service, _activity, context = state
+    service, _uptime, context = state
     if not _holds_token(request, context):
         return _reply({"detail": "control token rejected"}, 403)
     try:
@@ -136,58 +134,30 @@ async def delete_station(request: Request, station_id: str) -> JSONResponse:
     return _reply(service.listing(private=True))
 
 
-@router.get("/api/headset-address")
-async def read_headset_address(request: Request) -> JSONResponse:
-    """The addresses to enter in the headset, the one saved for the station in use, and whether it is stale."""
-    state = _state(request)
-    settings = getattr(request.app.state, "settings", None)
-    if state is None or settings is None:
-        return _unavailable()
-    service, _activity, context = state
-    if not _holds_token(request, context):
-        return _reply({"detail": "control token rejected"}, 403)
-    # Interface enumeration is a blocking system call, kept off the event loop.
-    candidates = await asyncio.to_thread(headset_addresses, settings.capture.capture_server_url)
-    selected = service.registry.selected
-    saved = selected.headset_address if selected is not None else None
-    return _reply(
-        {
-            "candidates": [candidate.to_json() for candidate in candidates],
-            "saved": saved,
-            "changed": address_changed(saved, candidates),
-        }
-    )
-
-
-@router.get("/api/station-activity")
-async def read_station_activity(request: Request) -> JSONResponse:
-    """Today's active and inactive time for the station in use."""
+@router.get("/api/station-uptime")
+async def read_station_uptime(request: Request) -> JSONResponse:
+    """What the station in use is doing now, and its active and down time between today's takes."""
     state = _state(request)
     if state is None:
         return _unavailable()
-    service, activity, _context = state
-    return _reply(await asyncio.to_thread(activity.report, service.label()))
+    service, uptime, _context = state
+    return _reply(await asyncio.to_thread(uptime.report, service.label()))
 
 
-@router.post("/api/station-activity")
-async def change_station_activity(request: Request) -> JSONResponse:
-    """Mark the station in use active or inactive, save its blocker notes, or both."""
+@router.post("/api/station-uptime")
+async def save_station_notes(request: Request) -> JSONResponse:
+    """Save the operator's notes for the station's day. The state itself is observed, never set."""
     state = _state(request)
     if state is None:
         return _unavailable()
-    service, activity, context = state
+    service, uptime, context = state
     body, refused = await read_authorized_json(request, context.control_token, _MAX_BODY_BYTES)
     if body is None:
         return refused  # type: ignore[return-value]
-    if "state" not in body and "notes" not in body:
-        return _reply({"detail": "name a state, notes, or both"}, 400)
     try:
-        report = await asyncio.to_thread(
-            lambda: activity.change(service.label(), state=body.get("state"), notes=body.get("notes"))
-        )
-    except StationActivityError as exc:
+        return _reply(await asyncio.to_thread(uptime.set_notes, service.label(), body.get("notes")))
+    except UptimeError as exc:
         return _reply({"detail": str(exc)}, 400)
     except OSError:
-        logger.exception("Could not save station activity")
-        return _reply({"detail": "could not save station activity"}, 503)
-    return _reply(report)
+        logger.exception("Could not save the station's notes")
+        return _reply({"detail": "could not save the notes"}, 503)

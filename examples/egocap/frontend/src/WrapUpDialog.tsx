@@ -3,14 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The end-of-day dialog: what was recorded today and what became of each take, the station's active and blocked
- * time with the operator's notes, saving the report on the station, and correcting a task after recording.
+ * The end-of-day dialog: what was recorded today at the station in use and what became of each take, the
+ * station's active and down time with what blocked it and the operator's notes, correcting a task after
+ * recording, and saving the report on the station.
+ *
+ * Closing would drop notes that are not saved and a correction that is half typed, so while there are any the
+ * dialog asks before it closes, whichever way the close was asked for.
  *
  * Everything shown comes from the backend's report, which reads the recording service's own manifests: a
  * rejected, discarded or interrupted take is listed with its real outcome, never left out. The dialog itself
- * decides nothing about a take.
+ * decides nothing about a take, and the station's time is the backend's own log, not something set here.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DISPOSITIONS,
   correctSession,
@@ -18,26 +22,29 @@ import {
   saveDayReport,
   type Correction,
   type CorrectionReply,
-  type DayReportQuery,
   type DayReportReply,
   type ReportEpisode,
   type ReportSession,
   type TakeDisposition,
 } from "./dayReportApi";
 import { formatElapsed } from "./RecordingPanel";
-import { Card, errorMessage, useAction, useEscapeToClose, useModalFocus } from "./settingsParts";
-import { formatActivity } from "./StationActivityToggle";
-import { changeStationActivity, type StationActivity } from "./stationsApi";
+import { sentence } from "./sentence";
+import { Card, errorMessage, useAction, useEscapeToClose, useModalFocus, type Loaded } from "./settingsParts";
+import { saveStationNotes, type StationUptime, type UptimeBlocker } from "./stationsApi";
+import { formatActivity, formatTotal } from "./stationTime";
 
 /** The calls the dialog makes; the page uses the real ones and tests pass fakes. */
 export interface WrapUpBackend {
-  load: (controlToken: string, query: DayReportQuery, signal: AbortSignal) => Promise<DayReportReply>;
-  save: (controlToken: string, query: DayReportQuery) => Promise<DayReportReply>;
+  load: (controlToken: string, signal: AbortSignal) => Promise<DayReportReply>;
+  save: (controlToken: string) => Promise<DayReportReply>;
   correct: (controlToken: string, correction: Correction) => Promise<CorrectionReply>;
-  saveNotes: (controlToken: string, change: { notes: string }) => Promise<StationActivity>;
+  saveNotes: (controlToken: string, notes: string) => Promise<StationUptime>;
 }
 
-export const REAL_WRAP_UP_BACKEND: WrapUpBackend = { load: fetchDayReport, save: saveDayReport, correct: correctSession, saveNotes: changeStationActivity };
+export const REAL_WRAP_UP_BACKEND: WrapUpBackend = { load: fetchDayReport, save: saveDayReport, correct: correctSession, saveNotes: saveStationNotes };
+
+/** The longest notes the backend accepts, so the field stops where a save would be refused. */
+const MAX_NOTES_CHARS = 4000;
 
 /** Each outcome in the operator's words. */
 const DISPOSITION_LABELS: Record<TakeDisposition, string> = {
@@ -48,9 +55,6 @@ const DISPOSITION_LABELS: Record<TakeDisposition, string> = {
   pending: "Pending",
   recording: "Recording",
 };
-
-/** The `station` value that asks the backend for every station. */
-const ALL_STATIONS = "*";
 
 /** A take's episode number where its data is: the trailing number of its location. */
 function episodeNumber(episode: ReportEpisode): string {
@@ -67,7 +71,11 @@ function startedAt(session: ReportSession): string {
   return session.started_at === null ? "" : session.started_at.slice(11, 16);
 }
 
-type Loaded = { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; value: DayReportReply };
+/** A local clock time, in the 24-hour form the session list uses. */
+function clockTime(epochSeconds: number): string {
+  const at = new Date(epochSeconds * 1000);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
 
 export interface WrapUpDialogProps {
   open: boolean;
@@ -77,68 +85,146 @@ export interface WrapUpDialogProps {
   backend?: WrapUpBackend;
 }
 
-/** Show the day's takes, the station's activity and notes, and the report and correction actions. */
+/** Show the day's takes, the station's time and notes, and the correction and report actions. */
 export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_UP_BACKEND }: WrapUpDialogProps) {
   const dialogRef = useModalFocus(open);
-  useEscapeToClose(open, onClose);
-  const [state, setState] = useState<Loaded>({ kind: "loading" });
-  const [date, setDate] = useState("");
-  const [everyStation, setEveryStation] = useState(false);
+  const [state, setState] = useState<Loaded<DayReportReply>>({ kind: "loading" });
+  // The notes as typed, kept here so that reading the report again never replaces them. Null while the operator
+  // has typed nothing: the field then shows what is saved.
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
   // Bumped after a correction or saved notes, so the report shows what is now on disk.
   const [generation, setGeneration] = useState(0);
+  // Why the latest read failed. A report already on screen stays there with this beside it: the correction or
+  // notes save that asked for the read succeeded, and the notes draft is only reachable through the report.
+  const [readFailure, setReadFailure] = useState<string | null>(null);
   const reload = useCallback(() => setGeneration((n) => n + 1), []);
   const { load } = backend;
+  // The sessions whose correction form holds typed input. Only consulted when a close is asked for, so a ref.
+  const typedCorrections = useRef(new Set<string>());
+  /** Note whether a session's correction form holds typed input. */
+  const noteCorrectionTyped = useCallback((sessionId: string, typed: boolean) => {
+    if (typed) typedCorrections.current.add(sessionId);
+    else {
+      typedCorrections.current.delete(sessionId);
+      // An applied or cleared correction leaves nothing of its own to discard, so the question goes with it.
+      if (typedCorrections.current.size === 0) setConfirmingDiscard(false);
+    }
+  }, []);
+  // Whether the header is asking to discard what is unsaved instead of offering Close.
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const keepButton = useRef<HTMLButtonElement>(null);
+  /** Close, or ask first while notes are unsaved or a correction is typed. */
+  const requestClose = useCallback(() => {
+    if (notesDraft !== null || typedCorrections.current.size > 0) setConfirmingDiscard(true);
+    else onClose();
+  }, [notesDraft, onClose]);
+  // Escape asks to close like the button does; over the question it answers "keep editing", never "discard".
+  useEscapeToClose(open, confirmingDiscard ? () => setConfirmingDiscard(false) : requestClose);
+  useEffect(() => {
+    if (!confirmingDiscard) return;
+    // The question replaces Close in the header: focus goes to its safe answer, and afterwards back to where
+    // the operator was, or to Close when that control is gone.
+    const previous = document.activeElement;
+    keepButton.current?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected && previous !== document.body) previous.focus();
+      else closeButton.current?.focus();
+    };
+  }, [confirmingDiscard]);
 
   useEffect(() => {
     if (!open || controlToken === null) return;
     const controller = new AbortController();
     // A refresh keeps the last report on screen instead of flashing back to "Loading".
     setState((current) => (current.kind === "loaded" ? current : { kind: "loading" }));
-    load(controlToken, { date, station: everyStation ? ALL_STATIONS : undefined }, controller.signal).then(
-      (value) => setState({ kind: "loaded", value }),
+    load(controlToken, controller.signal).then(
+      (value) => {
+        if (controller.signal.aborted) return;
+        setState({ kind: "loaded", value });
+        setReadFailure(null);
+      },
       (error: unknown) => {
-        if (!controller.signal.aborted) setState({ kind: "error", message: errorMessage(error) });
+        if (controller.signal.aborted) return;
+        const message = errorMessage(error);
+        setState((current) => (current.kind === "loaded" ? current : { kind: "error", message }));
+        setReadFailure(message);
       },
     );
     return () => controller.abort();
-  }, [open, controlToken, load, date, everyStation, generation]);
+  }, [open, controlToken, load, generation]);
 
   if (!open) return null;
   const reply = state.kind === "loaded" ? state.value : null;
+  /** Show the saved notes at once, then read the report again so all of it is what is on disk. */
+  const notesSaved = (uptime: StationUptime) => {
+    setState((current) => (current.kind === "loaded" ? { kind: "loaded", value: { ...current.value, uptime } } : current));
+    setNotesDraft(null);
+    // Saved notes are no longer something to discard.
+    if (typedCorrections.current.size === 0) setConfirmingDiscard(false);
+    reload();
+  };
   return (
     <>
-      <div className="settings-backdrop" onClick={onClose} aria-hidden="true" />
+      <div className="settings-backdrop" onClick={requestClose} aria-hidden="true" />
       <div ref={dialogRef} tabIndex={-1} className="settings-modal wrap-up-modal" role="dialog" aria-modal="true" aria-label="End of day">
         <div className="settings-content">
           <header className="settings-content-header">
-            <h3>End of day{reply !== null && ` — ${reply.report.station ?? "every station"}, ${reply.report.date}`}</h3>
-            <button type="button" className="settings-quiet" onClick={onClose}>
-              Close
-            </button>
+            <h3>End of day{reply !== null && ` — ${reply.report.station ?? reply.station_in_use}, ${reply.report.date}`}</h3>
+            {confirmingDiscard ? (
+              <div className="wrap-up-discard" role="group" aria-label="Discard unsaved changes?">
+                <span role="alert">Discard unsaved changes?</span>
+                <button
+                  type="button"
+                  className="settings-danger"
+                  onClick={() => {
+                    setConfirmingDiscard(false);
+                    onClose();
+                  }}
+                >
+                  Discard
+                </button>
+                <button ref={keepButton} type="button" className="settings-quiet" onClick={() => setConfirmingDiscard(false)}>
+                  Keep editing
+                </button>
+              </div>
+            ) : (
+              <button ref={closeButton} type="button" className="settings-quiet" onClick={requestClose}>
+                Close
+              </button>
+            )}
           </header>
           <div className="settings-content-body">
             {controlToken === null ? (
               <p className="settings-note settings-note--hint">Enter the control token in the recording panel to see the day's report.</p>
             ) : (
               <>
-                <div className="settings-actions">
-                  <label className="wrap-up-filter">
-                    Day
-                    <input type="date" className="settings-input" value={date === "" ? (reply?.today ?? "") : date} max={reply?.today} onChange={(e) => setDate(e.target.value)} />
-                  </label>
-                  <label className="wrap-up-filter">
-                    <input type="checkbox" checked={everyStation} onChange={(e) => setEveryStation(e.target.checked)} />
-                    Every station
-                  </label>
-                </div>
                 {state.kind === "loading" && <p className="settings-note">Loading…</p>}
                 {state.kind === "error" && <p className="settings-note tone-warning">The report is unavailable: {state.message}</p>}
                 {reply !== null && (
                   <>
+                    {readFailure !== null && (
+                      <p className="settings-note tone-warning">
+                        The report could not be read again, so it is shown as last read: {readFailure}{" "}
+                        <button type="button" className="settings-quiet" onClick={reload}>
+                          Read again
+                        </button>
+                      </p>
+                    )}
                     <Totals reply={reply} />
-                    {reply.activity !== null && <ActivityCard activity={reply.activity} controlToken={controlToken} saveNotes={backend.saveNotes} onSaved={reload} />}
-                    <Sessions sessions={reply.report.sessions} controlToken={controlToken} correct={backend.correct} onCorrected={reload} />
-                    <SaveReport controlToken={controlToken} query={{ date, station: everyStation ? ALL_STATIONS : undefined }} save={backend.save} />
+                    <StationTime
+                      uptime={reply.uptime}
+                      // The report counts the takes; the time figures alone can all be zero after the first one.
+                      hasTake={reply.report.totals.episodes > 0}
+                      notes={notesDraft ?? reply.uptime.notes}
+                      // Typing back to what is saved leaves nothing to keep.
+                      onNotes={(notes) => setNotesDraft(notes === reply.uptime.notes ? null : notes)}
+                      controlToken={controlToken}
+                      saveNotes={backend.saveNotes}
+                      onSaved={notesSaved}
+                    />
+                    <Sessions sessions={reply.report.sessions} controlToken={controlToken} correct={backend.correct} onCorrected={reload} onTyped={noteCorrectionTyped} />
+                    <SaveReport controlToken={controlToken} save={backend.save} />
                   </>
                 )}
               </>
@@ -168,49 +254,71 @@ function Totals({ reply }: { reply: DayReportReply }) {
   );
 }
 
-/** The station's active and blocked time today, and the operator's notes on what blocked it. */
-function ActivityCard({
-  activity,
+/** One stretch the station could not record: when, for how long, and why. */
+function BlockerLine({ blocker }: { blocker: UptimeBlocker }) {
+  return (
+    <li>
+      {clockTime(blocker.start)}–{blocker.end === null ? "now" : clockTime(blocker.end)} · {formatActivity(blocker.seconds)} · {sentence(blocker.reason)}
+    </li>
+  );
+}
+
+/** The station's active and down time today, what blocked it, and the operator's notes. */
+function StationTime({
+  uptime,
+  hasTake,
+  notes,
+  onNotes,
   controlToken,
   saveNotes,
   onSaved,
 }: {
-  activity: StationActivity;
+  uptime: StationUptime;
+  /** Whether the day has a take; before one there is no time to show. */
+  hasTake: boolean;
+  /** The notes as the field shows them: the operator's draft, or what is saved. */
+  notes: string;
+  onNotes: (notes: string) => void;
   controlToken: string;
   saveNotes: WrapUpBackend["saveNotes"];
-  onSaved: () => void;
+  onSaved: (uptime: StationUptime) => void;
 }) {
-  const [notes, setNotes] = useState(activity.notes);
   const [{ busy, failure }, run] = useAction();
-  // What is saved replaces the draft only when the two were the same, so a reload never eats typing.
-  useEffect(() => setNotes((draft) => (draft === "" || draft === activity.notes ? activity.notes : draft)), [activity.notes]);
-  const dirty = notes !== activity.notes;
+  const dirty = notes !== uptime.notes;
+  /** Save the draft; a save already on its way is not sent twice. */
+  const save = () => {
+    if (!busy) run(() => saveNotes(controlToken, notes).then(onSaved));
+  };
   return (
-    <Card title="Station activity" lead={`${activity.station} is ${activity.state === "active" ? "active" : activity.since === null ? "not started" : "blocked"} now.`}>
-      <dl className="kv-list">
-        <div>
-          <dt>Active</dt>
-          <dd>{formatActivity(activity.active_seconds)}</dd>
-        </div>
-        <div>
-          <dt>Blocked</dt>
-          <dd>{formatActivity(activity.inactive_seconds)}</dd>
-        </div>
-        <div>
-          <dt>Blockers</dt>
-          <dd>{activity.blocker_count}</dd>
-        </div>
-      </dl>
+    <Card title="Station time" lead="Logged by the backend between the first and the last take of the day: active while the station could record, down while something held it.">
+      <p className="wrap-up-time">{hasTake ? `Active ${formatTotal(uptime.active_seconds)} · Down ${formatTotal(uptime.down_seconds)}` : "No take yet today."}</p>
+      {uptime.blockers.length > 0 && (
+        <ul className="wrap-up-blockers" aria-label="Blockers">
+          {uptime.blockers.map((blocker, index) => (
+            <BlockerLine key={`${blocker.start}:${index}`} blocker={blocker} />
+          ))}
+        </ul>
+      )}
       <label className="wrap-up-notes">
-        Notes and blockers
-        <textarea className="settings-input wrap-up-notes-text" value={notes} maxLength={4000} rows={3} disabled={busy} onChange={(e) => setNotes(e.target.value)} />
+        Notes
+        <textarea
+          className="settings-input wrap-up-notes-text"
+          value={notes}
+          maxLength={MAX_NOTES_CHARS}
+          rows={3}
+          // Read-only, not disabled, while saving: a disabled field gives up keyboard focus, which would leave
+          // the operator outside the notes when the save is refused and they are still to be corrected.
+          readOnly={busy}
+          onChange={(e) => onNotes(e.target.value)}
+        />
       </label>
       <div className="settings-actions">
-        <button type="button" className="settings-primary" disabled={!dirty || busy} onClick={() => run(() => saveNotes(controlToken, { notes }).then(onSaved))}>
+        {/* Not disabled while saving, for the same reason as the field. */}
+        <button type="button" className="settings-primary" disabled={!dirty} aria-busy={busy} onClick={save}>
           {busy ? "Saving…" : "Save notes"}
         </button>
         {failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>}
-        {!dirty && activity.notes !== "" && failure === null && <span className="settings-note settings-ready-item--ok">✓ Saved</span>}
+        {!dirty && uptime.notes !== "" && failure === null && <span className="settings-note tone-positive">✓ Saved</span>}
       </div>
     </Card>
   );
@@ -222,20 +330,23 @@ function Sessions({
   controlToken,
   correct,
   onCorrected,
+  onTyped,
 }: {
   sessions: ReportSession[];
   controlToken: string;
   correct: WrapUpBackend["correct"];
   onCorrected: () => void;
+  /** Told which session's correction form holds typed input, and when it no longer does. */
+  onTyped: (sessionId: string, typed: boolean) => void;
 }) {
   return (
     <Card title="Sessions" lead="Each recording session of the day and its takes. A take's task can be corrected here; its video and tracking stay as recorded.">
       {sessions.length === 0 ? (
-        <p className="settings-note">Nothing was recorded on this day.</p>
+        <p className="settings-note">Nothing was recorded today.</p>
       ) : (
         sessions.map((session, index) => (
           // The latest session opens by default: it is the one an operator is finishing.
-          <SessionDetails key={session.session_id} session={session} open={index === sessions.length - 1} controlToken={controlToken} correct={correct} onCorrected={onCorrected} />
+          <SessionDetails key={session.session_id} session={session} open={index === sessions.length - 1} controlToken={controlToken} correct={correct} onCorrected={onCorrected} onTyped={onTyped} />
         ))
       )}
     </Card>
@@ -249,16 +360,22 @@ function SessionDetails({
   controlToken,
   correct,
   onCorrected,
+  onTyped,
 }: {
   session: ReportSession;
   open: boolean;
   controlToken: string;
   correct: WrapUpBackend["correct"];
   onCorrected: () => void;
+  onTyped: (sessionId: string, typed: boolean) => void;
 }) {
   const counts = DISPOSITIONS.filter((name) => session.by_disposition[name].count > 0).map((name) => `${session.by_disposition[name].count} ${DISPOSITION_LABELS[name].toLowerCase()}`);
   // Only a take that was finalized has recorded data whose task can be relabelled.
   const holders = [...new Set(session.episodes.filter((episode) => episode.disposition === "kept" || episode.disposition === "flagged").map(holderOf))];
+  // Each routed group numbers its takes from zero, so with more than one a number alone does not name a take.
+  const routed = holders.length > 1;
+  const { session_id: sessionId } = session;
+  const noteTyped = useCallback((typed: boolean) => onTyped(sessionId, typed), [onTyped, sessionId]);
   return (
     <details className="wrap-up-session" open={open}>
       <summary>
@@ -277,9 +394,14 @@ function SessionDetails({
           <table className="data-table wrap-up-table">
             <thead>
               <tr>
-                <th scope="col">Take</th>
+                <th scope="col" className="num-cell">
+                  Take
+                </th>
+                {routed && <th scope="col">Recorded under</th>}
                 <th scope="col">Outcome</th>
-                <th scope="col">Time</th>
+                <th scope="col" className="num-cell">
+                  Time
+                </th>
                 <th scope="col">Task</th>
                 <th scope="col">Operator</th>
                 <th scope="col">Issues</th>
@@ -289,6 +411,7 @@ function SessionDetails({
               {session.episodes.map((episode) => (
                 <tr key={episode.episode_id}>
                   <td className="num-cell">{episodeNumber(episode)}</td>
+                  {routed && <td>{holderOf(episode)}</td>}
                   <td>
                     <span className={`wrap-up-outcome wrap-up-outcome--${episode.disposition}`}>{DISPOSITION_LABELS[episode.disposition]}</span>
                   </td>
@@ -302,7 +425,7 @@ function SessionDetails({
           </table>
         </div>
       )}
-      {holders.length > 0 && <CorrectionForm holders={holders} controlToken={controlToken} correct={correct} onCorrected={onCorrected} />}
+      {holders.length > 0 && <CorrectionForm holders={holders} controlToken={controlToken} correct={correct} onCorrected={onCorrected} onTyped={noteTyped} />}
     </details>
   );
 }
@@ -313,12 +436,15 @@ function CorrectionForm({
   controlToken,
   correct,
   onCorrected,
+  onTyped,
 }: {
   /** Where the session's finalized takes are: the session itself, or each routed group it filled. */
   holders: string[];
   controlToken: string;
   correct: WrapUpBackend["correct"];
   onCorrected: () => void;
+  /** Told whether the form holds typed input, which closing the dialog would drop. */
+  onTyped: (typed: boolean) => void;
 }) {
   const [holder, setHolder] = useState(holders[0]);
   const [episodes, setEpisodes] = useState("");
@@ -326,13 +452,21 @@ function CorrectionForm({
   const [done, setDone] = useState<string | null>(null);
   const [{ busy, failure }, run] = useAction();
   const ready = episodes.trim() !== "" && task.trim() !== "" && !busy;
+  const typed = episodes !== "" || task !== "";
+  useEffect(() => {
+    onTyped(typed);
+    // A form that leaves the report has nothing left to lose.
+    return () => onTyped(false);
+  }, [typed, onTyped]);
   /** Apply the correction, say what it changed, and have the report read again. */
   const apply = () =>
     run(async () => {
       setDone(null);
       const reply = await correct(controlToken, { session: holder, episodes: episodes.trim(), task: task.trim() });
       const skipped = reply.missing.length === 0 ? "" : ` Not found: ${reply.missing.join(", ")}.`;
-      setDone(`Corrected ${reply.updated.length === 0 ? "nothing" : reply.updated.join(", ")}.${skipped}`);
+      // With more than one group the take numbers repeat, so the confirmation says which group was changed.
+      const where = holders.length > 1 ? ` in ${holder}` : "";
+      setDone(`Corrected ${reply.updated.length === 0 ? "nothing" : reply.updated.join(", ")}${where}.${skipped}`);
       setEpisodes("");
       setTask("");
       onCorrected();
@@ -363,13 +497,13 @@ function CorrectionForm({
 }
 
 /** Save the report as a file on the station and say what was written. */
-function SaveReport({ controlToken, query, save }: { controlToken: string; query: DayReportQuery; save: WrapUpBackend["save"] }) {
+function SaveReport({ controlToken, save }: { controlToken: string; save: WrapUpBackend["save"] }) {
   const [saved, setSaved] = useState<string | null>(null);
   const [{ busy, failure }, run] = useAction();
   /** Write the report and name the files, so the operator knows where the day's record is. */
   const write = () =>
     run(async () => {
-      const reply = await save(controlToken, query);
+      const reply = await save(controlToken);
       const files = [reply.saved?.report, reply.saved?.activity_log].filter((name): name is string => typeof name === "string");
       setSaved(`Saved ${files.join(" and ")} in station_status under the recording output.`);
     });

@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** The start-of-day calls: what each sends, the backend's own reason on a refusal, and a malformed body. */
+/** The start-of-day read: what it sends, the backend's own reason on a refusal, and a malformed body. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
-import { fetchSetup, runConnectionTest } from "./setupApi";
-import { SETUP_NOT_TESTED, SETUP_PASSED } from "./setupTestDoubles";
+import { fetchSetup, type SetupStatus } from "./setupApi";
+import { SETUP_HELD, SETUP_READY } from "./setupTestDoubles";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -18,26 +18,28 @@ function stubFetch(status: number, body: unknown) {
 
 describe("the start-of-day flow", () => {
   it("is read without a credential", async () => {
-    const fn = stubFetch(200, SETUP_NOT_TESTED);
-    await expect(fetchSetup()).resolves.toEqual(SETUP_NOT_TESTED);
-    expect(fn).toHaveBeenCalledWith("/api/setup", { signal: undefined });
+    const fn = stubFetch(200, SETUP_HELD);
+    await expect(fetchSetup()).resolves.toEqual(SETUP_HELD);
+    expect(fn).toHaveBeenCalledWith("/api/setup", { signal: undefined, headers: {} });
   });
 
-  it("runs the connection test with the control token and returns the new flow", async () => {
-    const fn = stubFetch(200, SETUP_PASSED);
-    await expect(runConnectionTest("tok")).resolves.toEqual(SETUP_PASSED);
-    expect(fn).toHaveBeenCalledWith("/api/setup/connection-test", { method: "POST", headers: { "X-Control-Token": "tok" } });
+  it("is read with the control token once the page has it, and then says where the headset connects", async () => {
+    const withHeadset: SetupStatus = { ...SETUP_READY, headset: { address: "10.0.0.42", saved: "10.0.0.7", changed: true } };
+    const fn = stubFetch(200, withHeadset);
+    const signal = new AbortController().signal;
+    await expect(fetchSetup(signal, "tok")).resolves.toEqual(withHeadset);
+    expect(fn).toHaveBeenCalledWith("/api/setup", { signal, headers: { "X-Control-Token": "tok" } });
   });
 
   it("surfaces the backend's reason, or the status when it gave none", async () => {
-    stubFetch(403, { detail: "control token rejected" });
-    await expect(runConnectionTest("wrong")).rejects.toThrow(new SettingsHttpError("control token rejected"));
+    stubFetch(503, { detail: "station setup is not available yet" });
+    await expect(fetchSetup()).rejects.toThrow(new SettingsHttpError("station setup is not available yet"));
     vi.stubGlobal("fetch", vi.fn(async () => new Response("gateway down", { status: 502 })));
     await expect(fetchSetup()).rejects.toThrow(new SettingsHttpError("HTTP 502"));
   });
 
   it("rejects a body of the wrong shape", async () => {
-    for (const body of [null, { ...SETUP_PASSED, steps: {} }, { ...SETUP_PASSED, system: null }, { ...SETUP_PASSED, enforced: "yes" }]) {
+    for (const body of [null, { ...SETUP_READY, steps: {} }, { ...SETUP_READY, checks: null }, { ...SETUP_READY, enforced: "yes" }]) {
       stubFetch(200, body);
       await expect(fetchSetup()).rejects.toThrow(SettingsParseError);
     }

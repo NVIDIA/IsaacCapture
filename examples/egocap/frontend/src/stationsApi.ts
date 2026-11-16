@@ -3,12 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The station registry, the station's activity for today and the headset address
- * (`backend/egocap_web/station_routes.py`).
+ * The station registry (`/api/stations`) and the station's uptime for today (`/api/station-uptime`).
  *
- * Reading the registry and the activity needs nothing; a station's headset address and this host's network
- * addresses are returned only with the run's control token, and every change carries it, as recording
- * commands do.
+ * Reading either needs nothing; every change carries the run's control token, as recording commands do.
  */
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
 
@@ -21,8 +18,6 @@ export interface StationRecord {
   camera_roles: Record<string, string | null>;
   /** Why this station cannot record yet, most important first; empty when it can. */
   problems: string[];
-  /** The capture host address last entered in the headset. Present only when the request carried the token. */
-  headset_address?: string | null;
 }
 
 /** `GET /api/stations`, and the reply to every registry change. */
@@ -45,7 +40,6 @@ export interface StationChange {
   name?: string;
   camera_type?: string | null;
   camera_roles?: Record<string, string | null>;
-  headset_address?: string | null;
 }
 
 /** The backend's public reason for a refusal, or the HTTP status when it gave none. */
@@ -81,9 +75,9 @@ function changeHeaders(controlToken: string, withBody: boolean): Record<string, 
   return withBody ? { "content-type": "application/json", "X-Control-Token": controlToken } : { "X-Control-Token": controlToken };
 }
 
-/** Load the registry; with the control token each station also carries its headset address. */
-export function fetchStations(signal?: AbortSignal, controlToken?: string | null): Promise<StationListing> {
-  return listingFrom("/api/stations", { signal, headers: controlToken ? { "X-Control-Token": controlToken } : {} });
+/** Load the registry. No credential is sent: the page reads the headset's address from the start-of-day flow. */
+export function fetchStations(signal?: AbortSignal): Promise<StationListing> {
+  return listingFrom("/api/stations", { signal });
 }
 
 /** Add a station. */
@@ -106,71 +100,62 @@ export function selectStation(controlToken: string, id: string | null): Promise<
   return listingFrom("/api/stations/select", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify({ id }) });
 }
 
-/** One address the headset could be given. */
-export interface HostAddress {
-  address: string;
-  /** The network interface holding the address, or null when it is not one of the backend host's. */
-  interface: string | null;
-  kind: string;
+export type UptimeState = "ready" | "recording" | "down";
+
+/** One stretch of the day in which the station could not record. */
+export interface UptimeBlocker {
+  reason: string;
+  /** Epoch seconds the stretch began. */
+  start: number;
+  /** Epoch seconds it ended; null while it is still open. */
+  end: number | null;
+  seconds: number;
 }
 
-/** `GET /api/headset-address`. */
-export interface HeadsetAddress {
-  /** Best first: wireless before wired. Empty when the host has no usable address. */
-  candidates: HostAddress[];
-  /** The address saved for the station in use, or null. */
-  saved: string | null;
-  /** The saved address is no longer one the host has, so the headset needs the new one. */
-  changed: boolean;
-}
-
-/** Load the addresses to enter in the headset. */
-export async function fetchHeadsetAddress(controlToken: string, signal?: AbortSignal): Promise<HeadsetAddress> {
-  const response = await fetch("/api/headset-address", { signal, headers: { "X-Control-Token": controlToken } });
-  if (!response.ok) throw await failureOf(response);
-  const body = (await response.json()) as Partial<HeadsetAddress>;
-  if (!Array.isArray(body.candidates)) throw new SettingsParseError("headset address is malformed");
-  return body as HeadsetAddress;
-}
-
-export type ActivityState = "active" | "inactive";
-
-/** `GET /api/station-activity`: today's active and inactive time for the station in use. */
-export interface StationActivity {
+/**
+ * `GET /api/station-uptime`: whether the station in use can record right now, and today's timeline of it.
+ * The backend keeps the timeline by itself; the totals and blockers cover the time between the first and the
+ * last take of the day, so they are zero and empty before the first take.
+ */
+export interface StationUptime {
   station: string;
   date: string;
-  state: ActivityState;
-  /** Epoch seconds the current state began, or null before the first change of the day. */
+  state: UptimeState;
+  /** Why the station cannot record; set only while it is down. */
+  reason: string | null;
+  /** Epoch seconds the current state began; without it no elapsed time is shown. */
   since: number | null;
   active_seconds: number;
-  inactive_seconds: number;
-  /** How many times the station went from active to inactive today. */
-  blocker_count: number;
+  down_seconds: number;
+  blockers: UptimeBlocker[];
+  /** The operator's notes for the day. */
   notes: string;
-  /** Epoch seconds the totals were computed at. */
+  /** Epoch seconds the figures were computed at. */
   as_of: number;
 }
 
-/** Checks the fields the toggle renders from. */
-function parseActivity(value: unknown): StationActivity {
+const UPTIME_STATES: readonly unknown[] = ["ready", "recording", "down"];
+
+/** Checks the fields the status strip and the end-of-day dialog render from. */
+export function parseUptime(value: unknown): StationUptime {
   const record = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
-  const numeric = typeof record.active_seconds === "number" && typeof record.inactive_seconds === "number";
-  if (!numeric || (record.state !== "active" && record.state !== "inactive") || typeof record.station !== "string") {
-    throw new SettingsParseError("station activity is malformed");
+  const numeric = typeof record.active_seconds === "number" && typeof record.down_seconds === "number" && typeof record.as_of === "number";
+  if (!numeric || !UPTIME_STATES.includes(record.state) || !Array.isArray(record.blockers) || typeof record.notes !== "string") {
+    throw new SettingsParseError("station uptime is malformed");
   }
-  return value as StationActivity;
+  return value as StationUptime;
 }
 
-/** Load today's activity. */
-export async function fetchStationActivity(signal?: AbortSignal): Promise<StationActivity> {
-  const response = await fetch("/api/station-activity", { signal });
+/** Load today's uptime for the station in use. */
+export async function fetchStationUptime(signal?: AbortSignal): Promise<StationUptime> {
+  const response = await fetch("/api/station-uptime", { signal });
   if (!response.ok) throw await failureOf(response);
-  return parseActivity(await response.json());
+  return parseUptime(await response.json());
 }
 
-/** Set the state, the blocker notes, or both. */
-export async function changeStationActivity(controlToken: string, change: { state?: ActivityState; notes?: string }): Promise<StationActivity> {
-  const response = await fetch("/api/station-activity", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify(change) });
+/** Save the day's notes. Notes are all that can be set: the state is the backend's own. */
+export async function saveStationNotes(controlToken: string, notes: string): Promise<StationUptime> {
+  const response = await fetch("/api/station-uptime", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify({ notes }) });
   if (!response.ok) throw await failureOf(response);
-  return parseActivity(await response.json());
+  return parseUptime(await response.json());
 }

@@ -39,12 +39,12 @@ types from the file and requests those streams from CaptureServer. An unconfigur
 a fixed development default that requests no cameras; a configured-but-invalid station file blocks
 new recording until it is fixed.
 
-The day follows a fixed order, shown as a progress rail: station, devices, calibration, record,
-wrap-up. The operator puts their station in use, runs the device connection test, which passes or
-fails every tracking device and camera that station needs, and sees whether its calibration files
-and the system checks (glove software, free disk space, the camera producer) hold. With a station in
-use a take is refused, with the reason, until that test has passed and those checks hold; a device
-or check the station does not use is skipped. With no stations set up the flow only advises.
+The day follows a fixed order, shown as a progress rail: station, devices, record, wrap-up. The
+operator puts their station in use and the page shows a live checklist of what that station needs:
+every tracking device and camera, the calibration files of its cameras, and room on the recording
+disk. Nothing is run; the checklist is judged continuously. With a station in use a take is refused,
+with the reason, while any item fails; a device or check the station does not use is skipped. With
+no stations set up the checklist only advises.
 
 Before recording, the operator also selects or enters the task being demonstrated, and confirms the
 live preview — camera video and tracked pose — looks correct. Starting an episode requires every required source to be
@@ -57,22 +57,25 @@ interrupting the session, and can rotate to a fresh batch of episodes when movin
 block of work. A kept take is checked automatically once it finishes writing, and any problem
 found is reported to the operator.
 
-Through the day the operator marks the station active while it is collecting and blocked while it is
-not; a per-station activity log keeps both totals and is written on the station.
+The station's time is observed, not entered. The backend logs through the day whether the station
+could record or was down, and why, and counts active and down time between the first and last take
+of the day, so a station left powered on outside working hours adds to neither. Each down period is
+kept as a blocker with its reason, in a daily log written on the station. A take that was interrupted
+and waits to be recovered or discarded counts as down, as does time the backend could not observe.
 
 At the end of the day a report lists every take of the day by session with what became of it: kept,
 flagged, rejected, discarded, or still pending after an interruption. It is read from the recording
 service's own record of each take, so a take that was not kept is counted rather than left out, and
 each take belongs to the day it was actually recorded rather than the day its session was opened.
-The report shows the station's active and blocked time with the operator's notes, and can be saved
-on the station. A dataset-reporting library function also counts each station's valid versus
-excluded episodes from the saved session metadata, for offline use.
+The report shows the station's active and down time with its blockers and the operator's notes, and
+can be saved on the station. A dataset-reporting library function also counts each station's valid
+versus excluded episodes from the saved session metadata, for offline use.
 
-A misfiled task can be corrected from the report across a range of a session's episodes. A session
-recorded by the recording service keeps its location, which its own records fix; only its labels
-change. A library function relocates an older session saved under the wrong studio. Both update a
-session's bookkeeping; its recorded video and tracking stay as captured. A correction is refused for
-the session still open for recording and for anything outside the recording output.
+A misfiled task can be corrected from the report for one take or a range of a session's takes. Only
+labels change; recorded video and tracking stay as captured, and a session is never moved from the
+page. A correction is refused for the session still open for recording, while a take of that session
+is being time-aligned, and for anything that is not a recorded session inside the recording output. A library function, for offline use, relocates an
+older session saved under the wrong studio.
 
 ### Timing and calibration requirements
 

@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The end-of-day report (`backend/egocap_web/day_report_routes.py`): a day's takes by session with what became
- * of each, the station's activity, saving the report on the station, and correcting a task after recording.
- * Every call carries the run's control token: the report names operators and tasks, and a correction rewrites
- * recorded labels.
+ * The end-of-day report (`/api/day-report`): today's takes for the station in use, by session, with what
+ * became of each; the station's uptime; saving the report on the station; and correcting a task after
+ * recording. Every call carries the run's control token: the report names operators and tasks, and a
+ * correction rewrites recorded labels.
  */
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
-import type { StationActivity } from "./stationsApi";
+import { parseUptime, type StationUptime } from "./stationsApi";
 
 /** What became of a take. `recording` is the one being written right now. */
 export type TakeDisposition = "kept" | "flagged" | "rejected" | "discarded" | "pending" | "recording";
@@ -49,7 +49,7 @@ export interface ReportSession {
 
 export interface DayReport {
   date: string;
-  /** The station the report is limited to, or null for every station. */
+  /** The station the report is limited to; null when it is not limited to one. */
   station: string | null;
   totals: { episodes: number; seconds: number; by_disposition: Tally };
   sessions: ReportSession[];
@@ -58,19 +58,12 @@ export interface DayReport {
 /** `GET /api/day-report`, and with `saved` the reply to saving it. */
 export interface DayReportReply {
   report: DayReport;
-  /** The station's activity; null for another day or for every station. */
-  activity: StationActivity | null;
+  /** The station's active and down time today, its blockers and the operator's notes. */
+  uptime: StationUptime;
   today: string;
   station_in_use: string;
   /** Present after a save: the files written on the station. */
-  saved?: { report: string; activity_log: string | null };
-}
-
-/** Which day and which station a report is asked for; omitted means today and the station in use. */
-export interface DayReportQuery {
-  date?: string;
-  /** A station name, or `*` for every station. */
-  station?: string;
+  saved?: { report: string; activity_log: string };
 }
 
 /** A task correction for a range of one session's episodes. */
@@ -88,7 +81,6 @@ export interface CorrectionReply {
   updated: string[];
   /** Episodes of the range that hold no recorded data to relabel. */
   missing: string[];
-  studio: string | null;
   config_updated: boolean;
 }
 
@@ -111,6 +103,7 @@ function parseReply(value: unknown): DayReportReply {
   if (typeof report !== "object" || report === null || !Array.isArray(report.sessions) || typeof report.totals !== "object" || report.totals === null) {
     throw new SettingsParseError("day report is malformed");
   }
+  parseUptime(record.uptime);
   return value as DayReportReply;
 }
 
@@ -119,18 +112,16 @@ function jsonHeaders(controlToken: string): Record<string, string> {
   return { "content-type": "application/json", "X-Control-Token": controlToken };
 }
 
-/** Read a day's report. */
-export async function fetchDayReport(controlToken: string, query: DayReportQuery = {}, signal?: AbortSignal): Promise<DayReportReply> {
-  const params = new URLSearchParams(Object.entries(query).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""));
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  const response = await fetch(`/api/day-report${suffix}`, { signal, headers: { "X-Control-Token": controlToken } });
+/** Read today's report for the station in use. */
+export async function fetchDayReport(controlToken: string, signal?: AbortSignal): Promise<DayReportReply> {
+  const response = await fetch("/api/day-report", { signal, headers: { "X-Control-Token": controlToken } });
   if (!response.ok) throw await failureOf(response);
   return parseReply(await response.json());
 }
 
-/** Save the day's report on the station and bring its activity log up to date. */
-export async function saveDayReport(controlToken: string, query: DayReportQuery = {}): Promise<DayReportReply> {
-  const response = await fetch("/api/day-report/save", { method: "POST", headers: jsonHeaders(controlToken), body: JSON.stringify(query) });
+/** Save today's report on the station and bring its activity log up to date. */
+export async function saveDayReport(controlToken: string): Promise<DayReportReply> {
+  const response = await fetch("/api/day-report/save", { method: "POST", headers: jsonHeaders(controlToken), body: "{}" });
   if (!response.ok) throw await failureOf(response);
   return parseReply(await response.json());
 }

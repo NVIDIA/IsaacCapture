@@ -3,16 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The Stations card of the Settings dialog: the stations this site records at, and the one in use.
+ * The Stations card of the Settings dialog: the stations this site records at, the one in use, and each
+ * station's name, camera type and cameras, edited in place.
  *
- * The station in use names every recording and its activity log, and its cameras are the ones the cards below
- * edit. It cannot change while a take is being recorded; the backend says so in `locked_reason` and refuses the
- * change either way. A station that is not in use can always be added, renamed or deleted.
+ * The station in use names every recording and its activity log. It cannot change while a take is being
+ * recorded; the backend says so in `locked_reason` and refuses the change either way. A station that is not in
+ * use can always be added, edited or deleted.
  */
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Card, TokenHint, useAction } from "./settingsParts";
-import { ROLE_LABELS } from "./settingsApi";
+import { CAMERA_TYPE_LABELS, ROLE_LABELS } from "./settingsApi";
 import { sentence } from "./sentence";
+import type { HeadsetLink } from "./setupApi";
 import type { StationChange, StationListing, StationRecord } from "./stationsApi";
 
 /** The registry calls the card makes; the dialog passes the real ones and tests pass fakes. */
@@ -31,37 +33,76 @@ function roleSummary(station: StationRecord, roles: readonly string[]): string {
   return roles.map((role) => `${ROLE_LABELS[role] ?? role}: ${station.camera_roles[role] ?? "—"}`).join(" · ");
 }
 
+/** What to tell the operator when the headset still holds an address this host no longer has; null otherwise. */
+function headsetWarning(headset: HeadsetLink | null): string | null {
+  if (headset === null || !headset.changed || headset.address === null || headset.saved === null) return null;
+  return `This host's address changed from ${headset.saved} to ${headset.address}. Enter the new one in the headset.`;
+}
+
 export interface StationsCardProps {
   listing: StationListing;
   controlToken: string | null;
   backend: StationsBackend;
   /** The camera setup saved before any station existed; the first station added takes it over. */
   inherited: StationChange;
+  /** The cameras the current session offers, by name. */
+  cameraSources: string[];
+  /** Where the headset of the station in use connects, from the start-of-day flow; null while that is not known. */
+  headset: HeadsetLink | null;
   /** Called with the backend's listing after every successful change. */
   onListing: (listing: StationListing) => void;
 }
 
-/** List the stations, choose the one in use, and add, rename or delete them. */
-export function StationsCard({ listing, controlToken, backend, inherited, onListing }: StationsCardProps) {
+/** List the stations, choose the one in use, and add, edit or delete them. */
+export function StationsCard({ listing, controlToken, backend, inherited, cameraSources, headset, onListing }: StationsCardProps) {
   const [{ busy, failure }, run] = useAction();
+  // At most one editor is open, so a draft is never left behind in a row the operator has moved on from.
+  const [editing, setEditing] = useState<string | null>(null);
+  // An editor's save reports to its own row, so it is tracked apart from the card's other changes.
+  const [saving, setSaving] = useState(false);
   const locked = listing.locked_reason !== null;
-  const canChange = controlToken !== null && !busy;
-  /** Run one registry change with the token and hand its listing to the dialog. */
-  const change = (work: (token: string) => Promise<StationListing>) => {
-    if (controlToken !== null) run(() => work(controlToken).then(onListing));
+  const idle = controlToken !== null && !busy;
+  // Every change answers with a whole listing and the last answer wins, so only one may be in flight.
+  const canChange = idle && !saving;
+  /** Run one registry change with the token and hand its listing to the dialog; resolves once it has ended either way. */
+  const change = (work: (token: string) => Promise<StationListing>): Promise<void> => {
+    if (controlToken === null) return Promise.resolve();
+    const outcome = work(controlToken).then(onListing);
+    run(() => outcome);
+    // The card shows a refusal itself, so a caller waiting for the end is not handed it again.
+    return outcome.catch(() => undefined);
   };
-  /** Add a station; the first one takes over the camera setup already saved and is put in use. */
-  const add = (name: string) =>
-    change(async (token) => {
+  /** Add a station; the first one takes over the camera setup already saved and is put in use. Resolves to whether it now exists. */
+  const add = (name: string): Promise<boolean> => {
+    let exists = false;
+    return change(async (token) => {
       const first = listing.stations.length === 0;
       const added = await backend.addStation(token, first ? { ...inherited, name } : { name });
+      // From here the station is in the registry, whatever becomes of putting it in use.
+      exists = true;
       // During a take the station in use cannot change, so the new station is left for the operator to select.
       if (!first || added.locked_reason !== null) return added;
-      return backend.selectStation(token, added.stations[added.stations.length - 1].id);
-    });
+      try {
+        return await backend.selectStation(token, added.stations[added.stations.length - 1].id);
+      } catch (error) {
+        // The station exists even though it could not be put in use: show its row, then the refusal.
+        onListing(added);
+        throw error;
+      }
+    }).then(() => exists);
+  };
+  /** Save one editor's changes. A refusal is the editor's to show, beside what was typed. */
+  const save = (id: string, changes: StationChange): Promise<void> => {
+    if (controlToken === null) return Promise.reject(new Error("enter the control token first"));
+    setSaving(true);
+    return backend
+      .updateStation(controlToken, id, changes)
+      .then(onListing)
+      .finally(() => setSaving(false));
+  };
 
   return (
-    <Card title="Stations" lead="The stations this site records at. The one in use names every recording and its activity log, and its cameras are set below.">
+    <Card title="Stations" lead="The stations this site records at, each with its own cameras. The one in use names every recording and its activity log.">
       {listing.warning !== undefined && <p className="settings-note tone-warning">{listing.warning}</p>}
       {listing.stations.length === 0 ? (
         <p className="settings-note">
@@ -69,19 +110,30 @@ export function StationsCard({ listing, controlToken, backend, inherited, onList
         </p>
       ) : (
         <ul className="settings-list settings-list--stations" aria-label="Stations">
-          {listing.stations.map((station) => (
-            <StationRow
-              key={station.id}
-              station={station}
-              roles={listing.roles}
-              inUse={listing.selected === station.id}
-              canChange={canChange}
-              locked={locked}
-              onSelect={() => change((token) => backend.selectStation(token, station.id))}
-              onRename={(name) => change((token) => backend.updateStation(token, station.id, { name }))}
-              onDelete={() => change((token) => backend.deleteStation(token, station.id))}
-            />
-          ))}
+          {listing.stations.map((station) => {
+            const inUse = listing.selected === station.id;
+            return (
+              <StationRow
+                key={station.id}
+                station={station}
+                listing={listing}
+                inUse={inUse}
+                canChange={canChange}
+                // The open editor's own save must not disable its Save button under the operator.
+                canSave={idle}
+                editing={editing === station.id}
+                cameraSources={cameraSources}
+                // The flow reports the headset of the station in use only.
+                headset={inUse ? headset : null}
+                onSelect={() => change((token) => backend.selectStation(token, station.id))}
+                onEdit={() => setEditing(station.id)}
+                // A save that answers after another row's editor was opened must not close that one.
+                onCloseEditor={() => setEditing((current) => (current === station.id ? null : current))}
+                onSave={(changes) => save(station.id, changes)}
+                onDelete={() => change((token) => backend.deleteStation(token, station.id))}
+              />
+            );
+          })}
           <li className={listing.selected === null ? "settings-list-item--on" : undefined}>
             <label className="settings-list-main">
               <input
@@ -109,123 +161,279 @@ export function StationsCard({ listing, controlToken, backend, inherited, onList
 /** One station: the radio that puts it in use, what fills its roles, why it cannot record, and its actions. */
 function StationRow({
   station,
-  roles,
+  listing,
   inUse,
   canChange,
-  locked,
+  canSave,
+  editing,
+  cameraSources,
+  headset,
   onSelect,
-  onRename,
+  onEdit,
+  onCloseEditor,
+  onSave,
   onDelete,
 }: {
   station: StationRecord;
-  roles: readonly string[];
+  listing: StationListing;
   inUse: boolean;
+  /** Whether the registry can be changed from this row now: nothing else is in flight. */
   canChange: boolean;
-  /** A take is being recorded: the station in use can be neither replaced nor edited. */
-  locked: boolean;
+  /** Whether the row's open editor can save: as `canChange`, but not held by that editor's own save. */
+  canSave: boolean;
+  editing: boolean;
+  cameraSources: string[];
+  headset: HeadsetLink | null;
   onSelect: () => void;
-  onRename: (name: string) => void;
+  onEdit: () => void;
+  onCloseEditor: () => void;
+  onSave: (changes: StationChange) => Promise<void>;
   onDelete: () => void;
 }) {
-  const [mode, setMode] = useState<"view" | "rename" | "delete">("view");
-  const [draft, setDraft] = useState(station.name);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const locked = listing.locked_reason !== null;
   // The station in use is frozen during a take; every other station stays editable.
-  const editable = canChange && !(inUse && locked);
-  const renamed = draft.trim() !== "" && draft.trim() !== station.name;
-  /** Save a changed name and leave the editor; an unchanged or empty one just closes it. */
-  const commitRename = () => {
-    if (renamed) onRename(draft.trim());
-    setMode("view");
-  };
+  const frozen = inUse && locked;
+  const editable = canChange && !frozen;
+  const warning = headsetWarning(headset);
+  // The row's actions give way to the editor or the delete confirmation and come back as new elements. When
+  // that leaves keyboard focus on nothing, it returns to Edit; focus that already moved elsewhere is left alone.
+  const editButton = useRef<HTMLButtonElement>(null);
+  const replaced = editing || confirmingDelete;
+  const wasReplaced = useRef(false);
+  useEffect(() => {
+    if (wasReplaced.current && !replaced && document.activeElement === document.body) editButton.current?.focus();
+    wasReplaced.current = replaced;
+  }, [replaced]);
   return (
     <li className={inUse ? "settings-list-item--on" : undefined}>
       <div className="settings-list-main settings-list-main--stacked">
         <label className="settings-station-head">
           <input type="radio" name="station-in-use" checked={inUse} disabled={!canChange || locked} onChange={onSelect} aria-label={`Use ${station.name}`} />
-          {mode === "rename" ? (
-            <input
-              className="settings-input"
-              aria-label={`New name for ${station.name}`}
-              value={draft}
-              maxLength={MAX_NAME_CHARS}
-              autoFocus
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                // Enter saves; Escape belongs to the dialog, which closes on it, so it is stopped here.
-                if (e.key === "Enter") commitRename();
-                if (e.key === "Escape") {
-                  e.stopPropagation();
-                  setMode("view");
-                }
-              }}
-            />
-          ) : (
-            <span className="settings-list-name">{station.name}</span>
-          )}
+          <span className="settings-list-name">{station.name}</span>
           {inUse && <span className="settings-badge settings-badge--on">in use</span>}
         </label>
-        <span className="settings-note">{roleSummary(station, roles)}</span>
+        <span className="settings-note">{roleSummary(station, listing.roles)}</span>
         {station.problems.length > 0 && <span className="settings-note tone-warning">Cannot record yet: {station.problems.join("; ")}.</span>}
+        {/* The open editor says the same beside the address, so it is not repeated here. */}
+        {warning !== null && !editing && <span className="settings-note tone-warning">{warning}</span>}
       </div>
-      {mode === "view" && (
+      {!editing && !confirmingDelete && (
         <>
-          <button
-            type="button"
-            className="settings-quiet"
-            disabled={!editable}
-            onClick={() => {
-              setDraft(station.name);
-              setMode("rename");
-            }}
-          >
-            Rename
+          <button ref={editButton} type="button" className="settings-quiet" disabled={!editable} onClick={onEdit}>
+            Edit
           </button>
-          <button type="button" className="settings-quiet" disabled={!editable} onClick={() => setMode("delete")}>
+          <button type="button" className="settings-quiet" disabled={!editable} onClick={() => setConfirmingDelete(true)}>
             Delete
           </button>
         </>
       )}
-      {mode === "rename" && (
-        <>
-          <button type="button" className="settings-primary" disabled={!editable || !renamed} onClick={commitRename}>
-            Save name
-          </button>
-          <button type="button" className="settings-quiet" onClick={() => setMode("view")}>
-            Cancel
-          </button>
-        </>
-      )}
-      {mode === "delete" && (
+      {!editing && confirmingDelete && (
         <>
           <button
             type="button"
             className="settings-danger"
+            // Takes the focus the Delete button it replaces had, so the confirmation is the next key press.
+            autoFocus
             disabled={!editable}
             onClick={() => {
-              setMode("view");
+              setConfirmingDelete(false);
               onDelete();
             }}
           >
             Delete {station.name}
           </button>
-          <button type="button" className="settings-quiet" onClick={() => setMode("view")}>
+          <button type="button" className="settings-quiet" onClick={() => setConfirmingDelete(false)}>
             Keep
           </button>
         </>
+      )}
+      {editing && (
+        <StationEditor station={station} listing={listing} cameraSources={cameraSources} headset={headset} canSave={canSave && !frozen} onSave={onSave} onClose={onCloseEditor} />
       )}
     </li>
   );
 }
 
+/** The editor's working copy of a station. */
+interface StationDraft {
+  name: string;
+  cameraType: string | null;
+  cameraRoles: Record<string, string | null>;
+}
+
+/** Only what the draft changes, so a save cannot overwrite a field another browser changed in the meantime. */
+function changesOf(station: StationRecord, roles: readonly string[], draft: StationDraft): StationChange {
+  const changes: StationChange = {};
+  if (draft.name.trim() !== station.name) changes.name = draft.name.trim();
+  if (draft.cameraType !== station.camera_type) changes.camera_type = draft.cameraType;
+  const moved = roles.filter((role) => (draft.cameraRoles[role] ?? null) !== (station.camera_roles[role] ?? null));
+  if (moved.length > 0) changes.camera_roles = Object.fromEntries(moved.map((role) => [role, draft.cameraRoles[role] ?? null]));
+  return changes;
+}
+
+/** A station's inline editor: its name, camera type and the camera for each role, saved together. */
+function StationEditor({
+  station,
+  listing,
+  cameraSources,
+  headset,
+  canSave,
+  onSave,
+  onClose,
+}: {
+  station: StationRecord;
+  listing: StationListing;
+  cameraSources: string[];
+  /** Where this station's headset connects; null for a station that is not in use. */
+  headset: HeadsetLink | null;
+  canSave: boolean;
+  onSave: (changes: StationChange) => Promise<void>;
+  onClose: () => void;
+}) {
+  const fieldId = useId();
+  const [draft, setDraft] = useState<StationDraft>({ name: station.name, cameraType: station.camera_type, cameraRoles: { ...station.camera_roles } });
+  const [{ busy, failure }, run] = useAction();
+  const { roles } = listing;
+  const changes = changesOf(station, roles, draft);
+  const dirty = Object.keys(changes).length > 0;
+  const named = draft.name.trim() !== "";
+  // A camera saved for the station stays selectable when the session no longer offers it, so it can be seen and cleared.
+  const cameras = [...new Set([...cameraSources, ...Object.values(station.camera_roles).filter((name): name is string => name !== null)])];
+  /** The cameras the other roles hold: one camera cannot fill two roles. */
+  const takenBy = (role: string) => new Set(roles.filter((other) => other !== role).map((other) => draft.cameraRoles[other]));
+  /** Assign a camera to a role, or none. */
+  const setRole = (role: string, camera: string | null) => setDraft((current) => ({ ...current, cameraRoles: { ...current.cameraRoles, [role]: camera } }));
+  /** Swap both wrists in one update so the assignments stay unique throughout. */
+  const swapWrists = () =>
+    setDraft((current) => ({
+      ...current,
+      cameraRoles: { ...current.cameraRoles, wrist_left: current.cameraRoles.wrist_right ?? null, wrist_right: current.cameraRoles.wrist_left ?? null },
+    }));
+  /** Send what changed and close on success; with nothing changed there is nothing to send. */
+  const save = () => {
+    if (!named || busy) return;
+    if (!dirty) onClose();
+    else if (canSave) run(() => onSave(changes).then(onClose));
+  };
+  const warning = headsetWarning(headset);
+  return (
+    <div
+      className="station-editor"
+      role="group"
+      aria-label={`Edit ${station.name}`}
+      onKeyDown={(e) => {
+        // Escape belongs to the dialog, which closes on it; here it only closes the editor.
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div className="settings-fields">
+        <label htmlFor={`${fieldId}-name`}>Name</label>
+        <input
+          id={`${fieldId}-name`}
+          className="settings-input"
+          value={draft.name}
+          maxLength={MAX_NAME_CHARS}
+          autoFocus
+          // Read-only, not disabled, while saving: Enter here starts the save, and a disabled field gives up
+          // keyboard focus, after which Escape would close the whole dialog instead of this editor.
+          readOnly={busy}
+          onChange={(e) => setDraft((current) => ({ ...current, name: e.target.value }))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+          }}
+        />
+        <label htmlFor={`${fieldId}-type`}>Camera type</label>
+        <select
+          id={`${fieldId}-type`}
+          className="settings-input"
+          value={draft.cameraType ?? ""}
+          disabled={busy}
+          onChange={(e) => setDraft((current) => ({ ...current, cameraType: e.target.value === "" ? null : e.target.value }))}
+        >
+          <option value="">Not set</option>
+          {listing.camera_types.map((type) => (
+            <option key={type} value={type}>
+              {CAMERA_TYPE_LABELS[type] ?? type}
+            </option>
+          ))}
+        </select>
+        {roles.map((role) => (
+          <RoleField key={role} id={`${fieldId}-${role}`} role={role} value={draft.cameraRoles[role] ?? null} cameras={cameras} offered={cameraSources} taken={takenBy(role)} disabled={busy} onChange={(camera) => setRole(role, camera)} />
+        ))}
+      </div>
+      {cameras.length === 0 && <p className="settings-note">The session offers no cameras yet; roles can be assigned once CaptureServer lists them.</p>}
+      <div className="settings-actions">
+        {/* Not disabled while saving, for the same reason as the name field; `save` ignores a second press. */}
+        <button type="button" className="settings-primary" disabled={!canSave || !dirty || !named} aria-busy={busy} onClick={save}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button type="button" className="settings-quiet" disabled={busy || ((draft.cameraRoles.wrist_left ?? null) === null && (draft.cameraRoles.wrist_right ?? null) === null)} onClick={swapWrists}>
+          Swap wrists
+        </button>
+        <button type="button" className="settings-quiet" onClick={onClose}>
+          Cancel
+        </button>
+        {failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>}
+      </div>
+      {headset !== null && headset.address !== null && <p className="settings-note">Headset connects to {headset.address}</p>}
+      {warning !== null && <p className="settings-note tone-warning">{warning}</p>}
+    </div>
+  );
+}
+
+/** The label and select of one camera role. */
+function RoleField({
+  id,
+  role,
+  value,
+  cameras,
+  offered,
+  taken,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  role: string;
+  value: string | null;
+  /** Every camera that can be chosen. */
+  cameras: string[];
+  /** The ones the session offers right now; the rest are marked. */
+  offered: string[];
+  /** The cameras the other roles hold. */
+  taken: Set<string | null | undefined>;
+  disabled: boolean;
+  onChange: (camera: string | null) => void;
+}) {
+  return (
+    <>
+      <label htmlFor={id}>{ROLE_LABELS[role] ?? role}</label>
+      <select id={id} className="settings-input" value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}>
+        <option value="">Not assigned</option>
+        {cameras.map((name) => (
+          <option key={name} value={name} disabled={taken.has(name)}>
+            {name}
+            {offered.includes(name) ? "" : " (not in this session)"}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+}
+
 /** The name field and button that add a station. */
-function AddStation({ canChange, onAdd }: { canChange: boolean; onAdd: (name: string) => void }) {
+function AddStation({ canChange, onAdd }: { canChange: boolean; onAdd: (name: string) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const ready = canChange && name.trim() !== "";
-  /** Add the typed name and clear the field for the next one. */
+  /** Add the typed name and clear the field for the next one; a refused name stays to be corrected. */
   const submit = () => {
     if (!ready) return;
-    onAdd(name.trim());
-    setName("");
+    onAdd(name.trim()).then((added) => {
+      if (added) setName("");
+    });
   };
   return (
     <div className="settings-actions">
