@@ -130,6 +130,7 @@ class AgentLink:
         self._pinned: Pinned | None = None
         self._pin_lost = ""  # why, once a RESULT said the robot connection is lost
         self._listeners: tuple[Callable[[RobotState], None], ...] = ()
+        self._welcome_listeners: tuple[Callable[[Welcome], None], ...] = ()
         self._client = WorkstationClient(
             carrier,
             types.SimpleNamespace(monotonic=monotonic),
@@ -256,6 +257,15 @@ class AgentLink:
         """
         with self._cond:
             self._listeners = (*self._listeners, fn)
+
+    def add_welcome_listener(self, fn: Callable[[Welcome], None]) -> None:
+        """Call fn(welcome) for every WELCOME from now on.
+
+        fn runs on the receive thread, after `welcome` shows that WELCOME, and
+        must not block.
+        """
+        with self._cond:
+            self._welcome_listeners = (*self._welcome_listeners, fn)
 
     def wait_change(self, timeout_s: float) -> None:
         """Return at the next ROBOT_STATE or RESULT, at a lost link or after timeout_s."""
@@ -646,7 +656,13 @@ class AgentLink:
         elif isinstance(message, Welcome):
             with self._cond:
                 self._welcome = message
+                listeners = self._welcome_listeners
                 self._cond.notify_all()
+            for listener in listeners:
+                try:
+                    listener(message)
+                except Exception:
+                    _log.exception("a WELCOME listener failed")
 
     def _take_state(self, state: RobotState) -> None:
         arrived = self._monotonic()

@@ -17,6 +17,7 @@ import threading
 from collections import OrderedDict, deque
 from typing import Any
 
+from ..agent.link_client import CLOCK_STEP_S
 from ..protocol.local_messages import LocalStatus
 from ..protocol.messages import Event, Message, RobotState, ViewStatus, Welcome
 
@@ -53,6 +54,8 @@ class ViewModel:
         self._welcome: Welcome | None = None
         self._state: RobotState | None = None
         self._state_at = 0.0
+        # When the Thor's wall clock last stepped against its monotonic clock.
+        self._clock_step_at: float | None = None
         self._events: deque[Event] = deque(maxlen=EVENTS_KEPT)
         self._local: LocalStatus | None = None
         self._service_alive = True
@@ -70,6 +73,14 @@ class ViewModel:
         """Take a WELCOME, a ROBOT_STATE or an EVENT; anything else is ignored."""
         with self._lock:
             if isinstance(message, RobotState):
+                earlier = self._state
+                if earlier is not None:
+                    # As AgentLink._take_state: the exposures taken in so far
+                    # are dated on the wall clock from before the step.
+                    was = earlier.clock_wall_s - earlier.clock_mono_s
+                    now = message.clock_wall_s - message.clock_mono_s
+                    if abs(now - was) > CLOCK_STEP_S:
+                        self._clock_step_at = now_mono
                 self._state = message
                 self._state_at = now_mono
             elif isinstance(message, Event):
@@ -144,8 +155,9 @@ class ViewModel:
 
         Live only when the page acknowledged, as visible and less than
         ack_timeout_s ago, a picture of the camera connection whose exposure
-        does not lie in the Thor's future, and a fresh ROBOT_STATE gives the
-        Thor's wall clock. The age is then the larger of that picture's age
+        does not lie in the Thor's future, a fresh ROBOT_STATE gives the
+        Thor's wall clock, and that clock did not step against the Thor's
+        monotonic clock within the last ack_timeout_s. The age is then the larger of that picture's age
         since its exposure and since its arrival on this machine.
         """
         with self._lock:
@@ -211,6 +223,9 @@ class ViewModel:
             return None
         exposure_wall_s, arrival_mono_s, invented = times
         if invented:
+            return None
+        stepped = self._clock_step_at
+        if stepped is not None and now_mono - stepped < self._ack_timeout_s:
             return None
         # The model's own ROBOT_STATE must be fresh, whatever clock was handed in.
         if thor_wall_now is None or self._thor_wall_now(now_mono) is None:

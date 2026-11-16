@@ -308,13 +308,17 @@ def on_a_terminal(
     typed_after: bytes = b"",
     marker: bytes = b"Type yes",
     delay_s: float = 0.5,
+    then: tuple[bytes, bytes] | None = None,
 ) -> tuple[str, bool]:
     """Run child() in a new process whose terminal this test owns.
 
     typed_before is typed at once and child() starts delay_s later;
-    typed_after is typed once `marker` showed on the terminal. Returns (the
-    repr of what child() returned or raised, whether the marker showed).
+    typed_after is typed once `marker` showed on the terminal. `then` is a
+    second (marker, what is typed once it showed after the first). Returns
+    (the repr of what child() returned or raised, whether the last marker
+    showed).
     """
+    steps = [(marker, typed_after), *([then] if then else [])]
     result = tempfile.NamedTemporaryFile(prefix="on-a-terminal-", delete=False)
     result.close()
     pid, master = pty.fork()
@@ -333,7 +337,7 @@ def on_a_terminal(
             os._exit(0)
     try:
         os.write(master, typed_before)
-        seen, answered, ended = b"", False, False
+        seen, answered, ended = b"", 0, False
         end = time.monotonic() + delay_s + 10.0
         while time.monotonic() < end and not ended:
             ready, _, _ = select.select([master], [], [], 0.05)
@@ -342,15 +346,15 @@ def on_a_terminal(
                     seen += os.read(master, 4096)
                 except OSError:  # the child closed the terminal
                     pass
-            if marker in seen and not answered:
-                answered = True
+            if answered < len(steps) and steps[answered][0] in seen:
                 time.sleep(0.1)  # the child reads by now
-                os.write(master, typed_after)
+                os.write(master, steps[answered][1])
+                answered += 1
             ended = os.waitpid(pid, os.WNOHANG)[0] != 0
         if not ended:
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
-        return Path(result.name).read_text(), marker in seen
+        return Path(result.name).read_text(), steps[-1][0] in seen
     finally:
         os.close(master)
         os.unlink(result.name)
@@ -489,6 +493,48 @@ def test_a_stop_the_robot_does_not_show_is_said_so(console: Console) -> None:
     assert console.run("stop", "--timeout", "0.3") == console_cmd.EXIT_FAILED
     assert "no ROBOT_STATE showed a higher stop number within 0.3 s" in console.said[-1]
     assert len(console.settled()) == 1
+
+
+def test_a_new_session_does_not_confirm_a_stop(console: Console) -> None:
+    fresh = dataclasses.replace(
+        robot_state(seq=50, session_id="s2", owner_number=0, stop_number=0),
+        motion="hold",
+    )
+    # The robot side drops the STOP and shows a restarted robot app.
+    console.reply = lambda message: [welcome("s2"), fresh]
+    assert console.run("stop") == console_cmd.EXIT_FAILED
+    assert console.said[-1] == (
+        "stop: NOT CONFIRMED: the robot app shows a new session (s2), which says "
+        "nothing about this STOP; look at the Thor terminal"
+    )
+    assert len(console.settled()) == 1
+
+
+def test_a_stop_sent_before_any_state_waits_for_a_higher_stop_number(
+    bench: Bench,
+) -> None:
+    console = Console(bench, robot=False)
+    console.thor = bench.robot(None)  # connected; no ROBOT_STATE yet
+    old = dataclasses.replace(
+        robot_state(seq=1, stop_number=7), stop_level="stop", motion="hold"
+    )
+    try:
+        # The first state shows a stop of an earlier STOP: it answers nothing.
+        console.reply = lambda message: [welcome(), old]
+        assert console.run("stop", "--timeout", "0.5") == console_cmd.EXIT_FAILED
+        assert "no ROBOT_STATE showed a higher stop number" in console.said[-1]
+    finally:
+        console.close()
+    later = dataclasses.replace(old, seq=2, stop_number=8)
+    assert not console_cmd.stop_shows(None, old)
+    assert not console_cmd.stop_shows(None, later)
+    assert console_cmd.stop_shows(old, later)
+    assert not console_cmd.stop_shows(old, dataclasses.replace(old, seq=3))
+    other = dataclasses.replace(later, session_id="s2")
+    assert not console_cmd.stop_shows(old, other)
+    assert console_cmd.new_session(old, other)
+    assert not console_cmd.new_session(old, later)
+    assert not console_cmd.new_session(None, other)
 
 
 def test_a_stop_without_a_robot_connection_prints_the_services_notice(

@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 import pytest
 import yaml
+from isaaccapture_examples.agentic_remote.agent import config as agent_config
 from isaaccapture_examples.agentic_remote.agent.camera import frame_source
 from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
     BridgeSource,
@@ -714,6 +715,48 @@ def test_paths_are_taken_from_the_files_folder_and_may_name_a_variable(
     camera["camera_pr"] = "${NOT_SET_ANYWHERE}/pr"
     with pytest.raises(view_main.ViewConfigError, match=r"camera\.camera_pr"):
         load_view_settings(write_config(folder, "", camera=camera))
+
+
+@pytest.mark.parametrize(
+    ("text", "says"),
+    [
+        ("$AGENTIC_REMOTE_CAMERA_PR/x", "holds a '$' that is not part of ${NAME}"),
+        ("${AGENTIC_REMOTE_CAMERA_PR/x", "holds a '$' that is not part of ${NAME}"),
+        ("/a/$HOME/b", "holds a '$' that is not part of ${NAME}"),
+        ("${HOME}/x", "names the variable 'HOME': a path takes"),
+        ("${AGENTIC_REMOTE_ENV_DIR}/x", "AGENTIC_REMOTE_ENV_DIR, which is not set"),
+    ],
+)
+def test_a_path_takes_the_agent_programs_three_variables_and_no_other_dollar(
+    folder, monkeypatch, text, says
+):
+    monkeypatch.setenv("AGENTIC_REMOTE_CAMERA_PR", "/the/pr")
+    monkeypatch.setenv("HOME", "/home/somebody")
+    monkeypatch.delenv("AGENTIC_REMOTE_ENV_DIR", raising=False)
+    for where, blocks in (
+        ("camera.camera_pr", {"camera": {"camera_pr": text}}),
+        ("camera.bridge_python", {"camera": {"bridge_python": text}}),
+    ):
+        with pytest.raises(view_main.ViewConfigError) as raised:
+            load_view_settings(write_config(folder, "", **blocks))
+        assert str(raised.value).startswith(f"{where}: the path {text!r} ")
+        assert says in str(raised.value)
+    file = write_config(folder, "")
+    data = yaml.safe_load(file.read_text())
+    data["state_dir"] = text
+    file.write_text(yaml.safe_dump(data))
+    with pytest.raises(view_main.ViewConfigError, match=r"^state_dir: the path "):
+        load_view_settings(file)
+    # The rule and the names are the agent program's: one helper.
+    assert view_main.expanded_path is agent_config.expanded_path
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/env")
+    monkeypatch.setenv("AGENTIC_REMOTE_EXPERIMENT_DIR", "/exp")
+    camera = {
+        "camera_pr": "${AGENTIC_REMOTE_EXPERIMENT_DIR}/pr",
+        "bridge_python": "${AGENTIC_REMOTE_ENV_DIR}/python",
+    }
+    settings = load_view_settings(write_config(folder, "", camera=camera))
+    assert (settings.camera_pr, settings.bridge_python) == ("/exp/pr", "/env/python")
 
 
 @pytest.mark.parametrize(

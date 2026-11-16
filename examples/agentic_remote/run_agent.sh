@@ -13,7 +13,8 @@
 #   AGENTIC_REMOTE_CAMERA_PR       the camera_streamer example of the camera pull
 #                                  request (--camera link)
 #   AGENTIC_REMOTE_ENV_DIR         the workstation's APAI Python environment
-#                                  (setup_workstation_env.sh); optional
+#                                  (setup_workstation_env.sh), as an absolute
+#                                  path; optional
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,8 +36,26 @@ if [[ -n "${AGENTIC_REMOTE_CAMERA_PR:-}" ]]; then
   export AGENTIC_REMOTE_CAMERA_PR
 fi
 # The experiment's code keeps these caches inside the experiment folder unless
-# the variables name another place. One that is set and not empty is kept.
+# the variables name another place. One that is set and not empty is kept,
+# unless it names a place inside the experiment folder.
 if [[ -n "${AGENTIC_REMOTE_ENV_DIR:-}" ]]; then
+  if [[ "${AGENTIC_REMOTE_ENV_DIR}" != /* ]]; then
+    echo "run_agent.sh: AGENTIC_REMOTE_ENV_DIR must be an absolute path (it is '${AGENTIC_REMOTE_ENV_DIR}')" >&2
+    exit 2
+  fi
+  experiment="${AGENTIC_REMOTE_EXPERIMENT_DIR:-}"
+  while [[ "${experiment}" == */ && "${experiment}" != "/" ]]; do
+    experiment="${experiment%/}"
+  done
+  if [[ -n "${experiment}" ]]; then
+    for name in TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR YOLO_CONFIG_DIR; do
+      value="${!name:-}"
+      if [[ "${value}" == "${experiment}" || "${value}" == "${experiment}/"* ]]; then
+        echo "run_agent.sh: ${name} names a place inside the experiment folder (${value}); unset it, or name a folder outside ${experiment}" >&2
+        exit 2
+      fi
+    done
+  fi
   export AGENTIC_REMOTE_ENV_DIR
   caches="${AGENTIC_REMOTE_ENV_DIR}/caches"
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${caches}/triton}"

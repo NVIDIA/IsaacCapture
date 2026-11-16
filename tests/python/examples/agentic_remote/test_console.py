@@ -62,12 +62,15 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     RobotState,
     Shutdown,
     Stop,
+    decode,
 )
 from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app import waits
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
 from isaaccapture_examples.agentic_remote.robot_app.terminal import TypedLines
+from isaaccapture_examples.agentic_remote.testing import client as client_module
+from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
 from link_bench import Bench, robot_state, until, welcome
 from test_console_cmd import Console as ScriptedRobot
 from test_console_cmd import completed, on_a_terminal
@@ -198,6 +201,7 @@ def desk(robot: ScriptedRobot, desks: Callable[..., Desk]) -> Desk:
     """A console attached to the service of `robot`, on the machine's clock."""
     made = desks(robot.bench.path)
     made.wait("attached to the robot link service: robot connection up")
+    made.sees(lambda state: True)  # a command typed before it is not sent
     return made
 
 
@@ -513,14 +517,24 @@ def test_what_is_typed_before_a_question_does_not_answer_it(
     def run() -> str:
         return console_at_a_terminal(robot.bench.path)
 
-    # The yes typed ahead of the question is dropped; the no typed at it counts.
+    # Typed once a status line shows a ROBOT_STATE. The yes typed ahead of the
+    # question is dropped; the no typed at it counts.
+    has_state = b" | owner nobody #4 | "
     answer, shown = on_a_terminal(
-        run, b"release\nyes\n", b"no\nquit\n", ASK_YES.encode()
+        run,
+        typed_after=b"release\nyes\n",
+        marker=has_state,
+        then=(ASK_YES.encode(), b"no\nquit\n"),
     )
     assert shown and "exit 0: " in answer
     assert "release not confirmed; nothing sent" in answer
     assert robot.settled() == []
-    answer, shown = on_a_terminal(run, b"release\n", b"yes\nquit\n", ASK_YES.encode())
+    answer, shown = on_a_terminal(
+        run,
+        typed_after=b"release\n",
+        marker=has_state,
+        then=(ASK_YES.encode(), b"yes\nquit\n"),
+    )
     assert shown and "release: sent" in answer
     assert [type(message) for message in robot.settled()] == [Release]
 
@@ -869,6 +883,256 @@ def test_a_status_line_is_printed_on_a_change_and_every_ten_seconds(
     clock.advance(1.0)
     desk.console.tick()
     desk.wait(" | owner agent #5 | ")
+
+
+# What confirms a STOP, and what a STOP never waits behind
+
+
+def test_a_new_session_does_not_confirm_a_stop(
+    robot: ScriptedRobot, desk: Desk
+) -> None:
+    fresh = dataclasses.replace(
+        robot_state(seq=50, session_id="s2", owner_number=0, stop_number=0),
+        motion="hold",
+    )
+    # The robot side drops the STOP and shows a restarted robot app.
+    robot.reply = lambda message: (
+        [welcome("s2"), fresh] if isinstance(message, Stop) else []
+    )
+    desk.type("stop")
+    assert desk.wait("STOP NOT CONFIRMED") == (
+        "\aSTOP NOT CONFIRMED: the robot app shows a new session (s2), which "
+        "says nothing about this STOP; type stop again or use the STOP key at "
+        "the Thor terminal"
+    )
+    time.sleep(0.2)
+    assert desk.count("stop: taken.") == 0
+    # The next STOP is measured against the new session.
+    robot.state = fresh
+    robot.reply = lambda message: [stopped(robot)]
+    desk.type("stop")
+    assert "stop number 1, stop level stop" in desk.wait("stop: taken.")
+
+
+def test_a_stop_sent_before_any_state_waits_for_a_higher_stop_number(
+    bench: Bench, desks: Callable[..., Desk]
+) -> None:
+    thor = bench.robot(None)  # connected; no WELCOME and no ROBOT_STATE yet
+    desk = desks(bench.path)
+    desk.wait("attached to the robot link service")
+    desk.type("stop")
+    desk.wait("stop: sent; waiting for the robot app to show it")
+    assert thor.next_message() == TYPED_STOP
+    thor.send(welcome("s1"))
+    old = dataclasses.replace(
+        robot_state(seq=1, stop_number=7), stop_level="stop", motion="hold"
+    )
+    thor.send(old)  # a stop of an earlier STOP: it answers nothing
+    desk.sees(lambda state: state.stop_number == 7)
+    time.sleep(0.2)
+    assert desk.count("stop: taken.") == 0
+    thor.send(dataclasses.replace(old, seq=2, stop_number=8))
+    assert "stop number 8, stop level stop" in desk.wait("stop: taken.")
+
+
+def test_stops_typed_again_keep_the_first_deadline(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.wait("attached to the robot link service")
+    desk.sees(lambda state: True)
+    robot.reply = lambda message: []  # the robot app shows nothing
+    desk.type("stop")
+    desk.wait("stop: sent; waiting for the robot app to show it")
+    clock.advance(4.9)
+    desk.console.tick()
+    desk.type("stop")
+    desk.wait("stop: sent; waiting for the robot app to show it", 2)
+    assert desk.count("STOP NOT CONFIRMED") == 0
+    clock.advance(0.2)  # 5.1 s after the first STOP, 0.2 s after the second
+    desk.console.tick()
+    desk.wait("STOP NOT CONFIRMED")
+    assert robot.settled() == [TYPED_STOP, TYPED_STOP]  # each one was sent
+    # A STOP after that waits its own 5 s.
+    desk.type("stop")
+    desk.wait("stop: sent; waiting for the robot app to show it", 3)
+    clock.advance(4.9)
+    desk.console.tick()
+    assert desk.count("STOP NOT CONFIRMED") == 1
+    clock.advance(0.2)
+    desk.console.tick()
+    desk.wait("STOP NOT CONFIRMED", 2)
+
+
+def test_a_command_before_the_first_state_answers_at_once_and_a_stop_is_not_held_up(
+    bench: Bench, desks: Callable[..., Desk]
+) -> None:
+    thor = bench.robot(None)  # connected; no ROBOT_STATE yet
+    desk = desks(bench.path)
+    desk.wait("attached to the robot link service")
+    until(
+        lambda: desk.console._station.carrier.status.robot_connected,
+        "robot connected",
+    )
+    began = time.monotonic()
+    desk.type("reset", "stop")
+    desk.wait("stop: sent; waiting for the robot app to show it")
+    took = time.monotonic() - began
+    line = desk.wait("reset: no ROBOT_STATE has arrived")
+    assert line.endswith("; nothing sent; type reset again once one is shown")
+    assert took < 1.0, f"the typed stop went out {took:.2f} s after it was typed"
+    assert thor.next_message() == TYPED_STOP
+    thor.nothing()  # and no RESET
+
+
+class Stuck(Direct):
+    """A carrier whose sends other than a STOP wait until `free` is set."""
+
+    def __init__(self, end: Any) -> None:
+        super().__init__(end)
+        self.free = threading.Event()
+        self.waiting = threading.Event()
+        self.send_reliable = self._send
+
+    def _send(self, msg_type: int, payload: bytes) -> None:
+        if msg_type != Stop.TYPE:
+            self.waiting.set()
+            assert self.free.wait(WAIT_S)
+        self._end.send_reliable(msg_type, payload)
+
+
+def test_a_ctrl_c_stop_does_not_wait_behind_a_command_whose_send_is_stuck(
+    desks: Callable[..., Desk],
+) -> None:
+    robot_end, console_end = loopback_pair()
+    carrier = Stuck(console_end)
+    desk = desks(None, attach=lambda *args: carrier)
+    desk.wait("attached to the robot link service")
+    send(robot_end, robot_state(seq=1))
+    desk.sees(lambda state: True)
+    try:
+        desk.type("reset")
+        assert carrier.waiting.wait(WAIT_S)  # the RESET is in its send
+        began = time.monotonic()
+        desk.console.interrupt()
+        got = robot_end.receive(1.0)
+        took = time.monotonic() - began
+        assert got is not None, "the STOP waited behind the stuck send"
+        assert got[0] == Stop.TYPE and took < 1.0
+        assert desk.count("reset: sent") == 0
+    finally:
+        carrier.free.set()
+    desk.wait("reset: sent; its RESULT is printed when it comes")
+    # Its RESULT is still the console's own.
+    command = decode(*robot_end.receive(WAIT_S))
+    assert isinstance(command, Reset)
+    send(robot_end, Result(command.command_id, "completed"))
+    desk.wait("reset: RESULT completed")
+
+
+# Ctrl+C while the console closes
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_ctrl_c_while_the_console_closes_is_still_a_stop(
+    tmp_path: Path, bench: Bench, desks: Callable[..., Desk], attached: bool
+) -> None:
+    raw: list[dict[str, Any]] = []
+
+    def raw_stop(path: str | None, **fields: Any) -> RawStop:
+        raw.append({"path": path, **fields})
+        return RawStop(True, "")
+
+    path = bench.path if attached else str(tmp_path / "none.sock")
+    if attached:
+        bench.robot()
+    desk = desks(path, raw_stop=raw_stop)
+    desk.wait("attached to" if attached else "cannot attach to")
+    console = desk.console
+    detach = console._detach
+
+    def detach_with_ctrl_c() -> None:
+        console.interrupt()  # what the signal handler does
+        detach()
+
+    console._detach = detach_with_ctrl_c
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    assert raw == [
+        {"path": path, "reason": STOP_CTRL_C, "sender": "console", "name": "console"}
+    ]
+    assert desk.said[-2:] == [
+        QUIT_NOTE,
+        "\astop: STOP written; not confirmed: look at the Thor terminal",
+    ]
+    assert not console._threads[1].is_alive()  # the console ended
+
+
+def test_ctrl_c_while_the_console_closes_reaches_the_robot(
+    robot: ScriptedRobot, desk: Desk
+) -> None:
+    detach = desk.console._detach
+
+    def detach_with_ctrl_c() -> None:
+        desk.console.interrupt()
+        detach()
+
+    desk.console._detach = detach_with_ctrl_c
+    desk.type("quit")
+    assert desk.end() == EXIT_OK
+    assert robot.settled() == [Stop(reason=STOP_CTRL_C, sender="console")]
+    assert "STOP written; not confirmed" in desk.said[-1]
+
+
+# RESULTs are not kept
+
+
+def test_results_of_other_clients_are_dropped_once_shown(
+    robot: ScriptedRobot, desk: Desk
+) -> None:
+    client = desk.console._station.client
+    for index in range(40):
+        robot.thor.send(Result(f"agent-move-{index}", "accepted"))
+        robot.thor.send(Result(f"agent-move-{index}", "completed"))
+        time.sleep(0.005)
+    robot.thor.send(Result("agent-last", "refused", "the permit is too old"))
+    desk.wait("(another client) RESULT refused: the permit is too old")
+    assert client._results == {}
+    # Its own command: kept while it is open, dropped with its final RESULT.
+    robot.reply = lambda message: [Result(message.command_id, "accepted")]
+    desk.type("reset")
+    desk.wait("reset: RESULT accepted")
+    (command_id,) = desk.console._mine
+    assert [r.status for r in client.results(command_id)] == ["accepted"]
+    robot.thor.send(Result(command_id, "completed"))
+    desk.wait("reset: RESULT completed")
+    until(lambda: client._results == {}, "the RESULTs to be dropped")
+    assert desk.console._mine == {}
+
+
+def test_the_clients_result_store_is_bounded() -> None:
+    robot_end, client_end = loopback_pair()
+    client = WorkstationClient(client_end, FakeClock())
+    kept = client_module.RESULTS_KEPT
+    try:
+        send(robot_end, Result("open-1", "accepted"))  # the oldest; not ended
+        for index in range(kept + 50):
+            send(robot_end, Result(f"other-{index}", "accepted"))
+            send(robot_end, Result(f"other-{index}", "completed"))
+        for _ in range(client_module.RESULTS_PER_COMMAND + 20):
+            send(robot_end, Result("chatty", "accepted"))
+        send(robot_end, Result("last", "completed"))
+        client.wait_result("last")
+        assert len(client._results) == kept
+        # The ended commands went first: the open one is still there.
+        assert [r.status for r in client.results("open-1")] == ["accepted"]
+        assert client.results("other-0") == []
+        assert len(client.results("chatty")) == client_module.RESULTS_PER_COMMAND
+    finally:
+        client.close()
+        robot_end.close()
+        client_end.close()
 
 
 # The source

@@ -39,6 +39,7 @@ from ..agent.camera.frame_source import (
     PairSource,
     RecordedPairSource,
 )
+from ..agent.config import ConfigError, expanded_path
 from ..console_log import set_console_level
 from ..link_service.local import LocalCarrier, connect_local
 from ..protocol.carrier import receive_message, send
@@ -224,11 +225,11 @@ def _checked(where: str, key: str, value: Any) -> Any:
 
 
 def _path(where: str, text: str, folder: Path) -> str:
-    expanded = os.path.expandvars(text)
-    if "$" in expanded:
-        raise ViewConfigError(
-            f"{where}: {text!r} names an environment variable that is not set"
-        )
+    # The agent program's rule: its three ${NAME}, and no other "$".
+    try:
+        expanded = expanded_path(where, text)
+    except ConfigError as problem:
+        raise ViewConfigError(str(problem)) from None
     path = Path(expanded).expanduser()
     return str(path if path.is_absolute() else (folder / path).resolve())
 

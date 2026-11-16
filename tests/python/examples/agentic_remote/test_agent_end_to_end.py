@@ -752,6 +752,65 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
 
 
 @apai
+@link
+def test_a_robot_app_restarted_as_real_gets_no_task_of_a_program_on_invented_times(
+    service_scene: Scene, make_realtime_apai: Callable[..., Any]
+) -> None:
+    scene, stack, first = service_scene, service_scene.stack, service_scene.h
+    typed = [QUICK, QUICK, QUICK]
+    seen: dict[str, Any] = {}
+
+    def on_the_new_session() -> bool:
+        session = seen["second"].app.session_id
+        try:
+            return (
+                scene.link.welcome.session_id == session
+                and scene.link.state().session_id == session
+            )
+        except RuntimeError:  # the link is lost while the robot app is away
+            return False
+
+    def next_line(prompt: str = "") -> str:
+        if not typed:
+            raise EOFError
+        if len(typed) == 2:  # before the second task: the robot app is restarted
+            stack.dialer.close()
+            first.app.close()
+            second = make_realtime_apai(
+                config=scene_robot_config(), connected=False, driver="real"
+            )
+            raise_arm(second)
+            seen["second"], seen["jaws"] = second, len(second.spy.jaw_commands)
+            stack.dial(second)
+            until(on_the_new_session, "the new session at the agent program")
+        return typed.pop(0)
+
+    scene.next_line = next_line
+    scene.answers = ["yes", "yes", "yes"]
+    code = scene.run("--interactive")
+    second = seen["second"]
+    # The first task ran on the mock arm; the robot app that declares "real"
+    # got no question, no owner request and no command.
+    assert scene.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    assert len(scene.asked) == 1
+    assert second.heard("owner") == [] and second.spy.targets == []
+    assert len(second.spy.jaw_commands) == seen["jaws"]
+    (refused,) = scene.said("motion refused: ")
+    assert "camera.allow_invented_times is true, but the robot app declares" in refused
+    assert "the driver 'real'" in refused and refused.endswith("; no command sent")
+    # The driver was said again for the new session; no third task was read.
+    up = scene.said("robot connection up")
+    assert [line.split("driver ")[1].split(",")[0] for line in up] == [
+        "apai-mock",
+        "real",
+    ]
+    assert f"session {second.app.session_id}" in up[1]
+    assert typed == [QUICK] and scene.said(task_gate.NO_NEW_TASK)
+    assert code == launcher.EXIT_FAILED
+    assert second.spy.released_at == [] and second.arm.torque_on()
+
+
+@apai
 def test_ownership_whose_result_never_came_is_given_back(scene: Scene) -> None:
     """The answer to OWNER_REQUEST "agent" times out, the ownership is there."""
 

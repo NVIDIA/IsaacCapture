@@ -326,7 +326,7 @@ def agent_hooks(
         ]
 
     def next_task(prompt: str = "") -> str:
-        if gate.tell_restart():
+        if gate.tell_end():
             raise EOFError  # ends APAI's task prompt: no new task is taken
         gate.return_late_ownership()
         if task_input is terminal_input:
@@ -542,6 +542,32 @@ def _settle(link: AgentLink, timeout_s: float = SETTLE_S) -> bool:
         link.wait_change(min(left, 0.1))
 
 
+class _Announcer:
+    """Says what a WELCOME declares, once per robot, driver and session.
+
+    Called from the program's thread and from the link's receive thread.
+    """
+
+    def __init__(self, say: Say) -> None:
+        self._say = say
+        self._lock = threading.Lock()
+        self._last = ""
+
+    def __call__(self, welcome: Any) -> None:
+        driver = getattr(welcome, "driver", "")
+        line = (
+            f"robot connection up: robot {welcome.robot_id}, profile "
+            f"{welcome.profile_id}, driver {driver or '(not declared)'}, session "
+            f"{welcome.session_id}, camera calibration "
+            f"{welcome.camera_calibration_id or '(unnamed)'}"
+        )
+        with self._lock:
+            if line == self._last:
+                return
+            self._last = line
+        self._say(line)
+
+
 def _check_arguments(args: argparse.Namespace) -> None:
     """ConfigError for an argument APAI would take for something else."""
     if args.task is not None and not args.task.strip():
@@ -613,15 +639,22 @@ def main(
             settings.link.socket_path or None,
             timeout_s=settings.link.connect_timeout_s,
         )
+        # Said for the first WELCOME and for each one that says something else,
+        # as that of a restarted robot app does.
+        announce = _Announcer(say)
+        link.add_welcome_listener(announce)
         welcome = link.wait_ready(settings.link.connect_timeout_s)
+        announce(welcome)
         driver = getattr(welcome, "driver", "")
-        say(
-            f"robot connection up: robot {welcome.robot_id}, profile "
-            f"{welcome.profile_id}, driver {driver or '(not declared)'}, session "
-            f"{welcome.session_id}, camera calibration "
-            f"{welcome.camera_calibration_id or '(unnamed)'}"
-        )
         agent_config.check_robot_driver(settings, driver, invented)
+
+        def driver_check(declared: str) -> str | None:
+            try:
+                agent_config.check_robot_driver(settings, declared, invented)
+            except ConfigError as problem:
+                return str(problem)
+            return None
+
         agent_config.check_joint_count(settings, len(welcome.joint_names))
         frame_times = FrameTimes()
         joint_feed = None
@@ -636,6 +669,7 @@ def main(
             say=say,
             motion_skills=_motion_skills(),
             read_only_tools=READ_ONLY_TOOLS,
+            driver_check=driver_check,
         )
         # The model is the configuration's; naming it keeps APAI from probing
         # for another one.
@@ -661,7 +695,7 @@ def main(
             task_input=task_input,
         ):
             status = demo.main(arguments)
-        if status == 0 and not gate.restart_told:
+        if status == 0 and not gate.restart_told and not gate.wrong_driver:
             code = EXIT_OK
         if code == EXIT_OK and args.interactive and gate.failed_tasks:
             say(f"{gate.failed_tasks} task(s) of this session ended without success")

@@ -59,7 +59,8 @@ ALLOWED_ENV = (
     "APAI_ASPIRE_LIBRARY",  # where the learned-notes library is read from
     "APAI_GRASPGENX_PORT",  # the port a grasp server on this machine is asked at
 )
-# The variables a path of the file may name as ${NAME}, and no other.
+# The variables a path of the file may name as ${NAME}, and no other; a "$"
+# that is not part of such a ${NAME} is refused.
 PATH_VARIABLES = (
     EXPERIMENT_DIR_ENV,
     "AGENTIC_REMOTE_CAMERA_PR",
@@ -296,7 +297,7 @@ def load_settings(path: str | os.PathLike[str]) -> AgentSettings:
         raise ConfigError("state_dir must be text that names a folder")
     settings = AgentSettings(
         path=file,
-        state_dir=Path(_path(state_dir, folder)),
+        state_dir=Path(_path("state_dir", state_dir, folder)),
         log_level=level.lower(),
         **blocks,
     )
@@ -365,7 +366,7 @@ def _block(name: str, kind: type, given: Any, folder: Path) -> Any:
             if not isinstance(value, str):
                 raise ConfigError(f"{where} must be text")
             if value and key in _PATHS.get(name, ()):
-                value = _path(value, folder)
+                value = _path(where, value, folder)
         if key in limits and value is not None and value > limits[key]:
             most = limits[key]
             raise ConfigError(f"{where} must be at most {most:g}, not {value:g}")
@@ -841,24 +842,37 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def _path(text: str, folder: Path) -> str:
-    path = Path(_expanded(text)).expanduser()
+def _path(where: str, text: str, folder: Path) -> str:
+    path = Path(expanded_path(where, text)).expanduser()
     return str(path if path.is_absolute() else (folder / path).resolve())
 
 
-def _expanded(text: str) -> str:
-    """The path with each ${NAME} of PATH_VARIABLES replaced by its value."""
+def expanded_path(where: str, text: str) -> str:
+    """The path of the key `where` with each ${NAME} replaced by its value.
+
+    ConfigError, which names the key, for a name outside PATH_VARIABLES, for
+    one that is not set, and for any other "$" in the text: "$NAME" and a
+    "${NAME" that is not closed are not expanded.
+    """
+    names = ", ".join(PATH_VARIABLES)
+    if "$" in _VARIABLE.sub("", text):
+        raise ConfigError(
+            f"{where}: the path {text!r} holds a '$' that is not part of "
+            f"${{NAME}}: a variable is written ${{NAME}}, and a path takes {names} "
+            "and no other"
+        )
 
     def value(found: re.Match[str]) -> str:
         name = found.group(1)
         if name not in PATH_VARIABLES:
             raise ConfigError(
-                f"the path {text!r} names the variable {name!r}: a path takes "
-                f"{', '.join(PATH_VARIABLES)} and no other"
+                f"{where}: the path {text!r} names the variable {name!r}: a path "
+                f"takes {names} and no other"
             )
         if not os.environ.get(name, "").strip():
             raise ConfigError(
-                f"the path {text!r} names the variable {name}, which is not set"
+                f"{where}: the path {text!r} names the variable {name}, which is "
+                "not set"
             )
         return os.environ[name]
 

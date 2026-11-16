@@ -311,6 +311,21 @@ def test_lost_reason_sees_a_welcome_of_another_session(rig: Rig) -> None:
     assert "new session (s2)" in link.lost_reason()
 
 
+def test_a_welcome_listener_gets_every_welcome_from_then_on(rig: Rig) -> None:
+    link = rig.ready()
+    seen: list[str] = []
+
+    def failing(message: Any) -> None:
+        raise RuntimeError("a listener of the test fails")
+
+    link.add_welcome_listener(failing)
+    link.add_welcome_listener(lambda message: seen.append(message.session_id))
+    rig.thor.send(welcome("s2"))
+    rig.thor.send(welcome("s3"))
+    until(lambda: seen == ["s2", "s3"], "the WELCOMEs")
+    assert link.welcome.session_id == "s3"  # stored before the listener ran
+
+
 def test_a_lost_connection_result_ends_the_pin_for_good(rig: Rig) -> None:
     link = rig.ready()
     command_id = link.checker_state("close_grasp")

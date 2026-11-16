@@ -40,8 +40,8 @@ MODEL_CLIENT = "@openai/codex@0.167.0"
 # run_agent.sh
 
 
-def run_agent(tmp_path: Path, **more: str) -> dict[str, str]:
-    """Run run_agent.sh on a stand-in interpreter; what it saw of the environment."""
+def start_agent(tmp_path: Path, **more: str) -> subprocess.CompletedProcess[str]:
+    """Run run_agent.sh on a stand-in interpreter that prints its environment."""
     fake = tmp_path / "python"
     names = ("AGENTIC_REMOTE_ENV_DIR", *CACHES)
     fake.write_text(
@@ -54,15 +54,29 @@ def run_agent(tmp_path: Path, **more: str) -> dict[str, str]:
         "AGENTIC_REMOTE_APAI_SRC": str(tmp_path),
         **more,
     }
-    done = subprocess.run(
+    return subprocess.run(
         [str(RUN_AGENT), "--check"],
         check=False,
         env=env,
         capture_output=True,
         text=True,
+        timeout=60,
     )
+
+
+def run_agent(tmp_path: Path, **more: str) -> dict[str, str]:
+    """As start_agent(), for a run that starts; what it saw of the environment."""
+    done = start_agent(tmp_path, **more)
     assert done.returncode == 0, done.stderr
     return dict(line.split("=", 1) for line in done.stdout.splitlines())
+
+
+def agent_refused(done: subprocess.CompletedProcess[str], piece: str) -> None:
+    """Exit code 2, one line that says why, and the interpreter was not started."""
+    assert done.returncode == 2, done.stdout + done.stderr
+    (line,) = done.stderr.splitlines()
+    assert line.startswith("run_agent.sh: ") and piece in line
+    assert done.stdout == ""
 
 
 def test_the_launcher_puts_the_caches_into_the_environment_folder(
@@ -102,6 +116,34 @@ def test_without_the_environment_folder_the_launcher_sets_no_cache(
     assert seen["TRITON_CACHE_DIR"] == "unset"
 
 
+@pytest.mark.parametrize("folder", ["env", "./env", "../env"])
+def test_the_launcher_refuses_an_environment_folder_that_is_not_absolute(
+    tmp_path: Path, folder: str
+) -> None:
+    done = start_agent(tmp_path, AGENTIC_REMOTE_ENV_DIR=folder)
+    agent_refused(
+        done, f"AGENTIC_REMOTE_ENV_DIR must be an absolute path (it is '{folder}')"
+    )
+
+
+@pytest.mark.parametrize("name", list(CACHES))
+def test_the_launcher_refuses_a_cache_variable_into_the_experiment_folder(
+    tmp_path: Path, name: str
+) -> None:
+    experiment = tmp_path / "experiment"
+    given = {
+        "AGENTIC_REMOTE_ENV_DIR": str(tmp_path / "env"),
+        "AGENTIC_REMOTE_EXPERIMENT_DIR": f"{experiment}/",  # the slash is dropped
+    }
+    for value in (f"{experiment}/.state/thor/ffs/cache", str(experiment)):
+        done = start_agent(tmp_path, **given, **{name: value})
+        agent_refused(done, f"{name} names a place inside the experiment folder")
+        assert f"({value})" in done.stderr
+    # A folder whose name only begins like the experiment folder's is kept.
+    beside = f"{experiment}-caches/x"
+    assert run_agent(tmp_path, **given, **{name: beside})[name] == beside
+
+
 def test_the_launcher_names_the_environment_folder_in_its_text() -> None:
     script = RUN_AGENT.read_text()
     assert "export AGENTIC_REMOTE_ENV_DIR" in script
@@ -136,27 +178,35 @@ class Tools:
                 'if [[ "$*" == "pip freeze"* ]]; then echo "torch==2.10.0+cu130"; fi\n'
             )
             tool.chmod(0o755)
-        mkdir = shutil.which("mkdir")
-        assert mkdir is not None
-        (self.folder / "mkdir").symlink_to(mkdir)
+        for name in ("mkdir", "dirname"):
+            real = shutil.which(name)
+            assert real is not None
+            (self.folder / name).symlink_to(real)
 
     def calls(self) -> list[str]:
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def run(
-        self, *arguments: str, env_dir: Path | str | None, fail_on: str = ""
+        self,
+        *arguments: str,
+        env_dir: Path | str | None,
+        fail_on: str = "",
+        by_name: bool = False,
     ) -> subprocess.CompletedProcess[str]:
+        """by_name runs it from its own folder as `bash setup_workstation_env.sh`."""
         env = {"PATH": str(self.folder), "TOOLS_LOG": str(self.log)}
         if env_dir is not None:
             env["AGENTIC_REMOTE_ENV_DIR"] = str(env_dir)
         if fail_on:
             env["TOOLS_FAIL_ON"] = fail_on
         return subprocess.run(
-            [BASH, str(SETUP), *arguments],
+            [BASH, SETUP.name if by_name else str(SETUP), *arguments],
             check=False,
+            cwd=EXAMPLE if by_name else None,
             env=env,
             capture_output=True,
             text=True,
+            timeout=60,
         )
 
 
@@ -317,6 +367,48 @@ def test_the_script_refuses_what_it_cannot_build_on(
     refused(tools.run(*more, env_dir=built), f"{built}/venv exists")
     assert tools.calls() == []
     assert not (tmp_path / "env").exists() and not (repository / "a").exists()
+
+
+def test_the_script_runs_when_it_is_named_without_a_folder(
+    tmp_path: Path, tools: Tools
+) -> None:
+    folder = tmp_path / "env"
+    done = tools.run("--help", env_dir=None, by_name=True)
+    assert done.returncode == 0 and done.stderr == ""
+    assert "--with-model-client" in done.stdout
+    done = tools.run("--dry-run", env_dir=folder, by_name=True)
+    assert done.returncode == 0, done.stderr
+    assert f"-r {REQUIREMENTS}" in done.stdout  # found beside the script
+    assert tools.calls() == [] and not folder.exists()
+    done = tools.run(env_dir=folder, by_name=True)
+    assert done.returncode == 0, done.stderr
+    assert tools.calls() == expected_calls(folder)
+
+
+@pytest.mark.parametrize("more", [(), ("--dry-run",)])
+def test_the_script_refuses_a_folder_named_through_a_dot_component(
+    tmp_path: Path, tools: Tools, more: tuple[str, ...]
+) -> None:
+    repository = tmp_path / "repository"
+    (repository / ".git").mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    # Out of a folder that does not exist yet, into a repository.
+    for named in (
+        f"{tmp_path}/outside/new/../../repository/env",
+        f"{tmp_path}/outside/..",
+        f"{tmp_path}/outside/../env/",
+        f"{tmp_path}/./env",
+        f"{tmp_path}/env/.",
+    ):
+        refused(tools.run(*more, env_dir=named), "'.' or '..' component")
+    assert tools.calls() == []
+    assert sorted(path.name for path in repository.iterdir()) == [".git"]
+    assert not (tmp_path / "env").exists()
+    assert not (tmp_path / "outside" / "new").exists()
+    # A name that only holds dots is a name.
+    for name in ("..env", "env..", ".env", "a.b"):
+        done = tools.run("--dry-run", env_dir=tmp_path / name)
+        assert done.returncode == 0, done.stderr
 
 
 @pytest.mark.parametrize("more", [(), ("--dry-run",)])

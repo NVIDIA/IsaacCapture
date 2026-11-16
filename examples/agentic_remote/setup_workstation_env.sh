@@ -27,13 +27,14 @@
 #   -h, --help           print this text
 #
 # Exit codes: 0 done; 1 a step failed (the step is named); 2 refused, nothing
-# was run. The script refuses when the folder lies inside a git repository, when
+# was run. The script refuses when the path is not absolute or holds a "." or
+# ".." component, when the folder lies inside a git repository, when
 # <folder>/venv exists, and when uv (or, with --with-model-client, npm) is
 # missing.
 set -euo pipefail
 
 me="setup_workstation_env.sh"
-here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 requirements="${here}/requirements-workstation.txt"
 torch_index="https://download.pytorch.org/whl/cu130"
 model_client="@openai/codex@0.167.0"
@@ -68,6 +69,11 @@ if [[ -z "${env_dir}" ]]; then
 fi
 if [[ "${env_dir}" != /* ]]; then
   refuse "AGENTIC_REMOTE_ENV_DIR must be an absolute path (it is '${env_dir}')"
+fi
+# The check below walks up the path as it is written; mkdir would follow a
+# ".." out of a folder that does not exist yet.
+if [[ "${env_dir}/" == */./* || "${env_dir}/" == */../* ]]; then
+  refuse "AGENTIC_REMOTE_ENV_DIR must not hold a '.' or '..' component (it is '${env_dir}')"
 fi
 while [[ "${env_dir}" == */ && "${env_dir}" != "/" ]]; do
   env_dir="${env_dir%/}"

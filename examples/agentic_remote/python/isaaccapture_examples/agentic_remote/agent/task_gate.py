@@ -16,6 +16,10 @@ that latch at its first motion skill, after the typed "yes" and the Thor's
 grant; nothing on the Thor is cleared by it. Where the latch does not clear,
 or with task.clear_skill_stop false, the program must be restarted.
 
+Before each question the gate checks the driver in the WELCOME of the session
+it is about to quote: a robot app this program must not drive gets no owner
+request, and the program takes no new task.
+
 The gate sends OWNER_REQUEST and nothing else.
 """
 
@@ -71,6 +75,7 @@ RESTART = (
     "a skill stop latched the workstation checker: restart the agent program; "
     "it takes no new task"
 )
+NO_NEW_TASK = "restart the agent program; it takes no new task"
 # What the typed yes of the next task covers, in its question.
 SKILL_STOP_NOTE = "the last task ended in a skill stop; it is cleared when you confirm"
 SKILL_STOP_TOLD = (
@@ -129,7 +134,11 @@ class TaskGate:
         motion_skills: Collection[str],
         read_only_tools: Collection[str] = READ_ONLY_TOOLS,
         harness: Any = None,
+        driver_check: Callable[[str], str | None] | None = None,
     ) -> None:
+        """driver_check(Welcome.driver) says why this program must not drive
+        that robot app, or None; it is asked before every task's question.
+        """
         self._link = link
         self._adapter = arm
         self._harness = harness
@@ -145,6 +154,10 @@ class TaskGate:
         self._current: ContextVar[_Task | None] = ContextVar(
             "agentic_remote_task", default=None
         )
+        self._driver_check = driver_check
+        # Why a task was refused over the robot app's driver; "" while none
+        # was. The program takes no new task after it.
+        self.wrong_driver = ""
         self._restart = False  # only a restart lets this program move the arm
         self._owning = False  # a task of this gate owns the arm
         # The command id of an OWNER_REQUEST "agent" whose RESULT did not come
@@ -190,6 +203,13 @@ class TaskGate:
         self._say(RESTART)
         return True
 
+    def tell_end(self) -> bool:
+        """Say why the program takes no new task, if it takes none; whether so."""
+        if self.wrong_driver:
+            self._say(f"{self.wrong_driver}: {NO_NEW_TASK}")
+            return True
+        return self.tell_restart()
+
     # The two wrappers
 
     def bind_run_task(self, original: Callable[..., Any]) -> Callable[..., Any]:
@@ -197,9 +217,9 @@ class TaskGate:
 
         @wraps(original)
         def run_task(task: str, *args: Any, **kwargs: Any) -> Any:
-            if self.tell_restart():
+            if self.tell_end():
                 self.failed_tasks += 1
-                return _refused_report(str(task), RESTART)
+                return _refused_report(str(task), self.wrong_driver or RESTART)
             state = _Task(str(task))
             token = self._current.set(state)
             report, error, interrupted = None, None, False
@@ -282,10 +302,16 @@ class TaskGate:
         if self._adapter is None:
             return self._refused("no arm is built yet", OWNERSHIP)
         self.return_late_ownership(self._owner_wait_s)
+        if self.restart_needed:  # latched since the check above
+            self.restart_told = True
+            return self._refused(RESTART, OWNERSHIP)
         try:
-            state = link.state(1.0)
+            state, reason = self._check_driver(link.state(1.0))
         except (LinkLost, StaleState) as error:
             return self._refused(f"robot connection lost: {error}", OWNERSHIP)
+        if reason is not None:
+            self.wrong_driver = printable(reason, MAX_REASON_CHARS)
+            return self._refused(reason, OWNERSHIP)
         self._say(_status_line(state))
         reason = _not_startable(state)
         if reason is not None:
@@ -307,6 +333,9 @@ class TaskGate:
             return self._refused(f"no typed yes: {error}", CONSENT)
         if str(answer).strip().lower() != "yes":
             return self._refused("the operator did not type yes", CONSENT)
+        if self.restart_needed:  # latched while the question stood
+            self.restart_told = True
+            return self._refused(RESTART, OWNERSHIP)
         quote = Pinned(state.session_id, state.owner_number, state.stop_number)
         try:
             result = link.request_owner(
@@ -359,6 +388,11 @@ class TaskGate:
         Only the workstation's latch is reset: nothing is sent to the Thor.
         """
         harness = self._harness
+        if not self._clear or mark is None or _stop_count(harness) is None:
+            # The setting keeps every latch; without the count nobody can
+            # tell whether the checker was stopped again.
+            self._restart = self.restart_told = True
+            return RESTART
         if not told or _stop_count(harness) != mark:
             return f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
         try:
@@ -379,11 +413,51 @@ class TaskGate:
             harness.reset_estop()
         except Exception:
             _log.exception("the workstation checker's latch was not reset")
+        if _stop_count(harness) != mark:
+            # A stop came after the counts were compared: its latch is put back.
+            try:
+                harness.estop()
+            except Exception:
+                _log.exception("the workstation checker was not latched again")
+            if getattr(harness, "estopped", False) is not True:
+                self._restart = self.restart_told = True
+                return RESTART
+            return f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
         if getattr(harness, "estopped", True) is not False:
             self._restart = self.restart_told = True
             return RESTART
         self._say("the skill stop of the last task is cleared")
         return None
+
+    def _check_driver(self, state: RobotState) -> tuple[RobotState, str | None]:
+        """(the state to quote, why its robot app's driver is not driven or None).
+
+        The driver is that of the WELCOME of the state's session. A robot app
+        that was restarted sends both anew: they are given owner_wait_s to
+        agree. Raises as AgentLink.state() does.
+        """
+        if self._driver_check is None:
+            return state, None
+        link = self._link
+        end = time.monotonic() + self._owner_wait_s
+        while True:
+            welcome = link.welcome
+            if welcome is not None and welcome.session_id == state.session_id:
+                return state, self._driver_check(getattr(welcome, "driver", ""))
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            link.wait_change(min(left, 0.05))
+            state = link.state(1.0)
+        newest = (
+            "none has arrived"
+            if welcome is None
+            else f"the newest is of session {welcome.session_id}"
+        )
+        return state, (
+            f"no WELCOME of session {state.session_id} has arrived ({newest}): "
+            "the driver of that robot app is not known"
+        )
 
     def _give_back(self, quote: Pinned, reason: str) -> None:
         """Return an ownership no task was opened on; waits for the RESULT."""

@@ -116,9 +116,17 @@ def question(command: str, state: RobotState | None) -> tuple[str, str] | None:
 
 
 def send_command(
-    command: str, client: WorkstationClient, state: RobotState, *, phrase_typed: str
+    command: str,
+    client: WorkstationClient,
+    state: RobotState,
+    *,
+    phrase_typed: str,
+    command_id: str | None = None,
 ) -> str:
     """Send reset, rest, open, release or shutdown; returns the command id.
+
+    command_id None lets the client make one; a caller that must know the id
+    before the send passes client.new_id().
 
     The link message quotes the session id, owner number and stop number of
     `state`: pass the ROBOT_STATE that was shown with the question, so the
@@ -135,6 +143,8 @@ def send_command(
         "owner_number": state.owner_number,
         "stop_number": state.stop_number,
     }
+    if command_id is not None:
+        numbers["command_id"] = command_id
     return _run(command, client, numbers, confirms(phrase_typed, PATH_IS_CLEAR))
 
 
@@ -324,9 +334,18 @@ def _stop(
                 say(f"stop: {notice.text}")
                 return EXIT_FAILED
         state = client.state
-        if state is not None and stop_shows(before, state):
-            say(f"stop: taken. {state_text(state)}")
-            return EXIT_OK
+        if state is not None:
+            if before is None:
+                before = state  # the first one: later states are measured on it
+            elif new_session(before, state):
+                say(
+                    f"stop: NOT CONFIRMED: {new_session_text(state)}; look at "
+                    "the Thor terminal"
+                )
+                return EXIT_FAILED
+            elif stop_shows(before, state):
+                say(f"stop: taken. {state_text(state)}")
+                return EXIT_OK
         if not carrier.alive:
             say(f"stop: the robot link service is gone ({carrier.close_reason})")
             return EXIT_FAILED
@@ -340,11 +359,30 @@ def _stop(
 
 
 def stop_shows(before: RobotState | None, state: RobotState) -> bool:
-    """Whether `state` shows a STOP sent after the ROBOT_STATE `before`."""
-    if before is None:
-        return state.stop_level != "none"
+    """Whether `state` shows a STOP sent after the ROBOT_STATE `before`.
+
+    Only a higher stop number of the same session does. With no `before`
+    nothing does: a stop level alone can be that of an earlier STOP.
+    """
     return (
-        state.session_id != before.session_id or state.stop_number > before.stop_number
+        before is not None
+        and state.session_id == before.session_id
+        and state.stop_number > before.stop_number
+    )
+
+
+def new_session(before: RobotState | None, state: RobotState) -> bool:
+    """Whether `state` is of another robot app session than `before`.
+
+    A new session's stop number starts over: it never confirms a STOP.
+    """
+    return before is not None and state.session_id != before.session_id
+
+
+def new_session_text(state: RobotState) -> str:
+    return (
+        f"the robot app shows a new session ({state.session_id}), which says "
+        "nothing about this STOP"
     )
 
 

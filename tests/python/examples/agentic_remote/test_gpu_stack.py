@@ -276,10 +276,14 @@ def test_ffs_depth_of_a_recorded_stereo_pair(experiment_dir: Path) -> None:
     cv2 = pytest.importorskip("cv2")
     pytest.importorskip("torch")
     yaml = pytest.importorskip("yaml")
+    import test_agent_end_to_end as end_to_end
     import test_stereo_camera as stereo
     from isaaccapture_examples.agentic_remote.agent.camera import stereo_camera
 
     folder = recorded_folder(experiment_dir)
+    before = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
+    caches = [Path(os.environ[name]) for name in CACHE_VARIABLES]
+    cached = sum(len(end_to_end.tree_state(cache)) for cache in caches)
     images = [
         cv2.imread(str(folder / name)) for name in ("left_raw.jpg", "right_raw.jpg")
     ]
@@ -317,9 +321,11 @@ def test_ffs_depth_of_a_recorded_stereo_pair(experiment_dir: Path) -> None:
     assert valid.size / depth_m.size > 0.2
     assert 0.2 <= valid.min() and valid.max() <= 8.0
     assert 0.3 < float(np.median(valid)) < 3.0  # a table scene in front of the arm
-    # The caches went where the variables point, not into the experiment folder.
-    for name in ("TRITON_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR"):
-        assert not Path(os.environ[name]).is_relative_to(experiment_dir)
+    # Nothing was written into APAI's checkout or the experiment folder.
+    after = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
+    assert after == before
+    now_cached = sum(len(end_to_end.tree_state(cache)) for cache in caches)
+    print(f"files in the cache folders: {cached} before, {now_cached} after")
 
 
 @apai
@@ -331,9 +337,11 @@ def test_the_segmenter_loads_on_cuda_0(
     torch = pytest.importorskip("torch")
     pytest.importorskip("ultralytics")
     yaml = pytest.importorskip("yaml")
+    import test_agent_end_to_end as end_to_end
     from apai.perception.segmenter import BoxSegmenter
     from apai.types import Frame
 
+    before = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
     # The model and the device the full stack's detector takes (thor_cloud.py).
     profile = yaml.safe_load((experiment_dir / "configs/thor_cloud.yaml").read_text())
     model = experiment_dir / profile["segmenter"]["model"]
@@ -365,7 +373,9 @@ def test_the_segmenter_loads_on_cuda_0(
     covered = int(mask.sum().item())
     print(f"the mask covers {covered} of {height * width} pixels")
     assert 0 < covered < height * width
-    assert Path(os.environ["YOLO_CONFIG_DIR"]).is_dir()
+    # Nothing was written into APAI's checkout or the experiment folder.
+    after = [end_to_end.tree_state(tree) for tree in end_to_end.read_only_trees()]
+    assert after == before
 
 
 def no_model() -> Any:

@@ -27,10 +27,11 @@ from ..agent.console_cmd import (
     CONFIRMED,
     NOT_CONFIRMED,
     SENDER,
-    STATE_WAIT_S,
     STOP_REASON,
     UNDELIVERED,
     NotConfirmed,
+    new_session,
+    new_session_text,
     question,
     raw_stop_text,
     result_text,
@@ -131,7 +132,8 @@ class _Station(NamedTuple):
 class _Pending(NamedTuple):
     """A STOP that was sent and that no ROBOT_STATE has shown yet."""
 
-    before: RobotState | None  # the newest state when it was sent
+    # The newest state when it was sent; with none then, the first one after.
+    before: RobotState | None
     by: float  # console clock time at which it counts as not confirmed
     carrier: LocalCarrier
 
@@ -197,7 +199,8 @@ class Console:
         self._ticking = threading.Lock()
         self._kept_line: str | None = None  # typed after a withdrawn question
         self._ended = threading.Event()
-        self._stops_ended = False  # the stop thread was told to end
+        self._saying = threading.Lock()  # a line is queued, or the output ends
+        self._closing = False  # close() began: nothing attaches, a STOP goes raw
         self._started = False
         self._threads = [
             threading.Thread(target=self._write_loop, name="console-out", daemon=True),
@@ -225,32 +228,34 @@ class Console:
                 if not self._serve(line):
                     break
         finally:
-            self._end_stops()
-            self._say(QUIT_NOTE)
-            self.close()
+            self.close(QUIT_NOTE)
         return EXIT_OK
 
-    def close(self) -> None:
-        """Detach and end the console's threads; the queued lines are written."""
-        self._end_stops()
-        if self._ended.is_set():
+    def close(self, last: str | None = None) -> None:
+        """Detach and end the console's threads; the queued lines are written.
+
+        `last` is said after every other line but a late STOP's. The stop
+        thread ends last of the sending: a Ctrl+C while the console detaches
+        is still a STOP, written raw.
+        """
+        with self._lock:
+            closing, self._closing = self._closing, True
+        if closing:
             return
-        self._ended.set()
+        with self._saying:
+            if last is not None:
+                self._out.put(last)
+            self._ended.set()  # from here only a STOP's lines are written
         self._detach()
+        # Every Ctrl+C up to here becomes its STOP before the stop thread ends.
+        self._interrupts.put(None)
+        if self._started:
+            self._threads[1].join(_JOIN_S)
         self._out.put(None)
         if self._started:
             for thread in self._threads:
                 if thread is not threading.current_thread():
                     thread.join(_JOIN_S)
-
-    def _end_stops(self) -> None:
-        """End the stop thread once every Ctrl+C so far has become its STOP."""
-        with self._lock:
-            told, self._stops_ended = self._stops_ended, True
-        if not told:
-            self._interrupts.put(None)
-            if self._started:
-                self._threads[1].join(_JOIN_S)
 
     def interrupt(self) -> None:
         """What Ctrl+C does: take back an open question, then STOP.
@@ -300,8 +305,13 @@ class Console:
         # The lock: a RESULT can arrive before its command id is written down.
         with self._lock:
             command = self._mine.get(result.command_id)
-            if command is not None and result.status != ACCEPTED:
+            still_open = command is not None and result.status == ACCEPTED
+            if command is not None and not still_open:
                 del self._mine[result.command_id]
+            station = self._station
+        if station is not None and not still_open:
+            # Shown below, or not the console's to show: the client drops it.
+            station.client.forget(result.command_id)
         text = printable(result_text(result), MAX_OUT_CHARS)
         if command is not None:
             self._say(f"{command}: {text}")
@@ -404,8 +414,11 @@ class Console:
 
     def _forget_commands(self, why: str) -> None:
         with self._lock:
-            waiting, self._mine = list(self._mine.values()), {}
-        for command in waiting:
+            waiting, self._mine = self._mine, {}
+            station = self._station
+        for command_id, command in waiting.items():
+            if station is not None:
+                station.client.forget(command_id)
             self._say(f"{command}: no RESULT will come: {why}")
 
     def _say_status(self, now: float) -> None:
@@ -435,6 +448,8 @@ class Console:
             with self._lock:
                 if self._station is not None:
                     return True
+                if self._closing:
+                    return False
                 self._next_try = now + ATTACH_EVERY_S
             try:
                 carrier = self._attach_fn(
@@ -457,10 +472,14 @@ class Console:
                         f"trying again every {ATTACH_EVERY_S:g} s, {left} times at most"
                     )
                 return False
-            client = WorkstationClient(
-                carrier, self._clock, name=self._name, listeners=[self.on_message]
-            )
+            # The lock: on_message() waits until the station is written down.
             with self._lock:
+                if self._closing:
+                    carrier.close()
+                    return False
+                client = WorkstationClient(
+                    carrier, self._clock, name=self._name, listeners=[self.on_message]
+                )
                 self._station = _Station(carrier, client)
                 self._robot_up, self._notices, self._why = None, [], ""
                 self._tries_left = ATTACH_TRIES
@@ -489,26 +508,28 @@ class Console:
                 self._stop(reason)
             except Exception:
                 _log.exception("a Ctrl+C at the operator console failed")
-                self._say(f"{BELL_CHAR}STOP FAILED HERE: {USE_THOR}")
+                self._say(f"{BELL_CHAR}STOP FAILED HERE: {USE_THOR}", late=True)
 
     def _stop(self, reason: str) -> None:
         """One STOP: through the client when attached, else written raw."""
         with self._lock:
-            station = self._station
+            station = None if self._closing else self._station
             attached = station is not None and station.carrier.alive
-            if attached:
-                before = self._state if self._pending is None else self._pending.before
+            if attached and self._pending is None:
+                # A STOP sent again while one waits keeps the first one's time.
                 by = self._clock.monotonic() + STOP_WAIT_S
-                self._pending = _Pending(before, by, station.carrier)
+                self._pending = _Pending(self._state, by, station.carrier)
         if attached:
             station.client.stop(reason, SENDER)
-            self._say("stop: sent; waiting for the robot app to show it")
-            return
+            if station.carrier.alive:
+                self._say("stop: sent; waiting for the robot app to show it")
+                return
+            # The carrier ended under the send: the STOP may not be out.
         raw = self._raw_stop(self._path, reason=reason, sender=SENDER, name=self._name)
         text = raw_stop_text(raw.written, printable(raw.notice, MAX_OUT_CHARS))
         if not raw.written:
             text = f"{text}; {USE_THOR}"
-        self._say(f"{BELL_CHAR}stop: {text}")
+        self._say(f"{BELL_CHAR}stop: {text}", late=True)
 
     def _check_stop(self) -> None:
         """Say what became of the STOP that waits, once that is known."""
@@ -516,18 +537,24 @@ class Console:
             pending, state = self._pending, self._state
             if pending is None:
                 return
-            taken = (
-                state is not None
-                and state is not pending.before
-                and stop_shows(pending.before, state)
-            )
+            if pending.before is None and state is not None:
+                # Sent before any state: later ones are measured on this one.
+                pending = self._pending = pending._replace(before=state)
+            taken = state is not None and stop_shows(pending.before, state)
+            other = state is not None and new_session(pending.before, state)
             gone = not pending.carrier.alive
             late = self._clock.monotonic() >= pending.by
-            if not (taken or gone or late):
+            if not (taken or other or gone or late):
                 return
             self._pending = None
         if taken:
             self._say(f"stop: taken. {state_text(state)}")
+        elif other:
+            self._say(
+                f"{BELL_CHAR}STOP NOT CONFIRMED: "
+                f"{printable(new_session_text(state), MAX_OUT_CHARS)}; type stop "
+                f"again or {USE_THOR}"
+            )
         elif gone:
             self._say(
                 f"{BELL_CHAR}STOP NOT CONFIRMED: the robot link service is gone; "
@@ -605,7 +632,13 @@ class Console:
         status = station.carrier.status
         up = status is not None and status.robot_connected
         if up and state is None:
-            state = self._first_state(station)
+            # No wait here: a stop typed next is read at once.
+            self._say(
+                f"{command}: no ROBOT_STATE has arrived "
+                f"({status_text(station.carrier)}); nothing sent; type {command} "
+                "again once one is shown"
+            )
+            return
         if state is None or not up:
             self._say(
                 f"{command}: no ROBOT_STATE to quote "
@@ -622,35 +655,44 @@ class Console:
                 self._say(f"{command} {NOT_CONFIRMED}")
                 return
             typed = answer
+        # The id is written down before the send, so its RESULT is known as the
+        # console's own; the send runs outside the lock, so a STOP never waits
+        # behind it.
+        command_id = station.client.new_id()
         with self._lock:
-            if self._station is not station:
-                self._say(
-                    f"{command}: the console is no longer attached as it was when "
-                    "it asked; nothing sent"
-                )
-                return
-            try:
-                # `state` is the one shown with the question: the robot app
-                # refuses the command if the arm's owner or stop number moved on.
-                command_id = send_command(
-                    command, station.client, state, phrase_typed=typed
-                )
-            except NotConfirmed as problem:
-                self._say(str(problem))
-                return
-            self._mine[command_id] = command
-        self._say(f"{command}: sent; its RESULT is printed when it comes")
-
-    def _first_state(self, station: _Station) -> RobotState | None:
-        """Right after attaching: wait, in real time, for the first ROBOT_STATE."""
-        for _ in range(int(STATE_WAIT_S / TICK_S)):
+            same = self._station is station
+            if same:
+                self._mine[command_id] = command
+        if not same:
+            self._say(
+                f"{command}: the console is no longer attached as it was when "
+                "it asked; nothing sent"
+            )
+            return
+        try:
+            # `state` is the one shown with the question: the robot app
+            # refuses the command if the arm's owner or stop number moved on.
+            send_command(
+                command,
+                station.client,
+                state,
+                phrase_typed=typed,
+                command_id=command_id,
+            )
+        except BaseException as problem:
             with self._lock:
-                state = self._state
-            if state is not None or not station.carrier.alive:
-                return state
-            if self._ended.wait(TICK_S):
-                break
-        return None
+                self._mine.pop(command_id, None)
+            if not isinstance(problem, NotConfirmed):
+                raise
+            self._say(str(problem))
+            return
+        if not station.carrier.alive:
+            self._say(
+                f"{command}: the robot link service went away while it was sent; "
+                "whether it is out is not known"
+            )
+            return
+        self._say(f"{command}: sent; its RESULT is printed when it comes")
 
     def _ask(self, prompt: str, state: RobotState) -> str | None:
         """Put a question; the next typed line, or None when it confirms nothing.
@@ -685,9 +727,13 @@ class Console:
 
     # Output
 
-    def _say(self, line: str) -> None:
-        if not self._ended.is_set() and self._out.qsize() < _LINES_WAITING:
-            self._out.put(line)
+    def _say(self, line: str, late: bool = False) -> None:
+        """Queue one line; `late` ones are written while the console closes too."""
+        with self._saying:
+            if (
+                late or not self._ended.is_set()
+            ) and self._out.qsize() < _LINES_WAITING:
+                self._out.put(line)
 
     def _flush(self, timeout_s: float = _JOIN_S) -> bool:
         """Wait in real time until the lines queued so far are written."""

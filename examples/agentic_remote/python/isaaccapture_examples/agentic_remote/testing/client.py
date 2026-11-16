@@ -52,6 +52,10 @@ _RECEIVE_S = 0.005
 PERMIT_LIFE_S = 2.5
 # EVENTs kept, and link messages a workstation should never get: the newest.
 MESSAGES_KEPT = 1024
+# Command ids whose RESULTs are kept, and RESULTs kept for one of them. Over
+# that, the oldest command that ended goes first, then the oldest.
+RESULTS_KEPT = 1024
+RESULTS_PER_COMMAND = 16
 # Peak speed of the minimum-jerk time law over its mean speed.
 _PEAK_OVER_MEAN = 1.875
 _EPS = 1e-9
@@ -105,9 +109,10 @@ class PermitFeed:
 class WorkstationClient:
     """Sends commands to a robot app and keeps what it answers.
 
-    A receive thread stores the WELCOME, the newest ROBOT_STATE, every RESULT by
-    command id and the newest MESSAGES_KEPT EVENTs. Commands quote the session id, owner number and
-    stop number of the newest ROBOT_STATE unless the caller passes its own.
+    A receive thread stores the WELCOME, the newest ROBOT_STATE, the RESULTs by
+    command id (of RESULTS_KEPT commands at most; see forget()) and the newest
+    MESSAGES_KEPT EVENTs. Commands quote the session id, owner number and stop
+    number of the newest ROBOT_STATE unless the caller passes its own.
     """
 
     def __init__(
@@ -543,6 +548,22 @@ class WorkstationClient:
         send(self._carrier, kind(**given))
         return given["command_id"]
 
+    def _keep_result(self, result: Result) -> None:
+        """Store one RESULT, within the bounds; under the client's lock."""
+        kept = self._results.get(result.command_id)
+        if kept is None:
+            if len(self._results) >= RESULTS_KEPT:
+                ended = (
+                    command_id
+                    for command_id, rows in self._results.items()
+                    if any(row.status != ACCEPTED for row in rows)
+                )
+                del self._results[next(ended, next(iter(self._results)))]
+            kept = self._results[result.command_id] = []
+        if len(kept) >= RESULTS_PER_COMMAND:
+            del kept[0]
+        kept.append(result)
+
     def _receive_loop(self) -> None:
         while not self._closed.is_set():
             try:
@@ -558,7 +579,7 @@ class WorkstationClient:
                     self._state = message
                     self._state_at = self._clock.monotonic()
                 elif isinstance(message, Result):
-                    self._results.setdefault(message.command_id, []).append(message)
+                    self._keep_result(message)
                 elif isinstance(message, Event):
                     self._events.append(message)
                 elif isinstance(message, Welcome):

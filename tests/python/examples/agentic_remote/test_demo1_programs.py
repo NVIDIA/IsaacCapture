@@ -12,14 +12,20 @@ the console program runs, its lines typed by the test) and the live view (the
 view program's main(), on a thread). The robot app runs on APAI's mock arm in
 real time, and on the simulated arm where no agent is needed.
 
-The last test starts the robot link service, the robot app, the live view and
-the console command as processes of their own and ends each of them.
+The last test starts the robot link service, the robot app, the live view, the
+operator console (on a pseudo-terminal) and the console command as processes of
+their own and ends each of them.
 """
 
 from __future__ import annotations
 
+import os
+import pty
 import re
 import signal
+import subprocess
+import sys
+import termios
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -34,9 +40,9 @@ from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
 from isaaccapture_examples.agentic_remote.view import __main__ as view_main
 from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE
-from link_stack import HOST, Program, ServiceProcess, Stack
+from link_stack import HOST, Program, ServiceProcess, Stack, program_env
 from test_agent_end_to_end import RUN_BUDGET_S, ObstacleGrid, Scene, raise_arm
-from test_console import ASK_REST, Desk
+from test_console import ASK_REST, QUIT_NOTE, Desk
 from test_launcher import PICK, QUICK, scene_robot_config
 from test_link_programs import ROBOT_MODULE, ROBOT_YAML
 from test_view_program import Browser, Running, StandInSource, write_config
@@ -54,6 +60,7 @@ REST_WAIT_S = 30.0
 REST = [0.0] * 6
 PATH = [[0.004 * (index + 1)] * 6 for index in range(25)]
 VIEW_MODULE = "isaaccapture_examples.agentic_remote.view"
+CONSOLE_MODULE = "isaaccapture_examples.agentic_remote.console"
 CONSOLE_CMD_MODULE = "isaaccapture_examples.agentic_remote.agent.console_cmd"
 # A status line of the console that shows a view age.
 VIEW_AGE = re.compile(r" \| view (\d+\.\d) s \| ")
@@ -92,6 +99,97 @@ class TimedDesk(Desk):
         """The lines printed so far that hold `text`."""
         with self._heard:
             return [line for line in self.said if text in line]
+
+
+class ConsoleProcess:
+    """The operator console program in its own process, on a pseudo-terminal.
+
+    python -m ...console --socket PATH, outside an agent's environment; the
+    test types at the terminal and reads what the program printed on it.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.said: list[str] = []
+        self._heard = threading.Condition()
+        self._master, terminal = pty.openpty()
+        attributes = termios.tcgetattr(terminal)
+        attributes[3] &= ~termios.ECHO  # what the test types is not shown back
+        termios.tcsetattr(terminal, termios.TCSANOW, attributes)
+        env = {
+            name: value
+            for name, value in program_env().items()
+            if console_cmd.agent_environment({name: value}) is None
+        }
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, "-m", CONSOLE_MODULE, "--socket", path],
+                stdin=terminal,
+                stdout=terminal,
+                stderr=terminal,
+                env=env,
+                start_new_session=True,
+            )
+        finally:
+            os.close(terminal)
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+    def _read(self) -> None:
+        pending = b""
+        while True:
+            try:
+                data = os.read(self._master, 4096)
+            except OSError:  # the program closed the terminal
+                data = b""
+            if not data:
+                return
+            *lines, pending = (pending + data).split(b"\n")
+            with self._heard:
+                self.said += [
+                    line.decode(errors="replace").rstrip("\r") for line in lines
+                ]
+                self._heard.notify_all()
+
+    def type(self, line: str) -> None:
+        os.write(self._master, line.encode() + b"\n")
+
+    def answer(self, question: str, line: str) -> None:
+        """Type `line` once the question is shown and the program reads.
+
+        The console drops what was typed before it reads the answer.
+        """
+        self.wait(question)
+        time.sleep(0.5)
+        self.type(line)
+
+    def wait(self, text: str, wait_s: float = WAIT_S) -> str:
+        """Wait for the first line that holds `text`; returns it."""
+
+        def found() -> list[str]:
+            return [line for line in self.said if text in line]
+
+        with self._heard:
+            assert self._heard.wait_for(lambda: bool(found()), wait_s), (
+                f"no line with {text!r} within {wait_s:g} s; said: {self.said}"
+            )
+            return found()[0]
+
+    def wait_exit(self) -> int:
+        """Wait for the process to end; its exit code. Every line is in `said`."""
+        code = self.process.wait(WAIT_S)
+        self._reader.join(WAIT_S)
+        return code
+
+    def close(self) -> None:
+        """End the process if it still runs, and the terminal."""
+        if self.process.poll() is None:
+            self.process.send_signal(signal.SIGKILL)
+            self.process.wait(WAIT_S)
+        if self._master >= 0:
+            # The reader ends at the closed terminal.
+            os.close(self._master)
+            self._master = -1
+        self._reader.join(WAIT_S)
 
 
 class Tab:
@@ -634,8 +732,7 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
 ) -> None:
     folder = tmp_path_factory.mktemp("d1")
     path = str(folder / "s.sock")
-    programs: list[Program] = []
-    desks = Desks(path, folder)
+    programs: list[Program | ConsoleProcess] = []
     try:
         service = ServiceProcess(folder, path)
         programs.append(service)
@@ -653,8 +750,11 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         line = view.wait_line("live view: open http://127.0.0.1:")
         view_port = int(line.split("http://127.0.0.1:")[1].split("/")[0])
 
-        # The console names the driver the robot app declares.
-        desk = desks.console()
+        # The console program, at a terminal, names the driver the robot app
+        # declares.
+        desk = ConsoleProcess(path)
+        programs.append(desk)
+        desk.wait("attached to the robot link service: ")
         assert f", driver {driver}, " in desk.wait("WELCOME: ")
         desk.wait(f" | clients 1 console, 1 viewer | driver {driver} | owner nobody #")
 
@@ -673,9 +773,8 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         desk.wait("[stop] STOP from console: ")
         # A rest typed at the console, with the arm at rest already.
         desk.type("rest")
-        desk.wait(ASK_REST)
-        desk.type(PATH_IS_CLEAR)
-        desk.wait_long("rest: RESULT completed", REST_WAIT_S)
+        desk.answer(ASK_REST, PATH_IS_CLEAR)
+        desk.wait("rest: RESULT completed", REST_WAIT_S)
 
         # The page of the view process shows the same robot.
         browser = Browser(view_port)
@@ -699,10 +798,11 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         desk.wait("ROBOT CONNECTION LOST: ")
         view.signal(signal.SIGTERM)
         assert view.wait_exit() == 0
-        desks.close()
+        desk.type("quit")
+        assert desk.wait_exit() == 0
+        assert desk.said[-1] == QUIT_NOTE
         service.signal(signal.SIGTERM)
         assert service.wait_exit() == 0
     finally:
-        desks.close()
         for program in programs:
             program.close()

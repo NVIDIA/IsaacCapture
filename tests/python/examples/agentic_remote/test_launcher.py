@@ -33,7 +33,7 @@ from isaaccapture_examples.agentic_remote.agent import launcher, task_gate
 from isaaccapture_examples.agentic_remote.agent.arm_adapter import AGENT_TERMINAL
 from isaaccapture_examples.agentic_remote.agent.config import ConfigError
 from isaaccapture_examples.agentic_remote.agent.link_client import AgentLink, LinkLost
-from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair, send
 from link_bench import until
 
 from conftest import EXPERIMENT_DIR_ENV, FakeGridClient, apai_runtime_env
@@ -1084,6 +1084,53 @@ def test_the_minimal_stack_against_a_real_driver_ends_the_program(
     ended_before_any_task(stage, "real")
 
 
+@apai
+def test_a_welcome_that_declares_real_before_a_later_task_ends_the_program(
+    make_stage: Callable[..., Stage],
+) -> None:
+    stage = make_stage(driver="apai-mock")
+    ends: dict[str, Any] = {}
+
+    def attach(socket_path: str | None = None, *, timeout_s: float) -> AgentLink:
+        robot_end, agent_end = loopback_pair()
+        made = AgentLink(agent_end)
+        assert stage.h.app.attach_carrier(robot_end)
+        stage.watch(made)
+        ends["robot"] = robot_end
+        return made
+
+    typed = [QUICK, QUICK, QUICK]
+
+    def next_line(prompt: str = "") -> str:
+        if not typed:
+            raise EOFError
+        if len(typed) == 2:  # before the second task: another WELCOME arrives
+            was = stage.link.welcome
+            send(ends["robot"], dataclasses.replace(was, driver="real"))
+            until(lambda: stage.link.welcome.driver == "real", "the new WELCOME")
+            ends["jaws"] = len(stage.jaw_commands())
+        return typed.pop(0)
+
+    stage.next_line = next_line
+    stage.answers = ["yes", "yes", "yes"]
+    assert stage.run("--interactive", attach=attach) == launcher.EXIT_FAILED
+    # The first task ran; the second got no question and no owner request.
+    assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    assert len(stage.asked) == 1 and stage.motion == ["gripper"]
+    assert len(stage.jaw_commands()) == ends["jaws"] > 0
+    refused = stage.said("motion refused: ")
+    assert len(refused) == 1
+    assert "but the robot app declares the driver 'real'" in refused[0]
+    assert refused[0].endswith("; no command sent")
+    # The third task was never read: the program said why and ended.
+    assert typed == [QUICK] and len(stage.reports()) == 2
+    assert stage.said(task_gate.NO_NEW_TASK)
+    # The driver is said again when the robot app declares another one.
+    up = stage.said("robot connection up")
+    assert len(up) == 2
+    assert "driver apai-mock, session" in up[0] and "driver real, session" in up[1]
+
+
 def test_what_the_declared_driver_allows(tmp_path: Path) -> None:
     minimal = agent_config.load_settings(settings_file(tmp_path))
     full = agent_config.load_settings(
@@ -1167,9 +1214,44 @@ def test_a_path_variable_expands_and_an_unknown_one_is_refused(
     del data["experiment"]["codex_bin"], data["link"]["socket_path"]
     path.write_text(yaml.safe_dump(data))
     assert agent_config.load_settings(path).state_dir == Path("/exp/state")
-    # A dollar sign without braces is no variable.
-    plain = settings_file(other, camera={"calibration_dir": "/a/$HOME/b"})
-    assert agent_config.load_settings(plain).camera.calibration_dir == "/a/$HOME/b"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "$AGENTIC_REMOTE_ENV_DIR/codex/bin/codex",  # no braces
+        "${AGENTIC_REMOTE_ENV_DIR/codex",  # not closed
+        "/a/$HOME/b",
+        "${AGENTIC_REMOTE_ENV_DIR}/a$",
+        "/a/$",
+    ],
+)
+def test_a_dollar_sign_that_is_no_variable_is_refused_with_its_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/env")
+    monkeypatch.setenv("HOME", "/home/somebody")
+    says = (
+        "holds a '$' that is not part of ${NAME}: a variable is written ${NAME}, "
+        "and a path takes AGENTIC_REMOTE_EXPERIMENT_DIR, AGENTIC_REMOTE_CAMERA_PR, "
+        "AGENTIC_REMOTE_ENV_DIR and no other"
+    )
+    for block, key in (("camera", "calibration_dir"), ("experiment", "codex_bin")):
+        refused = settings_file(tmp_path, **{block: {key: text}})
+        with pytest.raises(ConfigError) as raised:
+            agent_config.load_settings(refused)
+        assert str(raised.value) == f"{block}.{key}: the path {text!r} {says}"
+    data = yaml.safe_load(settings_file(tmp_path).read_text())
+    data["state_dir"] = text
+    file = tmp_path / "state.yaml"
+    file.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match=r"^state_dir: the path .* holds a '\$'"):
+        agent_config.load_settings(file)
+    # Nothing was expanded on the way, and a value's own text is not looked at.
+    with pytest.raises(ConfigError, match=r"holds a '\$'"):
+        agent_config.expanded_path("x", text)
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/a$b")
+    assert agent_config.expanded_path("x", "${AGENTIC_REMOTE_ENV_DIR}/c") == "/a$b/c"
 
 
 def test_the_model_clients_program_is_a_setting(tmp_path: Path) -> None:

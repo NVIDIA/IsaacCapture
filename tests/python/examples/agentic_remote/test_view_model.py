@@ -14,12 +14,14 @@ import threading
 from typing import Any
 
 import pytest
+from isaaccapture_examples.agentic_remote.agent import link_client
 from isaaccapture_examples.agentic_remote.protocol.local_messages import LocalStatus
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     Event,
     RobotState,
     ViewStatus,
 )
+from isaaccapture_examples.agentic_remote.view import model as view_model
 from isaaccapture_examples.agentic_remote.view.model import (
     AGE_WHEN_NOT_LIVE_S,
     EVENTS_KEPT,
@@ -44,7 +46,11 @@ def near(seconds: float) -> Any:
 
 
 def state_at(wall: float, **fields: Any) -> RobotState:
-    return dataclasses.replace(robot_state(), clock_wall_s=wall, **fields)
+    """A ROBOT_STATE of that wall time; the Thor's monotonic clock went along."""
+    mono = robot_state().clock_mono_s + (wall - WALL0)
+    return dataclasses.replace(
+        robot_state(), clock_wall_s=wall, clock_mono_s=mono, **fields
+    )
 
 
 def model_with_state(**settings: float) -> ViewModel:
@@ -359,3 +365,39 @@ def test_the_model_is_used_from_many_threads():
     stop.set()
     assert problems == []
     assert status(model, T0).live
+
+
+# A step of the Thor's wall clock
+
+
+def test_a_step_of_the_thors_wall_clock_is_not_live_for_one_ack_timeout():
+    model = model_with_state(ack_timeout_s=1.0)
+    shown(model, now=T0 + 0.1)  # exposed at WALL0, 0.1 s ago
+    model.on_message(state_at(WALL0 + 0.15), T0 + 0.15)
+    assert status(model, T0 + 0.15) == ViewStatus(live=True, age_s=near(0.15))
+    # The Thor's wall clock steps back 0.15 s against its monotonic clock:
+    # the picture would count as 0.05 s old when it is 0.2 s old.
+    back = dataclasses.replace(state_at(WALL0 + 0.2), clock_wall_s=WALL0 + 0.05)
+    model.on_message(back, T0 + 0.2)
+    assert status(model, T0 + 0.2) == NOT_LIVE
+    # Not live for ack_timeout_s from the step, whatever is acknowledged.
+    later = dataclasses.replace(state_at(WALL0 + 1.0), clock_wall_s=WALL0 + 0.85)
+    model.on_message(later, T0 + 1.0)
+    model.put_picture(2, JPEG, WALL0 + 0.8, T0 + 1.0, False)
+    model.acknowledge(2, True, T0 + 1.1)
+    assert status(model, T0 + 1.19) == NOT_LIVE
+    assert status(model, T0 + 1.21) == ViewStatus(live=True, age_s=near(0.26))
+    # A step forward counts the same.
+    ahead = dataclasses.replace(state_at(WALL0 + 1.3), clock_wall_s=WALL0 + 1.4)
+    model.on_message(ahead, T0 + 1.3)
+    model.acknowledge(2, True, T0 + 1.3)
+    assert status(model, T0 + 1.3) == NOT_LIVE
+
+
+def test_a_change_within_the_links_threshold_is_no_step():
+    assert view_model.CLOCK_STEP_S is link_client.CLOCK_STEP_S == 0.02
+    model = model_with_state()
+    shown(model)
+    drifted = dataclasses.replace(state_at(WALL0 + 0.1), clock_wall_s=WALL0 + 0.119)
+    model.on_message(drifted, T0 + 0.1)
+    assert status(model, T0 + 0.1).live

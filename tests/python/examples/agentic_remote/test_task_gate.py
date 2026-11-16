@@ -10,6 +10,7 @@ checker are stand-ins the test scripts.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 import types
 from collections.abc import Callable, Iterator
@@ -33,7 +34,7 @@ from isaaccapture_examples.agentic_remote.agent.task_gate import (
     SKILL_STOP_TOLD,
     TaskGate,
 )
-from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair, send
 from isaaccapture_examples.agentic_remote.protocol.messages import Result
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import Owner
 from link_bench import WAIT_S, until
@@ -87,6 +88,10 @@ class Rig:
         self.on_ask: Callable[[], None] | None = None
         self.checker = Checker(self.log)
         self.depth = 0  # how many skill scopes are open
+        # driver_check is the gate's own keyword, not a task setting.
+        options = {
+            name: settings.pop(name) for name in ("driver_check",) if name in settings
+        }
         self.gate = TaskGate(
             self.link,
             None,
@@ -95,6 +100,7 @@ class Rig:
             say=self.said.append,
             motion_skills=MOTION,
             read_only_tools=READ_ONLY_TOOLS,
+            **options,
         )
         self.gate.bind_arm(self, self.checker)
         real = self.link.request_owner
@@ -988,3 +994,148 @@ def test_clear_skill_stop_false_keeps_the_restart(
     # The latch stays for the run, whatever the checker says later.
     rig.checker.estopped = False
     assert rig.gate.restart_needed is True and rig.gate.tell_restart() is True
+
+
+def test_a_stop_between_the_count_check_and_the_reset_is_not_erased(rig: Rig) -> None:
+    end_in_a_skill_stop(rig)
+    reset = rig.checker.reset_estop
+
+    def stop_then_reset() -> None:
+        rig.checker.estop()  # after the gate compared the counts
+        reset()
+
+    rig.checker.reset_estop = stop_then_reset
+    count = rig.checker._observation_cancel_generation
+    refused = grasp(rig)
+    assert refused["refused"] == "ownership"
+    assert refused["motion_block_reason"] == (
+        f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
+    )
+    # Latched again by the checker's own stop; granted, given back, not opened.
+    assert rig.checker.estopped is True
+    assert rig.checker._observation_cancel_generation == count + 2
+    assert rig.kinds() == ["ask", "request", "result", "reset", "request", "result"]
+    assert rig.of("result")[-1][1:] == ("nobody", "completed")
+    assert rig.gate.restart_needed is False
+    # The next task's question names the latch, and its yes clears it.
+    rig.checker.reset_estop = reset
+    rig.log.clear()
+    rig.answers = ["yes"]
+    assert grasp(rig) == {"ok": True} and rig.checker.estopped is False
+
+
+def test_a_checker_without_the_stop_count_keeps_its_latch(rig: Rig) -> None:
+    end_in_a_skill_stop(rig)
+    log = rig.log
+
+    class NoCount:
+        estopped = True
+
+        def estop(self) -> None:
+            self.estopped = True
+
+        def reset_estop(self) -> None:
+            log.append(("reset",))
+            self.estopped = False
+
+    checker = NoCount()
+    rig.gate.bind_arm(rig, checker)
+    rig.on_ask = checker.estop  # stopped again while the question stood
+    refused = grasp(rig)
+    # Whether it was stopped again cannot be told: nothing is cleared.
+    assert refused["motion_block_reason"] == RESTART
+    assert checker.estopped is True and rig.of("reset") == []
+    assert rig.kinds() == ["ask", "request", "result", "request", "result"]
+    assert rig.of("result")[-1][1:] == ("nobody", "completed")
+    assert rig.gate.restart_needed is True and rig.gate.restart_told is True
+
+
+@pytest.mark.parametrize("when", ["before the question", "at the question", "granted"])
+def test_clear_skill_stop_false_clears_no_latch_seen_while_a_task_starts(
+    make_rig: Callable[..., Rig], when: str
+) -> None:
+    rig = make_rig(clear_skill_stop=False)
+    if when == "before the question":
+        late = rig.gate.return_late_ownership
+
+        def return_late_ownership(*args: Any, **kwargs: Any) -> None:
+            rig.checker.estop()  # e.g. a stop from another thread
+            late(*args, **kwargs)
+
+        rig.gate.return_late_ownership = return_late_ownership
+        expected: list[str] = []
+    elif when == "at the question":
+        rig.on_ask = rig.checker.estop
+        expected = ["ask"]
+    else:
+        await_owner = rig.gate._await_owner
+
+        def stop_after_the_grant(number: Any) -> Any:
+            shown = await_owner(number)
+            rig.checker.estop()
+            return shown
+
+        rig.gate._await_owner = stop_after_the_grant
+        expected = ["ask", "request", "result", "request", "result"]
+    refused = grasp(rig)
+    assert refused["refused"] == "ownership"
+    assert refused["motion_block_reason"] == RESTART
+    assert rig.kinds() == expected
+    assert all(SKILL_STOP_NOTE not in entry[1] for entry in rig.of("ask"))
+    assert rig.checker.estopped is True and rig.owner() == "nobody"
+    assert rig.gate.restart_needed is True and rig.gate.restart_told is True
+
+
+# The driver the robot app declares
+
+
+@apai
+def test_the_driver_of_the_quoted_session_is_checked_before_the_question(
+    make_rig: Callable[..., Rig],
+) -> None:
+    seen: list[str] = []
+
+    def driver_check(driver: str) -> str | None:
+        seen.append(driver)
+        return None if driver == "sim" else f"the driver {driver!r} is not driven"
+
+    rig = make_rig(driver_check=driver_check)
+    assert grasp(rig) == {"ok": True} and seen == ["sim"]
+    assert rig.gate.wrong_driver == "" and rig.gate.tell_end() is False
+    # The robot app shows another driver for the same session.
+    rig.log.clear()
+    rig.answers = ["yes"]
+    was = rig.link.welcome
+    send(rig.robot_end, dataclasses.replace(was, driver="real"))
+    until(lambda: rig.link.welcome.driver == "real", "the new WELCOME")
+    refused = grasp(rig)
+    assert refused["refused"] == "ownership"
+    assert refused["motion_block_reason"] == "the driver 'real' is not driven"
+    assert rig.kinds() == []  # no question, no owner request
+    assert rig.gate.wrong_driver == "the driver 'real' is not driven"
+    # No later task is run, whatever the robot app declares then.
+    send(rig.robot_end, was)
+    until(lambda: rig.link.welcome.driver == "sim", "the old WELCOME")
+    ran: list[str] = []
+    again = rig.gate.bind_run_task(lambda task, **kwargs: ran.append(task))("again")
+    assert ran == [] and rig.log == [] and again.success is False
+    assert rig.gate.tell_end() is True
+    assert rig.said[-1] == (
+        "the driver 'real' is not driven: restart the agent program; it takes "
+        "no new task"
+    )
+
+
+def test_a_session_without_its_welcome_is_not_quoted(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(driver_check=lambda driver: None, owner_wait_s=0.3)
+    send(rig.robot_end, dataclasses.replace(rig.link.welcome, session_id="other"))
+    until(lambda: rig.link.welcome.session_id == "other", "the other WELCOME")
+    refused = grasp(rig)
+    session = rig.link.state().session_id
+    assert refused["motion_block_reason"] == (
+        f"no WELCOME of session {session} has arrived (the newest is of session "
+        "other): the driver of that robot app is not known"
+    )
+    assert rig.kinds() == [] and rig.gate.tell_end() is True
