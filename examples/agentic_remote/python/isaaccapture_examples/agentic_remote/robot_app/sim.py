@@ -539,7 +539,8 @@ class BasicChecker:
     """Joint-space checks for one control owner: a stand-in for APAI's checker.
 
     It knows no kinematics, so the grasp region and the contact spots are only
-    stored, and tip_blocked answers through a hook a test installs.
+    stored, tip_blocked answers through a hook a test installs, and tip_state
+    gives None: this checker knows no table.
     """
 
     def __init__(
@@ -659,6 +660,9 @@ class BasicChecker:
             self._refuse_if_latched()
         self._check_boxes("pose", self._as_pose("pose", q))
 
+    def check_low_pose(self, q: Sequence[float]) -> None:
+        self.check_pose(q)  # no table rule to leave out
+
     def check_path(
         self, q_start: Sequence[float], setpoints: Sequence[Sequence[float]], dt: float
     ) -> None:
@@ -695,6 +699,9 @@ class BasicChecker:
         with self._lock:
             hook = self._tip_hook
         return None if hook is None else hook([float(v) for v in q], region)
+
+    def tip_state(self, q: Sequence[float], region: GraspRegion | None) -> None:
+        return None  # no kinematics: where the tip is, is not known
 
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None

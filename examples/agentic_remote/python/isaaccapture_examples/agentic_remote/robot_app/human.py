@@ -26,6 +26,7 @@ from .executor import HOLD_FAILED
 from .interfaces import ArmFault, ContactStop, FeedbackLost, Owner, ReadFailed, Refusal
 
 if TYPE_CHECKING:
+    from ..protocol.messages import GraspRegion
     from .authority import Authority
     from .clock import Clock
     from .config import RobotAppConfig
@@ -55,6 +56,13 @@ _HOLD_ATTEMPTS = 2
 # at this one do the data count as fresh.
 _STAGE_READY = "ready"
 
+# The gripper tip is low while it is below the table clearance or inside the
+# agent's last grasp region. A person lifts it out: while the measured tip is
+# low, a human target, and the step toward it, may not bring the tip lower
+# than it is measured, within TIP_TOL_M. LIFT begins the refusal.
+TIP_TOL_M = 0.001
+LIFT = "lift the gripper: "
+
 
 @dataclass(frozen=True)
 class HumanTarget:
@@ -69,12 +77,16 @@ class HumanTarget:
     engaged: bool
     grip_released: bool
     q: tuple[float, ...] | None  # joint target, rad
-    # Age of the controller data when the target was made. None: unknown, stale,
-    # or not a finite number of 0 or more.
+    # Age of the controller data at arrived_mono, never less than it is: the
+    # time a target spent on its way to the Thor side is in it. None: unknown,
+    # stale, or not a finite number of 0 or more.
     sample_age_s: float | None
     # The app's monotonic clock when the target reached the Thor side.
     arrived_mono: float
     round_trip_s: float | None = None
+    # The jaw opening the trigger asks for, 1.0 fully open to 0.0 closed; None:
+    # the trigger is not usable. The human drive does not read it.
+    jaw_opening: float | None = None
 
 
 def _finite(value: object) -> bool:
@@ -166,6 +178,8 @@ class _Drive:
     should_stop: Callable[[], str | None]
     # The pose the start read measured, None before it.
     measured: list[float] | None = None
+    # The newest reading of each joint: the start read's, then the watch's.
+    at: list[float] = field(default_factory=list)
     # Where the next step starts: the measured pose, then the last setpoint sent.
     q_prev: list[float] = field(default_factory=list)
     # This pass's setpoint once it is checked, and the target it follows.
@@ -183,10 +197,11 @@ class HumanDrive:
 
     Once per period it asks the stop conditions, the newest target's numbers,
     stage and age and the live view's age, moves one speed-limited step toward
-    the target, has the human checker check it and sends it. Every end leaves the
-    last setpoint sent standing, which is a hold with the motors on; a contact
-    holds at the measured pose. It never changes the control owner, raises no
-    stop, cuts no torque and leaves the jaws alone.
+    the target, has the human checker check it and sends it. While the measured
+    gripper tip is low, a target that would lower it ends the drive, refused.
+    Every end leaves the last setpoint sent standing, which is a hold with the
+    motors on; a contact holds at the measured pose. It never changes the
+    control owner, raises no stop, cuts no torque and leaves the jaws alone.
     """
 
     def __init__(
@@ -203,14 +218,17 @@ class HumanDrive:
         claim_idle: Callable[[], AbstractContextManager[bool]],
         note_clamped: Callable[[], None] | None = None,
         reads_paused: Callable[[], AbstractContextManager[None]] | None = None,
+        last_grasp_region: Callable[[], GraspRegion | None] | None = None,
     ) -> None:
         """checker is the human checker; view_age(now) is the live view's age.
 
         A drive runs inside claim_idle() (MoveExecutor.claim_idle), so no move
         starts meanwhile. note_clamped is called for a step the speed clamp
         cut. From its start read on the drive runs inside reads_paused()
-        (IdleReader.paused).
+        (IdleReader.paused). last_grasp_region() is the grasp region of the
+        agent's last grasp, None when there is none.
         """
+        self._last_grasp_region = last_grasp_region or (lambda: None)
         self._arm = arm
         self._authority = authority
         self._checker = checker
@@ -312,6 +330,7 @@ class HumanDrive:
         if measured is None:
             return "refused", "the start pose read left a joint out"
         drive.measured = measured
+        drive.at = list(measured)
         drive.q_prev = measured  # the first step starts where the arm is
         self._checker.begin_motion(self._checker.halt_count())
         drive.begun = True
@@ -342,6 +361,9 @@ class HumanDrive:
         if far is not None:
             return "refused", far
         q_next = self._clamped(target.q, drive.q_prev)
+        lower = self._lift_problem(drive, target.q, q_next)
+        if lower is not None:
+            return "refused", lower
         self._checker.check_setpoint(drive.q_prev, q_next, config.period_s)
         # The check took time: what held before it is asked again.
         stop = self._stop_reason(drive)
@@ -371,7 +393,11 @@ class HumanDrive:
             # A delay, not the usual cost: the next setpoint keeps its distance.
             drive.due += behind
         deadline = drive.due + config.period_s
-        drive.watch.after_send(index, drive.q_next, deadline)
+        readings = drive.watch.after_send(index, drive.q_next, deadline)
+        for reading in readings or ():
+            known = 0 <= reading.joint < len(drive.at)
+            if known and reading.valid and math.isfinite(reading.value):
+                drive.at[reading.joint] = float(reading.value)
         # The checker suspends its watchdog while it is in motion: this feed
         # serves the next drive, and the sample age is the watchdog of this one.
         self._feed(drive, drive.target)
@@ -476,6 +502,24 @@ class HumanDrive:
             f"the target is {off:.3f} rad from the arm on joint index {joint}, "
             f"the limit is {limit:g} rad"
         )
+
+    def _lift_problem(
+        self, drive: _Drive, q: Sequence[float], q_next: Sequence[float]
+    ) -> str | None:
+        """Why the target q, or the step q_next toward it, is no lift, else None.
+
+        Only while the measured gripper tip is low; with a checker that knows
+        no table it never is.
+        """
+        region = self._last_grasp_region()
+        tip = self._checker.tip_state(drive.at, region)
+        if tip is None or tip.low is None:
+            return None
+        for what, pose in (("the target", q), ("the step toward the target", q_next)):
+            to = self._checker.tip_state(pose, region)
+            if to is not None and to.z < tip.z - TIP_TOL_M:
+                return f"{LIFT}{tip.low}, and {what} would lower it to z={to.z:.3f} m"
+        return None
 
     def _clamped(self, q: Sequence[float], q_prev: Sequence[float]) -> list[float]:
         """One step from q_prev toward q, each joint within the speed clamp.

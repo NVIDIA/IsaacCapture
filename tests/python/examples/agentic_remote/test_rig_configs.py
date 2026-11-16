@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Sequence
+import sys
+import types
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pytest
@@ -26,22 +28,38 @@ from isaaccapture_examples.agentic_remote.human.types import IkSettings
 from isaaccapture_examples.agentic_remote.link_service import __main__ as service_main
 from isaaccapture_examples.agentic_remote.link_service import config as service_config
 from isaaccapture_examples.agentic_remote.protocol.messages import HumanSetpoint
+from isaaccapture_examples.agentic_remote.robot_app.app import (
+    LOW_TIP,
+    OUTSIDE_HUMAN_LIMITS,
+    TAKEN_OVER,
+    TAKEOVER_OPEN,
+)
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import (
     ConfigError,
     RobotAppConfig,
     load_config,
 )
-from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
+from isaaccapture_examples.agentic_remote.robot_app.human import LIFT, SPEED_MARGIN
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     MotionState,
     Owner,
+    Refusal,
 )
+from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
 from repo_paths import repo_root
 
 import test_apai_backend as rs
-from conftest import AppHarness
-from test_takeover import drives, feed, keep_human_fed, setpoint, take_over
+from conftest import AppHarness, basic_checkers
+from test_takeover import (
+    ask_takeover,
+    drives,
+    feed,
+    final,
+    keep_human_fed,
+    setpoint,
+    take_over,
+)
 
 CONFIGS = repo_root() / "examples" / "agentic_remote" / "configs"
 ROBOT_RIG = CONFIGS / "robot_app_rebot.yaml"
@@ -58,6 +76,15 @@ BOX_LOW = (-2.8, -0.05, -0.05, -1.69, -1.57, -3.14)
 # The agent's working box: 120 degrees around 0, cut to the joint box.
 ENVELOPE_LOW = (-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944)
 ENVELOPE_HIGH = (2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944)
+# How far inside the recovery region (rest.region_*, the start poses a return
+# to rest is taken from) each bound of the human joint box lies, rad. A bound
+# is one side of one joint: (joint index, "min" or "max").
+HUMAN_BOX_MARGIN_RAD = 0.02
+# The two bounds without the margin: the second and third joint lie on their
+# stops at rest, and their lower bound is the region's.
+ON_STOPS = ((1, "min"), (2, "min"))
+HUMAN_LOW = (-2.0744, -0.05, -0.05, -1.67, -1.55, -2.0744)
+HUMAN_HIGH = (2.0744, 2.0744, 2.0744, 1.77, 1.55, 2.0744)
 
 apai = pytest.mark.apai
 
@@ -95,11 +122,12 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
     for limit_set in (limits.agent, limits.recovery):
         assert limit_set.version == "rebot-p2-1"
         assert (limit_set.joint_min, limit_set.joint_max) == (BOX_LOW, MODEL_HIGH)
-    # The human joint box is the recovery region, which is the agent's working box.
+    # The human joint box lies inside the recovery region, which is the agent's
+    # working box: by HUMAN_BOX_MARGIN_RAD on every bound but the two ON_STOPS.
     assert limits.human.version == "rebot-p3-1"
     assert (limits.human.joint_min, limits.human.joint_max) == (
-        ENVELOPE_LOW,
-        ENVELOPE_HIGH,
+        HUMAN_LOW,
+        HUMAN_HIGH,
     )
     assert limits.human.max_step_rad == 0.1
     assert (limits.agent.envelope_min, limits.agent.envelope_max) == (
@@ -154,7 +182,18 @@ def test_the_human_settings_ship_in_the_safe_position(robot_rig):
 
 def test_the_rig_file_keeps_a_person_inside_the_recovery_region(robot_rig):
     human, rest = robot_rig.limits.human, robot_rig.rest
-    assert (human.joint_min, human.joint_max) == (rest.region_min, rest.region_max)
+    # A joint driven to the edge of the human joint box can read a few
+    # thousandths of a rad outside it. The margin keeps such a reading inside
+    # the region, where a typed rest is taken.
+    for joint in range(robot_rig.n_joints):
+        if (joint, "min") in ON_STOPS:
+            # A joint cannot be driven below the stop it lies on at rest.
+            assert human.joint_min[joint] == rest.region_min[joint] == -0.05
+        else:
+            below = human.joint_min[joint] - rest.region_min[joint]
+            assert below == pytest.approx(HUMAN_BOX_MARGIN_RAD, abs=1e-9), joint
+        above = rest.region_max[joint] - human.joint_max[joint]
+        assert above == pytest.approx(HUMAN_BOX_MARGIN_RAD, abs=1e-9), joint
     # So the rig file passes the check that human.enabled brings.
     on = dataclasses.replace(robot_rig.human, enabled=True)
     assert dataclasses.replace(robot_rig, human=on).human.enabled
@@ -344,8 +383,8 @@ def test_a_new_task_starts_from_each_rig_reading_with_the_rig_file(
 # pose of the gripper tip to joint values.
 
 # The rig's limit on the hand's speed, m/s: retarget.max_linear_velocity of
-# configs/human_rebot.yaml, which is not loaded here. The hand below keeps its
-# orientation, so that file's limit on turning is not met.
+# configs/human_rebot.yaml; a test below holds the two together. The hand below
+# keeps its orientation, so that file's limit on turning is not met.
 HAND_SPEED = 0.01
 LIFT_M = 0.03  # the first human motion planned on the rig: 3 cm straight up
 
@@ -459,6 +498,308 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         assert sdk.disconnects == 0 and arm.torque_on()
     finally:
         h.close()
+
+
+def test_the_rig_human_file_names_the_hand_speed_and_the_ahead_limit_of_the_lift():
+    # The lift above stands for the rig's human file only while that file
+    # names the speed its hand rises with and the ahead limit it is held to.
+    rig = shipped("human_rebot.yaml")
+    assert rig["retarget"]["max_linear_velocity"] == HAND_SPEED
+    assert rig["ik"]["max_ahead_rad"] == IkSettings().max_ahead_rad
+
+
+# The edge of the rig file's human joint box. A STOP makes nobody the control
+# owner and leaves the takeover open. A new takeover is refused where the
+# human checker refuses the measured pose, and a typed rest, the operator's
+# return to rest confirmed with "path is clear", is taken only from inside
+# rest.region_*. The outer band is the part of the region outside the box.
+
+OVER_RAD = 0.005  # a joint driven to a bound reads this far outside it
+BAND_RAD = 0.01  # how far outside the box the pose in the outer band lies
+
+# Per bound that has the margin, a pose there; the bound's own joint is filled
+# in by beside(). With that joint 0.01 rad inside its bound APAI's human
+# checker of the rebot_rs profile takes the pose, and with it up to BAND_RAD
+# outside, APAI's recovery checker takes every setpoint of the return to rest.
+BESIDE = {
+    (0, "min"): (0.0, 0.3, 0.3, 1.5, -1.0, 0.0),
+    (0, "max"): (0.0, 0.3, 0.3, 1.5, 1.0, 0.0),
+    (1, "max"): (0.0, 0.0, 0.3, 1.5, 0.0, 0.0),
+    (2, "max"): (0.0, 0.9, 0.0, -1.5, 0.0, 0.0),
+    (3, "min"): (0.0, 0.6, 1.2, 0.0, 0.0, 0.0),
+    (3, "max"): (0.0, 0.6, 0.1, 0.0, 0.0, 0.0),
+    (4, "min"): (0.0, 0.3, 0.3, 0.0, 0.0, 0.0),
+    (4, "max"): (0.0, 0.3, 0.3, 0.0, 0.0, 0.0),
+    (5, "min"): (0.0, 0.3, 0.3, 0.5, 1.0, 0.0),
+    (5, "max"): (0.0, 0.3, 0.3, 0.5, -1.0, 0.0),
+}
+REST_REFUSED = "rest: refused: joint index {} at {:.4f} rad is outside the tested "
+
+
+def named(bound: tuple[int, str]) -> str:
+    return f"joint{bound[0]}_{bound[1]}"
+
+
+def beside(config: RobotAppConfig, bound: tuple[int, str], off: float) -> list[float]:
+    """A pose whose joint lies `off` rad outside this bound of the human joint box.
+
+    A negative `off` lies inside the box. The other joints are BESIDE's, or 0.
+    """
+    joint, side = bound
+    human = config.limits.human
+    pose = list(BESIDE.get(bound, (0.0,) * config.n_joints))
+    if side == "min":
+        pose[joint] = human.joint_min[joint] - off
+    else:
+        pose[joint] = human.joint_max[joint] + off
+    return pose
+
+
+class PersonRig(NamedTuple):
+    """The rig file's robot app with human driving switched on, and its arm."""
+
+    h: AppHarness
+    place: Callable[[Sequence[float]], None]  # the arm reads this pose and holds
+    sent: Callable[[], list[list[float]]]  # every joint target the motors got
+
+
+@pytest.fixture(params=["sim", pytest.param("apai", marks=apai)])
+def person_rig(request, robot_rig, clock, monkeypatch) -> Iterator[PersonRig]:
+    """The rig file's robot app at rest, started, with human driving switched on.
+
+    Once on the simulated arm with its checkers, which read exactly what was
+    sent and know no kinematics, and once on APAI's driver of the rebot_rs
+    profile over the stand-in motor SDK, with APAI's checkers.
+    """
+    # Human driving ships switched off in the rig file: on here, in memory only.
+    on = dataclasses.replace(robot_rig.human, enabled=True)
+    config = dataclasses.replace(robot_rig, human=on)
+    if request.param == "sim":
+        rest_q = list(config.rest.rest_q)
+        arm = SimArm(n_joints=config.n_joints, clock=clock, q0=rest_q)
+        h = AppHarness(config, arm, basic_checkers(config, clock), clock)
+        place, sent = h.hold_at, h.sent
+    else:
+        backend = rs.apai_backend
+        cap = {"safety": {"max_joint_vel": 0.1}}
+        profile = backend.load_apai_profile("rebot_rs", cap)
+        config = backend.config_for_profile(config, profile)
+        arm, sdk = rs.rs_arm(config, profile, clock, monkeypatch)
+        checkers = backend.build_apai_checkers(config, profile, clock)
+        h = AppHarness(config, arm, checkers, clock)
+        # APAI's driver refuses a full read that lies farther from its last
+        # good one than the arm can travel in the time between, which it takes
+        # from the machine's clock. A return to rest of 40 s on the fake clock
+        # lasts a fraction of a second there: the driver reads the app's clock.
+        driver = arm.backend
+        app_time = types.SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep)
+        monkeypatch.setattr(sys.modules[type(driver).__module__], "time", app_time)
+
+        def place(pose: Sequence[float]) -> None:
+            for motor, value in zip(sdk.arm.joint_names, pose):
+                sdk.arm._mm[motor].value = value
+            # The arm is here without having travelled: the driver's last good
+            # full read is this pose.
+            driver._last_q = driver._read_positions()
+            driver._last_q_t = clock.monotonic()
+            h.app._motion.set(MotionState.HOLD)
+
+        def sent() -> list[list[float]]:
+            return [q for q, _ in sdk.arm.sent]
+
+    try:
+        h.start()
+        yield PersonRig(h, place, sent)
+    finally:
+        h.close()
+
+
+def refused_for_the_human_joint_box(h: AppHarness) -> None:
+    """A takeover asked now is refused by the human joint box; it names the rest."""
+    before = h.app.snapshot()
+    feed(h)  # fresh controller data and a live view: neither is the reason
+    refused = ask_takeover(h)
+    assert refused.status == "refused"
+    assert refused.reason.startswith(OUTSIDE_HUMAN_LIMITS), refused.reason
+    assert "is outside the human joint limits" in refused.reason
+    assert refused.reason.endswith("; type rest")
+    assert h.app.snapshot() == before
+
+
+def typed_rest(h: AppHarness) -> str:
+    """Type rest and "path is clear" at the Thor terminal; the terminal's answer."""
+    return h.thor_terminal().ask("rest", "path is clear", answer="rest: ")
+
+
+def at_rest_after_the_return(rig: PersonRig) -> None:
+    """The return to rest ran to its end, and a takeover is taken there."""
+    h = rig.h
+    assert h.app.motion_state is MotionState.REST_HOLD
+    assert rig.sent()[-1] == list(h.config.rest.rest_q)
+    assert h.arm.torque_on()
+    assert take_over(h).status == "completed"
+
+
+@pytest.mark.parametrize("bound", list(BESIDE), ids=named)
+def test_a_typed_rest_is_taken_after_a_stop_just_outside_the_rig_human_box(
+    person_rig, bound
+):
+    h, place, sent = person_rig
+    # A person owns the arm, one joint 0.01 rad inside a bound of the box.
+    place(beside(h.config, bound, -0.01))
+    take_over(h)
+    assert h.app.snapshot().owner is Owner.HUMAN
+    # The joint then reads a few thousandths of a rad outside, and a STOP comes.
+    place(beside(h.config, bound, OVER_RAD))
+    h.client.stop(reason="right B", sender="controller")
+    h.client.wait_state(lambda s: s.owner == "nobody" and s.stop_number == 1)
+    assert h.app.takeover_open
+    # No squeeze brings the joint back: a new takeover is refused there, and
+    # the agent gets no task while the takeover is open.
+    refused_for_the_human_joint_box(h)
+    assert final(h, h.client.request_owner("agent")).reason == TAKEOVER_OPEN
+    assert sent() == []
+    # The reading lies inside rest.region_*: the typed rest is the way out.
+    assert typed_rest(h) == "rest: completed"
+    at_rest_after_the_return(person_rig)
+
+
+@pytest.mark.parametrize("bound", list(BESIDE), ids=named)
+def test_the_outer_band_of_the_rig_file_refuses_a_takeover_and_takes_a_typed_rest(
+    person_rig, bound
+):
+    h, place, sent = person_rig
+    joint, _ = bound
+    # What the margin costs. The arm holds where an agent's move may end:
+    # inside the region, outside the human joint box. Nobody owns it.
+    band = beside(h.config, bound, BAND_RAD)
+    rest = h.config.rest
+    assert rest.region_min[joint] < band[joint] < rest.region_max[joint]
+    place(band)
+    assert h.app.snapshot().owner is Owner.NOBODY
+    refused_for_the_human_joint_box(h)
+    assert not h.app.takeover_open and sent() == []
+    assert typed_rest(h) == "rest: completed"
+    at_rest_after_the_return(person_rig)
+
+
+@pytest.mark.parametrize("bound", ON_STOPS, ids=named)
+def test_below_the_two_bounds_without_the_margin_a_typed_rest_is_refused(
+    person_rig, bound
+):
+    # A known limit, left as it is. The second and third joint lie on their
+    # stops at rest, and a joint target cannot drive a joint below its stop:
+    # a reading below the region's -0.05 there is no tracking error. A margin
+    # at these two bounds would take its width from a takeover at rest.
+    h, place, sent = person_rig
+    joint, _ = bound
+    place(beside(h.config, bound, -0.01))
+    take_over(h)
+    under = beside(h.config, bound, OVER_RAD)
+    place(under)
+    h.client.stop(reason="right B", sender="controller")
+    h.client.wait_state(lambda s: s.owner == "nobody" and s.stop_number == 1)
+    refused_for_the_human_joint_box(h)
+    refused = typed_rest(h)
+    assert refused.startswith(REST_REFUSED.format(joint, under[joint])), refused
+    assert refused.endswith("recovery region -0.0500..2.0944")
+    assert sent() == [] and h.arm.torque_on()
+
+
+# A low gripper tip on the rig file. The table clearance is the height over the
+# table the gripper tip keeps outside a grasp: rest.table_clearance_m of the
+# file and safety.table_clearance of APAI's profile. A tip under it is low: a
+# typed rest is refused there, a takeover is granted, and until the measured
+# tip is clear a human target is followed only when it does not lower the tip.
+
+# Poses of the rebot_rs arm model inside the rig's human joint box: the gripper
+# tip 1 cm over the table, the same with the tip 4 mm lower, and the tip 3 cm
+# over the table.
+TIP_LOW = [0.0, 1.68, 0.7, 0.0, 0.5, 0.0]
+TIP_LOWER = [0.0, 1.69, 0.7, 0.0, 0.5, 0.0]
+TIP_CLEAR = [0.0, 1.62, 0.7, 0.0, 0.5, 0.0]
+STRIDE = 0.05  # rad a hand's target runs ahead of the last joint target sent
+
+
+class JointHand:
+    """A hand that squeezes toward a pose: keep_human_fed's setpoint.
+
+    Its target runs at most STRIDE per joint ahead of the last joint target
+    the motors got. The grip is released once they got the goal.
+    """
+
+    def __init__(self, rig: PersonRig) -> None:
+        self.rig = rig
+        self.goal: list[float] | None = None  # None: the grip is released
+        keep_human_fed(rig.h, self)
+
+    def __call__(self) -> HumanSetpoint:
+        if self.goal is None:
+            return setpoint(self.rig.h)
+        last = self.rig.sent()[-1]
+        if max(abs(to - at) for at, to in zip(last, self.goal)) < 1e-9:
+            self.goal = None
+            return setpoint(self.rig.h)
+        return setpoint(self.rig.h, self.ahead(last))
+
+    def ahead(self, last: Sequence[float]) -> list[float]:
+        """The target that leads `last` toward the goal."""
+        return [
+            at + max(-STRIDE, min(STRIDE, to - at)) for at, to in zip(last, self.goal)
+        ]
+
+    def squeeze(self, measured: Sequence[float], goal: Sequence[float]) -> None:
+        """Squeeze at the measured pose toward goal; the human drive has ended."""
+        h = self.rig.h
+        self.goal = None
+        feed(h)  # fresh controller data: the grip is released
+        self.goal = [float(value) for value in goal]
+        feed(h, setpoint(h, self.ahead(measured)))
+        h.idle()
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+def test_a_person_lifts_a_low_gripper_tip_out_with_the_rig_file(person_rig):
+    # Only APAI's checkers know a table: the simulated arm's have no such rule.
+    h, place, sent = person_rig
+    human = h.checkers.human
+    clearance = h.config.rest.table_clearance_m
+    place(TIP_LOW)
+    low = human.tip_state(TIP_LOW, None)
+    assert 0.0 < low.z < clearance and low.low is not None
+    # The human checker refuses the pose, and for the low tip alone.
+    with pytest.raises(Refusal, match=r"^TCP z=0\.011 below table clearance 0\.020$"):
+        human.check_pose(TIP_LOW)
+    human.check_low_pose(TIP_LOW)
+    # No typed command moves the arm from there.
+    assert typed_rest(h) == f"rest: refused: {low.low}"
+    # A takeover is granted, and it says what a person can do there.
+    number = take_over(h).detail["owner_number"]
+    assert h.heard("owner")[-1][1] == TAKEN_OVER.format(number=number) + LOW_TIP
+    assert h.app.snapshot().owner is Owner.HUMAN and sent() == []
+    ended = drives(h)
+    hand = JointHand(person_rig)
+    # A target that lowers the tip moves nothing: the arm holds.
+    hand.squeeze(TIP_LOW, TIP_LOWER)
+    assert [(end.status, end.sent) for end in ended] == [("refused", 0)]
+    assert ended[0].reason.startswith(f"{LIFT}{low.low}, and the target would lower")
+    assert sent() == [] and h.arm.torque_on()
+    # The lift: every setpoint raises the tip, up to above the table clearance.
+    hand.squeeze(TIP_LOW, TIP_CLEAR)
+    lift = sent()
+    assert [(end.status, end.sent) for end in ended[1:]] == [("released", len(lift))]
+    assert lift[-1] == pytest.approx(TIP_CLEAR, abs=1e-9)
+    heights = [human.tip_state(q, None).z for q in lift]
+    assert all(b > a for a, b in zip([low.z, *heights], heights))
+    assert heights[-1] > clearance and human.tip_state(lift[-1], None).low is None
+    assert len(h.heard("human")) == 1  # the refused squeeze's, none since
+    # With the tip clear the typed rest is taken; the takeover stays open.
+    assert typed_rest(h) == "rest: completed"
+    assert h.app.motion_state is MotionState.REST_HOLD
+    assert sent()[-1] == list(h.config.rest.rest_q)
+    assert h.arm.torque_on() and h.app.takeover_open
 
 
 # agent_rebot.yaml

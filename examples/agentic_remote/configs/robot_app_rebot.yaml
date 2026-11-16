@@ -19,8 +19,10 @@ joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
 # -1.57..1.57, -3.14..3.14, with one change: joint indices 1 and 2 lie on their
 # stops at rest and read a few mrad below 0 there, so their boxes begin at -0.05.
 # The limits are the model's, not a measurement of this arm. The human joint box
-# is narrower: it is rest.region_*, so that a person cannot leave the arm where a
-# typed rest is refused; with human.enabled a wider one is refused.
+# is narrower: it lies 0.02 rad inside rest.region_*, the start poses a return to
+# rest is taken from, on every bound but the lower bound of joint indices 1 and
+# 2, which keep the region's -0.05. The comment at limits.human says why. With
+# human.enabled a human joint box that reaches outside rest.region_* is refused.
 # Every speed is 0.1: the rig's profile caps the joint speed at 0.1 or 0.2, and a
 # limit set faster than the profile's cap is refused.
 limits:
@@ -35,11 +37,17 @@ limits:
     envelope_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
   human:
     version: rebot-p3-1
-    # The values of rest.region_*, which are also the agent's working box: a
-    # takeover, which makes a person the control owner, stays possible wherever
-    # the agent can stop.
-    joint_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
-    joint_max: [2.0944, 2.0944, 2.0944, 1.79, 1.57, 2.0944]
+    # 0.02 rad inside rest.region_*, which is also the agent's working box. A
+    # joint driven to the edge of this box can read a few thousandths of a rad
+    # outside it. After a STOP there nobody is the control owner, and a
+    # takeover, which makes a person the control owner, is refused outside this
+    # box: the typed rest must still be taken, and it is taken only from inside
+    # the region. The lower bound of joint indices 1 and 2 keeps the region's
+    # -0.05: they lie on their stops at rest and cannot be driven below them.
+    # The cost: in the outer 0.02 rad of the agent's working box a takeover is
+    # refused. Type rest there.
+    joint_min: [-2.0744, -0.05, -0.05, -1.67, -1.55, -2.0744]
+    joint_max: [2.0744, 2.0744, 2.0744, 1.77, 1.55, 2.0744]
     # First value. It may not exceed the profile's cap. A person's motion is
     # clamped at 0.98 of it.
     max_joint_speed: 0.1
@@ -132,6 +140,13 @@ human:
   # link message. The human program is the workstation program that turns
   # controller data into joint targets; its stage is how far it is with them.
   stage_keep_s: 4.0
+  # Whether the controller's trigger moves the jaws while a person owns the arm;
+  # false: it does nothing. The grip level is the jaw opening in force at the
+  # takeover: the trigger is ignored until the opening it asks for is within
+  # jaw_match_tol of the grip level, as a share of the jaw travel, or has
+  # crossed it.
+  trigger_jaws: true
+  jaw_match_tol: 0.05
 
 connection:
   retry_s: 1.0

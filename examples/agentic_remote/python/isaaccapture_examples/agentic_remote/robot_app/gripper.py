@@ -3,7 +3,8 @@
 
 """The jaws: what they may hold, and the one thread that runs their commands.
 
-See sections 9 and 11 of docs/design/claude_agentic_remote_execution.md.
+Also how they follow the trigger of a person who owns the arm. See sections 9,
+11 and 12 of docs/design/claude_agentic_remote_execution.md.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..protocol.messages import GripperState
 from .interfaces import (
@@ -40,6 +41,9 @@ JAW_MODES = (PLAIN, CLOSE_UNTIL_CONTACT)
 # What a queued jaw reference carries in place of a jaw mode; no link message
 # can ask for it.
 REFERENCE = "reference"
+# What a queued step of the jaws toward a person's trigger carries in place of
+# a jaw mode; no link message can ask for it.
+FOLLOW = "follow"
 ALREADY_REFERENCED = "the jaws are referenced already"
 JAWS_BUSY = "busy: a jaw command is running or waiting"
 DROPPED_BY_STOP = "dropped by a stop"
@@ -62,6 +66,16 @@ STOP_WAIT_S = 0.25
 _CLOSE_WAIT_S = 2.0
 
 _EPS = 1e-9
+
+# Why the trigger of a person who owns the arm moves no jaw (JawFollower). The
+# grip level is the jaw opening in force when the person took the arm over.
+NOT_MATCHED = "the trigger has not reached the grip level"
+NO_OPENING = "the human target carries no jaw opening"
+NO_GRIP_LEVEL = "the grip level is not known: "
+STEP_OUT = "a jaw step that was cut short has not returned"
+# Why the jaws stay wider than the trigger asks.
+NO_TIGHTER = "no closing beyond the grip level until the jaws were measured fully open"
+NO_CLOSING = "no closing: "
 
 DoneFn = Callable[[GripperOutcome], None]
 
@@ -259,6 +273,8 @@ class _Job:
     on_done: DoneFn | None
     owner_number: int  # the authority's numbers when the request was admitted
     stop_number: int
+    # App-clock time at or after which the request is not started; None: none.
+    expires_mono_s: float | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
     returned: threading.Event = field(default_factory=threading.Event)
     light_hold_owed: bool = False  # a stop gave up waiting for the arm call
@@ -311,16 +327,27 @@ class GripperWorker:
         mode: str,
         admitted_owner: Owner,
         on_done: DoneFn | None = None,
+        expires_mono_s: float | None = None,
     ) -> str | None:
         """Queue one jaw command; returns why it was refused at once, or None.
 
         Refused when a fault-stop is latched, when the control owner is not
-        admitted_owner, when a value is out of range, or when MAX_WAITING
-        requests wait already.
+        admitted_owner, when a value is out of range, when MAX_WAITING
+        requests wait already, or when expires_mono_s, a time of the app
+        clock, has passed. A command whose expiry passes while it waits ends
+        "refused" with no arm command sent; None never expires.
         """
         reason = _value_refusal(opening, max_effort, mode)
+        reason = reason or self._expired(expires_mono_s)
         return self._enqueue(
-            opening, max_effort, mode, False, Owner(admitted_owner), on_done, reason
+            opening,
+            max_effort,
+            mode,
+            False,
+            Owner(admitted_owner),
+            on_done,
+            reason,
+            expires_mono_s=expires_mono_s,
         )
 
     def open_guarded(
@@ -351,6 +378,37 @@ class GripperWorker:
         reason = ALREADY_REFERENCED if self._arm.gripper_referenced() else None
         return self._enqueue(
             0.0, 0.0, REFERENCE, False, Owner.NOBODY, on_done, reason, alone=True
+        )
+
+    def follow(
+        self,
+        opening: float,
+        owner_number: int,
+        stop_number: int,
+        on_done: DoneFn | None = None,
+        max_effort: float = OPEN_EFFORT,
+    ) -> str | None:
+        """Queue one step of the jaws toward `opening`; None if queued.
+
+        For the trigger of a person who owns the arm. The step is at most one
+        arm command: one step of open_step toward a wider opening, or a close
+        to `opening`, which ends in the light hold when the jaws stall. None
+        is sent when the jaws are there, or hold something with a jaw target
+        no wider than `opening`. Refused when a fault-stop is latched, when
+        the control owner is not a person, when the two numbers are not the
+        current ones, or when any jaw request runs or waits.
+        """
+        reason = _value_refusal(opening, max_effort, PLAIN)
+        return self._enqueue(
+            opening,
+            max_effort,
+            FOLLOW,
+            False,
+            Owner.HUMAN,
+            on_done,
+            reason,
+            alone=True,
+            numbers=(owner_number, stop_number),
         )
 
     def stop_now(self, keep_reference: bool = False) -> bool:
@@ -466,13 +524,20 @@ class GripperWorker:
         on_done: DoneFn | None,
         reason: str | None,
         alone: bool = False,
+        numbers: tuple[int, int] | None = None,
+        expires_mono_s: float | None = None,
     ) -> str | None:
         """Queue a request unless `reason` or the authority refuses it.
 
         alone: it is taken only while no other jaw request runs or waits.
+        numbers: the owner number and the stop number the request quotes; it
+        is taken only while they are the current ones.
+        expires_mono_s: the request is not started at or after this time.
         """
         state = self._authority.snapshot()
         reason = _authority_refusal(state, owner) or reason
+        if reason is None and numbers is not None:
+            reason = _numbers_refusal(state, numbers)
         if reason is None:
             job = _Job(
                 float(opening),
@@ -482,6 +547,7 @@ class GripperWorker:
                 on_done,
                 state.owner_number,
                 state.stop_number,
+                expires_mono_s,
             )
             with self._cond:
                 if self._closed:
@@ -536,8 +602,14 @@ class GripperWorker:
 
     def _execute(self, job: _Job) -> tuple[GripperOutcome, str | None]:
         """Run a request; returns its outcome and the fault reason, if any."""
+        expired = self._expired(job.expires_mono_s)
+        if expired is not None:
+            _log.info("jaw command refused: %s", expired)
+            return GripperOutcome(REFUSED, None, expired), None
         if job.mode == REFERENCE:
             return self._reference(job)
+        if job.mode == FOLLOW:
+            return self._follow(job)
         if not job.guarded:
             return self._command(job, job.opening, job.mode)
         if not self._arm.gripper_referenced():
@@ -585,6 +657,37 @@ class GripperWorker:
         _log.info("jaws referenced; opening %s", job.measured)
         return GripperOutcome(REACHED, job.measured), None
 
+    def _follow(self, job: _Job) -> tuple[GripperOutcome, str | None]:
+        """One step toward the opening a trigger asks for: at most one arm command.
+
+        It ends "reached" with nothing sent when the jaws are within reach_tol
+        of the opening, or hold something with a jaw target no wider than it:
+        that light hold stands, so easing the trigger squeezes nothing anew.
+        """
+        detail = self._ended_early(job)
+        if detail is not None:
+            return GripperOutcome(CANCELLED, None, detail), None
+        if not self._arm.gripper_referenced():
+            return GripperOutcome(REFUSED, None, "the jaws are not referenced"), None
+        start = _finite(self._arm.gripper_read())
+        if start is None:
+            # A step from an unknown opening could drop or squeeze an object.
+            detail = "the jaw opening could not be read, so no jaw command was sent"
+            return GripperOutcome(REFUSED, None, detail), None
+        job.measured = start
+        config = self._jaw_state.config
+        wanted, tol = job.opening, config.reach_tol
+        to_full_open = wanted >= 1.0 - _EPS and start < 1.0 - _EPS
+        if wanted > start + tol or to_full_open:
+            step = min(wanted, start + config.open_step)
+            return self._command(job, step, PLAIN)
+        if wanted < start - tol:
+            target = _finite(self._arm.gripper_last_target())
+            held = self._jaw_state.may_be_holding and target is not None
+            if not (held and wanted >= target - tol):
+                return self._command(job, wanted, CLOSE_UNTIL_CONTACT)
+        return GripperOutcome(REACHED, start), None
+
     def _command(
         self, job: _Job, opening: float, mode: str
     ) -> tuple[GripperOutcome, str | None]:
@@ -617,6 +720,13 @@ class GripperWorker:
             self._clock.monotonic() - t_start,
         )
         return outcome, fault
+
+    def _expired(self, expires_mono_s: float | None) -> str | None:
+        """Why a request with this expiry is not started now, or None."""
+        if expires_mono_s is None:
+            return None
+        late = self._clock.monotonic() - expires_mono_s
+        return None if late < 0.0 else f"the jaw command expired {late:.3f} s ago"
 
     def _ended_early(self, job: _Job) -> str | None:
         """Why the request's next arm command must not be sent, or None."""
@@ -671,6 +781,246 @@ class GripperWorker:
                 self._reporting = False
 
 
+class JawFollower:
+    """Lets the jaws follow the trigger of a person who owns the arm.
+
+    The grip level is the jaw opening in force when the person took the arm
+    over. The trigger is ignored until the opening it asks for is within
+    match_tol of the grip level or has crossed it: the trigger has matched.
+    From then on the jaws follow it, one jaw step at a time and toward the
+    newest opening only. Until the jaws were measured fully open no opening
+    below the grip level is asked of them. Thread-safe.
+    """
+
+    def __init__(
+        self,
+        arm: ArmPort,
+        jaw_state: JawState,
+        worker: GripperWorker,
+        authority: Authority,
+        match_tol: float,
+        say: Callable[[str], None] | None = None,
+    ) -> None:
+        """say(line) logs when the jaws begin and end to follow the trigger."""
+        self._arm = arm
+        self._jaw_state = jaw_state
+        self._worker = worker
+        self._authority = authority
+        self._match_tol = float(match_tol)
+        self._say = say if say is not None else _log.info
+        config = jaw_state.config
+        # A new opening is asked of the jaws only when it differs by more.
+        self._band = config.reach_tol
+        self._full_open = 1.0 - config.full_open_tol - _EPS
+        # Reentrant: a step that is refused at once ends on the caller's thread.
+        self._lock = threading.RLock()
+        # The owner number and the stop number the grip level was noted for.
+        self._numbers: tuple[int, int] | None = None
+        self._level: float | None = None  # the grip level; None: not known
+        self._matched = False
+        self._opened = False  # measured fully open since the takeover
+        self._asked: float | None = None  # the opening the trigger asked for last
+        self._wanted: float | None = None  # the opening the jaws are to follow
+        # The opening the jaws have settled for; None while an opening goes on.
+        self._settled: float | None = None
+        self._flying: float | None = None  # the opening of the step under way
+        self._measured: float | None = None  # the end reading of the last step
+        self._step_end: float | None = None  # where an opening's last step ended
+        self._refusal = ""  # why the trigger moves nothing, or holds the jaws wider
+
+    @property
+    def following(self) -> bool:
+        """Whether the trigger has matched, so the jaws follow it."""
+        with self._lock:
+            return self._matched
+
+    def note(self, owner_number: int, stop_number: int) -> None:
+        """Note the grip level of a takeover with these numbers; sends nothing."""
+        with self._lock:
+            self._opened = False
+            self._note((owner_number, stop_number))
+
+    def offer(
+        self,
+        opening: object,
+        owner_number: int,
+        stop_number: int,
+        no_close: str | None = None,
+    ) -> None:
+        """Take the opening the trigger of one admitted human target asks for.
+
+        owner_number and stop_number are those the target quotes, which are
+        the current ones with a person the control owner. no_close says why
+        the jaws may only open now; None: they may close too. An opening of
+        None leaves the jaws as they are, and one that is not a number from 0
+        to 1 ends their motion; after either the trigger must match again.
+        """
+        numbers = (owner_number, stop_number)
+        with self._lock:
+            if self._flying is not None and not self._matched:
+                self._refusal = STEP_OUT
+                return
+            bad = None if opening is None else _fraction_refusal("jaw_opening", opening)
+            cut = bad is not None and self._matched
+            if bad is not None:
+                self._drop(f"refused: {bad}")
+            elif opening is not None:
+                self._take(float(opening), numbers, no_close)
+            elif self._matched:
+                self._drop(NO_OPENING)
+            else:
+                if numbers != self._numbers:
+                    self._note(numbers)
+                self._asked = None
+                if self._level is not None:
+                    self._refusal = NO_OPENING
+        if cut:
+            self._cut(numbers)
+
+    def end(self, reason: str, hold: bool = True) -> None:
+        """End the jaw motion as a STOP ends one; the trigger must match again.
+
+        Jaws that followed the trigger are held lightly where they are, never
+        opened; a STOP or an owner change has done that itself, and so has
+        the caller that passes hold False. Jaws that did not follow the
+        trigger are sent nothing.
+        """
+        with self._lock:
+            cut, numbers = self._matched, self._numbers
+            if cut:
+                self._say(f"the jaws no longer follow the trigger: {reason}")
+            self._drop(reason)
+        if cut and hold and numbers is not None:
+            self._cut(numbers)
+
+    def facts(self) -> dict[str, Any]:
+        """For ROBOT_STATE: whether the trigger has matched, and why not."""
+        with self._lock:
+            return {
+                "matched": self._matched,
+                "grip_level": self._level,
+                "opened": self._opened,
+                "asked": self._asked,
+                "refusal": self._refusal,
+            }
+
+    def _note(self, numbers: tuple[int, int]) -> None:
+        """Note the grip level from what is known of the jaws; the lock is held.
+
+        The last jaw target; fully open when the jaws are proven empty and
+        open; without a target the newest reading. Nothing is read or sent.
+        """
+        state = self._jaw_state.gripper_state(self._arm)
+        reading = _finite(state.opening)
+        is_open = reading is not None and reading >= self._full_open
+        level: float | None = None
+        why = ""
+        if not state.referenced:
+            why = "the jaws are not referenced"
+        elif is_open and state.load == JawLoad.EMPTY.value:
+            level = 1.0
+        elif state.last_target is not None:
+            level = min(1.0, max(0.0, state.last_target))
+        elif reading is not None:
+            level = min(1.0, max(0.0, reading))
+        else:
+            why = "the jaws have no target and no reading"
+        self._drop(NOT_MATCHED if level is not None else f"{NO_GRIP_LEVEL}{why}")
+        self._numbers, self._level = numbers, level
+        self._opened = self._opened or is_open
+        _log.debug("grip level %s for owner number %d (%s)", level, numbers[0], why)
+
+    def _take(
+        self, asked: float, numbers: tuple[int, int], no_close: str | None
+    ) -> None:
+        """Follow one opening the trigger asks for, once it has matched; lock held."""
+        if numbers != self._numbers:
+            self._note(numbers)
+        before, self._asked = self._asked, asked
+        level = self._level
+        if level is None:
+            return  # _note() said why
+        if not self._matched:
+            near = abs(asked - level) <= self._match_tol + _EPS
+            crossed = before is not None and (before - level) * (asked - level) < 0.0
+            if not (near or crossed):
+                self._refusal = NOT_MATCHED
+                return
+            self._matched = True
+            self._settled = level  # the jaws are there, or held short of it
+            self._say(f"the jaws follow the trigger from the grip level {level:.2f}")
+        wanted = 1.0 if asked >= self._full_open else asked
+        refusal = ""
+        if not self._opened and wanted < level:
+            wanted, refusal = level, NO_TIGHTER
+        # Where the jaws are, or are going: without the leave to close, no further.
+        floor = self._settled
+        if floor is None:
+            floor = self._measured if self._flying is None else self._flying
+        if no_close is not None and floor is not None and wanted < floor:
+            wanted, refusal = floor, f"{NO_CLOSING}{no_close}"
+        self._wanted, self._refusal = wanted, refusal
+        self._pump()
+
+    def _pump(self) -> None:
+        """Ask the next jaw step, unless one is under way; the lock is held."""
+        wanted, numbers = self._wanted, self._numbers
+        if self._flying is not None or not self._matched:
+            return
+        if wanted is None or numbers is None:
+            return
+        settled = self._settled
+        if settled is not None:
+            to_full_open = wanted >= 1.0 - _EPS and settled < 1.0 - _EPS
+            if abs(wanted - settled) <= self._band and not to_full_open:
+                return
+        self._flying = wanted
+        # A refusal has called _done() before this returns.
+        self._worker.follow(wanted, numbers[0], numbers[1], self._done)
+
+    def _done(self, outcome: GripperOutcome) -> None:
+        """The end of one jaw step: on the gripper worker's thread, or a caller's."""
+        with self._lock:
+            wanted, self._flying = self._flying, None
+            measured = _finite(outcome.opening)
+            if measured is not None:
+                self._measured = measured
+                if measured >= self._full_open:
+                    self._opened = True
+            if wanted is None or not self._matched:
+                return  # ended meanwhile: the grip level is noted anew
+            if outcome.status not in (REACHED, STALLED, TIMEOUT):
+                why = outcome.detail or "no reason given"
+                reason = f"a jaw step ended {outcome.status}: {why}"
+                self._say(f"the jaws no longer follow the trigger: {reason}")
+                self._drop(reason)
+                return
+            # An opening goes one step at a time: more of it may be left.
+            short = measured is not None and measured < wanted - self._band
+            further = self._step_end is None or (
+                measured is not None and measured > self._step_end + _EPS
+            )
+            if outcome.status == REACHED and short and further:
+                self._step_end, self._settled = measured, None
+            else:
+                self._step_end, self._settled = None, wanted
+            self._pump()
+
+    def _drop(self, reason: str) -> None:
+        """Forget the match and the grip level; the lock is held."""
+        self._matched = False
+        self._numbers = self._level = None
+        self._asked = self._wanted = self._settled = self._step_end = None
+        self._refusal = reason
+
+    def _cut(self, numbers: tuple[int, int]) -> None:
+        """Hold the jaws lightly where they are, while these numbers stand."""
+        state = self._authority.snapshot()
+        current = (state.owner_number, state.stop_number)
+        if state.owner is Owner.HUMAN and current == numbers:
+            self._worker.stop_now()
+
+
 def _call(on_done: DoneFn | None, outcome: GripperOutcome) -> None:
     if on_done is None:
         return
@@ -708,3 +1058,14 @@ def _authority_refusal(state: AuthorityState, owner: Owner | None) -> str | None
     if owner is not None and state.owner != owner:
         return f"control owner is {state.owner}, not {owner}"
     return None
+
+
+def _numbers_refusal(state: AuthorityState, numbers: tuple[int, int]) -> str | None:
+    """Why a request that quotes (owner number, stop number) is not taken."""
+    current = (state.owner_number, state.stop_number)
+    if numbers == current:
+        return None
+    return (
+        f"the request quotes owner number {numbers[0]} and stop number "
+        f"{numbers[1]}, the current ones are {current[0]} and {current[1]}"
+    )

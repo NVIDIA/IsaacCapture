@@ -34,6 +34,7 @@ from .interfaces import (
     JointReading,
     ReadFailed,
     Refusal,
+    TipState,
 )
 from apai.config import Cfg, load_demo_config
 from apai.control import arm_hold
@@ -79,6 +80,8 @@ _RS_OPEN_POS, _RS_CLOSED_POS = 6.2, 0.0
 _MOCK_REFERENCE_TOL = 0.05  # fraction of travel from closed
 # How the harness's pose vet begins its refusal of a pose inside a contact spot.
 _CONTACT_ZONE_REFUSAL = "TCP would enter the contact zone"
+# The radius of the column check_low_pose() opens around the gripper tip, m.
+_TIP_COLUMN_M = 1e-6
 # How ContactFeedback.stopped() begins its note of a hold at the measured pose,
 # and of a hold whose target the driver did not take.
 _HELD_MEASURED = "measured pose ["
@@ -113,6 +116,24 @@ def _in_region(point: np.ndarray, region: GraspRegion) -> bool:
     if point[2] < region.z_min:
         return False
     return region.z_max is None or point[2] <= region.z_max
+
+
+def _low_tip(
+    tip: np.ndarray,
+    clearance_m: float,
+    limits: SafetyLimits,
+    region: GraspRegion | None,
+) -> str | None:
+    """Why the gripper tip is low: under the table clearance or inside region."""
+    floor = limits.table_z + clearance_m
+    if tip[2] < floor:
+        return (
+            f"the gripper tip is at z={tip[2]:.3f} m, below the table "
+            f"clearance {floor:.3f} m"
+        )
+    if region is not None and _in_region(tip, region):
+        return "the gripper tip is inside the last grasp region"
+    return None
 
 
 def _merge(base: dict[str, Any], extra: Mapping[str, Any]) -> None:
@@ -505,6 +526,12 @@ class ApaiChecker:
             raise _refusal(exc) from exc
 
     def check_pose(self, q: Sequence[float]) -> None:
+        self._check_pose(q, low_tip=False)
+
+    def check_low_pose(self, q: Sequence[float]) -> None:
+        self._check_pose(q, low_tip=True)
+
+    def _check_pose(self, q: Sequence[float], *, low_tip: bool) -> None:
         pose = self._pose(q)
         if self._harness.estopped:
             raise Refusal("e-stop latched")
@@ -513,7 +540,13 @@ class ApaiChecker:
         # its pose vet refuses. The limit set decides the joints; the harness vets
         # the rest at the nearest pose its margin accepts.
         inside = self._kinematics.clamp(pose, self._harness.limits.joint_margin)
-        reason = self._harness.vet_pose(inside)
+        if low_tip:
+            # The pose vet takes a column in which the table rules are off. This
+            # one holds the gripper tip and nothing else, at any height.
+            tip = self._kinematics.fk(inside)[:3, 3]
+            reason = self._harness.vet_pose(inside, tip[:2], _TIP_COLUMN_M, -math.inf)
+        else:
+            reason = self._harness.vet_pose(inside)
         if reason is not None and reason.startswith(_CONTACT_ZONE_REFUSAL):
             # The pose vet takes a pose for a target. The arm is already here,
             # and leaving a contact spot is allowed: the step vet knows that
@@ -579,15 +612,17 @@ class ApaiChecker:
             tip = self._kinematics.fk(self._pose(q))[:3, 3]
         except Refusal as exc:
             return exc.reason
-        floor = self._harness.limits.table_z + self._table_clearance_m
-        if tip[2] < floor:
-            return (
-                f"the gripper tip is at z={tip[2]:.3f} m, below the table "
-                f"clearance {floor:.3f} m"
-            )
-        if region is not None and _in_region(tip, region):
-            return "the gripper tip is inside the last grasp region"
-        return None
+        return _low_tip(tip, self._table_clearance_m, self._harness.limits, region)
+
+    def tip_state(
+        self, q: Sequence[float], region: GraspRegion | None
+    ) -> TipState | None:
+        tip = self._kinematics.fk(self._pose(q))[:3, 3]
+        # Low is where a return to rest is refused or the harness's pose vet
+        # refuses the tip: under the higher of the two table clearances.
+        limits = self._harness.limits
+        clearance = max(self._table_clearance_m, float(limits.table_clearance))
+        return TipState(float(tip[2]), _low_tip(tip, clearance, limits, region))
 
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None
@@ -947,6 +982,9 @@ class ApaiArm:
 
     release_torque is the only path to the backend's disconnect, which cuts
     motor torque. connect() never goes ahead on an operator's confirmation.
+    A disconnect that raised may have switched some motors off: torque_on()
+    stays true, the driver is sent no further target, and release_torque may
+    be called again.
     """
 
     def __init__(
@@ -988,7 +1026,8 @@ class ApaiArm:
             raise ValueError("the gripper's open and closed positions are equal")
         self._reach_tol = config.gripper.reach_tol
         self._connected = False
-        self._released = False
+        self._released = False  # the backend's disconnect returned
+        self._release_failed = False  # its last call raised
         self._last_target: tuple[list[float], float] | None = None
 
     @property
@@ -1058,11 +1097,13 @@ class ApaiArm:
         self.send_target([reading.value for reading in self.read_all()])
 
     def release_torque(self) -> None:
-        self._released = True
         try:
             self._backend.disconnect()
         except Exception as exc:
+            self._release_failed = True
             raise ArmFault(f"the driver's disconnect failed: {exc}") from exc
+        self._released = True
+        self._release_failed = False
 
     def release_confirmed(self) -> bool:
         return self._released and self._release_reports
@@ -1133,9 +1174,18 @@ class ApaiArm:
 
     # Internals
 
-    def _require_torque(self) -> None:
+    def _no_command(self) -> str | None:
+        """Why the driver is sent no target and no jaw command; None when it is."""
+        if self._release_failed:
+            return "a torque release failed: the motors may be on or off"
         if not self.torque_on():
-            raise ArmFault("the arm is not connected or its motors are off")
+            return "the arm is not connected or its motors are off"
+        return None
+
+    def _require_torque(self) -> None:
+        reason = self._no_command()
+        if reason is not None:
+            raise ArmFault(reason)
 
     def _opening(self, jaw: float) -> float:
         opening = (jaw - self._jaws.closed) / (self._jaws.open - self._jaws.closed)
@@ -1146,7 +1196,7 @@ class ApaiArm:
 
     def _hold_light(self, opening: float | None) -> None:
         """The light hold at the jaw target in force, or at this opening."""
-        if not self.torque_on():
+        if self._no_command() is not None:
             return
         try:
             self._jaws.hold_light(None if opening is None else self._jaw(opening))
@@ -1162,8 +1212,9 @@ class ApaiArm:
         return GripperOutcome("cancelled", measured)
 
     def _jaw_refusal(self, opening: float, max_effort: float, mode: str) -> str | None:
-        if not self.torque_on():
-            return "the arm is not connected or its motors are off"
+        reason = self._no_command()
+        if reason is not None:
+            return reason
         if not self._jaws.referenced():
             return "the jaws are not referenced"
         for name, value in (("opening", opening), ("max_effort", max_effort)):

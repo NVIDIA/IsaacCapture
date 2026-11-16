@@ -183,6 +183,9 @@ class Gripper(Message):
     opening: float  # 0 closed .. 1 open
     max_effort: float  # 0 .. 1
     mode: str  # "plain" or "close_until_contact"
+    # Thor monotonic clock: nothing of the command starts at or after this
+    # time. None, also when the field is absent: the command does not expire.
+    expires_mono_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -364,7 +367,13 @@ class ViewStatus(Message):
     TYPE: ClassVar[int] = 98
 
     live: bool
-    age_s: float
+    age_s: float  # the view's age when this was sent
+    # When this was sent, on the robot app's monotonic clock as the sender
+    # reads it off its newest ROBOT_STATE: clock_mono_s plus the time since
+    # that ROBOT_STATE arrived, so never later than the true moment. The Thor
+    # adds the time since then to the age. None: not said; the Thor then
+    # takes the age as unknown.
+    sent_mono_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -392,11 +401,17 @@ class HumanSetpoint(Message):
     grip_released: bool
     # Joint target, rad, in the order of WELCOME.joint_names; None unless engaged.
     q: list[float] | None
-    # Always None: the trigger moves no jaw. Kept so that it needs no new field.
+    # The jaw opening the controller's trigger asks for, as a share of the jaw
+    # travel: 1.0 fully open, 0.0 closed. None: the trigger is not usable and
+    # the jaws keep their state. The Thor refuses a value outside 0 .. 1.
     jaw_opening: float | None
     # clock_mono_s of the ROBOT_STATE this was computed on; None: none yet.
     state_clock_mono_s: float | None
     note: str = ""  # why the human program does not engage, for the operator
+    # When this was sent, as ViewStatus.sent_mono_s; the Thor adds the time
+    # since then to the sample age. None: not said; the Thor then counts from
+    # state_clock_mono_s, and with neither it takes the sample age as unknown.
+    sent_mono_s: float | None = None
 
 
 MESSAGE_TYPES: dict[int, type[Message]] = {

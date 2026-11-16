@@ -1,0 +1,156 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot app settings for demo 2 on one machine: a person takes the simulated arm
+# over (--arm sim). These are demo values; none was measured on a robot. Angles are
+# in rad, speeds in rad/s, times in s, jaw openings run from 0 (closed) to 1 (open).
+#
+# A takeover makes a person the control owner, the one who may move the arm. The
+# live view is the browser page on the workstation that shows the camera picture.
+#
+# This file differs from configs/robot_app.yaml in exactly these keys:
+# - human.enabled is true: a person may take the arm over and drive it.
+# - human.require_live_view is false: the recipe runs the live view without a
+#   camera, so no view is ever live. The robot app takes this only with a simulated
+#   driver.
+# - limits.human.joint_min and limits.human.joint_max are -2.5 and 2.5 on every
+#   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
+#   rest.region_*.
+
+robot_id: sim-arm
+profile_id: sim-6dof
+n_joints: 6
+joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
+
+# One limit set per control owner. The recovery joint box must contain the human one.
+# With human.enabled the human joint box must also lie inside rest.region_*, so that
+# a person cannot leave the arm where a typed rest is refused.
+limits:
+  agent:
+    version: sim-1
+    joint_min: [-2.0, -2.0, -2.0, -2.0, -2.0, -2.0]
+    joint_max: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+    max_joint_speed: 0.4
+    # The agent's working box: a setpoint outside it is refused, with no way back in.
+    envelope_min: [-1.5, -1.5, -1.5, -1.5, -1.5, -1.5]
+    envelope_max: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+  human:
+    version: sim-1
+    joint_min: [-2.5, -2.5, -2.5, -2.5, -2.5, -2.5]
+    joint_max: [2.5, 2.5, 2.5, 2.5, 2.5, 2.5]
+    max_joint_speed: 1.5
+    # A human target is a joint target that follows a person's hand. This is the
+    # farthest, on any joint, one may lie from the last joint target sent. One
+    # beyond it is refused: the arm holds until the grip is squeezed again. The
+    # speed is not refused but clamped, at 0.98 of max_joint_speed.
+    max_step_rad: 0.1
+  recovery:
+    version: sim-1
+    joint_min: [-3.0, -3.0, -3.0, -3.0, -3.0, -3.0]
+    joint_max: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    max_joint_speed: 0.1
+
+executor:
+  period_s: 0.02
+  # Must hold the longest return to rest, from the far end of rest.region_*; checked
+  # when the file is loaded.
+  max_setpoints: 3000
+  # A late setpoint moves the later ones back with it; none is sent sooner to catch up.
+  small_delay_s: 0.005  # a setpoint later than this counts as a missed deadline
+  large_delay_s: 0.1  # a setpoint later than this ends the move in a hold
+  settle_tol_rad: 0.03
+  settle_timeout_s: 2.0
+  reads_per_step: 2
+  max_start_tol_rad: 0.05  # a move that asks for a wider start tolerance is refused
+
+permits:
+  evidence_age_limit_s: 3.0
+  required_for_agent: true
+  first_wait_s: 0.5  # longest a move waits for its first covering permit
+
+waits:
+  assistance_s: 120.0  # never below 90
+  bell_at_s: [30.0, 10.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+
+rest:
+  rest_q: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  rest_tol_rad: 0.05  # at rest for a release and at the end of a return to rest
+  # At rest when the app connects: how far the arm may lie from rest_q with its
+  # motors off. Not below rest_tol_rad.
+  start_rest_tol_rad: 0.05
+  agree_tol_rad: 0.02
+  read_gap_s: 0.2
+  recovery_speed: 0.1
+  min_duration_s: 2.0
+  # Start poses from which a return to rest is allowed.
+  region_min: [-2.5, -2.5, -2.5, -2.5, -2.5, -2.5]
+  region_max: [2.5, 2.5, 2.5, 2.5, 2.5, 2.5]
+  auto_return: true  # the timed return when the assistance wait runs out
+  # How far above the table the gripper tip must be before a return to rest. Used
+  # with --arm apai only: the simulated arm's checker has no table.
+  table_clearance_m: 0.02
+
+gripper:
+  closed_frac: 0.04
+  # Jaws proven empty: how far a reading may lie from the last jaw target. At
+  # most 0.1 rad of the gripper's travel; --arm apai tightens it to that.
+  target_tol: 0.03
+  # A jaw command has reached its target within this.
+  reach_tol: 0.03
+  # A reading within this of 1 after a command to full open is a full open.
+  full_open_tol: 0.03
+  agree_tol: 0.02
+  reads: 3
+  read_gap_s: 0.05
+  open_step: 0.05
+  reference_at_start: true
+
+# The grasp region a MOVE may carry; one beyond these is refused, never cut down.
+grasp:
+  max_radius_m: 0.3
+  max_depth_m: 0.06  # how far below the table plane the region may reach
+
+state:
+  publish_period_s: 0.05
+  recent_window_s: 0.5
+  history_s: 6.0
+  idle_read_period_s: 0.02
+
+# A person driving the arm with the headset's controller, or with the synthetic
+# controller of the one-machine recipe.
+human:
+  enabled: true  # whether a person may take the arm over and drive it
+  require_live_view: false  # false is accepted only with a simulated driver
+  # The oldest live view a person may take the arm over and drive with. Not asked
+  # while require_live_view is false.
+  view_age_limit_s: 0.5
+  # The oldest controller data that count as fresh: their age when the workstation
+  # sent them plus the time since they arrived. Older ones refuse a takeover and
+  # end a drive in a hold; after them the grip moves the arm only once it was
+  # released and squeezed again.
+  sample_age_limit_s: 0.25
+  # How long ROBOT_STATE shows the stage of the human program after its last
+  # link message. The human program is the workstation program that turns
+  # controller data into joint targets; its stage is how far it is with them.
+  stage_keep_s: 4.0
+  # Whether the controller's trigger moves the jaws while a person owns the arm;
+  # false: it does nothing. The grip level is the jaw opening in force at the
+  # takeover: the trigger is ignored until the opening it asks for is within
+  # jaw_match_tol of the grip level, as a share of the jaw travel, or has
+  # crossed it.
+  trigger_jaws: true
+  jaw_match_tol: 0.05
+
+# The robot connection, which the robot app dials. retry_s is the time from a failed
+# dial, or from a lost connection, to the next dial; never below 0.2.
+connection:
+  retry_s: 1.0
+
+# Whether "reference" may be typed at the Thor terminal: the jaws then close slowly
+# to their stop on a person's word that they are empty. Off: the command is refused.
+jaws:
+  allow_reference: false
+
+# The name of the camera calibration in use; the workstation gets it in WELCOME and
+# compares it with its own. "" names none.
+camera_calibration_id: ""

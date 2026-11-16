@@ -1974,3 +1974,252 @@ def test_a_cost_that_changes_brings_setpoints_closer_by_less_than_the_small_dela
     assert max(rig.gaps()) == pytest.approx(PERIOD + 0.004, abs=1e-9)
     # The move as a whole is not stretched.
     assert rig.times()[-1] - rig.times()[0] == pytest.approx(24 * PERIOD, abs=1e-9)
+
+
+# The move's expiry is asked again after the first setpoint's check
+
+
+def test_a_move_that_expires_during_its_first_check_sends_nothing(rig, leaving):
+    began = rig.clock.monotonic()
+    # The first setpoint is due at 0.048 s; its check ends at 0.098 s.
+    stall_in_check(rig, 0, lambda: rig.clock.advance(0.05))
+    outcome = rig.run(expires_mono_s=began + START_READ_S + 0.02)
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.030 s ago"
+    assert rig.arm.sent == []
+    assert (outcome.index, outcome.end_q) == (0, REST)
+    assert rig.missed == []
+    assert leaving[-2:] == ["region off", "end"]
+    assert not rig.agent.in_motion
+
+
+def test_an_expiry_that_also_made_the_first_setpoint_late_is_refused_as_expired(rig):
+    began = rig.clock.monotonic()
+    stall_in_check(rig, 0, lambda: rig.clock.advance(0.15))
+    outcome = rig.run(expires_mono_s=began + START_READ_S + 0.02)
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.130 s ago"
+    assert rig.arm.sent == []
+    assert rig.missed == []
+
+
+def test_a_stop_during_the_first_check_wins_over_the_expiry(rig):
+    began = rig.clock.monotonic()
+
+    def stall() -> None:
+        rig.clock.advance(0.05)
+        rig.authority.raise_stop("operator", "console")
+
+    stall_in_check(rig, 0, stall)
+    outcome = rig.run(expires_mono_s=began + START_READ_S + 0.02)
+    assert outcome.status == "stopped"
+    assert rig.arm.sent == []
+
+
+def test_a_held_permit_does_not_start_a_move_that_expires_in_its_first_check(bare):
+    began = bare.clock.monotonic()
+    bare.permit(len(PATH) - 1)
+    stall_in_check(bare, 0, lambda: bare.clock.advance(0.05))
+    outcome = bare.run(
+        permit_gate=bare.gate, expires_mono_s=began + START_READ_S + 0.02
+    )
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.030 s ago"
+    assert bare.arm.sent == []
+
+
+def test_a_slow_first_check_that_ends_before_the_expiry_starts_the_move(rig):
+    began = rig.clock.monotonic()
+    stall_in_check(rig, 0, lambda: rig.clock.advance(0.05))
+    expires = began + START_READ_S + 0.051
+    outcome = rig.run(expires_mono_s=expires)
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    assert rig.sent() == PATH
+    assert rig.times()[0] == pytest.approx(began + START_READ_S + 0.05, abs=1e-9)
+    assert rig.times()[0] < expires
+
+
+def test_the_expiry_passing_in_a_later_check_does_not_end_a_move_under_way(rig):
+    began = rig.clock.monotonic()
+    # Setpoint 5 is due at 0.148 s; the expiry falls inside its check.
+    stall_in_check(rig, 5, lambda: rig.clock.advance(0.05))
+    outcome = rig.run(expires_mono_s=began + START_READ_S + 5 * PERIOD + 0.01)
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    assert rig.sent() == PATH
+
+
+def test_the_first_setpoint_stays_back_once_its_permit_expired_during_the_check(bare):
+    permit = bare.permit(len(PATH) - 1, expires_in_s=START_READ_S + 0.02)
+    stall_in_check(bare, 0, lambda: bare.clock.advance(0.05))
+    outcome = bare.run(permit_gate=bare.gate)
+    assert (outcome.status, outcome.reason) == ("refused", "permit expired")
+    assert bare.arm.sent == []
+    assert bare.clock.monotonic() > permit.expires_mono_s
+
+
+# A move completes on one full valid read
+
+
+def script_reads(rig: Rig, how: Callable[[int, int], str]) -> list[tuple[int, str]]:
+    """Script each joint read made once the last setpoint is out.
+
+    how(joint, nth) names what the joint's nth such read does: "invalid" marks
+    it not valid, "fails" raises ReadFailed, "off" puts it 0.05 rad away, ""
+    leaves it as read. Returns the reads as they come: (joint, what).
+    """
+    real = rig.arm.read_joint
+    counts = [0] * N
+    reads: list[tuple[int, str]] = []
+
+    def read(joint: int) -> object:
+        reading = real(joint)
+        if len(rig.arm.sent) < len(PATH):
+            return reading
+        counts[joint] += 1
+        what = how(joint, counts[joint])
+        reads.append((joint, what))
+        if what == "fails":
+            raise ReadFailed(f"joint index {joint}: the read failed")
+        if what == "invalid":
+            return dataclasses.replace(reading, valid=False)
+        if what == "off":
+            return dataclasses.replace(reading, value=reading.value + 0.05)
+        return reading
+
+    rig.patch.setattr(rig.arm, "read_joint", read)
+    return reads
+
+
+def full_reads_after_the_move(rig: Rig, spoil: str = "") -> list[int]:
+    """Count the full reads made once the last setpoint is out.
+
+    spoil "invalid" hands each of them out with joint 3 not valid; "fails"
+    makes each raise ReadFailed.
+    """
+    real = rig.arm.read_all
+    calls: list[int] = []
+
+    def read_all() -> list:
+        if len(rig.arm.sent) < len(PATH):
+            return real()
+        calls.append(1)
+        readings = real()
+        if spoil == "fails":
+            raise ReadFailed("the joints could not be read")
+        if spoil == "invalid":
+            readings[3] = dataclasses.replace(readings[3], valid=False)
+        return readings
+
+    rig.patch.setattr(rig.arm, "read_all", read_all)
+    return calls
+
+
+def assert_holds_at_the_last_setpoint(rig: Rig, outcome: MoveOutcome) -> None:
+    assert rig.sent() == PATH
+    assert outcome.index == len(PATH)
+    assert rig.arm.last_target()[0] == PATH[-1]
+    assert rig.arm.holds == []
+    assert rig.arm.torque_on()
+    assert rig.arm.released_at == []
+
+
+def test_a_joint_that_read_near_and_reads_invalid_later_does_not_count(rig):
+    # Settling reads joints 2 and 3, then 4 and 5, then 0 and 1. Joint 5 is not
+    # read in the first round; by its first reading joint 2 has read invalid.
+    def how(joint: int, nth: int) -> str:
+        if joint == 5 and nth == 1:
+            return "fails"
+        return "invalid" if joint == 2 and nth in (2, 3) else ""
+
+    reads = script_reads(rig, how)
+    outcome = rig.run()
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    tol = rig.config.executor.settle_tol_rad
+    assert outcome.end_q == pytest.approx(PATH[-1], abs=tol)
+    # It went on until joint 2 read valid again, and ended on a full read.
+    assert reads.count((2, "invalid")) == 2
+    assert reads[-N:] == [(joint, "") for joint in range(N)]
+    assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+@pytest.mark.parametrize("what", ["invalid", "fails", "off"])
+def test_a_full_read_that_does_not_show_every_joint_near_does_not_complete(rig, what):
+    # Each joint has read near in its turn when the full read comes; joint 4's
+    # second reading belongs to that full read.
+    script_reads(rig, lambda joint, nth: what if (joint, nth) == (4, 2) else "")
+    full_reads = full_reads_after_the_move(rig)
+    outcome = rig.run()
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    tol = rig.config.executor.settle_tol_rad
+    assert outcome.end_q == pytest.approx(PATH[-1], abs=tol)
+    # The move settled on the second full read, whose pose it reports.
+    assert len(full_reads) == 2
+    assert [reading.value for reading in rig.history.latest()] == outcome.end_q
+    assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+def test_a_completed_move_makes_one_full_read_after_its_last_setpoint(rig):
+    full_reads = full_reads_after_the_move(rig)
+    began = rig.clock.monotonic()
+    outcome = rig.run()
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    assert len(full_reads) == 1
+    # As long as before: the start read, 25 periods, two settling passes, the
+    # two reads of the third and the full read.
+    spent = START_READ_S + 25 * PERIOD + 2 * PERIOD + 2 * READ_S + N * READ_S
+    assert rig.clock.monotonic() - began == pytest.approx(spent, abs=1e-9)
+
+
+def test_settling_that_runs_out_on_invalid_readings_is_not_settled(rig, watches):
+    # The watch hands joint 3's readings on as not valid after the first, as
+    # APAI's does with a reading its monitor rejects; the arm itself reads well.
+    seen = []
+
+    def after_send(index: int, q: object, deadline_mono: float) -> list:
+        readings = real(index, q, deadline_mono)
+        if len(rig.arm.sent) < len(PATH):
+            return readings
+        for at, reading in enumerate(readings):
+            if reading.joint == 3:
+                seen.append(reading)
+                if len(seen) > 1:
+                    readings[at] = dataclasses.replace(reading, valid=False)
+        return readings
+
+    def contact_watch(arm: object, q_start: object, history: object) -> object:
+        watch = made(arm, q_start, history)
+        nonlocal real
+        real = watch.after_send
+        rig.patch.setattr(watch, "after_send", after_send)
+        return watch
+
+    real = None
+    made = rig.agent.contact_watch
+    rig.patch.setattr(rig.agent, "contact_watch", contact_watch)
+    # Joint 5 is first read in the second round, after joint 3 read invalid.
+    rig.on_send(lambda: rig.arm.fail_reads(5, 1), index=len(PATH) - 1)
+    outcome = rig.run()
+    assert outcome.status == "not_settled"
+    assert outcome.reason == (
+        "joint index 3 is not within 0.03 rad of the last setpoint after 2 s"
+    )
+    assert len(seen) > 30
+    assert outcome.end_q == pytest.approx(PATH[-1], abs=0.005)
+    assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+@pytest.mark.parametrize("spoil", ["invalid", "fails"])
+def test_a_move_whose_full_reads_stay_bad_is_not_settled_and_never_completed(
+    rig, spoil
+):
+    full_reads = full_reads_after_the_move(rig, spoil)
+    outcome = rig.run()
+    assert outcome.status == "not_settled"
+    assert outcome.reason.endswith(
+        "is not within 0.03 rad of the last setpoint after 2 s"
+    )
+    if spoil == "invalid":
+        assert outcome.reason.startswith("joint index 3 ")
+    assert outcome.end_q is None
+    assert len(full_reads) > 2
+    assert_holds_at_the_last_setpoint(rig, outcome)

@@ -514,6 +514,13 @@ class HumanConfig:
     # link message. The human program is the workstation program that turns
     # controller data into joint targets; its stage is how far it is with them.
     stage_keep_s: float = 4.0
+    # Whether the controller's trigger moves the jaws while a person owns the
+    # arm; False: it does nothing. The grip level is the jaw opening in force
+    # when the person took the arm over. The trigger is ignored until the
+    # opening it asks for is within jaw_match_tol of the grip level, as a
+    # share of the jaw travel, or has crossed it.
+    trigger_jaws: bool = True
+    jaw_match_tol: float = 0.05
 
     def __post_init__(self) -> None:
         _normalise(
@@ -524,6 +531,8 @@ class HumanConfig:
             view_age_limit_s=_positive,
             sample_age_limit_s=_positive,
             stage_keep_s=_positive,
+            trigger_jaws=_flag,
+            jaw_match_tol=_fraction,
         )
 
 

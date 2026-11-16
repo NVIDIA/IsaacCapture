@@ -45,6 +45,8 @@ class MotionState(StrEnum):
     HOLD = "hold"
     REST_HOLD = "rest_hold"
     REST_UNPOWERED = "rest_unpowered"
+    # A torque release raised: the motors may be on or off.
+    RELEASE_FAILED = "release_failed"
 
 
 class Refusal(Exception):
@@ -120,6 +122,16 @@ class RestOutcome:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class TipState:
+    """Where the gripper tip is at one pose, from a checker that knows the table."""
+
+    z: float  # height in the arm's base coordinates, m
+    # Why the tip is low there: below the table clearance or inside the grasp
+    # region asked about. None when it is neither.
+    low: str | None
+
+
 @runtime_checkable
 class ArmPort(Protocol):
     """The arm and gripper driver as the robot app uses it."""
@@ -149,7 +161,12 @@ class ArmPort(Protocol):
         """Command a hold at a freshly measured pose."""
 
     def release_torque(self) -> None:
-        """Switch the motors off. Only the guarded release in rest.py may call this."""
+        """Switch the motors off. Only the guarded release in rest.py may call this.
+
+        Raises ArmFault when the driver's call failed. The motors may then be
+        on or off: torque_on() stays true unless the driver knows that they
+        are off, and it may be called again.
+        """
 
     def release_confirmed(self) -> bool:
         """Whether the driver knows that release_torque() switched the motors off.
@@ -256,6 +273,12 @@ class Checker(Protocol):
     def check_pose(self, q: Sequence[float]) -> None:
         """Check a pose on its own; raises Refusal."""
 
+    def check_low_pose(self, q: Sequence[float]) -> None:
+        """check_pose() without its table clearance for the gripper tip.
+
+        Every other rule of check_pose() stays; raises Refusal.
+        """
+
     def check_path(
         self, q_start: Sequence[float], setpoints: Sequence[Sequence[float]], dt: float
     ) -> None:
@@ -280,6 +303,15 @@ class Checker(Protocol):
         """Why the gripper tip at q may not start a return to rest, else None.
 
         Blocked means below the table clearance or inside region.
+        """
+
+    def tip_state(
+        self, q: Sequence[float], region: GraspRegion | None
+    ) -> TipState | None:
+        """The gripper tip's height at q and whether it is low there.
+
+        Low means below the table clearance or inside region. None from a
+        checker that knows no table. Raises Refusal when q is no pose.
         """
 
     def contact_watch(

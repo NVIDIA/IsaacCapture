@@ -117,6 +117,7 @@ class _Move:
     total: int = 0
     sent: int = 0  # setpoints sent so far
     missed: int = 0  # deadlines missed by more than the small delay
+    settled_q: list[float] | None = None  # the full read the move settled on
 
 
 class MoveExecutor:
@@ -374,7 +375,10 @@ class MoveExecutor:
             ended = self._refused(move, refusal.reason)
         except ReadFailed as failed:
             ended = ("refused", f"a joint read failed: {failed}")
-        return MoveOutcome(*ended, move.sent, self._read_pose())
+        # A completed move reports the pose of the full read it settled on.
+        completed = ended[0] == "completed"
+        end_q = move.settled_q if completed else self._read_pose()
+        return MoveOutcome(*ended, move.sent, end_q)
 
     def _checked(
         self,
@@ -548,6 +552,10 @@ class MoveExecutor:
             ended = self._permit_problem(move, gate, index, now)
             if ended is not None:
                 return ended
+            if index == 0:
+                expired = self._expired(move)
+                if expired is not None:
+                    return self._refused(move, expired)
             if now - due > config.large_delay_s:
                 return self._late(move, index, now - due, "is")
             self._arm.send_target(q)
@@ -584,7 +592,11 @@ class MoveExecutor:
         )
 
     def _settle(self, move: _Move, q_last: list[float]) -> Ending | None:
-        """Read until every joint is at the last setpoint; None once it is."""
+        """Read until one full read has every joint at the last setpoint; None then.
+
+        The watch reads a few joints a pass. Once each joint's newest reading
+        is valid and near, one read of every joint decides.
+        """
         config = self._config
         near = [False] * len(q_last)
         started = self._clock.monotonic()
@@ -595,12 +607,12 @@ class MoveExecutor:
             deadline = self._clock.monotonic() + config.period_s
             # Nothing is sent here: the watch reads against the standing setpoint,
             # so a contact while settling still ends in a hold.
-            for reading in move.watch.after_send(move.sent - 1, q_last, deadline):
-                if reading.valid and math.isfinite(reading.value):
-                    off = abs(reading.value - q_last[reading.joint])
-                    near[reading.joint] = off <= config.settle_tol_rad
+            readings = move.watch.after_send(move.sent - 1, q_last, deadline)
+            self._note_near(near, readings, q_last)
             if all(near):
-                return None
+                near = self._read_near(move, q_last)
+                if all(near):
+                    return None
             now = self._clock.monotonic()
             if now - started >= config.settle_timeout_s:
                 return "not_settled", (
@@ -609,6 +621,37 @@ class MoveExecutor:
                     f"{config.settle_timeout_s:g} s"
                 )
             self._clock.sleep(max(0.0, deadline - now))
+
+    def _note_near(
+        self, near: list[bool], readings: Sequence[JointReading], q_last: list[float]
+    ) -> None:
+        """Set near[joint] from each reading: valid and inside the settle tolerance.
+
+        A reading that is not valid takes back what an earlier one showed.
+        """
+        tol = self._config.settle_tol_rad
+        for reading in readings:
+            joint = reading.joint
+            if 0 <= joint < len(near):
+                valid = reading.valid and math.isfinite(reading.value)
+                near[joint] = valid and abs(reading.value - q_last[joint]) <= tol
+
+    def _read_near(self, move: _Move, q_last: list[float]) -> list[bool]:
+        """Per joint, whether one fresh full read has it valid and near q_last.
+
+        Keeps that read's pose in move.settled_q when every joint is.
+        """
+        near = [False] * len(q_last)
+        try:
+            readings = self._arm.read_all()
+        except ReadFailed as failed:
+            _log.debug("no settled pose yet: the full read failed: %s", failed)
+            return near
+        self._keep(readings)
+        self._note_near(near, readings, q_last)
+        if all(near):
+            move.settled_q = _pose_of(readings, len(near))
+        return near
 
     def _hold_measured(self, watch: ContactWatch | None) -> str:
         """Hold at a freshly measured pose; text for the reason when that failed.

@@ -154,7 +154,8 @@ def human_setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanS
     """A HUMAN_SETPOINT that quotes the app's numbers as they are now.
 
     With q the grip is squeezed toward q; without, it is released. The
-    controller is ready and its data are 0.02 s old. fields replace any field.
+    controller is ready and its data are 0.02 s old. It is sent now, by the
+    app's clock. fields replace any field.
     """
     now = h.app.snapshot()
     values: dict[str, Any] = {
@@ -171,6 +172,7 @@ def human_setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanS
         "jaw_opening": None,
         "state_clock_mono_s": None,
         "note": "",
+        "sent_mono_s": h.clock.monotonic(),
     }
     values.update(fields)
     return HumanSetpoint(**values)
@@ -186,7 +188,8 @@ def feed(h, message: HumanSetpoint | None = None, view: bool = True) -> None:
         message = human_setpoint(h)
     h.client.send(message)
     if view:
-        h.client.send(ViewStatus(live=True, age_s=0.0))
+        now = h.clock.monotonic()  # it is sent now, by the app's clock
+        h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=now))
     answered(h, h.client.checker_state("probe"))  # answered after both were taken
 
 
@@ -257,7 +260,8 @@ class Hand:
             self.ends_at = None
             (self.ending or self.release)()
         if self.view is not None:
-            self.h.client.send(self.view)
+            now = self.h.clock.monotonic()  # it is sent now, by the app's clock
+            self.h.client.send(dataclasses.replace(self.view, sent_mono_s=now))
         if self.silent:
             return None
         if self.goal is not None and self.stride is not None and sent:
@@ -745,7 +749,9 @@ def reference_typed_at_the_thor_terminal(h, finish: Callable[[], None]) -> None:
 
 def view_reports_and_goes_away(h, finish: Callable[[], None]) -> None:
     """A live view reports its age, says it is not live, then says nothing."""
-    for status in (ViewStatus(live=True, age_s=0.2), ViewStatus(live=False, age_s=0.0)):
+    now = h.clock.monotonic()  # the live one is sent now, by the app's clock
+    live = ViewStatus(live=True, age_s=0.2, sent_mono_s=now)
+    for status in (live, ViewStatus(live=False, age_s=0.0)):
         h.client.send(status)
         answered(h, h.client.checker_state("probe"))
 
@@ -2056,12 +2062,14 @@ def test_the_console_and_the_view_name_no_release_and_no_shutdown():
 
 
 # The human path, from the controller to the motors: the human program (human/)
-# and the Thor's side of it (robot_app/human.py). The same rule.
+# and the Thor's side of it (robot_app/human.py, and robot_app/human_socket.py,
+# the robot app's socket for a human program on the Thor). The same rule.
 
 
 # The files of the human path the scan must have read.
 HUMAN_FILES = (
     "robot_app/human.py",
+    "robot_app/human_socket.py",
     "human/__init__.py",
     "human/__main__.py",
     "human/types.py",

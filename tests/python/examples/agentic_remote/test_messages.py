@@ -417,6 +417,7 @@ MESSAGE_FIELDS = {
         "opening": ...,
         "max_effort": ...,
         "mode": ...,
+        "expires_mono_s": None,
     },
     CheckerState: {
         "command_id": ...,
@@ -490,7 +491,7 @@ MESSAGE_FIELDS = {
         "evidence_wall_s": ...,
         "expires_mono_s": ...,
     },
-    ViewStatus: {"live": ..., "age_s": ...},
+    ViewStatus: {"live": ..., "age_s": ..., "sent_mono_s": None},
     # It quotes the session id and both numbers and carries no command id: no
     # RESULT answers it. A value that may be None is still sent.
     HumanSetpoint: dict.fromkeys(
@@ -510,7 +511,7 @@ MESSAGE_FIELDS = {
         ),
         ...,
     )
-    | {"note": ""},
+    | {"note": "", "sent_mono_s": None},
     GraspRegion: {"center_xy": ..., "radius_m": ..., "z_min": ..., "z_max": ...},
     JointSample: dict.fromkeys(("joint", "value", "t_start", "t_end", "valid"), ...),
     GripperState: dict.fromkeys(
@@ -599,7 +600,9 @@ def test_tuples_and_nested_dataclasses_are_rebuilt():
 
 def test_payload_is_compact_utf8_json():
     assert STOP.to_payload() == b'{"reason":"operator typed stop","sender":"console"}'
-    assert VIEW_STATUS.to_payload() == b'{"live":true,"age_s":0.12}'
+    assert VIEW_STATUS.to_payload() == (
+        b'{"live":true,"age_s":0.12,"sent_mono_s":null}'
+    )
     for message in EXAMPLES:
         obj = json.loads(message.to_payload().decode("utf-8"))
         assert list(obj) == [item.name for item in dataclasses.fields(message)]

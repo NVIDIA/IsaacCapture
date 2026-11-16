@@ -59,6 +59,7 @@ from .gripper import (
     JAWS_BUSY,
     PLAIN,
     GripperWorker,
+    JawFollower,
     JawState,
 )
 from .human import DriveEnd, HumanDrive, HumanInput, HumanTarget
@@ -131,6 +132,15 @@ RESULT_IDS_KEPT = 256
 PATH_CLEAR_PROMPT = "Return to rest: is the path to the rest pose clear?"
 
 MOTORS_OFF = "the motors are off; restart the robot app"
+# A torque release that raised: the driver may have switched some or all of
+# the motors off before it failed. RELEASE_FAILED begins the fault-stop's
+# reason; MOTORS_UNKNOWN is why nothing moves the arm from then on.
+TORQUE_UNKNOWN = "the motors may be on or off"
+RELEASE_FAILED = f"torque release failed, {TORQUE_UNKNOWN}"
+MOTORS_UNKNOWN = (
+    f"a torque release failed and {TORQUE_UNKNOWN}; type release to try it "
+    "again, or restart the robot app"
+)
 CONFIRM_PATH = rest_module.CONFIRM_PATH
 CONFIRM_OPEN = "confirm the jaw opening"
 CONFIRM_JAWS_EMPTY = "confirm that the jaws are empty"
@@ -149,6 +159,14 @@ LINK_CONNECTED = (
 )
 CLOSING = "the robot app is closing"
 NOT_RUNNING = "the robot app is not running"
+# Told once when a second human program sends HUMAN_SETPOINT link messages:
+# where the second one sends them, then where the one that is followed does.
+SECOND_HUMAN_PROGRAM = (
+    "a second human program sends HUMAN_SETPOINT link messages {here}: they are "
+    "dropped while the one {there} sends; one human program at a time"
+)
+_AT_SOCKET = "at the robot app's socket"
+_OVER_LINK = "over the robot connection"
 _RACED = "a STOP or an owner change arrived while the request was checked"
 
 # A person drives the arm. A takeover makes a person the control owner; the
@@ -171,6 +189,9 @@ TAKEN_OVER = (
     "TAKEOVER: a person owns the arm, owner number {number}; release the grip, "
     "then squeeze it to move"
 )
+# Added to TAKEN_OVER when the gripper tip is low at the takeover: below the
+# table clearance or inside the agent's last grasp region.
+LOW_TIP = "; the gripper tip is low: only a lift is taken until it is clear"
 HANDED_BACK = "takeover ended: the arm is given back; nobody owns it"
 # Why an engaged human target moves nothing: the grip was squeezed before the
 # person could move the arm, since a drive that the grip did not end, while
@@ -343,6 +364,25 @@ class _NoCarrier:
         return None
 
 
+class _Both:
+    """Two carriers as one, for a link message that goes to both."""
+
+    def __init__(self, first: Carrier, second: Carrier) -> None:
+        self._first, self._second = first, second
+
+    @property
+    def alive(self) -> bool:
+        return bool(self._first.alive or self._second.alive)
+
+    def send_reliable(self, msg_type: int, payload: bytes) -> None:
+        self._first.send_reliable(msg_type, payload)
+        self._second.send_reliable(msg_type, payload)
+
+    def send_latest(self, msg_type: int, payload: bytes) -> None:
+        self._first.send_latest(msg_type, payload)
+        self._second.send_latest(msg_type, payload)
+
+
 class _MotionBox:
     """The arm's motion state, for rest.py and ROBOT_STATE; thread-safe."""
 
@@ -495,6 +535,25 @@ def _span_s(value: float | None) -> float | None:
     return span if math.isfinite(span) and span >= 0.0 else None
 
 
+def _age_on_arrival(
+    age_s: float | None, sent_mono_s: float | None, arrived_mono: float
+) -> float | None:
+    """How old a datum was when its link message arrived, never less than it is.
+
+    age_s is the age its sender measured as it sent. sent_mono_s is that
+    moment on this app's monotonic clock as the sender read it off a
+    ROBOT_STATE: at or before the true one. The time from then to
+    arrived_mono, the way to the robot app and the wait there, is added. None
+    when either is unknown or no finite number of 0 or more, as with a
+    sent_mono_s that lies after arrived_mono.
+    """
+    age = _span_s(age_s)
+    if age is None or sent_mono_s is None:
+        return None
+    on_the_way = _span_s(arrived_mono - sent_mono_s)
+    return None if on_the_way is None else age + on_the_way
+
+
 def live_view_problem(config: RobotAppConfig, driver: str) -> str | None:
     """Why this driver may not run the configuration's human settings, else None.
 
@@ -514,14 +573,18 @@ def live_view_problem(config: RobotAppConfig, driver: str) -> str | None:
 def human_target(m: HumanSetpoint, arrived_mono: float) -> HumanTarget:
     """The human target a HUMAN_SETPOINT carries; the only place one is read.
 
-    arrived_mono is the app's monotonic clock when the link message arrived.
-    A sample age that is not a finite number of 0 or more becomes None. The
+    arrived_mono is the app's monotonic clock when the app took the link
+    message up. The sample age is the one the setpoint reports plus the time
+    since it was sent (_age_on_arrival); None when that is not known. The
     round trip is the time since the ROBOT_STATE the setpoint was computed on,
     None when it names none or the time is not a finite number of 0 or more.
     """
     round_trip_s = None
     if m.state_clock_mono_s is not None:
         round_trip_s = _span_s(arrived_mono - m.state_clock_mono_s)
+    # A human program that does not say when it sent: it sent after the
+    # ROBOT_STATE it computed on was made, so the age counts from there.
+    sent_mono_s = m.state_clock_mono_s if m.sent_mono_s is None else m.sent_mono_s
     return HumanTarget(
         seq=m.seq,
         owner_number=m.owner_number,
@@ -532,9 +595,10 @@ def human_target(m: HumanSetpoint, arrived_mono: float) -> HumanTarget:
         engaged=bool(m.engaged),
         grip_released=bool(m.grip_released),
         q=None if m.q is None else tuple(m.q),
-        sample_age_s=_span_s(m.sample_age_s),
+        sample_age_s=_age_on_arrival(m.sample_age_s, sent_mono_s, arrived_mono),
         arrived_mono=arrived_mono,
         round_trip_s=round_trip_s,
+        jaw_opening=m.jaw_opening,
     )
 
 
@@ -637,6 +701,20 @@ class RobotApp:
         self._permit_refusal: str | None = None
         self._dropped: set[str] = set()  # kinds of link messages not taken
         self._inbox = Inbox()  # taken off the link, not yet handled
+        # A human program on the Thor, the program that turns a person's
+        # controller data into joint targets: its carrier (None: there is no
+        # such socket), what was taken off it and not yet handled, and
+        # whether such a program is attached now. See attach_local().
+        self._local: Carrier | None = None
+        self._local_inbox = Inbox()
+        self._local_attached: Callable[[], bool] = lambda: False
+        # The local carrier while the dispatcher handles a link message that
+        # arrived on it; None for one of the robot connection.
+        self._arrived_on: Carrier | None = None
+        # Of the newest HUMAN_SETPOINT taken: whether it arrived on the local
+        # carrier, and when. Whether a second human program was told of.
+        self._human_from: tuple[bool, float] | None = None
+        self._second_told = False
         self._lines = LineLimit(clock)  # for log lines a link can make repeat
         longest_move = config.executor.max_setpoints * (
             config.n_joints * MOVE_VALUE_BYTES + len("[],")
@@ -682,9 +760,19 @@ class RobotApp:
             claim_idle=self._executor.claim_idle,
             note_clamped=lambda: self._publisher.note_clamped(),
             reads_paused=lambda: self._idle.paused(),
+            last_grasp_region=lambda: self._grasp_region,
         )
         self._jaw_state = JawState(config.gripper, clock)
         self._worker = GripperWorker(arm, self._jaw_state, self._authority, clock)
+        # The jaws under a person's trigger; asked only with human.trigger_jaws.
+        self._jaw_follower = JawFollower(
+            arm,
+            self._jaw_state,
+            self._worker,
+            self._authority,
+            config.human.jaw_match_tol,
+            lambda line: self._note(logging.INFO, line, kind=_NUMBER.sub("#", line)),
+        )
         self._wait = AssistanceWait(config.waits, clock, self._on_expire)
         self._stops = StopController(
             self._authority,
@@ -739,6 +827,7 @@ class RobotApp:
             controller_age=self._human_input.sample_age_s,
             human_facts=self._human_facts,
             contact_hold=lambda: self._contact_hold,
+            local_program=self._local_program,
         )
         self._handlers: dict[type, Callable[[Any], None]] = {
             Move: self._on_move,
@@ -761,6 +850,7 @@ class RobotApp:
             ("the idle joint read", self._step_idle),
             ("the fault poll", self._poll_faults),
             ("the robot connection check", self._check_link),
+            ("the jaws under a person's trigger", self._watch_jaws),
             ("the state publisher", self._publish),
             ("the count of repeated log lines", self._flush_lines),
         )
@@ -816,6 +906,25 @@ class RobotApp:
             self._emit(EVENT_CONNECTION, LINK_CONNECTED, {"connected": True})
         _log.info("robot connection made")
         return True
+
+    def attach_local(self, carrier: Carrier, attached: Callable[[], bool]) -> None:
+        """Take the carrier of a human program on the Thor; once.
+
+        What that program sends on `carrier` is handled as when it arrives on
+        the robot connection, by the same handlers, and also while the robot
+        connection is down. The carrier gets WELCOME, every ROBOT_STATE and
+        the RESULTs of what arrived on it; the robot connection gets those
+        RESULTs too. attached() says whether a human program is attached
+        there now; it must not block. The carrier's sends must not block
+        either. Safe before and after start(); it does not touch the arm.
+        """
+        with self._lock:
+            if self._local is not None:
+                raise RuntimeError("a local carrier was attached before")
+            self._local_attached = attached
+            self._local = carrier
+            self._send(self._welcome(), via=carrier)
+            self._state_forced = True  # the dispatcher sends a ROBOT_STATE
 
     @property
     def motion_state(self) -> MotionState:
@@ -923,6 +1032,12 @@ class RobotApp:
             _log.info(
                 "robot app closed; torque on: not known, the arm's connect did "
                 "not end: the motors may be on"
+            )
+            return
+        if self._motion.get() is MotionState.RELEASE_FAILED:
+            _log.info(
+                "robot app closed; torque on: not known, a torque release failed: %s",
+                TORQUE_UNKNOWN,
             )
             return
         _log.info("robot app closed; torque on: %s", self._arm.torque_on())
@@ -1079,17 +1194,19 @@ class RobotApp:
     def view_age_s(self, now: float) -> float | None:
         """The age of the operator's live view at the app-clock time `now`.
 
-        The age the newest VIEW_STATUS reported plus the time since it
-        arrived. None when none has arrived on this robot connection, when it
-        said the view is not live, or when its age is not 0 or more.
+        The age the newest VIEW_STATUS reported plus the time since it was
+        sent (_age_on_arrival), never less than the view's age. None when none
+        has arrived on this robot connection, when it said the view is not
+        live, or when its age or the time it was sent is not known.
         """
         view = self._view
         if view is None:
             return None
         status, arrived = view
-        if not status.live or not status.age_s >= 0.0:
+        if not status.live:
             return None
-        return status.age_s + max(0.0, now - arrived)
+        age = _age_on_arrival(status.age_s, status.sent_mono_s, arrived)
+        return None if age is None else age + max(0.0, now - arrived)
 
     def offer_human_target(self, target: HumanTarget) -> None:
         """Take one human target, whoever made it; safe from any thread.
@@ -1099,7 +1216,8 @@ class RobotApp:
         an engaged target moves nothing shows in ROBOT_STATE, in
         health["human"]["refusal"]. A human drive that is queued or runs ends
         in a hold when the controller data were away before this target, or
-        when the admission refuses it engaged.
+        when the admission refuses it engaged. The jaw opening its trigger
+        asks for goes to _follow_trigger(), engaged or not.
         """
         with self._lock:
             now = self._clock.monotonic()
@@ -1109,12 +1227,14 @@ class RobotApp:
             if self._controller_problem(now) is not None:
                 self._release_seen = None
                 self._end_human_drive(DATA_AWAY)
+                self._jaw_follower.end(DATA_AWAY)
             self._human_input.put(target)
             state = self._authority.snapshot()
             # Why the target is not a person's who owns the arm now.
             not_owner = self._authority.admit(
                 state.session_id, target.owner_number, target.stop_number, Owner.HUMAN
             )
+            self._follow_trigger(target, not_owner, now)
             if not target.engaged:
                 self._human_refusal = ""
                 fresh = self._controller_problem(now) is None
@@ -1168,14 +1288,72 @@ class RobotApp:
                 )
             )
 
+    def _follow_trigger(
+        self, target: HumanTarget, not_owner: str | None, now: float
+    ) -> None:
+        """The jaw part of a human target: the opening its trigger asks for.
+
+        Under the app's lock, with human.trigger_jaws. not_owner is why the
+        target is not a person's who owns the arm now. The jaws follow the
+        trigger of a target that passes the checks of an engaged one, the grip
+        squeezed or not; a close also needs the live view fresh. A target that
+        fails them ends the jaw motion in a light hold, and so does one whose
+        opening is no number from 0 to 1. Why the trigger moves nothing shows
+        in ROBOT_STATE, in health["human"]["jaws"]["refusal"].
+        """
+        if not self._config.human.trigger_jaws:
+            return
+        reason = (
+            self._human_off()
+            or self._source_problem()
+            or not_owner
+            or self._motors_off()
+            # A return to rest or a hand-back proves the jaws empty: no jaw
+            # step may follow that proof.
+            or self._busy(_no_human_drive)
+            or self._referencing()
+            or self._controller_problem(now)
+        )
+        if reason is not None:
+            self._jaw_follower.end(reason)
+            return
+        self._jaw_follower.offer(
+            target.jaw_opening,
+            target.owner_number,
+            target.stop_number,
+            no_close=self._view_problem(now),
+        )
+
+    def _watch_jaws(self) -> None:
+        """End the jaw motion of a trigger whose human targets no longer count.
+
+        No human target arrives to end it when the controller data are away,
+        or after a STOP or an owner change.
+        """
+        if not self._jaw_follower.following:
+            return
+        with self._lock:
+            state = self._authority.snapshot()
+            # The app's own numbers: only the fault-stop and the owner count.
+            reason = self._authority.admit(
+                state.session_id, state.owner_number, state.stop_number, Owner.HUMAN
+            ) or self._controller_problem(self._clock.monotonic())
+            if reason is not None:
+                self._jaw_follower.end(reason)
+
     def shutdown_moves_arm(self) -> bool:
         """Whether a shutdown asked for now would first move the arm to rest.
 
         By the motion state: False while the arm holds at rest or the motors
-        are off. Such a shutdown needs the confirmation that the path is clear.
+        are off, and after a torque release that failed, when nothing moves
+        the arm. Such a shutdown needs the confirmation that the path is clear.
         """
-        at_rest = (MotionState.REST_HOLD, MotionState.REST_UNPOWERED)
-        return self._motion.get() not in at_rest
+        unmoved = (
+            MotionState.REST_HOLD,
+            MotionState.REST_UNPOWERED,
+            MotionState.RELEASE_FAILED,
+        )
+        return self._motion.get() not in unmoved
 
     def request_shutdown(
         self, confirmed: bool | None, on_done: DoneFn | None = None
@@ -1256,7 +1434,24 @@ class RobotApp:
         def cut() -> Result:
             return dataclasses.replace(plain(), reason=_cut(result.reason))
 
-        self._send(result, plain, cut, via=via)
+        to = self._reply_carrier() if via is None else via
+        self._send(result, plain, cut, via=to)
+
+    def _reply_carrier(self) -> Carrier:
+        """Where the RESULTs of the link message being handled go.
+
+        The robot connection. For a link message of the human program on the
+        Thor: its carrier, and the robot connection for the operator console.
+        """
+        local = self._arrived_on
+        return self._carrier if local is None else _Both(local, self._carrier)
+
+    def _local_program(self) -> bool | None:
+        """Whether a human program is attached at this app's own socket.
+
+        None without such a socket: ROBOT_STATE then says nothing of it.
+        """
+        return None if self._local is None else bool(self._local_attached())
 
     def _send_result(self, result: Result, via: Carrier | None = None) -> None:
         """Store and send a RESULT; a command's second final one is dropped."""
@@ -1282,7 +1477,7 @@ class RobotApp:
         A RESULT that becomes final after that carrier was lost is stored and
         not sent: a later connection gets it only for the same command id.
         """
-        arrived_on = self._carrier
+        arrived_on = self._reply_carrier()
 
         def deliver(result: Result) -> None:
             self._send_result(result, arrived_on)
@@ -1335,6 +1530,7 @@ class RobotApp:
                 self._report("serving the link", error)
                 # An error that comes at once must not spin the thread.
                 self._closing.wait(self._step_period_s)
+            self._guarded("the local link messages", self._serve_local)
             self._guarded("a STOP request", self._serve_stop_requests)
             self._supervisor_step()
             with self._pass_cond:
@@ -1398,22 +1594,60 @@ class RobotApp:
             return False
         return True
 
-    def _sort(self, msg_type: int, payload: bytes) -> None:
+    def _sort(self, msg_type: int, payload: bytes, inbox: Inbox | None = None) -> None:
         """One link message, just off the link: served, kept for later or dropped.
 
         A STOP is served now. What the app has no handler for is dropped
         undecoded. A payload over its size limit is refused now, unparsed, and
-        so is one the inbox has no room for.
+        so is one the inbox has no room for. inbox is where it is kept; None
+        is the robot connection's.
         """
+        inbox = self._inbox if inbox is None else inbox
         if msg_type == Stop.TYPE:
             self._handle_payload(msg_type, payload)
         elif msg_type not in self._takes:
             self._not_taken(msg_type)
         elif len(payload) > self._payload_limit(msg_type):
             self._handle_payload(msg_type, payload)  # refused where it is decoded
-        elif not self._inbox.add(msg_type, payload):
-            problem = f"busy: {len(self._inbox)} link messages wait at the robot app"
+        elif not inbox.add(msg_type, payload):
+            problem = f"busy: {len(inbox)} link messages wait at the robot app"
             self._undecoded(msg_type, self._unread_id(msg_type, payload), problem)
+
+    def _serve_local(self) -> None:
+        """Handle what the human program on the Thor sent, for up to one step period.
+
+        Its link messages go through the handlers of the robot connection's,
+        a STOP the moment it is taken off its carrier, and they are handled
+        with the robot connection down as well.
+        """
+        local = self._local
+        if local is None:
+            return
+        until = self._clock.monotonic() + self._step_period_s
+        self._arrived_on = local
+        try:
+            taken = 0
+            received = local.receive(0.0)
+            while received is not None:
+                kept = self._local_inbox
+                self._guarded("a local link message", self._sort, *received, kept)
+                taken += 1
+                if (received[0] == Stop.TYPE or taken % _TAKEN_PER_CHECK == 0) and (
+                    self._closing.is_set() or self._clock.monotonic() >= until
+                ):
+                    break
+                received = local.receive(0.0)
+            handled = 0
+            while not self._closing.is_set():
+                if handled and self._clock.monotonic() >= until:
+                    break  # the supervisor step is due; the rest waits
+                waiting = self._local_inbox.take()
+                if waiting is None:
+                    break
+                self._guarded("a local link message", self._handle_payload, *waiting)
+                handled += 1
+        finally:
+            self._arrived_on = None
 
     def _not_taken(self, msg_type: int) -> None:
         cls = MESSAGE_TYPES.get(msg_type)
@@ -1629,6 +1863,8 @@ class RobotApp:
             self._human_input.clear()
             self._release_seen = None
             self._human_refusal = ""
+            # The trigger must match again; the jaw stop below holds the jaws.
+            self._jaw_follower.end(LINK_LOST, hold=False)
             # A jaw reference was typed at the Thor terminal: it needs no link.
             self._worker.stop_now(keep_reference=True)
             cancelled = self._wait.cancel(LINK_LOST)
@@ -1667,6 +1903,10 @@ class RobotApp:
             # is owed one again.
             forced, self._state_forced = self._state_forced, False
             carrier = self._carrier
+            if self._local is not None:
+                # The human program on the Thor gets every ROBOT_STATE too,
+                # also with the robot connection down.
+                carrier = _Both(carrier, self._local)
         if not carrier.alive or (key == self._published and not forced):
             self._publisher.maybe_publish(carrier, now)
             return
@@ -1779,7 +2019,33 @@ class RobotApp:
             line = "a HUMAN_SETPOINT of another session was dropped"
             self._note(logging.DEBUG, line)
             return
+        if self._second_human_program():
+            return
         self.offer_human_target(human_target(m, self._clock.monotonic()))
+
+    def _second_human_program(self) -> bool:
+        """Whether the HUMAN_SETPOINT being handled is a second human program's.
+
+        One human program at a time is followed: the one at the robot link
+        service, whose link messages come over the robot connection, or the
+        one at the robot app's own socket. While one of them has sent within
+        human.stage_keep_s, the other's HUMAN_SETPOINTs are dropped, and an
+        EVENT says so once.
+        """
+        local = self._arrived_on is not None
+        now = self._clock.monotonic()
+        last = self._human_from
+        keep_s = self._config.human.stage_keep_s
+        if last is not None and last[0] != local and now - last[1] <= keep_s:
+            if not self._second_told:
+                self._second_told = True
+                ends = (_AT_SOCKET, _OVER_LINK) if local else (_OVER_LINK, _AT_SOCKET)
+                text = SECOND_HUMAN_PROGRAM.format(here=ends[0], there=ends[1])
+                self._emit(EVENT_REFUSED, text, {"local": local})
+            return True
+        self._human_from = (local, now)
+        self._second_told = False
+        return False
 
     def _on_permit(self, m: Permit) -> None:
         reason = self._gate.update(m)
@@ -1844,8 +2110,12 @@ class RobotApp:
                 reply.final(REFUSED, reason)
                 return
             done = _JawReply(reply, m.mode)
+            # The worker refuses a GRIPPER whose expiry has passed, now or later.
+            expires = m.expires_mono_s
             done.queued(
-                self._worker.submit(m.opening, m.max_effort, m.mode, Owner.AGENT, done)
+                self._worker.submit(
+                    m.opening, m.max_effort, m.mode, Owner.AGENT, done, expires
+                )
             )
 
     def _on_open(self, m: Open) -> None:
@@ -2118,7 +2388,8 @@ class RobotApp:
 
         seen is the authority as the request found it, with nobody the owner;
         reason is the request's own. No link message is read here. No jaw
-        command is sent: the jaws stay as they are.
+        command is sent: the jaws stay as they are, and the opening in force
+        is noted as the grip level the person's trigger must reach.
         """
         with self._lock:
             problem = self._takeover_problem(self._clock.monotonic(), seen)
@@ -2130,8 +2401,14 @@ class RobotApp:
             pose = self._read_pose()
         except ReadFailed as failed:
             return f"the measured pose could not be read: {failed}"
+        low = self._low_tip(pose)
         try:
-            self._checkers.human.check_pose(pose)
+            if low:
+                # A person lifts such an arm out: the human drive takes no
+                # target that lowers the tip while it is low.
+                self._checkers.human.check_low_pose(pose)
+            else:
+                self._checkers.human.check_pose(pose)
         except Refusal as refusal:
             if self._authority.stop_number != seen.stop_number:
                 return _RACED  # a fault-stop latches the checker
@@ -2151,10 +2428,26 @@ class RobotApp:
                 return _RACED
             self._wait.cancel("a person took over")
             self._takeover_open = True
+            if self._config.human.trigger_jaws:
+                # The grip level: the trigger does nothing until it matches it.
+                self._jaw_follower.note(number, seen.stop_number)
             detail = {"owner": Owner.HUMAN.value, "owner_number": number}
-            self._emit(EVENT_OWNER, TAKEN_OVER.format(number=number), dict(detail))
+            taken = TAKEN_OVER.format(number=number) + (LOW_TIP if low else "")
+            self._emit(EVENT_OWNER, taken, dict(detail))
             reply.final(COMPLETED, detail=detail)
         return None
+
+    def _low_tip(self, pose: Sequence[float]) -> bool:
+        """Whether the gripper tip is low at this pose, as the human checker has it.
+
+        Low is below the table clearance or inside the agent's last grasp
+        region. False with a checker that knows no table.
+        """
+        try:
+            tip = self._checkers.human.tip_state(pose, self._grasp_region)
+        except Refusal:
+            return False  # no pose: check_pose() says so
+        return tip is not None and tip.low is not None
 
     def _end_takeover(
         self, seen: AuthorityState, reason: str, reply: _Reply
@@ -2195,8 +2488,12 @@ class RobotApp:
         return None
 
     def _motors_off(self) -> str | None:
-        if self._motion.get() is MotionState.REST_UNPOWERED:
+        """Why nothing may move the arm: its motors are off, or may be."""
+        motion = self._motion.get()
+        if motion is MotionState.REST_UNPOWERED:
             return MOTORS_OFF
+        if motion is MotionState.RELEASE_FAILED:
+            return MOTORS_UNKNOWN
         return None
 
     def _not_running(self) -> str | None:
@@ -2283,6 +2580,8 @@ class RobotApp:
                 why = "no VIEW_STATUS has arrived"
             elif not view[0].live:
                 why = "the view is not live"
+            elif view[0].sent_mono_s is None:
+                why = "the VIEW_STATUS does not say when it was sent"
             else:
                 why = "the view's age is unknown"
         elif age > human.view_age_limit_s:
@@ -2308,7 +2607,13 @@ class RobotApp:
             # Controller data that are away set the flag when they come back.
             away = self._controller_problem(now) is not None
             unseen = self._release_seen != self._authority.owner_number
+            # While a takeover is open, with human.trigger_jaws: whether the
+            # trigger moves the jaws, and why not.
+            jaws: dict[str, Any] = {}
+            if self._config.human.trigger_jaws and self._takeover_open:
+                jaws = {"jaws": self._jaw_follower.facts()}
             return {
+                **jaws,
                 "enabled": self._config.human.enabled,
                 "takeover_open": self._takeover_open,
                 "driving": self._human_drive.progress() is not None,
@@ -2627,6 +2932,8 @@ class RobotApp:
                 self._contact_hold = False  # the arm was moved since the contact
             if end.status != _DRIVE_RELEASED:
                 self._release_seen = None  # a released grip comes first
+                # The jaw motion ends with the drive: the trigger matches anew.
+                self._jaw_follower.end(f"the human drive ended: {why}")
             self._drive_ended = why
         if end.status == _DRIVE_FAILED and end.reason.startswith("fault: "):
             # A driver fault or joint feedback lost during the drive. The
@@ -2690,6 +2997,18 @@ class RobotApp:
 
         confirmed is what the operator's command said of the path.
         """
+        if self._motion.get() is MotionState.RELEASE_FAILED:
+            # Nothing moves an arm whose motors may be off.
+            data = {
+                "source": source,
+                "status": rest_module.REFUSED,
+                "reason": MOTORS_UNKNOWN,
+            }
+            text = f"return to rest refused: {MOTORS_UNKNOWN}"
+            self._emit(rest_module.EVENT_REST, text, data)
+            return _Ending(
+                REFUSED, MOTORS_UNKNOWN, None, {"outcome": rest_module.REFUSED}
+            )
         # Only the agent can clear its contact spots, and it is refused while a
         # takeover is open: "path is clear" is the person's word for them.
         if confirmed and self.takeover_open:
@@ -2722,36 +3041,75 @@ class RobotApp:
         self._emit(rest_module.EVENT_REST, f"{reason}; the arm holds")
         return reason
 
+    def _release_raised(self, fault: ArmFault) -> None:
+        """Note a torque release whose driver call raised; the caller passes it on.
+
+        Inside rest.py's release only the arm port's release_torque() raises
+        an ArmFault. With the arm port still saying that its motors are on,
+        the driver may have switched some or all of them off before it
+        failed: the motion state becomes "release_failed" and an ArmFault
+        that says so is raised.
+        """
+        if not self._arm.torque_on():
+            return  # the arm port knows that its motors are off
+        self._motion.set(MotionState.RELEASE_FAILED)
+        _log.error("a torque release raised: %s", TORQUE_UNKNOWN, exc_info=fault)
+        raise ArmFault(f"{RELEASE_FAILED}: {fault}") from fault
+
     def _run_release(self, job: _Job, stop_number: int) -> _Ending:
-        reason = self._rest.release(stop_number, job.should_stop)
+        try:
+            reason = self._rest.release(stop_number, job.should_stop)
+        except ArmFault as fault:
+            self._release_raised(fault)
+            raise
         if reason is None:
             return _Ending(COMPLETED)
-        text = f"release refused: {reason}; the motors stay on"
+        unknown = self._motion.get() is MotionState.RELEASE_FAILED
+        left = TORQUE_UNKNOWN if unknown else "the motors stay on"
+        text = f"release refused: {reason}; {left}"
         self._emit(EVENT_REFUSED, text, {"reason": reason})
         return _Ending(REFUSED, reason)
 
     def _run_shutdown(self, job: _Job, stop_number: int, confirmed: bool) -> _Ending:
-        """Return to rest, release torque there, then let the app close."""
+        """Return to rest, release torque there, then let the app close.
+
+        After a torque release that failed it starts no return to rest: the
+        release is tried again, and the app closes only once it has worked.
+        """
         ending = _Ending(COMPLETED)
         released = False  # by this shutdown; the motors may have been off before
-        if self._motion.get() is not MotionState.REST_UNPOWERED:
-            ending = self._run_rest(job, rest_module.SHUTDOWN, stop_number, confirmed)
+        motion = self._motion.get()
+        unknown = motion is MotionState.RELEASE_FAILED
+        if motion is not MotionState.REST_UNPOWERED:
+            if not unknown:
+                ending = self._run_rest(
+                    job, rest_module.SHUTDOWN, stop_number, confirmed
+                )
             if ending.status != COMPLETED:
                 reason = f"the return to rest ended {ending.status}: {ending.reason}"
                 ending = dataclasses.replace(ending, reason=reason)
             else:
                 # What told this job to stop since, such as the loss of the
                 # robot connection it came over, keeps the motors on.
-                refusal = self._rest.release(stop_number, job.should_stop)
+                try:
+                    refusal = self._rest.release(stop_number, job.should_stop)
+                except ArmFault as fault:
+                    self._release_raised(fault)
+                    raise
                 released = refusal is None
                 if refusal is not None:
-                    reason = f"at rest with the motors on; release refused: {refusal}"
+                    where = "at rest with the motors on"
+                    if unknown:
+                        where = f"a torque release failed and {TORQUE_UNKNOWN}"
+                    reason = f"{where}; release refused: {refusal}"
                     ending = dataclasses.replace(ending, status=FAILED, reason=reason)
         if ending.status != COMPLETED:
             text = (
                 f"shutdown {ending.status}: {ending.reason}; the robot app keeps "
-                "running and the arm holds"
+                "running"
             )
+            if not unknown:
+                text += " and the arm holds"
             self._emit(EVENT_SHUTDOWN, text, {"status": ending.status})
             return ending
         # A release that the driver only sent is not reported as motors off.

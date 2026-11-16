@@ -404,6 +404,40 @@ def test_load_config_accepts_a_string_path():
     assert load_config(str(CONFIG_YAML)) == RobotAppConfig.default()
 
 
+@pytest.mark.parametrize(
+    ("name", "differs"),
+    [
+        (
+            "robot_app_demo2.yaml",
+            {"human.enabled": True, "human.require_live_view": False},
+        ),
+        (
+            "robot_app_human_check.yaml",
+            {"human.enabled": True, "limits.human.max_joint_speed": 0.1},
+        ),
+    ],
+)
+def test_the_demo_2_robot_files_are_the_shipped_file_with_the_keys_they_list(
+    name, differs, tmp_path
+):
+    # Demo 2: a person takes the arm over. Both files keep the human joint box
+    # inside rest.region_*, as human.enabled needs.
+    box = {
+        "limits.human.joint_min": _every_joint(-2.5),
+        "limits.human.joint_max": _every_joint(2.5),
+    }
+    changes = [_put(key, value) for key, value in {**differs, **box}.items()]
+    path = CONFIG_YAML.with_name(name)
+    # The file names every setting the shipped file names, with these values.
+    settings = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))
+    for change in changes:
+        change(settings)
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == settings
+    loaded = load_config(path)
+    assert loaded == _load_changed(tmp_path, *changes)
+    assert loaded.human.enabled is True
+
+
 def test_settings_left_out_take_their_defaults(tmp_path):
     optional_blocks = (
         "executor",

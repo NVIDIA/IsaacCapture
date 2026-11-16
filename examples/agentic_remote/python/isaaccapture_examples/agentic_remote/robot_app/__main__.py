@@ -9,7 +9,10 @@ service. --selftest drives the app on the simulated arm over a loopback link;
 --selftest-link drives it through a robot link service over a real link on
 127.0.0.1. --arm apai --driver real connects APAI's motor driver, whose connect
 cuts motor torque: only after its checks and three typed confirmations, and
-APAI's driver itself refuses an arm it does not measure at rest.
+APAI's driver itself refuses an arm it does not measure at rest. --human-socket
+PATH, with --connect, serves a Unix socket for a human program on this machine:
+the program through which a person drives the arm with the headset's right
+controller.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from .app import RobotApp, live_view_problem
 from .clock import SystemClock
 from .config import ConfigError, load_config
 from .connection import RobotDialer
+from .human_socket import HumanSocket
 from .interfaces import CheckerSet, MotionState, Owner
 from .rest import planned_duration_s
 from .sim import BasicChecker, SimArm
@@ -268,6 +272,16 @@ def _parser() -> argparse.ArgumentParser:
             "camera_calibration_id of the file"
         ),
     )
+    parser.add_argument(
+        "--human-socket",
+        metavar="PATH",
+        help=(
+            "with --connect: serve a Unix socket at PATH for the human program, "
+            "the program through which a person drives the arm with the "
+            "headset's right controller, when it runs on this machine (its "
+            "socket_path names the same PATH); without it there is no such socket"
+        ),
+    )
     return parser
 
 
@@ -340,6 +354,7 @@ def _main(argv: Sequence[str] | None) -> int:
         clock,
         args.connect,
         driver=DRIVER_SIM,
+        human_socket=args.human_socket,
     )
 
 
@@ -352,6 +367,11 @@ def _unusable(args: argparse.Namespace) -> str | None:
     modes = [bool(args.selftest), bool(args.selftest_link), args.connect is not None]
     if sum(modes) > 1:
         return "--connect, --selftest and --selftest-link exclude each other"
+    if args.human_socket is not None:
+        if args.connect is None:
+            return "--human-socket can be used with --connect only"
+        if not args.human_socket.strip():
+            return "--human-socket needs the path of the socket"
     apai_only = {
         "--driver": args.driver,
         "--apai-profile": args.apai_profile,
@@ -463,6 +483,7 @@ def run_connected(
     say: Say = _say,
     driver: str = "",
     signals: _StartSignals | None = None,
+    human_socket: str | None = None,
 ) -> int:
     """Run the robot app with the Thor terminal and dial the robot link service.
 
@@ -476,11 +497,26 @@ def run_connected(
     and the lines it does not take are lost. signals are the caller's, noted
     since before this call; None notes them from here on. driver is what
     WELCOME declares. A configuration this driver may not run with gives one
-    line and EXIT_NOT_RUN, with nothing connected.
+    line and EXIT_NOT_RUN, with nothing connected. human_socket is the path of
+    a Unix socket to serve for a human program on this machine, the program
+    through which a person drives the arm with the headset's right controller;
+    None serves none. A socket that cannot be made gives one line and
+    EXIT_NOT_RUN, with nothing connected.
     """
     lines = typed_lines() if typed is None else typed
     signals = _StartSignals() if signals is None else signals
     tell = _lossy(say)
+    # The socket comes first: the robot app starts a thread when it is made.
+    human: HumanSocket | None = None
+    if human_socket is not None:
+        try:
+            human = HumanSocket(human_socket)
+            human.start()
+        except (OSError, ValueError) as error:
+            # Before the arm is connected: nothing was.
+            _complain(f"--human-socket {human_socket} cannot be served: {error}")
+            _end_input(lines)
+            return EXIT_NOT_RUN
     try:
         app = RobotApp(
             config,
@@ -493,9 +529,13 @@ def run_connected(
         )
     except ConfigError as error:
         # A setting this driver may not run with: nothing was connected.
+        if human is not None:
+            human.close()
         _complain(f"the configuration cannot be used: {error}")
         _end_input(lines)
         return EXIT_NOT_RUN
+    if human is not None:
+        app.attach_local(human.carrier, human.attached)
     terminal = ThorTerminal(app, lines, say)
     dialer = RobotDialer(
         app,
@@ -530,6 +570,8 @@ def run_connected(
             f"robot app: session {app.session_id[:8]}; dialing the robot link "
             f"service at {endpoint}"
         )
+        if human is not None:
+            tell(f"robot app: the human program's socket is {human.path}")
         dialer.start()
         shown = ""
         while not app.wait_closed(_WATCH_S):
@@ -546,6 +588,8 @@ def run_connected(
     finally:
         dialer.close()
         app.close()
+        if human is not None:
+            human.close()  # the socket's file goes with it
         _end_input(lines)
         if reader.is_alive():
             reader.join(2 * _WATCH_S)  # one that cannot be ended is left behind
@@ -676,7 +720,13 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
         )
         return EXIT_NOT_RUN
     return run_connected(
-        config, arm, checkers, clock, args.connect, driver=DRIVER_APAI_MOCK
+        config,
+        arm,
+        checkers,
+        clock,
+        args.connect,
+        driver=DRIVER_APAI_MOCK,
+        human_socket=args.human_socket,
     )
 
 
@@ -883,6 +933,7 @@ def _real_driver(
             say=say,
             driver=DRIVER_REAL,
             signals=signals,
+            human_socket=args.human_socket,
         )
     finally:
         signals.restore()

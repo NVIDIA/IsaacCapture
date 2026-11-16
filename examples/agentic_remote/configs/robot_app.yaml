@@ -121,6 +121,13 @@ human:
   # link message. The human program is the workstation program that turns
   # controller data into joint targets; its stage is how far it is with them.
   stage_keep_s: 4.0
+  # Whether the controller's trigger moves the jaws while a person owns the arm;
+  # false: it does nothing. The grip level is the jaw opening in force at the
+  # takeover: the trigger is ignored until the opening it asks for is within
+  # jaw_match_tol of the grip level, as a share of the jaw travel, or has
+  # crossed it.
+  trigger_jaws: true
+  jaw_match_tol: 0.05
 
 # The robot connection, which the robot app dials. retry_s is the time from a failed
 # dial, or from a lost connection, to the next dial; never below 0.2.

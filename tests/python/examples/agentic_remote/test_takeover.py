@@ -117,7 +117,8 @@ def keep_human_fed(
         if message is not None:
             h.client.send(message)
         if view:
-            h.client.send(ViewStatus(live=True, age_s=0.0))
+            now = h.clock.monotonic()  # it is sent now, by the app's clock
+            h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=now))
         h.step()
 
     h.arm.send_target = send_target
@@ -154,8 +155,8 @@ def setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanSetpoin
     """A HUMAN_SETPOINT that quotes the app's numbers as they are now.
 
     With q the grip is squeezed and the clutch engaged toward q; without, the
-    grip is released. The controller is ready and its data are 0.02 s old.
-    fields replace any field.
+    grip is released. The controller is ready and its data are 0.02 s old. It
+    is sent now, by the app's clock. fields replace any field.
     """
     now = h.app.snapshot()
     values: dict[str, Any] = {
@@ -172,6 +173,7 @@ def setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanSetpoin
         "jaw_opening": None,
         "state_clock_mono_s": None,
         "note": "",
+        "sent_mono_s": h.clock.monotonic(),
     }
     values.update(fields)
     return HumanSetpoint(**values)
@@ -184,7 +186,8 @@ def feed(h, message: HumanSetpoint | None = None, *, view: bool = True) -> None:
     """
     h.client.send(setpoint(h) if message is None else message)
     if view:
-        h.client.send(ViewStatus(live=True, age_s=0.0))
+        now = h.clock.monotonic()  # it is sent now, by the app's clock
+        h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=now))
     h.step()
     h.step()
 
@@ -421,6 +424,7 @@ def test_a_human_setpoint_becomes_a_human_target_in_one_place():
         jaw_opening=0.0,
         state_clock_mono_s=999.75,
         note="following",
+        sent_mono_s=1000.0,  # no time on the way: the age is the reported one
     )
     assert human_target(m, 1000.0) == HumanTarget(
         seq=9,
@@ -435,6 +439,7 @@ def test_a_human_setpoint_becomes_a_human_target_in_one_place():
         sample_age_s=0.03,
         arrived_mono=1000.0,
         round_trip_s=0.25,
+        jaw_opening=0.0,
     )
     status = dataclasses.replace(m, engaged=False, q=None, state_clock_mono_s=None)
     assert human_target(status, 1000.0).q is None
@@ -443,7 +448,8 @@ def test_a_human_setpoint_becomes_a_human_target_in_one_place():
     for age in (None, -0.001, float("nan"), float("inf")):
         unknown = human_target(dataclasses.replace(m, sample_age_s=age), 1000.0)
         assert unknown.sample_age_s is None, age
-    assert human_target(dataclasses.replace(m, sample_age_s=0), 5.0).sample_age_s == 0.0
+    whole = human_target(dataclasses.replace(m, sample_age_s=0), 1000.0)
+    assert whole.sample_age_s == 0.0
     for computed_on in (1000.5, float("nan"), float("-inf")):
         ahead = dataclasses.replace(m, state_clock_mono_s=computed_on)
         assert human_target(ahead, 1000.0).round_trip_s is None, computed_on
@@ -505,7 +511,7 @@ def test_a_takeover_is_refused_with_a_fault_stop(human_app):
 def test_a_takeover_is_refused_without_fresh_controller_data(human_app):
     h = human_app
     before = h.app.snapshot()
-    h.client.send(ViewStatus(live=True, age_s=0.0))
+    h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=h.clock.monotonic()))
     none = "no fresh controller data: no HUMAN_SETPOINT has arrived"
     assert human_facts(h)["takeover"] == none
     assert_refused(h, ask_takeover(h), none)
@@ -521,7 +527,7 @@ def test_a_takeover_is_refused_without_fresh_controller_data(human_app):
     # Ready, and older than human.sample_age_limit_s once it is asked about.
     feed(h, setpoint(h, sample_age_s=0.2))
     h.advance(0.1, 0.1)
-    h.client.send(ViewStatus(live=True, age_s=0.0))
+    h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=h.clock.monotonic()))
     old = ask_takeover(h)
     assert old.status == "refused"
     assert re.fullmatch(
@@ -541,7 +547,7 @@ def test_a_takeover_is_refused_with_a_stale_view(human_app):
     assert human_facts(h)["takeover"] == none
     assert_refused(h, ask_takeover(h), none)
     # A view that was live, 0.4 s old then, and is older than the limit now.
-    h.client.send(ViewStatus(live=True, age_s=0.4))
+    h.client.send(ViewStatus(live=True, age_s=0.4, sent_mono_s=h.clock.monotonic()))
     h.step()
     h.advance(0.2, 0.2)
     feed(h, view=False)
@@ -2432,3 +2438,133 @@ def test_a_typed_rest_during_a_takeover_clears_the_recovery_checkers_contact_spo
     assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     assert h.app.snapshot().owner is Owner.HUMAN and h.app.takeover_open
     assert h.arm.torque_on() and h.arm.released_at == []
+
+
+# The edge of the human joint box
+#
+# The recovery region is rest.region_*: the start poses a return to rest is
+# taken from. A joint a person drove to the edge of the human joint box can
+# read a few thousandths of a rad outside it. After a STOP there nobody owns
+# the arm, and no squeeze brings the joint back without a new takeover.
+
+OVER_RAD = 0.005  # how far outside the human joint box the joint reads
+# Human driving on, with the human joint box 0.02 rad inside the recovery
+# region on every bound.
+_BOX_INSIDE = dataclasses.replace(
+    _ON,
+    limits=dataclasses.replace(
+        _ON.limits,
+        human=dataclasses.replace(
+            _ON.limits.human,
+            joint_min=[low + 0.02 for low in _ON.rest.region_min],
+            joint_max=[high - 0.02 for high in _ON.rest.region_max],
+        ),
+    ),
+)
+
+
+def a_stop(h) -> str:
+    """Right B: a STOP makes nobody the control owner. The stop level it leaves."""
+    h.client.stop(reason="right B", sender="controller")
+    h.client.wait_state(lambda s: s.owner == "nobody" and s.stop_number == 1)
+    # A STOP's level stands until a new control owner is set.
+    return "stop"
+
+
+def a_fault_stop_and_its_reset(h) -> str:
+    """A motor fault latches a fault-stop; the reset lifts it. The level left."""
+    h.arm.set_fault("motor 3 over temperature")
+    h.wait_local_event("fault")
+    h.arm.clear_faults()
+    h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert final(h, h.client.reset()).status == "completed"
+    h.client.wait_state(lambda s: s.stop_level == "none" and s.owner == "nobody")
+    return "none"
+
+
+def nobody_owns_just_outside_the_human_box(h, stop: Callable[[Any], str]) -> None:
+    """A person owns the arm; joint index 0 then reads OVER_RAD outside; `stop`.
+
+    The joint reads that far above the human joint box when `stop` makes
+    nobody the owner. The takeover stays open and the controller data are fresh.
+    """
+    edge = h.config.limits.human.joint_max[0]
+    h.hold_at([edge - 0.01, 0.3, 0.3, 0.0, 0.0, 0.0])
+    take_over(h)
+    h.hold_at([edge + OVER_RAD, 0.3, 0.3, 0.0, 0.0, 0.0])
+    level = stop(h)
+    state = state_now(h)
+    assert (state.owner, state.stop_level, state.motion) == ("nobody", level, "hold")
+    assert state.health["human"]["takeover_open"] is True
+    feed(h)
+
+
+_STOPS = [a_stop, a_fault_stop_and_its_reset]
+
+
+@pytest.mark.parametrize("stop", _STOPS)
+def test_after_a_stop_at_the_edge_of_a_box_without_margin_nothing_moves_the_arm(
+    human_app, stop
+):
+    # A known limit of a file whose human joint box equals the recovery region,
+    # as human_config() makes it. The rig's file keeps its box inside the region.
+    h = human_app
+    assert h.config.limits.human.joint_max == h.config.rest.region_max
+    nobody_owns_just_outside_the_human_box(h, stop)
+    # ROBOT_STATE names no reason against a takeover: no joint is read for it.
+    assert human_facts(h)["takeover"] == ""
+    takeover = ask_takeover(h)
+    assert (takeover.status, takeover.reason) == (
+        "refused",
+        "the arm is outside the human limits: pose: joint index 0 at 2.5050 rad "
+        "is outside the human joint limits -2.5000..2.5000; type rest",
+    )
+    # The typed rest that refusal names is refused for its start pose.
+    outside = (
+        "joint index 0 at 2.5050 rad is outside the tested recovery region "
+        "-2.5000..2.5000"
+    )
+    rest = final(h, h.client.rest())
+    assert (rest.status, rest.reason) == ("refused", outside)
+    # So is every other command that could move the arm or end the takeover.
+    assert final(h, h.client.request_owner("agent")).reason == TAKEOVER_OPEN
+    back = hand_back(h)
+    assert back.status == "refused" and back.reason.endswith("; type rest first")
+    assert final(h, h.client.release()).status == "refused"
+    down = final(h, h.client.shutdown())
+    assert (down.status, down.reason) == (
+        "refused",
+        f"the return to rest ended refused: {outside}",
+    )
+    assert h.arm.sent == [] and h.arm.jaw_commands == []
+    assert h.arm.torque_on() and h.arm.released_at == []
+    assert h.app.snapshot().owner is Owner.NOBODY and h.app.takeover_open
+
+
+@pytest.mark.parametrize("config", [_BOX_INSIDE], ids=["a human box inside the region"])
+@pytest.mark.parametrize("stop", _STOPS)
+def test_with_a_box_inside_the_region_the_typed_rest_is_taken_after_that_stop(
+    human_app, stop
+):
+    h = human_app
+    human, region = h.config.limits.human, h.config.rest
+    assert region.region_max[0] - human.joint_max[0] == pytest.approx(0.02)
+    nobody_owns_just_outside_the_human_box(h, stop)
+    takeover = ask_takeover(h)
+    assert (takeover.status, takeover.reason) == (
+        "refused",
+        "the arm is outside the human limits: pose: joint index 0 at 2.4850 rad "
+        "is outside the human joint limits -2.4800..2.4800; type rest",
+    )
+    assert h.arm.sent == []
+    # The reading lies inside the region: the typed rest that refusal names is
+    # taken and ends at rest with the motors on.
+    rest = final(h, h.client.rest())
+    assert (rest.status, rest.reason) == ("completed", "")
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    assert h.app.motion_state is MotionState.REST_HOLD
+    assert h.arm.torque_on() and h.arm.released_at == []
+    # Nobody owns the arm and the takeover is open: the hand-back ends it.
+    assert h.app.snapshot().owner is Owner.NOBODY and h.app.takeover_open
+    assert hand_back(h).status == "completed"
+    assert not h.app.takeover_open

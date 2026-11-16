@@ -345,6 +345,7 @@ class StatePublisher:
         controller_age: Callable[[float], float | None] | None = None,
         human_facts: Callable[[], dict[str, Any]] | None = None,
         contact_hold: Callable[[], bool] | None = None,
+        local_program: Callable[[], bool | None] | None = None,
     ) -> None:
         """view_age(now) is the age of the operator's live view, None if unknown.
 
@@ -355,8 +356,12 @@ class StatePublisher:
         targets (HumanInput.stage), controller_age(now) the age of its newest
         controller data (HumanInput.sample_age_s), human_facts() the content
         of health["human"], and contact_hold() whether the arm holds at a
-        contact. Each of the seven may be left out.
+        contact. local_program() is whether a human program is attached at the
+        robot app's own socket, None when the app has no such socket: it is
+        sent as health["human"]["local_program"], and not at all for None.
+        Each of the eight may be left out.
         """
+        self._local_program = local_program
         self._move_stage = move_stage
         self._view_age = view_age
         self._permit_facts = permit_facts
@@ -446,6 +451,9 @@ class StatePublisher:
             controller_age_s = None
         human = {} if self._human_facts is None else self._human_facts()
         human = _clean(human, "human", not_finite)
+        local = None if self._local_program is None else self._local_program()
+        if local is not None:
+            human = {**human, "local_program": bool(local)}
         contact_hold = False if self._contact_hold is None else self._contact_hold()
         permit = None if self._permit_facts is None else self._permit_facts(now)
         permit = _clean(permit, "permit", not_finite)

@@ -3005,7 +3005,8 @@ def test_no_live_view_needs_a_simulated_driver(config, sim_arm, checkers, clock)
 def send_view(h, live: bool, age_s: float) -> float:
     """Send a VIEW_STATUS; the app-clock time at which the app took it."""
     before = h.app._view
-    h.client.send(ViewStatus(live=live, age_s=age_s))
+    now = h.clock.monotonic()  # it is sent now, by the app's clock
+    h.client.send(ViewStatus(live=live, age_s=age_s, sent_mono_s=now))
     deadline = time.monotonic() + WAIT_S
     while h.app._view is before and time.monotonic() < deadline:
         time.sleep(0.001)
