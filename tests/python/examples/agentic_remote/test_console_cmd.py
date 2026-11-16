@@ -12,7 +12,14 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import os
+import pty
+import select
+import signal
+import sys
+import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -190,6 +197,117 @@ def test_a_confirmation_cannot_come_from_a_pipe(console: Console, command: str) 
         "confirmation at); nothing sent"
     ]
     assert console.roles == [] and console.settled() == []
+
+
+def on_a_terminal(
+    child: Callable[[], Any],
+    typed_before: bytes = b"",
+    typed_after: bytes = b"",
+    marker: bytes = b"Type yes",
+    delay_s: float = 0.5,
+) -> tuple[str, bool]:
+    """Run child() in a new process whose terminal this test owns.
+
+    typed_before is typed at once and child() starts delay_s later;
+    typed_after is typed once `marker` showed on the terminal. Returns (the
+    repr of what child() returned or raised, whether the marker showed).
+    """
+    result = tempfile.NamedTemporaryFile(prefix="on-a-terminal-", delete=False)
+    result.close()
+    pid, master = pty.fork()
+    if pid == 0:  # stdin, stdout and the controlling terminal are the new one
+        try:
+            # pytest holds sys.stdin and sys.stdout; the terminal is 0 and 1.
+            sys.stdin = open(0, closefd=False)  # noqa: SIM115
+            sys.stdout = open(1, "w", closefd=False)  # noqa: SIM115
+            time.sleep(delay_s)
+            text = repr(child())
+        except BaseException as problem:  # noqa: BLE001
+            text = f"raised {problem!r}"
+        try:
+            Path(result.name).write_text(text)
+        finally:
+            os._exit(0)
+    try:
+        os.write(master, typed_before)
+        seen, answered, ended = b"", False, False
+        end = time.monotonic() + delay_s + 10.0
+        while time.monotonic() < end and not ended:
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if ready:
+                try:
+                    seen += os.read(master, 4096)
+                except OSError:  # the child closed the terminal
+                    pass
+            if marker in seen and not answered:
+                answered = True
+                time.sleep(0.1)  # the child reads by now
+                os.write(master, typed_after)
+            ended = os.waitpid(pid, os.WNOHANG)[0] != 0
+        if not ended:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        return Path(result.name).read_text(), marker in seen
+    finally:
+        os.close(master)
+        os.unlink(result.name)
+
+
+def release_at_a_terminal(tmp_path: Path, agent_marker: str = "") -> str:
+    """console_cmd release, with no service to attach to; for on_a_terminal()."""
+    said: list[str] = []
+    for name in list(os.environ):
+        if console_cmd.agent_environment({name: os.environ[name]}):
+            del os.environ[name]
+    if agent_marker:
+        os.environ[agent_marker] = "1"
+    code = console_cmd.main(
+        ["release", "--socket", str(tmp_path / "no-service.sock")], say=said.append
+    )
+    return f"exit {code}: {said}"
+
+
+def test_a_yes_typed_before_the_question_does_not_answer_it(tmp_path: Path) -> None:
+    def run() -> str:
+        return release_at_a_terminal(tmp_path)
+
+    # Typed ahead, the yes is dropped; what is typed at the question counts.
+    answer, shown = on_a_terminal(run, b"yes\n", b"no\n")
+    assert shown and "release not confirmed; nothing sent" in answer
+    answer, shown = on_a_terminal(run, b"", b"yes\n")
+    assert shown and "cannot attach to the robot link service" in answer
+    answer, shown = on_a_terminal(run, b"no\n\n", b"yes\n")
+    assert shown and "cannot attach to the robot link service" in answer
+
+
+@pytest.mark.parametrize("marker", ["CLAUDECODE", "AI_AGENT", "OPENCLAW_HOME"])
+def test_a_confirmation_is_not_asked_in_an_agents_environment(
+    tmp_path: Path, marker: str
+) -> None:
+    answer, shown = on_a_terminal(
+        lambda: release_at_a_terminal(tmp_path, marker), b"yes\n", b"yes\n"
+    )
+    assert not shown  # the question was never put
+    assert "release not confirmed (the confirmation is typed by the operator" in answer
+    assert "outside an agent environment); nothing sent" in answer
+    assert "exit 1: " in answer
+
+
+def test_the_marks_of_an_agents_environment() -> None:
+    marked = console_cmd.agent_environment
+    assert marked({"CLAUDECODE": "1", "PATH": "/bin"}) == "CLAUDECODE"
+    assert marked({"OPENCLAW_ANYTHING": "x"}) == "OPENCLAW_ANYTHING"
+    assert marked({"CLAUDECODE": " ", "PATH": "/bin"}) is None
+    assert marked({}) is None
+
+
+@pytest.mark.apai
+def test_the_marks_of_an_agents_environment_are_apais() -> None:
+    import importlib
+
+    arm_hold = importlib.import_module("apai.control.arm_hold")
+    assert console_cmd.AGENT_ENV == arm_hold.AGENT_ENV
+    assert console_cmd.AGENT_ENV_PREFIXES == arm_hold.AGENT_ENV_PREFIXES
 
 
 @pytest.mark.parametrize("command", ["state", "stop", "reset"])

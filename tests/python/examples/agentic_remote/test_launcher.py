@@ -11,6 +11,8 @@ carrier, and behind the real robot link service on a link of 127.0.0.1.
 from __future__ import annotations
 
 import ast
+import contextlib
+import dataclasses
 import hashlib
 import importlib
 import json
@@ -52,6 +54,13 @@ SPEED = 1.2
 PICK = "pick up and place the red object"  # pick_and_place to the drop zone
 QUICK = "open the gripper"  # one jaw command
 LOOK = "look at the table and report what objects you see"
+# A rig.motion_bounds block that can be used.
+BOUNDS: dict[str, Any] = {
+    "joint_center_rad": [0.0] * 6,
+    "max_joint_deviation_rad": 2.0,
+    "tcp_center_m": [0.3, 0.0, 0.2],
+    "max_tcp_distance_m": 0.25,
+}
 
 
 def settings_file(folder: Path, **blocks: dict[str, Any]) -> Path:
@@ -65,6 +74,8 @@ def settings_file(folder: Path, **blocks: dict[str, Any]) -> Path:
         },
         "thor": {"agent_max_joint_speed": SPEED},
         "task": {"max_joint_speed": SPEED, "grid_wait_s": 10.0},
+        # The mock camera and recorded pairs: their times are invented.
+        "camera": {"allow_invented_times": True},
         "experiment": {"stack": "minimal"},
     }
     for name, block in blocks.items():
@@ -152,7 +163,8 @@ def test_the_read_only_tools_are_the_experiments(experiment_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        ({"task": {"max_joint_speed": 9.0}}, "above the Thor's agent limit"),
+        ({"task": {"max_joint_speed": 2.0}}, "above the Thor's agent limit"),
+        ({"task": {"max_joint_speed": 9.0}}, "max_joint_speed must be at most 3"),
         ({"task": {"max_joint_speed": 0.0}}, "task.max_joint_speed must be"),
         ({"task": {"max_joint_speed": float("nan")}}, "task.max_joint_speed must be"),
         ({"task": {"failed_steps_limit": 0}}, "failed_steps_limit must be"),
@@ -161,6 +173,40 @@ def test_the_read_only_tools_are_the_experiments(experiment_dir: Path) -> None:
         ({"permits": {"reach": 3}}, "permits: unknown key"),
         ({"camera": {"streams": ["one"]}}, "two stream names"),
         ({"rig": {"home_q": [0.0, "a"]}}, "rig.home_q must be"),
+        ({"camera": {"streams": ["head.left", "head.left"]}}, "two different"),
+        ({"permits": {"renew_s": 1.0, "life_s": 1.0}}, "renew_s must be below"),
+        ({"permits": {"renew_s": 0.5, "life_s": 0.1}}, "renew_s must be below"),
+        ({"camera": {"allow_invented_times": 1}}, "must be true or false"),
+        ({"rig": {"home_q": [0.0] * 6, "park_q": [0.0] * 5}}, "differ in length"),
+        (
+            {
+                "rig": {
+                    "home_q": [0.0] * 6,
+                    "motion_bounds": {**BOUNDS, "joint_center_rad": [0.0] * 5},
+                }
+            },
+            "differ in length",
+        ),
+        (
+            {"rig": {"motion_bounds": {**BOUNDS, "no_such_key": 1}}},
+            "rig.motion_bounds: unknown key",
+        ),
+        (
+            {"rig": {"motion_bounds": {**BOUNDS, "max_tcp_distance_m": -5}}},
+            "max_tcp_distance_m must be",
+        ),
+        (
+            {"rig": {"motion_bounds": {**BOUNDS, "max_joint_deviation_rad": 0}}},
+            "max_joint_deviation_rad must be",
+        ),
+        (
+            {"rig": {"motion_bounds": {**BOUNDS, "tcp_center_m": [0.0, 0.0]}}},
+            "tcp_center_m must be three",
+        ),
+        (
+            {"rig": {"motion_bounds": {"max_tcp_distance_m": 0.2}}},
+            "rig.motion_bounds needs",
+        ),
     ],
 )
 def test_a_file_that_cannot_be_used_is_refused(
@@ -170,6 +216,71 @@ def test_a_file_that_cannot_be_used_is_refused(
         agent_config.load_settings(settings_file(tmp_path, **change))
 
 
+def test_every_wait_age_and_count_has_an_upper_bound(tmp_path: Path) -> None:
+    limits = agent_config.LIMITS
+    # No number of the file is without one.
+    for block, kind in agent_config._SECTIONS.items():
+        for item in dataclasses.fields(kind):
+            number = isinstance(item.default, (int, float)) or item.name.endswith("px")
+            if number and not isinstance(item.default, bool):
+                assert item.name in limits[block], f"{block}.{item.name}"
+    for block, keys in limits.items():
+        for key, limit in keys.items():
+            over = limit + 1 if isinstance(limit, int) else limit * 1.001
+            with pytest.raises(ConfigError, match=f"{block}.{key} must be at most"):
+                agent_config.load_settings(
+                    settings_file(tmp_path, **{block: {key: over}})
+                )
+    # The shipped file names the bounds, and its own values are inside them.
+    shipped = SHIPPED.read_text().lower()
+    assert "at most 60 s" in shipped and "at most 3 rad/s" in shipped
+    agent_config.load_settings(SHIPPED)
+
+
+@pytest.mark.parametrize("empty", ["[]", "0", "false", '""', "text"])
+def test_a_block_that_is_no_mapping_is_refused(tmp_path: Path, empty: str) -> None:
+    path = tmp_path / "agent.yaml"
+    path.write_text(f"task: {empty}\n")
+    with pytest.raises(ConfigError, match="task must be a mapping"):
+        agent_config.load_settings(path)
+    path.write_text(f"{empty}\n")
+    with pytest.raises(ConfigError, match="must hold a mapping"):
+        agent_config.load_settings(path)
+    # A block or a file with nothing in it is the defaults.
+    path.write_text("task:\nlink:\n")
+    assert agent_config.load_settings(path).task == agent_config.TaskSettings()
+    path.write_text("")
+    assert agent_config.load_settings(path).link == agent_config.LinkSettings()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "task:\n  max_joint_speed: 0.05\ntask:\n  max_joint_speed: 0.1\n",
+        "task:\n  end_wait_s: 1.0\n  end_wait_s: 2.0\n",
+        "rig:\n  motion_bounds:\n    tcp_center_m: [0]\n    tcp_center_m: [1]\n",
+    ],
+    ids=["block", "key", "nested"],
+)
+def test_a_key_given_twice_is_refused(tmp_path: Path, text: str) -> None:
+    path = tmp_path / "agent.yaml"
+    path.write_text(text)
+    with pytest.raises(ConfigError, match="is given twice"):
+        agent_config.load_settings(path)
+
+
+def test_the_rigs_poses_have_the_arms_joint_count(tmp_path: Path) -> None:
+    rig = {"home_q": [0.0] * 6, "park_q": [0.0] * 6, "motion_bounds": BOUNDS}
+    settings = agent_config.load_settings(settings_file(tmp_path, rig=rig))
+    agent_config.check_joint_count(settings, 6)
+    with pytest.raises(ConfigError, match=r"rig\.home_q has 6 values; the arm has 7"):
+        agent_config.check_joint_count(settings, 7)
+    # Nothing to compare without the rig's values.
+    agent_config.check_joint_count(
+        agent_config.load_settings(settings_file(tmp_path)), 7
+    )
+
+
 def test_an_unknown_block_or_a_missing_file_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "agent.yaml"
     path.write_text("speed: 1\n")
@@ -177,6 +288,15 @@ def test_an_unknown_block_or_a_missing_file_is_refused(tmp_path: Path) -> None:
         agent_config.load_settings(path)
     with pytest.raises(ConfigError, match="cannot read"):
         agent_config.load_settings(tmp_path / "none.yaml")
+    for text, message in (
+        ("state_dir: 12\n", "state_dir must be text"),
+        ("state_dir: [a]\n", "state_dir must be text"),
+        ("log_level: 3\n", "log_level must be one of"),
+        ("log_level: loud\n", "log_level must be one of"),
+    ):
+        path.write_text(text)
+        with pytest.raises(ConfigError, match=message):
+            agent_config.load_settings(path)
 
 
 def test_a_relative_path_is_taken_from_the_files_folder(tmp_path: Path) -> None:
@@ -189,11 +309,44 @@ def test_a_relative_path_is_taken_from_the_files_folder(tmp_path: Path) -> None:
     assert settings.state_dir == tmp_path.parent / "state"
 
 
-@pytest.mark.parametrize("name", agent_config.REFUSED_ENV)
-def test_an_environment_that_changes_apai_is_refused(name: str) -> None:
-    with pytest.raises(ConfigError, match=name):
-        agent_config.refused_environment({name: "1"})
+@pytest.mark.parametrize(
+    "name",
+    [
+        "APAI_ROBOT",
+        "APAI_BASE",
+        "APAI_START_STOPPED",
+        "APAI_OBSERVED_FINGER_GATE",
+        "APAI_OCCUPANCY",
+        "APAI_GRASP_EXECUTOR",
+        "APAI_GRASP_BACKEND",
+        "APAI_AGENT_HARNESS",
+        "APAI_PROGRAMS",
+        "APAI_BELIEFS",
+        "APAI_PREMOTION_CHECK",
+        "APAI_ANYTHING_NEW",
+    ],
+)
+def test_an_apai_variable_the_program_does_not_know_is_refused(name: str) -> None:
+    with pytest.raises(ConfigError, match=f"{name} is set in the environment"):
+        agent_config.refused_environment({name: "1", "APAI_REQUIRE_CUDA": "1"})
     agent_config.refused_environment({name: " "})
+
+
+def test_the_apai_variables_the_program_takes_are_listed() -> None:
+    stores = {name for name, _ in agent_config.APAI_STORES}
+    assert stores < set(agent_config.ALLOWED_ENV)
+    assert set(agent_config.ALLOWED_ENV) - stores == {
+        "APAI_REQUIRE_CUDA",  # run_agent.sh sets it
+        "APAI_ASPIRE_LIBRARY",  # the learned-notes library, which is only read
+        "APAI_GRASPGENX_PORT",  # the port of a grasp server on this machine
+    }
+    agent_config.refused_environment(dict.fromkeys(agent_config.ALLOWED_ENV, "x"))
+    # Other programs' variables are not looked at.
+    agent_config.refused_environment({"APAIX": "1", "MY_APAI_ROBOT": "1", "PATH": "/"})
+    # Every variable that is refused is named.
+    with pytest.raises(ConfigError, match="APAI_BASE, APAI_ROBOT are set"):
+        agent_config.refused_environment({"APAI_ROBOT": "x", "APAI_BASE": "y"})
+    assert "APAI_REQUIRE_CUDA" in (EXAMPLE / "run_agent.sh").read_text()
 
 
 def test_the_camera_argument_has_three_forms() -> None:
@@ -213,6 +366,88 @@ def test_the_stores_of_apai_go_into_the_state_folder(tmp_path: Path) -> None:
     assert env["APAI_BELIEFS_PATH"] == "/kept/beliefs.json"  # the operator's own
     for name, leaf in agent_config.APAI_STORES[1:]:
         assert env[name] == str(folder / leaf)
+    # A variable that is set and empty names no place: APAI would fall back to
+    # its own checkout.
+    env = {"APAI_BELIEFS_PATH": "", "APAI_EPISODIC_PATH": "  "}
+    agent_config.redirect_apai_stores(settings, env)
+    for name, leaf in agent_config.APAI_STORES:
+        assert env[name] == str(folder / leaf)
+
+
+def test_the_minimal_stack_pins_apais_mock_detector_for_a_stereo_camera(
+    tmp_path: Path,
+) -> None:
+    camera = {
+        "calibration_dir": str(tmp_path),
+        "hand_eye_json": str(tmp_path / "hand_eye.json"),
+        "bridge_python": "/consumer/python",
+    }
+    minimal = agent_config.load_settings(settings_file(tmp_path, camera=camera))
+    for recorded in ("", str(tmp_path)):
+        profile = agent_config._camera_profile(minimal, tmp_path, recorded)
+        assert profile["detector"] == {"type": "mock"}
+    # The full stack takes the experiment's detector (see _merge_experiment).
+    full = agent_config.load_settings(
+        settings_file(tmp_path, camera=camera, experiment={"stack": "full"})
+    )
+    assert "detector" not in agent_config._camera_profile(full, tmp_path, "")
+
+
+def test_a_camera_with_invented_times_needs_its_setting(tmp_path: Path) -> None:
+    refused = agent_config.load_settings(
+        settings_file(tmp_path, camera={"allow_invented_times": False})
+    )
+    assert agent_config.load_settings(SHIPPED).camera.allow_invented_times is False
+    assert agent_config.invented_times(refused, "link") is False
+    for camera in ("mock", "recorded:/x"):
+        with pytest.raises(ConfigError, match=r"camera\.allow_invented_times"):
+            agent_config.invented_times(refused, camera)
+    allowed = agent_config.load_settings(settings_file(tmp_path))
+    assert agent_config.invented_times(allowed, "mock") is True
+    assert agent_config.invented_times(allowed, "recorded:/x") is True
+    assert agent_config.invented_times(allowed, "link") is False
+
+
+@pytest.mark.parametrize("camera", ["mock", "recorded:/x"])
+@pytest.mark.parametrize("more", [["--task", QUICK], ["--check"]])
+def test_the_program_does_not_start_on_invented_times_without_the_setting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], camera: str, more: list[str]
+) -> None:
+    def never(*args: Any, **kwargs: Any) -> AgentLink:
+        raise AssertionError("attached to the robot link service")
+
+    path = settings_file(tmp_path, camera={"allow_invented_times": False})
+    code = launcher.main(
+        ["--config", str(path), "--camera", camera, *more], attach=never
+    )
+    assert code == launcher.EXIT_NOT_RUN
+    error = capsys.readouterr().err
+    assert "camera.allow_invented_times" in error and "invented" in error
+    assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--task", ""], "--task must name a task"),
+        (["--task", "  \n"], "--task must name a task"),
+        (["--max-steps", "0"], "--max-steps must be at least 1"),
+        (["--max-steps", "-3"], "--max-steps must be at least 1"),
+    ],
+)
+def test_arguments_that_cannot_be_used_end_with_exit_code_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    message: str,
+) -> None:
+    def never(*args: Any, **kwargs: Any) -> AgentLink:
+        raise AssertionError("attached to the robot link service")
+
+    path = settings_file(tmp_path)
+    code = launcher.main(["--config", str(path), *arguments], attach=never)
+    assert code == launcher.EXIT_NOT_RUN
+    assert message in capsys.readouterr().err
 
 
 def test_the_calibration_id_is_the_files_or_the_one_named(tmp_path: Path) -> None:
@@ -950,11 +1185,11 @@ def test_camera_frames_of_a_local_camera_get_evidence_that_never_goes_back() -> 
     made, times = Link(), FrameTimes()
     stamps = launcher.LocalFrameStamps(made, times)
     now = time.monotonic()
-    first = mock.Mock(t=now - 0.2)
+    first = mock.Mock(t=now - 0.2, capture=None)
     stamps.note(first)
     assert times.lookup(first.t) == pytest.approx(5000.0 - 0.2, abs=0.05)
     made.wall = 4999.0  # the estimate of the Thor's clock moved back
-    second = mock.Mock(t=now)
+    second = mock.Mock(t=now, capture=None)
     stamps.note(second)
     assert times.lookup(second.t) == times.lookup(first.t)
     # No clock of the Thor yet, or a time that is not this machine's: no evidence.
@@ -963,6 +1198,143 @@ def test_camera_frames_of_a_local_camera_get_evidence_that_never_goes_back() -> 
     made.wall = 5001.0
     stamps.note(mock.Mock(t=12.0))
     assert len(times) == 2
+    # Each camera frame that got such a time says that it was invented.
+    assert first.capture == {"invented_times": True}
+    kept = mock.Mock(t=time.monotonic(), capture={"backend": "mock"})
+    stamps.note(kept)
+    assert kept.capture == {"backend": "mock", "invented_times": True}
+
+
+@apai
+def test_a_run_on_invented_times_says_so_at_its_start(
+    stage: Stage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hooks, seen = launcher.agent_hooks, []
+
+    @contextlib.contextmanager
+    def watched(*args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        with hooks(*args, **kwargs) as built:
+            seen.append(built)
+            yield built
+
+    monkeypatch.setattr(launcher, "agent_hooks", watched)
+    stage.run("--task", LOOK)
+    (warning,) = stage.said("camera.allow_invented_times")
+    assert warning.startswith("WARNING: the camera frames of --camera mock carry")
+    assert "never against a real arm" in warning
+    assert stage.lines.index(warning) < stage.lines.index(
+        stage.said("robot connection up")[0]
+    )
+    assert seen[0]["invented_times"] is True
+    recorded = json.loads((stage.run_dir / "agent-settings.json").read_text())
+    assert recorded["camera"]["allow_invented_times"] is True
+
+
+@apai
+def test_a_registration_that_fails_leaves_apais_names_as_they_were(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera_base = importlib.import_module("apai.perception.camera_base")
+    demo = importlib.import_module("apai.apps.demo")
+    before = (camera_base.make_camera, demo.make_camera, demo._make_detector)
+    settings = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"stack": "full"})
+    )
+
+    def register_detector() -> None:
+        demo._make_detector = lambda *args, **kwargs: None  # then it fails
+        raise RuntimeError("the detector cannot be registered")
+
+    monkeypatch.setattr(
+        launcher, "_experiment_parts", lambda: {"register_detector": register_detector}
+    )
+    try:
+        with pytest.raises(RuntimeError, match="cannot be registered"):
+            with launcher.agent_hooks(None, settings, mock.Mock(), None, tmp_path):
+                pass
+        after = (camera_base.make_camera, demo.make_camera, demo._make_detector)
+        assert after == before
+    finally:
+        camera_base.make_camera, demo.make_camera, demo._make_detector = before
+
+
+def test_the_end_of_the_program_waits_until_the_agent_no_longer_owns() -> None:
+    class Link:
+        def __init__(self, owners: list[str]) -> None:
+            self.owners = owners
+
+        def state(self) -> Any:
+            owner = self.owners.pop(0) if len(self.owners) > 1 else self.owners[0]
+            return mock.Mock(owner=owner)
+
+        def wait_change(self, timeout_s: float) -> None:
+            time.sleep(min(timeout_s, 0.01))
+
+    assert launcher._settle(Link(["agent", "agent", "nobody"]), 1.0) is True
+    began = time.monotonic()
+    assert launcher._settle(Link(["agent"]), 0.2) is False  # it gave up
+    assert 0.2 <= time.monotonic() - began < 1.0
+
+
+@apai
+def test_an_end_request_without_an_answer_ends_the_program_with_1(
+    stage: Stage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from isaaccapture_examples.agentic_remote.agent.link_client import CommandTimeout
+
+    def attach(socket_path: Any = None, *, timeout_s: float) -> Any:
+        made = stage.attach(socket_path, timeout_s=timeout_s)
+        real = made.request_owner
+
+        def request_owner(name: str, **kwargs: Any) -> Any:
+            if name == "nobody":  # the request, or its RESULT, never gets through
+                stage.order.append("nobody:no answer")
+                raise CommandTimeout("no RESULT within 5 s")
+            return real(name, **kwargs)
+
+        made.request_owner = request_owner
+        return made
+
+    began = time.monotonic()
+    code = stage.run("--task", QUICK, attach=attach)
+    # The task succeeded, and the arm is still the agent's.
+    assert stage.reports()[0]["success"] is True
+    assert stage.order == ["agent:completed", "nobody:no answer", "close:agent"]
+    assert code == launcher.EXIT_FAILED
+    assert stage.said("was not answered")
+    error = capsys.readouterr().err
+    assert "the agent still owned the arm when the program ended" in error
+    assert time.monotonic() - began > launcher.SETTLE_S  # it waited for the state
+
+
+@apai
+def test_an_interactive_session_ends_with_1_when_a_task_did_not_succeed(
+    stage: Stage,
+) -> None:
+    stage.typed = [QUICK]
+    assert stage.run("--interactive") == launcher.EXIT_OK
+    assert stage.reports()[-1]["success"] is True
+    # The second session: one task succeeds, the other is not authorized.
+    stage.typed = [QUICK, QUICK]
+    stage.answers = ["yes", "no"]
+    assert stage.run("--interactive") == launcher.EXIT_FAILED
+    assert [row["success"] for row in stage.reports()[-2:]] == [True, False]
+    assert stage.order[-1] == "close:nobody"
+
+
+@apai
+def test_sigterm_is_a_stop_and_ends_the_program_with_1(stage: Stage) -> None:
+    def interrupt(number: int) -> None:
+        if number == 40:
+            signal.raise_signal(signal.SIGTERM)
+
+    stage.h.spy.after_target.append(interrupt)
+    code = stage.run("--task", PICK)
+    assert code == launcher.EXIT_FAILED
+    assert f"stop:{AGENT_TERMINAL}" in stage.order and stage.order[-1] == "close:nobody"
+    snapshot = stage.h.app.snapshot()
+    assert snapshot.owner == "nobody" and snapshot.stop_number >= 1
+    assert stage.h.spy.released_at == []
 
 
 @apai
@@ -977,3 +1349,19 @@ def test_the_typed_yes_is_never_taken_inside_an_agents_environment(
     monkeypatch.setattr(arm_hold, "agent_environment", lambda: None)
     with pytest.raises(RuntimeError, match="no interactive terminal"):
         launcher.terminal_ask("Type yes: ")
+
+
+@apai
+def test_a_yes_typed_before_the_question_does_not_answer_it() -> None:
+    from test_console_cmd import on_a_terminal
+
+    def ask() -> str:
+        arm_hold = importlib.import_module("apai.control.arm_hold")
+        arm_hold.agent_environment = lambda: None  # in the child process only
+        return launcher.terminal_ask("Authorize motion. Type yes to proceed: ")
+
+    # Typed while the task was thinking: dropped. The answer is what is typed
+    # once the question is on the terminal.
+    assert on_a_terminal(ask, b"yes\n", b"no\n") == (repr("no\n"), True)
+    assert on_a_terminal(ask, b"yes\nyes\n", b"\n") == (repr("\n"), True)
+    assert on_a_terminal(ask, b"", b"yes\n") == (repr("yes\n"), True)

@@ -90,7 +90,12 @@ def check_catalog(subscribed: Mapping[str, Any], rules: StreamRules) -> tuple[in
         slots = entry.get("slots")
         if not isinstance(slots, list) or len(slots) < 3:
             raise StreamRefused(f"stream {name} has fewer than 3 slots")
-        if sorted(slot.get("slot") for slot in slots) != list(range(len(slots))):
+        if not all(isinstance(slot, dict) for slot in slots):
+            raise StreamRefused(f"stream {name} lists slots that are no objects")
+        numbers = [slot.get("slot") for slot in slots]
+        if not all(map(_is_whole, numbers)) or sorted(numbers) != list(
+            range(len(slots))
+        ):
             raise StreamRefused(f"stream {name}: the slots are not numbered 0 to n-1")
         shape = [rules.height * 3 // 2, rules.width]
         for slot in slots:
@@ -280,6 +285,8 @@ class PairTracker:
             return
         meta = message.get("metadata")
         try:
+            if not isinstance(meta, Mapping):
+                raise TypeError("metadata is no object")
             note = _Note(
                 stream=message["stream"],
                 slot=_whole(message["slot"]),
@@ -335,8 +342,7 @@ class PairTracker:
     def _pair(self, note: _Note) -> None:
         half = self._half
         if half is not None and half.seq != note.seq:
-            if note.seq < half.seq:
-                return
+            # Also when the seq went back: the receiver began its numbers again.
             self.counters["unpaired"] += 1
             half = None
         if half is None or half.stream == note.stream:
@@ -364,6 +370,10 @@ class PairTracker:
         if left.session == request.after_session and (
             request.after_seq is not None and left.seq <= request.after_seq
         ):
+            request.refused = (
+                f"seq {left.seq} is not after seq {request.after_seq} of the "
+                "same session"
+            )
             return
         self._copy(left, right)
 
@@ -372,7 +382,8 @@ class PairTracker:
         rules = self._rules
         for note, role in ((left, "left"), (right, "right")):
             meta = note.meta
-            if meta.get("stream_rotation") != rules.rotation:
+            rotation = meta.get("stream_rotation")
+            if not _is_whole(rotation) or rotation != rules.rotation:
                 return (
                     f"{note.stream} is sent with rotation "
                     f"{meta.get('stream_rotation')!r}; the calibration needs "
@@ -386,7 +397,7 @@ class PairTracker:
                     f"not {rules.width} x {rules.height}"
                 )
         devices = (left.meta.get("device_index"), right.meta.get("device_index"))
-        if devices != rules.devices:
+        if not all(map(_is_whole, devices)) or devices != rules.devices:
             return (
                 f"the stereo pair comes from Argus devices {devices[0]!r} and "
                 f"{devices[1]!r}; the calibration is for {rules.devices[0]} (left) "

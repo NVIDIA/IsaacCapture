@@ -208,6 +208,13 @@ class BridgeSource:
                 ) from None
             except wire.WireError as problem:
                 raise self._fail(f"bad record from the bridge: {problem}") from None
+            except CameraError:
+                raise
+            except Exception as problem:
+                raise self._fail(
+                    f"the request to the camera frame bridge failed: "
+                    f"{type(problem).__name__}: {problem}"
+                ) from None
 
     def close(self) -> None:
         """End the bridge child; safe to call twice and from another thread."""

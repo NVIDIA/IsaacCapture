@@ -37,15 +37,6 @@ CAMERA_MOCK = "mock"
 CAMERA_RECORDED = "recorded:"
 # The profile type of camera/stereo_camera.py.
 LINK_STEREO = "link_stereo"
-# Set in the environment, each of these changes what APAI builds behind the
-# launcher's back; the program refuses to start with one of them.
-REFUSED_ENV = (
-    "APAI_ROBOT",
-    "APAI_BASE",
-    "APAI_START_STOPPED",
-    "APAI_OBSERVED_FINGER_GATE",
-    "APAI_OCCUPANCY",
-)
 # Where APAI writes a store: the environment variable and the name in the
 # agent program's store folder. (Its learned-notes library is only read.)
 APAI_STORES = (
@@ -57,6 +48,54 @@ APAI_STORES = (
     ("APAI_ENVELOPE_PATH", "envelope.json"),
     ("APAI_PROGRAMS_PATH", "programs.jsonl"),
 )
+APAI_ENV_PREFIX = "APAI_"
+# The APAI variables the program starts with. Any other one that is set could
+# change what APAI builds behind the launcher's back, and is refused.
+ALLOWED_ENV = (
+    *(name for name, _ in APAI_STORES),
+    "APAI_REQUIRE_CUDA",  # run_agent.sh sets it
+    "APAI_ASPIRE_LIBRARY",  # where the learned-notes library is read from
+    "APAI_GRASPGENX_PORT",  # the port a grasp server on this machine is asked at
+)
+# The keys of rig.motion_bounds; all four are needed when the block is given.
+MOTION_BOUNDS_KEYS = (
+    "joint_center_rad",
+    "max_joint_deviation_rad",
+    "tcp_center_m",
+    "max_tcp_distance_m",
+)
+# The largest value each number of the file may have.
+LIMITS: dict[str, dict[str, float | int]] = {
+    "link": {
+        "connect_timeout_s": 120.0,
+        "state_max_age_s": 2.0,
+        "state_renew_age_s": 2.0,
+    },
+    "thor": {
+        "first_wait_s": 5.0,
+        "settle_timeout_s": 30.0,
+        "agent_max_joint_speed": 3.0,
+    },
+    "move": {
+        "start_tol_rad": 0.2,
+        "fresh_wait_s": 5.0,
+        "start_grid_age_s": 5.0,
+        "start_grid_wait_s": 30.0,
+        "expires_in_s": 10.0,
+        "cancel_wait_s": 30.0,
+    },
+    "permits": {"reach_setpoints": 1000, "renew_s": 1.0, "life_s": 5.0},
+    "jaws": {"fresh_s": 5.0, "result_timeout_s": 120.0},
+    "task": {
+        "failed_steps_limit": 100,
+        "max_joint_speed": 3.0,
+        "end_wait_s": 60.0,
+        "owner_wait_s": 30.0,
+        "grid_wait_s": 300.0,
+    },
+    "camera": {"max_skew_ms": 50.0, "fps": 120.0},
+    "rig": {"body_mask_dilate_px": 100},
+}
 
 
 class ConfigError(ValueError):
@@ -68,6 +107,7 @@ class LinkSettings:
     socket_path: str = ""  # "" is the robot link service's default path
     connect_timeout_s: float = 10.0
     state_max_age_s: float = 0.5
+    state_renew_age_s: float = 0.1  # no PERMIT on an older ROBOT_STATE
     expected_profile_id: str = ""  # "" accepts any profile id
     # "" names the calibration by the hashes of the camera block's two files.
     calibration_id: str = ""
@@ -130,6 +170,9 @@ class CameraSettings:
     max_skew_ms: float = 5.0
     depth_backend: str = "ffs"
     fps: float = 7.0
+    # true lets the program run on a camera whose capture times are made up
+    # (--camera mock, --camera recorded:<dir>): never against a real arm.
+    allow_invented_times: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,36 +252,70 @@ def load_settings(path: str | os.PathLike[str]) -> AgentSettings:
     """Read and check agent.yaml; ConfigError says what is wrong."""
     file = Path(path).expanduser()
     try:
-        data = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+        text = file.read_text(encoding="utf-8")
+        data = yaml.load(text, Loader=_OnceLoader)  # a SafeLoader
+    except _GivenTwice as problem:
+        raise ConfigError(f"{file}: {problem}") from None
     except (OSError, yaml.YAMLError) as problem:
         raise ConfigError(f"cannot read {file}: {problem}") from None
+    data = {} if data is None else data
     if not isinstance(data, dict):
         raise ConfigError(f"{file} must hold a mapping")
-    unknown = sorted(set(data) - set(_TOP))
+    unknown = sorted(str(key) for key in set(data) - set(_TOP))
     if unknown:
         raise ConfigError(f"{file}: unknown key(s) {', '.join(unknown)}")
     folder = file.resolve().parent
     blocks: dict[str, Any] = {}
     for name, kind in _SECTIONS.items():
-        blocks[name] = _block(name, kind, data.get(name) or {}, folder)
-    level = str(data.get("log_level", "info")).lower()
-    if level not in LOG_LEVELS:
+        given = data.get(name)
+        blocks[name] = _block(name, kind, {} if given is None else given, folder)
+    level = data.get("log_level", "info")
+    if not isinstance(level, str) or level.lower() not in LOG_LEVELS:
         raise ConfigError(f"log_level must be one of {', '.join(LOG_LEVELS)}")
-    state_dir = _path(str(data.get("state_dir") or "../.state"), folder)
+    state_dir = data.get("state_dir")
+    state_dir = "../.state" if state_dir is None else state_dir
+    if not isinstance(state_dir, str) or not state_dir.strip():
+        raise ConfigError("state_dir must be text that names a folder")
     settings = AgentSettings(
-        path=file, state_dir=Path(state_dir), log_level=level, **blocks
+        path=file,
+        state_dir=Path(_path(state_dir, folder)),
+        log_level=level.lower(),
+        **blocks,
     )
     _check(settings)
     return settings
+
+
+class _GivenTwice(ValueError):
+    """A mapping of the file holds a key more than once."""
+
+
+class _OnceLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, which refuses a key that is given twice."""
+
+    def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=True)
+            try:
+                twice = key in seen
+                seen.add(key)
+            except TypeError:  # a key that cannot be hashed: PyYAML refuses it
+                continue
+            if twice:
+                line = key_node.start_mark.line + 1
+                raise _GivenTwice(f"the key {key!r} is given twice (line {line})")
+        return super().construct_mapping(node, deep=deep)
 
 
 def _block(name: str, kind: type, given: Any, folder: Path) -> Any:
     if not isinstance(given, dict):
         raise ConfigError(f"{name} must be a mapping")
     known = {item.name: item for item in fields(kind)}
-    unknown = sorted(set(given) - set(known))
+    unknown = sorted(str(key) for key in set(given) - set(known))
     if unknown:
         raise ConfigError(f"{name}: unknown key(s) {', '.join(unknown)}")
+    limits = LIMITS.get(name, {})
     values: dict[str, Any] = {}
     for key, value in given.items():
         default = known[key].default
@@ -246,11 +323,12 @@ def _block(name: str, kind: type, given: Any, folder: Path) -> Any:
         if key in ("home_q", "park_q"):
             value = None if value is None else _numbers(where, value)
         elif key == "motion_bounds":
-            if value is not None and not isinstance(value, dict):
-                raise ConfigError(f"{where} must be a mapping")
+            value = None if value is None else _motion_bounds(where, value)
         elif key == "streams":
             if not _is_names(value, 2):
                 raise ConfigError(f"{where} must be two stream names")
+            if value[0] == value[1]:
+                raise ConfigError(f"{where} must be two different stream names")
             value = tuple(value)
         elif isinstance(default, bool):
             if not isinstance(value, bool):
@@ -270,8 +348,35 @@ def _block(name: str, kind: type, given: Any, folder: Path) -> Any:
                 raise ConfigError(f"{where} must be text")
             if value and key in _PATHS.get(name, ()):
                 value = _path(value, folder)
+        if key in limits and value is not None and value > limits[key]:
+            most = limits[key]
+            raise ConfigError(f"{where} must be at most {most:g}, not {value:g}")
         values[key] = value
     return kind(**values)
+
+
+def _motion_bounds(where: str, given: Any) -> dict[str, Any]:
+    """rig.motion_bounds, checked as the experiment's restrict_motion reads it."""
+    if not isinstance(given, dict):
+        raise ConfigError(f"{where} must be a mapping")
+    unknown = sorted(str(key) for key in set(given) - set(MOTION_BOUNDS_KEYS))
+    if unknown:
+        raise ConfigError(f"{where}: unknown key(s) {', '.join(unknown)}")
+    missing = [key for key in MOTION_BOUNDS_KEYS if key not in given]
+    if missing:
+        raise ConfigError(f"{where} needs {', '.join(missing)}")
+    bounds: dict[str, Any] = {}
+    for key in MOTION_BOUNDS_KEYS:
+        value = given[key]
+        if key.startswith("max_"):
+            if not _is_number(value) or value <= 0:
+                raise ConfigError(f"{where}.{key} must be a finite number above 0")
+        else:
+            value = list(_numbers(f"{where}.{key}", value))
+            if key == "tcp_center_m" and len(value) != 3:
+                raise ConfigError(f"{where}.{key} must be three numbers")
+        bounds[key] = value
+    return bounds
 
 
 def _check(settings: AgentSettings) -> None:
@@ -284,9 +389,43 @@ def _check(settings: AgentSettings) -> None:
             f"task.max_joint_speed is {speed:g} rad/s, above the Thor's agent "
             f"limit thor.agent_max_joint_speed of {limit:g} rad/s"
         )
-    home, park = settings.rig.home_q, settings.rig.park_q
-    if home is not None and park is not None and len(home) != len(park):
-        raise ConfigError("rig.home_q and rig.park_q differ in length")
+    renew, life = settings.permits.renew_s, settings.permits.life_s
+    if not renew < life:
+        raise ConfigError(
+            f"permits.renew_s must be below permits.life_s, not {renew:g} s "
+            f"against {life:g} s: no PERMIT would be renewed in time"
+        )
+    renew_age, max_age = settings.link.state_renew_age_s, settings.link.state_max_age_s
+    if renew_age > max_age:
+        raise ConfigError(
+            f"link.state_renew_age_s must be at most link.state_max_age_s, not "
+            f"{renew_age:g} s against {max_age:g} s"
+        )
+    counts = _joint_counts(settings.rig)
+    if len(set(counts.values())) > 1:
+        raise ConfigError(
+            " and ".join(f"{name} ({count})" for name, count in counts.items())
+            + " differ in length"
+        )
+
+
+def _joint_counts(rig: RigSettings) -> dict[str, int]:
+    """The length of each of the rig's per-joint lists that is given."""
+    counts: dict[str, int] = {}
+    for name in ("home_q", "park_q"):
+        if getattr(rig, name) is not None:
+            counts[f"rig.{name}"] = len(getattr(rig, name))
+    if rig.motion_bounds is not None:
+        center = rig.motion_bounds["joint_center_rad"]
+        counts["rig.motion_bounds.joint_center_rad"] = len(center)
+    return counts
+
+
+def check_joint_count(settings: AgentSettings, joints: int) -> None:
+    """ConfigError when a per-joint list of the rig is not of the arm's joints."""
+    for name, count in _joint_counts(settings.rig).items():
+        if count != joints:
+            raise ConfigError(f"{name} has {count} values; the arm has {joints} joints")
 
 
 def arm_settings(settings: AgentSettings, calibration_id: str = "") -> ArmSettings:
@@ -299,6 +438,7 @@ def arm_settings(settings: AgentSettings, calibration_id: str = "") -> ArmSettin
         allow_unnamed_calibration=link.allow_unnamed_calibration,
         connect_timeout_s=link.connect_timeout_s,
         state_max_age_s=link.state_max_age_s,
+        state_renew_age_s=link.state_renew_age_s,
         first_wait_s=thor.first_wait_s,
         settle_timeout_s=thor.settle_timeout_s,
         agent_max_joint_speed=thor.agent_max_joint_speed,
@@ -317,14 +457,22 @@ def arm_settings(settings: AgentSettings, calibration_id: str = "") -> ArmSettin
 
 
 def refused_environment(environ: Mapping[str, str] | None = None) -> None:
-    """ConfigError when the environment would change what APAI builds."""
+    """ConfigError when an APAI variable is set that is not in ALLOWED_ENV."""
     env = os.environ if environ is None else environ
-    found = [name for name in REFUSED_ENV if str(env.get(name, "")).strip()]
+    found = sorted(
+        name
+        for name, value in env.items()
+        if name.startswith(APAI_ENV_PREFIX)
+        and name not in ALLOWED_ENV
+        and str(value).strip()
+    )
     if found:
         raise ConfigError(
-            f"{', '.join(found)} is set in the environment: APAI would build "
-            "another robot, start stopped or change its obstacle check; unset "
-            "it and start again"
+            f"{', '.join(found)} {'is' if len(found) == 1 else 'are'} set in the "
+            "environment: APAI could build something else than this program "
+            "configures (another robot, executor or obstacle check); unset "
+            f"{'it' if len(found) == 1 else 'them'} and start again. The APAI "
+            f"variables the program takes: {', '.join(ALLOWED_ENV)}"
         )
 
 
@@ -336,13 +484,35 @@ def store_folder(settings: AgentSettings) -> Path:
 def redirect_apai_stores(
     settings: AgentSettings, environ: dict[str, str] | None = None
 ) -> Path:
-    """Point every APAI store that is not set yet into the store folder."""
+    """Point every APAI store whose variable names no place into the store folder.
+
+    A variable that is set and empty counts as not set: APAI would take it for
+    its own default, a path in its checkout.
+    """
     env = os.environ if environ is None else environ
     folder = store_folder(settings)
     folder.mkdir(parents=True, exist_ok=True)
     for name, leaf in APAI_STORES:
-        env.setdefault(name, str(folder / leaf))
+        if not str(env.get(name, "")).strip():
+            env[name] = str(folder / leaf)
     return folder
+
+
+def invented_times(settings: AgentSettings, camera: str) -> bool:
+    """Whether this camera's capture times are made up; ConfigError if not allowed.
+
+    The mock camera and recorded pairs date their camera frames at the moment
+    they are handed out, so a permit would rest on evidence nobody captured.
+    """
+    if camera_kind(camera)[0] == CAMERA_LINK:
+        return False
+    if not settings.camera.allow_invented_times:
+        raise ConfigError(
+            f"--camera {camera} gives camera frames with invented capture times, "
+            "and camera.allow_invented_times is false: the program does not "
+            "start. Set it to true only for a run against a simulated or mock arm"
+        )
+    return True
 
 
 def camera_kind(camera: str) -> tuple[str, str]:
@@ -485,6 +655,9 @@ def _camera_profile(
         "map_depth": True,
         "fuse_beliefs": False,
     }
+    if settings.minimal:
+        # APAI's default detector asks a model server; the mock one asks nothing.
+        profile["detector"] = {"type": "mock"}
     if recorded:
         profile["recorded_dir"] = str(Path(recorded).expanduser().resolve())
         return profile
@@ -573,6 +746,7 @@ def summary(settings: AgentSettings, cfg: Any, camera: str) -> dict[str, Any]:
         "settings": settings.as_dict(),
         "calibration_id": calibration_id(settings, camera),
         "camera": camera,
+        "invented_times": camera_kind(camera)[0] != CAMERA_LINK,
         "arm_type": cfg.arm.type,
         "camera_type": cfg.camera.type,
         "llm_type": cfg.llm.get("type"),

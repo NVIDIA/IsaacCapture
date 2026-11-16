@@ -134,7 +134,7 @@ def parse(line: bytes) -> dict[str, Any]:
     """The record of one line (without its newline); WireError when it is none."""
     try:
         record = json.loads(line.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as problem:
+    except (UnicodeDecodeError, ValueError, RecursionError) as problem:
         raise WireError(f"not a JSON line: {problem}") from None
     check(record)
     return record
@@ -144,7 +144,8 @@ def check(record: Any) -> None:
     """Raise WireError unless `record` has a known type and that type's fields."""
     if not isinstance(record, dict):
         raise WireError("a record must be a JSON object")
-    fields = _FIELDS.get(record.get("type"))
+    kind = record.get("type")
+    fields = _FIELDS.get(kind) if isinstance(kind, str) else None
     if fields is None:
         raise WireError(f"unknown record type {record.get('type')!r}")
     for name, kind in fields.items():
@@ -183,13 +184,14 @@ class Reader:
         Raises WireClosed, WireTimeout (what was read so far is kept) or WireError.
         """
         while True:
-            end = self._buffer.find(b"\n")
+            # A line and its newline are at most MAX_LINE_BYTES, as pack() makes them.
+            end = self._buffer.find(b"\n", 0, MAX_LINE_BYTES)
             if end >= 0:
                 line = bytes(self._buffer[:end])
                 del self._buffer[: end + 1]
                 return parse(line)
-            if len(self._buffer) > MAX_LINE_BYTES:
-                raise WireError("a line without an end")
+            if len(self._buffer) >= MAX_LINE_BYTES:
+                raise WireError(f"a line longer than {MAX_LINE_BYTES} bytes")
             self._buffer += self._receive(_RECV_BYTES, deadline)
 
     def exact(self, count: int, deadline: float | None = None) -> bytearray:

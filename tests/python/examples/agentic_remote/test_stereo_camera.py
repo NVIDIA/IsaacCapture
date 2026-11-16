@@ -204,11 +204,41 @@ def test_a_capture_time_in_the_future_of_the_thors_clock_is_refused(
     link: StubLink, now: Now
 ) -> None:
     assert FUTURE_LIMIT_S == 0.05
-    stamp_pair(link, a_pair(link, age_s=-0.049), now)
+    stamp_pair(link, a_pair(link, age_s=-0.049, arrived_ago_s=0.0), now)
     with pytest.raises(CameraError, match=r"0\.051 s in the future"):
         stamp_pair(link, a_pair(link, age_s=-0.051), now)
     with pytest.raises(CameraError, match="in the future"):
         stamp_pair(link, a_pair(link, age_s=-3600.0), now)
+
+
+@pytest.mark.parametrize("arrived_ago_s", [0.5, 2.5])
+def test_a_capture_time_after_the_pairs_arrival_is_refused(
+    link: StubLink, now: Now, arrived_ago_s: float
+) -> None:
+    # Exposed 10 ms ago by the Thor's clock, yet here since arrived_ago_s.
+    pair = a_pair(link, age_s=0.010, arrived_ago_s=arrived_ago_s)
+    with pytest.raises(CameraError, match=r"s after its arrival, over 0\.07 s"):
+        stamp_pair(link, pair, now)
+    # The limit is the future limit plus the clock margin.
+    edge = FUTURE_LIMIT_S + MARGIN + 0.010
+    stamp_pair(link, a_pair(link, age_s=0.010, arrived_ago_s=edge - 0.001), now)
+    with pytest.raises(CameraError, match="after its arrival"):
+        stamp_pair(link, a_pair(link, age_s=0.010, arrived_ago_s=edge + 0.001), now)
+
+
+def test_the_evidence_time_is_never_newer_than_the_arrival(
+    link: StubLink, now: Now
+) -> None:
+    # Within the limit: the capture time lies 40 ms after the arrival.
+    pair = a_pair(link, age_s=0.010, arrived_ago_s=0.050)
+    stamp = stamp_pair(link, pair, now)
+    assert stamp.t == pair.receiver_rx_mono_s
+    arrival_wall = link.thor_now()[1] - 0.050
+    assert stamp.evidence_wall_s == pytest.approx(arrival_wall, abs=CLOSE)
+    assert stamp.evidence_wall_s < min(pair.sof_wall_ns) / 1e9
+    assert stamp.capture_thor_mono_s == pytest.approx(now.t + AHEAD - 0.050, abs=CLOSE)
+    # What the two clocks said is kept as it was measured.
+    assert stamp.raw_age_s == pytest.approx(0.010, abs=CLOSE)
 
 
 def test_a_capture_time_long_before_the_arrival_is_refused(
@@ -499,6 +529,7 @@ def test_a_pair_becomes_a_camera_frame_with_depth_times_and_its_calibration(
     assert capture["sensor_ids"] == [5, 7]
     assert capture["sensor_timestamps_ns"] == list(pair.sof_wall_ns)
     assert capture["check"] == {"source": "test", "confirmed_by_seq": 42}
+    assert capture["invented_times"] is False
     assert capture["calibration_id"] == bench.calibration_id
     assert capture["calibration_status"] == "test_calibration"
     assert capture["depth_backend"] == "stand_in"
@@ -853,6 +884,7 @@ def test_a_profile_may_name_a_folder_of_recorded_pairs(
         frame = camera.get_frame()
     assert frame.rgb.shape == (1984, 2560, 3)
     assert frame.capture["check"]["invented_times"] is True
+    assert frame.capture["invented_times"] is True
     # The invented capture time is on the link's estimate of the Thor's wall clock.
     assert frame.capture["evidence_wall_s"] == pytest.approx(
         link.thor_now()[1] - 0.06, abs=CLOSE
@@ -1047,9 +1079,13 @@ def test_frame_t_is_never_later_than_the_receipt(
         ahead[0] = 0.06 + 0.04
         second = camera.get_frame()
     assert first.t < first.capture["receipt_monotonic_s"]
-    by_the_clocks = second.capture["capture_thor_mono_s"] - AHEAD
-    assert by_the_clocks > second.capture["receipt_monotonic_s"] + 0.03
-    assert second.t == second.capture["receipt_monotonic_s"]
+    receipt = second.capture["receipt_monotonic_s"]
+    sof_s = min(second.capture["sensor_timestamps_ns"]) / 1e9
+    assert sof_s - SKEW - AHEAD > receipt + 0.03  # by the two clocks
+    assert second.t == receipt
+    # The evidence time is the arrival's, not the later capture time.
+    assert second.capture["evidence_wall_s"] < sof_s - 0.03
+    assert second.capture["capture_thor_mono_s"] - AHEAD <= receipt + 0.005
     assert second.t > first.t and second.frame_id == 2
     for frame in (first, second):
         assert frame.t <= frame.capture["receipt_monotonic_s"] <= time.monotonic()

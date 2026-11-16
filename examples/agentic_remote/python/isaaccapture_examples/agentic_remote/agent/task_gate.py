@@ -134,8 +134,19 @@ class TaskGate:
             "agentic_remote_task", default=None
         )
         self._latched = False
+        self._owning = False  # a task of this gate owns the arm
+        # The command id of an OWNER_REQUEST "agent" whose RESULT did not come
+        # in time ("" when the id is not known); None when there is none.
+        self._unanswered: str | None = None
+        # The owner number of the last ownership a task of this gate ended.
+        self._ended_number: int | None = None
+        self._tried: Pinned | None = None  # what the last give-back quoted
         # The operator was told to restart the agent program.
         self.restart_told = False
+        # An OWNER_REQUEST that ended a task got no RESULT: the agent may still own.
+        self.end_unanswered = False
+        # Tasks that ended without success; a task the operator cancelled is none.
+        self.failed_tasks = 0
         # (request, status, reason) of every OWNER_REQUEST answered so far.
         self.requests: list[tuple[str, str, str]] = []
 
@@ -166,6 +177,7 @@ class TaskGate:
         @wraps(original)
         def run_task(task: str, *args: Any, **kwargs: Any) -> Any:
             if self.tell_restart():
+                self.failed_tasks += 1
                 return _refused_report(str(task), RESTART)
             state = _Task(str(task))
             token = self._current.set(state)
@@ -183,6 +195,9 @@ class TaskGate:
                 try:
                     self._end(state, report, error, interrupted)
                 finally:
+                    cancelled = interrupted or getattr(report, "cancelled", False)
+                    if not cancelled and not getattr(report, "success", False):
+                        self.failed_tasks += 1
                     self._current.reset(token)
 
         return run_task
@@ -245,6 +260,7 @@ class TaskGate:
             return self._refused(RESTART, OWNERSHIP)
         if self._adapter is None:
             return self._refused("no arm is built yet", OWNERSHIP)
+        self.return_late_ownership(self._owner_wait_s)
         try:
             state = link.state(1.0)
         except (LinkLost, StaleState) as error:
@@ -277,7 +293,8 @@ class TaskGate:
                 timeout_s=self._end_wait_s,
             )
         except CommandTimeout as error:
-            self._return_late_ownership()
+            self._unanswered = error.command_id or ""
+            self.return_late_ownership()
             return self._refused(f"the robot did not answer: {error}", OWNERSHIP)
         except (LinkLost, StaleState) as error:
             return self._refused(f"robot connection lost: {error}", OWNERSHIP)
@@ -291,14 +308,15 @@ class TaskGate:
         number = (result.detail or {}).get("owner_number")
         shown = self._await_owner(number)
         if shown is None:
-            self._return_late_ownership()
+            self._unanswered = ""  # granted, and not shown yet
+            self.return_late_ownership()
             return self._refused(
                 "no ROBOT_STATE showed the agent as control owner", OWNERSHIP
             )
         pinned = Pinned(shown.session_id, shown.owner_number, shown.stop_number)
         link.pin(pinned)
         self._adapter.open_task(pinned)
-        task.owner = True
+        task.owner = self._owning = True
         self._say(f"the agent owns the arm (owner number {pinned.owner_number})")
         return None
 
@@ -318,22 +336,83 @@ class TaskGate:
                 return None
             link.wait_change(min(left, 0.05))
 
-    def _return_late_ownership(self) -> None:
-        """Give the arm back when it became the agent's without the gate knowing."""
+    def return_late_ownership(self, wait_s: float = 0.0) -> None:
+        """Give the arm back when the agent owns it and no task of this gate does.
+
+        Called before a task takes the arm, at the task prompt and at the end
+        of the program. While an OWNER_REQUEST "agent" of this gate has no
+        RESULT, it waits up to wait_s for the grant; that wait is spent once.
+        """
+        if self._owning:
+            return
+        link = self._link
+        end = time.monotonic() + max(0.0, wait_s)
         try:
-            state = self._link.state()
-            if state.owner != "agent":
-                return
-            quote = Pinned(state.session_id, state.owner_number, state.stop_number)
-            result = self._link.request_owner(
+            while True:
+                state = link.state()
+                if state.owner == "agent" and state.owner_number != self._ended_number:
+                    break
+                if self._unanswered is None or self._late_refusal():
+                    return
+                left = end - time.monotonic()
+                if left <= 0:
+                    if wait_s > 0:
+                        self._forget_unanswered()
+                    return
+                link.wait_change(min(left, 0.05))
+        except (LinkLost, StaleState):
+            return
+        quote = Pinned(state.session_id, state.owner_number, state.stop_number)
+        if quote == self._tried:
+            return
+        self._tried = quote
+        try:
+            result = link.request_owner(
                 "nobody",
                 reason="the ownership arrived late",
                 quote=quote,
                 timeout_s=self._end_wait_s,
             )
-            self.requests.append(("nobody", result.status, result.reason))
         except (LinkLost, StaleState, CommandTimeout) as error:
             self._say(f"the arm could not be given back: {error}")
+            return
+        self.requests.append(("nobody", result.status, result.reason))
+        if result.status != "completed":
+            self._say(f"the arm could not be given back: {result.reason}")
+            return
+        self._forget_unanswered()
+        self._ended_number = quote.owner_number
+        self._say("the ownership arrived late: the arm was given back")
+        self._await_released(quote.owner_number)
+
+    def _late_refusal(self) -> bool:
+        """Whether the RESULT that came late says the request was not granted."""
+        result = self._link.final_result(self._unanswered) if self._unanswered else None
+        if result is None or result.status == "completed":
+            return False
+        self._forget_unanswered()
+        return True
+
+    def _forget_unanswered(self) -> None:
+        if self._unanswered:
+            self._link.forget(self._unanswered)
+        self._unanswered = None
+
+    def _await_released(self, number: int) -> None:
+        """Wait for a ROBOT_STATE in which that ownership has ended."""
+        link = self._link
+        end = time.monotonic() + self._owner_wait_s
+        while True:
+            try:
+                state = link.state()
+            except (LinkLost, StaleState):
+                return
+            if state.owner != "agent" or state.owner_number != number:
+                return
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            link.wait_change(min(left, 0.05))
 
     def _refused(self, reason: str, kind: str) -> tuple[str, str]:
         reason = printable(reason, MAX_REASON_CHARS)
@@ -348,6 +427,9 @@ class TaskGate:
         """Give the arm back or ask for help, then close the task on the arm."""
         if not task.owner:
             return
+        pinned = self._link.pinned
+        if pinned is not None:
+            self._ended_number = pinned.owner_number
         try:
             request, reason = _ending(task, report, error, interrupted)
             if request is None:
@@ -362,6 +444,7 @@ class TaskGate:
                 self._adapter.close_task()
             except Exception:
                 _log.exception("closing the task on the arm adapter failed")
+            self._owning = False
             self.tell_restart()
 
     def _send_end(self, request: str, reason: str) -> None:
@@ -381,9 +464,10 @@ class TaskGate:
                 timeout_s=self._end_wait_s,
             )
         except (LinkLost, StaleState, CommandTimeout) as error:
+            self.end_unanswered = True
             self._say(
                 f"{request} ({reason}) was not answered: {error}; the robot "
-                "app holds the arm"
+                "app holds the arm, and the agent may still own it"
             )
             return
         self.requests.append((request, result.status, result.reason))

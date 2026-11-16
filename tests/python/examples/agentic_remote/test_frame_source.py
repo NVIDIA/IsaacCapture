@@ -191,6 +191,73 @@ def test_a_killed_bridge_is_a_camera_error_that_stays(receiver, make_source):
             source.next_pair(0.5)
 
 
+# In place of the bridge: says hello, then answers a request with ANSWER.
+ROGUE = r"""
+import json, socket, sys, time
+path = sys.argv[sys.argv.index("--listen") + 1]
+width = int(sys.argv[sys.argv.index("--width") + 1])
+height = int(sys.argv[sys.argv.index("--height") + 1])
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(path); server.listen(1)
+client, _ = server.accept()
+hello = {"type": "hello", "version": 1, "width": width, "height": height,
+         "pixel_format": "nv12", "ring_depth": 4, "gpu_id": 0,
+         "streams": ["head.left", "head.right"]}
+client.sendall(json.dumps(hello).encode() + b"\n")
+client.recv(65536)
+client.sendall(ANSWER)
+time.sleep(3)
+"""
+
+
+def rogue_source(tmp_path, answer: bytes) -> BridgeSource:
+    return BridgeSource(
+        python=sys.executable,
+        receiver_socket="unused",
+        run_dir=tmp_path / "run",
+        width=8,
+        height=4,
+        command=[sys.executable, "-c", ROGUE.replace("ANSWER", repr(answer))],
+    )
+
+
+@pytest.mark.parametrize(
+    "answer", [b'{"type": []}\n', b"[" * 60000 + b"\n"], ids=["type", "nested"]
+)
+def test_a_corrupt_record_from_the_bridge_is_a_camera_error_that_stays(
+    tmp_path, answer
+):
+    source = rogue_source(tmp_path, answer)
+    source.open()
+    try:
+        with pytest.raises(CameraError, match="bad record from the bridge"):
+            source.next_pair(0.5)
+        assert source._failure.startswith("bad record from the bridge")
+        with pytest.raises(CameraError, match="bad record from the bridge"):
+            source.next_pair(0.5)
+    finally:
+        source.close()
+
+
+def test_any_other_failure_of_a_request_ends_the_source(tmp_path, monkeypatch):
+    source = rogue_source(tmp_path, b'{"type": "none", "reason": "x"}\n')
+    source.open()
+    try:
+
+        def broken(*_: object) -> dict:
+            raise ZeroDivisionError("not a wire error")
+
+        monkeypatch.setattr(frame_source.wire, "next_request", broken)
+        with pytest.raises(CameraError, match="ZeroDivisionError: not a wire error"):
+            source.next_pair(0.5)
+        monkeypatch.undo()
+        # The source is finished: it does not ask the bridge again.
+        with pytest.raises(CameraError, match="ZeroDivisionError"):
+            source.next_pair(0.5)
+    finally:
+        source.close()
+
+
 def test_other_cameras_than_the_calibrated_ones_are_a_camera_error(
     tmp_path, make_source
 ):

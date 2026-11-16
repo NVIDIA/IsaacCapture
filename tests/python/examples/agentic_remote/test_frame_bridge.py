@@ -137,6 +137,31 @@ def test_pair_needs_both_eyes_same_session_seq_and_slot():
     assert rig.count("pairs") == 1 and rig.count("copies") == 1
 
 
+def test_a_seq_that_starts_again_in_a_session_drops_the_waiting_eye():
+    rig = Rig()
+    rig.ask(timeout_s=100.0)
+    # One eye of seq 1000 came, the other never did.
+    rig.tracker.on_notification(rig.notes(1000, 0)[0])
+    # The receiver's seq began again, in the same session.
+    rig.publish(1)
+    assert rig.count("unpaired") == 1 and rig.count("pairs") == 1
+    assert rig.count("copies") == 1
+    rig.publish(2)
+    assert taken_pair(rig).record["seq"] == 1
+    assert rig.tracker.refusal is None
+
+
+def test_a_pair_that_is_not_newer_than_the_one_named_says_so():
+    rig = Rig()
+    rig.ask(after=(41, 1000), timeout_s=0.05)
+    rig.publish(1)
+    assert rig.count("pairs") == 1 and rig.count("copies") == 0
+    rig.now += 50 * MS
+    outcome = rig.tracker.take()
+    assert outcome.record["type"] == wire.NONE
+    assert "seq 1 is not after seq 1000" in outcome.record["reason"]
+
+
 def test_missing_capture_time_is_refused():
     rig = Rig()
     rig.ask(timeout_s=0.1)
@@ -194,6 +219,10 @@ def test_a_skew_at_the_limit_passes():
         ({"width": 1280}, "is 1280 x 4, not 8 x 4"),
         ({"role": "mono"}, "carries the 'mono' eye"),
         ({"device_index": None}, "Argus devices None and None"),
+        # Numbers that compare equal and are no whole numbers.
+        ({"rotation": 0.0}, "rotation 0.0; the calibration needs 0"),
+        ({"rotation": False}, "rotation False; the calibration needs 0"),
+        ({"devices": (5.0, 7.0)}, "Argus devices 5.0 and 7.0"),
     ],
 )
 def test_a_stream_that_is_not_the_calibrated_one_ends_the_bridge(meta, text):
@@ -523,6 +552,8 @@ def test_the_catalog_of_this_rig_is_accepted():
             },
             "not a packed NV12 image",
         ),
+        ({"both": {"slots": [1, 2, 3]}}, "slots that are no objects"),
+        ({"both": {"slots": [None, {"slot": 1}, "x"]}}, "slots that are no objects"),
     ],
 )
 def test_a_catalog_that_does_not_fit_the_calibration_is_refused(changes, text):
@@ -592,6 +623,38 @@ def test_a_line_that_is_no_json_is_refused():
         wire.pack(wire.error("x" * wire.MAX_LINE_BYTES))
 
 
+@pytest.mark.parametrize("kind", [[], {}, 1, None, True])
+def test_a_record_type_that_is_no_text_is_a_wire_error(kind):
+    with pytest.raises(wire.WireError, match="unknown record type"):
+        wire.check({"type": kind})
+    with pytest.raises(wire.WireError, match="unknown record type"):
+        wire.parse(json.dumps({"type": kind}).encode())
+
+
+def test_a_line_nested_too_deep_is_a_wire_error():
+    with pytest.raises(wire.WireError, match="not a JSON line"):
+        wire.parse(b"[" * 60000)
+
+
+def test_a_line_over_the_limit_is_refused_also_when_it_comes_whole():
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        theirs.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 21)
+        fill = "x" * (wire.MAX_LINE_BYTES - len('{"type":"none","reason":""}'))
+        longest = json.dumps(
+            {"type": "none", "reason": fill[:-1]}, separators=(",", ":")
+        )
+        assert len(longest) == wire.MAX_LINE_BYTES - 1  # what pack() lets through
+        too_long = json.dumps({"type": "none", "reason": fill}, separators=(",", ":"))
+        theirs.sendall(longest.encode() + b"\n" + too_long.encode() + b"\n")
+        time.sleep(0.2)  # both lines are in one receive
+        reader = wire.Reader(ours)
+        deadline = time.monotonic() + 2.0
+        assert len(reader.record(deadline)["reason"]) == len(fill) - 1
+        with pytest.raises(wire.WireError, match="a line longer than"):
+            reader.record(deadline)
+
+
 def test_the_reader_keeps_records_and_raw_bytes_apart():
     ours, theirs = socket.socketpair()
     with ours, theirs:
@@ -623,7 +686,7 @@ def test_the_reader_keeps_records_and_raw_bytes_apart():
         assert reader.record(time.monotonic() + 2.0)["reason"] == "in two halves"
 
         theirs.sendall(b"x" * (wire.MAX_LINE_BYTES + 2))
-        with pytest.raises(wire.WireError, match="without an end"):
+        with pytest.raises(wire.WireError, match="a line longer than 65536 bytes"):
             reader.record(time.monotonic() + 2.0)
         theirs.close()
         rest = wire.Reader(ours)

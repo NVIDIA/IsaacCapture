@@ -41,7 +41,8 @@ CAMERA_TYPE = "link_stereo"
 # A camera frame is refused when the newest ROBOT_STATE is older than this: its
 # clock pair is what dates the camera frame.
 STATE_MAX_AGE_S = 1.0
-# A capture time this far ahead of the estimate of the Thor's wall clock is refused.
+# A capture time this far ahead of the estimate of the Thor's wall clock is
+# refused; so is one this far, plus the link's clock margin, after the arrival.
 FUTURE_LIMIT_S = 0.05
 # A capture time this far before the pair's arrival on this machine is refused.
 BEFORE_ARRIVAL_LIMIT_S = 1.0
@@ -78,8 +79,10 @@ def stamp_pair(
         state_at = link.state_arrived_s()
         step_at = link.clock_step_at_s()
         now = monotonic()
-        raw_age = link.thor_now()[1] - evidence
-        converted = now - link.wall_age_s(evidence)
+        thor_wall = link.thor_now()[1]
+        raw_age = thor_wall - evidence
+        margin = link.wall_age_s(evidence) - raw_age
+        converted = now - raw_age - margin
         thor_mono = link.wall_to_thor_mono(evidence)
     except StaleState:
         raise CameraError(
@@ -106,14 +109,23 @@ def stamp_pair(
             f"the camera frame's capture time lies {-raw_age:.3f} s in the future "
             f"of the Thor's wall clock, over {FUTURE_LIMIT_S:g} s"
         )
+    # The capture time minus the arrival, both on the Thor's wall clock.
+    lead = (now - arrival) - raw_age
+    if lead > FUTURE_LIMIT_S + margin:
+        raise CameraError(
+            f"the camera frame's capture time lies {lead:.3f} s after its "
+            f"arrival, over {FUTURE_LIMIT_S + margin:g} s"
+        )
     if arrival - converted > BEFORE_ARRIVAL_LIMIT_S:
         raise CameraError(
             f"the camera frame's capture time is {arrival - converted:.2f} s "
             f"before its arrival, over {BEFORE_ARRIVAL_LIMIT_S:g} s"
         )
+    # The evidence is never newer than the arrival.
+    late = max(0.0, lead)
     return FrameStamp(
-        evidence_wall_s=evidence,
-        capture_thor_mono_s=float(thor_mono),
+        evidence_wall_s=evidence - late,
+        capture_thor_mono_s=float(thor_mono) - late,
         t=float(min(converted, arrival)),
         raw_age_s=float(raw_age),
     )
@@ -275,6 +287,8 @@ class _LinkStereoInput:
                 "sensor_ids": list(pair.device_index),
                 "sensor_timestamps_ns": list(pair.sof_wall_ns),
                 "check": dict(pair.check),
+                # True: the source made the times up; nothing was captured then.
+                "invented_times": pair.check.get("invented_times") is True,
                 "calibration_id": self.calibration_id,
                 "calibration_status": manifest.get("status"),
                 "absolute_accuracy_verified": False,

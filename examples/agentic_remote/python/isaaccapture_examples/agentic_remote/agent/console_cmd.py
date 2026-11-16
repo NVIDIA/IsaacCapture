@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import termios
 import time
 import types
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ..link_service.local import LocalCarrier, connect_local
@@ -65,6 +67,21 @@ RESULT_WAIT_S = {
 STATE_WAIT_S = 3.0
 STOP_WAIT_S = 5.0
 _LOOK_S = 0.1
+# Set, each of these marks the environment of an AI agent: no confirmation is
+# asked there. Equal to AGENT_ENV and AGENT_ENV_PREFIXES of APAI's arm_hold.py.
+AGENT_ENV = (
+    "AI_AGENT",
+    "HERMES_AGENT",
+    "HERMES_SESSION_ID",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_THREAD_ID",
+    "APAI_MCP_TOKEN",
+    "APAI_OPENCLAW_PROFILE",
+)
+AGENT_ENV_PREFIXES = ("OPENCLAW_",)
 
 Say = Callable[[str], None]
 Ask = Callable[[str], str]
@@ -78,23 +95,47 @@ def _say(text: str) -> None:
     print(text, flush=True)
 
 
+def agent_environment(environ: Mapping[str, str] | None = None) -> str | None:
+    """The variable that marks the environment as an AI agent's, or None.
+
+    The marks are APAI's (apai.control.arm_hold); the command runs without APAI.
+    """
+    env = os.environ if environ is None else environ
+    for name in AGENT_ENV:
+        if str(env.get(name, "")).strip():
+            return name
+    for name, value in env.items():
+        if name.startswith(AGENT_ENV_PREFIXES) and str(value).strip():
+            return name
+    return None
+
+
 def terminal_ask(prompt: str) -> str:
-    """What is typed at this process's controlling terminal; never a pipe."""
+    """What is typed at this process's controlling terminal; never a pipe.
+
+    NotAsked without a terminal and inside an agent's environment. What was
+    typed before the question is shown is dropped.
+    """
     try:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
     except (AttributeError, ValueError):
         interactive = False
     if not interactive:
         raise NotAsked("this command needs a terminal to type the confirmation at")
+    if agent_environment() is not None:
+        raise NotAsked(
+            "the confirmation is typed by the operator, outside an agent environment"
+        )
     try:
         with (
             open("/dev/tty", encoding="utf-8") as typed,
             open("/dev/tty", "w", encoding="utf-8") as shown,
         ):
+            termios.tcflush(typed.fileno(), termios.TCIFLUSH)
             shown.write(prompt)
             shown.flush()
             return typed.readline()
-    except OSError as problem:
+    except (OSError, termios.error) as problem:
         raise NotAsked(f"no controlling terminal ({problem})") from None
 
 

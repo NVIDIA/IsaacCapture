@@ -25,6 +25,7 @@ import os
 import select
 import sys
 import tempfile
+import termios
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -81,7 +82,8 @@ def _complain(text: str) -> None:
 def terminal_ask(prompt: str) -> str:
     """What the operator types at this process's terminal; never a pipe.
 
-    RuntimeError inside an agent's environment and without a terminal.
+    RuntimeError inside an agent's environment and without a terminal. What
+    was typed before the question is shown is dropped.
     """
     from apai.control import arm_hold
 
@@ -89,14 +91,38 @@ def terminal_ask(prompt: str) -> str:
         raise RuntimeError(
             "motion needs the operator's terminal, outside an agent environment"
         )
+    _drop_typed_ahead()
     try:
         return arm_hold._answer_at_terminal(prompt)
     except arm_hold.NoTerminal as missing:
         raise RuntimeError(str(missing)) from None
 
 
-def terminal_input(prompt: str = "") -> str:
-    """One line of the task terminal, read so that a signal is seen at once."""
+def _drop_typed_ahead() -> None:
+    """Discard what waits unread at the controlling terminal of this session.
+
+    APAI's helper reads the answer from /dev/tty; a "yes" typed while the task
+    was thinking would answer a question the operator has not seen.
+    """
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return
+        terminal = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+    except (AttributeError, OSError, ValueError):
+        return  # no terminal: APAI's helper says so
+    try:
+        termios.tcflush(terminal, termios.TCIFLUSH)
+    except termios.error:
+        pass
+    finally:
+        os.close(terminal)
+
+
+def terminal_input(prompt: str = "", idle: Callable[[], None] | None = None) -> str:
+    """One line of the task terminal, read so that a signal is seen at once.
+
+    idle() is called while no key comes, about every 50 ms.
+    """
     stream = sys.stdin
     try:
         fd = stream.fileno()
@@ -110,6 +136,8 @@ def terminal_input(prompt: str = "") -> str:
     while True:
         readable, _, _ = select.select([fd], [], [], _INPUT_POLL_S)
         if not readable:
+            if idle is not None:
+                idle()
             continue
         char = os.read(fd, 1)
         if char == b"\n" or not char:
@@ -124,7 +152,9 @@ class LocalFrameStamps:
 
     APAI's mock camera stamps a camera frame on this machine's monotonic
     clock; its capture time on the Thor's wall clock is that age taken off the
-    link's estimate of the Thor's clock. The times never go back.
+    link's estimate of the Thor's clock. The times never go back. They are
+    invented: nothing was captured on the Thor then, and each camera frame
+    says so in capture["invented_times"].
     """
 
     def __init__(self, link: AgentLink, frame_times: FrameTimes) -> None:
@@ -140,6 +170,7 @@ class LocalFrameStamps:
         age = time.monotonic() - float(frame.t)
         if not 0.0 <= age <= _LOCAL_AGE_LIMIT_S:
             return  # not a time of this machine's monotonic clock: no evidence
+        frame.capture = {**(frame.capture or {}), "invented_times": True}
         with self._lock:
             self._last = max(self._last, wall - age)
             self._frame_times.note(frame.t, self._last)
@@ -157,12 +188,15 @@ def agent_hooks(
     joint_feed: Any = None,
     source: Any = None,
     calibration: str = "",
+    invented_times: bool = False,
     say: Say = _say,
     task_input: Callable[[str], str] = terminal_input,
 ) -> Iterator[dict[str, Any]]:
     """APAI's demo.main, while this is open, runs on the robot link.
 
-    Yields a dict the hooks fill: "runtime", "adapter", "harness", "grid".
+    Yields a dict the hooks fill: "runtime", "adapter", "harness", "grid";
+    "invented_times" is there from the start. Only with invented_times does a
+    camera frame that did not come over the camera link get an evidence time.
     """
     from apai.agent import orchestrator
     from apai.apps import demo
@@ -173,24 +207,21 @@ def agent_hooks(
     run_dir = Path(run_dir)
     full = not settings.minimal
     frame_times = FrameTimes() if frame_times is None else frame_times
-    built: dict[str, Any] = {}
+    built: dict[str, Any] = {"invented_times": bool(invented_times)}
     make_arm = arm_factory(
         link, agent_config.arm_settings(settings, calibration), joint_feed
     )
-    stamps = LocalFrameStamps(link, frame_times)
+    stamps = LocalFrameStamps(link, frame_times) if invented_times else None
     mounting = _mounting_facts(settings) if full else {}
     original_build, original_arm = demo.build_runtime, demo._build_arm
     original_agent, original_report = demo.AgentOrchestrator, demo._print_report
     original_specs = orchestrator.tool_specs_for_config
     experiment = _experiment_parts() if full else {}
-    # The two registrations replace a name of APAI for good; both are put
-    # back when the hooks close.
+    # The two registrations (below) replace a name of APAI for good; both are
+    # put back when the hooks close.
     unregistered_camera = camera_base.make_camera
     unregistered_detector = demo._make_detector
-    stereo_camera.register_camera(link, frame_times, source)
-    registered_camera = camera_base.make_camera
-    if full:
-        experiment["register_detector"]()
+    registered_camera: Any = None
     bridge: Any = None
 
     def make_camera(ccfg: Any) -> Any:
@@ -202,7 +233,7 @@ def agent_hooks(
             frame = grab()
             if stereo:
                 frame.capture = {**(frame.capture or {}), **mounting}
-            else:
+            elif stamps is not None:
                 stamps.note(frame)
             return frame
 
@@ -297,9 +328,16 @@ def agent_hooks(
     def next_task(prompt: str = "") -> str:
         if gate.tell_restart():
             raise EOFError  # ends APAI's task prompt: no new task is taken
+        gate.return_late_ownership()
+        if task_input is terminal_input:
+            return terminal_input(prompt, idle=gate.return_late_ownership)
         return task_input(prompt)
 
     try:
+        stereo_camera.register_camera(link, frame_times, source)
+        registered_camera = camera_base.make_camera
+        if full:
+            experiment["register_detector"]()
         with ExitStack() as stack:
             if full:
                 stack.enter_context(experiment["motion_adapters"](cfg))
@@ -483,24 +521,33 @@ def _check(settings: AgentSettings, camera: str, say: Say) -> int:
     return EXIT_OK
 
 
-def _settle(link: AgentLink, timeout_s: float = SETTLE_S) -> None:
+def _settle(link: AgentLink, timeout_s: float = SETTLE_S) -> bool:
     """Wait until ROBOT_STATE no longer shows the agent as control owner.
 
     A local socket closed while it does makes the robot link service ask for
-    help in the agent's name ("agent program gone").
+    help in the agent's name ("agent program gone"). False when the agent is
+    still the owner after timeout_s.
     """
     end = time.monotonic() + timeout_s
     while True:
         try:
             if link.state().owner != "agent":
-                return
+                return True
         except (LinkLost, StaleState):
-            return
+            return True
         left = end - time.monotonic()
         if left <= 0:
             _log.warning("the agent still owns the arm; closing the link anyway")
-            return
+            return False
         link.wait_change(min(left, 0.1))
+
+
+def _check_arguments(args: argparse.Namespace) -> None:
+    """ConfigError for an argument APAI would take for something else."""
+    if args.task is not None and not args.task.strip():
+        raise ConfigError("--task must name a task; it is empty")
+    if args.max_steps < 1:
+        raise ConfigError(f"--max-steps must be at least 1, not {args.max_steps}")
 
 
 def main(
@@ -521,8 +568,9 @@ def main(
     sys.dont_write_bytecode = True  # nothing lands in APAI or the experiment
     args = _parser().parse_args(argv)
     try:
+        _check_arguments(args)
         settings = agent_config.load_settings(args.config)
-        agent_config.camera_kind(args.camera)
+        invented = agent_config.invented_times(settings, args.camera)
         agent_config.refused_environment()
     except ConfigError as problem:
         _complain(str(problem))
@@ -547,8 +595,17 @@ def main(
         return EXIT_NOT_RUN
     agent_config.write_json(run_dir / "agent-settings.json", settings.as_dict())
     say(f"run folder {run_dir}; camera calibration {calibration or '(unnamed)'}")
+    if invented:
+        say(
+            f"WARNING: the camera frames of --camera {args.camera} carry invented "
+            "capture times (camera.allow_invented_times is true): a permit rests "
+            "on evidence that nobody captured. For a simulated or mock arm only, "
+            "never against a real arm"
+        )
 
     link: AgentLink | None = None
+    gate: TaskGate | None = None
+    code, settled = EXIT_FAILED, True
     try:
         attach = attach or AgentLink.attach
         link = attach(
@@ -561,6 +618,7 @@ def main(
             f"{welcome.profile_id}, session {welcome.session_id}, camera "
             f"calibration {welcome.camera_calibration_id or '(unnamed)'}"
         )
+        agent_config.check_joint_count(settings, len(welcome.joint_names))
         frame_times = FrameTimes()
         joint_feed = None
         if agent_config.camera_kind(args.camera)[0] != agent_config.CAMERA_MOCK:
@@ -594,27 +652,42 @@ def main(
             joint_feed=joint_feed,
             source=source,
             calibration=calibration,
+            invented_times=invented,
             say=say,
             task_input=task_input,
         ):
             status = demo.main(arguments)
-        if gate.restart_told:
-            return EXIT_FAILED
-        return EXIT_OK if status == 0 else EXIT_FAILED
+        if status == 0 and not gate.restart_told:
+            code = EXIT_OK
+        if code == EXIT_OK and args.interactive and gate.failed_tasks:
+            say(f"{gate.failed_tasks} task(s) of this session ended without success")
+            code = EXIT_FAILED
     except KeyboardInterrupt:
         # A second Ctrl+C, or one before APAI's own handling stood.
         if link is not None:
             link.stop(STOP_REASON, AGENT_TERMINAL)
         _complain("interrupted; STOP was sent")
-        return EXIT_INTERRUPTED
+        code = EXIT_INTERRUPTED
     except (LinkLost, TimeoutError) as problem:
         _complain(f"no robot connection: {problem}")
-        return EXIT_FAILED
+    except ConfigError as problem:
+        _complain(str(problem))
     except Exception as problem:
         _log.debug("the agent program failed", exc_info=True)
         _complain(f"{type(problem).__name__}: {problem}")
-        return EXIT_FAILED
     finally:
         if link is not None:
-            _settle(link)
+            if gate is not None:
+                gate.return_late_ownership(SETTLE_S)
+            settled = _settle(link)
             link.close()
+    if not settled:
+        _complain(
+            "the agent still owned the arm when the program ended: the robot "
+            "side ends that ownership; look at the Thor terminal"
+        )
+    elif gate is not None and gate.end_unanswered:
+        _complain("an owner request that ended a task was not answered")
+    if code == EXIT_OK and (not settled or (gate and gate.end_unanswered)):
+        code = EXIT_FAILED
+    return code

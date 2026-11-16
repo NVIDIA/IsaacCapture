@@ -437,8 +437,8 @@ def test_two_tasks_run_end_to_end_and_every_setpoint_was_permitted(
     (help_needed,) = scene.h.heard("help_needed")
     assert help_needed[2]["reason"].startswith("task ended without success: ")
     assert help_needed[2]["owner"] == "nobody"
-    # APAI's task prompt returns 0 whatever its tasks' ends were.
-    assert code == launcher.EXIT_OK
+    # One task of the session ended without success.
+    assert code == launcher.EXIT_FAILED
 
     # The tasks are judged by the run folder's task reports.
     opened, picked = scene.reports()
@@ -641,7 +641,8 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
         "close:nobody",
     ]
     assert trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
-    assert opened["success"] is True and code == launcher.EXIT_OK
+    # The stopped task did not succeed: exit code 1 for the session.
+    assert opened["success"] is True and code == launcher.EXIT_FAILED
     assert scene.h.app.snapshot().stop_number == 1
     scene.holds()
 
@@ -683,20 +684,20 @@ def test_ownership_whose_result_never_came_is_given_back(scene: Scene) -> None:
 
 
 @apai
-def test_ownership_granted_after_the_gate_gave_up_ends_with_the_program(
+def test_ownership_granted_after_the_gate_gave_up_is_given_back_before_the_end(
     any_scene: Scene,
 ) -> None:
     """The Thor answers OWNER_REQUEST "agent" later than the gate waits.
 
-    The gate looks for a late ownership once, at its timeout, and finds none.
-    What then ends the ownership is the robot side: the robot app when its
-    link is lost, the service's help request behind the service.
+    The gate keeps watching: the program does not end before the late grant
+    is there and the arm is given back.
     """
     scene = any_scene
     app = scene.h.app
     new_task = app._new_task
 
     def slow(message: Any, reply: Any) -> Any:
+        app._new_task = new_task
         time.sleep(0.6)  # on the dispatcher thread
         return new_task(message, reply)
 
@@ -705,22 +706,53 @@ def test_ownership_granted_after_the_gate_gave_up_ends_with_the_program(
     assert code == launcher.EXIT_FAILED
     (result,) = scene.results("open_gripper")
     assert result["refused"] == "ownership"
-    assert scene.order == ["close:nobody"]  # no request was answered in time
-    # The ownership came after the program had gone, and ended at once.
-    until(lambda: len(scene.h.heard("owner")) >= 1, "the late ownership")
-    if scene.stack is None:
-        until(lambda: len(scene.h.heard("connection")) == 2, "the lost link's event")
-        lost = scene.h.heard("connection")[-1]
-        assert "robot connection lost" in lost[1]
-        assert "the agent's ownership ended" in lost[1]
-        assert scene.h.heard("help_needed") == []
-    else:
-        until(lambda: scene.h.heard("help_needed"), "the service's help request")
-        (help_needed,) = scene.h.heard("help_needed")
-        assert help_needed[2]["reason"] == "agent program gone"
+    # The arm was given back by the program itself, and only then the link closed.
+    assert scene.order == ["nobody:completed", "close:nobody"]
+    assert scene.trace.owners == ["nobody", "agent", "nobody"]
+    granted, returned = scene.h.heard("owner")
+    assert granted[2]["owner"] == "agent"
+    assert "the ownership arrived late" in returned[1]
+    # Nobody had to end the ownership for the program: no lost link's
+    # ownership, no help request of the service.
+    time.sleep(0.3)
+    assert scene.h.heard("help_needed") == []
+    assert not [e for e in scene.h.heard("connection") if "ownership ended" in e[1]]
     snapshot = app.snapshot()
     assert snapshot.owner.value == "nobody" and snapshot.stop_number == 0
     assert scene.motion == [] and scene.h.spy.targets == []
+    scene.holds()
+
+
+@apai
+def test_a_late_ownership_is_given_back_and_the_next_task_runs(scene: Scene) -> None:
+    """--interactive: the grant of the first task comes after the gate gave up."""
+    app = scene.h.app
+    new_task = app._new_task
+
+    def slow(message: Any, reply: Any) -> Any:
+        app._new_task = new_task
+        time.sleep(0.6)  # on the dispatcher thread
+        return new_task(message, reply)
+
+    app._new_task = slow
+    scene.typed = [QUICK, QUICK]
+    scene.answers = ["yes", "yes"]
+    code = scene.run("--interactive", task={"end_wait_s": 0.3})
+    first, second = scene.reports()
+    assert first["success"] is False and second["success"] is True
+    refused, opened = scene.results("open_gripper")
+    assert refused["refused"] == "ownership" and opened["ok"] is True
+    # The late ownership was given back, then the second task took the arm.
+    assert scene.order == [
+        "nobody:completed",
+        "agent:completed",
+        "nobody:completed",
+        "close:nobody",
+    ]
+    assert scene.trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
+    assert "the ownership arrived late" in scene.h.heard("owner")[1][1]
+    assert scene.h.heard("help_needed") == []
+    assert code == launcher.EXIT_FAILED  # the first task did not succeed
     scene.holds()
 
 
@@ -889,7 +921,7 @@ class _FakeMoveCheck:
         check.passes.append((sent, reach))
         if self.refusal is not None:
             return None
-        last = min(self.count - 1, sent + reach)
+        last = min(self.count - 1, sent + reach - 1)
         for index in range(self.approved_through + 1, last + 1):
             if index == check.refuse_at:
                 self.refusal = checkahead.CheckRefused(

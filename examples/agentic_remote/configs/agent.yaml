@@ -5,6 +5,10 @@
 # through the robot link service. Every number here is a first value; none was
 # measured on a robot. Angles are in rad, speeds in rad/s, times in s. A relative
 # path is taken from this file's folder.
+#
+# The program refuses a key it does not know, a key given twice, a block that is
+# not a mapping, and a number above the bound its comment names ("at most").
+# Every number must be above 0 (camera.max_skew_ms may be 0).
 
 # Run folders (runs/<time>) and APAI's stores (apai/) go here, never into APAI's
 # checkout or the experiment folder.
@@ -16,9 +20,12 @@ log_level: info
 link:
   # The robot link service's local socket. Empty: the service's default path.
   socket_path: ""
-  connect_timeout_s: 10.0
-  # The oldest ROBOT_STATE the arm adapter reads a pose from.
+  connect_timeout_s: 10.0  # at most 120 s
+  # The oldest ROBOT_STATE the arm adapter reads a pose from. At most 2 s.
   state_max_age_s: 0.5
+  # No PERMIT is sent on a ROBOT_STATE older than this (two state periods). At
+  # most state_max_age_s.
+  state_renew_age_s: 0.1
   # The profile id the robot app must name in WELCOME. Empty accepts any.
   expected_profile_id: ""
   # The name of the camera calibration. Empty: made from the hashes of
@@ -31,40 +38,47 @@ link:
 # Copies of the Thor's settings that WELCOME does not carry. Keep them equal to
 # the robot app's file.
 thor:
-  first_wait_s: 0.5  # permits.first_wait_s
-  settle_timeout_s: 2.0  # executor.settle_timeout_s
-  agent_max_joint_speed: 0.1  # limits.agent.max_joint_speed
+  first_wait_s: 0.5  # permits.first_wait_s; at most 5 s
+  settle_timeout_s: 2.0  # executor.settle_timeout_s; at most 30 s
+  agent_max_joint_speed: 0.1  # limits.agent.max_joint_speed; at most 3 rad/s
 
 move:
   # A MOVE quotes the smaller of this and half a period's travel at the Thor's
-  # agent speed limit.
+  # agent speed limit. At most 0.2 rad.
   start_tol_rad: 0.02
-  fresh_wait_s: 0.6  # longest wait for joint readings taken after the call began
-  start_grid_age_s: 1.0  # the oldest obstacle grid a move starts on
-  start_grid_wait_s: 3.0  # longest wait for such a grid
-  expires_in_s: 2.0  # how long a MOVE stays valid on the Thor
-  cancel_wait_s: 2.0  # longest wait for the RESULT after a cancel
+  # Longest wait for joint readings taken after the call began. At most 5 s.
+  fresh_wait_s: 0.6
+  start_grid_age_s: 1.0  # the oldest obstacle grid a move starts on; at most 5 s
+  start_grid_wait_s: 3.0  # longest wait for such a grid; at most 30 s
+  expires_in_s: 2.0  # how long a MOVE stays valid on the Thor; at most 10 s
+  cancel_wait_s: 2.0  # longest wait for the RESULT after a cancel; at most 30 s
 
 permits:
-  reach_setpoints: 25  # how far a PERMIT reaches beyond the setpoints sent
-  renew_s: 0.05  # pause between two passes of the permit loop
-  life_s: 1.0  # how long a PERMIT lasts on the Thor
+  # How many setpoints a PERMIT reaches beyond the last one sent. At most 1000.
+  reach_setpoints: 25
+  # Pause between two passes of the permit loop. Below life_s; at most 1 s.
+  renew_s: 0.05
+  life_s: 1.0  # how long a PERMIT lasts on the Thor; at most 5 s
 
 jaws:
-  fresh_s: 1.0  # an older jaw reading counts as unknown
-  result_timeout_s: 12.0
+  fresh_s: 1.0  # an older jaw reading counts as unknown; at most 5 s
+  result_timeout_s: 12.0  # at most 120 s
 
 task:
   # false for the first run: the timed return moves the arm by itself, and its
   # bench tests on this arm come first.
   timed_return: false
-  # This many failed steps in a row end the task with a help request.
+  # This many failed steps in a row end the task with a help request. At most 100.
   failed_steps_limit: 3
   # APAI's joint speed cap for the task; at most thor.agent_max_joint_speed.
   max_joint_speed: 0.1
-  end_wait_s: 5.0  # longest wait for the RESULT of the task's own owner request
-  owner_wait_s: 2.0  # longest wait for the ROBOT_STATE that shows the agent as owner
-  grid_wait_s: 20.0  # longest wait for a usable obstacle grid at the start
+  # Longest wait for the RESULT of the task's own owner request. At most 60 s.
+  end_wait_s: 5.0
+  # Longest wait for the ROBOT_STATE that shows the agent as owner, and, before a
+  # task takes the arm, for the grant of an earlier request that was not answered
+  # in time. At most 30 s.
+  owner_wait_s: 2.0
+  grid_wait_s: 20.0  # longest wait for a usable obstacle grid at the start; at most 300 s
 
 camera:
   # The interpreter of the camera consumer (it has CuPy); the camera frame bridge
@@ -75,26 +89,35 @@ camera:
   camera_pr: ""
   # ipc.socket_path of camera_receiver_rebot.yaml.
   receiver_socket: /tmp/camera_receiver_avs1_cuda_ipc.sock
-  streams: [head.left, head.right]
+  streams: [head.left, head.right]  # two different names
   # The workstation's copy of the stereo calibration folder and of the hand-eye
   # file in use on the Thor.
   calibration_dir: ""
   hand_eye_json: ""
-  max_skew_ms: 5.0  # the two eyes of a stereo pair lie at most this far apart
+  # The two eyes of a stereo pair lie at most this far apart. At most 50 ms.
+  max_skew_ms: 5.0
   depth_backend: ffs  # ffs for the real run; opencv_cpu needs no GPU
-  fps: 7.0
+  fps: 7.0  # at most 120
+  # --camera mock and --camera recorded:<dir> make their capture times up: a
+  # permit would rest on evidence that nobody captured. With false the program
+  # does not start on such a camera. Set true only for a run against a
+  # simulated or mock arm, never against a real one.
+  allow_invented_times: false
 
 experiment:
   # full: the experiment's behaviour hooks, its obstacle grid bridge on cuda:0
   # and its cloud model (AGENTIC_REMOTE_EXPERIMENT_DIR names its folder).
-  # minimal: none of them; APAI's own profiles below. For dry runs and tests.
+  # minimal: none of them; APAI's own profiles below and APAI's mock detector.
+  # For dry runs and tests.
   stack: full
   arm_profile: mock
   llm: mock
 
 # Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
 # configs/thor_operation.yaml (lines 6 to 18); that file extends a path that
-# exists only on the Thor.
+# exists only on the Thor. home_q, park_q and joint_center_rad have one value per
+# joint of the arm. motion_bounds takes these four keys and no other; its two
+# max_ values are above 0. body_mask_dilate_px is at most 100.
 rig:
   home_q: [-0.01966477744281292, 0.025, 0.025, 0.007842481136322021, -0.05901991203427315, 0.05646965652704239]
   park_q: [0, 0, 0, 0, 0, 0]

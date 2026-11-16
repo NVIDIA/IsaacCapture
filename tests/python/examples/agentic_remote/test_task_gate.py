@@ -10,6 +10,7 @@ checker are stand-ins the test scripts.
 
 from __future__ import annotations
 
+import time
 import types
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -18,7 +19,11 @@ from typing import Any
 import pytest
 from isaaccapture_examples.agentic_remote.agent import task_gate
 from isaaccapture_examples.agentic_remote.agent.config import TaskSettings
-from isaaccapture_examples.agentic_remote.agent.link_client import AgentLink, Pinned
+from isaaccapture_examples.agentic_remote.agent.link_client import (
+    AgentLink,
+    CommandTimeout,
+    Pinned,
+)
 from isaaccapture_examples.agentic_remote.agent.task_gate import (
     READ_ONLY_TOOLS,
     REST_REFUSAL,
@@ -26,6 +31,8 @@ from isaaccapture_examples.agentic_remote.agent.task_gate import (
     TaskGate,
 )
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
+from isaaccapture_examples.agentic_remote.protocol.messages import Result
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import Owner
 from link_bench import WAIT_S, until
 
 apai = pytest.mark.apai
@@ -291,14 +298,15 @@ def test_motion_outside_a_task_and_move_to_rest_are_always_refused(rig: Rig) -> 
 def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     make_rig: Callable[..., Rig],
 ) -> None:
-    # Somebody owns the arm already.
+    # A person owns the arm.
     rig = make_rig()
-    assert rig.link.request_owner("agent", timed_return=False).status == "completed"
-    rig.shown("agent")
-    rig.log.clear()
+    rig.h.app._authority.set_owner(Owner.HUMAN, "takeover")
+    rig.shown("human")
     result = rig.task(lambda: rig.execute("grasp_object"))
     assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == "control owner is agent"
+    assert result["motion_block_reason"] == (
+        "takeover not finished: give the arm back with right A at rest"
+    )
     assert rig.kinds() == [] and rig.h.heard("help_needed") == []
     # A fault-stop is latched.
     rig = make_rig()
@@ -316,6 +324,180 @@ def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     result = rig.task(lambda: rig.execute("grasp_object"))
     assert result["motion_block_reason"].startswith("robot connection lost: ")
     assert rig.kinds() == []
+
+
+def answer_late(rig: Rig, delay_s: float) -> None:
+    """The robot app answers the next OWNER_REQUEST "agent" delay_s late."""
+    app = rig.h.app
+    new_task = app._new_task
+
+    def slow(message: Any, reply: Any) -> Any:
+        app._new_task = new_task
+        time.sleep(delay_s)  # on the dispatcher thread
+        return new_task(message, reply)
+
+    app._new_task = slow
+
+
+def test_ownership_that_arrives_after_the_gate_gave_up_is_given_back_at_the_next_task(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(end_wait_s=0.3)
+    answer_late(rig, 0.6)
+    refused = rig.task(lambda: rig.execute("grasp_object"))
+    assert refused["refused"] == "ownership"
+    assert "the robot did not answer" in refused["motion_block_reason"]
+    assert rig.gate.requests == []  # the grant is still under way
+    # The next task, typed at once: the gate waits for the late grant, gives
+    # the arm back and starts as ever.
+    rig.log.clear()
+    rig.answers = ["yes"]
+    done: list[dict] = []
+    rig.task(lambda: done.append(rig.execute("grasp_object")) or report(True))
+    assert done == [{"ok": True}]
+    assert rig.kinds() == ["request", "result", "ask", "request", "result"] + [
+        "open_task",
+        "skill",
+        "request",
+        "result",
+        "close_task",
+    ]
+    assert [entry[1:] for entry in rig.of("result")] == [
+        ("nobody", "completed"),
+        ("agent", "completed"),
+        ("nobody", "completed"),
+    ]
+    assert rig.of("skill")[0][1:3] == ("grasp_object", "agent")
+    assert rig.gate.requests[0][:2] == ("nobody", "completed")
+    events = rig.h.heard("owner")
+    assert events[0][2]["owner"] == "agent" and events[2][2]["owner"] == "agent"
+    assert "the ownership arrived late" in events[1][1]
+    assert any("the ownership arrived late" in line for line in rig.said)
+    assert rig.h.heard("help_needed") == []
+
+
+def unanswered_start(rig: Rig, command_id: str) -> None:
+    """A task whose OWNER_REQUEST "agent" gets no RESULT in time."""
+    real = rig.link.request_owner
+
+    def no_answer(request: str, **kwargs: Any) -> Any:
+        raise CommandTimeout("no final RESULT within 0.3 s", command_id)
+
+    rig.link.request_owner = no_answer
+    try:
+        refused = rig.task(lambda: rig.execute("grasp_object"))
+    finally:
+        rig.link.request_owner = real
+    assert "the robot did not answer" in refused["motion_block_reason"]
+    rig.log.clear()
+
+
+def test_a_late_refusal_of_the_thor_leaves_nothing_to_give_back(rig: Rig) -> None:
+    unanswered_start(rig, "late-1")
+    rig.link._take_result(
+        Result("late-1", "refused", reason="stop number 0 does not match")
+    )
+    began = time.monotonic()
+    rig.gate.return_late_ownership(5.0)
+    rig.gate.return_late_ownership(5.0)
+    assert time.monotonic() - began < 1.0  # the refusal ended the wait
+    assert rig.kinds() == [] and rig.owner() == "nobody"
+
+
+def test_the_wait_for_a_late_grant_is_spent_once(rig: Rig) -> None:
+    unanswered_start(rig, "late-2")  # its RESULT never comes
+    began = time.monotonic()
+    rig.gate.return_late_ownership(0.3)
+    assert 0.3 <= time.monotonic() - began < 1.0
+    began = time.monotonic()
+    rig.gate.return_late_ownership(5.0)
+    assert time.monotonic() - began < 0.5
+    assert rig.kinds() == []
+
+
+def test_ownership_without_a_task_is_given_back_whenever_the_gate_looks(
+    rig: Rig,
+) -> None:
+    # The agent owns the arm and no task of this gate does.
+    assert rig.link.request_owner("agent", timed_return=False).status == "completed"
+    state = rig.shown("agent")
+    rig.log.clear()
+    rig.gate.return_late_ownership()
+    quote = Pinned(state.session_id, state.owner_number, state.stop_number)
+    assert rig.log == [("request", "nobody", quote), ("result", "nobody", "completed")]
+    assert rig.gate.requests == [("nobody", "completed", "")]
+    assert rig.link.state().owner == "nobody"  # shown before the gate goes on
+    (returned,) = [e for e in rig.h.heard("owner") if "arrived late" in e[1]]
+    assert "the ownership arrived late" in returned[1]
+    # Nothing to do then, and nothing while a task owns the arm.
+    rig.log.clear()
+    rig.gate.return_late_ownership()
+    assert rig.log == []
+
+    def body() -> Any:
+        rig.execute("grasp_object")
+        rig.gate.return_late_ownership()
+        return report(True)
+
+    rig.task(body)
+    assert [entry[1] for entry in rig.of("request")] == ["agent", "nobody"]
+    # After the task its own ownership is not taken for a late one, even while
+    # ROBOT_STATE has not caught up.
+    rig.log.clear()
+    rig.gate.return_late_ownership()
+    assert rig.log == []
+
+
+def test_a_task_started_while_the_agent_owns_without_one_takes_the_arm(
+    rig: Rig,
+) -> None:
+    assert rig.link.request_owner("agent", timed_return=False).status == "completed"
+    rig.shown("agent")
+    rig.log.clear()
+    assert rig.task(lambda: rig.execute("grasp_object")) == {"ok": True}
+    assert [entry[1:] for entry in rig.of("result")][:2] == [
+        ("nobody", "completed"),
+        ("agent", "completed"),
+    ]
+
+
+def test_an_end_request_without_an_answer_is_remembered(rig: Rig) -> None:
+    assert rig.gate.end_unanswered is False
+
+    def body() -> Any:
+        rig.execute("grasp_object")
+        asked = rig.link.request_owner
+
+        def no_answer(request: str, **kwargs: Any) -> Any:
+            if request == "agent":
+                return asked(request, **kwargs)
+            raise CommandTimeout("no final RESULT within 5 s", "c1")
+
+        rig.link.request_owner = no_answer
+        return report(True)
+
+    rig.task(body)
+    assert rig.gate.end_unanswered is True
+    assert "was not answered" in rig.said[-1] and rig.owner() == "agent"
+    # The gate does not ask again for an ownership it tried to end.
+    rig.log.clear()
+    rig.gate.return_late_ownership()
+    assert rig.log == []
+
+
+def test_the_gate_counts_the_tasks_that_ended_without_success(rig: Rig) -> None:
+    rig.task(lambda: rig.execute("get_observation") and report(True))
+    assert rig.gate.failed_tasks == 0
+    rig.task(lambda: report(False, "nothing seen"))
+    assert rig.gate.failed_tasks == 1
+    with pytest.raises(ValueError, match="broken"):
+        rig.task(lambda: (_ for _ in ()).throw(ValueError("broken")))
+    assert rig.gate.failed_tasks == 2
+    # A task the operator cancelled is not one that failed.
+    rig.task(lambda: report(summary="command cancelled", cancelled=True))
+    with pytest.raises(KeyboardInterrupt):
+        rig.task(lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    assert rig.gate.failed_tasks == 2
 
 
 def test_a_refusal_by_the_thor_names_the_remedy_and_ends_the_tasks_motion(
