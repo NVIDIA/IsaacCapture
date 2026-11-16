@@ -45,8 +45,10 @@ slots" applies.
 | `gpu_ops/` and the GPU step pipeline in `bridge/stream_worker.cpp` | Application or derived-stream processing over camera data | Reuse the kernels; adapt the pipeline; retire the bridge wiring | Connect read-only camera views, GPU completion and derived outputs to a processing consumer. Lands when GPU processing runs there with correct geometry and calibration and safe buffer lifetime. |
 
 GPU operations run on camera images as application or derived-stream processing; running them inside this bridge is
-temporary wiring. The processing path keeps input and output on the GPU and ties buffer lifetime to GPU completion, and
-must keep doing so when it moves behind the camera reader interface. The sine-warp step demonstrates kernel
+temporary wiring. The processing path keeps input and output on the GPU. The bridge's own scratch and encoder buffers are tied to GPU
+completion; the receiver's input slot is read without a lease (see the slot-overwrite limitation described in this README), so reading
+it safely depends on an ownership contract on the receiver side. When processing moves behind the camera reader
+interface it must keep GPU-resident buffers and completion-based lifetime. The sine-warp step demonstrates kernel
 integration; it is not a calibrated rectification implementation.
 
 The `chrony_clock/` adapter connects the reusable timing library to the current video publication path and is intended
