@@ -17,6 +17,7 @@ import dataclasses
 import http.client
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -184,14 +185,35 @@ class Running:
 
 
 class Browser:
-    """What the page does, over one HTTP connection."""
+    """What the page does, over one HTTP connection.
+
+    `token` is the view token: the secret the view serves a page with, valid
+    until the page is loaded again by anyone. The Browser loads the page on
+    its first frame(), so one that only reads the status replaces no page.
+    """
 
     def __init__(self, port: int) -> None:
         self.http = http.client.HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+        self.token: str | None = None
+        self._frame_status: int | None = None
+
+    def reload(self) -> None:
+        """Load the page again: a new token, and the one before counts no more."""
+        self.http.request("GET", "/")
+        reply = self.http.getresponse()
+        page = reply.read().decode("utf-8")
+        assert reply.status == 200
+        found = re.search(r'const TOKEN = "([A-Za-z0-9_-]+)";', page)
+        assert found is not None, "the served page holds no view token"
+        self.token = found.group(1)
 
     def frame(self) -> tuple[int | None, bytes]:
-        self.http.request("GET", "/frame.jpg")
+        """The newest picture; (None, b"") without one or when it is refused."""
+        if self.token is None:
+            self.reload()
+        self.http.request("GET", "/frame.jpg", headers={"X-View-Token": self.token})
         reply = self.http.getresponse()
+        self._frame_status = reply.status
         seq = reply.getheader("X-Picture-Seq")
         return (None if seq is None else int(seq)), reply.read()
 
@@ -202,14 +224,24 @@ class Browser:
             if seq is not None:
                 return seq, jpeg
             time.sleep(0.1)
-        raise AssertionError("no camera picture was served")
+        raise AssertionError(
+            f"no camera picture was served; the last reply was {self._frame_status}"
+        )
 
     def shown(self, seq: int, visible: bool = True) -> None:
-        body = json.dumps({"seq": seq, "visible": visible})
-        self.http.request("POST", "/shown", body=body)
+        """Acknowledge a picture this page fetched; the view must take it."""
+        code = self.shown_raw(
+            {"seq": seq, "visible": visible, "token": self.token or ""}
+        )
+        assert code == 204, f"the acknowledgement of picture {seq} got {code}"
+
+    def shown_raw(self, body: Any) -> int:
+        """POST /shown with that body, bytes as they are; the status code."""
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.http.request("POST", "/shown", body=data)
         reply = self.http.getresponse()
         reply.read()
-        assert reply.status == 204
+        return reply.status
 
     def status(self) -> dict[str, Any]:
         self.http.request("GET", "/status.json")
@@ -319,10 +351,11 @@ def test_view_status_reaches_the_robot_app_and_shows_in_robot_state(
         watcher.ws.wait_state(lambda s: s.view_age_s is None, WAIT_S)
         assert browser.status()["view_status"] == {"live": False, "age_s": 3600.0}
 
-        # Live again, then the tab is hidden.
+        # Live again, then the tab is hidden: it says so with its next picture.
         seq, _ = browser.frame()
         browser.shown(seq)
         watcher.ws.wait_state(lambda s: s.view_age_s is not None, WAIT_S)
+        seq, _ = browser.frame()
         browser.shown(seq, visible=False)
         watcher.ws.wait_state(lambda s: s.view_age_s is None, WAIT_S)
 
@@ -437,10 +470,17 @@ class SteppedThor:
             self.statuses.append((now, status, age))
 
     def _page(self) -> None:
+        token = None  # the view token of the one page this stand-in loads
         while not self._off.wait(0.25):
-            picture = None if self.model is None else self.model.picture()
-            if picture is not None:
-                self.model.acknowledge(picture[0], True, time.monotonic())
+            model = self.model
+            picture = None if model is None else model.picture()
+            if picture is None:
+                continue
+            now = time.monotonic()
+            token = token or model.new_page(now)
+            # As the page: it is served the picture and acknowledges it.
+            model.note_served(picture[0], token, now)
+            if model.acknowledge(picture[0], True, now, token):
                 with self._lock:
                     self._acknowledged = picture[0]
 
@@ -539,6 +579,37 @@ def test_a_recorded_source_shows_pictures_and_is_never_live(bench, folder, runni
     thor.drain()
     assert [thor.next_message() for _ in range(2)] == [NOT_LIVE] * 2
     browser.close()
+
+
+def test_only_the_page_loaded_last_is_served_and_counts(bench, folder, running):
+    view = start(running, write_config(folder, bench.path), source=StandInSource())
+    first, second = Browser(view.program.port), Browser(view.program.port)
+    seq, _ = first.first_frame()
+    first.shown(seq)
+    # Reading the status loads no page: the first tab goes on.
+    assert second.status()["picture"]["seq"] >= seq and second.token is None
+    seq, _ = first.frame()
+    first.shown(seq)
+    # A second tab is opened: the first one gets no picture and counts no more.
+    seq, _ = second.first_frame()
+    second.shown(seq)
+    assert second.token != first.token
+    assert first.frame() == (None, b"")
+    old = {"seq": seq, "visible": True, "token": first.token}
+    assert first.shown_raw(old) == 403
+    # The first tab is loaded again: now the second one is the replaced page.
+    first.reload()
+    assert old["token"] != first.token
+    seq, _ = first.frame()
+    first.shown(seq)
+    assert second.frame() == (None, b"")
+    assert second.shown_raw({"seq": seq, "visible": True, "token": second.token}) == 403
+    # The body a program sends that knows the route and no token, and no JSON.
+    assert first.shown_raw({"seq": seq, "visible": True}) == 403
+    assert first.shown_raw(b"not json") == 400
+    assert view.program.model._ack[0] == seq
+    first.close()
+    second.close()
 
 
 # One view at a time, and the ways the program ends

@@ -3,11 +3,16 @@
 
 """The live view's HTTP side, for a browser on this machine.
 
-GET /            the page (page.html beside this file)
-GET /frame.jpg   the newest camera picture; its number in X-Picture-Seq (204
-                 without a picture)
-GET /status.json what the page shows under the picture
-POST /shown      {"seq": N, "visible": true|false}: the page has drawn picture N
+GET /            the page (page.html beside this file), with a new view token
+GET /frame.jpg   the newest camera picture, for the page that sends the valid
+                 view token as X-View-Token; its number in X-Picture-Seq (204
+                 without a picture, 403 without the valid token)
+GET /status.json what the page shows over and under the picture; needs no token
+POST /shown      {"seq": N, "visible": true|false, "token": "..."}: the page has
+                 drawn picture N (403 when it does not count)
+
+The view token is the secret a page is served with: each GET / makes a new one
+the only valid one, so one page at a time counts. It is never logged.
 
 Nothing here can reach the robot: /shown only tells the model what the page drew.
 """
@@ -28,6 +33,15 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.view_server")
 
 LOOPBACK = "127.0.0.1"
 PAGE_FILE = Path(__file__).with_name("page.html")
+# The text in page.html that each GET / replaces with that page's view token.
+TOKEN_PLACE = b"__VIEW_TOKEN__"
+# The request header in which the page sends its view token with GET /frame.jpg.
+TOKEN_HEADER = "X-View-Token"
+# The methods and paths the log names; any other request line is logged as
+# _OTHER_REQUEST.
+_METHODS = ("GET", "POST")
+_PATHS = ("/", "/frame.jpg", "/status.json", "/shown")
+_OTHER_REQUEST = "another request"
 # The longest body of POST /shown.
 MAX_SHOWN_BYTES = 4096
 # A longer body than MAX_SHOWN_BYTES is read and dropped up to this size; above
@@ -56,19 +70,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         path = self.path.partition("?")[0]
         if path == "/":
+            token = self.server.model.new_page(self.server.monotonic())
+            _log.info("the page was loaded; a page loaded before counts no longer")
             self._reply(
                 200,
-                self.server.page,
+                self.server.page.replace(TOKEN_PLACE, token.encode()),
                 "text/html; charset=utf-8",
                 {"Content-Security-Policy": CONTENT_SECURITY_POLICY},
             )
         elif path == "/frame.jpg":
-            picture = self.server.model.picture()
+            model, now = self.server.model, self.server.monotonic()
+            token = self.headers.get(TOKEN_HEADER, "")
+            picture = model.picture()
             if picture is None:
-                self._reply(204)
-            else:
+                self._reply(204 if model.is_current_page(token) else 403)
+            elif model.note_served(picture[0], token, now):
                 seq, jpeg = picture
                 self._reply(200, jpeg, "image/jpeg", {"X-Picture-Seq": str(seq)})
+            else:
+                self._reply(403)
         elif path == "/status.json":
             model, now = self.server.model, self.server.monotonic()
             told = model.status_json(now, model.thor_wall_now(now))
@@ -107,13 +127,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             told = json.loads(body)
         except ValueError:
             told = None
-        seq = told.get("seq") if isinstance(told, dict) else None
-        visible = told.get("visible") if isinstance(told, dict) else None
-        if type(seq) is not int or type(visible) is not bool:
+        if not isinstance(told, dict):
+            told = {}
+        seq, visible = told.get("seq"), told.get("visible")
+        # A body that names no token is well formed: the model refuses it.
+        token = told.get("token", "")
+        if type(seq) is not int or type(visible) is not bool or type(token) is not str:
             self._reply(400)
             return
-        self.server.model.acknowledge(seq, visible, self.server.monotonic())
-        self._reply(204)
+        now = self.server.monotonic()
+        counted = self.server.model.acknowledge(seq, visible, now, token)
+        self._reply(204 if counted else 403)
 
     def _from_here(self) -> bool:
         """Whether the request names this server; another host name gets 403."""
@@ -142,6 +166,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_error(
+        self, code: int, message: str | None = None, explain: str | None = None
+    ) -> None:
+        # http.server's own texts quote the request line. The standard words
+        # of the status code go out and into the log instead.
+        super().send_error(code)
+
+    def log_request(self, code: Any = "-", size: Any = "-") -> None:
+        # Of a request line the log names only what this server serves: a view
+        # token could stand anywhere else in it.
+        line = _OTHER_REQUEST
+        if self.command in _METHODS:
+            path = self.path.partition("?")[0]
+            if path in _PATHS:
+                line = f"{self.command} {path} {self.request_version}"
+        self.log_message('"%s" %s', line, code)
 
     def log_message(self, format: str, *args: Any) -> None:
         _log.debug("%s %s", self.address_string(), format % args)

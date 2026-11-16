@@ -6,13 +6,18 @@ whether a browser is showing the view.
 
 A camera picture is a camera frame made small and packed as JPEG. The page
 acknowledges each picture it has drawn; VIEW_STATUS says "live" only on such an
-acknowledgement. The model reads no clock and does no I/O: every time is handed
-in, on this machine's monotonic clock unless the name says "wall".
+acknowledgement. The view token is the secret a page gets when it is loaded:
+only the page loaded last has the valid one, and only that page's
+acknowledgements of pictures it was served count. The model reads no clock and
+does no I/O: every time is handed in, on this machine's monotonic clock unless
+the name says "wall".
 """
 
 from __future__ import annotations
 
+import hmac
 import math
+import secrets
 import threading
 from collections import OrderedDict, deque
 from typing import Any
@@ -39,6 +44,8 @@ PICTURES_REMEMBERED = 64
 NO_PICTURE = "NO PICTURE"
 STALE = "STALE"
 RECORDED = "RECORDED, NOT LIVE"
+# While the Thor says a person is driving the arm (health["human"]["driving"]).
+HUMAN_DRIVING = "HUMAN DRIVING"
 
 _PERMIT_KEYS = ("move_id", "through_index", "evidence_age_s", "expires_in_s")
 
@@ -70,6 +77,11 @@ class ViewModel:
         self._picture: tuple[int, bytes] | None = None
         # Picture number -> (exposure on the Thor's wall clock, arrival, invented).
         self._times: OrderedDict[int, tuple[float, float, bool]] = OrderedDict()
+        # The valid view token and when its page was loaded; None before a load.
+        self._token: bytes | None = None
+        self._page_at: float | None = None
+        # Picture number -> when it last went to the page of the valid token.
+        self._served: OrderedDict[int, float] = OrderedDict()
         # The newest acknowledgement: picture number, tab visible, when.
         self._ack: tuple[int, bool, float] | None = None
         self._camera_note = ""
@@ -129,18 +141,62 @@ class ViewModel:
             while len(self._times) > PICTURES_REMEMBERED:
                 self._times.popitem(last=False)
 
-    def acknowledge(self, seq: int, visible: bool, now_mono: float) -> None:
-        """The page has drawn picture `seq`; `visible` is whether its tab shows.
+    def new_page(self, now_mono: float) -> str:
+        """The page was loaded: its view token, from now on the only valid one.
 
-        A number the model does not remember, and one below the picture
-        acknowledged last, count for nothing.
+        Every acknowledgement and every served picture of the page loaded
+        before is forgotten: the view is not live until this page has drawn a
+        picture.
+        """
+        token = secrets.token_urlsafe(24)
+        with self._lock:
+            self._token = token.encode()
+            self._page_at = now_mono
+            self._served.clear()
+            self._ack = None
+        return token
+
+    def is_current_page(self, token: str) -> bool:
+        """Whether `token` is the view token of the page loaded last."""
+        with self._lock:
+            return self._is_valid(token)
+
+    def note_served(self, seq: int, token: str, now_mono: float) -> bool:
+        """Picture `seq` goes to the page of `token` now.
+
+        False, and nothing is remembered, when the token is not the valid one.
         """
         with self._lock:
+            if not self._is_valid(token):
+                return False
+            self._served[seq] = now_mono
+            self._served.move_to_end(seq)
+            while len(self._served) > PICTURES_REMEMBERED:
+                self._served.popitem(last=False)
+            return True
+
+    def acknowledge(
+        self, seq: int, visible: bool, now_mono: float, token: str = ""
+    ) -> bool:
+        """The page has drawn picture `seq`; `visible` is whether its tab shows.
+
+        It counts only with the valid view token and for a picture that went
+        to that page less than ack_timeout_s ago. A number the model does not
+        remember, and one below the picture acknowledged last, count for
+        nothing either. False when it did not count: nothing has changed then.
+        """
+        with self._lock:
+            if not self._is_valid(token):
+                return False
+            served_at = self._served.get(seq)
+            if served_at is None or not now_mono - served_at < self._ack_timeout_s:
+                return False
             if seq not in self._times:
-                return
+                return False
             if self._ack is not None and seq < self._ack[0]:
-                return
+                return False
             self._ack = (seq, bool(visible), now_mono)
+            return True
 
     def note_sent(self, status: ViewStatus) -> None:
         """Remember the VIEW_STATUS that was sent last, for the page."""
@@ -165,14 +221,15 @@ class ViewModel:
     def view_status(self, now_mono: float, thor_wall_now: float | None) -> ViewStatus:
         """The VIEW_STATUS to send now.
 
-        Live only when the page acknowledged, as visible and less than
-        ack_timeout_s ago, a picture of the camera connection whose exposure
-        does not lie in the Thor's future, and a fresh ROBOT_STATE gives the
-        Thor's wall clock. The picture must have arrived CLOCK_STEP_QUIET_S or
-        more after the model's first ROBOT_STATE and after the newest step of
-        that clock against the Thor's monotonic clock: an earlier one is never
-        live. The age is then the larger of that picture's age since its
-        exposure and since its arrival on this machine.
+        Live only when the page loaded last acknowledged, as visible and less
+        than ack_timeout_s ago, a picture it fetched less than ack_timeout_s
+        ago: one of the camera connection whose exposure does not lie in the
+        Thor's future. A fresh ROBOT_STATE must give the Thor's wall clock. The
+        picture must have arrived CLOCK_STEP_QUIET_S or more after the model's
+        first ROBOT_STATE and after the newest step of that clock against the
+        Thor's monotonic clock: an earlier one is never live. The age is then
+        the larger of that picture's age since its exposure and since its
+        arrival on this machine.
         """
         with self._lock:
             age = self._live_age(now_mono, thor_wall_now)
@@ -183,7 +240,10 @@ class ViewModel:
     def status_json(
         self, now_mono: float, thor_wall_now: float | None
     ) -> dict[str, Any]:
-        """Everything the page shows under the picture, as JSON values."""
+        """Everything the page shows over and under the picture, as JSON values.
+
+        The view token is not among them.
+        """
         with self._lock:
             local, state, sent = self._local, self._state, self._sent
             welcome = self._welcome
@@ -204,6 +264,8 @@ class ViewModel:
                     None if state is None else max(0.0, now_mono - self._state_at)
                 ),
                 "picture": self._picture_json(now_mono, thor_wall_now),
+                # In large letters over the picture; "" for nothing.
+                "banner": HUMAN_DRIVING if _human_driving(state) else "",
                 "view_status": (
                     None if sent is None else {"live": sent.live, "age_s": sent.age_s}
                 ),
@@ -214,6 +276,12 @@ class ViewModel:
             }
 
     # Under the lock
+
+    def _is_valid(self, token: str) -> bool:
+        valid = self._token
+        if valid is None:
+            return False
+        return hmac.compare_digest(token.encode("utf-8", "replace"), valid)
 
     def _thor_wall_now(self, now_mono: float) -> float | None:
         state = self._state
@@ -231,6 +299,12 @@ class ViewModel:
             return None
         seq, visible, at = ack
         if not visible or not now_mono - at < self._ack_timeout_s:
+            return None
+        # acknowledge() takes no word about a picture that went to the page
+        # ack_timeout_s ago or longer, "the tab is hidden" neither: from then
+        # on that picture is not live.
+        served_at = self._served.get(seq)
+        if served_at is None or not now_mono - served_at < self._ack_timeout_s:
             return None
         times = self._times.get(seq)
         if times is None:
@@ -298,6 +372,14 @@ def _state_json(state: RobotState) -> dict[str, Any]:
         "permit_refusal": refusal if isinstance(refusal, str) else "",
         "view_age_s": state.view_age_s,
     }
+
+
+def _human_driving(state: RobotState | None) -> bool:
+    """Whether the newest ROBOT_STATE says that a person is driving the arm."""
+    if state is None or not isinstance(state.health, dict):
+        return False
+    human = state.health.get("human")
+    return isinstance(human, dict) and human.get("driving") is True
 
 
 def _permit_json(permit: Any) -> dict[str, Any] | None:

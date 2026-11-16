@@ -3,12 +3,15 @@
 
 """view/model.py: when the live view counts as live, and what the page is told.
 
-Every time is a number the test picks: the model reads no clock.
+Every time is a number the test picks: the model reads no clock. The view
+token is the secret a page gets when it is loaded; only the page loaded last
+has the valid one.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hmac
 import json
 import threading
 from typing import Any
@@ -27,6 +30,7 @@ from isaaccapture_examples.agentic_remote.view.model import (
     AGE_WHEN_NOT_LIVE_S,
     EVENTS_KEPT,
     FUTURE_TOLERANCE_S,
+    HUMAN_DRIVING,
     NO_PICTURE,
     RECORDED,
     STALE,
@@ -69,8 +73,27 @@ def model_with_state(**settings: float) -> ViewModel:
     return model
 
 
+class Page:
+    """A page that was loaded on a model, with the view token it was given."""
+
+    def __init__(self, model: ViewModel, now: float = T0 - 30.0) -> None:
+        self.model = model
+        self.token = model.new_page(now)
+
+    def fetch(self, seq: int, now: float) -> bool:
+        """The page is served picture `seq`."""
+        return self.model.note_served(seq, self.token, now)
+
+    def acknowledge(self, seq: int, visible: bool, now: float) -> bool:
+        return self.model.acknowledge(seq, visible, now, self.token)
+
+    def draw(self, seq: int, now: float, visible: bool = True) -> bool:
+        """What the page does with a picture: it fetches and acknowledges it."""
+        return self.fetch(seq, now) and self.acknowledge(seq, visible, now)
+
+
 def shown(
-    model: ViewModel,
+    page: Page,
     seq: int = 1,
     *,
     exposed_ago: float = 0.1,
@@ -79,10 +102,12 @@ def shown(
     visible: bool = True,
     now: float = T0,
 ) -> None:
-    """A picture taken and arrived before `now`, acknowledged by the page at `now`."""
+    """A picture taken and arrived before `now`, drawn by the page at `now`."""
     wall_now = WALL0 + (now - T0)
-    model.put_picture(seq, JPEG, wall_now - exposed_ago, now - arrived_ago, invented)
-    model.acknowledge(seq, visible, now)
+    page.model.put_picture(
+        seq, JPEG, wall_now - exposed_ago, now - arrived_ago, invented
+    )
+    assert page.draw(seq, now, visible)
 
 
 def status(model: ViewModel, now: float) -> ViewStatus:
@@ -94,53 +119,59 @@ def status(model: ViewModel, now: float) -> ViewStatus:
 
 def test_not_live_without_an_acknowledged_picture():
     model = model_with_state()
+    page = Page(model)
     assert status(model, T0) == NOT_LIVE
     model.put_picture(1, JPEG, WALL0 - 0.1, T0 - 0.05, False)
     assert status(model, T0) == NOT_LIVE
-    # An acknowledgement of a picture the model never had counts for nothing.
-    model.acknowledge(7, True, T0)
+    # A picture the page was served and did not acknowledge counts for nothing.
+    assert page.fetch(1, T0)
+    assert status(model, T0) == NOT_LIVE
+    # So does an acknowledgement of a picture the model never had.
+    assert page.fetch(7, T0) and not page.acknowledge(7, True, T0)
     assert status(model, T0) == NOT_LIVE
 
 
 def test_live_after_a_visible_acknowledgement():
     model = model_with_state()
-    shown(model)
+    shown(Page(model))
     assert status(model, T0) == ViewStatus(live=True, age_s=near(0.1))
 
 
 def test_a_hidden_tab_is_not_live():
     model = model_with_state()
-    shown(model, visible=False)
+    page = Page(model)
+    shown(page, visible=False)
     assert status(model, T0) == NOT_LIVE
     # A tab that was visible and is hidden now is not live from that moment.
-    shown(model, 2, visible=True)
+    shown(page, 2, visible=True)
     assert status(model, T0).live
-    model.acknowledge(2, False, T0 + 0.1)
+    assert page.acknowledge(2, False, T0 + 0.1)
     model.on_message(state_at(WALL0 + 0.1), T0 + 0.1)
     assert status(model, T0 + 0.1) == NOT_LIVE
 
 
 def test_an_acknowledgement_older_than_the_timeout_is_not_live():
     model = model_with_state(ack_timeout_s=1.0)
-    shown(model)
+    page = Page(model)
+    shown(page)
     model.on_message(state_at(WALL0 + 0.9), T0 + 0.9)
     assert status(model, T0 + 0.99).live
     model.on_message(state_at(WALL0 + 1.0), T0 + 1.0)
     assert status(model, T0 + 1.0) == NOT_LIVE
-    # The same picture acknowledged again is live again, with its own age.
+    # The same picture drawn again is live again, with its own age.
     model.put_picture(2, JPEG, WALL0 + 1.0, T0 + 1.0, False)
-    model.acknowledge(1, True, T0 + 1.1)
+    assert page.draw(1, T0 + 1.1)
     assert status(model, T0 + 1.1) == ViewStatus(live=True, age_s=near(1.2))
     # Once a newer picture was acknowledged, an older one counts for nothing.
-    model.acknowledge(2, True, T0 + 1.2)
-    model.acknowledge(1, True, T0 + 3.0)
+    assert page.draw(2, T0 + 1.2)
+    assert not page.draw(1, T0 + 3.0)
     model.on_message(state_at(WALL0 + 3.0), T0 + 3.0)
     assert status(model, T0 + 3.0) == NOT_LIVE
 
 
 def test_a_recorded_source_is_never_live():
     model = model_with_state()
-    shown(model, invented=True)
+    shown(Page(model), invented=True)
     assert status(model, T0) == NOT_LIVE
     assert model.status_json(T0, model.thor_wall_now(T0))["picture"]["overlay"] == (
         RECORDED
@@ -150,17 +181,18 @@ def test_a_recorded_source_is_never_live():
 def test_not_live_without_a_fresh_robot_state():
     # No ROBOT_STATE at all: the Thor's wall clock is not known.
     model = ViewModel(state_max_age_s=1.0)
-    shown(model)
+    shown(Page(model))
     assert model.thor_wall_now(T0) is None
     assert model.view_status(T0, None) == NOT_LIVE
     assert model.view_status(T0, WALL0) == NOT_LIVE
     # A ROBOT_STATE that is too old.
     model = model_with_state(state_max_age_s=1.0)
-    shown(model)
+    page = Page(model)
+    shown(page)
     assert status(model, T0 + 0.5).live
-    model.acknowledge(1, True, T0 + 0.9)
+    assert page.draw(1, T0 + 0.9)
     assert status(model, T0 + 0.99).live
-    model.acknowledge(1, True, T0 + 1.0)
+    assert page.draw(1, T0 + 1.0)
     assert status(model, T0 + 1.0) == NOT_LIVE
     assert model.thor_wall_now(T0 + 1.0) is None
     # A newer one brings it back.
@@ -170,11 +202,156 @@ def test_not_live_without_a_fresh_robot_state():
 
 def test_an_exposure_in_the_future_is_not_live():
     model = model_with_state()
-    shown(model, exposed_ago=-(FUTURE_TOLERANCE_S + 0.01))
+    page = Page(model)
+    shown(page, exposed_ago=-(FUTURE_TOLERANCE_S + 0.01))
     assert status(model, T0) == NOT_LIVE
     # Inside the tolerance the picture counts, with the arrival age.
-    shown(model, 2, exposed_ago=-(FUTURE_TOLERANCE_S - 0.01), arrived_ago=0.02)
+    shown(page, 2, exposed_ago=-(FUTURE_TOLERANCE_S - 0.01), arrived_ago=0.02)
     assert status(model, T0) == ViewStatus(live=True, age_s=near(0.02))
+
+
+# The view token
+
+
+@pytest.fixture
+def model() -> ViewModel:
+    """model_with_state() that holds picture 1, exposed 0.1 s before T0."""
+    made = model_with_state()
+    made.put_picture(1, JPEG, WALL0 - 0.1, T0 - 0.05, False)
+    return made
+
+
+def test_an_acknowledgement_without_the_pages_token_is_refused_and_the_view_is_not_live(
+    model,
+):
+    # Before a page was loaded no token is the valid one, the empty one neither.
+    assert not model.is_current_page("")
+    assert not model.note_served(1, "", T0)
+    assert not model.acknowledge(1, True, T0, "")
+    page = Page(model)
+    assert page.fetch(1, T0)
+    others = (
+        "",
+        "x" * len(page.token),
+        page.token[:-1],
+        page.token + "x",
+        page.token.swapcase(),
+        "é" * len(page.token),
+        "\ud800",  # text that is no UTF-8
+    )
+    for token in others:
+        assert not model.is_current_page(token), token
+        assert not model.note_served(1, token, T0), token
+        assert not model.acknowledge(1, True, T0, token), token
+    # Without a token at all, as a program does that only knows the route.
+    assert model.acknowledge(1, True, T0) is False
+    assert model._ack is None
+    assert status(model, T0) == NOT_LIVE
+
+
+def test_an_acknowledgement_with_the_token_makes_the_view_live(model):
+    page = Page(model)
+    # 24 random bytes, as text for a URL.
+    assert len(page.token) == 32 and model.is_current_page(page.token)
+    assert model.note_served(1, page.token, T0) is True
+    assert status(model, T0) == NOT_LIVE
+    assert model.acknowledge(1, True, T0 + 0.01, page.token) is True
+    assert status(model, T0 + 0.01) == ViewStatus(live=True, age_s=near(0.11))
+
+
+def test_an_acknowledgement_of_a_picture_the_page_never_fetched_is_refused(model):
+    page = Page(model)
+    model.put_picture(2, JPEG, WALL0 - 0.1, T0 - 0.05, False)
+    # The page was served picture 1 and no other.
+    assert page.fetch(1, T0)
+    assert not page.acknowledge(2, True, T0)
+    assert model._ack is None and status(model, T0) == NOT_LIVE
+    assert page.acknowledge(1, True, T0)
+    # A refused acknowledgement changes nothing, whatever it says.
+    assert not page.acknowledge(2, False, T0)
+    assert model._ack == (1, True, T0) and status(model, T0).live
+
+
+@pytest.mark.parametrize("ack_timeout_s", [0.3, 1.0])
+def test_an_acknowledgement_counts_only_within_the_timeout_after_the_fetch(
+    ack_timeout_s: float,
+) -> None:
+    model = model_with_state(ack_timeout_s=ack_timeout_s)
+    page = Page(model)
+    model.put_picture(1, JPEG, WALL0 - 0.1, T0 - 0.05, False)
+    assert page.fetch(1, T0)
+    assert not page.acknowledge(1, True, T0 + ack_timeout_s)
+    assert model._ack is None
+    # The time runs from the newest fetch of that picture.
+    assert page.fetch(1, T0 + ack_timeout_s)
+    late = T0 + 2 * ack_timeout_s - 0.01
+    assert page.acknowledge(1, True, late)
+    assert model._ack == (1, True, late)
+
+
+def test_a_tab_hidden_too_long_after_its_fetch_is_not_live(model):
+    page = Page(model)
+    assert page.fetch(1, T0)
+    # Shown 0.9 s after the page fetched the picture: that still counts.
+    assert page.acknowledge(1, True, T0 + 0.9)
+    assert status(model, T0 + 0.95) == ViewStatus(live=True, age_s=near(1.05))
+    # Hidden a timeout after the fetch: the model takes no word about that
+    # picture any more, and the view is not live from that moment.
+    assert not page.acknowledge(1, False, T0 + 1.0)
+    assert model._ack == (1, True, T0 + 0.9)
+    model.on_message(state_at(WALL0 + 1.0), T0 + 1.0)
+    for seconds in (1.0, 1.2, 1.5, 1.89):
+        assert status(model, T0 + seconds) == NOT_LIVE, seconds
+    # A page that fetches and acknowledges again is live again.
+    assert page.draw(1, T0 + 1.9)
+    assert status(model, T0 + 1.9) == ViewStatus(live=True, age_s=near(2.0))
+
+
+def test_a_new_page_takes_the_token_and_forgets_what_the_page_before_did(model):
+    first = Page(model)
+    assert first.draw(1, T0)
+    assert status(model, T0).live
+    second = Page(model, T0)
+    assert second.token != first.token
+    assert status(model, T0) == NOT_LIVE
+    # The page loaded before is served nothing and counts for nothing.
+    assert not model.is_current_page(first.token)
+    assert not first.fetch(1, T0) and not first.acknowledge(1, True, T0)
+    # What it was served is forgotten: the new page did not fetch picture 1.
+    assert not second.acknowledge(1, True, T0)
+    assert status(model, T0) == NOT_LIVE
+    assert second.draw(1, T0)
+    assert status(model, T0) == ViewStatus(live=True, age_s=near(0.1))
+
+
+def test_tokens_are_compared_in_constant_time(model, monkeypatch):
+    page = Page(model)
+    compared: list[tuple[bytes, bytes]] = []
+    compare_digest = hmac.compare_digest
+
+    def noted(given: bytes, valid: bytes) -> bool:
+        compared.append((given, valid))
+        return compare_digest(given, valid)
+
+    monkeypatch.setattr(view_model.hmac, "compare_digest", noted)
+    assert not model.is_current_page("a guess")
+    assert not model.note_served(1, "a guess", T0)
+    assert not model.acknowledge(1, True, T0, "a guess")
+    assert compared == [(b"a guess", page.token.encode())] * 3
+    assert page.draw(1, T0)
+    assert compared[3:] == [(page.token.encode(), page.token.encode())] * 2
+
+
+def test_the_served_pictures_that_are_remembered_are_bounded():
+    model = model_with_state()
+    page = Page(model)
+    kept = view_model.PICTURES_REMEMBERED
+    for seq in range(1, kept + 11):
+        model.put_picture(seq, JPEG, WALL0 - 0.1, T0 - 0.05, False)
+        assert page.fetch(seq, T0)
+    assert list(model._served) == list(range(11, kept + 11))
+    assert not page.acknowledge(10, True, T0)
+    assert page.acknowledge(kept + 10, True, T0)
 
 
 # The age
@@ -182,9 +359,10 @@ def test_an_exposure_in_the_future_is_not_live():
 
 def test_the_age_is_the_larger_of_the_exposure_age_and_the_arrival_age():
     model = model_with_state()
-    shown(model, 1, exposed_ago=0.30, arrived_ago=0.10)
+    page = Page(model)
+    shown(page, 1, exposed_ago=0.30, arrived_ago=0.10)
     assert status(model, T0).age_s == near(0.30)
-    shown(model, 2, exposed_ago=0.10, arrived_ago=0.25)
+    shown(page, 2, exposed_ago=0.10, arrived_ago=0.25)
     assert status(model, T0).age_s == near(0.25)
     # Both ages grow with the time since the acknowledgement: the age is that
     # of the picture on the screen, not of the acknowledgement.
@@ -198,11 +376,12 @@ def test_the_age_is_the_larger_of_the_exposure_age_and_the_arrival_age():
 
 def test_the_age_is_of_the_acknowledged_picture_not_of_the_newest_one():
     model = model_with_state()
-    shown(model, 1, exposed_ago=0.2, arrived_ago=0.2)
+    page = Page(model)
+    shown(page, 1, exposed_ago=0.2, arrived_ago=0.2)
     model.put_picture(2, JPEG, WALL0 + 0.3, T0 + 0.3, False)
     model.on_message(state_at(WALL0 + 0.3), T0 + 0.3)
     assert status(model, T0 + 0.3).age_s == near(0.5)
-    model.acknowledge(2, True, T0 + 0.3)
+    assert page.draw(2, T0 + 0.3)
     assert status(model, T0 + 0.3).age_s == near(0.0)
 
 
@@ -240,12 +419,56 @@ def test_the_overlay_says_no_picture_stale_or_recorded():
     assert overlay(T0 + 3.0) == f"{RECORDED}, {STALE}"
 
 
+def test_the_page_shows_human_driving():
+    assert HUMAN_DRIVING == "HUMAN DRIVING"
+    model = ViewModel()
+
+    def banner() -> str:
+        return model.status_json(T0, None)["banner"]
+
+    # No ROBOT_STATE yet.
+    assert banner() == ""
+    # The human part of the health as the robot app fills it while a person
+    # owns the arm and the grip is released.
+    human = {"enabled": True, "takeover_open": True, "driving": False, "note": ""}
+    for health in (
+        {},
+        {"human": human},
+        {"human": {}},
+        {"human": None},
+        {"human": "driving"},
+        {"human": ["driving"]},
+        {"human": {"driving": "yes"}},
+        {"human": {"driving": 1}},
+        {"driving": True},
+    ):
+        model.on_message(state_at(WALL0, health=health), T0)
+        assert banner() == "", health
+    # While the Thor says a human drive runs.
+    model.on_message(
+        state_at(WALL0, owner="human", health={"human": {**human, "driving": True}}),
+        T0,
+    )
+    assert banner() == "HUMAN DRIVING"
+    told = model.status_json(T0, model.thor_wall_now(T0))
+    assert told["banner"] == HUMAN_DRIVING and told["picture"]["overlay"] == NO_PICTURE
+    json.dumps(told, allow_nan=False)
+    # The words are those of the newest ROBOT_STATE, however old it is; the
+    # status says how old.
+    told = model.status_json(T0 + 30.0, model.thor_wall_now(T0 + 30.0))
+    assert told["banner"] == HUMAN_DRIVING and told["state_age_s"] == near(30.0)
+    # The next ROBOT_STATE without it takes the words away.
+    model.on_message(state_at(WALL0, owner="human", health={"human": human}), T0)
+    assert banner() == ""
+
+
 def test_the_status_holds_what_the_page_shows():
     model = ViewModel()
     empty = model.status_json(T0, None)
     assert empty["state"] is None and empty["view_status"] is None
     assert empty["robot"]["connected"] is None
     assert empty["picture"]["seq"] is None and empty["events"] == []
+    assert empty["banner"] == ""
 
     hello = dataclasses.replace(welcome("s9"), driver="sim")
     model.on_message(hello, T0)
@@ -283,6 +506,15 @@ def test_the_status_holds_what_the_page_shows():
     model.note_sent(ViewStatus(live=True, age_s=0.2))
     told = model.status_json(T0 + 0.25, model.thor_wall_now(T0 + 0.25))
 
+    assert set(told) == {
+        "robot",
+        "state",
+        "state_age_s",
+        "picture",
+        "banner",
+        "view_status",
+        "events",
+    }
     assert told["robot"] == {
         "service_alive": True,
         "connected": True,
@@ -318,6 +550,7 @@ def test_the_status_holds_what_the_page_shows():
         "overlay": "",
         "note": "no camera pictures: the receiver is not there",
     }
+    assert told["banner"] == ""
     assert told["view_status"] == {"live": True, "age_s": 0.2}
     json.dumps(told, allow_nan=False)
 
@@ -327,6 +560,16 @@ def test_the_status_holds_what_the_page_shows():
     told = model.status_json(T0 + 1.0, model.thor_wall_now(T0 + 1.0))
     assert told["robot"]["service_alive"] is False
     assert told["state"]["permit"] is None and told["state"]["permit_refusal"] == ""
+
+
+def test_the_view_token_is_not_in_the_status():
+    model = model_with_state()
+    page = Page(model)
+    shown(page)
+    model.note_sent(status(model, T0))
+    told = json.dumps(model.status_json(T0, model.thor_wall_now(T0)))
+    assert '"live": true' in told
+    assert page.token not in told and "token" not in told
 
 
 def test_the_last_ten_events_are_kept_newest_last():
@@ -349,6 +592,7 @@ def test_a_value_that_is_not_json_does_not_break_the_status():
 
 def test_the_model_is_used_from_many_threads():
     model = model_with_state()
+    page = Page(model)
     stop = threading.Event()
     problems: list[BaseException] = []
 
@@ -358,7 +602,9 @@ def test_the_model_is_used_from_many_threads():
             while not stop.is_set():
                 seq += 1
                 model.put_picture(seq, JPEG, WALL0, T0, False)
-                model.acknowledge(seq, True, T0)
+                # Another thread may have acknowledged a newer picture already.
+                page.draw(seq, T0)
+                model.is_current_page(page.token)
                 model.on_message(state_at(WALL0), T0)
                 model.status_json(T0, model.thor_wall_now(T0))
                 model.view_status(T0, model.thor_wall_now(T0))
@@ -375,6 +621,9 @@ def test_the_model_is_used_from_many_threads():
     stop.set()
     assert problems == []
     assert status(model, T0).live
+    # A page load in the middle of it all ends "live" at once.
+    Page(model, T0)
+    assert status(model, T0) == NOT_LIVE
 
 
 # A step of the Thor's wall clock
@@ -390,17 +639,18 @@ def test_a_picture_from_before_a_step_of_the_thors_wall_clock_is_never_live():
     # The same quiet time as the agent's camera keeps after a step.
     assert view_model.CLOCK_STEP_QUIET_S == QUIET == stereo_camera.CLOCK_STEP_QUIET_S
     model = model_with_state(ack_timeout_s=1.0)
-    shown(model, now=T0 + 0.1)  # exposed at WALL0, 0.1 s ago
+    page = Page(model)
+    shown(page, now=T0 + 0.1)  # exposed at WALL0, 0.1 s ago
     model.on_message(state_at(WALL0 + 0.15), T0 + 0.15)
     assert status(model, T0 + 0.15) == ViewStatus(live=True, age_s=near(0.15))
     # The Thor's wall clock steps back 0.15 s against its monotonic clock:
     # the picture would count as 0.05 s old when it is 0.2 s old.
     model.on_message(stepped_state(0.2, -0.15), T0 + 0.2)
     assert status(model, T0 + 0.2) == NOT_LIVE
-    # It stays out for as long as the page goes on acknowledging it.
+    # It stays out for as long as the page goes on drawing it.
     for seconds in (0.9, 1.3, QUIET - 0.1):
         model.on_message(stepped_state(seconds, -0.15), T0 + seconds)
-        model.acknowledge(1, True, T0 + seconds)
+        assert page.draw(1, T0 + seconds)
         assert status(model, T0 + seconds) == NOT_LIVE
     # So does a picture that arrives within the quiet time after the step:
     # its exposure can still be one of the old clock.
@@ -408,17 +658,17 @@ def test_a_picture_from_before_a_step_of_the_thors_wall_clock_is_never_live():
     model.put_picture(2, JPEG, WALL0 + at - 0.15 - 0.1, T0 + at, False)
     for seconds in (at, at + 0.5, 30.0):
         model.on_message(stepped_state(seconds, -0.15), T0 + seconds)
-        model.acknowledge(2, True, T0 + seconds)
+        assert page.draw(2, T0 + seconds)
         assert status(model, T0 + seconds) == NOT_LIVE
     # A picture that arrives after it is live, with its age on the new clock.
     at = 31.0
     model.on_message(stepped_state(at, -0.15), T0 + at)
     model.put_picture(3, JPEG, WALL0 + at - 0.15 - 0.1, T0 + at - 0.02, False)
-    model.acknowledge(3, True, T0 + at)
+    assert page.draw(3, T0 + at)
     assert status(model, T0 + at) == ViewStatus(live=True, age_s=near(0.1))
     # A step forward counts the same.
     model.on_message(stepped_state(at + 0.1, 0.1), T0 + at + 0.1)
-    model.acknowledge(3, True, T0 + at + 0.1)
+    assert page.draw(3, T0 + at + 0.1)
     assert status(model, T0 + at + 0.1) == NOT_LIVE
 
 
@@ -427,37 +677,39 @@ def test_a_shorter_ack_timeout_does_not_let_a_picture_from_before_the_step_in(
     ack_timeout_s: float,
 ) -> None:
     model = model_with_state(ack_timeout_s=ack_timeout_s)
+    page = Page(model)
     # Exposed 0.05 s before the Thor's wall clock steps back 0.4 s; it takes
     # 0.25 s to arrive, after the ROBOT_STATE that shows the step.
     model.on_message(stepped_state(0.06, -0.4), T0 + 0.06)
     model.put_picture(1, JPEG, WALL0, T0 + 0.25, False)
-    # The camera stalls, and the page acknowledges that picture every 0.2 s.
+    # The camera stalls, and the page draws that picture again every 0.2 s.
     for tenth in range(3, 80, 2):
         now = T0 + tenth / 10.0
         model.on_message(stepped_state(tenth / 10.0, -0.4), now)
-        model.acknowledge(1, True, now)
+        assert page.draw(1, now)
         assert status(model, now) == NOT_LIVE, f"{now - T0:.1f} s after the exposure"
 
 
 def test_a_step_before_the_models_first_robot_state_is_not_missed():
     model = ViewModel(ack_timeout_s=1.0)
+    page = Page(model)
     # The camera connection is up before the robot connection: a picture
     # exposed at WALL0 arrives and is acknowledged.
     model.put_picture(1, JPEG, WALL0, T0 + 0.05, False)
-    model.acknowledge(1, True, T0 + 0.1)
+    assert page.draw(1, T0 + 0.1)
     # The first ROBOT_STATE comes 0.2 s after that exposure, from a wall clock
     # that stepped back 0.1 s meanwhile: nothing in the model shows the step.
     model.on_message(stepped_state(0.2, -0.1), T0 + 0.2)
     assert status(model, T0 + 0.2) == NOT_LIVE
     for seconds in (0.25, 0.9, 1.1, QUIET, 20.0):
         model.on_message(stepped_state(seconds, -0.1), T0 + seconds)
-        model.acknowledge(1, True, T0 + seconds)
+        assert page.draw(1, T0 + seconds)
         assert status(model, T0 + seconds) == NOT_LIVE
     # The view is live once a picture arrives the quiet time after that state.
     at = 0.2 + QUIET
     model.on_message(stepped_state(at, -0.1), T0 + at)
     model.put_picture(2, JPEG, WALL0 + at - 0.1 - 0.05, T0 + at, False)
-    model.acknowledge(2, True, T0 + at)
+    assert page.draw(2, T0 + at)
     assert status(model, T0 + at) == ViewStatus(live=True, age_s=near(0.05))
     # A robot connection that comes back on the same clocks marks nothing.
     again = dataclasses.replace(stepped_state(at + 0.1, -0.1), session_id="s2")
@@ -468,7 +720,7 @@ def test_a_step_before_the_models_first_robot_state_is_not_missed():
 def test_a_change_within_the_links_threshold_is_no_step():
     assert view_model.CLOCK_STEP_S is link_client.CLOCK_STEP_S == 0.02
     model = model_with_state()
-    shown(model)
+    shown(Page(model))
     drifted = dataclasses.replace(state_at(WALL0 + 0.1), clock_wall_s=WALL0 + 0.119)
     model.on_message(drifted, T0 + 0.1)
     assert status(model, T0 + 0.1).live

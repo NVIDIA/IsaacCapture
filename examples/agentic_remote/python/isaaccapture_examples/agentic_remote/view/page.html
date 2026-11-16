@@ -6,6 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 The live view's one page: the newest camera picture and the robot's status.
 It only looks: the one thing it sends back is the acknowledgement of a picture
 it has drawn (POST /shown), which the live view turns into VIEW_STATUS.
+
+The live view serves each load of this page with a view token of its own: a
+secret that goes out with every request for a picture and with every
+acknowledgement. Only the page loaded last has the valid one.
 -->
 <html lang="en">
 <head>
@@ -20,6 +24,11 @@ it has drawn (POST /shown), which the live view turns into VIEW_STATUS.
   #overlay { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; text-align: center; font-size: 56px; font-weight: bold;
     color: #ff3b30; text-shadow: 0 0 8px #000, 0 0 2px #000; pointer-events: none; }
+  #banner { position: absolute; top: 0; left: 0; right: 0; padding: 4px 0;
+    text-align: center; font-size: 44px; font-weight: bold; color: #111;
+    background: #ffcc00; pointer-events: none; }
+  #banner:empty { display: none; }
+  body.replaced #picture { opacity: 0.3; }
   table { border-collapse: collapse; width: 100%; margin-top: 10px; }
   th, td { text-align: left; vertical-align: top; padding: 3px 8px;
     border-bottom: 1px solid #333; }
@@ -34,6 +43,7 @@ it has drawn (POST /shown), which the live view turns into VIEW_STATUS.
 <main>
   <div id="stage">
     <canvas id="picture" width="960" height="744"></canvas>
+    <div id="banner"></div>
     <div id="overlay">NO PICTURE</div>
   </div>
   <table><tbody id="rows"></tbody></table>
@@ -48,13 +58,20 @@ const STATUS_MS = 400;
 // A request that failed is made again after this long: one a second, not more.
 const RETRY_MS = 1000;
 const NOT_ANSWERING = "VIEW PROGRAM NOT ANSWERING";
+const REPLACED = "THIS PAGE WAS REPLACED: reload it";
+// The view token of this load of the page; the live view puts it in here.
+const TOKEN = "__VIEW_TOKEN__";
 const canvas = document.getElementById("picture");
+const banner = document.getElementById("banner");
 const overlay = document.getElementById("overlay");
 const rows = document.getElementById("rows");
 const events = document.getElementById("events");
 let pictureMs = 200;
 let drawnSeq = null;
 let statusAt = 0;
+// Whether the page was loaded again since, here or in another tab: the live
+// view then serves this one no picture and counts none of its acknowledgements.
+let replaced = false;
 
 function seconds(value, digits) {
   return typeof value === "number" ? value.toFixed(digits) + " s" : "unknown";
@@ -62,7 +79,7 @@ function seconds(value, digits) {
 
 function acknowledge(seq) {
   const body = JSON.stringify({
-    seq: seq, visible: document.visibilityState === "visible"});
+    seq: seq, visible: document.visibilityState === "visible", token: TOKEN});
   fetch("/shown", {method: "POST", body: body, cache: "no-store",
     headers: {"Content-Type": "application/json"}}).catch(() => {});
 }
@@ -70,7 +87,16 @@ function acknowledge(seq) {
 async function nextPicture() {
   let wait = pictureMs;
   try {
-    const reply = await fetch("/frame.jpg", {cache: "no-store"});
+    const reply = await fetch("/frame.jpg", {cache: "no-store",
+      headers: {"X-View-Token": TOKEN}});
+    if (reply.status === 403) {
+      // This page's token is valid no longer, and never will be again: the
+      // page asks for no more pictures.
+      replaced = true;
+      overlay.textContent = REPLACED;
+      document.body.classList.add("replaced");
+      return;
+    }
     if (reply.status === 200) {
       const seq = Number(reply.headers.get("X-Picture-Seq"));
       const bitmap = await createImageBitmap(await reply.blob());
@@ -151,7 +177,8 @@ function show(status) {
     row("View age on the Thor", state.view_age_s === null ? "unknown" :
       seconds(state.view_age_s, 2), state.view_age_s === null);
   }
-  overlay.textContent = picture.overlay;
+  banner.textContent = status.banner || "";
+  overlay.textContent = replaced ? REPLACED : picture.overlay;
   events.replaceChildren();
   for (const event of status.events) {
     const item = document.createElement("li");
@@ -183,7 +210,7 @@ async function nextStatus() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (drawnSeq !== null) { acknowledge(drawnSeq); }
+  if (drawnSeq !== null && !replaced) { acknowledge(drawnSeq); }
 });
 nextPicture();
 nextStatus();
