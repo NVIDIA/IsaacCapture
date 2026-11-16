@@ -87,16 +87,21 @@ class GraphStep:
     fields, the arrays with np.array_equal.
     """
 
-    present: bool  # the right controller is active and its pose is valid
+    # The right controller is active, its pose is valid and its squeeze and
+    # trigger are finite numbers.
+    present: bool
     squeeze: float
     trigger: float  # read for the report line only; it moves nothing
     a: bool  # right A (primary_click)
     b: bool  # right B (secondary_click)
-    engaged: bool  # SO101ClutchRetargeter.is_engaged after this pass
+    # SO101ClutchRetargeter.is_engaged after this pass; False on a pass whose
+    # squeeze or trigger is not a finite number.
+    engaged: bool
     # 4x4 float64, the gripper tip in the robot's base axes, after the rate
-    # limiter.
+    # limiter. None on a pass whose squeeze or trigger is not a finite number.
     ee_target: np.ndarray | None
-    # 4x4 float64, the clutch's output, before the rate limiter.
+    # 4x4 float64, the clutch's output, before the rate limiter. None on such
+    # a pass too.
     commanded_target: np.ndarray | None
     limiter: str  # the rate limiter's disposition, in lower case
     # 3 float64: the right controller's position in the stage space, in metres,

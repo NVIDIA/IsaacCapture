@@ -652,9 +652,14 @@ def test_only_the_app_connects_the_arm_and_only_once():
     # apai_backend.py connects its own backend inside ApaiArm.connect().
     # Link.connect and LinkCarrier.connect dial the robot connection, not the arm.
     callers = method_calls("connect", not_on=frozenset({"Link", "LinkCarrier"}))
-    assert set(callers) <= {"apai_backend.py", "app.py"}
+    # human/retarget.py wires Isaac Capture's retargeting graph
+    # (BaseRetargeter.connect); it holds no arm.
+    assert set(callers) <= {"apai_backend.py", "app.py", "retarget.py"}
     assert callers.count("apai_backend.py") == 1
     assert callers.count("app.py") <= 1
+    package = Path(agentic_remote.__file__).resolve().parent
+    text = (package / "human" / "retarget.py").read_text(encoding="utf-8")
+    assert "robot_app" not in text and "ArmPort" not in text
 
 
 @pytest.fixture
