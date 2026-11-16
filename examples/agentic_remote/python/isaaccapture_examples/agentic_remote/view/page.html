@@ -1,0 +1,192 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+The live view's one page: the newest camera picture and the robot's status.
+It only looks: the one thing it sends back is the acknowledgement of a picture
+it has drawn (POST /shown), which the live view turns into VIEW_STATUS.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live view - agentic remote</title>
+<style>
+  body { margin: 0; background: #111; color: #ddd; font: 15px/1.4 sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 10px; }
+  #stage { position: relative; background: #000; min-height: 240px; }
+  #picture { display: block; width: 100%; height: auto; }
+  #overlay { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; text-align: center; font-size: 56px; font-weight: bold;
+    color: #ff3b30; text-shadow: 0 0 8px #000, 0 0 2px #000; pointer-events: none; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  th, td { text-align: left; vertical-align: top; padding: 3px 8px;
+    border-bottom: 1px solid #333; }
+  th { width: 14em; font-weight: normal; color: #999; }
+  td.bad { color: #ff6b60; font-weight: bold; }
+  h2 { font-size: 15px; color: #999; margin: 14px 0 4px; }
+  ol { list-style: none; margin: 0; padding: 0; font-family: monospace; }
+  body.lost table, body.lost ol { opacity: 0.4; }
+</style>
+</head>
+<body>
+<main>
+  <div id="stage">
+    <canvas id="picture" width="960" height="744"></canvas>
+    <div id="overlay">NO PICTURE</div>
+  </div>
+  <table><tbody id="rows"></tbody></table>
+  <h2>Last EVENTs of the robot app</h2>
+  <ol id="events"></ol>
+</main>
+<script>
+"use strict";
+// The server stopped answering when no status came for this long, in ms.
+const SILENT_MS = 2000;
+const STATUS_MS = 400;
+// A request that failed is made again after this long: one a second, not more.
+const RETRY_MS = 1000;
+const NOT_ANSWERING = "VIEW PROGRAM NOT ANSWERING";
+const canvas = document.getElementById("picture");
+const overlay = document.getElementById("overlay");
+const rows = document.getElementById("rows");
+const events = document.getElementById("events");
+let pictureMs = 200;
+let drawnSeq = null;
+let statusAt = 0;
+
+function seconds(value, digits) {
+  return typeof value === "number" ? value.toFixed(digits) + " s" : "unknown";
+}
+
+function acknowledge(seq) {
+  const body = JSON.stringify({
+    seq: seq, visible: document.visibilityState === "visible"});
+  fetch("/shown", {method: "POST", body: body, cache: "no-store",
+    headers: {"Content-Type": "application/json"}}).catch(() => {});
+}
+
+async function nextPicture() {
+  let wait = pictureMs;
+  try {
+    const reply = await fetch("/frame.jpg", {cache: "no-store"});
+    if (reply.status === 200) {
+      const seq = Number(reply.headers.get("X-Picture-Seq"));
+      const bitmap = await createImageBitmap(await reply.blob());
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+      }
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      bitmap.close();
+      drawnSeq = seq;
+      acknowledge(seq);
+    }
+  } catch (problem) {
+    // The status poll says so when the view program is gone.
+    wait = RETRY_MS;
+  }
+  setTimeout(nextPicture, wait);
+}
+
+function row(name, text, bad) {
+  const line = document.createElement("tr");
+  const head = document.createElement("th");
+  const cell = document.createElement("td");
+  head.textContent = name;
+  cell.textContent = text;
+  if (bad) { cell.className = "bad"; }
+  line.append(head, cell);
+  rows.appendChild(line);
+}
+
+function show(status) {
+  const robot = status.robot, state = status.state, picture = status.picture;
+  rows.replaceChildren();
+  if (!robot.service_alive) {
+    row("Robot connection", "the robot link service is gone", true);
+  } else if (robot.connected) {
+    row("Robot connection", "up, session " + (robot.session_id || "?") + ", robot " +
+      (robot.robot_id || "?") + ", driver " + (robot.driver || "not declared"), false);
+  } else {
+    row("Robot connection", "LOST (" + (robot.close_reason || "not connected") + ")",
+      true);
+  }
+  if (robot.stop_unconfirmed) {
+    row("STOP", "a STOP was sent and is not confirmed yet", true);
+  }
+  if (state === null) {
+    row("ROBOT_STATE", "none has arrived", true);
+  } else {
+    row("Control owner", state.owner + " (owner number " + state.owner_number + ")",
+      false);
+    row("Stop level", state.stop_level + " (stop number " + state.stop_number + ")" +
+      (state.fault_reason ? ": " + state.fault_reason : ""),
+      state.stop_level !== "none");
+    row("Motion", state.motion + (state.move_id ? ", move " + state.move_id +
+      " at setpoint " + state.move_index + " of " + state.move_total + ", stage " +
+      (state.move_stage || "not started") : ""), false);
+    row("Jaw load", state.jaw_load, false);
+    row("Torque", state.torque_on ? "on" : "off", false);
+    row("Assistance wait", state.assistance_wait_s === null ? "none" :
+      seconds(state.assistance_wait_s, 0) + " left", state.assistance_wait_s !== null);
+    const permit = state.permit;
+    row("Permit", (permit === null ? "none" : "through setpoint " +
+      permit.through_index + " of move " + permit.move_id + ", evidence " +
+      seconds(permit.evidence_age_s, 2) + " old, expires in " +
+      seconds(permit.expires_in_s, 2)) +
+      (state.permit_refusal ? "; refused: " + state.permit_refusal : ""),
+      Boolean(state.permit_refusal));
+    row("Age of the ROBOT_STATE", seconds(status.state_age_s, 2),
+      status.state_age_s > 1);
+  }
+  row("Camera picture", (picture.seq === null ? "none" : "number " + picture.seq +
+    ", " + seconds(picture.age_s, 2) + " old") +
+    (picture.note ? "; " + picture.note : ""), picture.overlay !== "");
+  const sent = status.view_status;
+  row("VIEW_STATUS last sent", sent === null ? "none" : sent.live ?
+    "live, age " + seconds(sent.age_s, 2) : "not live", sent === null || !sent.live);
+  if (state !== null) {
+    row("View age on the Thor", state.view_age_s === null ? "unknown" :
+      seconds(state.view_age_s, 2), state.view_age_s === null);
+  }
+  overlay.textContent = picture.overlay;
+  events.replaceChildren();
+  for (const event of status.events) {
+    const item = document.createElement("li");
+    item.textContent = event.seq + " " + event.kind + ": " + event.text;
+    events.appendChild(item);
+  }
+  if (status.page && status.page.picture_period_s > 0) {
+    pictureMs = Math.max(50, 1000 * status.page.picture_period_s);
+  }
+}
+
+async function nextStatus() {
+  let wait = STATUS_MS;
+  try {
+    const reply = await fetch("/status.json", {cache: "no-store"});
+    if (reply.status === 200) {
+      show(await reply.json());
+      statusAt = performance.now();
+      document.body.classList.remove("lost");
+    }
+  } catch (problem) {
+    wait = RETRY_MS;
+  }
+  if (performance.now() - statusAt > SILENT_MS) {
+    overlay.textContent = NOT_ANSWERING;
+    document.body.classList.add("lost");
+  }
+  setTimeout(nextStatus, wait);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (drawnSeq !== null) { acknowledge(drawnSeq); }
+});
+nextPicture();
+nextStatus();
+</script>
+</body>
+</html>
