@@ -27,6 +27,7 @@ except ImportError:
 from isaaccapture_examples.agentic_remote.link_service.local import (
     HEADER,
     LocalCarrier,
+    Stalled,
     connect_local,
     pack_record,
     read_exact,
@@ -320,9 +321,13 @@ def write(sock: socket.socket, message: Message) -> None:
 
 
 def read_record(sock: socket.socket) -> tuple[int, bytes]:
-    """The next record of a plain socket; EOFError once the service closed it."""
-    msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size))
-    return msg_type, read_exact(sock, length)
+    """The next record of a plain socket; it has WAIT_S to come whole.
+
+    EOFError once the service closed the socket, Stalled when the wait ends.
+    """
+    by = time.monotonic() + WAIT_S
+    msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
+    return msg_type, read_exact(sock, length, by)
 
 
 def read_message(sock: socket.socket) -> Message:
@@ -333,13 +338,29 @@ def read_message(sock: socket.socket) -> Message:
 
 
 def closed_by_service(sock: socket.socket) -> list[Message]:
-    """Read a plain socket until the service closes it; what it sent before."""
-    messages = []
+    """Read a plain socket until the service closes it; what it sent before.
+
+    Fails when the socket is still open WAIT_S from now: one wait for all that
+    is read, so records that keep coming do not renew it.
+    """
+    messages: list[Message] = []
+    by = time.monotonic() + WAIT_S
     try:
         while True:
-            messages.append(read_message(sock))
+            msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
+            payload = read_exact(sock, length, by)
+            to_message = decode_local if is_local(msg_type) else decode
+            messages.append(to_message(msg_type, payload))
     except EOFError:
         return messages
+    except Stalled:
+        # The first four in full: a socket that stays open can send many.
+        sent = ", ".join(repr(message) for message in messages[:4]) or "nothing"
+        more = f" and {len(messages) - 4} more" if len(messages) > 4 else ""
+        raise AssertionError(
+            f"the service did not close the socket within {WAIT_S:g} s; "
+            f"it had sent {sent}{more}"
+        ) from None
 
 
 def received(

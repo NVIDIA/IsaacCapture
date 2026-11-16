@@ -164,17 +164,21 @@ class Wrapped:
         self._hold = hold  # type number whose send waits for self.release
         self.holding = threading.Event()
         self.release = threading.Event()
+        # Every send asked of it, in order: ("reliable" or "latest", type number).
+        self.calls: list[tuple[str, int]] = []
 
     def clock_offset(self):
         return self._offset
 
     def send_reliable(self, msg_type, payload):
+        self.calls.append(("reliable", msg_type))
         if msg_type == self._hold:
             self.holding.set()
             self.release.wait(WAIT_S)
         self._inner.send_reliable(msg_type, payload)
 
     def send_latest(self, msg_type, payload):
+        self.calls.append(("latest", msg_type))
         self._inner.send_latest(msg_type, payload)
 
     def receive(self, timeout_s):
@@ -577,6 +581,46 @@ def test_too_many_commands_without_a_result_are_refused(bench, monkeypatch):
     received(agent, Result, command_id="grip-1")
     send(agent, gripper("grip-4"))
     assert thor.next_message().command_id == "grip-4"
+
+
+# Reliable and newest-wins
+#
+# The robot connection takes a link message in one of two ways: send_reliable
+# queues every one in order; send_latest keeps only the newest unsent one of
+# its type (newest-wins).
+
+
+def _three_go_out_newest_wins(bench: Bench, role: str, messages: list) -> None:
+    """A client in this role sends three link messages of one newest-wins type."""
+    robot_end, wrapped = _wrapped_robot(bench, offset=(0, True, True))
+    client = bench.client(role)
+    for message in messages:
+        send(client, message)
+    send(client, MARKER)  # the service reads it behind the three
+    until(lambda: ("reliable", Stop.TYPE) in wrapped.calls, "the STOP")
+    kind = messages[0].TYPE
+    assert wrapped.calls == [("latest", kind)] * 3 + [("reliable", Stop.TYPE)]
+    # The Thor read nothing meanwhile: only the newest one waits for it.
+    arrived = [decode(*robot_end.receive(WAIT_S)) for _ in range(2)]
+    assert arrived == [messages[-1], MARKER]
+
+
+def test_a_human_setpoint_goes_to_the_thor_newest_wins(bench):
+    # The human program sends up to 50 a second: none may wait in a queue.
+    setpoints = [human_setpoint(seq=seq) for seq in (1, 2, 3)]
+    _three_go_out_newest_wins(bench, "human", setpoints)
+
+
+@pytest.mark.parametrize(
+    ("role", "messages"),
+    [
+        ("agent", [permit(f"move-{n}") for n in (1, 2, 3)]),
+        ("viewer", [ViewStatus(live=True, age_s=n / 10) for n in (1, 2, 3)]),
+    ],
+    ids=["PERMIT", "VIEW_STATUS"],
+)
+def test_a_permit_and_a_view_status_go_to_the_thor_newest_wins(bench, role, messages):
+    _three_go_out_newest_wins(bench, role, messages)
 
 
 # STOP

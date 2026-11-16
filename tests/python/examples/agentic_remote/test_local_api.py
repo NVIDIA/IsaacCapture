@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import select
@@ -17,6 +18,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+import link_bench
 import pytest
 import yaml
 from link_bench import (
@@ -25,6 +27,7 @@ from link_bench import (
     Bench,
     closed_by_service,
     read_message,
+    read_record,
     received,
     until,
     welcome,
@@ -233,6 +236,127 @@ def test_the_record_queue_is_bounded_in_count_and_bytes():
     waiting.clear()
     assert len(waiting) == 0 and waiting.take() is None
     assert waiting.add(75, b"1234567890")
+
+
+# link_bench's reads of a plain socket
+
+# Real seconds the tests below give a read, in place of link_bench.WAIT_S.
+SHORT_WAIT_S = 0.2
+# Real seconds a read gets where the test must first read what was sent.
+ROOMY_WAIT_S = 1.0
+# Real seconds after which they end a read that is still going; under WAIT_S.
+GIVE_UP_S = 3.0
+# How closed_by_service begins to say that the socket stayed open.
+NOT_CLOSED = f"the service did not close the socket within {SHORT_WAIT_S:g} s; "
+
+
+@contextlib.contextmanager
+def shut_after(sock: socket.socket, limit_s: float = GIVE_UP_S) -> Iterator[None]:
+    """Shut the socket down limit_s from now, unless the block ends first.
+
+    A read that has no deadline ends with it: the test of a deadline then
+    fails where it would block.
+    """
+
+    def shut() -> None:
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+
+    timer = threading.Timer(limit_s, shut)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+
+
+@pytest.mark.parametrize(
+    "arrived",
+    [b"", HEADER.pack(75, 100)[:2], HEADER.pack(75, 100) + b"half"],
+    ids=["nothing", "half a header", "half a payload"],
+)
+def test_read_record_gives_a_record_its_wait_and_no_longer(monkeypatch, arrived):
+    monkeypatch.setattr(link_bench, "WAIT_S", SHORT_WAIT_S)
+    near, far = socket.socketpair()
+    with near, far, shut_after(near):
+        far.sendall(pack_record(68, b"abc") + arrived)  # the rest never comes
+        assert read_record(near) == (68, b"abc")
+        with pytest.raises(Stalled):
+            read_record(near)
+
+
+def test_read_record_gives_the_header_and_the_payload_one_wait(monkeypatch):
+    # Notes by when each read must be done. No wait is run out, so a busy
+    # machine does not change the outcome.
+    done_by: list[float | None] = []
+
+    def noting(sock, count, deadline=None):
+        done_by.append(deadline)
+        return read_exact(sock, count, deadline)
+
+    monkeypatch.setattr(link_bench, "read_exact", noting)
+    near, far = socket.socketpair()
+    with near, far:
+        far.sendall(pack_record(68, b"abc"))
+        began = time.monotonic()
+        assert read_record(near) == (68, b"abc")
+        ended = time.monotonic()
+    header_by, payload_by = done_by
+    assert header_by is not None and payload_by == header_by
+    # The wait began with the call, not with the header's arrival.
+    wait_s = link_bench.WAIT_S
+    assert began + wait_s <= header_by <= ended + wait_s
+
+
+def test_closed_by_service_fails_when_the_service_keeps_the_socket_open(
+    bench, monkeypatch
+):
+    sock = bench.raw("tool")  # attached: the service serves it and keeps it open
+    monkeypatch.setattr(link_bench, "WAIT_S", SHORT_WAIT_S)
+    with shut_after(sock), pytest.raises(AssertionError) as failure:
+        closed_by_service(sock)
+    assert str(failure.value) == NOT_CLOSED + "it had sent nothing"
+
+
+def test_records_that_keep_coming_do_not_renew_the_wait_of_closed_by_service(
+    bench, monkeypatch
+):
+    thor = bench.robot()
+    sock = bench.raw("viewer")
+    done = threading.Event()
+
+    def feed() -> None:
+        # A ROBOT_STATE every 20 ms: each one comes well inside the wait.
+        while not done.wait(0.02):
+            thor.state()
+
+    feeder = threading.Thread(target=feed, daemon=True)
+    monkeypatch.setattr(link_bench, "WAIT_S", SHORT_WAIT_S)
+    feeder.start()
+    try:
+        with shut_after(sock), pytest.raises(AssertionError, match=r"did not close"):
+            closed_by_service(sock)
+    finally:
+        done.set()
+        feeder.join(WAIT_S)
+
+
+def test_closed_by_service_says_what_was_sent_before_it_gave_up(monkeypatch):
+    # The wait has room for all six to be read on a busy machine.
+    monkeypatch.setattr(link_bench, "WAIT_S", ROOMY_WAIT_S)
+    events = [Event(seq=seq, kind="note", text="x") for seq in range(1, 7)]
+    near, far = socket.socketpair()  # far stands in for the service
+    with near, far, shut_after(near):
+        for event in events:
+            write(far, event)
+        with pytest.raises(AssertionError) as failure:
+            closed_by_service(near)
+    first_four = ", ".join(repr(event) for event in events[:4])
+    assert str(failure.value) == (
+        f"the service did not close the socket within {ROOMY_WAIT_S:g} s; "
+        f"it had sent {first_four} and 2 more"
+    )
 
 
 # The socket
