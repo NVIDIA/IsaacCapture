@@ -31,10 +31,16 @@ from isaaccapture_examples.agentic_remote.human.logic import (
     NOTE_RELEASE_A,
     NOTE_RELEASE_B,
     NOTE_RELEASE_FIRST,
+    NOTE_RETURNING,
     NOTE_SQUEEZE,
     NOTE_SQUEEZE_AGAIN,
     NOTE_TAKE_OVER,
+    NOTE_TRIGGER_EASE,
+    NOTE_TRIGGER_PULL,
+    TRIGGER_CLOSED_MIN,
+    TRIGGER_OPEN_MAX,
     HumanLogic,
+    jaw_opening,
 )
 from isaaccapture_examples.agentic_remote.human.types import (
     FeedStep,
@@ -57,7 +63,13 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Welcome,
     decode,
 )
-from isaaccapture_examples.agentic_remote.robot_app.interfaces import JawLoad
+from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
+from isaaccapture_examples.agentic_remote.robot_app.gripper import (
+    NO_OPENING,
+    NO_TIGHTER,
+    NOT_MATCHED,
+)
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import JawLoad, Owner
 
 PASS_S = 0.02
 T0 = 100.0
@@ -124,6 +136,7 @@ class FakeGraph:
         b: bool,
         present: bool,
         pose_valid: bool = True,
+        trigger: float = 0.0,
         lag_m: float = 0.0,
         limiter: str = "passed",
         clutch: bool | None = None,
@@ -132,7 +145,7 @@ class FakeGraph:
         """One pass of the graph: the outputs a controller feed hands on.
 
         present says the controller is active; with pose_valid False its pose
-        is not valid, and its buttons and squeeze are read all the same.
+        is not valid, and its buttons, squeeze and trigger are read all the same.
         lag_m puts the limited target that far below the clutch's; clutch
         forces the clutch's word, against its own rules; without names a
         field of the GraphStep that is None on this pass.
@@ -156,7 +169,7 @@ class FakeGraph:
         step = GraphStep(
             present=tracked,
             squeeze=squeeze if present else 0.0,
-            trigger=0.0,
+            trigger=trigger if present else 0.0,
             a=present and a,
             b=present and b,
             engaged=self._engaged,
@@ -387,6 +400,13 @@ class Bench:
     def lost(self, stage: str = "stale", age: float | None = None) -> list[Message]:
         """One pass without usable controller data."""
         return self.step(present=False, stage=stage, age=age)
+
+    def stall(self, seconds: float) -> None:
+        """Let this long go by without a pass, as when the program's loop stands.
+
+        The next pass then comes this long and one pass period after the last.
+        """
+        self.passes += round(seconds / PASS_S)
 
     def status(self, **controls: Any) -> HumanSetpoint:
         """The next HUMAN_SETPOINT; at the status rate it takes up to three passes."""
@@ -863,6 +883,134 @@ def test_a_held_at_rest_asks_for_the_handback():
     assert of(closed.run(150, a=True), (Stop, OwnerRequest)) == []
 
 
+# A stall is a stretch without a pass: the human program's loop stood, as
+# behind a log call that blocks. A button that is down before and after it may
+# have been released and pressed again meanwhile, unseen.
+
+
+def test_a_hold_of_b_does_not_count_across_a_stall_of_more_than_a_second():
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()
+    assert bench.step(b=True)[0] == STOP_B  # a press that counts
+    bench.state = nobody(8)  # the Thor shows the STOP
+    assert notes(bench.run(10, b=True)) == {NOTE_TAKE_OVER}  # 0.2 s of the hold
+    bench.stall(2.0)
+    back = bench.step(b=True)
+    assert back[0] == STOP_B  # more than 1 s unseen: a new stretch of right B
+    bench.state = nobody(9)  # the Thor shows that STOP too
+    # The 2 s count for nothing, and the press that was on counts no more:
+    # held on for 2 s, B asks for no takeover. The note says what to do.
+    held = back + bench.run(100, b=True)
+    assert of(held, OwnerRequest) == [] and of(held, Stop) == [STOP_B]
+    assert notes(held) == {NOTE_RELEASE_B}
+    counts = bench.logic.counts()
+    assert (counts["b_pressed"], counts["takeover_asked"]) == (1, 0)
+
+    # Seen up and then held for 1 s, B asks once.
+    bench.step()
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(10)
+    assert of(bench.run(49, b=True), OwnerRequest) == []  # 0.98 s after the press
+    [request] = of(bench.run(100, b=True), OwnerRequest)
+    assert (request.request, request.stop_number) == ("human", 10)
+    assert bench.logic.counts()["takeover_asked"] == 1
+
+
+def test_a_hold_of_a_does_not_count_across_a_stall_of_more_than_a_second():
+    # After a STOP at rest, with the takeover still open.
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True, motion="rest_hold")
+    bench.step()
+    assert notes(bench.run(10, a=True)) == {NOTE_AT_REST}  # 0.2 s of the hold
+    assert bench.logic.counts()["a_pressed"] == 1
+    bench.stall(2.0)
+    # The 2 s count for nothing, and the press that was on counts no more:
+    # held on for 2 s, A asks for no hand-back. The note says what to do.
+    held = bench.run(100, a=True)
+    assert of(held, (Stop, OwnerRequest)) == []
+    assert notes(held) == {NOTE_RELEASE_A}
+    counts = bench.logic.counts()
+    assert (counts["a_pressed"], counts["handback_asked"]) == (1, 0)
+
+    # Seen up and then held for 1 s, A asks once.
+    bench.step()
+    assert of(bench.run(50, a=True), OwnerRequest) == []  # 0.98 s after the press
+    [request] = of(bench.run(100, a=True), OwnerRequest)
+    assert request.request == "handback"
+    assert bench.logic.counts()["handback_asked"] == 1
+
+    # The same while the person owns the arm.
+    bench = Bench()
+    bench.state = robot_state(motion="rest_hold")
+    bench.step()
+    bench.run(10, a=True)
+    bench.stall(2.0)
+    assert of(bench.run(100, a=True), OwnerRequest) == []
+    bench.step()
+    assert len(of(bench.run(51, a=True), OwnerRequest)) == 1
+
+
+def test_a_hold_runs_on_through_a_stall_of_a_second_or_less():
+    # The threshold is _STRETCH_KEEP_S, 1 s, as for a stretch of right B: two
+    # passes with known buttons that far apart or less are one hold. So a
+    # hold can be over with the button seen down on a few passes only.
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(8)
+    bench.run(10, b=True)  # 0.2 s after the press
+    bench.stall(0.5)
+    # The next pass comes 0.72 s after the press; the hold is over at 1 s.
+    assert of(bench.run(14, b=True), (Stop, OwnerRequest)) == []
+    due = bench.step(b=True)
+    assert len(of(due, OwnerRequest)) == 1 and of(due, Stop) == []
+
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True, motion="rest_hold")
+    bench.step()
+    bench.run(11, a=True)  # 0.2 s after the press
+    bench.stall(0.5)
+    assert of(bench.run(14, a=True), OwnerRequest) == []
+    assert len(of(bench.step(a=True), OwnerRequest)) == 1
+
+    # Two passes 1.0 s apart: the hold is over on the second one.
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True, motion="rest_hold")
+    bench.step()
+    assert of(bench.step(a=True), OwnerRequest) == []
+    bench.stall(1.0 - PASS_S)
+    assert len(of(bench.step(a=True), OwnerRequest)) == 1
+
+
+def test_a_button_seen_up_on_the_first_pass_after_a_stall_counts_as_seen_up():
+    # That pass is fresh: a press on the pass after it counts.
+    bench = Bench()
+    bench.state = nobody(3, takeover_open=True, motion="rest_hold")
+    bench.step()
+    bench.run(10, a=True)
+    bench.stall(2.0)
+    bench.step()  # A is up, 2 s after the pass before
+    assert of(bench.run(50, a=True), OwnerRequest) == []  # 0.98 s after the press
+    assert len(of(bench.run(100, a=True), OwnerRequest)) == 1
+    assert bench.logic.counts()["a_pressed"] == 2
+
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(8)
+    bench.run(10, b=True)
+    bench.stall(2.0)
+    assert of(bench.step(), Stop) == []  # B is up, 2 s after the pass before
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(9)
+    assert of(bench.run(49, b=True), OwnerRequest) == []
+    assert len(of(bench.run(100, b=True), OwnerRequest)) == 1
+    assert bench.logic.counts()["b_pressed"] == 2
+
+
 # Gates, the home
 
 
@@ -1120,6 +1268,33 @@ def test_the_thors_needs_release_is_mirrored():
     assert ended.note == AGAIN + why
     assert not bench.logic.armed
     assert bench.logic.counts()["needs_release"] == 1
+
+
+def test_a_release_asked_for_while_other_work_ran_names_that_work():
+    def ended_note(**human: Any) -> str:
+        """The note of the pass on which the Thor's needs_release ends a squeeze."""
+        bench = Bench()
+        bench.engage()
+        bench.state = robot_state(needs_release=True, **human)
+        ended = setpoint(bench.step(squeeze=1.0))
+        assert (ended.engaged, ended.q) == (False, None)
+        return ended.note
+
+    # The squeeze began while other work ran on the Thor, which refused it as
+    # busy. No drive ran, so "ended" still holds the end of the drive before.
+    before = "the grip was released"
+    busy = "busy: a hand-back is running"
+    assert ended_note(ended=before, refusal=busy) == AGAIN + busy
+    assert ended_note(ended="", refusal=busy) == AGAIN + busy
+
+    # A refusal that names no work: the drive's own end is quoted.
+    why = "the live view is not fresh (0.7 s old, the limit is 0.5 s)"
+    for refusal in ("", None, "no fresh controller data", "the arm is busy: no"):
+        assert ended_note(ended=why, refusal=refusal) == AGAIN + why, refusal
+    # With neither, the logic's own words.
+    own = AGAIN + "the robot app asks for a released grip"
+    assert ended_note(ended="", refusal="") == own
+    assert ended_note(ended="", refusal="no fresh controller data") == own
 
 
 def test_armed_reaches_the_graph_as_the_permission_and_the_running_state():
@@ -1429,6 +1604,83 @@ def test_the_stop_of_a_press_goes_out_on_a_pass_that_fails_afterwards():
     assert setpoint(bench.step(squeeze=1.0)).engaged
 
 
+def test_the_stop_of_right_b_goes_out_on_a_pass_whose_request_fails(caplog):
+    name = logic_module._log.name
+    caplog.set_level("INFO", logger=name)
+
+    def broken(p: Any) -> OwnerRequest | None:
+        raise RuntimeError("no request")
+
+    # The arm follows the hand. Right B goes down on a pass on which the
+    # request of a held button cannot be built: the code right behind the STOP.
+    bench = Bench()
+    bench.engage()
+    whole = bench.logic._request
+    bench.logic._request = broken
+    # The STOP goes out, alone: no HUMAN_SETPOINT of a pass that failed.
+    assert bench.step(squeeze=1.0, b=True) == [STOP_B]
+    assert not bench.logic.armed and bench.logic.counts()["b_pressed"] == 1
+    # The error is logged as that of any pass that fails behind its buttons.
+    bench.logic.log_pass()
+    lines = [(r.levelname, r.getMessage()) for r in caplog.records if r.name == name]
+    assert lines[-2:] == [
+        ("INFO", "right B is down: STOP sent"),
+        ("ERROR", "the pass failed after its buttons were read"),
+    ]
+    assert caplog.records[-1].exc_info[0] is RuntimeError
+
+    # B stays down: its stretch has had its STOP. A pass that fails with no
+    # link message of a button to send fails as it did.
+    with pytest.raises(RuntimeError, match="no request"):
+        bench.step(squeeze=1.0, b=True)
+    bench.logic._request = whole
+    held = bench.run(20, squeeze=1.0, b=True)
+    assert of(held, Stop) == [] and none_engaged(held)
+    assert not bench.logic.armed
+
+    # Seen up and pressed again, B is a STOP again, on such a pass too.
+    assert of(bench.step(), Stop) == []
+    bench.logic._request = broken
+    assert bench.step(b=True) == [STOP_B]
+    assert bench.logic.counts()["b_pressed"] == 2
+
+    # Before any WELCOME or ROBOT_STATE, as the first data arrive with B down.
+    early = Bench()
+    early.welcome, early.state, early.state_age_s = None, None, None
+    early.logic._request = broken
+    assert early.step(b=True) == [STOP_B]
+
+
+def test_an_error_before_the_buttons_are_read_sends_nothing_and_stays_armed():
+    def broken(outputs: Any) -> GraphStep:
+        raise ValueError("no graph outputs")
+
+    # Right B goes down on the pass that fails: no STOP on it, one on the next.
+    bench = Bench()
+    bench.step()
+    read = bench.graph.read
+    bench.graph.read = broken
+    with pytest.raises(ValueError, match="no graph outputs"):
+        bench.step(b=True)
+    bench.graph.read = read
+    assert bench.logic.counts()["b_pressed"] == 0
+    assert bench.step(b=True)[0] == STOP_B
+    assert bench.logic.counts()["b_pressed"] == 1
+
+    # The arm follows the hand; the pass that fails leaves the logic armed,
+    # and the held squeeze is followed on the next pass with no new squeeze.
+    bench = Bench()
+    bench.engage()
+    read = bench.graph.read
+    bench.graph.read = broken
+    with pytest.raises(ValueError, match="no graph outputs"):
+        bench.step(squeeze=1.0)
+    bench.graph.read = read
+    assert bench.logic.armed
+    assert setpoint(bench.step(squeeze=1.0)).engaged
+    assert bench.logic.counts()["engagements"] == 1
+
+
 def test_a_released_grip_ends_the_engagement_and_the_next_squeeze_engages():
     bench = Bench()
     bench.engage()
@@ -1516,7 +1768,7 @@ def test_every_setpoint_quotes_the_newest_robot_state_and_its_clock():
         engaged=False,
         grip_released=True,
         q=None,
-        jaw_opening=None,
+        jaw_opening=1.0,  # the trigger is released
         state_clock_mono_s=512.5,
         note=NOTE_SQUEEZE,
     )
@@ -1526,7 +1778,7 @@ def test_every_setpoint_quotes_the_newest_robot_state_and_its_clock():
     assert (second.owner_number, second.stop_number, second.seq) == (5, 3, 2)
     assert second.state_clock_mono_s == 512.6
     assert second.engaged and second.q == pytest.approx(list(REST_INSIDE))
-    assert (second.jaw_opening, second.grip_released, second.note) == (None, False, "")
+    assert (second.jaw_opening, second.grip_released, second.note) == (1.0, False, "")
     assert decode(HumanSetpoint.TYPE, second.to_payload()) == second
 
     # The source is the controller feed's, as the logic was given it.
@@ -1847,6 +2099,495 @@ def test_a_hold_of_a_that_can_ask_keeps_the_hand_back_note_until_its_result():
     assert notes(held + pending) == {NOTE_AT_REST}
 
 
+def returning(**fields: Any) -> RobotState:
+    """The ROBOT_STATE of a return to rest while a takeover is open.
+
+    Recovery, the return to rest, is the control owner while the arm moves
+    and while it is measured at rest; fields replace what the state shows.
+    """
+    shown = {"owner": "recovery", "owner_number": 4, "motion": "moving", **fields}
+    return robot_state(**{"takeover_open": True, **shown})
+
+
+def test_during_a_return_to_rest_with_a_takeover_open_the_note_says_b_is_a_stop():
+    assert NOTE_RETURNING == "the arm returns to rest; right B is a STOP"
+    assert len(NOTE_RETURNING) <= NOTE_MAX_CHARS
+    assert logic_module._OWNER_RECOVERY == Owner.RECOVERY.value
+
+    # The person moved the arm and holds it away from rest.
+    bench = Bench()
+    bench.engage()
+    assert setpoint(bench.step()).note == NOTE_SQUEEZE
+    # A typed rest: recovery owns the arm while it moves ...
+    bench.state = returning()
+    moving = bench.run(50)
+    assert notes(moving) == {NOTE_RETURNING} and none_engaged(moving)
+    # ... and while it is measured at rest, before the person has it again.
+    bench.state = returning(motion="rest_hold")
+    assert notes(bench.run(10)) == {NOTE_RETURNING}
+    # The return is over: the notes are those of a person who owns the arm.
+    at_rest = {"owner_number": 5, "motion": "rest_hold"}
+    bench.state = robot_state(needs_release=True, **at_rest)
+    assert setpoint(bench.step()).note == NOTE_RELEASE_FIRST
+    bench.state = robot_state(**at_rest)
+    assert setpoint(bench.step()).note == NOTE_AT_REST
+
+    # Right B during the return: the STOP, under the same note until a
+    # ROBOT_STATE shows it. Held on, B then asks for the arm, as after any STOP.
+    bench = Bench()
+    bench.state = returning()
+    bench.step()
+    pressed = bench.step(b=True)
+    assert pressed[0] == STOP_B and setpoint(pressed).note == NOTE_RETURNING
+    bench.state = nobody(2, takeover_open=True)
+    held = bench.run(50, b=True)
+    assert notes(held) == {NOTE_TAKE_OVER}
+    assert [sent.request for sent in of(held, OwnerRequest)] == ["human"]
+
+
+def test_the_note_of_a_return_to_rest_comes_ahead_of_the_others_that_apply_there():
+    # Away from rest the notes of a takeover apply: the one for right B that
+    # is down with no press that can ask, here as the first data arrive, and
+    # the plain one.
+    bench = Bench()
+    bench.state = returning()
+    assert bench.step(b=True)[0] == STOP_B
+    assert notes(bench.run(20, b=True)) == {NOTE_RETURNING}
+    assert bench.status().note == NOTE_RETURNING
+
+    # At rest those of the hand-back apply: the one for right A that is down
+    # with no press that can ask, the plain one, the one for loaded jaws.
+    at_rest = returning(motion="rest_hold")
+    bench = Bench()
+    bench.state = at_rest
+    assert notes(bench.run(20, a=True)) == {NOTE_RETURNING}
+    assert bench.status().note == NOTE_RETURNING
+    bench.state = with_jaws(at_rest, "loaded")
+    assert bench.status().note == NOTE_RETURNING
+
+    # A hand-back asked for during the return is refused. The refusal is not
+    # shown while the return goes on, and it has gone when the return is over.
+    bench = Bench()
+    bench.engage()
+    bench.state = returning()
+    bench.step()
+    held = bench.run(51, a=True)
+    [request] = of(held, OwnerRequest)
+    refused = [Result(request.command_id, "refused", "control owner is recovery")]
+    held += bench.step(a=True, results=refused) + bench.run(20)
+    assert notes(held) == {NOTE_RETURNING}
+    bench.state = robot_state(owner_number=5, motion="rest_hold")
+    assert setpoint(bench.step()).note == NOTE_AT_REST
+
+
+def test_the_note_of_a_return_to_rest_is_given_nowhere_else():
+    # Recovery owns the arm with no takeover open, as in the timed return to
+    # rest of a help request nobody answered: the note of a takeover.
+    bench = Bench()
+    bench.state = returning(takeover_open=False)
+    assert bench.status().note == NOTE_TAKE_OVER
+    bench.state = returning(takeover_open=False, motion="rest_hold")
+    assert bench.status().note == NOTE_TAKE_OVER
+
+    # A takeover is open and recovery does not own the arm.
+    bench.state = nobody(2, takeover_open=True)
+    assert bench.status().note == NOTE_TAKE_OVER
+    bench.state = nobody(2, takeover_open=True, motion="rest_hold")
+    assert bench.status().note == NOTE_AT_REST
+    bench.state = robot_state(owner_number=6, stop_number=2)
+    assert setpoint(bench.step()).note == NOTE_SQUEEZE
+
+    # The feed's stage is not ready during such a return: right B may not be
+    # read, so the note does not say that it is a STOP. The feed's note stays.
+    text = "the SAMPLES of the Teleop Session Server are too old"
+    bench.state = returning()
+    assert bench.status().note == NOTE_RETURNING
+    stale = {"present": False, "stage": "stale", "age": None}
+    assert bench.status(note=text, **stale).note == text
+    assert bench.status(note="no valid pose", **POSE_LOST).note == "no valid pose"
+    absent = {"outputs": False, "stage": "no_server", "age": None}
+    assert bench.status(note="no server", **absent).note == "no server"
+    assert bench.status().note == NOTE_RETURNING
+
+
+def test_the_note_of_a_return_to_rest_changes_nothing_but_the_note(monkeypatch):
+    def run() -> list[Message]:
+        """A takeover with a return to rest in it, and both buttons during it."""
+        bench = Bench()
+        out = bench.step() + bench.run(5, squeeze=1.0)  # the arm follows the hand
+        bench.state = returning()
+        out += bench.run(5, squeeze=1.0) + bench.run(5)
+        held = bench.run(60, a=True)  # right A: a hand-back is asked for
+        [request] = of(held, OwnerRequest)
+        refused = [Result(request.command_id, "refused", "control owner is recovery")]
+        out += held + bench.step(a=True, results=refused) + bench.run(5)
+        out += bench.run(5, b=True)  # right B: the STOP of the return
+        bench.state = nobody(2, takeover_open=True)
+        held = bench.run(60, b=True)  # held on, B asks for the arm again
+        [request] = of(held, OwnerRequest)
+        granted = [Result(request.command_id, "completed")]
+        bench.state = robot_state(owner_number=6, stop_number=2)
+        out += held + bench.step(b=True, results=granted) + bench.run(3)
+        return out + bench.run(5, squeeze=1.0)  # the arm follows the hand again
+
+    def plain(messages: Sequence[Message]) -> list[Message]:
+        """The link messages without their notes.
+
+        A command id keeps its number: what stands before it differs from one
+        HumanLogic to the next.
+        """
+        out: list[Message] = []
+        for message in messages:
+            if isinstance(message, HumanSetpoint):
+                message = dataclasses.replace(message, note="")
+            elif isinstance(message, OwnerRequest):
+                number = message.command_id.rsplit("-", 1)[-1]
+                message = dataclasses.replace(message, command_id=number)
+            out.append(message)
+        return out
+
+    with_note = run()
+    # The same run with the note switched off: no owner has this word.
+    monkeypatch.setattr(logic_module, "_OWNER_RECOVERY", "an owner there is not")
+    without = run()
+    assert NOTE_RETURNING in notes(with_note)
+    assert NOTE_RETURNING not in notes(without)
+    assert plain(with_note) == plain(without)
+    # The run holds what could differ: both requests, the STOP, joint targets
+    # before and after the return and the status HUMAN_SETPOINTs between.
+    assert [sent.request for sent in of(with_note, OwnerRequest)] == [
+        "handback",
+        "human",
+    ]
+    assert of(with_note, Stop) == [STOP_B]
+    sent = of(with_note, HumanSetpoint)
+    assert sent[1].engaged and sent[-1].engaged
+    assert sum(not one.engaged for one in sent) > 50
+
+
+# The trigger and the jaws. The jaws are the gripper's fingers; a jaw opening
+# is a share of their travel, 1.0 fully open and 0.0 closed. The grip level is
+# the opening in force when the person took the arm over: the robot app lets
+# the jaws follow the trigger once the opening it asks for has reached it.
+
+
+def openings(messages: Sequence[Message]) -> list[float | None]:
+    """The jaw opening of each HUMAN_SETPOINT among these link messages."""
+    return [sent.jaw_opening for sent in of(messages, HumanSetpoint)]
+
+
+def test_the_jaw_opening_is_one_minus_the_trigger_the_grip_squeezed_or_not():
+    bench = Bench()
+    # The grip is released: the arm holds, and the trigger asks all the same.
+    assert setpoint(bench.step()).jaw_opening == 1.0
+    released = setpoint(bench.step(trigger=0.3))
+    assert released.grip_released and not released.engaged
+    assert released.jaw_opening == 1.0 - 0.3
+    # The grip is squeezed and the arm follows the hand.
+    squeezed = setpoint(bench.step(squeeze=1.0, trigger=0.3))
+    assert squeezed.engaged and squeezed.jaw_opening == 1.0 - 0.3
+    assert setpoint(bench.step(squeeze=1.0, trigger=0.8)).jaw_opening == 1.0 - 0.8
+    # The grip is squeezed and the arm may not follow: the gates are the arm's.
+    bench.step()
+    bench.state = robot_state(needs_release=True)
+    held = setpoint(bench.step(squeeze=1.0, trigger=0.6))
+    assert not held.engaged and held.note == NOTE_RELEASE_FIRST
+    assert held.jaw_opening == 1.0 - 0.6
+    bench.state = robot_state(valid=(True, False, True, True, True, True))
+    blind = setpoint(bench.step(trigger=0.6))
+    assert blind.note == "a joint has no valid reading"
+    assert blind.jaw_opening == 1.0 - 0.6
+    # On every pass while the person owns the arm.
+    assert openings(bench.run(50, trigger=1.0)) == [0.0] * 50
+
+
+@pytest.mark.parametrize(
+    "trigger, opening",
+    [
+        (0.0, 1.0),
+        (0.03, 1.0),
+        (TRIGGER_OPEN_MAX, 1.0),
+        (0.06, 1.0 - 0.06),
+        (0.5, 0.5),
+        (0.94, 1.0 - 0.94),
+        (TRIGGER_CLOSED_MIN, 0.0),
+        (0.97, 0.0),
+        (1.0, 0.0),
+        # A value outside 0 to 1 asks for what the nearest end asks for.
+        (-0.2, 1.0),
+        (1.3, 0.0),
+    ],
+)
+def test_the_trigger_has_a_dead_zone_at_each_end(trigger, opening):
+    assert (TRIGGER_OPEN_MAX, TRIGGER_CLOSED_MIN) == (0.05, 0.95)
+    assert jaw_opening(trigger) == opening
+    sent = setpoint(Bench().step(trigger=trigger))
+    assert sent.jaw_opening == opening and 0.0 <= sent.jaw_opening <= 1.0
+    assert decode(HumanSetpoint.TYPE, sent.to_payload()) == sent
+
+
+def test_a_trigger_that_rests_in_its_dead_zone_asks_for_fully_open_jaws():
+    # The robot app counts jaws as fully open, which proves them empty, from
+    # this opening on. A trigger that rests at 0.05 would ask for less.
+    full_open = 1.0 - RobotAppConfig.default().gripper.full_open_tol
+    assert 1.0 - TRIGGER_OPEN_MAX < full_open
+    assert jaw_opening(TRIGGER_OPEN_MAX) >= full_open
+
+
+NOT_USABLE = {
+    **GAPS,
+    "a pose that is not valid": POSE_LOST,
+    "a controller that is not active": {"present": False, "stage": "no_controller"},
+    "a stage that is not ready": {"stage": "waiting_for_headset"},
+    "a trigger that reads nan": {"trigger": float("nan")},
+    "a trigger that reads inf": {"trigger": float("inf")},
+    "a trigger that reads -inf": {"trigger": float("-inf")},
+}
+
+
+@pytest.mark.parametrize("controls", list(NOT_USABLE.values()), ids=list(NOT_USABLE))
+def test_no_jaw_opening_on_a_pass_whose_trigger_is_not_usable(controls):
+    bench = Bench()
+    assert setpoint(bench.step(trigger=0.4)).jaw_opening == 1.0 - 0.4
+    # None: the jaws keep their state. Never fully open, never closed.
+    lost = setpoint(bench.step(**{"trigger": 0.4, **controls}))
+    assert lost.jaw_opening is None
+    assert setpoint(bench.step(squeeze=1.0, **controls)).jaw_opening is None
+    # Usable again on the next pass.
+    assert setpoint(bench.step(trigger=0.4)).jaw_opening == 1.0 - 0.4
+
+
+@pytest.mark.parametrize("value", [None, "0.5", True, False, [0.5], 16**400])
+def test_a_trigger_value_that_is_no_number_asks_for_no_jaw_opening(value):
+    assert jaw_opening(value) is None
+
+
+def test_no_jaw_opening_unless_the_robot_state_shows_the_person_as_the_owner():
+    # The robot app takes a jaw opening from a person who owns the arm only.
+    bench = Bench()
+    for state in (
+        robot_state(owner="agent", owner_number=6),
+        nobody(2),
+        nobody(2, takeover_open=True),
+        returning(),
+    ):
+        bench.state = state
+        assert bench.status(trigger=0.4).jaw_opening is None, state.owner
+
+    # Right B is held for the takeover: a HUMAN_SETPOINT on every pass, and
+    # still none of them asks anything of the jaws.
+    bench = Bench()
+    bench.state = nobody(2)
+    bench.step(trigger=0.4)
+    assert bench.step(b=True, trigger=0.4)[0] == STOP_B
+    bench.state = nobody(3)
+    held = bench.run(60, b=True, trigger=0.4)
+    [request] = of(held, OwnerRequest)
+    assert openings(held) == [None] * 60
+    # The takeover is granted: from the first ROBOT_STATE that shows it.
+    granted = [Result(request.command_id, "completed")]
+    bench.state = robot_state(owner_number=6, stop_number=3, needs_release=True)
+    first = setpoint(bench.step(b=True, trigger=0.4, results=granted))
+    assert (first.owner_number, first.jaw_opening) == (6, 1.0 - 0.4)
+
+
+def test_the_trigger_changes_nothing_of_a_pass_but_the_jaw_opening():
+    def run(trigger: float) -> list[Message]:
+        """A takeover, an engagement, a data gap and the hand-back's request."""
+        bench = Bench()
+        bench.state = robot_state(owner="agent")
+        out = bench.run(3, trigger=trigger) + bench.run(2, b=True, trigger=trigger)
+        bench.state = nobody(2)
+        held = bench.run(60, b=True, trigger=trigger)
+        [request] = of(held, OwnerRequest)
+        granted = [Result(request.command_id, "completed")]
+        owned = {"owner_number": 6, "stop_number": 2}
+        bench.state = robot_state(needs_release=True, **owned)
+        out += held + bench.step(b=True, trigger=trigger, results=granted)
+        out += bench.run(2, squeeze=1.0, trigger=trigger)
+        bench.state = robot_state(**owned)
+        out += bench.run(3, trigger=trigger)
+        out += bench.run(10, squeeze=1.0, trigger=trigger)  # the arm follows
+        out += bench.lost() + bench.run(3, squeeze=1.0, trigger=trigger)
+        out += bench.run(3, trigger=trigger)
+        bench.state = robot_state(motion="rest_hold", **owned)
+        return out + bench.run(55, a=True, trigger=trigger)
+
+    def plain(messages: Sequence[Message]) -> list[Message]:
+        """The link messages without their jaw openings.
+
+        A command id keeps its number: what stands before it differs from one
+        HumanLogic to the next.
+        """
+        out: list[Message] = []
+        for message in messages:
+            if isinstance(message, HumanSetpoint):
+                message = dataclasses.replace(message, jaw_opening=None)
+            elif isinstance(message, OwnerRequest):
+                number = message.command_id.rsplit("-", 1)[-1]
+                message = dataclasses.replace(message, command_id=number)
+            out.append(message)
+        return out
+
+    released, pulled = run(0.0), run(0.7)
+    assert set(openings(released)) == {None, 1.0}
+    assert set(openings(pulled)) == {None, 1.0 - 0.7}
+    assert plain(released) == plain(pulled)
+    # The run holds what could differ: the STOP, both requests, joint targets,
+    # and HUMAN_SETPOINTs with the grip released, squeezed and without data.
+    assert of(pulled, Stop) == [STOP_B]
+    assert [sent.request for sent in of(pulled, OwnerRequest)] == ["human", "handback"]
+    sent = of(pulled, HumanSetpoint)
+    assert sum(one.engaged for one in sent) == 10
+    assert {one.stage for one in sent} == {"ready", "stale"}
+    assert {one.grip_released for one in sent} == {True, False}
+    assert len({one.note for one in sent}) >= 6
+
+
+def jaws(**facts: Any) -> dict[str, Any]:
+    """health["human"]["jaws"]: the robot app's facts of the jaws under the trigger.
+
+    As after a takeover from an agent that left the jaws closed, with the
+    trigger released; facts replace any of them.
+    """
+    short = {
+        "matched": False,
+        "grip_level": 0.0,
+        "opened": False,
+        "asked": 1.0,
+        "refusal": NOT_MATCHED,
+    }
+    return {**short, **facts}
+
+
+def test_the_note_says_which_way_the_trigger_goes_while_the_arm_follows_the_hand():
+    assert NOTE_TRIGGER_PULL == "pull the trigger to the grip level to move the jaws"
+    assert NOTE_TRIGGER_EASE == (
+        "ease the trigger back to the grip level to move the jaws"
+    )
+    assert max(len(NOTE_TRIGGER_PULL), len(NOTE_TRIGGER_EASE)) <= NOTE_MAX_CHARS
+    # The robot app's own words for it.
+    assert logic_module._JAWS_NOT_MATCHED == NOT_MATCHED
+
+    def note(**facts: Any) -> str:
+        """The note of one more pass of the engagement, on these jaw facts."""
+        bench.state = robot_state(jaws=jaws(**facts))
+        sent = setpoint(bench.step(squeeze=1.0))
+        assert sent.engaged
+        return sent.note
+
+    bench = Bench()
+    bench.engage()
+    # The jaws are closed further than the trigger asks: pull it.
+    assert note() == NOTE_TRIGGER_PULL
+    assert note(asked=0.4) == NOTE_TRIGGER_PULL
+    assert note(grip_level=0.5, asked=0.8) == NOTE_TRIGGER_PULL
+    # The trigger asks for more closing than the grip level: ease it.
+    assert note(grip_level=1.0, asked=0.4) == NOTE_TRIGGER_EASE
+    assert note(grip_level=0.5, asked=0.2) == NOTE_TRIGGER_EASE
+    # Without both numbers: the plain one.
+    assert note(asked=None) == NOTE_TRIGGER_PULL
+    assert note(grip_level="0.5", asked=float("nan")) == NOTE_TRIGGER_PULL
+
+    # The jaws follow the trigger: nothing to say, whatever holds them wider.
+    assert note(matched=True, refusal="") == ""
+    assert note(matched=True, refusal=NO_TIGHTER) == ""
+    assert note(matched=True) == ""
+    # The trigger moves nothing for another reason: no advice on the trigger.
+    assert note(refusal=NO_OPENING, asked=None) == ""
+    unknown = "the grip level is not known: the jaws are not referenced"
+    assert note(grip_level=None, refusal=unknown) == ""
+    assert note(refusal="") == ""
+    # A robot app that gives no jaw facts, as with human.trigger_jaws false.
+    for state in (robot_state(), robot_state(jaws=None), robot_state(jaws=NOT_MATCHED)):
+        bench.state = state
+        assert setpoint(bench.step(squeeze=1.0)).note == ""
+    assert bench.logic.counts()["engagements"] == 1  # one engagement throughout
+
+
+def test_the_trigger_note_comes_behind_every_note_about_the_arm():
+    def walk(**human: Any) -> list[HumanSetpoint]:
+        """A takeover through the notes about the arm.
+
+        human goes into health["human"] of every ROBOT_STATE.
+        """
+        out: list[HumanSetpoint] = []
+
+        def take(messages: Sequence[Message]) -> None:
+            out.extend(of(messages, HumanSetpoint))
+
+        def owned(number: int = 6, **fields: Any) -> RobotState:
+            return robot_state(owner_number=number, stop_number=2, **human, **fields)
+
+        gap = {"present": False, "stage": "stale", "age": None, "note": "too old"}
+        bench = Bench()
+        bench.state = owned(needs_release=True)
+        take(bench.run(2, squeeze=1.0))  # release the grip first
+        bench.state = owned()
+        take(bench.run(2))  # squeeze the grip
+        take(bench.run(3, squeeze=1.0))  # the arm follows the hand
+        take(bench.step(**gap) + bench.run(2, squeeze=1.0))  # squeeze again
+        take(bench.step())
+        take(bench.step(**gap))  # the feed's note
+        bench.state_age_s = 1.0
+        take(bench.step())  # no fresh robot state
+        bench.state_age_s = 0.01
+        take(bench.step() + bench.run(3, squeeze=1.0))  # the arm follows again
+        recovery = {"owner": "recovery", "takeover_open": True, "motion": "moving"}
+        bench.state = robot_state(owner_number=7, stop_number=2, **human, **recovery)
+        out.append(bench.status())  # the arm returns to rest
+        at_rest = owned(8, motion="rest_hold")
+        bench.state = at_rest
+        take(bench.run(2))  # at rest: right A
+        bench.state = with_jaws(at_rest, "loaded")
+        take(bench.step())  # the jaws first
+        bench.state = at_rest
+        take(bench.step(**gap) + bench.run(2, a=True))  # release right A
+        take(bench.step())
+        held = bench.run(51, a=True)
+        [request] = of(held, OwnerRequest)
+        refused = [Result(request.command_id, "refused", "not proven empty")]
+        take(held + bench.step(a=True, results=refused))  # the refusal
+        bench.state = nobody(3, owner_number=9, takeover_open=True, **human)
+        out.append(bench.status())  # right B takes over
+        bench.step(**gap)
+        take(bench.run(3, b=True))  # release right B
+        return out
+
+    plain, short = walk(), walk(jaws=jaws())
+    about_the_arm = [
+        NOTE_RELEASE_FIRST,
+        NOTE_SQUEEZE,
+        "",
+        AGAIN + "controller data lost",
+        NOTE_SQUEEZE,
+        "too old",
+        "no fresh robot state",
+        NOTE_SQUEEZE,
+        "",
+        NOTE_RETURNING,
+        NOTE_AT_REST,
+        NOTE_AT_REST_JAWS,
+        "too old",
+        NOTE_RELEASE_A,
+        NOTE_AT_REST,
+        "handback refused: not proven empty",
+        NOTE_TAKE_OVER,
+        NOTE_RELEASE_B,
+    ]
+    told = [one.note for one in plain]
+    assert [told[0]] + [b for a, b in zip(told, told[1:]) if a != b] == about_the_arm
+    # No note is given only while the arm follows the hand.
+    assert {one.engaged for one in plain if one.note == ""} == {True}
+    assert {one.note for one in plain if one.engaged} == {""}
+    # The trigger's note takes that place and no other, and changes nothing else.
+    assert len(short) == len(plain)
+    assert [one.note for one in short] == [note or NOTE_TRIGGER_PULL for note in told]
+    assert [dataclasses.replace(one, note="") for one in short] == [
+        dataclasses.replace(one, note="") for one in plain
+    ]
+
+
 def test_the_feeds_note_is_sent_while_the_stage_is_not_ready():
     text = "server did not answer at 127.0.0.1:47600"
     bench = Bench()
@@ -2098,6 +2839,67 @@ def test_counts_start_at_zero_under_the_keys_the_report_line_reads():
     bench.step()
     bench.step(a=True)
     assert bench.logic.counts() == {**dict.fromkeys(COUNT_KEYS, 0), "a_pressed": 1}
+
+
+# The log lines
+
+
+def test_a_pass_logs_nothing_itself_and_log_pass_writes_its_lines_in_order(caplog):
+    name = logic_module._log.name
+    caplog.set_level("INFO", logger=name)
+
+    def written() -> list[tuple[str, str]]:
+        """What the logic's logger has written so far."""
+        records = [record for record in caplog.records if record.name == name]
+        return [(record.levelname, record.getMessage()) for record in records]
+
+    # Right B while the arm follows the hand. step() logs nothing: a log call
+    # can block, and the program sends the STOP before it asks for the lines.
+    bench = Bench()
+    bench.engage()
+    assert bench.step(squeeze=1.0, b=True)[0] == STOP_B
+    assert written() == []
+    bench.logic.log_pass()
+    assert written() == [
+        ("INFO", "engagement started"),
+        ("INFO", "right B is down: STOP sent"),
+        ("INFO", "engagement ended: STOP by right B"),
+    ]
+    bench.logic.log_pass()  # each line once
+    assert len(written()) == 3
+
+    # A request, then a pass with its refusal and right B that fails after its
+    # buttons were read.
+    def broken(q: Sequence[float]) -> np.ndarray:
+        raise ValueError("no arm model")
+
+    caplog.clear()
+    bench = Bench()
+    bench.state = robot_state(motion="rest_hold")
+    bench.step()
+    [request] = of(bench.run(51, a=True), OwnerRequest)
+    refused = Result(request.command_id, "refused", "not at rest")
+    bench.solver.fk = broken  # the home cannot be set
+    assert bench.step(a=True, b=True, results=[refused]) == [STOP_B]
+    assert written() == []
+    bench.logic.log_pass()
+    assert written() == [
+        ("INFO", "right A held 1.0 s: asking for the handback"),
+        ("WARNING", "handback refused: not at rest"),
+        ("INFO", "right B is down: STOP sent"),
+        ("ERROR", "the pass failed after its buttons were read"),
+    ]
+    assert caplog.records[-1].exc_info[0] is ValueError
+
+    # Lines nobody asks for are not kept without end: the newest ones stay.
+    caplog.clear()
+    bench = Bench()
+    for _ in range(logic_module.LOG_LINES_KEPT):
+        bench.engage()  # one line for the squeeze, one for the release before
+    assert written() == []
+    bench.logic.log_pass()
+    assert len(written()) == logic_module.LOG_LINES_KEPT
+    assert written()[-1] == ("INFO", "engagement started")
 
 
 # The module

@@ -104,8 +104,24 @@ _IDLE: dict[str, Any] = {
 }
 # The built-in scripts. "lift": right B takes the arm over, the squeezed hand
 # rises 5 cm in 4 s, and right A gives the arm back once it is at rest.
+# "grasp" moves the jaws, the gripper's fingers, and not the arm: right B takes
+# the arm over, the trigger is pulled all the way for 4 s, which closes the
+# jaws on nothing, and released for 6 s, which opens them again, and right A
+# gives the arm back once it is at rest.
 SCRIPTS: dict[str, tuple[Mapping[str, Any], ...]] = {
     "idle": (_IDLE,),
+    "grasp": (
+        _IDLE,
+        {"t": 3.0, "b": True},
+        {"wait_for": "owner_human"},
+        {"t": 3.5, "b": False},
+        {"t": 5.0, "trigger": 1.0},
+        {"t": 9.0, "trigger": 0.0},
+        {"wait_for": "rest_hold"},
+        {"t": 15.0, "a": True},
+        {"wait_for": "owner_nobody"},
+        {"t": 15.5, "a": False},
+    ),
     "lift": (
         _IDLE,
         {"t": 3.0, "b": True},
@@ -277,6 +293,14 @@ class TeleopFeed:
         except (OSError, RuntimeError) as error:  # a TimeoutError is an OSError
             self._failures += 1
             self._failed(error, entry_stage(error))
+            if self._failures >= settings.attempts:
+                # Not logged here: the program sends its STOP before the line
+                # of its end, which names the last attempt.
+                raise AttemptsRanOut(
+                    f"no remote session at {settings.endpoint}: {self._failures} "
+                    f"attempts in a row failed, {settings.retry_s:g} s apart; the "
+                    f"last one: {self._note}"
+                ) from error
             _log.info(
                 "attempt %d of %d to enter a remote session at %s failed (%s): %s",
                 self._failures,
@@ -285,12 +309,6 @@ class TeleopFeed:
                 self._stage,
                 error,
             )
-            if self._failures >= settings.attempts:
-                raise AttemptsRanOut(
-                    f"no remote session at {settings.endpoint}: {self._failures} "
-                    f"attempts in a row failed, {settings.retry_s:g} s apart; the "
-                    f"last one: {self._note}"
-                ) from error
             return
         except ValueError as error:
             # Isaac Capture's error for an endpoint it cannot read, such as a

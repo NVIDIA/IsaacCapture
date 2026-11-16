@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Start the human program on the workstation: set its environment, then exec
+# Start the human program: set its environment, then exec
 #   python -m isaaccapture_examples.agentic_remote.human "$@"
 # for example
 #   ./run_human.sh --config configs/human.yaml
 # The human program is the program through which a person drives the arm with
-# the headset's right controller. The working folder stays as it is, so a
-# relative --config is taken from it.
+# the headset's right controller. On the rig it runs on the Thor, the machine on
+# the robot, with configs/human_rebot.yaml; on one machine with
+# configs/human.yaml. The working folder stays as it is, so a relative --config
+# is taken from it.
 #
 # Needs in the environment:
 #   AGENTIC_REMOTE_HUMAN_PYTHON      a Python with numpy, PyYAML and pinocchio;

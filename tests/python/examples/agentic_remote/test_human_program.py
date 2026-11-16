@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import fcntl
+import logging
 import math
 import os
 import re
@@ -48,6 +49,9 @@ from isaaccapture_examples.agentic_remote.human import (  # noqa: E402
     __main__ as human_main,
 )
 from isaaccapture_examples.agentic_remote.human import feed as feed_module  # noqa: E402
+from isaaccapture_examples.agentic_remote.human import (  # noqa: E402
+    logic as logic_module,
+)
 from isaaccapture_examples.agentic_remote.human.__main__ import (  # noqa: E402
     HumanConfigError,
     human_settings,
@@ -86,12 +90,16 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (  # noqa: E4
 from isaaccapture_examples.agentic_remote.robot_app.config import (  # noqa: E402
     RobotAppConfig,
 )
+from isaaccapture_examples.agentic_remote.robot_app.gripper import (  # noqa: E402
+    NOT_MATCHED,
+)
 from isaaccapture_examples.agentic_remote.robot_app.human import (  # noqa: E402
     SPEED_MARGIN,
 )
 from link_bench import Bench, FakeThor, until  # noqa: E402
 from test_human_logic import of, robot_state, welcome  # noqa: E402
-from test_human_retarget import MID_Q  # noqa: E402
+from test_human_retarget import HOME, MID_Q, along  # noqa: E402
+from test_human_retarget import Bench as GraphBench  # noqa: E402
 
 pytestmark = [pytest.mark.link, pytest.mark.apai]
 
@@ -118,6 +126,7 @@ BASE_AXIS = {UP: 2, AWAY: 0, LEFT: 1}
 END_STOP = Stop(
     reason="the human program ends (the stop event was set)", sender="human_program"
 )
+RIGHT_B = Stop(reason="right B", sender="controller")
 EDGE = re.compile(r"human program: (A|B|grip|trigger) (down|up)$")
 NUMBER = r"-?\d+\.\d{3}"
 REPORT = re.compile(
@@ -131,7 +140,13 @@ REPORT = re.compile(
     r"roll (-?\d+\.\d|-) pitch (-?\d+\.\d|-) yaw (-?\d+\.\d|-) deg; "
     r"IK (?P<ik>\d+\.\d\d/\d+\.\d\d|-/-) ms; "
     r"ended: no solution \d+, jump \d+, solution ahead \d+, hand ahead \d+, "
-    r"limiter \d+(?P<refused>; refused by the Thor: .+)?"
+    r"limiter \d+"
+    # While a takeover is open: the jaws, the gripper's fingers, under the
+    # trigger. An opening is a share of the jaw travel, 1.00 fully open.
+    r"(?P<jaws>; jaws follow the trigger (?P<following>yes|no), "
+    r"grip level (?P<level>\d\.\d\d|-), trigger asks (?P<asks>\d\.\d\d|-)"
+    r"(?P<why>: .+?)?)?"
+    r"(?P<refused>; refused by the Thor: .+)?"
 )
 
 
@@ -307,6 +322,7 @@ class Rig:
                 gaps = [abs(a - b) for a, b in zip(message.q, reference)]
                 self.ahead.append(max(gaps))
         self.results = thor.take(messages)
+        logic.log_pass()  # behind the link messages, as the program logs
         self.state = thor.state()
         self.sent += messages
         self.fed.append(fed)
@@ -418,6 +434,39 @@ def test_a_script_lift_from_rest_engages_and_follows():
     last = rig.logic.last
     assert last.present and not (last.a or last.b) and last.squeeze == 0.0
     assert len(engaged(rig.sent)) == len(targets)  # nothing moved after the release
+    # The trigger was never pulled: under the person every HUMAN_SETPOINT asked
+    # for fully open jaws, and none asked anything while nobody owned the arm.
+    owned = thor.owner_number - 1  # the owner number of the takeover
+    asked = {
+        (m.owner_number == owned, m.jaw_opening) for m in of(rig.sent, HumanSetpoint)
+    }
+    assert asked == {(True, 1.0), (False, None)}
+
+
+def test_a_script_grasp_asks_for_closed_and_then_open_jaws_and_moves_no_joint():
+    thor = Thor()
+    rig = Rig("grasp", thor)
+    rig.run_until(lambda: thor.owner == "human")
+    owned = thor.owner_number
+    rig.run_until(lambda: thor.owner == "nobody")
+    rig.run(1.0)
+    requests = of(rig.sent, OwnerRequest)
+    assert [request.request for request in requests] == ["human", "handback"]
+    assert of(rig.sent, Stop) == [Stop(reason="right B", sender="controller")]
+    sent = of(rig.sent, HumanSetpoint)
+    # The jaw opening the trigger asks for goes out only under the person:
+    # fully open, closed for the 4 s the trigger is pulled, fully open again.
+    under = [m.jaw_opening for m in sent if m.owner_number == owned]
+    assert {m.jaw_opening for m in sent if m.owner_number != owned} == {None}
+    changes = [under[0]] + [b for a, b in zip(under, under[1:]) if a != b]
+    assert changes == [1.0, 0.0, 1.0]
+    assert 195 <= under.count(0.0) <= 205  # 50 passes per second
+    # The grip is never squeezed: no joint target, and the arm stays at rest.
+    assert engaged(rig.sent) == [] and rig.logic.counts()["engagements"] == 0
+    assert tuple(thor.q) == REST and thor.motion == "rest_hold"
+    last = rig.logic.last
+    assert last.present and not (last.a or last.b)
+    assert (last.squeeze, last.trigger) == (0.0, 0.0)
 
 
 def test_right_b_is_a_stop_through_the_real_graph_while_the_pose_is_not_valid():
@@ -499,6 +548,25 @@ def shipped(name: str) -> dict[str, Any]:
     return flat(yaml.safe_load((CONFIGS / name).read_text(encoding="utf-8")))
 
 
+def comment_above(text: str, key: str) -> str:
+    """The comment lines right above a key of a YAML file, as one line."""
+    lines = [line.strip() for line in text.splitlines()]
+    [at] = [index for index, line in enumerate(lines) if line.startswith(f"{key}:")]
+    words: list[str] = []
+    while at > 0 and lines[at - 1].startswith("#"):
+        at -= 1
+        words.insert(0, lines[at].lstrip("# "))
+    return " ".join(words)
+
+
+# How the comment beside rates.loop_hz ends in both shipped files.
+LOOP_HZ_BOUND = (
+    "A pass that comes sooner than 10 ms after the one before counts as 10 ms; "
+    "above 100 both hand speed limits would grow in proportion, so values above "
+    "100 are refused."
+)
+
+
 def test_the_shipped_human_files_load():
     demo = load_human_settings(CONFIGS / "human.yaml")
     assert demo == HumanSettings()  # the first values
@@ -520,7 +588,8 @@ def test_the_shipped_human_files_load():
         assert set(shipped(name)) == names, name
         text = (CONFIGS / name).read_text(encoding="utf-8")
         assert text.startswith("# SPDX-FileCopyrightText: ")
-        assert "LIMITER_PASS_S" in text  # beside rates.loop_hz
+        beside = comment_above(text, "loop_hz")
+        assert "LIMITER_PASS_S" in beside and beside.endswith(LOOP_HZ_BOUND), name
 
     # What each file asks for can be built: the graph, and the arm model.
     for settings in (demo, rig):
@@ -533,10 +602,12 @@ def test_the_shipped_human_files_load():
         assert settings.teleop.connect_timeout_s < keep_s
 
 
-def test_the_rig_human_file_differs_from_the_shipped_one_in_four_keys():
+def test_the_rig_human_file_differs_from_the_shipped_one_in_six_keys():
     demo, rig = shipped("human.yaml"), shipped("human_rebot.yaml")
     differing = {key: (demo[key], rig[key]) for key in demo if demo[key] != rig[key]}
     assert differing == {
+        "socket_path": ("", "~/.agentic_remote/human.sock"),
+        "teleop.endpoint": ("127.0.0.1:47600", "192.0.2.1:47600"),
         "teleop.attempts": (720, 8640),
         "retarget.max_linear_velocity": (0.10, 0.01),
         "retarget.max_angular_velocity": (0.4, 0.03),
@@ -564,6 +635,95 @@ def test_rates_that_are_not_above_0_are_refused(key, tmp_path, capsys):
     file = write_config(tmp_path, str(tmp_path / "nobody.sock"), rates={key: 0})
     assert human_main.main(["--config", str(file)], attach=never) == 2
     assert f"rates.{key} must be above 0" in capsys.readouterr().err
+
+
+def loop_rate_refusal(value: Any) -> str:
+    """How the settings refuse this rates.loop_hz: one line."""
+    return (
+        f"rates.loop_hz must be at most 100, got {value!r}: the rate limiter "
+        "counts a pass as at least 10 ms, so above 100 both hand speed limits "
+        "would rise above their settings"
+    )
+
+
+def test_a_loop_rate_above_100_is_refused(tmp_path, capsys):
+    assert human_main.MAX_LOOP_HZ == 100.0
+    for value in (100, 100.0, 99.5):
+        assert human_settings({"rates": {"loop_hz": value}}).loop_hz == value
+    for value in (100.5, 200, 1e6):
+        with pytest.raises(HumanConfigError) as refused:
+            human_settings({"rates": {"loop_hz": value}})
+        assert str(refused.value) == loop_rate_refusal(value)
+    # The bound is on the program's passes alone.
+    assert human_settings({"rates": {"idle_hz": 200}}).idle_hz == 200.0
+    assert human_settings({"teleop": {"tick_rate_hz": 120}}).teleop.tick_rate_hz == 120
+
+    # Through the program: exit code 2 and one line, before anything is attached.
+    file = write_config(tmp_path, str(tmp_path / "nobody.sock"), rates={"loop_hz": 200})
+    assert human_main.main(["--config", str(file)], attach=never) == 2
+    line = f"human program: the settings cannot be used: {loop_rate_refusal(200)}\n"
+    assert capsys.readouterr().err == line
+
+
+@pytest.mark.parametrize("rate, times", [(50, 1), (100, 1), (200, 2), (400, 4)])
+def test_above_100_passes_per_second_the_hand_speed_limit_grows_in_proportion(
+    rate, times
+):
+    # Why rates.loop_hz ends at MAX_LOOP_HZ: up to it the limited target moves
+    # at retarget.max_linear_velocity, above it faster by rate / MAX_LOOP_HZ.
+    assert times == max(1.0, rate / human_main.MAX_LOOP_HZ)
+    settings = RetargetSettings()
+    seconds, hand_speed = 0.2, 0.5  # the hand: above the limit, not rejected
+    assert settings.max_linear_velocity < hand_speed < settings.reject_linear_velocity
+    graph = GraphBench(settings)
+    first = graph.engage().hand
+    for index in range(1, round(seconds * rate) + 1):
+        hand = along(first, UP, hand_speed * index / rate)
+        step = graph.step(hand, squeeze=1.0, pass_ns=round(1e9 / rate))
+        assert step.limiter == "clamped"
+    speed = (step.ee_target[2, 3] - HOME[2, 3]) / seconds
+    assert speed == pytest.approx(times * settings.max_linear_velocity, rel=0.01)
+
+
+@pytest.mark.parametrize(
+    "rate, early_ms, late_ms, times",
+    [
+        (100, 9.9, 10.1, 1.005),
+        (100, 9.0, 11.0, 1.05),
+        (66, 5.0, 25.3, 0.99),
+        (50, 15.0, 25.0, 0.875),
+    ],
+)
+def test_uneven_passes_raise_the_hand_speed_limit_only_near_100_passes_per_second(
+    rate, early_ms, late_ms, times
+):
+    # A known limit of MAX_LOOP_HZ itself. The rate limiter counts a pass as
+    # 10 ms at least and 20 ms at most. At 100 passes per second a pass that
+    # comes early counts for more than its time, and the late one behind it
+    # for no less: the limited target is faster than the setting by half the
+    # share of that unevenness. With a period of 15 ms or more, up to 66 per
+    # second, an early pass and a late one never count for more than their
+    # time together; a late pass is not made up, so the target is slower.
+    assert early_ms + late_ms == pytest.approx(2000.0 / rate, rel=0.002)
+    settings = RetargetSettings()
+    hand_speed = 0.5  # the hand: above the limit, not rejected
+    graph = GraphBench(settings)
+    first = graph.engage().hand
+    elapsed_ns = 0
+    for index in range(1, rate + 1):
+        pass_ns = round((early_ms if index % 2 else late_ms) * 1e6)
+        elapsed_ns += pass_ns
+        hand = along(first, UP, hand_speed * elapsed_ns / 1e9)
+        step = graph.step(hand, squeeze=1.0, pass_ns=pass_ns)
+        assert step.limiter == "clamped"
+    speed = (step.ee_target[2, 3] - HOME[2, 3]) / (elapsed_ns / 1e9)
+    assert speed == pytest.approx(times * settings.max_linear_velocity, rel=0.002)
+
+
+# A whole number of more digits than Python prints, and what the settings say
+# in its place.
+HUGE = 16**5000
+TOO_LARGE = "a whole number too large to print"
 
 
 @pytest.mark.parametrize(
@@ -606,11 +766,53 @@ def test_rates_that_are_not_above_0_are_refused(key, tmp_path, capsys):
             {"retarget": {"controller_to_base": [[1, 0, 0], [0, 1, 0], [0, 0, "z"]]}},
             "retarget.controller_to_base[2][2] must be a number",
         ),
+        # A whole number too large for a float, and one too large to print.
+        (
+            {"rates": {"loop_hz": 10**400}},
+            "rates.loop_hz must be a finite number, got 1000",
+        ),
+        ({"buttons": {"hold_s": -(10**400)}}, "buttons.hold_s must be a finite number"),
+        ({"state": {"max_age_s": HUGE}}, f"must be a finite number, got {TOO_LARGE}"),
+        ({"teleop": {"attempts": -HUGE}}, f"number of 1 or more, got {TOO_LARGE}"),
+        ({"ik": {"apai_arm": HUGE}}, f"ik.apai_arm must be text, got {TOO_LARGE}"),
+        ({"log_level": HUGE}, f"warning, error, got {TOO_LARGE}"),
+        ({"ik": HUGE}, f"ik must be a mapping, got {TOO_LARGE}"),
+        ({"retarget": {"controller_to_base": [HUGE]}}, f"numbers, got {TOO_LARGE}"),
+        ({"buttons": {"hold_s": [HUGE]}}, f"must be a number, got {TOO_LARGE}"),
+        ({HUGE: 1}, f"unknown setting(s): {TOO_LARGE}"),
     ],
 )
 def test_a_setting_the_file_does_not_know_or_cannot_use_is_refused(data, said):
     with pytest.raises(HumanConfigError, match=re.escape(said)):
         human_settings(data)
+
+
+def test_what_python_cannot_read_or_print_in_the_file_ends_with_exit_code_2(
+    tmp_path, capsys
+):
+    finite = "rates.loop_hz must be a finite number, got "
+    for value, said in (
+        # Too large for a float.
+        ("1" + "0" * 400, finite + "1000"),
+        # In hexadecimal, of more digits than Python prints.
+        ("0x" + "f" * 5000, finite + TOO_LARGE),
+        # In decimal, of more digits than Python reads.
+        ("1" + "0" * 5000, "cannot read "),
+        # Not a number, and not UTF-8 either.
+        (b"\xff\xfe", "cannot read "),
+    ):
+        file = tmp_path / f"human_{len(value)}.yaml"
+        if isinstance(value, bytes):
+            file.write_bytes(b"rates:\n  loop_hz: " + value + b"\n")
+        else:
+            file.write_text(f"rates:\n  loop_hz: {value}\n", encoding="utf-8")
+        with pytest.raises(HumanConfigError):
+            load_human_settings(file)
+        # Through the program: exit code 2 and one line, cut to a line's length.
+        assert human_main.main(["--config", str(file)], attach=never) == 2
+        error = capsys.readouterr().err
+        assert error.startswith("human program: the settings cannot be used: ")
+        assert said in error and error.count("\n") == 1 and len(error) < 500, error
 
 
 def test_a_file_names_only_what_differs_from_the_first_values(tmp_path):
@@ -1039,6 +1241,74 @@ def test_the_words_of_the_report_line():
         "ready", [], [], robot_state(refusal="no fresh\tcontroller data"), None, [], {}
     )
     assert refused.endswith("; refused by the Thor: no fresh controller data")
+    # Without the robot app's jaw facts the line says nothing of the jaws.
+    assert "jaws" not in line + nothing + refused
+
+
+def jaw_facts(**facts: Any) -> dict[str, Any]:
+    """health["human"]["jaws"] as the robot app gives it while a takeover is open."""
+    return {
+        "matched": False,
+        "grip_level": None,
+        "opened": False,
+        "asked": None,
+        "refusal": "",
+        **facts,
+    }
+
+
+@pytest.mark.parametrize(
+    "facts, said, why",
+    [
+        (
+            jaw_facts(grip_level=0.0, asked=1.0, refusal=NOT_MATCHED),
+            "; jaws follow the trigger no, grip level 0.00, trigger asks 1.00"
+            ": the trigger has not reached the grip level",
+            ": the trigger has not reached the grip level",
+        ),
+        (
+            jaw_facts(matched=True, grip_level=0.3, asked=0.456, opened=True),
+            "; jaws follow the trigger yes, grip level 0.30, trigger asks 0.46",
+            None,
+        ),
+        (
+            jaw_facts(refusal="the grip level is not known:\tno reading"),
+            "; jaws follow the trigger no, grip level -, trigger asks -"
+            ": the grip level is not known: no reading",
+            ": the grip level is not known: no reading",
+        ),
+        # Values that are no numbers print as "-".
+        (
+            jaw_facts(grip_level=float("nan"), asked=True),
+            "; jaws follow the trigger no, grip level -, trigger asks -",
+            None,
+        ),
+        (
+            jaw_facts(grip_level="0.5", asked=16**400),
+            "; jaws follow the trigger no, grip level -, trigger asks -",
+            None,
+        ),
+    ],
+    ids=["not reached", "following", "no grip level", "no numbers", "no floats"],
+)
+def test_the_report_line_says_whether_the_jaws_follow_the_trigger(facts, said, why):
+    def line(**human: Any) -> str:
+        return report_line("ready", [], [], robot_state(**human), None, [], {})
+
+    plain = line()
+    with_jaws = line(jaws=facts)
+    # The jaw part comes behind the line of today and ahead of the refusal.
+    assert with_jaws == plain + said
+    found = REPORT.fullmatch(with_jaws)
+    assert found is not None and (found["why"], found["refused"]) == (why, None)
+    assert found["following"] == ("yes" if facts["matched"] else "no")
+    refused = line(jaws=facts, refusal="no fresh controller data")
+    assert refused == plain + said + "; refused by the Thor: no fresh controller data"
+    found = REPORT.fullmatch(refused)
+    assert found is not None and found["why"] == why
+    assert found["refused"] == "; refused by the Thor: no fresh controller data"
+    # Jaw facts that are no mapping say nothing.
+    assert line(jaws="matched") == plain and line(jaws=None) == plain
 
 
 @pytest.mark.parametrize("driver", ["real", ""])
@@ -1418,6 +1688,36 @@ def test_a_pass_that_fails_in_the_logic_does_not_end_the_program(
     assert 1 <= len(failed) <= 3 and failed[0].exc_info[0] is ValueError
 
 
+def test_right_b_is_a_stop_on_a_pass_whose_request_cannot_be_built(
+    bench, folder, start, monkeypatch, caplog
+):
+    def broken(self: HumanLogic, p: Any) -> None:
+        raise RuntimeError("no request")
+
+    # Every pass fails right behind its buttons, where the logic builds the
+    # OWNER_REQUEST of a held button.
+    monkeypatch.setattr(HumanLogic, "_request", broken)
+    # The agent owns the arm: right B is the wearer's STOP of the agent's move.
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    name = logic_module._log.name
+    with caplog.at_level("ERROR", logger=name):
+        program = start(
+            write_config(folder, bench.path), feed=script([BASE, {"t": 0.3, "b": True}])
+        )
+        until(lambda: seen.of(Stop), "the STOP of right B")
+        program.wait_said("human program: B down")
+        time.sleep(0.2)  # ten more passes with B down
+        assert program.running and program.end() == 0
+    # One STOP for the stretch, and no other link message of a pass that failed.
+    assert seen.of(Stop) == [RIGHT_B] and seen.of(HumanSetpoint) == []
+    told = [record for record in caplog.records if record.name == name]
+    assert [record.getMessage() for record in told] == [
+        "the pass failed after its buttons were read"
+    ]
+    assert told[0].exc_info[0] is RuntimeError
+
+
 def test_the_link_messages_of_a_pass_go_out_in_the_logics_order(
     bench, folder, start, monkeypatch
 ):
@@ -1528,6 +1828,387 @@ def test_a_line_that_cannot_be_said_does_not_end_the_program(
     # Logged once for the stretch, not once per line.
     warned = [r for r in caplog.records if "cannot be written" in r.getMessage()]
     assert len(warned) == 1 and "the terminal is gone" in warned[0].getMessage()
+
+
+class PausedLog(logging.Handler):
+    """A log handler a test can pause, on the loggers of the program's passes.
+
+    It stands in for Isaac Capture's console handler on a terminal that is
+    paused, or on a standard error nobody reads: that handler writes on the
+    thread that logs, so the log call waits there.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.pause = threading.Event()  # set by a test: no line is taken
+        self.resume = threading.Event()  # set by a test: lines are taken again
+        self.waiting = threading.Event()  # a log call waits
+        self.held: list[str] = []  # the lines whose log call waited
+        self.written: list[str] = []  # the lines that were written, in order
+
+    def emit(self, record: logging.LogRecord) -> None:
+        line = record.getMessage()
+        if self.pause.is_set() and not self.resume.is_set():
+            self.held.append(line)
+            self.waiting.set()
+            self.resume.wait(3 * WAIT_S)
+        self.written.append(line)
+
+
+@pytest.fixture
+def paused_log() -> Iterator[PausedLog]:
+    """A PausedLog on the three loggers a pass of the program logs with."""
+    handler = PausedLog()
+    loggers = [human_main._log, logic_module._log, feed_module._log]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    try:
+        yield handler
+    finally:
+        handler.resume.set()
+        for logger, level in zip(loggers, levels):
+            logger.removeHandler(handler)
+            logger.setLevel(level)
+
+
+def test_right_b_is_a_stop_ahead_of_the_log_line_of_its_pass(
+    bench, folder, start, paused_log
+):
+    line = "right B is down: STOP sent"
+    # The agent owns the arm: right B is the wearer's STOP of the agent's move.
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    program = start(
+        write_config(folder, bench.path), feed=script([BASE, {"t": 0.6, "b": True}])
+    )
+    program.wait_said("right controller seen")
+    paused_log.pause.set()  # from here on the terminal takes no log line
+    try:
+        # The pass that reads right B has a line to log, and its call waits ...
+        assert paused_log.waiting.wait(WAIT_S)
+        # ... behind the STOP of that pass, which is on its way to the Thor.
+        until(lambda: seen.of(Stop), "the STOP of right B")
+        assert seen.of(Stop) == [RIGHT_B]
+        assert paused_log.held == [line] and line not in paused_log.written
+    finally:
+        paused_log.resume.set()
+    # The line is written once the terminal takes lines again.
+    until(lambda: line in paused_log.written, "the log line")
+    assert program.end() == 0
+    # One line per STOP. Right B held through a wait of more than 1 s would
+    # be a second STOP: a new stretch.
+    stops = seen.of(Stop)
+    assert set(stops) == {RIGHT_B} and paused_log.written.count(line) == len(stops)
+
+
+class HeldB:
+    """main()'s feed keyword: a script feed whose passes a test can hold up.
+
+    Right B goes down once a ROBOT_STATE shows nobody as the owner.
+    """
+
+    def __init__(self) -> None:
+        self.hold = threading.Event()  # set by a test: the next pass waits
+        self.holding = threading.Event()  # a pass waits
+        self.go = threading.Event()  # set by a test: that pass goes on
+        self.newest: Callable[[], RobotState | None] = lambda: None
+
+    def __call__(self, graph: Any, newest_state: Any) -> ScriptFeed:
+        held = self
+
+        class Held(ScriptFeed):
+            def step(
+                self, external_inputs: Any, events: Any, now_mono: float
+            ) -> FeedStep:
+                if held.hold.is_set():
+                    held.holding.set()
+                    held.go.wait(WAIT_S)
+                return super().step(external_inputs, events, now_mono)
+
+        self.newest = newest_state
+        rows = [BASE, {"wait_for": "owner_nobody"}, {"t": 0.0, "b": True}]
+        return Held(graph, rows, state=newest_state)
+
+    def between_two_passes(self, bench: Bench, thor: FakeThor, new: Message) -> None:
+        """The robot app comes back with this WELCOME, of the session s2.
+
+        Right B goes down with it: the next pass, which waits for go, reads
+        both.
+        """
+        self.hold.set()
+        assert self.holding.wait(WAIT_S)
+        thor.send(new)
+        shown = show(bench, thor, owner="nobody", session_id="s2")
+        until(lambda: self.newest() == shown, "the new session's ROBOT_STATE")
+
+
+SESSION_LINE = "the robot app has a new session: s2"  # a log line of the program
+
+
+def test_right_b_is_a_stop_ahead_of_the_log_line_of_a_new_session(
+    bench, folder, start, paused_log
+):
+    feed = HeldB()
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    program = start(write_config(folder, bench.path), feed=feed)
+    program.wait_said("right controller seen")
+    feed.between_two_passes(bench, thor, welcome("s2"))
+    paused_log.pause.set()
+    feed.go.set()
+    try:
+        assert paused_log.waiting.wait(WAIT_S)
+        until(lambda: seen.of(Stop), "the STOP of right B")
+        assert seen.of(Stop) == [RIGHT_B]
+        assert paused_log.held == [SESSION_LINE]
+    finally:
+        paused_log.resume.set()
+    until(lambda: "right B is down: STOP sent" in paused_log.written, "the lines")
+    assert program.end() == 0
+    lines = [text for text in paused_log.written if "right B" in text or "s2" in text]
+    assert lines[:2] == [SESSION_LINE, "right B is down: STOP sent"]
+
+
+@pytest.fixture
+def paused_error(paused_log, monkeypatch) -> list[str]:
+    """What the program wrote to standard error, which waits while the log does.
+
+    The lines are kept without the program's name in front.
+    """
+    written: list[str] = []
+
+    def complain(text: str) -> None:
+        if paused_log.pause.is_set():
+            paused_log.resume.wait(3 * WAIT_S)  # a standard error that takes nothing
+        written.append(text)
+
+    monkeypatch.setattr(human_main, "_complain", complain)
+    return written
+
+
+@pytest.mark.parametrize("why", ["a real arm", "another arm model"])
+def test_right_b_is_a_stop_on_the_pass_that_ends_the_program_for_a_new_session(
+    why, bench, folder, start, paused_log, paused_error
+):
+    feed = HeldB()
+    # The agent owns the arm: right B is the wearer's STOP of the agent's move.
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    program = start(write_config(folder, bench.path), feed=feed)
+    program.wait_said("right controller seen")
+    # The new session is one this program must not drive: its last pass.
+    if why == "a real arm":
+        new = dataclasses.replace(welcome("s2"), driver="real")
+        said = "a synthetic controller may drive only a simulated arm; "
+    else:
+        names = [f"j{index}" for index in range(1, 6)]
+        new = dataclasses.replace(welcome("s2"), joint_names=names)
+        said = "the arm model 'mock' has 6 joints and the robot app's WELCOME names 5"
+    feed.between_two_passes(bench, thor, new)
+    paused_log.pause.set()  # neither the log nor standard error takes a line
+    feed.go.set()
+    try:
+        # Right B, read on that pass, is a STOP ahead of every line of the end.
+        until(lambda: seen.of(Stop), "the STOP of right B")
+        assert paused_log.waiting.wait(WAIT_S)
+        assert paused_log.held == [SESSION_LINE] and paused_error == []
+        assert program.running
+    finally:
+        paused_log.resume.set()
+    until(lambda: not program.running, "the program's end")
+    assert program.code == 1
+    assert len(paused_error) == 1 and paused_error[0].startswith(said)
+    lines = [text for text in paused_log.written if "right B" in text or "s2" in text]
+    assert lines == [SESSION_LINE, "right B is down: STOP sent"]
+    # The agent owned the arm: no STOP of the program's own. Nothing else went
+    # out for the session it must not drive.
+    time.sleep(0.2)
+    assert seen.of(Stop) == [RIGHT_B]
+    others = [message for message in seen.messages if message != RIGHT_B]
+    assert all(message.session_id == "s1" for message in others)
+
+
+@pytest.mark.parametrize(
+    "why, said",
+    [
+        ("it failed", "failed: ValueError('the feed broke')"),
+        ("no Teleop Session Server", "no remote session at x: 3 attempts failed"),
+        (
+            "the robot app's new session cannot be driven",
+            "a synthetic controller may drive only a simulated arm; "
+            "the robot app declares driver real",
+        ),
+    ],
+    ids=["an error", "the attempts ran out", "a new session"],
+)
+def test_the_programs_own_stop_goes_out_ahead_of_the_lines_of_its_end(
+    why, said, bench, folder, start, paused_log, paused_error
+):
+    errors: list[BaseException] = []
+
+    class Failing(ScriptFeed):
+        def step(self, external_inputs: Any, events: Any, now_mono: float) -> FeedStep:
+            if errors:
+                raise errors[0]
+            return super().step(external_inputs, events, now_mono)
+
+    thor = robot(bench, owner="human")
+    seen = Forwarded(thor)
+    program = start(
+        write_config(folder, bench.path),
+        feed=lambda graph, state: Failing(graph, [BASE], state=state),
+    )
+    program.wait_said("right controller seen")
+    paused_log.pause.set()  # neither the log nor standard error takes a line
+    if why == "it failed":
+        errors.append(ValueError("the feed broke"))
+    elif why == "no Teleop Session Server":
+        errors.append(feed_module.AttemptsRanOut(said))
+    else:
+        thor.send(dataclasses.replace(welcome("s2"), driver="real"))
+    reason = f"the human program ends ({why})"
+    try:
+        # The person owns the arm: the end is a STOP, a hold, and it is on its
+        # way to the Thor while the first line that tells of it waits.
+        until(lambda: seen.of(Stop), "the program's STOP")
+        assert seen.of(Stop) == [Stop(reason=reason, sender="human_program")]
+        assert paused_log.waiting.wait(WAIT_S)
+        assert paused_log.held == [f"STOP sent: the person owned the arm; {reason}"]
+        assert paused_error == [] and program.running
+    finally:
+        paused_log.resume.set()
+    until(lambda: not program.running, "the program's end")
+    assert program.code == 1 and paused_error == [said]
+    time.sleep(0.2)
+    assert len(seen.of(Stop)) == 1
+
+
+def test_the_stop_after_the_last_teleop_attempt_waits_for_no_log_line_of_the_feed(
+    bench, folder, start, paused_log, paused_error
+):
+    go = threading.Event()  # set by the test: the second attempt goes on
+    errors = [
+        TimeoutError(
+            f"Teleop Session Server at {NO_SERVER} was not ready after 3 s: "
+            "server did not answer"
+        ),
+        RuntimeError("The Teleop Session Server is busy"),
+    ]
+    entered: list[None] = []
+
+    class NoSession:
+        """In place of a TeleopSession: one that cannot be entered."""
+
+        def __init__(self, config: Any) -> None:
+            self.config = config
+
+        def __enter__(self) -> Any:
+            entered.append(None)
+            if len(entered) == 2:
+                go.wait(WAIT_S)
+            raise errors[len(entered) - 1]
+
+    # The teleop feed itself, with two attempts; nothing is dialed.
+    settings = TeleopSettings(endpoint=NO_SERVER, retry_s=0.5, attempts=2)
+    thor = robot(bench, owner="human")
+    seen = Forwarded(thor)
+    program = start(
+        write_config(folder, bench.path),
+        feed=lambda graph, state: feed_module.TeleopFeed(
+            graph, settings, session_factory=NoSession
+        ),
+    )
+    first = (
+        f"attempt 1 of 2 to enter a remote session at {NO_SERVER} failed "
+        f"(no_server): {errors[0]}"
+    )
+    until(lambda: first in paused_log.written, "the log line of the first attempt")
+    # The program has the ROBOT_STATE that shows the person as the owner.
+    until(lambda: seen.of(HumanSetpoint), "a HUMAN_SETPOINT")
+    paused_log.pause.set()  # neither the log nor standard error takes a line
+    go.set()
+    reason = "the human program ends (no Teleop Session Server)"
+    try:
+        # The last attempt failed: the program's STOP is on its way to the
+        # Thor, and the first line that waits is the one behind it.
+        until(lambda: seen.of(Stop), "the program's STOP")
+        assert seen.of(Stop) == [Stop(reason=reason, sender="human_program")]
+        assert paused_log.waiting.wait(WAIT_S)
+        assert paused_log.held == [f"STOP sent: the person owned the arm; {reason}"]
+        assert paused_error == [] and program.running
+    finally:
+        paused_log.resume.set()
+    until(lambda: not program.running, "the program's end")
+    assert program.code == 1 and len(entered) == 2
+    # The line of the end names the last attempt's error; the log has a line
+    # of the attempt before it only.
+    assert paused_error == [
+        f"no remote session at {NO_SERVER}: 2 attempts in a row failed, 0.5 s "
+        f"apart; the last one: {errors[1]}"
+    ]
+    attempts = [text for text in paused_log.written if text.startswith("attempt ")]
+    assert attempts == [first]
+
+
+def test_a_log_line_that_blocks_on_an_earlier_pass_still_holds_up_right_b_afterwards(
+    bench, folder, start, monkeypatch, paused_log
+):
+    # A known limit. A log call writes on the thread that logs, so one that
+    # blocks after a pass has sent its link messages holds up every pass
+    # behind it: right B is read, and is a STOP, only once the call returns.
+    from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
+
+    sent: list[Message] = []  # what the program's client was given, in order
+    real = WorkstationClient.send
+
+    def send(self: Any, message: Message) -> None:
+        sent.append(message)
+        real(self, message)
+
+    monkeypatch.setattr(WorkstationClient, "send", send)
+    newest: list[Callable[[], RobotState | None]] = []
+
+    def feed(graph: Any, newest_state: Any) -> ScriptFeed:
+        newest.append(newest_state)
+        # Right A is held from 0.2 s on; right B goes down once a ROBOT_STATE
+        # shows the arm at rest.
+        rows = [BASE, {"t": 0.2, "a": True}, {"wait_for": "rest_hold"}]
+        return ScriptFeed(graph, [*rows, {"t": 0.2, "b": True}], state=newest_state)
+
+    # The person owns the arm, on a ROBOT_STATE that counts as young throughout.
+    thor = robot(bench, owner="human")
+    seen = Forwarded(thor)
+    config = write_config(folder, bench.path, state={"max_age_s": 60.0})
+    program = start(config, feed=feed)
+    program.wait_said("human program: A down")
+    paused_log.pause.set()  # from here on the terminal takes no log line
+    try:
+        # A's hold of 1 s asks for the hand-back; that pass's line waits.
+        assert paused_log.waiting.wait(WAIT_S)
+        assert paused_log.held == ["right A held 1.0 s: asking for the handback"]
+        # Its link messages went out first, and a HUMAN_SETPOINT on every pass
+        # before it.
+        count = len(sent)
+        assert isinstance(sent[-2], OwnerRequest) and sent[-2].request == "handback"
+        assert isinstance(sent[-1], HumanSetpoint) and count > 20
+
+        # The passes stand. Meanwhile the ROBOT_STATE at rest arrives, on which
+        # the script holds right B down: B is down when a pass runs again.
+        shown = show(bench, thor, owner="human", motion="rest_hold")
+        until(lambda: newest[0]() == shown, "the ROBOT_STATE at rest")
+        time.sleep(0.5)  # 25 passes
+        assert len(sent) == count and of(sent, Stop) == [] and seen.of(Stop) == []
+        assert "human program: B down" not in program.said
+    finally:
+        paused_log.resume.set()
+    # The passes run again: the STOP of right B goes out with the first one.
+    until(lambda: seen.of(Stop), "the STOP of right B")
+    assert sent[count] == RIGHT_B and seen.of(Stop) == [RIGHT_B]
+    until(lambda: len(of(sent[count:], HumanSetpoint)) > 10, "more passes")
+    program.wait_said("human program: B down")
+    assert program.end() == 0
 
 
 def test_the_writer_says_the_lines_in_order_and_keeps_only_so_many(monkeypatch):
@@ -1762,6 +2443,13 @@ def test_the_program_takes_the_simulated_arm_over_and_drives_it(
         assert all(found["ik"] != "-/-" for found in driving)
         assert any(found["trip"] != "-" for found in driving)
         assert all(found["refused"] is None for found in driving)
+        # The trigger is released and the jaws are open: they follow it from
+        # the takeover on, and that asks no jaw command of the arm.
+        open_jaws = ("yes", "1.00", "1.00", None)
+        for found in driving:
+            said = (found["following"], found["level"], found["asks"], found["why"])
+            assert said == open_jaws, found.group(0)
+        assert h.arm.jaw_commands == []
         assert h.arm.torque_on() and h.arm.released_at == []
 
         # The program ends while the person owns the arm: one more STOP, a hold.

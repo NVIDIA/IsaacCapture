@@ -325,9 +325,49 @@ def test_the_script_lift_releases_b_and_a():
         assert step.present and not (step.a or step.b)
         assert (step.squeeze, step.trigger) == (0.0, 0.0)
     assert (idle.feed.name, idle.fed.stage) == ("idle", "ready")
-    assert set(SCRIPTS) == {"lift", "idle"}
-    with pytest.raises(ValueError, match=r"no synthetic controller 'wave'.*idle, lift"):
+    assert set(SCRIPTS) == {"lift", "idle", "grasp"}
+    known = r"no synthetic controller 'wave'.*grasp, idle, lift"
+    with pytest.raises(ValueError, match=known):
         ScriptFeed.named(idle.graph, "wave")
+
+
+def test_the_script_grasp_pulls_and_releases_the_trigger_and_never_squeezes():
+    bench = Bench("grasp")
+    assert bench.feed.name == "grasp"
+    hands, squeezes = [bench.step.hand], {bench.step.squeeze}
+
+    def go(seconds: float) -> GraphStep:
+        """Run on; the hand and the squeeze of the last pass are kept."""
+        step = bench.go(seconds)
+        hands.append(step.hand)
+        squeezes.add(step.squeeze)
+        return step
+
+    # Right B is held until a person owns the arm.
+    assert not go(2.96).b and go(0.08).b  # script time 3.04
+    assert go(4.0).b
+    bench.state = robot_state(owner="human")
+    assert go(0.48).b and not go(0.04).b  # 3.52
+
+    # The trigger: pulled all the way from script time 5.0 to 9.0, then released.
+    assert go(1.46).trigger == 0.0  # 4.98
+    assert go(0.04).trigger == 1.0  # 5.02
+    assert go(3.96).trigger == 1.0  # 8.98
+    assert go(0.04).trigger == 0.0  # 9.02
+
+    # The script's clock stands at 9.0 until the arm holds at rest; right A
+    # goes down 6 s later and up once the arm was given back.
+    assert not go(8.0).a
+    bench.state = robot_state(owner="human", motion="rest_hold")
+    assert not go(5.96).a and go(0.08).a  # 15.04
+    assert go(4.0).a
+    bench.state = robot_state(owner="nobody", motion="rest_hold")
+    assert go(0.48).a and not go(0.04).a
+    end = go(5.0)
+    assert end.present and not (end.a or end.b) and end.trigger == 0.0
+    # The arm is not asked to move: no squeeze, and the hand stays where it is.
+    assert squeezes == {0.0}
+    np.testing.assert_allclose(hands, [HAND] * len(hands), atol=TOL)
 
 
 @pytest.mark.parametrize(
@@ -590,6 +630,48 @@ def test_the_attempts_run_out_only_in_a_row():
     slow.step()
     assert slow.step(1.9).outputs is None and slow.attempts == 1
     assert slow.step(0.2).outputs is None and slow.attempts == 2
+
+
+def test_the_last_failed_attempt_raises_without_a_log_line_of_its_own(caplog):
+    name = feed_module._log.name
+    caplog.set_level("INFO", logger=name)
+
+    def attempts_logged() -> list[tuple[str, str]]:
+        """The feed's log lines so far that tell of an attempt."""
+        records = [record for record in caplog.records if record.name == name]
+        lines = [(record.levelname, record.getMessage()) for record in records]
+        return [line for line in lines if line[1].startswith("attempt ")]
+
+    def line(number: int, stage: str, error: BaseException) -> tuple[str, str]:
+        return (
+            "INFO",
+            f"attempt {number} of 3 to enter a remote session at {ENDPOINT} "
+            f"failed ({stage}): {error}",
+        )
+
+    bench = TeleopBench(attempts=3, retry_s=2.0)
+    absent = not_ready(_remote.SERVER_DID_NOT_ANSWER)
+    asleep = not_ready(_remote.describe_stage({"stage": "waiting_for_headset"}))
+    busy = RuntimeError("The Teleop Session Server is busy")
+    bench.server.entry_errors = [absent, asleep, busy]
+    # An attempt before the last one is logged, with its stage and its error.
+    assert bench.step().stage == "no_server"
+    assert attempts_logged() == [line(1, "no_server", absent)]
+    assert bench.step(2.1).stage == "waiting_for_headset"
+    logged = [line(1, "no_server", absent), line(2, "waiting_for_headset", asleep)]
+    assert attempts_logged() == logged
+
+    # The last one is not: a log call can block, and the human program sends
+    # its STOP before the line of its end. That line is the error's text,
+    # which names the last attempt's own error.
+    with pytest.raises(AttemptsRanOut) as raised:
+        bench.step(2.1)
+    assert bench.attempts == 3 and attempts_logged() == logged
+    assert str(raised.value) == (
+        f"no remote session at {ENDPOINT}: 3 attempts in a row failed, 2 s apart; "
+        f"the last one: {busy}"
+    )
+    assert raised.value.__cause__ is busy
 
 
 def test_an_endpoint_isaac_capture_cannot_use_is_refused_and_no_failed_attempt():

@@ -2,23 +2,31 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # The human program's settings for the rig, the reBot arm. The human program is
-# the workstation program through which a person drives the arm with the
-# headset's right controller: it turns the controller's motion into joint targets
-# and sends them to the Thor, the machine on the robot. A takeover makes the
-# person the control owner, the one who may move the arm; the hand-back ends it
-# with the arm at rest. Every number is a first value; none was measured on the
-# arm or with a headset. Times are in s, lengths in m, angles in rad unless a
-# key says deg.
+# the program through which a person drives the arm with the headset's right
+# controller: it turns the controller's motion into joint targets for the robot
+# app, the program that talks to the motors. On the rig it runs on the Thor, the
+# machine on the robot, beside the robot app, so that the STOP of right B, the
+# person's stop button, passes neither the robot connection, the link between
+# the two machines that the agent's commands use, nor the robot link service,
+# the workstation program that holds that link's end. The button itself still
+# arrives over the teleop connection from the workstation (teleop, below).
+# A takeover makes the person the control owner, the one who may move the arm;
+# the hand-back ends it with the arm at rest. Every number is a first value;
+# none was measured on the arm or with a headset. Times are in s, lengths in m,
+# angles in rad unless a key says deg.
 #
-# It differs from configs/human.yaml in four keys: teleop.attempts,
-# retarget.max_linear_velocity, retarget.max_angular_velocity and ik.apai_arm.
+# It differs from configs/human.yaml in six keys: socket_path, teleop.endpoint,
+# teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity
+# and ik.apai_arm.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names; a number without a named bound must be above 0.
 
-# The robot link service's local socket, as socket_path of its file names it.
-# Empty: the service's default path.
-socket_path: ""
+# The Unix socket the program attaches to: on the Thor the robot app's own,
+# which it serves when started with --human-socket and this same path. A path
+# that begins with ~ is taken from the home folder. The socket's folder must be
+# the user's own, with mode 0700; the robot app makes it when it is not there.
+socket_path: "~/.agentic_remote/human.sock"
 
 # debug, info, warning or error.
 log_level: info
@@ -29,7 +37,12 @@ log_level: info
 # is one pass of its loop, and the tick age is now minus the tick time of the
 # newest SAMPLES.
 teleop:
-  endpoint: "127.0.0.1:47600"
+  # The server runs on the workstation and this program on the Thor: the remote
+  # session, Isaac Capture's connection from this program to the server, crosses
+  # between the two machines. 192.0.2.1 is a placeholder: write the
+  # workstation's address on the wired link in before the first run. The server
+  # must listen on that address (its --listen; its default is every address).
+  endpoint: "192.0.2.1:47600"
   tick_rate_hz: 90.0  # the tick rate asked of the server
   # SAMPLES with a tick age above this are stale: the arm does not follow them.
   max_tick_age_s: 0.15
@@ -98,7 +111,9 @@ rates:
   # Passes of the program's loop per second; the arm is sent a joint target on
   # each one while it follows the hand. The rate limiter gives one pass at most
   # 20 ms of motion (human/retarget.py, LIMITER_PASS_S): below 50 the hand speed
-  # limits shrink in proportion.
+  # limits shrink in proportion. A pass that comes sooner than 10 ms after the
+  # one before counts as 10 ms; above 100 both hand speed limits would grow in
+  # proportion, so values above 100 are refused.
   loop_hz: 50.0
   # HUMAN_SETPOINT link messages per second while nothing is to be moved: they
   # carry the program's stage for the operator console.

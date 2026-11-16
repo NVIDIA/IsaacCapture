@@ -92,7 +92,9 @@ rates:
   # Passes of the program's loop per second; the arm is sent a joint target on
   # each one while it follows the hand. The rate limiter gives one pass at most
   # 20 ms of motion (human/retarget.py, LIMITER_PASS_S): below 50 the hand speed
-  # limits shrink in proportion.
+  # limits shrink in proportion. A pass that comes sooner than 10 ms after the
+  # one before counts as 10 ms; above 100 both hand speed limits would grow in
+  # proportion, so values above 100 are refused.
   loop_hz: 50.0
   # HUMAN_SETPOINT link messages per second while nothing is to be moved: they
   # carry the program's stage for the operator console.

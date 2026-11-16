@@ -24,7 +24,19 @@ buttons. The stretch ends when B is seen up on such a pass, and when two such
 passes are more than 1 s apart: B may have been released unseen, so B that is
 down then is a STOP again. A takeover and a hand-back need more, a press that
 counts: the button was seen up on a fresh pass since the last pass that was
-not fresh, and it is held on fresh passes.
+not fresh, and it is held on fresh passes. Two passes with known buttons more
+than 1 s apart end such a press as well: the button is to be seen up before
+a new one counts.
+
+Jaws. The jaws are the gripper's fingers. A jaw opening is a share of the jaw
+travel: 1.0 fully open, 0.0 closed. The trigger asks for one on every fresh
+pass while the person owns the arm, the grip squeezed or not. The grip level
+is the jaw opening in force at the takeover; the robot app lets the jaws
+follow the trigger once the opening it asks for has reached the grip level.
+
+Log lines. step() logs nothing: a log call can block, and right B's STOP must
+not wait for one. The lines are kept until the program, which has sent the
+pass's link messages by then, calls log_pass().
 """
 
 from __future__ import annotations
@@ -33,6 +45,7 @@ import itertools
 import logging
 import math
 import uuid
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from numbers import Real
@@ -81,6 +94,20 @@ NOTE_AT_REST_JAWS = (
     "at rest: jaws not proven empty: at the console type stop, open, yes; "
     "then hold right A for 1 s"
 )
+# While a takeover is open and recovery, the return to rest, is the control
+# owner: right B's STOP ends that return in a hold.
+NOTE_RETURNING = "the arm returns to rest; right B is a STOP"
+# While the arm follows the hand and the ROBOT_STATE says that the trigger has
+# not reached the grip level: which way the trigger is to go. Pull: the jaws
+# are closed further than it asks. Ease: it asks for more closing than that.
+NOTE_TRIGGER_PULL = "pull the trigger to the grip level to move the jaws"
+NOTE_TRIGGER_EASE = "ease the trigger back to the grip level to move the jaws"
+# The trigger's two dead zones. At or below the first value it asks for fully
+# open jaws: a trigger at rest need not read 0, and the robot app proves the
+# jaws empty only when they are fully open. At or above the second it asks for
+# closed jaws. Between them the jaw opening is 1.0 minus the trigger's value.
+TRIGGER_OPEN_MAX = 0.05
+TRIGGER_CLOSED_MIN = 0.95
 # A note goes out as printable ASCII of at most this many characters, which
 # keeps every HUMAN_SETPOINT under 512 bytes. A longer one loses its middle:
 # a refusal ends with what to do about it. The reason behind
@@ -113,14 +140,21 @@ COUNT_KEYS = (
     "takeover_asked",
     "handback_asked",
 )
+# Log lines kept for log_pass(); of more, the oldest are dropped.
+LOG_LINES_KEPT = 64
+# One of them: its level, its text, the text's values, the error it tells of.
+_Line = tuple[int, str, tuple[Any, ...], BaseException | None]
 
 # HUMAN_SETPOINT.stage of fresh controller data with an active right controller.
 _STAGE_READY = "ready"
 # ROBOT_STATE words read here.
 _OWNER_HUMAN = "human"
+_OWNER_RECOVERY = "recovery"  # the owner while the arm returns to rest
 _STOP_LEVEL_NONE = "none"
 _MOTION_REST_HOLD = "rest_hold"
 _JAWS_LOADED = "loaded"  # ROBOT_STATE.gripper.load: the jaws may hold something
+# health["human"]["jaws"]["refusal"] while the trigger is ignored for this.
+_JAWS_NOT_MATCHED = "the trigger has not reached the grip level"
 # RESULT.status of a command that goes on, and of one that was done.
 _ACCEPTED = "accepted"
 _COMPLETED = "completed"
@@ -136,8 +170,9 @@ _EPS = 1e-9
 # How long the gates wait, once right B is up again, for a ROBOT_STATE that
 # shows its STOP. A STOP that got lost is never shown.
 _STOP_WAIT_S = 1.0
-# How far apart two passes with known buttons may be for a stretch of right B
-# to go on. Further apart, B may have been released unseen in between.
+# How far apart two passes with known buttons may be for a stretch of right B,
+# and for the hold of a button, to go on. Further apart, the button may have
+# been released unseen in between.
 _STRETCH_KEEP_S = 1.0
 
 
@@ -171,6 +206,8 @@ class _Button:
 
     A press counts only when the button was seen up on a fresh pass since the
     last pass that was not fresh; its hold ends on any pass that is not fresh.
+    After more than _STRETCH_KEEP_S without known buttons HumanLogic ends the
+    hold the same way, ahead of the next pass's own reading.
     Only a press that counts asks for a takeover or a hand-back. Right B's
     STOP needs none: HumanLogic sends it on known buttons.
     """
@@ -256,6 +293,7 @@ class HumanLogic:
         self._seq = 0
         self._idle_due = -math.inf
         self._counts = dict.fromkeys(COUNT_KEYS, 0)
+        self._lines: deque[_Line] = deque(maxlen=LOG_LINES_KEPT)  # since log_pass()
 
     @property
     def armed(self) -> bool:
@@ -275,6 +313,21 @@ class HumanLogic:
         """How often each of COUNT_KEYS happened so far."""
         return dict(self._counts)
 
+    def log_pass(self) -> None:
+        """Log the lines of the passes since the last call, in their order.
+
+        The program calls it once it has sent a pass's link messages.
+        """
+        while self._lines:
+            level, text, values, error = self._lines.popleft()
+            _log.log(level, text, *values, exc_info=error)
+
+    def _later(
+        self, level: int, text: str, *values: Any, error: BaseException | None = None
+    ) -> None:
+        """Keep one log line for log_pass(); error: the exception it tells of."""
+        self._lines.append((level, text, values, error))
+
     def step(
         self,
         now_mono: float,
@@ -289,8 +342,8 @@ class HumanLogic:
         At most one STOP, at most one OWNER_REQUEST, then a HUMAN_SETPOINT when
         one is due. state is the newest ROBOT_STATE, state_age_s the time since
         it arrived, results the RESULTs that arrived since the last pass. An
-        error of the solver or the graph is raised, unless a STOP or an
-        OWNER_REQUEST is due: those are returned and the error is logged.
+        error is raised, unless a STOP or an OWNER_REQUEST was due before it
+        came: those are returned and the error is a log line.
         """
         step = None if feed.outputs is None else self._graph.read(feed.outputs)
         self._last = step
@@ -301,14 +354,19 @@ class HumanLogic:
         self._forget(p)
         out = self._buttons(p)
         try:
+            # Behind right B's STOP: an error from here on does not lose it.
+            request = self._request(p)
+            if request is not None:
+                out.append(request)
             setpoint = self._after_buttons(p)
-        except Exception:
+        except Exception as error:
             # Nothing follows the hand after a pass that failed.
             self._armed = False
             self._engaged = False
             if not out:
                 raise
-            _log.exception("the pass failed after its buttons were read")
+            text = "the pass failed after its buttons were read"
+            self._later(logging.ERROR, text, error=error)
             return out
         if setpoint is not None:
             out.append(setpoint)
@@ -336,7 +394,7 @@ class HumanLogic:
                 self._end(*gate)
             elif p.released:
                 self._counts["released"] += 1
-                _log.info("engagement ended: the grip was released")
+                self._later(logging.INFO, "engagement ended: the grip was released")
             else:
                 self._end("clutch", "the clutch let go of the hand")
         self._engaged = q is not None
@@ -394,11 +452,11 @@ class HumanLogic:
             if which == _TAKEOVER:
                 self._every_pass = False
             if result.status == _COMPLETED:
-                _log.info("%s: %s", which, result.status)
+                self._later(logging.INFO, "%s: %s", which, result.status)
             else:
                 note = f"{which} {result.status}: {result.reason}"
                 self._refusal = (which, note, _shown(p.state))
-                _log.warning("%s", note)
+                self._later(logging.WARNING, "%s", note)
 
     def _forget(self, p: _Pass) -> None:
         """Drop what the newest ROBOT_STATE has overtaken."""
@@ -421,9 +479,16 @@ class HumanLogic:
                 self._refusal = None
 
     def _buttons(self, p: _Pass) -> list[Message]:
-        """Right B's STOP and the OWNER_REQUEST of a held button."""
+        """Take this pass's buttons; right B's STOP when one is due."""
         out: list[Message] = []
         step = p.step
+        known_at = self._known_at
+        apart = known_at is not None and p.now_mono - known_at > _STRETCH_KEEP_S + _EPS
+        if apart:
+            # Too long unseen: a press that was on may have ended meanwhile. It
+            # counts no more, and the button is to be seen up before one does.
+            self._b.take(False, False, False, p.now_mono)
+            self._a.take(False, False, False, p.now_mono)
         b_pressed = self._b.take(p.fresh, p.fresh and step.b, p.released, p.now_mono)
         a_pressed = self._a.take(p.fresh, p.fresh and step.a, p.released, p.now_mono)
         if a_pressed or b_pressed:
@@ -436,8 +501,8 @@ class HumanLogic:
         if p.known:
             self._a_down = bool(step.a)
             b_down = bool(step.b)
-            known_at, self._known_at = self._known_at, p.now_mono
-            if known_at is not None and p.now_mono - known_at > _STRETCH_KEEP_S + _EPS:
+            self._known_at = p.now_mono
+            if apart:
                 self._b_down = False  # too long unseen: a new stretch
             if b_down and not self._b_down:
                 # The first pass of a stretch; a press that counts is on one.
@@ -447,11 +512,8 @@ class HumanLogic:
                 )
                 self._b_stop_at = p.now_mono
                 out.append(Stop(reason=STOP_REASON, sender=STOP_SENDER))
-                _log.info("right B is down: STOP sent")
+                self._later(logging.INFO, "right B is down: STOP sent")
             self._b_down = b_down
-        request = self._request(p)
-        if request is not None:
-            out.append(request)
         if self._every_pass and self._b.pressed_at is None:
             # B was seen up, or the data were lost with no request on its way.
             if p.fresh or _TAKEOVER not in self._asked.values():
@@ -490,7 +552,7 @@ class HumanLogic:
         self._asked[command_id] = which
         self._counts[f"{which}_asked"] += 1
         reason = f"right {button} held {float(self._settings.hold_s)} s"
-        _log.info("%s: asking for the %s", reason, which)
+        self._later(logging.INFO, "%s: asking for the %s", reason, which)
         return OwnerRequest(
             command_id,
             state.session_id,
@@ -514,8 +576,11 @@ class HumanLogic:
         if self._stop_unseen(p, state):
             return "stop", "STOP by right B"
         if p.human.get("needs_release"):
-            why = p.human.get("ended") or "the robot app asks for a released grip"
-            return "needs_release", str(why)
+            # A squeeze refused as busy ran no drive: "ended" is an older end.
+            refusal = str(p.human.get("refusal") or "")
+            busy = refusal if refusal.startswith("busy: ") else ""
+            why = busy or p.human.get("ended")
+            return "needs_release", str(why or "the robot app asks for a released grip")
         if p.measured is None:
             return "no_reading", "a joint has no valid reading"
         return None
@@ -549,7 +614,7 @@ class HumanLogic:
             self._moved = True
             self._refusal = None
             self._counts["engagements"] += 1
-            _log.info("engagement started")
+            self._later(logging.INFO, "engagement started")
         seed = self._q_sent
         if seed is None:
             seed = self._home_q
@@ -597,7 +662,7 @@ class HumanLogic:
         self._q_sent = None
         self._failures = 0
         self._counts[key] += 1
-        _log.info("engagement ended: %s", why)
+        self._later(logging.INFO, "engagement ended: %s", why)
 
     def _setpoint(
         self,
@@ -633,22 +698,50 @@ class HumanLogic:
             engaged=q is not None,
             grip_released=p.released,
             q=None if q is None else list(q),
-            jaw_opening=None,
+            jaw_opening=self._jaw_opening(p),
             state_clock_mono_s=state.clock_mono_s,
             note=_cut(self._note(p, state, gate)),
         )
 
+    def _jaw_opening(self, p: _Pass) -> float | None:
+        """What the trigger asks of the jaws on this pass; None: they keep their state.
+
+        Only a fresh pass has a trigger to read. The robot app takes a jaw
+        opening from nobody but a person who owns the arm, so none is sent
+        unless the ROBOT_STATE shows one.
+        """
+        if not (p.fresh and p.owns):
+            return None
+        return jaw_opening(p.step.trigger)
+
+    def _jaw_note(self, p: _Pass) -> str:
+        """What to do with the trigger while the robot app ignores it; else ""."""
+        jaws = p.human.get("jaws")
+        if not isinstance(jaws, dict) or jaws.get("matched"):
+            return ""
+        if jaws.get("refusal") != _JAWS_NOT_MATCHED:
+            return ""
+        asked = _finite(jaws.get("asked"))
+        level = _finite(jaws.get("grip_level"))
+        if asked is not None and level is not None and asked < level:
+            return NOTE_TRIGGER_EASE
+        return NOTE_TRIGGER_PULL
+
     def _note(self, p: _Pass, state: RobotState, gate: tuple[str, str] | None) -> str:
         """What the operator does next, or why the arm does not follow."""
         if p.owns and self._engaged:
-            return ""
+            return self._jaw_note(p)  # behind every note about the arm
         if p.owns and self._ended:
             # The prefix stays whole: the reason alone is cut to what is left.
             room = NOTE_MAX_CHARS - len(NOTE_SQUEEZE_AGAIN)
             return NOTE_SQUEEZE_AGAIN + _cut(self._ended, room)
+        ready = p.feed.stage == _STAGE_READY
+        if ready and p.takeover_open and state.owner == _OWNER_RECOVERY:
+            # Only with a ready stage: else right B may not be read.
+            return NOTE_RETURNING
         if self._refusal is not None:
             return self._refusal[1]
-        if p.feed.stage != _STAGE_READY:
+        if not ready:
             return p.feed.note
         at_rest = state.motion == _MOTION_REST_HOLD
         if not p.owns:
@@ -704,6 +797,33 @@ def _sample_age(value: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) and number >= 0.0 else None
+
+
+def jaw_opening(trigger: Any) -> float | None:
+    """The jaw opening a trigger value asks for; None when it is no finite number.
+
+    1.0 minus the value, with the two dead zones: 1.0 at or below
+    TRIGGER_OPEN_MAX, 0.0 at or above TRIGGER_CLOSED_MIN.
+    """
+    value = _finite(trigger)
+    if value is None:
+        return None
+    if value <= TRIGGER_OPEN_MAX:
+        return 1.0
+    if value >= TRIGGER_CLOSED_MIN:
+        return 0.0
+    return 1.0 - value
+
+
+def _finite(value: Any) -> float | None:
+    """value as a finite float; None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:  # a whole number too large for a float
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _joints(values: Any, n_joints: int) -> tuple[float, ...] | None:

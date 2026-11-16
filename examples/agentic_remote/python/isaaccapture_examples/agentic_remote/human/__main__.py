@@ -3,14 +3,15 @@
 
 """python -m isaaccapture_examples.agentic_remote.human --config PATH.
 
-The human program: the workstation program through which a person drives the
-arm with the headset's right controller. It attaches to the robot link service
-in the role "human". On every pass of its loop it takes controller data from a
-controller feed, runs the retargeting graph and the inverse kinematics (IK) on
-them and sends link messages to the Thor, the machine on the robot: joint
-targets in HUMAN_SETPOINT, a STOP for right B, and the requests for the
-takeover (a person becomes the control owner, the one who may move the arm)
-and for the hand-back that ends it at rest.
+The human program: the program through which a person drives the arm with the
+headset's right controller. It attaches in the role "human" to the socket its
+file names: on the rig the robot app's own on the Thor, the machine on the
+robot; on one machine the robot link service's. On every pass of its loop it
+takes controller data from a controller feed, runs the retargeting graph and
+the inverse kinematics (IK) on them and sends link messages to the robot app,
+the program that talks to the motors: joint targets in HUMAN_SETPOINT, a STOP
+for right B, and the requests for the takeover (a person becomes the control
+owner, the one who may move the arm) and for the hand-back that ends it at rest.
 
 Isaac Capture and APAI are imported inside main(): the settings and the usage
 text work without them.
@@ -43,6 +44,7 @@ from ..protocol.messages import (
     HUMAN_SOURCE_SYNTHETIC,
     HUMAN_SOURCE_TELEOP,
     SIMULATED_DRIVERS,
+    HumanSetpoint,
     Message,
     Result,
     RobotState,
@@ -97,7 +99,9 @@ _WRITER_JOIN_S = 2.0  # longest wait, at the end, for the lines still to say
 _WELCOME_POLL_S = 0.05
 _ERROR_LOG_S = 1.0  # a pass that keeps failing is logged this often
 _OWNER_HUMAN = "human"
-_MAX_TEXT_CHARS = 200  # of a text from the Thor or a feed in a printed line
+# Of a text from the Thor or a feed, or of a value of the file, in one line.
+_MAX_TEXT_CHARS = 200
+_NEW_SESSION = "the robot app has a new session: %s"  # a log line
 
 Say = Callable[[str], None]
 
@@ -128,6 +132,10 @@ _ANY_NUMBER = ("stage_yaw_deg",)
 _AT_LEAST = {"retry_s": 2.0}
 _BELOW = {"squeeze_threshold": 1.0}  # and above 0
 _CONTROLLER_POSES = ("grip", "aim")
+# The most rates.loop_hz may be. The rate limiter counts a pass as at least
+# half of LIMITER_PASS_S of human/retarget.py, 10 ms: with more passes per
+# second the target would move faster than both hand speed limits allow.
+MAX_LOOP_HZ = 100.0
 
 
 def load_human_settings(path: str | os.PathLike[str]) -> HumanSettings:
@@ -139,7 +147,9 @@ def load_human_settings(path: str | os.PathLike[str]) -> HumanSettings:
     try:
         with open(path, encoding="utf-8") as stream:
             data = yaml.safe_load(stream)
-    except (OSError, yaml.YAMLError) as error:
+    # A ValueError: a file that is not UTF-8, or a whole number of more digits
+    # than Python reads.
+    except (OSError, ValueError, yaml.YAMLError) as error:
         raise HumanConfigError(f"cannot read {os.fspath(path)}: {error}") from error
     return human_settings(data)
 
@@ -164,7 +174,7 @@ def _block(where: str, value: object) -> dict[Any, Any]:
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise HumanConfigError(f"{where} must be a mapping, got {value!r}")
+        raise HumanConfigError(f"{where} must be a mapping, got {_got(value)}")
     return dict(value)
 
 
@@ -172,7 +182,7 @@ def _taken(
     where: str, block: Mapping[Any, Any], keys: Mapping[str, str]
 ) -> dict[str, Any]:
     """The checked values of one block, by the field each key fills."""
-    unknown = sorted(str(key) for key in block if key not in keys)
+    unknown = sorted(_got(key, str) for key in block if key not in keys)
     if unknown:
         raise HumanConfigError(
             "unknown setting(s): " + ", ".join(where + key for key in unknown)
@@ -194,7 +204,7 @@ def _checked(where: str, key: str, value: Any) -> Any:
             isinstance(row, (list, tuple)) and len(row) == 3 for row in rows
         ):
             raise HumanConfigError(
-                f"{where} must be 3 rows of 3 numbers, got {value!r}"
+                f"{where} must be 3 rows of 3 numbers, got {_got(value)}"
             )
         return tuple(
             tuple(_number(f"{where}[{i}][{j}]", item) for j, item in enumerate(row))
@@ -202,12 +212,12 @@ def _checked(where: str, key: str, value: Any) -> Any:
         )
     if key in _TEXT:
         if not isinstance(value, str) or not (value.strip() or key == "socket_path"):
-            raise HumanConfigError(f"{where} must be text, got {value!r}")
+            raise HumanConfigError(f"{where} must be text, got {_got(value)}")
         return value
     if key in _WHOLE:
         if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
             raise HumanConfigError(
-                f"{where} must be a whole number of 1 or more, got {value!r}"
+                f"{where} must be a whole number of 1 or more, got {_got(value)}"
             )
         return int(value)
     if key in _MAY_BE_NONE and value is None:
@@ -226,23 +236,46 @@ def _checked(where: str, key: str, value: Any) -> Any:
         raise HumanConfigError(
             f"{where} must be above 0 and below {_BELOW[key]:g}, got {value!r}"
         )
+    elif key == "loop_hz" and number > MAX_LOOP_HZ:
+        raise HumanConfigError(
+            f"{where} must be at most {MAX_LOOP_HZ:g}, got {value!r}: the rate "
+            f"limiter counts a pass as at least {1000.0 / MAX_LOOP_HZ:g} ms, so "
+            f"above {MAX_LOOP_HZ:g} both hand speed limits would rise above "
+            "their settings"
+        )
     return number
 
 
 def _one_of(where: str, value: Any, words: Sequence[str]) -> str:
     if value not in words:
         raise HumanConfigError(
-            f"{where} must be one of {', '.join(words)}, got {value!r}"
+            f"{where} must be one of {', '.join(words)}, got {_got(value)}"
         )
     return value
 
 
 def _number(where: str, value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
-        raise HumanConfigError(f"{where} must be a number, got {value!r}")
-    if not math.isfinite(value):
-        raise HumanConfigError(f"{where} must be a finite number, got {value!r}")
-    return float(value)
+        raise HumanConfigError(f"{where} must be a number, got {_got(value)}")
+    try:
+        number = float(value)
+    except OverflowError:  # a whole number too large for a float
+        number = math.inf
+    if not math.isfinite(number):
+        raise HumanConfigError(f"{where} must be a finite number, got {_got(value)}")
+    return number
+
+
+def _got(value: object, text: Callable[[object], str] = repr) -> str:
+    """A value or a key of the file for an error's text, cut to one line.
+
+    For one that was not checked to be a finite number: a whole number can
+    have more digits than Python prints.
+    """
+    try:
+        return _plain(text(value))
+    except ValueError:
+        return "a whole number too large to print"
 
 
 class _MachineClock:
@@ -440,6 +473,29 @@ def _human_facts(state: RobotState | None) -> dict[str, Any]:
     return facts if isinstance(facts, dict) else {}
 
 
+def as_sent(
+    setpoint: HumanSetpoint,
+    asked_mono: float,
+    state_at: float | None,
+    now_mono: float,
+) -> HumanSetpoint:
+    """setpoint as it is sent at now_mono, on this machine's monotonic clock.
+
+    asked_mono is when the pass asked the feed for the controller data: the
+    sample age gains the time since, the pass's own work. state_at is when the
+    ROBOT_STATE the setpoint was computed on arrived: sent_mono_s is that
+    one's clock_mono_s plus the time since, so never later than the robot
+    app's clock reads now. The robot app adds the time from then to the age.
+    """
+    age = setpoint.sample_age_s
+    if age is not None:
+        age += max(0.0, now_mono - asked_mono)
+    sent = None
+    if setpoint.state_clock_mono_s is not None and state_at is not None:
+        sent = setpoint.state_clock_mono_s + max(0.0, now_mono - state_at)
+    return dataclasses.replace(setpoint, sample_age_s=age, sent_mono_s=sent)
+
+
 def report_line(
     stage: str,
     tick_ages_s: Sequence[float],
@@ -480,10 +536,42 @@ def report_line(
         f"hand ahead {counts.get('hand_ahead', 0)}, "
         f"limiter {counts.get('limiter', 0)}"
     )
+    line += _jaws_text(human.get("jaws"))
     refusal = human.get("refusal")
     if refusal:
         line += f"; refused by the Thor: {_plain(refusal)}"
     return line
+
+
+def _jaws_text(jaws: Any) -> str:
+    """The report line's part about the jaws under the trigger; "" without facts.
+
+    jaws is health["human"]["jaws"] of a ROBOT_STATE, which the robot app
+    gives while a takeover is open. The grip level is the jaw opening in force
+    at the takeover; the jaws follow the trigger once the opening it asks for
+    has reached that level. An opening is a share of the jaw travel, 1.00
+    fully open.
+    """
+    if not isinstance(jaws, dict):
+        return ""
+    text = (
+        f"; jaws follow the trigger {'yes' if jaws.get('matched') else 'no'}, "
+        f"grip level {_share(jaws.get('grip_level'))}, "
+        f"trigger asks {_share(jaws.get('asked'))}"
+    )
+    refusal = jaws.get("refusal")
+    return f"{text}: {_plain(refusal)}" if refusal else text
+
+
+def _share(value: Any) -> str:
+    """A share of the jaw travel with two decimals; "-" for one not known."""
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return "-"
+    try:
+        number = float(value)
+    except OverflowError:  # a whole number too large for a float
+        return "-"
+    return _fixed(number, 2) if math.isfinite(number) else "-"
 
 
 class _Edges:
@@ -593,8 +681,11 @@ class _Loop:
             if why is not None:
                 _log.info("%s before a WELCOME came; closing", why)
                 return EXIT_OK
-        if not self._take(welcome):
+        problem = self._problem(welcome)
+        if problem is not None:
+            _complain(problem)
             return EXIT_FAILED
+        self._session_id = welcome.session_id
         self._say(
             f"{PROGRAM}: {_feed_text(self._feed)}; driver "
             f"{_plain(welcome.driver) or NOT_DECLARED}; arm model "
@@ -606,33 +697,32 @@ class _Loop:
         finally:
             self._feed.close()
 
-    def _take(self, welcome: Welcome) -> bool:
-        """Check a WELCOME this program has not seen; False, with a line, to end."""
+    def _problem(self, welcome: Welcome) -> str | None:
+        """Why this program must not drive a WELCOME's session; None: it may."""
         joints, n_joints = len(welcome.joint_names), self._solver.n_joints
-        problem = None
         if joints != n_joints:
-            problem = (
+            return (
                 f"the arm model {self._settings.ik.apai_arm!r} has {n_joints} "
                 f"joints and the robot app's WELCOME names {joints}: set "
                 "ik.apai_arm to the model of this arm"
             )
-        elif (
+        if (
             self._feed.source != HUMAN_SOURCE_TELEOP
             and welcome.driver not in SIMULATED_DRIVERS
         ):
             declared = f"driver {_plain(welcome.driver)}" if welcome.driver else None
-            problem = (
+            return (
                 "a synthetic controller may drive only a simulated arm; the robot "
                 f"app declares {declared or 'no driver, which counts as real'}"
             )
-        if problem is not None:
-            _complain(problem)
-            return False
-        self._session_id = welcome.session_id
-        return True
+        return None
 
     def _passes(self) -> int:
-        """One pass every 1 / rates.loop_hz seconds; a late pass is not made up."""
+        """One pass every 1 / rates.loop_hz seconds; a late pass is not made up.
+
+        Where the program ends, its STOP goes out ahead of the lines that tell
+        of the end: a log call and a write to standard error can block.
+        """
         period = 1.0 / self._settings.loop_hz
         due = self._clock.monotonic()
         if self._report_s > 0.0:
@@ -643,20 +733,19 @@ class _Loop:
             try:
                 drivable = self._pass()
             except self._ran_out as error:
-                _complain(str(error))
                 self._stop_if_owning("no Teleop Session Server")
+                _complain(str(error))
                 return EXIT_FAILED
             except self._refused as error:
                 # The file's error, met at the first attempt: nothing was sent.
                 _complain(f"the settings cannot be used: {_plain(error)}")
                 return EXIT_NOT_RUN
             except Exception as error:
+                self._stop_if_owning("it failed")
                 _log.exception("the human program failed")
                 _complain(f"failed: {_plain(repr(error))}")
-                self._stop_if_owning("it failed")
                 return EXIT_FAILED
             if not drivable:
-                self._stop_if_owning("the robot app's new session cannot be driven")
                 return EXIT_FAILED
             due += period
             now = self._clock.monotonic()
@@ -670,21 +759,25 @@ class _Loop:
     def _pass(self) -> bool:
         """Controller data in, link messages out, in the order the logic asks for.
 
-        False, with nothing sent, when a new session of the robot app came
-        that this program must not drive.
+        False when a new session of the robot app came that this program must
+        not drive: nothing but STOPs went out.
         """
         logic, graph = self._logic, self._graph
         # While the logic is not armed the graph runs stopped: nothing engages.
         events = graph.events(stopped=not logic.armed)
         inputs = graph.external_inputs(logic.armed)
-        feed_step = self._feed.step(inputs, events, self._clock.monotonic())
+        asked = self._clock.monotonic()
+        feed_step = self._feed.step(inputs, events, asked)
         # Read after the feed: entering a remote session can take seconds.
         now = self._clock.monotonic()
         welcome, state, state_at, results = self._inbox.take()
-        if welcome is not None and welcome.session_id != self._session_id:
-            _log.info("the robot app has a new session: %s", _plain(welcome.session_id))
-            if not self._take(welcome):
-                return False
+        new_session = welcome is not None and welcome.session_id != self._session_id
+        problem = self._problem(welcome) if new_session else None
+        if problem is not None:
+            self._end_on_session(welcome, problem, now, feed_step)
+            return False
+        if new_session:
+            self._session_id = welcome.session_id
         state_age = None if state_at is None else max(0.0, now - state_at)
         try:
             messages = logic.step(now, feed_step, welcome, state, state_age, results)
@@ -696,7 +789,16 @@ class _Loop:
                 self._error_due = now + _ERROR_LOG_S
                 _log.exception("a pass failed; no HUMAN_SETPOINT of it is sent")
         for message in messages:
+            if isinstance(message, HumanSetpoint):
+                # Its age is the one at this moment: the graph's and the IK's
+                # time are in it.
+                message = as_sent(message, asked, state_at, self._clock.monotonic())
             self._client.send(message)
+        # A log call can block, as on a terminal that is paused: this pass's
+        # log lines come behind its link messages, so right B's STOP is out.
+        if new_session:
+            _log.info(_NEW_SESSION, _plain(welcome.session_id))
+        logic.log_pass()
         self._edges.note(feed_step, logic.last)
         self._stage = feed_step.stage
         if feed_step.sample_age_s is not None:
@@ -706,6 +808,24 @@ class _Loop:
         if now >= self._report_due:
             self._report(now, state)
         return True
+
+    def _end_on_session(
+        self, welcome: Welcome, problem: str, now: float, feed_step: FeedStep
+    ) -> None:
+        """The last pass: a new session came that this program must not drive.
+
+        Only STOPs go out: right B's when this pass read it down, then the
+        program's own when the person owns the arm. The lines come behind.
+        """
+        # With no WELCOME the logic takes no ROBOT_STATE: of this pass it
+        # gives right B's STOP and nothing else.
+        for message in self._logic.step(now, feed_step, None, None, None):
+            if isinstance(message, Stop):
+                self._client.send(message)
+        self._stop_if_owning("the robot app's new session cannot be driven")
+        _log.info(_NEW_SESSION, _plain(welcome.session_id))
+        _complain(problem)
+        self._logic.log_pass()
 
     def _report(self, now: float, state: RobotState | None) -> None:
         """Say the report line; the next one is due a period after this one was."""
@@ -775,7 +895,8 @@ def _parser() -> argparse.ArgumentParser:
             "person drives the arm with the headset's right controller. Right B "
             "is a STOP; held for a second with the grip released it takes the "
             "arm over. The arm follows the hand while the grip is squeezed. "
-            "Right A held gives the arm back at rest."
+            "The jaws follow the trigger once it has reached the jaw opening "
+            "they had at the takeover. Right A held gives the arm back at rest."
         ),
     )
     parser.add_argument(
@@ -788,7 +909,7 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             f"{CONTROLLER_TELEOP} (default): the headset, through the Teleop "
             f"Session Server; {CONTROLLER_SYNTHETIC}<name>: a scripted "
-            "controller, lift or idle, for a simulated arm only"
+            "controller, lift, grasp or idle, for a simulated arm only"
         ),
     )
     parser.add_argument(
