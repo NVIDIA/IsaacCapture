@@ -6,8 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 # timesync
 
 Converts a camera host's wall-clock capture time to the PC's monotonic clock and decides whether
-the result may be recorded. The two hosts keep their wall clocks aligned with `chronyd`; this
-library reads chrony's own report of how well it is doing and refuses a frame it cannot vouch for.
+the result may be recorded. The PC runs a measuring-only `chronyd` that follows the camera host and never adjusts
+the PC's clock, so the two wall clocks keep their offset; the library applies that measured offset (the difference
+of the two hosts' `System time`) to each capture time. It reads chrony's own report of how well it is doing and
+refuses a frame it cannot vouch for.
 
 Target `timesync::timesync` (consumers include `<timesync/...>`). POSIX only, so the Windows source
 build skips it. It builds without CUDA, LiveKit or Python, and on its own:
