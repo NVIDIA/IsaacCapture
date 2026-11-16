@@ -84,6 +84,8 @@ class ViewModel:
         self._served: OrderedDict[int, float] = OrderedDict()
         # The newest acknowledgement: picture number, tab visible, when.
         self._ack: tuple[int, bool, float] | None = None
+        # The latest time at which the page said that its tab is hidden.
+        self._hidden_at: float | None = None
         self._camera_note = ""
         self._sent: ViewStatus | None = None
 
@@ -154,6 +156,7 @@ class ViewModel:
             self._page_at = now_mono
             self._served.clear()
             self._ack = None
+            self._hidden_at = None
         return token
 
     def is_current_page(self, token: str) -> bool:
@@ -183,17 +186,31 @@ class ViewModel:
         It counts only with the valid view token and for a picture that went
         to that page less than ack_timeout_s ago. A number the model does not
         remember, and one below the picture acknowledged last, count for
-        nothing either. False when it did not count: nothing has changed then.
+        nothing either. Nor does "the tab shows" for a picture that went to
+        the page before it last said "the tab is hidden": the next picture it
+        fetches counts again. False when it did not count: nothing has changed
+        then.
         """
         with self._lock:
             if not self._is_valid(token):
                 return False
+            # When that number last went to the page: the model cannot tell
+            # which fetch of a number a word is about.
             served_at = self._served.get(seq)
             if served_at is None or not now_mono - served_at < self._ack_timeout_s:
                 return False
             if seq not in self._times:
                 return False
             if self._ack is not None and seq < self._ack[0]:
+                return False
+            if not visible:
+                # The server reads its clock before this lock is taken: two
+                # of these can come in against the order of their times.
+                if self._hidden_at is None or now_mono > self._hidden_at:
+                    self._hidden_at = now_mono
+            elif self._hidden_at is not None and served_at < self._hidden_at:
+                # The page's two words about one picture are two requests:
+                # "the tab shows" can be handled after a later "is hidden".
                 return False
             self._ack = (seq, bool(visible), now_mono)
             return True

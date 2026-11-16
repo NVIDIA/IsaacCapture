@@ -354,6 +354,120 @@ def test_the_served_pictures_that_are_remembered_are_bounded():
     assert page.acknowledge(kept + 10, True, T0)
 
 
+# "hidden": an acknowledgement that says the page's tab does not show;
+# "visible": one that says it shows
+
+
+def test_visible_after_hidden_for_the_same_fetch_does_not_count(model):
+    page = Page(model)
+    assert page.fetch(1, T0)
+    # The page's two words about one picture are two requests: the server can
+    # handle "hidden" first and the older "visible" after it.
+    assert page.acknowledge(1, False, T0 + 0.02) is True
+    assert page.acknowledge(1, True, T0 + 0.021) is False
+    assert model._ack == (1, False, T0 + 0.02)
+    for seconds in (0.021, 0.19):
+        assert status(model, T0 + seconds) == NOT_LIVE, seconds
+    # The next picture the page fetches counts again: here the same number,
+    # as when the camera gave no newer one.
+    assert page.draw(1, T0 + 0.2) is True
+    assert status(model, T0 + 0.2) == ViewStatus(live=True, age_s=near(0.3))
+
+
+def test_a_tab_that_shows_again_is_live_with_the_next_picture_it_fetches(model):
+    page = Page(model)
+    assert page.draw(1, T0)
+    # The tab is hidden and shows again: the page says each about the picture
+    # it drew last, which it fetched before it said "hidden".
+    assert page.acknowledge(1, False, T0 + 0.1)
+    assert not page.acknowledge(1, True, T0 + 0.3)
+    assert status(model, T0 + 0.3) == NOT_LIVE
+    model.put_picture(2, JPEG, WALL0 + 0.3, T0 + 0.35, False)
+    assert page.draw(2, T0 + 0.4)
+    assert status(model, T0 + 0.4) == ViewStatus(live=True, age_s=near(0.1))
+
+
+def test_a_late_hidden_for_an_older_picture_does_not_block_a_newer_one(model):
+    page = Page(model)
+    model.put_picture(2, JPEG, WALL0 + 0.1, T0 + 0.15, False)
+    model.put_picture(3, JPEG, WALL0 + 0.3, T0 + 0.35, False)
+    assert page.draw(1, T0) and page.draw(2, T0 + 0.2)
+    assert page.fetch(3, T0 + 0.4)
+    # "hidden" for picture 1 is handled only now, after picture 2 was
+    # acknowledged: it does not count and leaves no mark.
+    assert not page.acknowledge(1, False, T0 + 0.41)
+    assert model._ack == (2, True, T0 + 0.2)
+    # So picture 3, which the page fetched before that, counts.
+    assert page.acknowledge(3, True, T0 + 0.42)
+    assert status(model, T0 + 0.42) == ViewStatus(live=True, age_s=near(0.12))
+
+
+@pytest.mark.parametrize(
+    "who, seq",
+    [
+        ("replaced", 2),  # the page loaded before: its token is valid no longer
+        ("page", 1),  # fetched ack_timeout_s ago
+        ("page", 3),  # never fetched
+        ("page", 7),  # fetched, and no picture the model ever had
+    ],
+)
+def test_a_hidden_that_is_refused_leaves_no_mark(model, who: str, seq: int) -> None:
+    pages = {"replaced": Page(model)}
+    pages["page"] = page = Page(model, T0)
+    model.put_picture(2, JPEG, WALL0 + 0.9, T0 + 0.95, False)
+    assert page.fetch(1, T0) and page.fetch(2, T0 + 0.95) and page.fetch(7, T0 + 0.95)
+    assert not pages[who].acknowledge(seq, False, T0 + 1.0)
+    # Picture 2 was fetched before that word: it counts all the same.
+    model.on_message(state_at(WALL0 + 1.0), T0 + 1.0)
+    assert page.acknowledge(2, True, T0 + 1.01)
+    assert status(model, T0 + 1.01) == ViewStatus(live=True, age_s=near(0.11))
+
+
+def test_hidden_words_handled_out_of_order_keep_the_later_time(model):
+    page = Page(model)
+    assert page.draw(1, T0)
+    # The tab is hidden at +0.1, shows while the page draws the picture again
+    # (fetched at +0.2, drawn at +0.25) and is hidden from +0.3. The server
+    # reads its clock before the model takes a word: the model can get the
+    # later "hidden" first and "visible" last.
+    assert page.fetch(1, T0 + 0.2)
+    assert page.acknowledge(1, False, T0 + 0.3)
+    assert page.acknowledge(1, False, T0 + 0.1)
+    assert not page.acknowledge(1, True, T0 + 0.25)
+    assert status(model, T0 + 0.3) == NOT_LIVE
+
+
+def test_a_visible_held_up_past_a_second_fetch_of_its_number_still_counts(model):
+    # A known limit: the model cannot tell which fetch of a picture number a
+    # word is about, so a picture's time is that of its newest fetch.
+    page = Page(model)
+    assert page.fetch(1, T0)
+    assert page.acknowledge(1, False, T0 + 0.01)
+    # The hidden tab fetches again and gets the same number: no newer picture
+    # came. Only then the model takes "visible" for the first fetch.
+    assert page.fetch(1, T0 + 0.2)
+    assert page.acknowledge(1, True, T0 + 0.201)
+    assert status(model, T0 + 0.201).live
+    # That ends with the hidden tab's word about its second fetch.
+    assert page.acknowledge(1, False, T0 + 0.203)
+    assert status(model, T0 + 0.203) == NOT_LIVE
+    assert not page.acknowledge(1, True, T0 + 0.204)
+
+
+def test_a_page_loaded_after_a_hidden_is_live_with_its_first_picture(model):
+    first = Page(model)
+    assert first.draw(1, T0, visible=False)
+    second = Page(model, T0 + 0.1)
+    assert second.draw(1, T0 + 0.1)
+    assert status(model, T0 + 0.1) == ViewStatus(live=True, age_s=near(0.2))
+    # A page load forgets "hidden" with everything else the page before
+    # said, whatever clock reading that word carried.
+    assert second.acknowledge(1, False, T0 + 0.5)
+    third = Page(model, T0 + 0.2)
+    assert third.draw(1, T0 + 0.3)
+    assert status(model, T0 + 0.3) == ViewStatus(live=True, age_s=near(0.4))
+
+
 # The age
 
 

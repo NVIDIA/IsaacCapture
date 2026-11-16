@@ -357,6 +357,10 @@ def test_view_status_reaches_the_robot_app_and_shows_in_robot_state(
         watcher.ws.wait_state(lambda s: s.view_age_s is not None, WAIT_S)
         seq, _ = browser.frame()
         browser.shown(seq, visible=False)
+        model = view.program.model
+        assert model._ack[:2] == (seq, False)
+        now = time.monotonic()
+        assert model.view_status(now, model.thor_wall_now(now)) == NOT_LIVE
         watcher.ws.wait_state(lambda s: s.view_age_s is None, WAIT_S)
 
         # Live once more, then the view ends: its last word is "not live".
@@ -610,6 +614,29 @@ def test_only_the_page_loaded_last_is_served_and_counts(bench, folder, running):
     assert view.program.model._ack[0] == seq
     first.close()
     second.close()
+
+
+def test_visible_after_hidden_for_the_same_fetch_gets_403(bench, folder, running):
+    # "hidden" is an acknowledgement that says the page's tab does not show,
+    # "visible" one that says it shows. With the highest ack_timeout_s no
+    # acknowledgement of this test comes too late after its fetch.
+    config = write_config(folder, bench.path, status={"ack_timeout_s": 10.0})
+    view = start(running, config, source=StandInSource())
+    model = view.program.model
+    browser = Browser(view.program.port)
+    seq, _ = browser.first_frame()
+    browser.shown(seq)
+    browser.shown(seq, visible=False)
+    # The page's two words about one picture are two requests: the view can
+    # handle "visible" after "hidden". It does not count then.
+    late = {"seq": seq, "visible": True, "token": browser.token}
+    assert browser.shown_raw(late) == 403
+    assert model._ack[:2] == (seq, False)
+    # The next picture the page fetches counts again.
+    seq, _ = browser.frame()
+    browser.shown(seq)
+    assert model._ack[:2] == (seq, True)
+    browser.close()
 
 
 # One view at a time, and the ways the program ends
