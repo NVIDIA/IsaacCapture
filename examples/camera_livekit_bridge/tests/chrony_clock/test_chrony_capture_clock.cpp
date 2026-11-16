@@ -140,6 +140,10 @@ struct Rig
         set_sender("A9FEA97B", 3, 0.0005); // the camera host, following its own upstream
         set_pc(kExpectedRefId, 4, 0.0005); // this machine's chronyd, following the camera host
     }
+    void healthy_sender_only()
+    {
+        set_sender("A9FEA97B", 3, 0.0005); // the camera host keeps answering
+    }
     void build()
     {
         clock = std::make_unique<ChronyCaptureClock>(config, chrony.runner(), clocks.reader());
@@ -212,6 +216,24 @@ void test_sender_unreachable()
     r.clock->poll_once();
     CHECK(r.chrony.pc_calls == 1 && r.chrony.sender_calls == 1);
     CHECK(r.qualify().verdict == Verdict::NoSenderEvidence);
+}
+
+// The PC's measuring instance can exit after it was ready (it is optional in the launcher). Its last report is not
+// extended: once it is older than the evidence limit every frame is refused, so a recording gets no timestamps.
+void test_pc_follower_that_stops_answering_stops_qualifying()
+{
+    Rig r;
+    r.healthy();
+    r.build();
+    r.clock->poll_once();
+    CHECK(r.qualify().verdict == Verdict::Qualified);
+    r.chrony.pc = CommandResult{}; // the follower is gone: the command never starts
+    r.clocks.advance(5 * kSec);
+    r.clock->poll_once();
+    r.healthy_sender_only();
+    r.clocks.advance(6 * kSec); // the PC's last report is now 11 s old
+    r.clock->poll_once();
+    CHECK(r.qualify().verdict == Verdict::StaleEvidence);
 }
 
 void test_reference_mismatch()
@@ -449,6 +471,7 @@ int main()
     test_sender_invalid();
     test_no_poll_yet();
     test_sender_unreachable();
+    test_pc_follower_that_stops_answering_stops_qualifying();
     test_reference_mismatch();
     test_unsynchronised();
     test_stale_evidence();
