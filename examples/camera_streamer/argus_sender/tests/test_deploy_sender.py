@@ -61,6 +61,17 @@ def test_stop_and_reset_patterns_match_the_started_command(capsys):
     assert f'pgrep -f "{started}"' in reboot
 
 
+def test_stop_daemon_only_stops_the_daemon_and_checks_the_result(capsys):
+    started = f"^\\./build/argus_sender --config {RUN_CONFIG}"
+    (script,) = remote_scripts(dry_run_lines(capsys, "stop-daemon"))
+    assert f'pgrep -f "{started}"' in script
+    assert "sudo -n systemctl stop nvargus-daemon.service" in script
+    assert "is not running" in script
+    assert "still active" in script
+    for broader in ("disable", "restart", "reboot", "rm "):
+        assert broader not in script
+
+
 def test_remove_producer_stops_before_removing(capsys):
     (script,) = remote_scripts(dry_run_lines(capsys, "remove-producer"))
     removal = script.index("rm -rf /opt/isaaccapture/releases")

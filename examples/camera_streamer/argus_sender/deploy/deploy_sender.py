@@ -10,6 +10,7 @@ Run on the desktop:
     deploy_sender.py user@orin deploy [--with-sipl] [--name NAME]
     deploy_sender.py user@orin run --name NAME --config FILE [--seconds N] [--env NAME=VALUE]
     deploy_sender.py user@orin stop                        stop the senders that `run` started
+    deploy_sender.py user@orin stop-daemon                 stop nvargus-daemon so SIPL capture can own the cameras
     deploy_sender.py user@orin reset [--reboot]            restart nvargus-daemon (or reboot) to free a stuck camera
     deploy_sender.py user@orin remove-producer             uninstall the sensing camera producer service and its releases
     deploy_sender.py user@orin linktest [--mb N]           TCP throughput from the target to this machine
@@ -20,6 +21,8 @@ It never stops, replaces or starts a service and never opens a camera; a release
 refused rather than overwritten. `run` starts a built release for a bounded time with a config from this machine and
 opens the cameras; it prints a note, and does not stop anything, if another camera process is running. `run` succeeds when the
 sender ends at its time limit and fails with the sender's own exit status otherwise; `deploy` fails if any unit test fails.
+`stop-daemon` stops nvargus-daemon (it returns at boot and holds the cameras that SIPL capture needs free); it is a no-op
+when the daemon is already stopped, never disables or uninstalls it, and refuses while a sender started by `run` is alive.
 `reset` is the one command that changes the target's state: it needs passwordless sudo there, refuses while a sender started
 by `run` is alive, and otherwise restarts nvargus-daemon (or, with --reboot, reboots and waits for ssh to return).
 `remove-producer` also needs passwordless sudo: it stops and disables isaaccapture-producer.service, deletes its unit file
@@ -179,6 +182,33 @@ for _ in $(seq 1 20); do
     sleep 1
 done
 echo "still running after 20 s; leaving it alone" >&2
+exit 1
+""",
+        dry_run,
+    )
+
+
+def cmd_stop_daemon(target: str, dry_run: bool) -> None:
+    """Stop nvargus-daemon so a SIPL sender can open the cameras; it is not disabled and starts again at boot.
+
+    Needs passwordless sudo on the target (`sudo -n`). Succeeds when the daemon is already stopped and fails if it is
+    still active afterwards. Refuses while a sender started by `run` is alive, because it may be using the daemon.
+    """
+    remote(
+        target,
+        r"""
+if pgrep -f "^\./build/argus_sender --config src/configs/run-config.yaml" >/dev/null; then
+    echo "a sender from ~/camera-streamer/releases is running; run 'stop' first" >&2
+    exit 1
+fi
+if ! systemctl is-active --quiet nvargus-daemon.service; then echo "nvargus-daemon is not running"; exit 0; fi
+sudo -n true || { echo "passwordless sudo is required on the target" >&2; exit 1; }
+sudo -n systemctl stop nvargus-daemon.service || { echo "could not stop nvargus-daemon" >&2; exit 1; }
+for _ in $(seq 1 20); do
+    systemctl is-active --quiet nvargus-daemon.service || { echo "nvargus-daemon stopped"; exit 0; }
+    sleep 1
+done
+echo "nvargus-daemon is still active after 20 s" >&2
 exit 1
 """,
         dry_run,
@@ -397,6 +427,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "stop", help="stop the senders started from ~/camera-streamer/releases"
     )
+    sub.add_parser(
+        "stop-daemon", help="stop nvargus-daemon so SIPL capture can own the cameras"
+    )
     reset = sub.add_parser(
         "reset", help="restart nvargus-daemon (or reboot) to free a stuck camera"
     )
@@ -435,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_check(args.target, args.dry_run)
         elif args.command == "stop":
             cmd_stop(args.target, args.dry_run)
+        elif args.command == "stop-daemon":
+            cmd_stop_daemon(args.target, args.dry_run)
         elif args.command == "reset":
             cmd_reset(args.target, args.reboot, args.dry_run)
         elif args.command == "remove-producer":
