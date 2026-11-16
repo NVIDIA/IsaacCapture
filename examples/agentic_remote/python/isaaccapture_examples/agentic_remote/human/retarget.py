@@ -66,7 +66,9 @@ CONTROLLER_KEY = "controller"  # the right controller, before the rotation
 
 # The most time the rate limiter counts for one pass, s: the period of the
 # human program's passes. A late pass moves the target no further than a pass
-# on time, so what follows the graph never gets a larger step.
+# on time, so what follows the graph never gets a larger step. The least it
+# counts is half of this: a rates.loop_hz (the human program's passes per
+# second) above 100 would raise both hand speed limits in proportion.
 LIMITER_PASS_S = 0.02
 
 # As the clutch checks its home: wide enough for a matrix typed with 5 decimals.
@@ -183,6 +185,11 @@ class HumanGraph:
                 # Also the time of a pass whose clock did not move.
                 nominal_dt=LIMITER_PASS_S,
                 max_dt=LIMITER_PASS_S,
+                # A pass that comes sooner than half of LIMITER_PASS_S after
+                # the one before counts as that half: the controller data come
+                # in steps of their own, and one such step over a shorter time
+                # would read as a speed to reject.
+                min_dt=0.5 * LIMITER_PASS_S,
             ),
         )
         limited = limiter.connect({EE_POSE_KEY: commanded.output(EE_POSE_KEY)})

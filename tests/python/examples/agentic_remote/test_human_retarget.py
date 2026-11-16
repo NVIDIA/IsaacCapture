@@ -540,11 +540,13 @@ def test_a_late_pass_is_given_the_motion_of_one_pass(late_ms):
 def test_a_short_pass_is_given_its_own_time_and_a_stopped_clock_one_pass():
     settings = RetargetSettings()
     most = settings.max_linear_velocity * PASS_S  # 2 mm
-    # The hand rose 1.5 cm: 1.5 m/s over 10 ms, below the rejection.
+    # The hand rose 1.5 cm: at most 1.5 m/s, over 10 ms, below the rejection.
     hand = along(HAND, UP, 0.015)
-    # 10 ms after the pass before: half a pass. 0 ms, a clock that did not
+    # A short pass comes less than 20 ms after the one before. Down to 10 ms,
+    # half a pass, it counts for its own time: 15 ms is three quarters of a
+    # pass. Less than 10 ms is the next test's. 0 ms, a clock that did not
     # move since the pass before: a whole pass.
-    for pass_ms, rose in ((10, most / 2), (0, most)):
+    for pass_ms, rose in ((15, 0.75 * most), (10, most / 2), (0, most)):
         bench = Bench(settings)
         bench.engage()
         step = bench.step(hand, squeeze=1.0, pass_ns=pass_ms * 1_000_000)
@@ -561,6 +563,34 @@ def test_a_short_pass_is_given_its_own_time_and_a_stopped_clock_one_pass():
             atol=PATH_TOL,
             err_msg=f"{pass_ms} ms",
         )
+
+
+@pytest.mark.parametrize("moved", ["the hand rose", "the hand turned"])
+def test_a_pass_right_after_the_one_before_is_not_rejected(moved):
+    settings = RetargetSettings()
+    counted_s = 0.010  # the least time a pass counts for: half a pass
+    bench = Bench(settings)
+    bench.engage()
+
+    # 1 ms after the pass before, with one step of the controller data in
+    # between. They come about every 11 ms, so 4.4 mm is a hand at 0.4 m/s and
+    # 0.011 rad a turn at 1 rad/s. Over 1 ms they would read as 4.4 m/s and
+    # 11 rad/s, above the rejection.
+    if moved == "the hand rose":
+        step = bench.step(along(HAND, UP, 0.0044), squeeze=1.0, pass_ns=1_000_000)
+        commanded = shifted(HOME, (0.0, 0.0, 0.0044))
+        limited = shifted(HOME, (0.0, 0.0, settings.max_linear_velocity * counted_s))
+    else:
+        # About the stage's vertical axis: the base's vertical axis, on the spot.
+        step = bench.step(HAND, quat(Y, 0.011), squeeze=1.0, pass_ns=1_000_000)
+        commanded = pose(HOME[:3, 3], turn(Z, 0.011) @ HOME[:3, :3])
+        most_turn = settings.max_angular_velocity * counted_s  # 0.004 rad
+        limited = pose(HOME[:3, 3], turn(Z, most_turn) @ HOME[:3, :3])
+
+    assert step.engaged
+    assert step.limiter == "clamped"
+    np.testing.assert_allclose(step.commanded_target, commanded, atol=PATH_TOL)
+    np.testing.assert_allclose(step.ee_target, limited, atol=PATH_TOL)
 
 
 @pytest.mark.apai
