@@ -62,6 +62,10 @@ def test_run_checks_for_other_senders_without_matching_itself_and_keeps_its_exit
     assert "pgrep -x argus_sender" in script
     assert "pgrep -f '/argus_sender'" not in script
     assert script.index("set +e") < script.index("exit 0")
+    # A 124 from timeout counts as the time limit only after about that long; a signalled timeout is a failure.
+    assert "/proc/uptime" in script  # a wall-clock step must not hide an early stop
+    assert "elapsed + 2 >=" in script
+    assert "before its 60 s limit" in script
 
 
 def test_stop_and_reset_patterns_match_the_started_command(capsys):

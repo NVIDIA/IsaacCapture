@@ -279,12 +279,21 @@ fi
 cd $d
 # SIGINT first: the sender drains its encoder and returns every camera buffer on SIGINT/SIGTERM.
 status=0
+started=$(cut -d' ' -f1 /proc/uptime)
 {env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config {RUN_CONFIG} || status=$?
+elapsed=$(awk -v s="$started" -v e="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN {{ printf "%d", e - s }}')
 # errexit off for the rest: a login shell also runs the target's logout files on exit, and a failing last command in
 # one would otherwise replace the exit status chosen here.
 set +e
-# 124 is the time limit this command set; any other nonzero status is the sender's own and fails the run.
-if [[ $status -eq 124 ]]; then echo "sender stopped at its {seconds} s time limit"; exit 0; fi
+# timeout's timer follows the wall clock, so a forward step of this host's clock (for example from a chrony restart)
+# makes it exit 124 early. Elapsed time comes from /proc/uptime, which a step does not move: 124 means the time limit
+# only if the run lasted about that long.
+if [[ $status -eq 124 ]]; then
+    if (( elapsed + 2 >= {seconds} )); then echo "sender stopped at its {seconds} s time limit"; exit 0; fi
+    echo "sender was stopped after $elapsed s, before its {seconds} s limit (the wall clock stepped or timeout was signalled)" >&2
+    exit 124
+fi
+# Any other nonzero status is the sender's own and fails the run.
 if [[ $status -ne 0 ]]; then echo "sender exited with status $status" >&2; exit $status; fi
 """,
         dry_run,
