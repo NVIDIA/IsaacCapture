@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="540" viewBox="0 0 1240 540" role="img" aria-labelledby="title desc">
+  <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved. -->
+  <!-- SPDX-License-Identifier: LicenseRef-OpenMDW-1.1 -->
+  <title id="title">EgoHand: from video to 3D hands</title>
+  <desc id="desc">Video frames, camera calibration, and hand boxes feed hand cropping, a visual backbone, a transformer decoder, and the SOMA hand model. Boxes can come from your own detector, ground truth, or optional RT-DETR. Outputs include camera-relative 3D hands and video overlays. Architecture details depend on the checkpoint.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101d32"/><stop offset="1" stop-color="#0b1220"/></linearGradient>
+    <linearGradient id="core" x2="1" y2="1"><stop stop-color="#19364a"/><stop offset="1" stop-color="#18263d"/></linearGradient>
+    <linearGradient id="accent"><stop stop-color="#5eead4"/><stop offset="1" stop-color="#93c5fd"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#7a9ab7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      text {font-family:Arial,Helvetica,sans-serif}
+      .section {font-size:13px;font-weight:700;letter-spacing:2px;fill:#9eb4cf}
+      .label {font-size:21px;font-weight:700;fill:#f1f5f9}
+      .small {font-size:16px;fill:#b9cce1}
+      .wire {fill:none;stroke:#7a9ab7;stroke-width:2;marker-end:url(#arrow)}
+      .box {fill:#15243a;stroke:#31465f;stroke-width:1.2}
+    </style>
+  </defs>
+  <rect width="1240" height="540" rx="24" fill="url(#bg)"/>
+  <rect x="42" y="35" width="35" height="5" rx="2.5" fill="url(#accent)"/>
+  <text x="91" y="44" font-size="24" font-weight="700" fill="#f1f5f9">EgoHand</text>
+  <text x="220" y="44" font-size="17" fill="#9eb4cf">Video in. 3D hands out.</text>
+  <text x="42" y="89" class="section">01 / INPUTS</text>
+  <text x="398" y="89" class="section">02 / RECONSTRUCTION</text>
+  <text x="898" y="89" class="section">03 / OUTPUTS</text>
+  <rect x="42" y="110" width="296" height="83" rx="14" class="box"/>
+  <rect x="60" y="134" width="34" height="26" rx="5" fill="none" stroke="#93c5fd" stroke-width="2"/>
+  <path d="M73 141l10 6-10 6z" fill="#93c5fd"/>
+  <text x="109" y="146" class="label">Video frames</text>
+  <text x="109" y="173" class="small">Decoded RGB input</text>
+  <rect x="42" y="211" width="296" height="83" rx="14" class="box"/>
+  <circle cx="77" cy="251" r="15" fill="none" stroke="#93c5fd" stroke-width="2"/>
+  <path d="M77 231v12m0 16v12m-20-20h12m16 0h12" stroke="#93c5fd" stroke-width="2"/>
+  <text x="109" y="247" class="label">Camera calibration</text>
+  <text x="109" y="274" font-size="14" fill="#b9cce1">Pinhole or supported fisheye</text>
+  <rect x="42" y="312" width="296" height="160" rx="14" class="box"/>
+  <text x="62" y="345" class="label">2D hand boxes</text>
+  <text x="62" y="376" class="small">Your detector or ground truth</text>
+  <path d="M62 394h256" stroke="#31465f"/>
+  <text x="62" y="429" font-size="17" fill="#c4b5fd">Bundled RT-DETR</text>
+  <rect x="226" y="411" width="93" height="25" rx="12" fill="#30274b" stroke="#8471b2" stroke-dasharray="3 3"/>
+  <text x="272.5" y="428" text-anchor="middle" font-size="12" font-weight="700" fill="#ddd6fe">OPTIONAL</text>
+  <text x="62" y="453" font-size="14" fill="#9eb4cf">Choose one box source</text>
+  <path d="M338 152h25q8 0 8 8v88" fill="none" stroke="#7a9ab7" stroke-width="2"/>
+  <path d="M338 392h25q8 0 8-8V256" fill="none" stroke="#7a9ab7" stroke-width="2"/>
+  <path d="M338 252h57" class="wire"/>
+  <circle cx="371" cy="252" r="4" fill="#93c5fd"/>
+  <rect x="398" y="110" width="440" height="362" rx="18" fill="url(#core)" stroke="#42758a" stroke-width="1.3"/>
+  <text x="420" y="138" font-size="12" font-weight="700" letter-spacing="1.6" fill="#5eead4">EGOHAND INFERENCE</text>
+  <rect x="420" y="155" width="396" height="55" rx="10" fill="#1a3d50"/>
+  <text x="438" y="178" font-size="18" font-weight="700" fill="#ecfeff">Hand crops</text>
+  <text x="438" y="199" font-size="14" fill="#b9cce1">Perspective crops for supported fisheye input</text>
+  <path d="M618 212v14" class="wire"/>
+  <rect x="420" y="229" width="396" height="49" rx="10" fill="#21364e"/>
+  <text x="618" y="260" text-anchor="middle" class="label">Visual backbone</text>
+  <path d="M618 280v14" class="wire"/>
+  <rect x="420" y="297" width="396" height="49" rx="10" fill="#29344f"/>
+  <text x="618" y="328" text-anchor="middle" class="label">Transformer decoder</text>
+  <path d="M618 348v14" class="wire"/>
+  <rect x="420" y="365" width="396" height="55" rx="10" fill="#1a3d50"/>
+  <text x="438" y="389" font-size="18" font-weight="700" fill="#ecfeff">SOMA hand model</text>
+  <text x="438" y="410" font-size="14" fill="#b9cce1">Pose + shape → joints and mesh</text>
+  <text x="618" y="447" text-anchor="middle" font-size="14" fill="#9eb4cf">Model configuration is loaded from the checkpoint</text>
+  <path d="M838 292h24q8 0 8-8v-72q0-8 8-8h17" class="wire"/>
+  <path d="M870 292v61q0 8 8 8h17" class="wire"/>
+  <circle cx="870" cy="292" r="4" fill="#93c5fd"/>
+  <rect x="898" y="151" width="300" height="115" rx="14" class="box"/>
+  <text x="920" y="186" class="label">3D hands</text>
+  <text x="920" y="215" class="small">SOMA poses · joints · meshes</text>
+  <text x="920" y="242" font-size="14" fill="#5eead4">Camera-relative reconstruction</text>
+  <rect x="898" y="306" width="300" height="115" rx="14" class="box"/>
+  <text x="920" y="341" class="label">Video overlays</text>
+  <text x="920" y="370" class="small">Skeletons · hand boxes</text>
+  <text x="920" y="397" font-size="14" fill="#9eb4cf">Mesh rendering for pinhole input</text>
+  <path d="M42 493h1156" stroke="#26374d"/>
+  <text x="42" y="519" font-size="14" fill="#9eb4cf">OPTIONAL AFTER INFERENCE</text>
+  <text x="298" y="519" font-size="14" fill="#c6d5e7">3D quality reports</text>
+  <circle cx="453" cy="514" r="2" fill="#5eead4"/>
+  <text x="469" y="519" font-size="14" fill="#c6d5e7">World coordinates with an external camera trajectory</text>
+</svg>
