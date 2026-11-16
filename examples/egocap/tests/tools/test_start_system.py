@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import importlib.util
 import json
 import os
 import signal
@@ -633,6 +634,32 @@ def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Pat
     config.write_text(yaml.safe_dump(argus))
     assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(config)]) == 0
     assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+
+
+DEPLOY_TOOL = ss.REPO_ROOT / "examples/camera_streamer/argus_sender/deploy/deploy_sender.py"
+
+
+@pytest.mark.skipif(
+    not DEPLOY_TOOL.is_file(),
+    reason="the deploy tool comes from the camera-streaming tools PR, absent from this tree",
+)
+def test_every_deploy_command_the_launcher_issues_is_accepted_by_the_real_deploy_tool(recorded_main, monkeypatch):
+    spec = importlib.util.spec_from_file_location("deploy_sender_real", DEPLOY_TOOL)
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    dispatched: list[str] = []
+    for name in dir(tool):
+        if name.startswith("cmd_"):
+            monkeypatch.setattr(tool, name, lambda *a, _name=name, **k: dispatched.append(_name))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    issued = [d[2:] for d in recorded_main.deploys if d[1] == "x"]
+    issued += [c.command[2:] for c in recorded_main.children if c.command[1] == "x"]
+    assert any(command[1] == "stop-daemon" for command in issued)
+    for command in issued:
+        # `target command ...` is exactly how the launcher calls the tool; the real parser must accept it.
+        assert tool.main(command) == 0, command
+    assert "cmd_stop_daemon" in dispatched
+    assert len(dispatched) == len(issued)
 
 
 def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
