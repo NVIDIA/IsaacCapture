@@ -100,3 +100,18 @@ def test_a_panel_with_no_recording_has_no_package_button(server):
     panel = panel_over(both_hands(30), server)
     assert not hasattr(panel, "_package_button")
     panel.package(FakeClient())  # and asking anyway is a no-op
+
+
+def test_separate_hands_moves_left_and_right_apart_and_back(server):
+    panel = panel_over(both_hands(30), server)
+    panel._separate.value = True
+    panel._place_hands()
+    left = tuple(panel._roots["left"].position)
+    right = tuple(panel._roots["right"].position)
+    assert left[0] < 0.0 < right[0]
+    assert left[1:] == right[1:] == (0.0, 0.0)
+
+    panel._separate.value = False
+    panel._place_hands()
+    assert tuple(panel._roots["left"].position) == (0.0, 0.0, 0.0)
+    assert tuple(panel._roots["right"].position) == (0.0, 0.0, 0.0)

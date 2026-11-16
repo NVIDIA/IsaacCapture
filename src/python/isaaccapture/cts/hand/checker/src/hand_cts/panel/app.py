@@ -48,6 +48,8 @@ DIGIT_COLOURS: dict[str, tuple[int, int, int]] = {
     "little": (188, 189, 34),
 }
 PALM_COLOUR = (120, 128, 140)
+# "separate hands" shifts each hand this far along x, left to -x; wrists stay as recorded.
+SEPARATION_M = {"left": -0.15, "right": 0.15}
 
 
 def _joint_colours() -> list[tuple[int, int, int]]:
@@ -106,6 +108,10 @@ class Panel:
         server.scene.add_frame("/origin", axes_length=0.1, axes_radius=0.002)
         server.initial_camera.position = (look[0], look[1] + 0.25, look[2] + 0.55)
         server.initial_camera.look_at = look
+        self._roots = {
+            side: server.scene.add_frame(f"/hands/{side}", show_axes=False)
+            for side in tracks
+        }
         self._skeletons = {
             side: Skeleton(
                 server,
@@ -162,6 +168,11 @@ class Panel:
             self._playing = gui.add_checkbox("play", initial_value=False)
             self._speed = gui.add_dropdown("speed", tuple(SPEEDS), initial_value="1x")
             self._name_held = gui.add_checkbox("name held joints", initial_value=False)
+            self._separate = gui.add_checkbox(
+                "separate hands",
+                initial_value=False,
+                hint="offset left and right along x, so hands with no wrist pose do not overlap",
+            )
             gui.add_html(_legend())
             self._readout = gui.add_html("")
 
@@ -169,6 +180,10 @@ class Panel:
             def _(_: viser.GuiEvent) -> None:
                 self._playhead_s = float(self._scrub.value)
                 self._draw()
+
+            @self._separate.on_update
+            def _(_: viser.GuiEvent) -> None:
+                self._place_hands()
 
         if self._recording is not None:
             self._build_submission(gui)
@@ -184,6 +199,11 @@ class Panel:
                 expand_by_default=group.mark is not Mark.PASS,
             ):
                 gui.add_html(render.group_body(group))
+
+    def _place_hands(self) -> None:
+        for side, root in self._roots.items():
+            offset = SEPARATION_M.get(side, 0.0) if self._separate.value else 0.0
+            root.position = (offset, 0.0, 0.0)
 
     def _build_submission(self, gui: viser.GuiApi) -> None:
         with gui.add_folder("Submission"):
