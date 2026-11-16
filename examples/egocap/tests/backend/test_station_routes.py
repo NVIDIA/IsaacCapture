@@ -306,8 +306,10 @@ def test_the_real_application_gates_recording_on_the_station_in_use(monkeypatch,
         # The label every viewer sees, and the one the next recording session will carry, changed in process.
         assert client.get("/api/capture-status").json()["station_label"] == "Bench A"
         assert client.app.state.station_service.label() == "Bench A"
-        # Capture never connected here, so what the session offers is unknown and the station itself is fine.
-        assert context.setup_block() is None
+        # Capture never connected here, so what the session offers is unknown and the station itself is fine;
+        # what remains is the next step of the flow.
+        assert client.app.state.station_service.block_reason() is None
+        assert context.setup_block() == "run the device connection test before recording"
         client.put(f"/api/stations/{bench}", json={"camera_roles": {"ego": None}}, headers=auth)
         assert context.snapshot()["not_ready_reason"] == (
             "station 'Bench A': no camera is assigned to the ego (head) role"

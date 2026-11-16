@@ -63,6 +63,8 @@ from .recording_session import CoordinatorBusyError, RecordingSessionCoordinator
 from .recordings import router as recordings_router
 from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
+from .setup_routes import router as setup_router
+from .setup_service import SetupService, capture_facts
 from .station_activity import ACTIVITY_DIR, StationActivity
 from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
 from .station_routes import router as station_router
@@ -488,6 +490,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.station_service = station_service
     monitor.set_station_label(station_service.label())
+    # The start-of-day flow: the device connection test and system checks that gate a take for a station in use.
+    setup_service = SetupService(
+        facts=lambda: capture_facts(monitor, config),
+        session_id=lambda: monitor.native.started.session_id if monitor.native.started is not None else None,
+        stations=station_service,
+        calibration_dir=calibration_dir,
+        output_root=recording_output_root,
+    )
+    app.state.setup_service = setup_service
     await monitor.start()
     app.state.monitor = monitor
     # Generated once per backend process start (a restart is the only way
@@ -503,7 +514,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         coordinator=coordinator,
         control_token=control_token,
         auto_fill_operator_name=auto_fill_operator_name,
-        setup_gate=station_service.block_reason,
+        setup_gate=setup_service.block_reason,
     )
     # The 3D view settings are read once, for the view itself and for the settings report.
     visualization_config: VisualizationConfig | None = None
@@ -570,6 +581,7 @@ app.include_router(task_file_router)
 app.include_router(settings_router)
 app.include_router(operator_settings_router)
 app.include_router(station_router)
+app.include_router(setup_router)
 # PoC demo integration: browse/download recorded files, off unless
 # EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
 # recordings.py's own module docstring.
