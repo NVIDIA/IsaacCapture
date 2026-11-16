@@ -42,6 +42,7 @@ JAW_MODES = (PLAIN, CLOSE_UNTIL_CONTACT)
 REFERENCE = "reference"
 ALREADY_REFERENCED = "the jaws are referenced already"
 JAWS_BUSY = "busy: a jaw command is running or waiting"
+DROPPED_BY_STOP = "dropped by a stop"
 
 # GripperOutcome statuses. FAILED is the worker's own: the driver raised.
 REACHED = "reached"
@@ -294,7 +295,7 @@ class GripperWorker:
         self._queue: deque[_Job] = deque()
         self._running: _Job | None = None  # its arm calls are under way
         # Its arm calls have returned; an owed light hold or a fault report runs.
-        self._finishing = False
+        self._finishing: _Job | None = None
         self._delivering = False  # a finished request's on_done is running
         self._reporting = False  # on_fault is running
         self._closed = False
@@ -352,26 +353,43 @@ class GripperWorker:
             0.0, 0.0, REFERENCE, False, Owner.NOBODY, on_done, reason, alone=True
         )
 
-    def stop_now(self) -> None:
+    def stop_now(self, keep_reference: bool = False) -> None:
         """Cancel the running command, drop the queued ones and hold lightly.
 
         A running command gets the light hold at once, so a close does not go on
         at the closing stiffness, and again once it has returned, so the light
         hold is the last thing the jaws are sent. Waits up to stop_wait_s of real
         time for that return.
+
+        keep_reference: a jaw reference, which is typed at the Thor terminal
+        only, goes on, and while one runs the jaws are sent no light hold.
         """
         with self._cond:
-            dropped = list(self._queue)
-            self._queue.clear()
+            kept: list[_Job] = []
+            dropped: list[_Job] = []
+            for queued in self._queue:
+                keep = keep_reference and queued.mode == REFERENCE
+                (kept if keep else dropped).append(queued)
+            self._queue = deque(kept)
             job = self._running
+            spared = keep_reference and job is not None and job.mode == REFERENCE
+            if spared:
+                job = None
             if job is not None:
                 job.cancel.set()
             self._cond.notify_all()
+        if spared:
+            for queued in dropped:
+                _call(queued.on_done, GripperOutcome(CANCELLED, None, DROPPED_BY_STOP))
+            _log.info(
+                "jaw stop: the reference goes on, %d queued dropped", len(dropped)
+            )
+            return
         held = True
         if job is not None:
             held = self._light_hold()
         for queued in dropped:
-            _call(queued.on_done, GripperOutcome(CANCELLED, None, "dropped by a stop"))
+            _call(queued.on_done, GripperOutcome(CANCELLED, None, DROPPED_BY_STOP))
         late = False
         if job is not None:
             on_worker = threading.current_thread() is self._thread
@@ -403,6 +421,11 @@ class GripperWorker:
         with self._cond:
             return self._busy()
 
+    def referencing(self) -> bool:
+        """True while a jaw reference waits, runs or is being finished."""
+        with self._cond:
+            return any(job.mode == REFERENCE for job in self._unfinished())
+
     def wait_idle(self, timeout_s: float) -> bool:
         """Wait in real time until no request is busy and no on_done runs."""
         with self._cond:
@@ -424,7 +447,12 @@ class GripperWorker:
                 _log.warning("the gripper worker thread has not ended")
 
     def _busy(self) -> bool:
-        return bool(self._queue) or self._running is not None or self._finishing
+        return bool(self._unfinished())
+
+    def _unfinished(self) -> list[_Job]:
+        """The requests that wait, run or are being finished."""
+        ahead = [job for job in (self._running, self._finishing) if job is not None]
+        return [*ahead, *self._queue]
 
     def _enqueue(
         self,
@@ -485,7 +513,7 @@ class GripperWorker:
                 outcome = GripperOutcome(FAILED, job.measured, fault)
             with self._cond:
                 self._running = None
-                self._finishing = True
+                self._finishing = job
                 owed = job.light_hold_owed
             job.returned.set()
             if owed:
@@ -496,7 +524,7 @@ class GripperWorker:
             with self._cond:
                 # No longer busy when the outcome goes out, so the command that
                 # follows it is not refused; wait_idle() still waits for on_done.
-                self._finishing = False
+                self._finishing = None
                 self._delivering = True
                 self._cond.notify_all()
             _call(job.on_done, outcome)

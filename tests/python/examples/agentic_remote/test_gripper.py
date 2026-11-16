@@ -1740,3 +1740,76 @@ def test_a_reference_the_driver_fails_is_a_fault(bare):
     assert ended == outcome("failed", None, reason)
     assert faults == [reason]
     assert not arm.gripper_referenced() and arm.jaw_commands == []
+
+
+def held_reference(arm: SimArm) -> tuple[threading.Event, threading.Event]:
+    """Hold the arm's jaw reference inside its call; (entered, release)."""
+    entered, release = threading.Event(), threading.Event()
+    inner = arm.gripper_reference
+
+    def slow_reference(cancel=None):
+        entered.set()
+        assert release.wait(WAIT_S)
+        inner(cancel)
+
+    arm.gripper_reference = slow_reference
+    return entered, release
+
+
+def test_referencing_is_true_from_the_request_until_its_outcome(bare):
+    arm, worker = bare
+    assert not worker.referencing()
+    entered, release = held_reference(arm)
+    seen: list[bool] = []
+    done = Done()
+
+    def on_done(ended: GripperOutcome) -> None:
+        seen.append(worker.referencing())
+        done(ended)
+
+    assert worker.reference(on_done) is None
+    assert worker.referencing()
+    assert entered.wait(WAIT_S) and worker.referencing()
+    release.set()
+    assert done.wait().status == "reached"
+    assert seen == [False] and not worker.referencing()
+    # Another jaw command is no reference.
+    pause = JawPause(arm, lambda opening: opening <= 0.8)
+    closing = Done()
+    assert worker.submit(0.5, 0.5, PLAIN, Owner.NOBODY, closing) is None
+    pause.wait()
+    assert worker.busy() and not worker.referencing()
+    pause.release.set()
+    assert closing.wait().status == "reached"
+
+
+def test_a_stop_that_keeps_the_reference_drops_only_what_waits_behind_it(bare):
+    arm, worker = bare
+    entered, release = held_reference(arm)
+    reference, queued = Done(), Done()
+    assert worker.reference(reference) is None
+    assert entered.wait(WAIT_S)
+    assert worker.open_guarded(queued, Owner.NOBODY) is None
+    worker.stop_now(keep_reference=True)
+    assert queued.outcomes == [DROPPED]
+    # The reference was not cancelled and no light hold went to the closing jaws.
+    assert reference.outcomes == [] and worker.referencing()
+    assert arm.light_holds == []
+    release.set()
+    assert reference.wait() == outcome("reached", 1.0)
+    assert arm.gripper_referenced() and nothing_sent_to_the_jaws(arm)
+
+
+def test_a_stop_that_keeps_the_reference_still_cancels_any_other_command(bare):
+    arm, worker = bare
+    arm.gripper_reference()
+    cancels = spy_on_cancel(arm)
+    pause = JawPause(arm, lambda opening: opening <= 0.605, until=lambda: cancels[-1])
+    closing, queued = Done(), Done()
+    worker.submit(0.0, 0.8, CLOSE_UNTIL_CONTACT, Owner.NOBODY, closing)
+    where = pause.wait()
+    worker.submit(1.0, 0.5, PLAIN, Owner.NOBODY, queued)
+    worker.stop_now(keep_reference=True)
+    assert queued.outcomes == [DROPPED]
+    assert closing.wait() == outcome("cancelled", where)
+    assert arm.jaw_stiffness == "light" and len(arm.light_holds) == 2

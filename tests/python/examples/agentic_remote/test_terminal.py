@@ -10,6 +10,7 @@ robot app itself on the simulated arm.
 from __future__ import annotations
 
 import os
+import pty
 import signal
 import threading
 from collections.abc import Callable, Iterator
@@ -17,6 +18,7 @@ from collections.abc import Callable, Iterator
 import pytest
 from isaaccapture_examples.agentic_remote.protocol import confirm
 from isaaccapture_examples.agentic_remote.protocol.messages import Result
+from isaaccapture_examples.agentic_remote.robot_app import __main__ as robot_main
 from isaaccapture_examples.agentic_remote.robot_app import terminal as terminal_module
 from isaaccapture_examples.agentic_remote.robot_app.app import (
     CONFIRM_JAWS_EMPTY,
@@ -988,6 +990,120 @@ def test_typed_lines_wait_for_the_next_line():
     lines.end()
     reader.join(WAIT_S)
     assert got == ["late"]
+
+
+# Typed-ahead input at a question, on a pseudo-terminal and on a pipe
+
+QUESTIONS = [
+    pytest.param(b"rest", CONFIRM_REST, b"path is clear", "rest", id="rest"),
+    pytest.param(b"quit", CONFIRM_REST, b"path is clear", "shutdown", id="quit"),
+    pytest.param(
+        b"reference", CONFIRM_REFERENCE, b"jaws are empty", "reference", id="reference"
+    ),
+]
+
+
+@pytest.fixture
+def terminal_pair() -> Iterator[tuple[int, int]]:
+    """A pseudo-terminal: the test types at the first, the program reads the second."""
+    master, slave = pty.openpty()
+    yield master, slave
+    os.close(master)
+    os.close(slave)
+
+
+@pytest.fixture
+def pipe_pair() -> Iterator[tuple[int, int]]:
+    """A pipe: the program reads the first, the test writes the second."""
+    read_end, write_end = os.pipe()
+    yield read_end, write_end
+    os.close(write_end)
+    os.close(read_end)
+
+
+@pytest.fixture
+def served(fake) -> Iterator[Callable[[int], Lines]]:
+    """Serve the lines typed at a descriptor; returns what the terminal writes.
+
+    Ask for the descriptors' fixture first: the reading ends before they close.
+    """
+    fake.moves_arm = fake.allow_reference = True  # so every command asks
+    made: list[tuple] = []
+
+    def serve(fd: int) -> Lines:
+        out, lines = Lines(), robot_main._FdLines(fd)
+        terminal = ThorTerminal(fake, lines, out)
+        reader = threading.Thread(target=terminal.run, daemon=True)
+        made.append((lines, reader, terminal))
+        reader.start()
+        return out
+
+    yield serve
+    for lines, reader, terminal in made:
+        lines.close()
+        reader.join(WAIT_S)
+        terminal.close()
+
+
+@pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
+def test_an_answer_typed_before_its_question_is_dropped(
+    fake, terminal_pair, served, command, question, phrase, call
+):
+    master, slave = terminal_pair
+    os.write(master, command + b"\n" + phrase + b"\n")  # both before the question
+    out = served(slave)
+    out.wait_for(question)
+    os.write(master, b"no\n")  # typed at the question
+    assert fake.wait_calls(1) == [(call, False)]
+    os.write(master, b"help\n")  # the phrase was not left over as a command
+    out.wait_for(HELP[0])
+    assert not any(line.startswith("unknown command") for line in out.lines)
+
+
+@pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
+def test_an_answer_typed_at_its_question_counts_on_a_terminal(
+    fake, terminal_pair, served, command, question, phrase, call
+):
+    master, slave = terminal_pair
+    os.write(master, command + b"\nno\n")
+    out = served(slave)
+    out.wait_for(question)
+    os.write(master, phrase + b"\n")
+    assert fake.wait_calls(1) == [(call, True)]
+
+
+def test_a_stop_typed_before_a_question_is_dropped_and_one_typed_at_it_stops(
+    fake, terminal_pair, served
+):
+    master, slave = terminal_pair
+    os.write(master, b"rest\nstop\n")
+    out = served(slave)
+    out.wait_for(CONFIRM_REST)
+    assert fake.calls == []
+    os.write(master, b"stop\n")  # at the question it is a STOP
+    assert fake.wait_calls(2) == [("stop", STOP_TYPED, THOR), ("rest", False)]
+
+
+@pytest.mark.parametrize(("command", "question", "phrase", "call"), QUESTIONS)
+def test_commands_and_answers_from_a_pipe_are_all_taken(
+    fake, pipe_pair, served, command, question, phrase, call
+):
+    read_end, write_end = pipe_pair
+    os.write(write_end, command + b"\n" + phrase + b"\nstop\n")
+    out = served(read_end)
+    out.wait_for(question)
+    assert fake.wait_calls(2) == [(call, True), ("stop", STOP_TYPED, THOR)]
+
+
+def test_input_without_a_way_to_drop_typed_ahead_lines_is_served_as_before(fake):
+    fake.moves_arm = True
+    assert typed(fake, "rest", "path is clear", "quit", "path is clear") == [
+        CONFIRM_REST,
+        "rest: completed",
+        CONFIRM_REST,
+        "quit: completed; the robot app closes",
+        ENDED_RUNNING,
+    ]
 
 
 # With the robot app itself, on the simulated arm

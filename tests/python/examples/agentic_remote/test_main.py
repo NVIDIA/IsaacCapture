@@ -12,9 +12,11 @@ import dataclasses
 import logging
 import os
 import runpy
+import signal
 import subprocess
 import sys
 import threading
+import time
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -805,6 +807,61 @@ def test_run_connected_declares_the_driver_its_caller_names(monkeypatch):
     with pytest.raises(ValueError, match="driver must be one of"):
         robot_main.run_connected(config, arm, checkers, clock, "h:1", driver="mock")
     assert [kwargs["driver"] for kwargs in built] == ["", "mock"]
+    assert left_threads() == []
+
+
+def test_ctrl_c_while_the_arm_connects_is_a_stop_once_the_app_has_started(monkeypatch):
+    config, clock = RobotAppConfig.default(), SystemClock()
+    arm = SimArm(n_joints=6, clock=clock, q0=list(config.rest.rest_q))
+    connect = arm.connect
+
+    def interrupted() -> None:
+        connect()
+        signal.raise_signal(signal.SIGINT)  # what Ctrl+C sends
+
+    arm.connect = interrupted
+    monkeypatch.setattr(robot_main.RobotDialer, "start", lambda self: None)
+    apps: list[Any] = []
+    real = robot_main.RobotApp
+
+    def robot_app(*args: Any, **kwargs: Any) -> Any:
+        apps.append(real(*args, **kwargs))
+        return apps[-1]
+
+    monkeypatch.setattr(robot_main, "RobotApp", robot_app)
+    stops: list[int] = []
+
+    def close_after_the_stop() -> None:
+        by = time.monotonic() + 10.0
+        while time.monotonic() < by and not (apps and apps[0].snapshot().stop_number):
+            time.sleep(0.02)
+        for app in apps:
+            stops.append(app.snapshot().stop_number)
+            app.close()
+
+    typed = TypedLines()
+    before = signal.getsignal(signal.SIGINT)
+    closer = threading.Thread(target=close_after_the_stop, daemon=True)
+    closer.start()
+    try:
+        code = robot_main.run_connected(
+            config,
+            arm,
+            robot_main.sim_checkers(config, clock),
+            clock,
+            "127.0.0.1:47610",
+            typed=typed,
+            say=lambda line: None,
+            driver="sim",
+        )
+    except KeyboardInterrupt:
+        code = None
+    finally:
+        typed.end()
+        closer.join(15.0)
+    assert code == 0 and stops == [1]
+    assert arm.torque_on() and arm.released_at == []
+    assert signal.getsignal(signal.SIGINT) is before
     assert left_threads() == []
 
 

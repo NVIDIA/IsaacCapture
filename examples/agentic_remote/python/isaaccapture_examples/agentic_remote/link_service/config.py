@@ -42,14 +42,17 @@ class LinkServiceConfig:
         peers = self.allowed_peers
         if not isinstance(peers, tuple) or not peers:
             raise ConfigError(f"allowed_peers must be a non-empty list, got {peers!r}")
+        spelled: list[str] = []
         for index, peer in enumerate(peers):
             _text(f"allowed_peers[{index}]", peer)
             try:
-                ipaddress.ip_address(peer.strip())
+                spelled.append(str(ipaddress.ip_address(peer.strip())))
             except ValueError:
                 raise ConfigError(
                     f"allowed_peers[{index}] must be an IP address, got {peer!r}"
                 ) from None
+        # One spelling per address, as the service compares a dialing peer's.
+        object.__setattr__(self, "allowed_peers", tuple(spelled))
         if self.socket_path is not None:
             _text("socket_path", self.socket_path)
         if self.log_level not in LOG_LEVELS:

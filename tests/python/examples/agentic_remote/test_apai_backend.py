@@ -2695,24 +2695,57 @@ def test_hold_bus_and_speed_cap_come_from_the_profile(
     )
 
 
-def test_pending_confirmation_counts_this_bus_and_any_arm_only(
-    rs_profile: apai_backend.ApaiProfile,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "named", [None, "can4", "can4.", " can4", "can4/", "another-bus"]
+)
+def test_any_confirmation_file_in_the_hold_folder_is_on_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: str | None
+) -> None:
+    from apai.control import arm_hold
+
+    monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(tmp_path / "holds"))
+    assert apai_backend.confirmation_on_file() is None  # no folder yet
+    marker = arm_hold.record("can4", arm="rebot_rs", reason="a hold is no confirmation")
+    assert apai_backend.confirmation_on_file() is None
+    written = arm_hold.confirm("holding the arm", named)
+    assert apai_backend.confirmation_on_file() == str(written)
+    # Only read: nothing was claimed or removed.
+    assert sorted(path.name for path in written.parent.iterdir()) == sorted(
+        [arm_hold.marker_path(marker["key"]).name, written.name]
+    )
+    written.unlink()
+    assert apai_backend.confirmation_on_file() is None
+
+
+@pytest.mark.parametrize(
+    "content", ["not json", "", '{"key": "can4", "at": 1.0}', '{"key": "can0"}']
+)
+def test_a_confirmation_file_counts_whatever_it_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
 ) -> None:
     from apai.control import arm_hold
 
     monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(tmp_path))
-    assert apai_backend.pending_confirmation(rs_profile) is False
-    other = arm_hold.confirm("holding the arm", "another-bus")
-    assert apai_backend.pending_confirmation(rs_profile) is False
-    mine = arm_hold.confirm("holding the arm", apai_backend.hold_bus(rs_profile))
-    assert apai_backend.pending_confirmation(rs_profile) is True
-    mine.unlink()
-    assert apai_backend.pending_confirmation(rs_profile) is False
-    any_arm = arm_hold.confirm("holding the arm", None)
-    assert apai_backend.pending_confirmation(rs_profile) is True
-    # Only read: nothing was claimed or removed.
-    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
-        [other.name, any_arm.name]
-    )
+    path = tmp_path / "can4.confirm.json"
+    path.write_text(content)
+    assert arm_hold.pending_confirmations() == []  # APAI lists none of them
+    assert apai_backend.confirmation_on_file() == str(path)
+    path.chmod(0)  # one that cannot be read
+    assert apai_backend.confirmation_on_file() == str(path)
+
+
+def test_a_hold_folder_that_cannot_be_listed_counts_as_a_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "holds"
+    folder.write_text("a file where the folder would be")
+    monkeypatch.setenv("APAI_ARM_HOLD_DIR", str(folder))
+    assert apai_backend.confirmation_on_file() is None  # nothing can lie in it
+    folder.unlink()
+    folder.mkdir()
+    (folder / "_any.confirm.json").write_text("{}")
+    folder.chmod(0o300)  # searchable, not listable: APAI could still claim the file
+    try:
+        assert apai_backend.confirmation_on_file() == str(folder)
+    finally:
+        folder.chmod(0o700)

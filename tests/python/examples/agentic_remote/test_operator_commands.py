@@ -1107,6 +1107,108 @@ def test_a_stop_ends_a_reference_without_a_fault_stop(unreferenced):
     assert h.arm.gripper_referenced()
 
 
+@pytest.fixture
+def referencing(unreferenced):
+    """A typed jaw reference held inside the arm's call: (app, release, done)."""
+    h = unreferenced
+    reached, release = h.hold_call("gripper_reference")
+    done = Done()
+    assert h.app.request_reference(True, done) is None
+    assert reached.wait(WAIT_S)  # the jaws are closing to their stop
+    return h, release, done
+
+
+def test_a_new_task_is_refused_while_the_reference_runs(referencing):
+    h, release, done = referencing
+    refused = final(h, h.client.request_owner("agent"))
+    assert (refused.status, refused.reason) == ("refused", JAWS_BUSY)
+    assert JAWS_BUSY == "busy: a jaw command is running or waiting"
+    assert h.app.snapshot().owner is Owner.NOBODY
+    release.set()
+    assert done.wait().status == "completed" and h.arm.gripper_referenced()
+    # The reference is over: the task is taken.
+    assert h.app._worker.wait_idle(WAIT_S)
+    assert h.new_task().status == "completed"
+
+
+def test_a_new_task_is_refused_when_the_reference_began_during_its_pose_read(
+    unreferenced,
+):
+    h = unreferenced
+    reading, read_on = threading.Event(), threading.Event()
+    agent_checker = h.app._checkers.agent
+    check_pose = agent_checker.check_pose
+
+    def held_check(pose):
+        reading.set()
+        read_on.wait(WAIT_S)
+        return check_pose(pose)
+
+    agent_checker.check_pose = held_check
+    held, release = h.hold_call("gripper_reference")
+    command_id = h.client.request_owner("agent")
+    assert reading.wait(WAIT_S)  # admitted; the measured pose is being checked
+    done = Done()
+    assert h.app.request_reference(True, done) is None
+    assert held.wait(WAIT_S)
+    read_on.set()
+    refused = final(h, command_id)
+    assert (refused.status, refused.reason) == ("refused", JAWS_BUSY)
+    assert h.app.snapshot().owner is Owner.NOBODY
+    release.set()
+    assert done.wait().status == "completed"
+
+
+def test_a_move_and_a_jaw_command_are_refused_while_the_reference_runs(referencing):
+    h, release, done = referencing
+    # No task is taken now. Were the agent the owner, it still commands nothing.
+    seen = h.app.snapshot()
+    with h.app._lock:
+        h.app._authority.set_owner_if(
+            Owner.AGENT,
+            "made the owner by the test",
+            stop_number=seen.stop_number,
+            owner_number=seen.owner_number,
+        )
+    assert h.app.snapshot().owner is Owner.AGENT
+    moved = final(h, h.client.move(FROM_RAISED, start_q=RAISED, **numbers(h)))
+    assert (moved.status, moved.reason) == ("refused", JAWS_BUSY)
+    jaws = final(h, h.client.gripper(0.5, **numbers(h)))
+    assert (jaws.status, jaws.reason) == ("refused", JAWS_BUSY)
+    assert h.arm.sent == [] and h.arm.jaw_commands == []
+    release.set()
+    done.wait()
+
+
+def test_a_lost_robot_connection_lets_a_typed_reference_go_on(referencing):
+    h, release, done = referencing
+    holds = len(h.arm.light_holds)
+    h.lose_link()
+    h.step()
+    # Not cancelled, and no light hold went to the closing jaws.
+    assert done.results == [] and h.app._worker.referencing()
+    assert len(h.arm.light_holds) == holds
+    release.set()
+    result = done.wait()
+    assert result.status == "completed" and h.arm.gripper_referenced()
+    state = h.app.snapshot()
+    assert (state.stop_level.value, state.owner) == ("none", Owner.NOBODY)
+    assert h.arm.torque_on() and h.arm.released_at == []
+
+
+def test_a_lost_robot_connection_still_cancels_a_jaw_command_of_the_link(robot_app):
+    h = robot_app
+    h.new_task()
+    waiting = h.hold_jaws_at(0.6)
+    h.client.gripper(0.0)
+    assert waiting.wait(WAIT_S)
+    holds = len(h.arm.light_holds)
+    h.lose_link()
+    assert h.app._worker.wait_idle(WAIT_S)
+    assert h.arm.gripper_read() == pytest.approx(0.6, abs=0.05)
+    assert h.arm.jaw_stiffness == "light" and len(h.arm.light_holds) > holds
+
+
 def test_a_reference_that_the_driver_fails_is_a_fault_stop_with_the_motors_on(
     unreferenced,
 ):

@@ -1353,7 +1353,8 @@ class RobotApp:
             self._inbox = Inbox()
             self._view = None
             self._stop_motion(LINK_LOST, lambda job: job.needs_link)
-            self._worker.stop_now()
+            # A jaw reference was typed at the Thor terminal: it needs no link.
+            self._worker.stop_now(keep_reference=True)
             cancelled = self._wait.cancel(LINK_LOST)
             state = self._authority.snapshot()
             if state.owner is Owner.AGENT:
@@ -1513,6 +1514,7 @@ class RobotApp:
                 )
                 or self._motors_off()
                 or self._busy()
+                or self._referencing()
                 or self._expired(m.expires_mono_s)
                 or self._region_problem(m.grasp_region)
             )
@@ -1551,6 +1553,7 @@ class RobotApp:
                 # A return to rest or a release has proven the jaws empty, or
                 # will: no jaw command may follow that proof.
                 or self._busy(lambda job: not job.is_move)
+                or self._referencing()
             )
             if reason is not None:
                 reply.final(REFUSED, reason)
@@ -1674,7 +1677,7 @@ class RobotApp:
             reason = reason or self._authority.admit(
                 m.session_id, m.owner_number, m.stop_number, Owner.NOBODY
             )
-            reason = reason or self._busy()
+            reason = reason or self._busy() or self._referencing()
             if reason is not None:
                 return reason
             seen = self._authority.snapshot()
@@ -1690,7 +1693,7 @@ class RobotApp:
             return f"type rest first: {refusal.reason}"
         with self._lock:
             # What began or ended while the pose was read.
-            reason = self._motors_off() or self._busy()
+            reason = self._motors_off() or self._busy() or self._referencing()
             if reason is not None:
                 return reason
             number = self._authority.set_owner_if(
@@ -1825,6 +1828,10 @@ class RobotApp:
                 if match(job):
                     return f"busy: {job.what} is queued"
         return None
+
+    def _referencing(self) -> str | None:
+        """Why no task, move or jaw command is taken: a jaw reference is under way."""
+        return JAWS_BUSY if self._worker.referencing() else None
 
     def _expired(self, expires_mono_s: float) -> str | None:
         late = self._clock.monotonic() - expires_mono_s

@@ -290,32 +290,45 @@ it once, when it starts, and only after the checks below. It is started on the T
 None of this was run on the arm. The tests run it with APAI's driver class over a stand-in
 for the motor library (`test_real_driver.py`).
 
-The checks, in order. Until the last one nothing was built that can reach the motors, and a
-failed check ends the program with exit code 2 and one line.
+The checks, in order. Until the connect of step 9 nothing is sent to the motors and the
+motor bus is not opened; check 7 builds the driver object and does not connect it. A failed
+check ends the program with exit code 2 and one line.
 
 1. `--apai-profile`, `--calibration` and `--connect` are all given, and the profile is not
    APAI's software arm.
-2. The standard input is a terminal: the confirmations are typed by a person.
+2. The standard input and the standard output are terminals: the questions are shown to a
+   person and the confirmations are typed by one.
 3. The environment is not that of an AI agent (the variables APAI's own confirmation looks
    at, such as `CLAUDECODE`).
 4. `--calibration` repeats `camera_calibration_id` of the robot app's file, and that name is
    not empty.
 5. APAI has no hold marker for the arm's motor bus. A typed `yes` never releases a hold: do
    APAI's operator recovery first.
-6. No operator confirmation for APAI's connect is on file. With one, APAI's driver would
-   connect an arm it does not measure at rest. The robot app never writes or uses such a
-   confirmation.
+6. No operator confirmation for APAI's connect is on file: APAI's hold folder
+   (`~/.apai/arm_holds`) holds no `*.confirm.json` file, whatever arm it names, however old
+   it is and whether or not it can be read. With one, APAI's driver would connect an arm it
+   does not measure at rest. The refusal names the file. The robot app never writes or uses
+   such a confirmation.
 7. The file fits the profile: no limit set is faster than the profile's speed cap, and the
    file's rest pose is the profile's park pose. Isaac Capture's remote link can be imported.
-   The program then prints the motor bus, the calibration, the speed cap and the tolerance
-   for "at rest at start".
+   The driver object is built here and not connected. The program then prints the motor bus,
+   the calibration, the speed cap and the tolerance for "at rest at start".
 8. Three questions, each answered with a typed `yes`: is the arm powered; is it at rest and
-   supported; is the calibration in use the one named. Any other answer, Ctrl+C or the end of
-   the input ends the program with `not confirmed: nothing was connected`. Checks 3 to 6 are
-   made once more after the third answer.
+   supported; is the calibration in use the one named. What was typed before a question was
+   written is dropped. Any other answer, Ctrl+C, the end of the input or a last line without
+   a line end ends the program with `not confirmed: nothing was connected`. Checks 3 to 6
+   are made once more after the third answer. A Ctrl+C or a SIGTERM that comes after the
+   third answer and before the connect also ends the program with that line.
 9. The connect. APAI's driver reads every joint twice before anything that cuts torque and
    refuses an arm it does not measure at rest. Then the program prints `the robot app did not
-   start: ...`, says that nothing was cut, and ends with exit code 1.
+   start: ...`, says that nothing was cut, and ends with exit code 1. A connect that fails
+   later, after APAI's driver enabled the motors, also ends with exit code 1; the program
+   then prints that the motors may be enabled and holding and that it ends without releasing
+   them. The arm lies at rest then: switch the 48 V off there.
+
+Ctrl+C and SIGTERM do not end the connect half-way. A Ctrl+C pressed while the robot app
+starts is a STOP once it has started. A SIGTERM that comes then closes the robot app after
+the start, with the motors left on.
 
 After the connect the program prints `robot app: the real driver is connected at measured
 rest: motors on, motion hold, jaws referenced` (or `motion rest_hold`) and dials the service.
@@ -605,9 +618,16 @@ a STOP and confirms nothing.
 | A task's first skill that moves | agent program | `yes` |
 | The real driver's three questions | Thor terminal, at the start | `yes` each |
 
-A confirmation is typed at a terminal. Without a terminal on standard input and output (a
-pipe, a script), and inside the environment of an AI agent, nothing is asked and nothing is
-sent. What was typed before the question was written is dropped.
+A confirmation is typed at a terminal. The operator console, the console command and the
+agent program ask nothing and send nothing without a terminal on standard input and output
+(a pipe, a script), and inside the environment of an AI agent. The robot app with `--driver
+real` needs a terminal on standard input and output and refuses the environment of an AI
+agent. The Thor terminal of a robot app with `--arm sim` or `--driver mock` checks neither:
+it takes its commands and their confirmations from a pipe too.
+
+What was typed before a question was written is dropped, for every question in the table,
+when the input is a terminal. Lines that the Thor terminal reads from a pipe are all taken,
+in their order.
 
 ### The operator console
 
@@ -887,8 +907,10 @@ from the console as link messages or are typed at the Thor terminal.
   neither return to rest nor be released. The command closes the jaws slowly to their stop,
   after a typed `jaws are empty`. It is taken only while nobody owns the arm, the motors are
   on, no fault-stop is latched, nothing else runs and the jaws are not referenced; a STOP
-  ends it `cancelled`. It proves nothing about what the jaws hold: an `open` follows before
-  a `rest`. This is a jaw rule the design does not have, because it moves the jaws on a
+  ends it `cancelled`. While it waits or runs, a new task (OWNER_REQUEST "agent"), a MOVE and
+  a GRIPPER command are refused with `busy: a jaw command is running or waiting`. A lost
+  robot connection does not cancel it: it was typed at the robot. It proves nothing about
+  what the jaws hold: an `open` follows before a `rest`. This is a jaw rule the design does not have, because it moves the jaws on a
   person's word. It waits for the owner's decision and is switched off: the robot app
   setting `jaws.allow_reference` is `false` in every shipped file, the rig file included,
   and the command is then refused without a question.
@@ -1271,7 +1293,10 @@ from what is written here, stop and find out why.
   18 (the connect of the real driver), 17 (`release`) and 28 (the shutdown). In each the arm
   lies at rest, and the program measures that before it cuts.
 - **To abort, at any step**: type `stop` at the Thor terminal or press Ctrl+C there. It
-  needs no network. The arm holds with its motors on. Then decide in peace.
+  needs no network. The arm holds with its motors on. Then decide in peace. Two moments of
+  step 15 differ. At one of the three questions Ctrl+C ends the program and nothing was
+  connected. While the robot app starts (the connect and the jaw reference, with the arm at
+  rest) Ctrl+C does not end the start half-way: it is a STOP as soon as the start is over.
 - **The 48 V switch drops the arm.** Use it only while the arm lies at rest or a person
   holds it. It is not the way to abort.
 - **Never restart the robot app with the arm raised**, and never end it with a kill signal
@@ -1279,7 +1304,7 @@ from what is written here, stop and find out why.
   it, and its next start is refused as long as the arm is not at rest. Bring the arm to rest
   first (`rest`, then `path is clear`).
 - **Never use APAI's own `holding the arm` confirmation** unless a person holds the arm. The
-  robot app refuses to start while one is on file.
+  robot app refuses to start while any `*.confirm.json` file lies in `~/.apai/arm_holds`.
 - Write every value the table asks for into the session record, with the commit id of the
   code on the Thor.
 
@@ -1315,8 +1340,8 @@ In the tables, `EX` is `examples/agentic_remote`, `PROFILE` is the rig's APAI ar
 | 3 | Thor | `timedatectl` | - | Whether the clock is synchronized, and by what | The clock is being set by hand |
 | 4 | Thor, by eye | 48 V off. The arm lies folded on its stops. The jaws are empty. Nothing is in the arm's reach | - | A photo | The arm is not at rest |
 | 5 | Thor | Bring the motor bus up with the experiment's script (it needs sudo and sends no motor command) | The bus is `can4` at 1 Mbit/s | - | The script stops |
-| 6 | Thor | Look into `~/.apai/arm_holds` | No hold marker for `can4` | - | A marker exists: do APAI's operator recovery first |
-| 7 | Workstation | `python -m isaaccapture_examples.agentic_remote.link_service --config EX/configs/link_service_rebot.yaml` | `robot link service: waits for the robot app on ...:47610` | - | Exit code 1 or 2 |
+| 6 | Thor | `ls -la ~/.apai/arm_holds` | No hold marker for `can4` (`can4.json`) and no `*.confirm.json` file at all | - | A marker exists: do APAI's operator recovery first. A `*.confirm.json` file exists: revoke it with APAI's `scripts/robots/arm_hold.py revoke` |
+| 7 | Workstation | `PYTHONPATH=EX/python:BUILD/python_package/Release python -m isaaccapture_examples.agentic_remote.link_service --config EX/configs/link_service_rebot.yaml`. `BUILD` is the Isaac Capture build folder on the workstation; `python` is the Python that build was made for, with PyYAML | `robot link service: waits for the robot app on ...:47610` | - | Exit code 1 or 2 |
 | 8 | Workstation | `EX/run_console.sh` | A status line with `robot connection lost (not connected)` | - | It cannot attach |
 | 9 | Thor | Describe only: `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --apai-profile PROFILE` | `robot app with --arm apai would run:`, the driver `built, not connected`, exit code 2 | The profile's speed cap, the two rest tolerances, the jaw tolerance | A refusal (speed cap, rest pose, joint count) |
 | 10 | Thor, then console | The link without the arm: `EX/run_robot_app.sh --config EX/configs/robot_app.yaml --arm sim --connect WS:47610`. Type `stop` at the console. Leave this robot app running until step 14 | The console's `WELCOME` line says `driver sim`; `stop: taken` | The time from Enter to `taken`, five times | No connection. This is the first run of port 47610 between two machines |
@@ -1329,7 +1354,7 @@ In the tables, `EX` is `examples/agentic_remote`, `PROFILE` is the rig's APAI ar
 
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
-| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: motors on, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`; the console's `WELCOME` says `driver real` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading | `the robot app did not start`: APAI's driver refused before it cut anything, and the motors were never switched on: the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again |
+| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: motors on, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`; the console's `WELCOME` says `driver real` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading | `the robot app did not start`, then a line that begins `APAI's driver refused the connect before anything that cuts torque`: the motors were never switched on and the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again. `the robot app did not start`, then `the start failed after the connect began: the motors may be enabled and holding`: the program has ended without releasing them. The arm lies at rest: with the second person's hand on it, switch the 48 V off, read the reason, start again |
 | 16 | Thor | If the motion is `hold`: type `rest`, then `path is clear`. The arm moves a few hundredths of a rad | `rest: completed`; motion `rest_hold` | The planned and the real time | The arm moves away from rest: `stop` |
 | 17 | Console, Thor | The release at rest: `release`, then `yes` | `torque release sent at rest: the driver does not confirm that the motors are off`; the motors are off | Whether the motors are off, by hand feel | `refused`: the motors stay on; read why |
 | 18 | Thor | After a release the robot app has to be started again (`the motors are off; restart the robot app`): `quit`, then steps 15 and 16 again | As steps 15 and 16 | - | As step 15 |

@@ -83,6 +83,8 @@ _CONTACT_ZONE_REFUSAL = "TCP would enter the contact zone"
 # and of a hold whose target the driver did not take.
 _HELD_MEASURED = "measured pose ["
 _HOLD_NOT_SENT = "last command (hold command failed"
+# How the name of an operator's confirmation file in APAI's hold folder ends.
+_CONFIRM_SUFFIX = ".confirm.json"
 # APAI keeps time on the machine's monotonic clock, whatever clock the app runs on.
 _MACHINE = SystemClock()
 
@@ -209,16 +211,25 @@ def hold_bus(profile: ApaiProfile) -> str | None:
     return arm_hold.hold_key(profile.arm_cfg.get("type"), profile.arm_cfg)
 
 
-def pending_confirmation(profile: ApaiProfile) -> bool:
-    """Whether an operator's confirmation for APAI's connect is on file.
+def confirmation_on_file() -> str | None:
+    """The path of an operator's confirmation file in APAI's hold folder, or None.
 
-    One for this profile's motor bus or for any arm counts. With it APAI's
-    driver would connect an arm it does not measure at rest. It only reads.
+    Any "*.confirm.json" there counts, whatever arm it names, however old it
+    is and whether or not it can be read: APAI's driver claims one by its file
+    name and would then connect an arm it does not measure at rest. A folder
+    that cannot be listed counts too, and is the path returned. It only lists.
     """
-    bus = hold_bus(profile)
-    return any(
-        found.get("key") in (None, bus) for found in arm_hold.pending_confirmations()
-    )
+    folder = arm_hold.hold_dir()
+    try:
+        names = sorted(os.listdir(folder))
+    except (FileNotFoundError, NotADirectoryError):
+        return None  # no folder: nothing is on file
+    except OSError:
+        return str(folder)
+    for name in names:
+        if name.endswith(_CONFIRM_SUFFIX):
+            return str(folder / name)
+    return None
 
 
 def speed_cap(profile: ApaiProfile) -> float:

@@ -189,6 +189,22 @@ def test_peer_host_drops_the_port(address, host):
     assert peer_host(address) == host
 
 
+@pytest.mark.parametrize(
+    ("address", "host"),
+    [
+        ("0:0:0:0:0:0:0:1", "::1"),
+        ("[0:0:0:0:0:0:0:1]:5000", "::1"),
+        ("[FE80::1]:5000", "fe80::1"),
+        ("::ffff:192.168.7.20", "192.168.7.20"),
+        ("[::FFFF:192.168.7.20]:5000", "192.168.7.20"),
+        ("[::ffff:c0a8:714]:5000", "192.168.7.20"),
+        ("THOR.local:1", "THOR.local"),  # no IP address: left as it is
+    ],
+)
+def test_peer_host_gives_an_ip_address_in_one_spelling(address, host):
+    assert peer_host(address) == host
+
+
 def test_the_role_table_is_the_contracts():
     for role in ROLES:
         for name, message in CLIENT_MESSAGES.items():
@@ -730,6 +746,43 @@ def test_allowed_peers_are_the_configured_ones(folder):
         assert not thor.refused.is_set()
     finally:
         bench.close()
+
+
+@pytest.mark.parametrize(
+    ("allowed", "dialing"),
+    [
+        ("0:0:0:0:0:0:0:1", "[::1]:5000"),
+        ("::ffff:127.0.0.1", "127.0.0.1:5000"),
+        ("FE80::1", "[fe80::1]:5000"),
+        ("192.168.7.20", "[::ffff:192.168.7.20]:9"),
+        (" 192.168.7.20 ", "192.168.7.20:9"),
+    ],
+)
+@pytest.mark.parametrize("through_the_file", [True, False])
+def test_an_allowed_peer_is_taken_in_any_spelling_of_its_address(
+    folder, allowed, dialing, through_the_file
+):
+    peers = [allowed]
+    if through_the_file:
+        peers = list(link_service_config({"allowed_peers": peers}).allowed_peers)
+    bench = Bench(folder, allowed_peers=peers)
+    try:
+        assert bench.dial("192.0.2.9:5000").refused.wait(WAIT_S)
+        thor = bench.dial(dialing)
+        until(lambda: bench.service.robot_connected)
+        assert not thor.refused.is_set()
+    finally:
+        bench.close()
+
+
+def test_allowed_peers_are_kept_in_one_spelling():
+    loaded = link_service_config(
+        {"allowed_peers": ["0:0:0:0:0:0:0:1", " 127.0.0.1 ", "FE80::1", "::1"]}
+    )
+    assert loaded.allowed_peers == ("::1", "127.0.0.1", "fe80::1", "::1")
+    assert LinkServiceConfig(allowed_peers=("::FFFF:10.0.0.2",)).allowed_peers == (
+        "::ffff:10.0.0.2",
+    )
 
 
 def test_a_second_robot_connection_is_refused_while_one_is_alive(bench):

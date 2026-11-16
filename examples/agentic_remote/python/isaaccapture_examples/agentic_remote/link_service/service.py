@@ -11,6 +11,7 @@ the one link message it makes itself is the "agent program gone" help request.
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import itertools
 import logging
 import re
@@ -138,14 +139,22 @@ def link_message_name(msg_type: int) -> str:
 
 
 def peer_host(address: str) -> str:
-    """The host of a peer address: "10.0.0.2:5000" and "[::1]:5000" lose the port."""
+    """The host of a peer address: "10.0.0.2:5000" and "[::1]:5000" lose the port.
+
+    An IP address comes back in one spelling: "0:0:0:0:0:0:0:1" as "::1", and
+    an IPv4 address carried in IPv6 ("::ffff:10.0.0.2") as "10.0.0.2".
+    """
     address = str(address).strip()
-    if address.startswith("["):
-        return address[1:].partition("]")[0]
     host, colon, port = address.rpartition(":")
-    if colon and port.isdigit() and ":" not in host:
-        return host
-    return address
+    if address.startswith("["):
+        host = address[1:].partition("]")[0]
+    elif not (colon and port.isdigit() and ":" not in host):
+        host = address
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host  # a name
+    return str(getattr(ip, "ipv4_mapped", None) or ip)
 
 
 @dataclass(frozen=True)

@@ -310,7 +310,11 @@ class ThorTerminal:
         return self._asked(CONFIRM_REST, PATH_IS_CLEAR)
 
     def _asked(self, question: str, phrase: str) -> bool:
-        """Ask a question; True only when the next typed line is the phrase."""
+        """Ask a question; True only when the next typed line is the phrase.
+
+        On a terminal, what was typed before the question is dropped.
+        """
+        drop_typed_ahead(self._input)
         self._say(question)
         answer = self._next_line()
         if confirms(answer, "stop"):
@@ -377,6 +381,17 @@ class ThorTerminal:
             self._write_failed = True
         else:
             self._write_failed = False
+
+
+def drop_typed_ahead(lines: object) -> None:
+    """Drop the input typed so far, where the input can: before a question.
+
+    Input with a drop_typed_ahead() of its own, the lines typed at a terminal,
+    drops it; any other input, a pipe or a script's lines, is left as it is.
+    """
+    drop = getattr(lines, "drop_typed_ahead", None)
+    if drop is not None:
+        drop()
 
 
 def _main_thread_only(what: str) -> None:

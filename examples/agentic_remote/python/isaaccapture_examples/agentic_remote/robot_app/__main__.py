@@ -42,9 +42,14 @@ from .connection import RobotDialer
 from .interfaces import CheckerSet, MotionState, Owner
 from .rest import planned_duration_s
 from .sim import BasicChecker, SimArm
-from .terminal import CONFIRM_REST, ThorTerminal, TypedLines
+from .terminal import CONFIRM_REST, ThorTerminal, TypedLines, drop_typed_ahead
 from .text import MAX_WORD_CHARS, printable
 from ..testing.client import WorkstationClient
+
+try:
+    import termios
+except ImportError:  # no terminal control on this platform
+    termios = None
 
 if TYPE_CHECKING:
     from ..link_service.local import LocalCarrier
@@ -77,6 +82,17 @@ NO_REAL_CONNECT = (
     "--driver real needs the robot link service's address: --connect HOST:PORT"
 )
 NO_TERMINAL = "the confirmations are typed by a person: standard input is no terminal"
+NO_OUTPUT_TERMINAL = (
+    "the questions are shown to a person: standard output is no terminal"
+)
+# After a start that failed past APAI's own refusal: the connect may have
+# enabled the motors, and this program switches nothing off away from a release.
+MOTORS_MAY_BE_ON = (
+    "the start failed after the connect began: the motors may be enabled and "
+    "holding, and this program ends without releasing them. APAI's driver "
+    "enables them only at measured rest: with the arm lying at rest, switch the "
+    "48 V off (safe only there or with the arm held by hand), then start again"
+)
 # What the operator confirms at the Thor terminal before the real driver may be
 # connected: connecting cuts motor torque.
 REAL_DRIVER_QUESTIONS = (
@@ -316,9 +332,25 @@ class _FdLines:
         self._buffer = b""
         self._ended = False
         self._closed = threading.Event()
+        # The line handed over last ended with the input, not with a newline.
+        self.unterminated = False
 
     def close(self) -> None:
         self._closed.set()
+
+    def drop_typed_ahead(self) -> None:
+        """On a terminal, drop what was typed and not yet handed over.
+
+        Called by the thread that iterates. Input that is no terminal, a pipe,
+        is kept: its lines are a script's, not a person's.
+        """
+        try:
+            if termios is None or not os.isatty(self._fd):
+                return
+            termios.tcflush(self._fd, termios.TCIFLUSH)
+        except (OSError, termios.error):
+            return  # the terminal is gone: the next read says so
+        self._buffer = b""
 
     def __iter__(self) -> Iterator[str]:
         return self
@@ -328,6 +360,7 @@ class _FdLines:
             line, newline, rest = self._buffer.partition(b"\n")
             if newline or (self._ended and line):
                 self._buffer = rest
+                self.unterminated = not newline
                 return line.decode("utf-8", "replace")
             if self._ended or self._closed.is_set():
                 raise StopIteration
@@ -357,15 +390,21 @@ def run_connected(
     typed: Iterator[str] | None = None,
     say: Say = _say,
     driver: str = "",
+    signals: _StartSignals | None = None,
 ) -> int:
     """Run the robot app with the Thor terminal and dial the robot link service.
 
     Returns when the robot app has closed (a typed quit, or a SHUTDOWN) or on
     SIGTERM, which closes the app with the motors left on. typed yields the
     lines of the Thor terminal; None reads the standard input. Ctrl+C is a STOP
-    when this runs on the main thread. driver is what WELCOME declares.
+    when this runs on the main thread: one pressed while the app starts is a
+    STOP once it has started, and a SIGTERM then closes the app after the
+    start, so no start is left half-way with the motors enabled. signals are
+    the caller's, noted since before this call; None notes them from here on.
+    driver is what WELCOME declares.
     """
     lines = typed_lines() if typed is None else typed
+    signals = _StartSignals() if signals is None else signals
     app = RobotApp(
         config,
         arm,
@@ -386,23 +425,24 @@ def run_connected(
         target=terminal.run, name="thor-terminal-input", daemon=True
     )
     on_main = threading.current_thread() is threading.main_thread()
-    terminated: list[int] = []
-    replaced: list[Any] = []  # the SIGTERM handler this run replaced
     try:
+        if on_main:
+            signals.install()
         try:
             app.start()
         except Exception as error:
             _log.debug("the robot app did not start", exc_info=True)
             _complain(f"the robot app did not start: {error}")
-            if driver == DRIVER_REAL and type(error).__name__ == _ARM_HELD:
-                _complain(NOT_AT_REST)
+            if driver == DRIVER_REAL:
+                held = type(error).__name__ == _ARM_HELD
+                _complain(NOT_AT_REST if held else MOTORS_MAY_BE_ON)
             return EXIT_FAILED
         if driver == DRIVER_REAL:
             say(_connected_line(app, arm))
         if on_main:
             terminal.install_signal_handlers()
-            handler = signal.signal(signal.SIGTERM, lambda *_: terminated.append(1))
-            replaced.append(signal.SIG_DFL if handler is None else handler)
+            if signals.interrupts:  # Ctrl+C while the app started
+                terminal.interrupt()
         reader.start()
         say(
             f"robot app: session {app.session_id[:8]}; dialing the robot link "
@@ -411,7 +451,7 @@ def run_connected(
         dialer.start()
         shown = ""
         while not app.wait_closed(_WATCH_S):
-            if terminated:
+            if signals.terminated:
                 say("robot app: SIGTERM; closing with the motors left on")
                 break
             error = "" if app.link_alive else dialer.last_error
@@ -428,9 +468,40 @@ def run_connected(
         if reader.is_alive():
             reader.join(2 * _WATCH_S)  # one that cannot be ended is left behind
         terminal.close()
-        for handler in replaced:
-            signal.signal(signal.SIGTERM, handler)
+        if on_main:
+            signals.restore()
     return EXIT_OK
+
+
+class _StartSignals:
+    """SIGINT and SIGTERM, noted and not acted on, from before the app's start.
+
+    A start that Ctrl+C or SIGTERM ended half-way would leave the motors
+    enabled with no program. install() and restore() are for the main thread.
+    """
+
+    def __init__(self) -> None:
+        # Filled by the handlers: list.append() is safe in a signal handler.
+        self.interrupts: list[int] = []
+        self.terminated: list[int] = []
+        self._replaced: dict[int, Any] = {}
+
+    def install(self) -> None:
+        """Note the two signals from here on; does nothing when installed."""
+        if self._replaced:
+            return
+        noted = {signal.SIGINT: self.interrupts, signal.SIGTERM: self.terminated}
+        for number, notes in noted.items():
+            # Kept first: a Ctrl+C still raises until its handler is in place.
+            handler = signal.getsignal(number)
+            self._replaced[number] = signal.SIG_DFL if handler is None else handler
+            signal.signal(number, lambda *_, notes=notes: notes.append(1))
+
+    def restore(self) -> None:
+        """Put back the handlers install() replaced."""
+        while self._replaced:
+            number, handler = self._replaced.popitem()
+            signal.signal(number, handler)
 
 
 def _connected_line(app: RobotApp, arm: ArmPort) -> str:
@@ -521,26 +592,37 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
 def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> bool:
     """Ask the three confirmations; True only when each was answered with yes.
 
-    The first other answer, or the end of the input, ends the asking.
+    The first other answer, or the end of the input, ends the asking. On a
+    terminal, what was typed before a question is dropped; a last line that the
+    end of the input cut short answers nothing.
     """
     named = repr(printable(calibration.strip(), MAX_WORD_CHARS))
     total = len(REAL_DRIVER_QUESTIONS)
     for number, question in enumerate(REAL_DRIVER_QUESTIONS, start=1):
         asked = question.format(calibration=named)
+        drop_typed_ahead(typed)
         say(f"Real driver, {number} of {total}: {asked} Type {YES} to confirm.")
         try:
             answer = next(typed, None)
         except (OSError, ValueError):  # the terminal is gone
             answer = None
-        if not confirms(answer, YES):
+        if getattr(typed, "unterminated", False) or not confirms(answer, YES):
             return False
     return True
 
 
 def _stdin_is_terminal() -> bool:
+    return _is_terminal(sys.stdin)
+
+
+def _stdout_is_terminal() -> bool:
+    return _is_terminal(sys.stdout)
+
+
+def _is_terminal(stream: Any) -> bool:
     try:
-        return sys.stdin.isatty()
-    except (AttributeError, ValueError):  # no standard input, or a closed one
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):  # no such stream, or a closed one
         return False
 
 
@@ -555,9 +637,9 @@ def real_driver_refusal(
 
     In turn, with nothing built or sent: an AI agent's environment (environ
     None: the process's); a --calibration that is not the file's
-    camera_calibration_id; APAI's hold marker for the arm's motor bus; an
-    operator's confirmation on file, with which APAI's driver would connect
-    an arm it does not measure at rest.
+    camera_calibration_id; APAI's hold marker for the arm's motor bus; any
+    operator's confirmation file in APAI's hold folder, whatever arm it names:
+    with one APAI's driver would connect an arm it does not measure at rest.
     """
     marker = agent_environment(environ)
     if marker is not None:
@@ -582,13 +664,13 @@ def real_driver_refusal(
             "Connecting would cut the torque of an arm that may be raised. Do "
             "APAI's operator recovery first; a typed yes never releases a hold"
         )
-    if apai_backend.pending_confirmation(profile):
-        bus = apai_backend.hold_bus(profile)
+    on_file = apai_backend.confirmation_on_file()
+    if on_file is not None:
         return (
             f"{NOT_CONNECTED}: an operator's confirmation for APAI's connect is "
-            f"on file for the arm on {bus}: with it APAI's driver would connect "
-            "an arm it does not measure at rest. Revoke it with APAI's own tool, "
-            "or wait until it has lapsed"
+            f"on file ({on_file}): with one on file APAI's driver would connect "
+            "an arm it does not measure at rest. Revoke it with APAI's own tool "
+            "(arm_hold.py revoke), then start again"
         )
     return None
 
@@ -621,9 +703,14 @@ def _real_driver(
             f"APAI arm profile {name!r} is APAI's software arm: use --driver mock"
         )
         return EXIT_NOT_RUN
-    if typed is None and not _stdin_is_terminal():
-        _complain(f"{NOT_CONFIRMED}: {NO_TERMINAL}")
-        return EXIT_NOT_RUN
+    if typed is None:
+        for is_terminal, why in (
+            (_stdin_is_terminal, NO_TERMINAL),
+            (_stdout_is_terminal, NO_OUTPUT_TERMINAL),
+        ):
+            if not is_terminal():
+                _complain(f"{NOT_CONFIRMED}: {why}")
+                return EXIT_NOT_RUN
     refusal = real_driver_refusal(config, profile, args.calibration, apai_backend)
     if refusal is not None:
         _complain(refusal)
@@ -652,32 +739,43 @@ def _real_driver(
         f"at rest at start within {config.rest.start_rest_tol_rad:g} rad"
     )
     lines = typed_lines() if typed is None else typed
+    signals = _StartSignals()
     try:
-        confirmed = confirm_real_driver(args.calibration, lines, say)
-    except KeyboardInterrupt:  # Ctrl+C at a question confirms nothing
-        confirmed = False
-    # A hold marker or a confirmation may have been written during the questions.
-    late = (
-        real_driver_refusal(config, profile, args.calibration, apai_backend)
-        if confirmed
-        else NOT_CONFIRMED
-    )
-    if late is not None:
-        if typed is None:
-            _end_input(lines)
-        _complain(late)
-        return EXIT_NOT_RUN
-    say(CONNECTING)
-    return run_connected(
-        config,
-        arm,
-        checkers,
-        clock,
-        args.connect,
-        typed=lines,
-        say=say,
-        driver=DRIVER_REAL,
-    )
+        try:
+            confirmed = confirm_real_driver(args.calibration, lines, say)
+            if confirmed and threading.current_thread() is threading.main_thread():
+                # From here on Ctrl+C is noted: it must not end a connect half-way.
+                signals.install()
+        except KeyboardInterrupt:  # Ctrl+C at a question confirms nothing
+            confirmed = False
+        # A hold marker or a confirmation may have been written during the
+        # questions.
+        late = (
+            real_driver_refusal(config, profile, args.calibration, apai_backend)
+            if confirmed
+            else NOT_CONFIRMED
+        )
+        if late is None and (signals.interrupts or signals.terminated):
+            late = NOT_CONFIRMED  # Ctrl+C or SIGTERM before the connect began
+        if late is not None:
+            if typed is None:
+                _end_input(lines)
+            _complain(late)
+            return EXIT_NOT_RUN
+        say(CONNECTING)
+        return run_connected(
+            config,
+            arm,
+            checkers,
+            clock,
+            args.connect,
+            typed=lines,
+            say=say,
+            driver=DRIVER_REAL,
+            signals=signals,
+        )
+    finally:
+        signals.restore()
 
 
 def _describe_apai(
